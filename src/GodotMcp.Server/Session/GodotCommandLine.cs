@@ -23,6 +23,12 @@ internal sealed record LaunchRequest(
 {
     /// <summary>Whether the run is recorded from launch with Godot's Movie Maker.</summary>
     public bool Record { get; init; }
+
+    /// <summary>
+    /// Whether the run is preview_scene's: the bridge pauses the game before its scene's first frame and frames a 3D scene
+    /// that has no current camera.
+    /// </summary>
+    public bool Preview { get; init; }
 }
 
 /// <summary>Where the bridge dials and the token it proves itself with.</summary>
@@ -35,6 +41,7 @@ internal static class GodotCommandLine
     public const string TokenVariable = "GODOT_MCP_TOKEN";
     public const string QuietVariable = "GODOT_MCP_QUIET";
     public const string ShutOutRealGamepadsVariable = "GODOT_MCP_SHUT_OUT_REAL_GAMEPADS";
+    public const string PreviewVariable = "GODOT_MCP_PREVIEW";
 
     /// <summary>
     /// A quiet run's audio driver. The Dummy driver still mixes on its own thread, so playback advances
@@ -188,6 +195,7 @@ internal static class GodotCommandLine
         startInfo.Environment[TokenVariable] = bridge.Token;
         SetFlag(startInfo, QuietVariable, request.Quiet);
         SetFlag(startInfo, ShutOutRealGamepadsVariable, request.ShutOutRealGamepads);
+        SetFlag(startInfo, PreviewVariable, request.Preview);
         return startInfo;
     }
 

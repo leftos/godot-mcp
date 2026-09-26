@@ -307,7 +307,7 @@ internal sealed partial class ProjectProfile
     private static McpException Refused(Place place, string problem) => new($"{place.Path} ({place.Where}): {problem}.");
 
     [GeneratedRegex(@"\A[1-9][0-9]*x[1-9][0-9]*\z")]
-    private static partial Regex ResolutionPattern();
+    internal static partial Regex ResolutionPattern();
 
     /// <summary>Where in the file a value is: the file's path, and "top level" or "preset \"name\"".</summary>
     private sealed record Place(string Path, string Where);

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.Wire;
 using Microsoft.Extensions.Logging;
@@ -14,7 +15,13 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// <summary>What a launch or an attach says about a session name it refuses.</summary>
     public const string NameRule = "a session name is 1 to 64 characters of letters, digits, '.', '_' and '-'";
 
+    /// <summary>How long a preview may take in all: its prep, its launch and its capture.</summary>
+    public static readonly TimeSpan PreviewLimit = TimeSpan.FromSeconds(60);
+
     private readonly Lock _lock = new();
+
+    // The number of the last preview session named, under _lock; each preview's name carries the next.
+    private int _previews;
     private readonly Dictionary<string, GodotSession> _sessions = new(StringComparer.OrdinalIgnoreCase);
 
     // One per folder a prep has run on, kept for the server's lifetime. Never disposed: a prep still in flight at shutdown
@@ -52,6 +59,45 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         SessionSpec spec = new(NameFor(session, projectDir), projectDir, SessionKind.Attach, shutOutRealGamepads, Quiet: false);
         GodotSession created = await ReserveAsync(spec);
         return await created.AttachAsync(bridgeScript, wait, cancellationToken);
+    }
+
+    /// <summary>
+    /// Runs <paramref name="capture"/> on a preview: the project started on the request's scene under a session of its own
+    /// (<see cref="PreviewName"/>), which is stopped and forgotten however the call ends. The session takes the settings of
+    /// the live sessions on the folder, whose override.cfg it shares, so it is never refused for differing from them; its run
+    /// is started as the request says. The prep, the launch and the capture share <see cref="PreviewLimit"/>.
+    /// </summary>
+    /// <exception cref="SessionException">
+    /// The project is missing, the prep failed or passed the limit, the launch failed, or the whole call passed the limit.
+    /// </exception>
+    public async Task<T> PreviewAsync<T>(
+        LaunchRequest request,
+        Func<GodotSession, PrepResult, CancellationToken, Task<T>> capture,
+        CancellationToken cancellationToken
+    )
+    {
+        string projectDir = NormaliseProjectDir(request.ProjectPath);
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limit.CancelAfter(PreviewLimit);
+        GodotSession session = ReservePreview(projectDir);
+        try
+        {
+            PrepResult prep = request.Prepare ? await PrepareForPreviewAsync(session, limit.Token, cancellationToken) : PrepResult.Skipped;
+            await session.LaunchAsync(request with { ProjectPath = projectDir, Prepare = false }, limit.Token);
+            return await capture(session, prep, limit.Token);
+        }
+        catch (OperationCanceledException e) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new SessionException(
+                $"preview_scene did not show {request.Scene} within {PreviewLimit.TotalSeconds:0} s (prep, launch and capture together), "
+                    + "so its game was stopped. run_project on the scene shows what holds it up.",
+                e
+            );
+        }
+        finally
+        {
+            await EndPreviewAsync(session);
+        }
     }
 
     /// <exception cref="SessionException">No session answers to the name, or the session is attached.</exception>
@@ -161,6 +207,35 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         string projectDir = ProjectPaths.Normalise(projectPath);
         string folder = Path.GetFileName(projectDir);
         return folder.Length > 0 ? folder : projectDir;
+    }
+
+    /// <summary>The name of a folder's <paramref name="number"/>th preview session: <c>&lt;folder name&gt;.preview-&lt;n&gt;</c>.</summary>
+    internal static string PreviewName(string folderName, int number) =>
+        string.Create(CultureInfo.InvariantCulture, $"{folderName}.preview-{number}");
+
+    /// <summary>
+    /// Registers a pending preview session on the folder under the next preview name no session holds. It takes the pad and
+    /// quiet settings of a live session on the folder (quiet and no shut-out when there is none), so the folder's rule that
+    /// its sessions agree on them, which their one override.cfg needs, holds without refusing the preview.
+    /// </summary>
+    internal GodotSession ReservePreview(string projectDir)
+    {
+        lock (_lock)
+        {
+            string folderName = NameFor(null, projectDir);
+            string name;
+            do
+            {
+                _previews++;
+                name = PreviewName(folderName, _previews);
+            } while (_sessions.ContainsKey(name));
+
+            GodotSession? onFolder = _sessions.Values.FirstOrDefault(other => other.IsLive && ProjectPaths.AreSame(other.ProjectDir, projectDir));
+            SessionSpec spec = new(name, projectDir, SessionKind.Run, onFolder?.ShutOutRealGamepads ?? false, onFolder?.Quiet ?? true);
+            GodotSession created = new(spec, this);
+            _sessions[name] = created;
+            return created;
+        }
     }
 
     /// <summary>Writes the marked override.cfg for a starting session, unless live sessions on its folder already have it.</summary>
@@ -368,6 +443,59 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         CheckSameSetting(spec, onFolder, "shutOutRealGamepads", session => session.ShutOutRealGamepads, spec.ShutOutRealGamepads);
         CheckSameSetting(spec, onFolder, "quiet", session => session.Quiet, spec.Quiet);
         return onFolder;
+    }
+
+    /// <summary>
+    /// A preview's prep under the folder's prep lock, as a launch's is. Passing <paramref name="limit"/> stops it, with its
+    /// whole process tree, and refuses the preview with where the logs are and how to prepare the project beforehand.
+    /// </summary>
+    /// <exception cref="SessionException">The prep failed, or it passed the preview's limit.</exception>
+    private async Task<PrepResult> PrepareForPreviewAsync(GodotSession session, CancellationToken limit, CancellationToken caller)
+    {
+        string projectDir = session.ProjectDir;
+        SemaphoreSlim folderLock = PrepLock(projectDir);
+        try
+        {
+            await folderLock.WaitAsync(limit);
+            try
+            {
+                PrepContext context = new(projectDir, logger, () => RunningSessionNames(projectDir, session));
+                return await ProjectPrep.RunAsync(context, limit);
+            }
+            finally
+            {
+                folderLock.Release();
+            }
+        }
+        catch (OperationCanceledException e) when (!caller.IsCancellationRequested)
+        {
+            throw new SessionException(
+                $"The prep of {projectDir} (its C# build or Godot import) did not finish within preview_scene's "
+                    + $"{PreviewLimit.TotalSeconds:0} s, so it was stopped with its whole process tree and the scene was not shown. "
+                    + $"Its logs are in {ProjectPrep.LogFolder(projectDir)}. Run run_project or validate first to build and import, "
+                    + "or pass prepare: never.",
+                e
+            );
+        }
+    }
+
+    /// <summary>Stops a preview's game if it runs, then forgets the session and lets go of it as a replaced session is.</summary>
+    private async Task EndPreviewAsync(GodotSession session)
+    {
+        if (session.HasGame)
+        {
+            try
+            {
+                await session.StopAsync(CancellationToken.None);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                Log.OverrideRemovalFailed(logger, e, session.ProjectDir);
+            }
+        }
+
+        Forget(session);
+        await RetireAsync(session);
     }
 
     private async Task RetireAsync(GodotSession replaced)

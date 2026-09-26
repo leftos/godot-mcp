@@ -217,8 +217,12 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
         return csharp;
     }
 
+    /// <summary>
+    /// A res:// or project-relative path as the res:// path of an existing file inside the project, of one of the rule's
+    /// extensions (in any case) and spelled in the case on disk.
+    /// </summary>
     /// <exception cref="McpException">The path breaks the rule, or the file does not exist.</exception>
-    private static string ToResPath(string projectDir, string path, PathRule rule)
+    internal static string ToResPath(string projectDir, string path, PathRule rule)
     {
         string full = ResolvePath(projectDir, path, rule);
         return File.Exists(full) ? ResOf(projectDir, full) : throw new McpException($"{rule.Argument} '{path}' does not exist: {full}.");
@@ -312,7 +316,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
     }
 
     /// <summary>How a path argument is checked: its name, the extensions it takes, and what a refusal of another kind says.</summary>
-    private sealed record PathRule(string Argument, string[] Extensions, string Refusal);
+    internal sealed record PathRule(string Argument, string[] Extensions, string Refusal);
 }
 
 /// <summary>Whether validate prepares the project first.</summary>

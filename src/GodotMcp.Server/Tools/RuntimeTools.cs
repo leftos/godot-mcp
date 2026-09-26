@@ -21,6 +21,10 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
     internal const int MaxErrorsLimit = ErrorFeed.Capacity;
     internal const int MaxPageSize = 500;
     internal const int MaxValueLength = 20000;
+    internal const string ResponseModeDescription =
+        "path_only: the path and size only; preview: also the image, scaled down to previewMaxWidth when wider "
+        + "(the scaled copy is saved beside the full one); full: also the full-resolution image.";
+    internal const string PreviewMaxWidthDescription = "The widest the preview image may be, in pixels; 480 by default.";
     private static readonly TimeSpan ScreenshotTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan UiElementsTimeout = TimeSpan.FromSeconds(10);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -35,17 +39,13 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
             + "default a preview at most 480 px wide, saved beside the full-size PNG, whose path is always returned."
     )]
     public async Task<IEnumerable<ContentBlock>> TakeScreenshotAsync(
-        [Description(
-            "path_only: the path and size only; preview: also the image, scaled down to previewMaxWidth when wider "
-                + "(the scaled copy is saved beside the full one); full: also the full-resolution image."
-        )]
-            string responseMode = "preview",
+        [Description(ResponseModeDescription)] string responseMode = "preview",
         [Description(
             "A rectangle to keep, in the screenshot's pixels from its top-left corner (the viewport's pixels when the project does not "
                 + "stretch); any part outside the screenshot is dropped."
         )]
             ScreenshotCrop? crop = null,
-        [Description("The widest the preview image may be, in pixels; 480 by default.")] int previewMaxWidth = 480,
+        [Description(PreviewMaxWidthDescription)] int previewMaxWidth = 480,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
@@ -53,9 +53,27 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
         ScreenshotMode mode = ParseMode(responseMode);
         JsonObject parameters = BuildScreenshotParameters(mode, crop, previewMaxWidth);
         BridgeCall call = new("take_screenshot", "screenshot", parameters, ScreenshotTimeout);
-        BridgeResult result = await CallWithErrorsAsync(Find(session), call, cancellationToken);
+        return await CaptureAsync(Find(session), call, mode, addFields: null, cancellationToken);
+    }
+
+    /// <summary>
+    /// Sends a screenshot-shaped bridge call and shapes its reply as take_screenshot does: a text block with the saved files'
+    /// paths and sizes, what <paramref name="addFields"/> adds from the reply, and the errors the game raised meanwhile, then
+    /// the image <paramref name="mode"/> asks for.
+    /// </summary>
+    /// <exception cref="McpException">The call failed, or the reply names no file, or the image cannot be read.</exception>
+    internal static async Task<IEnumerable<ContentBlock>> CaptureAsync(
+        GodotSession target,
+        BridgeCall call,
+        ScreenshotMode mode,
+        Action<JsonObject, JsonNode?>? addFields,
+        CancellationToken cancellationToken
+    )
+    {
+        BridgeResult result = await CallWithErrorsAsync(target, call, cancellationToken);
         ScreenshotFiles files = ReadScreenshotFiles(result.Reply);
         JsonObject text = JsonSerializer.SerializeToNode(files, Json)!.AsObject();
+        addFields?.Invoke(text, result.Reply);
         List<ContentBlock> blocks = [new TextContentBlock { Text = ErrorReport.AddTo(text, result.Errors).ToJsonString() }];
         string? imagePath = mode switch
         {
@@ -329,7 +347,8 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
         return new McpException(report.Describe(call.Tool, call.Timeout, hint), timedOut);
     }
 
-    private static ScreenshotMode ParseMode(string responseMode) =>
+    /// <exception cref="McpException">The mode is not path_only, preview or full.</exception>
+    internal static ScreenshotMode ParseMode(string responseMode) =>
         responseMode switch
         {
             "path_only" => ScreenshotMode.PathOnly,
@@ -338,7 +357,9 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
             _ => throw new McpException($"responseMode '{responseMode}' is not one of path_only, preview, full."),
         };
 
-    private static JsonObject BuildScreenshotParameters(ScreenshotMode mode, ScreenshotCrop? crop, int previewMaxWidth)
+    /// <summary>The bridge's screenshot parameters: the crop when given, and previewMaxWidth for a preview.</summary>
+    /// <exception cref="McpException">The crop is empty, or a preview's previewMaxWidth is under 1.</exception>
+    internal static JsonObject BuildScreenshotParameters(ScreenshotMode mode, ScreenshotCrop? crop, int previewMaxWidth)
     {
         JsonObject parameters = [];
         if (crop is not null)
@@ -398,7 +419,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
     private static int? ReadInt(JsonNode? node) => node is JsonValue value && value.TryGetValue(out double number) ? (int)number : null;
 
     /// <summary>One request to the bridge: the tool it serves (for messages), the bridge command, its parameters and its timeout.</summary>
-    private sealed record BridgeCall(string Tool, string Command, JsonObject Parameters, TimeSpan Timeout);
+    internal sealed record BridgeCall(string Tool, string Command, JsonObject Parameters, TimeSpan Timeout);
 
     /// <summary>A bridge reply's result and the errors the game raised while it was on its way.</summary>
     private sealed record BridgeResult(JsonNode? Reply, IReadOnlyList<ErrorEntry> Errors);

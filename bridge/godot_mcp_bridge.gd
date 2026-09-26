@@ -21,6 +21,7 @@ const TIME_SCRIPT := "godot_mcp_time.gd"
 const BASELINE_SCRIPT := "godot_mcp_baseline.gd"
 const LOGGER_SCRIPT := "godot_mcp_logger.gd"
 const JSON_SCRIPT := "godot_mcp_json.gd"
+const PREVIEW_SCRIPT := "godot_mcp_preview.gd"
 const MIN_DRAG_STEPS := 3
 ## The device id every injected mouse event carries, so _input can tell it from the real mouse
 ## (DEVICE_ID_MOUSE, 32) and from the engine's own ids: 0-15 joypads, 16-31 keyboards, -1
@@ -62,6 +63,8 @@ var _inspect: Node
 var _time: Node
 ## The screenshot comparison (godot_mcp_baseline.gd beside this script).
 var _baseline: Node
+## The scene preview (godot_mcp_preview.gd beside this script): preview_scene's framing and capture.
+var _preview: Node
 ## The JSON conversion (godot_mcp_json.gd beside this script), static functions called on the
 ## script itself, by this script and by the Inspect and Time modules.
 var _json: GDScript
@@ -101,6 +104,9 @@ func _ready() -> void:
 	var port: int = _endpoint["port"]
 	if OS.get_environment("GODOT_MCP_QUIET") == "1":
 		_park_window()
+	# A preview's scene enters after this autoload's _ready, so it never runs a frame unpaused.
+	if OS.get_environment("GODOT_MCP_PREVIEW") == "1":
+		get_tree().paused = true
 	var script_dir: String = (get_script() as Script).resource_path.get_base_dir()
 	_json = load(script_dir.path_join(JSON_SCRIPT)) as GDScript
 	_pads = (load(script_dir.path_join(GAMEPAD_SCRIPT)) as GDScript).new()
@@ -119,6 +125,10 @@ func _ready() -> void:
 	_baseline.name = "Baseline"
 	_baseline.bridge = self
 	add_child(_baseline)
+	_preview = (load(script_dir.path_join(PREVIEW_SCRIPT)) as GDScript).new()
+	_preview.name = "Preview"
+	_preview.bridge = self
+	add_child(_preview)
 	_handlers = _command_handlers()
 	_stream = StreamPeerTCP.new()
 	_stream.big_endian = true
@@ -288,6 +298,7 @@ func _command_handlers() -> Dictionary:
 		"frame": _handle_time.bind("frame"),
 		"wait_for": _handle_time.bind("wait_for"),
 		"compare_screenshot": _handle_compare,
+		"preview": _handle_preview,
 		"movie_frame": _handle_movie_frame,
 		"shutdown": _handle_shutdown,
 	}
@@ -337,6 +348,15 @@ func _handle_screenshot(id: int, params: Dictionary) -> void:
 		_reply_error(id, saved)
 		return
 	_reply_ok(id, saved)
+
+
+## Frames and saves the scene a preview_scene run shows, on the Preview child.
+func _handle_preview(id: int, params: Dictionary) -> void:
+	var result: Variant = await _preview.capture(params)
+	if result is String:
+		_reply_error(id, result)
+	else:
+		_reply_ok(id, result)
 
 
 ## Saves image (cropped when params.crop is set) as a PNG under the project's .godot/ folder,
