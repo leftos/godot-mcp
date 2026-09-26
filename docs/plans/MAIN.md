@@ -20,7 +20,6 @@ Steps 0 to 4b and Wave 1 (steps 7-9: named sessions, the error feed and compact 
 
 ### Wave 4: singles
 
-- [ ] With `input_devices/pointing/emulate_touch_from_mouse` on, a real click during a gesture still reaches the GUI through its emulated touch event (`input.cpp` L850-861, L876-891), which the bridge's mouse swallow does not catch; swallow the unmarked touch twins too while a gesture plays (step 9 review, 2026-09-26)
 - [ ] Step 15: in-engine recording (video and audio from inside the engine, frame-perfect, headless or hidden). Absorbs the "in-engine recording" item from Later
 - [ ] Step 5: the 16 headless scene and node tools and validate
 - [ ] Step 6: cutover in opening-hand and delve-the-dungeon (registration, their docs and conventions, the debugger agent's allow-list; one scratch drive each; git status clean)

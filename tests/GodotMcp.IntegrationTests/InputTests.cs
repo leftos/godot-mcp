@@ -33,6 +33,35 @@ public sealed class InputTests : IAsyncDisposable
         + "sent += 1\n\t\t"
         + "await scene_tree.process_frame\n\t"
         + "return sent";
+
+    // Counts the emulated touch events that reach SmallButton's gui_input, and turns on touch emulation from the mouse.
+    private const string CountTouchesScript =
+        "var button = scene_tree.root.get_node(\"Main/SmallButton\")\n\t"
+        + "button.set_meta(\"touches\", 0)\n\t"
+        + "button.gui_input.connect(func(event: InputEvent) -> void:\n\t\t"
+        + "if event is InputEventScreenTouch:\n\t\t\t"
+        + "button.set_meta(\"touches\", int(button.get_meta(\"touches\")) + 1))\n\t"
+        + "Input.emulate_touch_from_mouse = true\n\t"
+        + "return true";
+
+    // A real left click on SmallButton (viewport (306, 276)), as Godot sees one: device DEVICE_ID_MOUSE, a press and a
+    // release a frame apart, sent a few frames after the script starts. Returns the touches SmallButton saw.
+    private const string RealClickScript =
+        "var button = scene_tree.root.get_node(\"Main/SmallButton\")\n\t"
+        + "var at := scene_tree.root.get_screen_transform() * Vector2(306, 276)\n\t"
+        + "for frame in 5:\n\t\t"
+        + "await scene_tree.process_frame\n\t"
+        + "for pressed: bool in [true, false]:\n\t\t"
+        + "var click := InputEventMouseButton.new()\n\t\t"
+        + "click.button_index = MOUSE_BUTTON_LEFT\n\t\t"
+        + "click.pressed = pressed\n\t\t"
+        + "click.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0\n\t\t"
+        + "click.position = at\n\t\t"
+        + "click.global_position = at\n\t\t"
+        + "Input.parse_input_event(click)\n\t\t"
+        + "Input.flush_buffered_events()\n\t\t"
+        + "await scene_tree.process_frame\n\t"
+        + "return [button.get_meta(\"touches\"), button.press_count]";
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
     private readonly RuntimeTools _tools;
@@ -146,6 +175,27 @@ public sealed class InputTests : IAsyncDisposable
         await drag;
 
         Assert.True(strayMotions > 10, $"only {strayMotions} stray motions were sent");
+        Assert.Equal(("dropped:DragSource", 1), await ReadDropAsync());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ARealClickDuringADragDoesNotReachTheGuiThroughItsTouchTwin()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await LaunchAsync([]);
+        await RunAsync(CountTouchesScript);
+
+        Task<string> drag = _tools.DragAsync(DragSource, DropTarget, 1000, "left", cancellationToken: cancellation);
+        JsonNode during = await RunAsync(RealClickScript);
+        await drag;
+        JsonNode after = await RunAsync(RealClickScript);
+        await _tools.ClickAsync(new InputTarget("SmallButton"), "left", false, cancellationToken: cancellation);
+        int touches = (await RunAsync("return scene_tree.root.get_node(\"Main/SmallButton\").get_meta(\"touches\")")).GetValue<int>();
+
+        // During the drag neither the touch twins nor the mouse click reach SmallButton; after it, both twins do, and an
+        // injected click's twins pass while its own gesture plays.
+        Assert.Equal((0, 0), (during[0]!.GetValue<int>(), during[1]!.GetValue<int>()));
+        Assert.Equal((2, 4), (after[0]!.GetValue<int>(), touches));
         Assert.Equal(("dropped:DragSource", 1), await ReadDropAsync());
     }
 

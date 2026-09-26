@@ -48,6 +48,8 @@ var _held_mask: int = 0
 var _pointer: Vector2 = Vector2.ZERO
 ## Whether an input gesture is playing, including the frames that settle it.
 var _gesture_playing: bool = false
+## Whether _dispatch is delivering an injected event, so the touch twins Input makes of it pass.
+var _dispatching: bool = false
 ## The gamepad (godot_mcp_gamepad.gd beside this script), a child once the bridge is on.
 var _pads: Node
 ## The server to dial, found in _init; empty when the bridge is off.
@@ -177,13 +179,18 @@ func _flush_errors() -> void:
 ## button, a mouse button or motion event without the injected mark is marked handled here.
 ## The root viewport runs every _input before its GUI (Viewport::push_input), so the GUI never
 ## sees it; hover still follows the real pointer, since push_input updates it before _input.
+## With emulate_touch_from_mouse on, Input sends each left-button event's touch twin (device
+## DEVICE_ID_EMULATION) just before the event itself, the injected ones' included
+## (input.cpp L850-861, L876-891 in 4.7.2); a twin that arrives outside _dispatch is a real one's.
 func _input(event: InputEvent) -> void:
-	if not (event is InputEventMouseButton or event is InputEventMouseMotion):
+	if not (_gesture_playing or _held_mask != 0):
 		return
-	if event.device == INJECTED_DEVICE:
-		return
-	if _gesture_playing or _held_mask != 0:
-		get_viewport().set_input_as_handled()
+	if event is InputEventMouseButton or event is InputEventMouseMotion:
+		if event.device != INJECTED_DEVICE:
+			get_viewport().set_input_as_handled()
+	elif event is InputEventScreenTouch or event is InputEventScreenDrag:
+		if event.device == InputEvent.DEVICE_ID_EMULATION and not _dispatching:
+			get_viewport().set_input_as_handled()
 
 
 ## A quiet run's window: its override.cfg created it unfocused, and asked for an off-screen
@@ -775,8 +782,10 @@ func _send_key(keycode: int, pressed: bool, unicode: int, modifiers: PackedStrin
 ## Sends a new event object through Input, as the display server's own events go, and
 ## flushes it at once so accumulated input neither merges nor delays it.
 func _dispatch(event: InputEvent) -> void:
+	_dispatching = true
 	Input.parse_input_event(event)
 	Input.flush_buffered_events()
+	_dispatching = false
 
 
 func _parse_button(value: Variant) -> int:
