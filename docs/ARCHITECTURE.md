@@ -68,6 +68,6 @@ Every tool declares `openWorldHint: false`. `readOnlyHint: true`: `get_debug_out
 1. A method in the right `RuntimeTools` partial with a last `session` parameter (five schema parameters at most): validate, resolve the session, then `SendAsync` on it.
 2. A handler branch in the bridge's `_handle_frame` (or `_handle_input` for a gesture).
 3. A unit test for the server-side checks (`tests/GodotMcp.Tests/Tools/`).
-4. An integration test against the InputProbe fixture (`tests/GodotMcp.IntegrationTests`), and the name in `McpServerSmokeTests`' list.
+4. An integration test against the InputProbe fixture (`tests/GodotMcp.IntegrationTests`), and the name in `McpServerSmokeTests`' list. A new test class goes into one group of `run.ps1`'s `$itestGroups`, keeping each group well under its 300 s ceiling (a full `itest` refuses to run while a class is in no group).
 5. Its annotations (`ReadOnly`, `Destructive`, `OpenWorld = false`) and `McpServerSmokeTests`' annotation check.
 6. This file's tool table and, for a new term, the glossary.

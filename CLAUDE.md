@@ -11,7 +11,7 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 - `docs/README.md`: the map and the glossary.
 - `docs/plans/MAIN.md`: open work, in order; the design and the user's decisions are in `docs/plans/2026-09-25-first-version.md`.
 - `docs/DEVELOPMENT.md`: toolchain, commands, gates, what each test class covers, and the footguns: read the footguns before touching process launching, a tool's signature, logging, or the bridge's input handling.
-- Everyday commands: `pwsh run.ps1 build`, `pwsh run.ps1 test` (unit), `pwsh run.ps1 itest` (real Godot); `-Filter "*ClassName"` runs one test class. Each writes `.tmp/<command>.log` and prints its tail.
+- Everyday commands: `pwsh run.ps1 build`, `pwsh run.ps1 test` (unit), `pwsh run.ps1 itest` (real Godot); `-Filter "*ClassName"` runs one test class. Each writes `.tmp/<command>.log` (a full `itest` writes `.tmp/itest-<group>.log` per class group) and prints its tail.
 
 ## Architecture
 

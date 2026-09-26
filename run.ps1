@@ -9,16 +9,24 @@ exits with the command's own status, or 124 when it outlived its ceiling and was
 
   build    dotnet build GodotMcp.slnx, warnings as errors; ceiling 300 s
   test     the unit tests (tests/GodotMcp.Tests); ceiling 180 s, and the runner's own --timeout 3m
-  itest    the integration tests against the real Godot (GODOT_PATH, else F:\Godot\Godot_console.exe); ceiling 300 s,
-           and the runner's own --timeout 4m
+  itest    the integration tests against the real Godot (GODOT_PATH, else F:\Godot\Godot_console.exe), in the class
+           groups of the table at the top of this script (lifecycle, input, reads). It first checks that every
+           `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly one group and every listed
+           class exists, and stops with status 1 before running anything when not. It then builds the project once
+           (.tmp/itest-build.log, ceiling 300 s) and runs each group as its own gate (.tmp/itest-<group>.log, ceiling
+           300 s, the runner's own --timeout 4m). Every group runs even when an earlier one fails; a summary line per
+           group follows, and the exit status is the first non-zero group's.
   format   dotnet format style (info severity), then CSharpier, on the whole solution; ceiling 180 s each
   publish  a framework-dependent win-x64 server at bin/publish/godot-mcp.exe, with bridge/ beside it; ceiling 300 s
 
--Filter narrows test or itest to one test class, e.g. -Filter "*SessionLifecycleTests".
+-Filter narrows test or itest to one test class, e.g. -Filter "*SessionLifecycleTests". A filtered itest skips the
+groups: one gate, .tmp/itest.log, ceiling 300 s, --timeout 4m.
 
 .EXAMPLE
 pwsh run.ps1 itest -Filter "*McpServerSmokeTests"
 #>
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingWriteHost', '', Justification = 'A console build script: its lines are for the person running it.')]
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
@@ -30,6 +38,16 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# The integration test classes, one gate per group, run in this order. A new test class goes into one group; itest
+# refuses to run while a class is in no group or a listed class no longer exists.
+$itestGroups = [ordered]@{
+    lifecycle = @('SessionLifecycleTests', 'AttachTests', 'QuietTests', 'WatchdogTests', 'McpServerSmokeTests')
+    input     = @('InputTests', 'GamepadTests')
+    reads     = @('RuntimeReadTests')
+}
+$itestNamespace = 'GodotMcp.IntegrationTests'
+$itestProject = 'tests/GodotMcp.IntegrationTests/GodotMcp.IntegrationTests.csproj'
 
 $root = $PSScriptRoot
 $logDir = Join-Path $root '.tmp'
@@ -52,29 +70,115 @@ function Invoke-Logged {
     return $LASTEXITCODE
 }
 
-function Get-TestArguments {
+# xUnit v3 under Microsoft Testing Platform takes several classes after one --filter-class and runs a test in any of
+# them, as the native runner's repeated -class does ("Filters" footnote 1:
+# https://xunit.net/docs/getting-started/v3/microsoft-testing-platform).
+function Get-TestArgumentList {
     param(
         [Parameter(Mandatory)] [string]$Project,
-        [Parameter(Mandatory)] [string]$Timeout
+        [Parameter(Mandatory)] [string]$Timeout,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Classes,
+        [switch]$NoBuild
     )
-    $arguments = @('test', '--project', (Join-Path $root $Project), '--', '--timeout', $Timeout)
-    if ($Filter) {
-        $arguments += @('--filter-class', $Filter)
+    $arguments = @('test', '--project', (Join-Path $root $Project))
+    if ($NoBuild) {
+        $arguments += '--no-build'
+    }
+    $arguments += @('--', '--timeout', $Timeout)
+    if ($Classes.Count -gt 0) {
+        $arguments += @('--filter-class') + $Classes
     }
     return $arguments
 }
+
+# Every test class the integration test project declares: a `public sealed [partial] class <Name>Tests` in one of its
+# top-level files (the Fixtures folder holds helpers, not tests).
+function Get-ItestClass {
+    $pattern = '^\s*public\s+sealed\s+(?:partial\s+)?class\s+(\w+Tests)\b'
+    Get-ChildItem -Path (Join-Path $root (Split-Path -Parent $itestProject)) -Filter '*.cs' -File |
+        Select-String -Pattern $pattern |
+        ForEach-Object { $_.Matches[0].Groups[1].Value } |
+        Sort-Object -Unique
+}
+
+# How the groups table has drifted from the project, as one message, or '' when every declared class is in exactly one
+# group and every listed class is declared.
+function Get-ItestGroupDrift {
+    $declared = @(Get-ItestClass)
+    $listed = @($itestGroups.Values | ForEach-Object { $_ })
+    $unlisted = @($declared | Where-Object { $listed -notcontains $_ })
+    $missing = @($listed | Where-Object { $declared -notcontains $_ } | Sort-Object -Unique)
+    $repeated = @($listed | Group-Object | Where-Object Count -GT 1 | ForEach-Object Name)
+    $parts = @()
+    if ($unlisted.Count -gt 0) {
+        $parts += "$($unlisted.Count) class(es) in no group: $($unlisted -join ', ')"
+    }
+    if ($missing.Count -gt 0) {
+        $parts += "$($missing.Count) listed but missing: $($missing -join ', ')"
+    }
+    if ($repeated.Count -gt 0) {
+        $parts += "$($repeated.Count) listed in more than one group: $($repeated -join ', ')"
+    }
+    if ($parts.Count -eq 0) {
+        return ''
+    }
+    return "itest groups are out of date: $($parts -join '; '). Edit the groups table in run.ps1."
+}
+
+function Write-ItestSummary {
+    param([Parameter(Mandatory)] [System.Collections.Specialized.OrderedDictionary]$Results)
+    foreach ($group in $Results.Keys) {
+        $verdict = switch ($Results[$group]) {
+            0 { 'passed' }
+            124 { 'TIMED OUT' }
+            default { "FAILED (status $_)" }
+        }
+        Write-Host "itest ${group}: $verdict"
+    }
+}
+
+# The whole integration suite: the groups table checked, the project built once, then every group under its own gate,
+# each run whatever the one before it did. Returns the first non-zero status, else 0.
+function Invoke-ItestByGroup {
+    $drift = Get-ItestGroupDrift
+    if ($drift) {
+        [Console]::Error.WriteLine($drift)
+        return 1
+    }
+    $build = Invoke-Logged -Name 'itest-build' -TimeoutSeconds 300 -Arguments @('build', (Join-Path $root $itestProject), '-warnaserror')
+    if ($build -ne 0) {
+        return $build
+    }
+    $results = [ordered]@{}
+    foreach ($group in $itestGroups.Keys) {
+        $classes = @($itestGroups[$group] | ForEach-Object { "$itestNamespace.$_" })
+        $arguments = Get-TestArgumentList -Project $itestProject -Timeout '4m' -Classes $classes -NoBuild
+        $results[$group] = Invoke-Logged -Name "itest-$group" -TimeoutSeconds 300 -Arguments $arguments
+    }
+    Write-ItestSummary -Results $results
+    $failed = @($results.Values | Where-Object { $_ -ne 0 })
+    if ($failed.Count -gt 0) {
+        return $failed[0]
+    }
+    return 0
+}
+
+[string[]]$filterClasses = @($Filter | Where-Object { $_ })
 
 switch ($Command) {
     'build' {
         exit (Invoke-Logged -Name 'build' -TimeoutSeconds 300 -Arguments @('build', $solution, '-warnaserror'))
     }
     'test' {
-        $arguments = Get-TestArguments -Project 'tests/GodotMcp.Tests/GodotMcp.Tests.csproj' -Timeout '3m'
+        $arguments = Get-TestArgumentList -Project 'tests/GodotMcp.Tests/GodotMcp.Tests.csproj' -Timeout '3m' -Classes $filterClasses
         exit (Invoke-Logged -Name 'test' -TimeoutSeconds 180 -Arguments $arguments)
     }
     'itest' {
-        $project = 'tests/GodotMcp.IntegrationTests/GodotMcp.IntegrationTests.csproj'
-        exit (Invoke-Logged -Name 'itest' -TimeoutSeconds 300 -Arguments (Get-TestArguments -Project $project -Timeout '4m'))
+        if ($filterClasses.Count -eq 0) {
+            exit (Invoke-ItestByGroup)
+        }
+        $arguments = Get-TestArgumentList -Project $itestProject -Timeout '4m' -Classes $filterClasses
+        exit (Invoke-Logged -Name 'itest' -TimeoutSeconds 300 -Arguments $arguments)
     }
     'format' {
         $status = Invoke-Logged -Name 'format-style' -TimeoutSeconds 180 -Arguments @('format', 'style', $solution, '--severity', 'info')

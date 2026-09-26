@@ -20,7 +20,8 @@ Everything runs from the repo root through `run.ps1`, and every command runs und
 |---|---|---|---|
 | `pwsh run.ps1 build` | `dotnet build GodotMcp.slnx -warnaserror` | 300 s | 1-4 s warm |
 | `pwsh run.ps1 test [-Filter "*Class"]` | unit tests (`tests/GodotMcp.Tests`) | 180 s, plus MTP `--timeout 3m` | 120 tests, about 8 s |
-| `pwsh run.ps1 itest [-Filter "*Class"]` | integration tests against the real Godot (`tests/GodotMcp.IntegrationTests`) | 300 s, plus MTP `--timeout 4m` | 53 tests, about 95 s |
+| `pwsh run.ps1 itest` | integration tests against the real Godot (`tests/GodotMcp.IntegrationTests`) in the class groups of `run.ps1`'s `$itestGroups` table (lifecycle, input, reads): the table checked against the declared `*Tests` classes (a class in no group, or a listed class that is gone, stops the run before anything runs), one build (`.tmp/itest-build.log`), then one gate per group (`.tmp/itest-<group>.log`), every group run, a summary line each | 300 s per group, plus MTP `--timeout 4m` each | 58 tests, 137 s over three groups (2026-09-26) |
+| `pwsh run.ps1 itest -Filter "*Class"` | one integration test class, one gate, `.tmp/itest.log` | 300 s, plus MTP `--timeout 4m` | |
 | `pwsh run.ps1 format` | `dotnet format style --severity info`, then CSharpier | 180 s per pass | |
 | `pwsh run.ps1 publish` | framework-dependent win-x64 to `bin/publish/godot-mcp.exe`, with `bin/publish/bridge/` beside it | 300 s | |
 | `prek run --all-files` | CSharpier check, `dotnet build -warnaserror`, unit tests, `gdformat --check` on `bridge/`, `headless/` and `tests/fixtures/`, gdlint on `bridge/` and `headless/` (empty until step 5) | | sees tracked files only |
