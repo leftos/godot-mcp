@@ -1,5 +1,5 @@
 # Main Plan
-<!-- plan-doc-hygiene: 2026-09-25 d164264 -->
+<!-- plan-doc-hygiene: 2026-09-26 c51c22b -->
 
 Open work only, in working order: the next item is the first line from the top; a finished line is deleted (git keeps the history). The design, the user's decisions and each step's proving test are in [2026-09-25-first-version.md](./2026-09-25-first-version.md).
 
