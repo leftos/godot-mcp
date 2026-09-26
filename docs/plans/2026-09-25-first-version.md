@@ -29,6 +29,13 @@ The user asked for our own plugin and MCP server for all their Godot projects. G
    - Ergonomics: tool annotations, a batch drive tool, compact outputs, project profiles.
 
    This reverses decision 5's "several sessions" and "in-engine recording" as later work. The order is in `MAIN.md` (steps 7-15, structural first).
+10. **Steps 7-9 shape** (user, 2026-09-25, each the recommended option of a ranked choice):
+    - **Session names.** `run_project` and `attach_project` take an optional `session`; without one, the session is named after the project folder. A second session under a live name is refused and asked for a name; a name whose run has exited is replaced. Runs and attaches share one name space. A runtime tool without a name uses the only session, and with several it refuses, listing the names. `list_sessions` (read-only) returns each session's name, project, kind (run or attach), liveness and process id.
+    - **Several sessions on one project folder** (delve's server and two clients). The marked `override.cfg` is reference-counted and removed when the last session on that folder ends. A new session whose `shutOutRealGamepads` differs from the live ones' is refused, since the file holds one value. An attach is refused while another attach on the same folder is still waiting for its game.
+    - **The five-parameter limit holds.** `session` goes into `run_project`'s `options`; `gamepad_axis` and `gamepad_stick` move `durationMs` and `release` into an `options` object to make room for it.
+    - **Error feed.** The bridge registers a `Logger` (`OS.add_logger`, confirmed in 4.7.2's source first) and sends errors with function, file, line and Godot's script backtrace over the wire, so attached games report too. Results carry errors only, in an `errors` array, and the call still succeeds; `get_errors(since)` returns errors and warnings keyed by a per-session sequence cursor.
+    - **Screenshots** default to an inline preview at most 480 px wide, plus the full-size path.
+    - **Quiet by default.** `run_project` starts in background mode (off-screen, unfocusable, click-through), the bridge mutes the Master bus and swallows all real mouse and keyboard events; `options.quiet = false` restores a visible, audible window that hears real input. Attach is unaffected. Real pads stay opt-in through `shutOutRealGamepads`.
 
 ## Design
 
@@ -83,14 +90,14 @@ The user asked for our own plugin and MCP server for all their Godot projects. G
 **Process and session:**
 - `run_project(projectPath, scene?, userArgs[], engineArgs[], background?)` spawns Godot with the user arguments after `--`.
 - Output is assembled into whole lines across stdout/stderr chunks into ring buffers, with a mark per call so errors are attributed to it.
-- One session at a time: `run_project` with a session already live refuses with a message, rather than killing it silently as the reference does.
+- Sessions are keyed by name (decision 10): `run_project` under a live name refuses with a message, rather than killing it silently as the reference does.
 - `attach_project` / `detach_project` / `stop_project` / `get_debug_output`, and `list_projects` / `get_project_info`.
 
 **Headless tools** (the 16: `create_scene`, `add_node`, `load_sprite`, `save_scene`, `export_mesh_library`, `batch_scene_operations`, the nine node tools, and `validate`):
 - Each runs `godot --headless --path <p> --script <repo>/headless/operations.gd` with the request passed as a JSON file path and the result written to a JSON file. This avoids the command-line length limit and stdout scraping.
 - `override.cfg` is never written for these, so a headless run loads only the project's own autoloads.
 
-**Out of the first version:** the profiler tools, the autoload-editing tools, the pure file-parsing tools and `launch_editor`, because none has ever been called. In-engine recording, concurrent sessions and C#-aware tools also wait.
+**Out of the first version:** the profiler tools, the autoload-editing tools, the pure file-parsing tools and `launch_editor`, because none has ever been called. C#-aware tools beyond `call_method` also wait.
 
 ## Repo and gates
 
