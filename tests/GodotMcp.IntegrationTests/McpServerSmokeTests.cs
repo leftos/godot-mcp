@@ -40,6 +40,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "attach_project",
                 "call_method",
                 "click",
+                "compare_screenshot",
                 "detach_project",
                 "drag",
                 "frame_control",
@@ -56,6 +57,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "mouse_button",
                 "run_project",
                 "run_script",
+                "save_screenshot_baseline",
                 "set_property",
                 "simulate_input",
                 "stop_project",
@@ -100,6 +102,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["attach_project"] = changesTheGame,
             ["call_method"] = destructive,
             ["click"] = changesTheGame,
+            ["compare_screenshot"] = readsTheGame,
             ["detach_project"] = changesTheGame,
             ["drag"] = changesTheGame,
             ["frame_control"] = changesTheGame,
@@ -116,6 +119,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["mouse_button"] = changesTheGame,
             ["run_project"] = changesTheGame,
             ["run_script"] = destructive,
+            ["save_screenshot_baseline"] = changesTheGame,
             ["set_property"] = changesTheGame,
             ["simulate_input"] = changesTheGame,
             ["stop_project"] = destructive,
@@ -133,7 +137,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(25, actual.Count);
+        Assert.Equal(27, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

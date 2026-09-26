@@ -18,6 +18,7 @@ const ATTACH_FILE := "res://.godot/godot-mcp/attach.json"
 const GAMEPAD_SCRIPT := "godot_mcp_gamepad.gd"
 const INSPECT_SCRIPT := "godot_mcp_inspect.gd"
 const TIME_SCRIPT := "godot_mcp_time.gd"
+const BASELINE_SCRIPT := "godot_mcp_baseline.gd"
 const LOGGER_SCRIPT := "godot_mcp_logger.gd"
 const MIN_DRAG_STEPS := 3
 ## The device id every injected mouse event carries, so _input can tell it from the real mouse
@@ -58,6 +59,8 @@ var _pads: Node
 var _inspect: Node
 ## The clock (godot_mcp_time.gd beside this script): pause, step, time scale and waits.
 var _time: Node
+## The screenshot comparison (godot_mcp_baseline.gd beside this script).
+var _baseline: Node
 ## The server to dial, found in _init; empty when the bridge is off.
 var _endpoint: Dictionary = {}
 ## The logger (godot_mcp_logger.gd beside this script) collecting the game's errors, registered
@@ -105,6 +108,10 @@ func _ready() -> void:
 	_time.name = "Time"
 	_time.bridge = self
 	add_child(_time)
+	_baseline = (load(script_dir.path_join(BASELINE_SCRIPT)) as GDScript).new()
+	_baseline.name = "Baseline"
+	_baseline.bridge = self
+	add_child(_baseline)
 	_stream = StreamPeerTCP.new()
 	_stream.big_endian = true
 	var error: Error = _stream.connect_to_host(HOST, port)
@@ -270,6 +277,8 @@ func _handle_frame(text: String) -> void:
 				_reply_ok(id, result)
 		"frame", "wait_for":
 			_handle_time(id, command, params)
+		"compare_screenshot":
+			_handle_compare(id, params)
 		"shutdown":
 			_reply_ok(id, {})
 			await get_tree().process_frame
@@ -434,6 +443,16 @@ func _handle_time(id: int, command: String, params: Dictionary) -> void:
 		_reply_error(id, str(outcome["error"]))
 		return
 	_reply_ok(id, outcome["result"])
+
+
+## Runs a compare_screenshot request on the Baseline child, which answers a Dictionary or a
+## String saying why it could not.
+func _handle_compare(id: int, params: Dictionary) -> void:
+	var outcome: Variant = await _baseline.compare_screenshot(params)
+	if outcome is String:
+		_reply_error(id, outcome)
+		return
+	_reply_ok(id, outcome)
 
 
 ## Plays one gesture over frames, then waits two more frames before replying, so the game's

@@ -5,13 +5,12 @@ Open work only, in working order: the next item is the first line from the top; 
 
 ## Now: the first version, replacing godot-mcp-runtime at parity
 
-Steps 0 to 4b, Wave 1 (steps 7-9: named sessions, the error feed and compact outputs, tool annotations and quiet runs) and most of Wave 2 (step 10 frame control and `wait_for`, step 12 inspection, step 14's hang watchdog) have shipped. Sixteen features the user added 2026-09-25 ("world's our oyster") come before the cutover (user's call). Every wave's command acceptance is `pwsh run.ps1 test` and `pwsh run.ps1 itest`; its human check is a drive of the InputProbe fixture through the new tools.
+Steps 0 to 4b, Wave 1 (steps 7-9: named sessions, the error feed and compact outputs, tool annotations and quiet runs) and most of Wave 2 (step 10 frame control and `wait_for`, step 12 inspection, step 14's hang watchdog) and step 14's screenshot baselines have shipped. Sixteen features the user added 2026-09-25 ("world's our oyster") come before the cutover (user's call). Every wave's command acceptance is `pwsh run.ps1 test` and `pwsh run.ps1 itest`; its human check is a drive of the InputProbe fixture through the new tools.
 
 ### Wave 3: the run's lifecycle (`GodotRun`, `GodotCommandLine`, `GodotSession`, `ProjectTools`), then the tools built on it
 
 - [ ] Step 11: the edit-build-look loop: `restart_project` (rebuild C# when sources changed, relaunch with the same scene and arguments) and fresh-worktree prep (a missing `.godot/` import cache or C# build is made before launch, under ceilings). Reuses step 12's `CsProbe` C# fixture. Its design is in the plan's decision 11 and the explorer's 4.7.2 citations in `.tmp/explore-wave3/`
-- [ ] Step 14: screenshot baselines (compare a screenshot or crop to a stored baseline; a difference score and a diff image). Independent of step 11; it reuses step 10's split screenshot capture (`_save_screenshot`, `_crop`)
-- [ ] Step 13: project profiles (`godot-mcp.json` per project: main scene, arguments, resolution, background, named launch presets such as delve's server and clients) and the batch drive tool (one call runs input, wait_for, call_method, assertions and screenshots in order, stopping at the first failed assertion). Depends on step 11; its screenshot-baseline assertion on step 14
+- [ ] Step 13: project profiles (`godot-mcp.json` per project: main scene, arguments, resolution, background, named launch presets such as delve's server and clients) and the batch drive tool (one call runs input, wait_for, call_method, assertions and screenshots in order, stopping at the first failed assertion). Depends on step 11; its screenshot-baseline assertion uses step 14's `compare_screenshot` (`match`, the stored crop)
 
 ### Wave 4: singles
 
