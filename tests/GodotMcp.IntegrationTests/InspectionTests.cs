@@ -11,9 +11,13 @@ namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// get_scene_tree, inspect_node, set_property and call_method against the InputProbe with inspect_probe.tscn added under the
-/// root, and call_method against the CsProbe, a Godot C# project built once for the class.
+/// root, in one shared run reset before each test (the test that stops its game has its own), and call_method against the
+/// CsProbe, a Godot C# project built once for the class.
 /// </summary>
-public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBuild>
+public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession shared)
+    : IAsyncLifetime,
+        IClassFixture<CsProbeBuild>,
+        IClassFixture<SharedProbeSession>
 {
     private const int TestTimeoutMs = 45_000;
     private const int CSharpTestTimeoutMs = 150_000;
@@ -23,35 +27,32 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
 
     // inspect_probe.tscn's Swatch: a ColorRect of Color(0, 0, 1) at (580, 300), 50 x 50, clear of main.tscn's controls.
     private static readonly ScreenshotCrop Swatch = new(580, 300, 50, 50);
-    private readonly ProbeProject _probe = new();
-    private readonly SessionHarness _harness = new();
-    private readonly CsProbeBuild _csProbe;
-    private readonly RuntimeTools _tools;
+    private readonly SharedProbeSession _shared = shared;
+    private readonly CsProbeBuild _csProbe = csProbe;
+    private readonly RuntimeTools _tools = new(shared.Sessions);
 
-    public InspectionTests(CsProbeBuild csProbe)
-    {
-        _csProbe = csProbe;
-        _tools = new RuntimeTools(_harness.Sessions);
-    }
+    public async ValueTask InitializeAsync() => await _shared.ResetAsync(TestContext.Current.CancellationToken);
 
-    public async ValueTask DisposeAsync()
-    {
-        await _harness.DisposeAsync();
-        _probe.Dispose();
-    }
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     [Fact(Timeout = TestTimeoutMs)]
     public async Task TreeFiltersByClassAndGroup()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        // The test stops its game to check the tree after the run, so it has a run of its own.
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using ProbeProject project = new();
+        await using SessionHarness harness = new();
+        RuntimeTools tools = new(harness.Sessions);
+        await LaunchAsync(harness, project.Directory, cancellation);
+        await AddInspectProbeAsync(tools, cancellation);
 
-        JsonNode controls = await TreeAsync(Probe, "Control", null);
-        JsonNode node2Ds = await TreeAsync(Probe, "Node2D", null);
-        JsonNode grouped = await TreeAsync(null, null, "probe_group");
-        await _harness.Sessions.StopAsync(null, TestContext.Current.CancellationToken);
+        JsonNode controls = await TreeAsync(tools, Probe, "Control", null);
+        JsonNode node2Ds = await TreeAsync(tools, Probe, "Node2D", null);
+        JsonNode grouped = await TreeAsync(tools, null, null, "probe_group");
+        await harness.Sessions.StopAsync(null, cancellation);
 
         // Loading inspect_probe.tscn and its script in a run writes nothing beside them (no .uid files).
-        Assert.Equal(string.Empty, Git.Status(_probe.Directory));
+        Assert.Equal(string.Empty, Git.Status(project.Directory));
         Assert.Equal(["Swatch"], Names(controls));
         Assert.Equal(["InspectProbe", "Sprite", "Inner"], Names(node2Ds));
         JsonNode probe = Assert.Single(grouped["nodes"]!.AsArray())!;
@@ -68,7 +69,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task TreePages()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         JsonNode first = await TreeAsync(Probe, null, null, new TreeOptions(Limit: 2));
         JsonNode second = await TreeAsync(Probe, null, null, new TreeOptions(Offset: 2, Limit: 2));
@@ -89,7 +90,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task InspectShowsScriptVarsAndColor()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         JsonNode probe = await InspectAsync("InspectProbe", null);
         JsonNode swatch = await InspectAsync("Swatch", null);
@@ -112,7 +113,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task InspectNamedPropertiesOnly()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         JsonNode probe = await InspectAsync("InspectProbe", ["count", "position"]);
         McpException unknown = await Assert.ThrowsAsync<McpException>(() => InspectAsync("InspectProbe", ["count", "nope"]));
@@ -124,7 +125,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task SetColorFromJsonObjectChangesPixel()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         JsonNode set = await SetAsync("Swatch", "color", """{"r": 0, "g": 1, "b": 0}""");
         List<ContentBlock> blocks =
@@ -146,7 +147,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task SetPositionFromXY()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         JsonNode set = await SetAsync("InspectProbe", "position", """{"x": 12.5, "y": -3}""");
         JsonNode position = await RunAsync("return scene_tree.root.get_node(\"InspectProbe\").position");
@@ -158,7 +159,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task SetTypedIntFromFloat()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         // GDScript's JSON parser reads the 7 as 7.0; the bridge converts it by the member's declared int.
         JsonNode set = await SetAsync("InspectProbe", "count", "7");
@@ -172,7 +173,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task SetUnknownPropertyFails()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         McpException failed = await Assert.ThrowsAsync<McpException>(() => SetAsync("InspectProbe", "nope", "1"));
 
@@ -182,7 +183,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task SetWrongShapeFails()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         McpException failed = await Assert.ThrowsAsync<McpException>(() => SetAsync("InspectProbe", "position", "\"abc\""));
         JsonNode position = await RunAsync("return scene_tree.root.get_node(\"InspectProbe\").position");
@@ -194,7 +195,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task CallMethodWithIntArgs()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         JsonNode called = await CallAsync("InspectProbe", "probe_add", "2", "3");
 
@@ -206,7 +207,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task CallMethodWrongArgCountFails()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         McpException failed = await Assert.ThrowsAsync<McpException>(() => CallAsync("InspectProbe", "probe_add", "1"));
 
@@ -216,7 +217,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task CallMethodReturnsNodeAsPath()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         // Node.get_node takes a NodePath, which the bridge makes from the JSON string.
         JsonNode called = await CallAsync("InspectProbe", "get_node", "\"Inner/Leaf\"");
@@ -227,7 +228,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task CallAwaitingMethodReturnsValue()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         JsonNode called = await CallAsync("InspectProbe", "probe_later", "21");
 
@@ -237,7 +238,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task CallMethodIgnoresTheMethodsOwnFailedCallv()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         // probe_inner_callv's own callv fails and logs Godot's "Error calling method from 'callv'"; the call itself succeeded.
         JsonNode called = await CallAsync("InspectProbe", "probe_inner_callv");
@@ -251,7 +252,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task SetTypedArrayFromJsonArray()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         JsonNode set = await SetAsync("InspectProbe", "numbers", "[1, 2]");
         JsonNode typed = await RunAsync(
@@ -265,7 +266,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task CallMethodWithTypedArrayArg()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         JsonNode called = await CallAsync("InspectProbe", "probe_sum", "[4, 5]");
 
@@ -275,7 +276,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task SetPackedVector2ArrayFromJsonArray()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         JsonNode set = await SetAsync("InspectProbe", "points", """[{"x": 1, "y": 2}, {"x": 3, "y": 4}]""");
         JsonNode isPacked = await RunAsync("return typeof(scene_tree.root.get_node(\"InspectProbe\").points) == TYPE_PACKED_VECTOR2_ARRAY");
@@ -289,7 +290,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task SetUntypedPropertyKeepsItsType()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         await SetAsync("InspectProbe", "target", """{"x": 1, "y": 2}""");
         await SetAsync("InspectProbe", "loose", "7");
@@ -303,7 +304,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task SetClampedValueIsPutBackAndFails()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         McpException failed = await Assert.ThrowsAsync<McpException>(() => SetAsync("InspectProbe", "level", "50"));
         JsonNode level = await RunAsync("return scene_tree.root.get_node(\"InspectProbe\").level");
@@ -319,7 +320,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task TheBridgeIsOutOfReach()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         JsonNode tree = await TreeAsync(null, null, null, new TreeOptions(Limit: 500));
         McpException inspected = await Assert.ThrowsAsync<McpException>(() => InspectAsync("GodotMcpBridge", null));
@@ -341,7 +342,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task CallMethodWithDefaultedParameter()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         JsonNode defaulted = await CallAsync("InspectProbe", "probe_scaled", "3");
         JsonNode given = await CallAsync("InspectProbe", "probe_scaled", "3", "5");
@@ -355,7 +356,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task CallVarargMethod()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         // Object.call is vararg: its first parameter is declared, the rest pass through as they are.
         JsonNode called = await CallAsync("InspectProbe", "call", "\"get_node\"", "\"Inner/Leaf\"");
@@ -366,7 +367,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task CallMethodLongValueIsCut()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
 
         JsonNode called = await CallAsync("InspectProbe", "probe_long");
 
@@ -379,10 +380,12 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = CSharpTestTimeoutMs)]
     public async Task CallCSharpPublicMethod()
     {
-        await LaunchAsync(_csProbe.Directory, TestContext.Current.CancellationToken);
+        await using SessionHarness harness = new();
+        RuntimeTools tools = new(harness.Sessions);
+        await LaunchAsync(harness, _csProbe.Directory, TestContext.Current.CancellationToken);
 
-        JsonNode called = await CallAsync("CsProbe", "PlayStep", "4");
-        await _harness.Sessions.StopAsync(null, TestContext.Current.CancellationToken);
+        JsonNode called = await CallAsync(tools, "CsProbe", "PlayStep", "4");
+        await harness.Sessions.StopAsync(null, TestContext.Current.CancellationToken);
 
         // The build's output and the run's files stay under the ignored .godot/.
         Assert.Equal(string.Empty, Git.Status(_csProbe.Directory));
@@ -393,10 +396,12 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = CSharpTestTimeoutMs)]
     public async Task CallCSharpInternalMethod()
     {
-        await LaunchAsync(_csProbe.Directory, TestContext.Current.CancellationToken);
+        await using SessionHarness harness = new();
+        RuntimeTools tools = new(harness.Sessions);
+        await LaunchAsync(harness, _csProbe.Directory, TestContext.Current.CancellationToken);
 
         // Godot's C# source generator exposes every method with a Godot-compatible signature, whatever its accessibility.
-        JsonNode called = await CallAsync("CsProbe", "Secret");
+        JsonNode called = await CallAsync(tools, "CsProbe", "Secret");
 
         Assert.Equal("hidden", called["value"]!.GetValue<string>());
     }
@@ -404,7 +409,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     [Fact(Timeout = TestTimeoutMs)]
     public async Task SetPropertyNullClearsAnObjectProperty()
     {
-        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
         await SetAsync("Sprite", "material", """{"type": "CanvasItemMaterial"}""");
 
         JsonNode cleared = await SetAsync("Sprite", "material", "null");
@@ -414,17 +419,14 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
         Assert.Null((await InspectAsync("Sprite", ["material"]))["properties"]!["material"]);
     }
 
-    private async Task LaunchWithInspectProbeAsync(CancellationToken cancellation)
-    {
-        await LaunchAsync(_probe.Directory, cancellation);
-        await RunAsync("scene_tree.root.add_child(load(\"res://inspect_probe.tscn\").instantiate())\n\treturn true");
-    }
+    private static Task<LaunchResult> LaunchAsync(SessionHarness harness, string directory, CancellationToken cancellation) =>
+        harness.Sessions.LaunchAsync(new LaunchRequest(directory, null, [], [], true, false, Prepare: true), null, cancellation);
 
-    private Task<LaunchResult> LaunchAsync(string directory, CancellationToken cancellation) =>
-        _harness.Sessions.LaunchAsync(new LaunchRequest(directory, null, [], [], true, false, Prepare: true), null, cancellation);
+    private Task<JsonNode> TreeAsync(string? root, string? className, string? group, TreeOptions? options = null) =>
+        TreeAsync(_tools, root, className, group, options);
 
-    private async Task<JsonNode> TreeAsync(string? root, string? className, string? group, TreeOptions? options = null) =>
-        JsonNode.Parse(await _tools.GetSceneTreeAsync(root, className, group, options, cancellationToken: TestContext.Current.CancellationToken))!;
+    private static async Task<JsonNode> TreeAsync(RuntimeTools tools, string? root, string? className, string? group, TreeOptions? options = null) =>
+        JsonNode.Parse(await tools.GetSceneTreeAsync(root, className, group, options, cancellationToken: TestContext.Current.CancellationToken))!;
 
     private async Task<JsonNode> InspectAsync(string node, string[]? properties) =>
         JsonNode.Parse(await _tools.InspectNodeAsync(node, properties, cancellationToken: TestContext.Current.CancellationToken))!;
@@ -439,17 +441,24 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
             )
         )!;
 
-    private async Task<JsonNode> CallAsync(string node, string method, params string[] argsJson)
+    private Task<JsonNode> CallAsync(string node, string method, params string[] argsJson) => CallAsync(_tools, node, method, argsJson);
+
+    private static async Task<JsonNode> CallAsync(RuntimeTools tools, string node, string method, params string[] argsJson)
     {
         JsonElement[] args = [.. argsJson.Select(arg => JsonSerializer.Deserialize<JsonElement>(arg))];
-        string json = await _tools.CallMethodAsync(node, method, args, cancellationToken: TestContext.Current.CancellationToken);
+        string json = await tools.CallMethodAsync(node, method, args, cancellationToken: TestContext.Current.CancellationToken);
         return JsonNode.Parse(json)!;
     }
 
-    private async Task<JsonNode> RunAsync(string body)
+    private Task<JsonNode> RunAsync(string body) => RunAsync(_tools, body, TestContext.Current.CancellationToken);
+
+    private static Task<JsonNode> AddInspectProbeAsync(RuntimeTools tools, CancellationToken cancellation) =>
+        RunAsync(tools, "scene_tree.root.add_child(load(\"res://inspect_probe.tscn\").instantiate())\n\treturn true", cancellation);
+
+    private static async Task<JsonNode> RunAsync(RuntimeTools tools, string body, CancellationToken cancellation)
     {
         string script = $"extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t{body}\n";
-        string json = await _tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: TestContext.Current.CancellationToken);
+        string json = await tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: cancellation);
         return JsonNode.Parse(json)!["value"]!;
     }
 
