@@ -405,7 +405,7 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
     }
 
     private Task<LaunchResult> LaunchAsync(string directory, CancellationToken cancellation) =>
-        _harness.Sessions.LaunchAsync(new LaunchRequest(directory, null, [], [], true, false), null, cancellation);
+        _harness.Sessions.LaunchAsync(new LaunchRequest(directory, null, [], [], true, false, Prepare: true), null, cancellation);
 
     private async Task<JsonNode> TreeAsync(string? root, string? className, string? group, TreeOptions? options = null) =>
         JsonNode.Parse(await _tools.GetSceneTreeAsync(root, className, group, options, cancellationToken: TestContext.Current.CancellationToken))!;

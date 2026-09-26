@@ -73,4 +73,22 @@ internal static partial class Log
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Detached from the game on {Project}; it keeps running.")]
     public static partial void Detached(ILogger logger, string project);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Preparing {Project}: checking its C# build and its import.")]
+    public static partial void PrepStarted(ILogger logger, string project);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Prepared {Project}: build {Build}, import {Import}.")]
+    public static partial void PrepFinished(ILogger logger, string project, string build, string import);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Preparing {Project} failed; the game is not started.")]
+    public static partial void PrepFailed(ILogger logger, Exception exception, string project);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Preparing {Project} was cancelled; the game is not started.")]
+    public static partial void PrepCancelled(ILogger logger, Exception exception, string project);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Killing {File} and the processes it started failed; some of them may still run.")]
+    public static partial void ToolKillFailed(ILogger logger, Exception exception, string file);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "{File} was still running {Seconds} s after it was killed.")]
+    public static partial void ToolStillRunningAfterKill(ILogger logger, string file, double seconds);
 }

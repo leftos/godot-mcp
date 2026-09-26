@@ -380,7 +380,7 @@ public sealed class TimeTests : IAsyncDisposable
     /// <summary>Launches the probe and adds time_probe.tscn under the root as TimeProbe.</summary>
     private async Task StartAsync(CancellationToken cancellationToken)
     {
-        await _harness.Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], true, false), null, cancellationToken);
+        await _harness.Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], true, false, Prepare: true), null, cancellationToken);
         await RunAsync("var probe: Node = load(\"res://time_probe.tscn\").instantiate()\n\tscene_tree.root.add_child(probe)\n\treturn probe");
     }
 

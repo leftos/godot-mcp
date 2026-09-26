@@ -219,7 +219,7 @@ public sealed class InputTests : IAsyncDisposable
 
     private Task<LaunchResult> LaunchAsync(string[] engineArgs) =>
         _harness.Sessions.LaunchAsync(
-            new LaunchRequest(_probe.Directory, null, engineArgs, [], true, false),
+            new LaunchRequest(_probe.Directory, null, engineArgs, [], true, false, Prepare: true),
             null,
             TestContext.Current.CancellationToken
         );

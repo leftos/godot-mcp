@@ -15,6 +15,9 @@ public sealed class CsProbeProject : IDisposable
     private readonly TempDirectory _temp = new();
 
     public CsProbeProject()
+        : this(build: true) { }
+
+    private CsProbeProject(bool build)
     {
         Directory = _temp.Combine("CsProbe");
         System.IO.Directory.CreateDirectory(Directory);
@@ -24,10 +27,21 @@ public sealed class CsProbeProject : IDisposable
         }
 
         Git.InitAndCommitAll(Directory);
-        Build(Path.Combine(Directory, "CsProbe.csproj"));
+        if (build)
+        {
+            Build(Path.Combine(Directory, "CsProbe.csproj"));
+        }
     }
 
     public string Directory { get; }
+
+    /// <summary>A copy as a fresh checkout has it: committed, with no assembly built.</summary>
+    public static CsProbeProject Unbuilt() => new(build: false);
+
+    public string SourcePath(string fileName) => Path.Combine(Directory, fileName);
+
+    /// <summary>Replaces a source file's text, leaving the change uncommitted.</summary>
+    public void WriteSource(string fileName, string content) => File.WriteAllText(SourcePath(fileName), content);
 
     public void Dispose() => _temp.Dispose();
 

@@ -145,7 +145,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
     {
         string alpha = Project("alpha");
         await StartWaitingAttachAsync(alpha, "server");
-        LaunchRequest request = new(alpha, null, [], [], false, ShutOutRealGamepads: true);
+        LaunchRequest request = new(alpha, null, [], [], false, ShutOutRealGamepads: true, Prepare: true);
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
             _sessions.LaunchAsync(request, "client", TestContext.Current.CancellationToken)
@@ -163,7 +163,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
     {
         string alpha = Project("alpha");
         await StartWaitingAttachAsync(alpha, "server");
-        LaunchRequest request = new(alpha, null, [], [], Quiet: true, ShutOutRealGamepads: false);
+        LaunchRequest request = new(alpha, null, [], [], Quiet: true, ShutOutRealGamepads: false, Prepare: true);
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
             _sessions.LaunchAsync(request, "client", TestContext.Current.CancellationToken)
@@ -225,6 +225,15 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         Directory.CreateDirectory(projectDir);
         File.WriteAllText(Path.Combine(projectDir, "project.godot"), "config_version=5\n");
         return projectDir;
+    }
+
+    [Fact]
+    public async Task AWaitingAttachIsNotAGameRunningOnItsFolder()
+    {
+        string alpha = Project("alpha");
+        await StartWaitingAttachAsync(alpha, "server");
+
+        Assert.Empty(_sessions.RunningSessionNames(alpha, except: null));
     }
 
     private async Task StartWaitingAttachAsync(string projectDir, string name)

@@ -17,6 +17,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     private readonly Lock _lock = new();
     private readonly Dictionary<string, GodotSession> _sessions = new(StringComparer.OrdinalIgnoreCase);
 
+    // One per folder a prep has run on, kept for the server's lifetime. Never disposed: a prep still in flight at shutdown
+    // releases its lock after the registry is gone, and a SemaphoreSlim whose wait handle is never asked for holds no handle.
+    private readonly Dictionary<string, SemaphoreSlim> _prepLocks = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal
+    );
+
     internal BridgeListener Listener => listener;
 
     internal ILogger Logger => logger;
@@ -157,6 +163,40 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         lock (_lock)
         {
             return !HasOtherLiveSession(session) && OverrideFile.Remove(session.ProjectDir);
+        }
+    }
+
+    /// <summary>The lock that lets one prep at a time build or import in a project folder.</summary>
+    internal SemaphoreSlim PrepLock(string projectDir)
+    {
+        string folder = ProjectPaths.Normalise(projectDir);
+        lock (_lock)
+        {
+            if (!_prepLocks.TryGetValue(folder, out SemaphoreSlim? folderLock))
+            {
+                folderLock = new SemaphoreSlim(1, 1);
+                _prepLocks[folder] = folderLock;
+            }
+
+            return folderLock;
+        }
+    }
+
+    /// <summary>
+    /// The names of the sessions whose game runs on the folder (a started run, or an attached game still connected),
+    /// ordered, leaving out <paramref name="except"/>. A session still starting is not counted: it waits on the folder's
+    /// prep lock, so it starts its game only after a prep holding the lock has finished.
+    /// </summary>
+    internal IReadOnlyList<string> RunningSessionNames(string projectDir, GodotSession? except)
+    {
+        lock (_lock)
+        {
+            return
+            [
+                .. Ordered()
+                    .Where(other => !ReferenceEquals(other, except) && other.HasGame && ProjectPaths.AreSame(other.ProjectDir, projectDir))
+                    .Select(other => other.Name),
+            ];
         }
     }
 

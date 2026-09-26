@@ -59,6 +59,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <summary>The game's own process id, as its bridge's hello reported it; null before the handshake or from an older bridge.</summary>
     public int? GameProcessId { get; private set; }
 
+    /// <summary>What the run was launched with, once it has launched; null for an attached game.</summary>
+    internal LaunchRequest? LastLaunch { get; private set; }
+
     /// <summary>Where the session logs.</summary>
     public ILogger Logger => _logger;
 
@@ -72,7 +75,10 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     public ErrorFeed Errors { get; } = new();
 
     /// <summary>Whether the session is starting, its run is running, or its attached game is still connected.</summary>
-    public bool IsLive => _pending || (Kind == SessionKind.Run ? _run is { IsRunning: true } : _attached is { IsOpen: true });
+    public bool IsLive => _pending || HasGame;
+
+    /// <summary>Whether the session's game is running: its run has started and not exited, or its attached game is still connected.</summary>
+    public bool HasGame => Kind == SessionKind.Run ? _run is { IsRunning: true } : _attached is { IsOpen: true };
 
     /// <summary>Whether this is an attach still waiting for its game to dial in.</summary>
     public bool IsWaitingForGame => _pending && Kind == SessionKind.Attach;
@@ -283,24 +289,52 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     private static string CreateToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
 
+    /// <summary>
+    /// Under the folder's prep lock, which every launch takes, so no game starts on the folder while a prep builds or
+    /// imports there: builds a stale C# assembly and runs a due import (unless the request says never), writes the
+    /// override and starts Godot. The prep runs before the override is written, so a failed prep leaves nothing to undo.
+    /// </summary>
+    /// <exception cref="SessionException">The prep failed, the project has its own override.cfg, or Godot could not start.</exception>
+    private async Task<(GodotRun Run, PrepResult Prep, string Token)> PrepareAndStartAsync(
+        string godotPath,
+        LaunchRequest request,
+        CancellationToken cancellationToken
+    )
+    {
+        SemaphoreSlim folderLock = registry.PrepLock(ProjectDir);
+        await folderLock.WaitAsync(cancellationToken);
+        try
+        {
+            PrepContext context = new(ProjectDir, _logger, () => registry.RunningSessionNames(ProjectDir, this));
+            PrepResult prep = request.Prepare ? await ProjectPrep.RunAsync(context, cancellationToken) : PrepResult.Skipped;
+            registry.WriteOverride(this, Installation.FindBridgeScript());
+            GitExclude.Ensure(ProjectDir, OverrideFile.FileName, _logger);
+            string token = CreateToken();
+            ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(godotPath, request, new BridgeEndpoint(registry.Listener.Port, token));
+            GodotRun run = new(ProjectDir, new Process { StartInfo = startInfo, EnableRaisingEvents = true });
+            StartProcess(run);
+            _run = run;
+            ProcessId = run.Process.Id;
+            return (run, prep, token);
+        }
+        finally
+        {
+            folderLock.Release();
+        }
+    }
+
     private async Task<LaunchResult> StartRunAsync(LaunchRequest request, CancellationToken cancellationToken)
     {
         string godotPath = Installation.FindGodot();
-        registry.WriteOverride(this, Installation.FindBridgeScript());
-        GitExclude.Ensure(ProjectDir, OverrideFile.FileName, _logger);
-        string token = CreateToken();
-        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(godotPath, request, new BridgeEndpoint(registry.Listener.Port, token));
-        GodotRun run = new(ProjectDir, new Process { StartInfo = startInfo, EnableRaisingEvents = true });
-        StartProcess(run);
-        _run = run;
+        (GodotRun run, PrepResult prep, string token) = await PrepareAndStartAsync(godotPath, request, cancellationToken);
         int processId = run.Process.Id;
-        ProcessId = processId;
         BridgeConnection connection = await WaitForHandshakeAsync(run, new HandshakeExpectation(token, ProjectDir), cancellationToken);
         connection.OnErrors(Errors.Receive);
         run.Connection = connection;
         GameProcessId = connection.GameProcessId;
         Log.RunStarted(_logger, processId, run.ProjectDir);
-        return new LaunchResult(Name, run.ProjectDir, processId, request.Quiet);
+        LastLaunch = request;
+        return new LaunchResult(Name, run.ProjectDir, processId, request.Quiet, prep);
     }
 
     private void StartProcess(GodotRun run)

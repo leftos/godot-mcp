@@ -9,7 +9,7 @@ Steps 0 to 4b, Wave 1 (steps 7-9: named sessions, the error feed and compact out
 
 ### Wave 3: the run's lifecycle (`GodotRun`, `GodotCommandLine`, `GodotSession`, `ProjectTools`), then the tools built on it
 
-- [ ] Step 11: the edit-build-look loop: `restart_project` (rebuild C# when sources changed, relaunch with the same scene and arguments) and fresh-worktree prep (a missing `.godot/` import cache or C# build is made before launch, under ceilings). Reuses step 12's `CsProbe` C# fixture. Its design is in the plan's decision 11 and the explorer's 4.7.2 citations in `.tmp/explore-wave3/`
+- [ ] Step 11: the edit-build-look loop, second half: `restart_project` (prep while the old game runs, then stop, then relaunch with the stored arguments in the same session; a red build leaves the old game running). Prep inside `run_project` has landed. Its design is in the plan's decision 11; the brief is written (`.tmp/brief-11b.md`)
 - [ ] Step 13: project profiles (`godot-mcp.json` per project: main scene, arguments, resolution, background, named launch presets such as delve's server and clients) and the batch drive tool (one call runs input, wait_for, call_method, assertions and screenshots in order, stopping at the first failed assertion). Depends on step 11; its screenshot-baseline assertion uses step 14's `compare_screenshot` (`match`, the stored crop)
 
 ### Wave 4: singles

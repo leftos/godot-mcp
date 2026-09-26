@@ -215,7 +215,7 @@ public sealed class GamepadTests : IAsyncDisposable
 
     private Task<LaunchResult> LaunchAsync(bool shutOutRealGamepads) =>
         _harness.Sessions.LaunchAsync(
-            new LaunchRequest(_probe.Directory, null, [], [], true, shutOutRealGamepads),
+            new LaunchRequest(_probe.Directory, null, [], [], true, shutOutRealGamepads, Prepare: true),
             null,
             TestContext.Current.CancellationToken
         );

@@ -31,6 +31,22 @@ internal static class Installation
             );
     }
 
+    /// <summary>The <c>dotnet</c> executable in the first folder of <c>PATH</c> that has one.</summary>
+    /// <exception cref="SessionException">No folder on <c>PATH</c> has it.</exception>
+    public static string FindDotnet()
+    {
+        string executable = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
+        string[] folders = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(
+            Path.PathSeparator,
+            StringSplitOptions.RemoveEmptyEntries
+        );
+        return folders.Select(folder => Path.Combine(folder.Trim('"'), executable)).FirstOrDefault(File.Exists)
+            ?? throw new SessionException(
+                "dotnet was not found on PATH, and the project's C# assembly needs building before the run. Install the .NET SDK "
+                    + "and put dotnet on PATH, or pass options.prepare: \"never\" to launch without building."
+            );
+    }
+
     public static string FindBridgeScript() => FindBridgeScript(AppContext.BaseDirectory);
 
     /// <summary>

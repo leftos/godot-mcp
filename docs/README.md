@@ -23,6 +23,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Shut out (real gamepads) | The opt-in `shutOutRealGamepads` mode that keeps a machine's real pads from reaching a run, by marking the game unfocused; the bridge half is `bridge/godot_mcp_gamepad.gd` |
 | Injected mark | The `InputEvent.device` value `0x6D6370` every injected mouse event carries, so the bridge can swallow the real mouse while a gesture plays |
 | Touch twin | The `InputEventScreenTouch`/`ScreenDrag` Godot makes of each left-button mouse event when `emulate_touch_from_mouse` is on (device -1); the bridge swallows real ones while a gesture plays, as it does the real mouse |
+| Prep | What a launch does first to make a fresh checkout runnable: build a missing or stale C# assembly and run a Godot import when imported files are missing (`run_project`'s `options.prepare`, `auto` by default, `never` to skip) |
 | Session, session name | One run or attached game the server drives, known by a name (by default its project folder's; delve's "server" and "client-1" share one folder); a tool may omit the name while only one session exists. `list_sessions` lists them |
 | Error feed | Engine and script errors (with file, line and Godot's stack) raised while a tool call ran, attached to that call's result as `errors` so no failure is silent; `get_errors` reads a session's errors and warnings from a cursor |
 | Errors frame | The id-less `{type: "errors", entries, dropped}` frame the bridge sends every frame and before each reply, carrying what its `Logger` caught |

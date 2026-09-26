@@ -55,15 +55,24 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         [Description("Arguments for the game, passed after --; the game reads them with OS.get_cmdline_user_args().")] string[]? userArgs = null,
         [Description("Arguments for the engine, placed before --, e.g. [\"--resolution\", \"1280x720\"].")] string[]? engineArgs = null,
         [Description(
-            "{quiet, shutOutRealGamepads, session}; when left out, quiet is true, shutOutRealGamepads is false and the session is "
-                + "named after the project folder."
+            "{quiet, shutOutRealGamepads, session, prepare}; when left out, quiet is true, shutOutRealGamepads is false, prepare is "
+                + "auto (a stale C# assembly is built and missing imports are run first; the result's prep says what was done) and "
+                + "the session is named after the project folder."
         )]
             RunOptions? options = null,
         CancellationToken cancellationToken = default
     )
     {
         RunOptions chosen = options ?? new RunOptions();
-        LaunchRequest request = new(projectPath, scene, engineArgs ?? [], userArgs ?? [], chosen.Quiet, chosen.ShutOutRealGamepads);
+        LaunchRequest request = new(
+            projectPath,
+            scene,
+            engineArgs ?? [],
+            userArgs ?? [],
+            chosen.Quiet,
+            chosen.ShutOutRealGamepads,
+            chosen.ShouldPrepare()
+        );
         LaunchResult result = await RunAsync(() => sessions.LaunchAsync(request, chosen.Session, cancellationToken));
         return JsonSerializer.Serialize(result, Json);
     }

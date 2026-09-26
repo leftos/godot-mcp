@@ -11,7 +11,7 @@ public sealed class GodotCommandLineTests
     [Fact]
     public void PutsPathSceneAndEngineArgsBeforeTheSeparatorAndUserArgsAfter()
     {
-        LaunchRequest request = new(Project, "res://levels/test.tscn", ["--resolution", "640x360"], ["--hello", "a b"], false, false);
+        LaunchRequest request = new(Project, "res://levels/test.tscn", ["--resolution", "640x360"], ["--hello", "a b"], false, false, Prepare: true);
 
         List<string> arguments = GodotCommandLine.BuildArguments(request);
 
@@ -22,7 +22,7 @@ public sealed class GodotCommandLineTests
     public void ADefaultRunChoosesTheDummyAudioDriverBeforeTheEngineArgs()
     {
         RunOptions defaults = new();
-        LaunchRequest request = new(Project, null, ["--audio-driver", "WASAPI"], [], defaults.Quiet, defaults.ShutOutRealGamepads);
+        LaunchRequest request = new(Project, null, ["--audio-driver", "WASAPI"], [], defaults.Quiet, defaults.ShutOutRealGamepads, Prepare: true);
 
         List<string> arguments = GodotCommandLine.BuildArguments(request);
 
@@ -32,7 +32,7 @@ public sealed class GodotCommandLineTests
     [Fact]
     public void ANotQuietRunLeavesTheAudioDriverAlone()
     {
-        LaunchRequest request = new(Project, null, [], [], false, false);
+        LaunchRequest request = new(Project, null, [], [], false, false, Prepare: true);
 
         List<string> arguments = GodotCommandLine.BuildArguments(request);
 
@@ -42,7 +42,7 @@ public sealed class GodotCommandLineTests
     [Fact]
     public void OmitsABlankSceneAndTheSeparatorWhenThereAreNoUserArgs()
     {
-        LaunchRequest request = new(Project, " ", [], [], false, false);
+        LaunchRequest request = new(Project, " ", [], [], false, false, Prepare: true);
 
         List<string> arguments = GodotCommandLine.BuildArguments(request);
 
@@ -52,7 +52,7 @@ public sealed class GodotCommandLineTests
     [Fact]
     public void KeepsArgumentsWithSpacesWhole()
     {
-        LaunchRequest request = new(Project, null, [], ["--hello", "a b"], false, false);
+        LaunchRequest request = new(Project, null, [], ["--hello", "a b"], false, false, Prepare: true);
 
         ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", request, new BridgeEndpoint(4321, "t0k3n"));
 
@@ -65,7 +65,11 @@ public sealed class GodotCommandLineTests
     {
         BridgeEndpoint bridge = new(4321, "t0k3n");
 
-        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", new LaunchRequest(Project, null, [], [], true, false), bridge);
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(
+            "godot.exe",
+            new LaunchRequest(Project, null, [], [], true, false, Prepare: true),
+            bridge
+        );
 
         Assert.Equal("4321", startInfo.Environment[GodotCommandLine.PortVariable]);
         Assert.Equal("t0k3n", startInfo.Environment[GodotCommandLine.TokenVariable]);
@@ -79,7 +83,7 @@ public sealed class GodotCommandLineTests
 
         ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(
             "godot.exe",
-            new LaunchRequest(Project, null, [], [], defaults.Quiet, defaults.ShutOutRealGamepads),
+            new LaunchRequest(Project, null, [], [], defaults.Quiet, defaults.ShutOutRealGamepads, Prepare: true),
             bridge
         );
 
@@ -91,7 +95,11 @@ public sealed class GodotCommandLineTests
     {
         BridgeEndpoint bridge = new(4321, "t0k3n");
 
-        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", new LaunchRequest(Project, null, [], [], false, false), bridge);
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(
+            "godot.exe",
+            new LaunchRequest(Project, null, [], [], false, false, Prepare: true),
+            bridge
+        );
 
         Assert.False(startInfo.Environment.ContainsKey(GodotCommandLine.QuietVariable));
     }
@@ -101,8 +109,16 @@ public sealed class GodotCommandLineTests
     {
         BridgeEndpoint bridge = new(4321, "t0k3n");
 
-        ProcessStartInfo shutOut = GodotCommandLine.CreateStartInfo("godot.exe", new LaunchRequest(Project, null, [], [], false, true), bridge);
-        ProcessStartInfo byDefault = GodotCommandLine.CreateStartInfo("godot.exe", new LaunchRequest(Project, null, [], [], false, false), bridge);
+        ProcessStartInfo shutOut = GodotCommandLine.CreateStartInfo(
+            "godot.exe",
+            new LaunchRequest(Project, null, [], [], false, true, Prepare: true),
+            bridge
+        );
+        ProcessStartInfo byDefault = GodotCommandLine.CreateStartInfo(
+            "godot.exe",
+            new LaunchRequest(Project, null, [], [], false, false, Prepare: true),
+            bridge
+        );
 
         Assert.Equal("1", shutOut.Environment[GodotCommandLine.ShutOutRealGamepadsVariable]);
         Assert.False(byDefault.Environment.ContainsKey(GodotCommandLine.ShutOutRealGamepadsVariable));

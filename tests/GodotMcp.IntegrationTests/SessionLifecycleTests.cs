@@ -240,7 +240,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
     }
 
     private LaunchRequest Request(string[]? userArgs = null, bool quiet = true, bool shutOutRealGamepads = false) =>
-        new(_probe.Directory, null, [], userArgs ?? [], quiet, shutOutRealGamepads);
+        new(_probe.Directory, null, [], userArgs ?? [], quiet, shutOutRealGamepads, Prepare: true);
 
     private async Task<bool> PingAsync(string? session)
     {

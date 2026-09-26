@@ -101,7 +101,7 @@ public sealed partial class WatchdogTests : IAsyncDisposable
     private static partial Regex ProcessLine();
 
     private Task<LaunchResult> LaunchAsync(CancellationToken cancellation) =>
-        _harness.Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], true, false), null, cancellation);
+        _harness.Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
 
     private Task<string> RunScriptAsync(string body, int timeoutMs)
     {

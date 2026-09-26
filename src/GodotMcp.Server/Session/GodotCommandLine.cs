@@ -7,7 +7,8 @@ namespace GodotMcp.Server.Session;
 /// <summary>
 /// What <c>run_project</c> asked for, with <see cref="ProjectPath"/> the project folder. With <see cref="Quiet"/> the window is
 /// created unfocused, off-screen and click-through, with the Dummy audio driver; with
-/// <see cref="ShutOutRealGamepads"/> it shuts the machine's real pads out of the game.
+/// <see cref="ShutOutRealGamepads"/> it shuts the machine's real pads out of the game. With <see cref="Prepare"/> (prepare
+/// "auto") a stale C# assembly is built and missing imports are run before the launch.
 /// </summary>
 internal sealed record LaunchRequest(
     string ProjectPath,
@@ -15,7 +16,8 @@ internal sealed record LaunchRequest(
     IReadOnlyList<string> EngineArgs,
     IReadOnlyList<string> UserArgs,
     bool Quiet,
-    bool ShutOutRealGamepads
+    bool ShutOutRealGamepads,
+    bool Prepare
 );
 
 /// <summary>Where the bridge dials and the token it proves itself with.</summary>

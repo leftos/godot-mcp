@@ -160,7 +160,7 @@ public sealed class BaselineTests : IAsyncDisposable
     }
 
     private Task<LaunchResult> LaunchAsync(string[] engineArgs, CancellationToken cancellation) =>
-        _harness.Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, engineArgs, [], true, false), null, cancellation);
+        _harness.Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, engineArgs, [], true, false, Prepare: true), null, cancellation);
 
     // Baselines, screenshots and diffs are written under the ignored .godot/, so the tree stays clean.
     private async Task StopAndCheckCleanAsync()
