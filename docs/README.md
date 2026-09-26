@@ -29,7 +29,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Compact output | A result held to a size budget: a screenshot as a path or a 480 px preview, a long list or log paged with a total, long lines and values cut with their length |
 | Quiet run | The default for `run_project`: the window created unfocused, then moved off-screen and made click-through, on the Dummy audio driver, so it takes no focus, shows nothing, plays nothing and receives no real input; `options.quiet: false` gives a normal window. Sessions on one folder share the setting; attached games are never quiet |
 | Tool annotations | The MCP hints each tool declares (`readOnlyHint`, `destructiveHint`, `openWorldHint`) so a client's permission rules can allow the reads |
-| Frame control | Pausing, stepping N frames and scaling time in a running game, so a screenshot or check lands on an exact frame (step 10; not built) |
+| Frame control | Pausing, stepping N frames and scaling time in a running game, so a screenshot or check lands on an exact frame (`frame_control`; `wait_for` waits for a node, a property, a signal or an expression) |
 | Profile, preset | A project's `godot-mcp.json`: its launch defaults, and named launch presets (step 13; not built) |
 | Batch drive | One tool call that plays a list of steps (input, waits, method calls, assertions, screenshots) and stops at the first failed assertion (step 13; not built) |
 | Hang watchdog | The server's report, when a request times out, of whether the game's main thread is still running (it answers a ping) or stuck (it does not), with the stuck process's CPU, threads and last stderr lines, in place of a bare timeout |

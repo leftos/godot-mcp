@@ -42,6 +42,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "click",
                 "detach_project",
                 "drag",
+                "frame_control",
                 "gamepad_axis",
                 "gamepad_button",
                 "gamepad_stick",
@@ -60,6 +61,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "stop_project",
                 "take_screenshot",
                 "type_text",
+                "wait_for",
             ],
             tools.Select(tool => tool.Name).Order()
         );
@@ -105,6 +107,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["click"] = changesTheGame,
             ["detach_project"] = changesTheGame,
             ["drag"] = changesTheGame,
+            ["frame_control"] = changesTheGame,
             ["gamepad_axis"] = changesTheGame,
             ["gamepad_button"] = changesTheGame,
             ["gamepad_stick"] = changesTheGame,
@@ -123,6 +126,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["stop_project"] = destructive,
             ["take_screenshot"] = readOnly,
             ["type_text"] = changesTheGame,
+            ["wait_for"] = changesTheGame,
         };
         Dictionary<string, (bool?, bool?, bool?)> actual = tools.ToDictionary(
             tool => tool.Name,
@@ -134,7 +138,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(23, actual.Count);
+        Assert.Equal(25, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

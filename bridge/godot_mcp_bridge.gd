@@ -17,6 +17,7 @@ const SCREENSHOT_DIR := "res://.godot/godot-mcp/screenshots"
 const ATTACH_FILE := "res://.godot/godot-mcp/attach.json"
 const GAMEPAD_SCRIPT := "godot_mcp_gamepad.gd"
 const INSPECT_SCRIPT := "godot_mcp_inspect.gd"
+const TIME_SCRIPT := "godot_mcp_time.gd"
 const LOGGER_SCRIPT := "godot_mcp_logger.gd"
 const MIN_DRAG_STEPS := 3
 ## The device id every injected mouse event carries, so _input can tell it from the real mouse
@@ -55,6 +56,8 @@ var _dispatching: bool = false
 var _pads: Node
 ## The inspector (godot_mcp_inspect.gd beside this script), a child once the bridge is on.
 var _inspect: Node
+## The clock (godot_mcp_time.gd beside this script): pause, step, time scale and waits.
+var _time: Node
 ## The server to dial, found in _init; empty when the bridge is off.
 var _endpoint: Dictionary = {}
 ## The logger (godot_mcp_logger.gd beside this script) collecting the game's errors, registered
@@ -98,6 +101,10 @@ func _ready() -> void:
 	add_child(_inspect)
 	if _endpoint["shutOutRealGamepads"]:
 		_pads.shut_out_real_pads()
+	_time = (load(script_dir.path_join(TIME_SCRIPT)) as GDScript).new()
+	_time.name = "Time"
+	_time.bridge = self
+	add_child(_time)
 	_stream = StreamPeerTCP.new()
 	_stream.big_endian = true
 	var error: Error = _stream.connect_to_host(HOST, port)
@@ -261,6 +268,8 @@ func _handle_frame(text: String) -> void:
 				_reply_error(id, result)
 			else:
 				_reply_ok(id, result)
+		"frame", "wait_for":
+			_handle_time(id, command, params)
 		"shutdown":
 			_reply_ok(id, {})
 			await get_tree().process_frame
@@ -269,30 +278,28 @@ func _handle_frame(text: String) -> void:
 			_reply_error(id, "unknown command '%s'" % command)
 
 
-## Saves the next drawn frame of the root viewport (cropped when params.crop is set) as a PNG
-## under the project's .godot/ folder, which projects keep out of git, and a scaled-down copy
-## when the image is wider than params.previewMaxWidth.
+## Saves the next drawn frame of the root viewport as _save_screenshot does.
 func _handle_screenshot(id: int, params: Dictionary) -> void:
 	await _wait_for_drawn_frame()
-	var image: Image = get_viewport().get_texture().get_image()
-	if image == null:
-		_reply_error(id, "the viewport returned no image")
+	var saved: Variant = _save_screenshot(get_viewport().get_texture().get_image(), params)
+	if saved is String:
+		_reply_error(id, saved)
 		return
+	_reply_ok(id, saved)
+
+
+## Saves image (cropped when params.crop is set) as a PNG under the project's .godot/ folder,
+## which projects keep out of git, and a scaled-down copy when the image is wider than
+## params.previewMaxWidth. Returns {path, width, height[, previewPath, previewWidth,
+## previewHeight]}, or a String saying why it could not.
+func _save_screenshot(image: Image, params: Dictionary) -> Variant:
+	if image == null:
+		return "the viewport returned no image"
 	if params.get("crop") is Dictionary:
-		var crop: Dictionary = params["crop"]
-		var wanted := Rect2i(
-			int(crop.get("x", 0)),
-			int(crop.get("y", 0)),
-			int(crop.get("width", 0)),
-			int(crop.get("height", 0))
-		)
-		var inside: Rect2i = wanted.intersection(Rect2i(Vector2i.ZERO, image.get_size()))
-		if not inside.has_area():
-			_reply_error(
-				id, "the crop %s lies outside the %s screenshot" % [wanted, image.get_size()]
-			)
-			return
-		image = image.get_region(inside)
+		var cropped: Variant = _crop(image, params["crop"])
+		if cropped is String:
+			return cropped
+		image = cropped
 	var directory: String = ProjectSettings.globalize_path(SCREENSHOT_DIR)
 	DirAccess.make_dir_recursive_absolute(directory)
 	# The process id keeps two games on one project from writing one file in the same millisecond.
@@ -300,8 +307,7 @@ func _handle_screenshot(id: int, params: Dictionary) -> void:
 	var path: String = directory.path_join(file_name)
 	var error: Error = image.save_png(path)
 	if error != OK:
-		_reply_error(id, "saving %s failed: %s" % [path, error_string(error)])
-		return
+		return "saving %s failed: %s" % [path, error_string(error)]
 	var result: Dictionary = {
 		"path": path, "width": image.get_width(), "height": image.get_height()
 	}
@@ -311,9 +317,22 @@ func _handle_screenshot(id: int, params: Dictionary) -> void:
 			image, path.get_basename() + "_preview.png", preview_max_width, result
 		)
 		if error != OK:
-			_reply_error(id, "saving the preview of %s failed: %s" % [path, error_string(error)])
-			return
-	_reply_ok(id, result)
+			return "saving the preview of %s failed: %s" % [path, error_string(error)]
+	return result
+
+
+## The part of image inside crop {x, y, width, height}, or a String when none of it is.
+func _crop(image: Image, crop: Dictionary) -> Variant:
+	var wanted := Rect2i(
+		int(crop.get("x", 0)),
+		int(crop.get("y", 0)),
+		int(crop.get("width", 0)),
+		int(crop.get("height", 0))
+	)
+	var inside: Rect2i = wanted.intersection(Rect2i(Vector2i.ZERO, image.get_size()))
+	if not inside.has_area():
+		return "the crop %s lies outside the %s screenshot" % [wanted, image.get_size()]
+	return image.get_region(inside)
 
 
 func _save_preview(image: Image, path: String, max_width: int, result: Dictionary) -> Error:
@@ -327,11 +346,12 @@ func _save_preview(image: Image, path: String, max_width: int, result: Dictionar
 	return error
 
 
-## Returns once a frame has been drawn. A window the OS reports as undrawable (occluded) never
-## emits frame_post_draw on its own, so one draw is forced; force_draw emits the signal
+## Returns once a frame has been drawn. A window the OS reports as undrawable (occluded), or a
+## game in low-processor mode with nothing changed, never emits frame_post_draw on its own
+## (main/main.cpp L5071-5086 in 4.7.2), so one draw is forced; force_draw emits the signal
 ## synchronously with single-threaded rendering, hence the connection made before it.
 func _wait_for_drawn_frame() -> void:
-	if DisplayServer.window_can_draw():
+	if DisplayServer.window_can_draw() and not OS.low_processor_usage_mode:
 		await RenderingServer.frame_post_draw
 		return
 	var drawn: Array[bool] = [false]
@@ -401,6 +421,19 @@ func _handle_run_script(id: int, source: String) -> void:
 	var value: Variant = await instance.execute(get_tree())
 	_free_unless_counted(instance)
 	_reply_ok(id, {"value": _to_json(value)})
+
+
+## Runs a frame or wait_for request on the clock child, which answers {result} or {error}.
+func _handle_time(id: int, command: String, params: Dictionary) -> void:
+	var outcome: Dictionary
+	if command == "frame":
+		outcome = await _time.frame_control(params)
+	else:
+		outcome = await _time.wait_for(params)
+	if outcome.has("error"):
+		_reply_error(id, str(outcome["error"]))
+		return
+	_reply_ok(id, outcome["result"])
 
 
 ## Plays one gesture over frames, then waits two more frames before replying, so the game's

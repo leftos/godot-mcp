@@ -5,21 +5,17 @@ Open work only, in working order: the next item is the first line from the top; 
 
 ## Now: the first version, replacing godot-mcp-runtime at parity
 
-Steps 0 to 4b and Wave 1 (steps 7-9: named sessions, the error feed and compact outputs, tool annotations and quiet runs) have shipped. Sixteen features the user added 2026-09-25 ("world's our oyster") come before the cutover (user's call). Every wave's command acceptance is `pwsh run.ps1 test` and `pwsh run.ps1 itest`; its human check is a drive of the InputProbe fixture through the new tools.
+Steps 0 to 4b, Wave 1 (steps 7-9: named sessions, the error feed and compact outputs, tool annotations and quiet runs) and most of Wave 2 (step 10 frame control and `wait_for`, step 12 inspection, step 14's hang watchdog) have shipped. Sixteen features the user added 2026-09-25 ("world's our oyster") come before the cutover (user's call). Every wave's command acceptance is `pwsh run.ps1 test` and `pwsh run.ps1 itest`; its human check is a drive of the InputProbe fixture through the new tools.
 
-### Wave 2: driving the running game (new `RuntimeTools` partials and bridge handlers)
+### Wave 3: the run's lifecycle (`GodotRun`, `GodotCommandLine`, `GodotSession`, `ProjectTools`), then the tools built on it
 
-- [ ] Step 10: time: frame control (pause, resume, step N frames, time_scale, screenshot at a frame) and `wait_for` (a node exists, a property equals, a signal fires, an expression is true; with a timeout)
-- [ ] Step 13: project profiles (`godot-mcp.json` per project: main scene, arguments, resolution, background, named launch presets such as delve's server and clients) and the batch drive tool (one call runs input, wait_for, call_method, assertions and screenshots in order, stopping at the first failed assertion). Depends on steps 10, 11 and 12; its screenshot-baseline assertion on step 14
-
-### Wave 3: the run's lifecycle (`GodotRun`, `GodotCommandLine`, `GodotSession`, `ProjectTools`)
-
-- [ ] Step 11: the edit-build-look loop: `restart_project` (rebuild C# when sources changed, relaunch with the same scene and arguments) and fresh-worktree prep (a missing `.godot/` import cache or C# build is made before launch, under ceilings). Depends on step 12 (its `CsProbe` C# fixture)
-- [ ] Step 14: screenshot baselines (compare a screenshot or crop to a stored baseline; a difference score and a diff image)
+- [ ] Step 11: the edit-build-look loop: `restart_project` (rebuild C# when sources changed, relaunch with the same scene and arguments) and fresh-worktree prep (a missing `.godot/` import cache or C# build is made before launch, under ceilings). Reuses step 12's `CsProbe` C# fixture. Its design is in the plan's decision 11 and the explorer's 4.7.2 citations in `.tmp/explore-wave3/`
+- [ ] Step 14: screenshot baselines (compare a screenshot or crop to a stored baseline; a difference score and a diff image). Independent of step 11; it reuses step 10's split screenshot capture (`_save_screenshot`, `_crop`)
+- [ ] Step 13: project profiles (`godot-mcp.json` per project: main scene, arguments, resolution, background, named launch presets such as delve's server and clients) and the batch drive tool (one call runs input, wait_for, call_method, assertions and screenshots in order, stopping at the first failed assertion). Depends on step 11; its screenshot-baseline assertion on step 14
 
 ### Wave 4: singles
 
-- [ ] After step 10 lands: bring `godot_mcp_bridge.gd`'s four complexity-baseline entries within the limits (`_input` 10, `_handle_frame` 12, `_play_event` 9, `_to_json` 12, measured 2026-09-26) and empty `tools/gdcomplexity-baseline.txt`; `_to_json` goes with the JSON move below
+- [ ] Bring `godot_mcp_bridge.gd`'s four complexity-baseline entries within the limits (`_input` 10, `_handle_frame` 12, `_play_event` 9, `_to_json` 12, measured 2026-09-26) and empty `tools/gdcomplexity-baseline.txt`; `_to_json` goes with the JSON move below
 - [ ] Before step 5: move the bridge's `_to_json` and the `Inspect` module's `from_json` into a static `bridge/godot_mcp_json.gd` with gdtest unit tests, so step 5's headless tools share one set of conversion rules
 - [ ] `tools/gate.ps1`'s comment-based help does not render (`Get-Help` shows no DESCRIPTION): a `#requires` line touches `<#`, as the shebang did in `run.ps1`; separate them with a blank line
 

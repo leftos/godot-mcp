@@ -49,6 +49,7 @@ $itestGroups = [ordered]@{
     lifecycle = @('SessionLifecycleTests', 'AttachTests', 'QuietTests', 'WatchdogTests', 'McpServerSmokeTests')
     input     = @('InputTests', 'GamepadTests')
     reads     = @('RuntimeReadTests', 'InspectionTests')
+    time      = @('TimeTests')
 }
 $itestNamespace = 'GodotMcp.IntegrationTests'
 $itestProject = 'tests/GodotMcp.IntegrationTests/GodotMcp.IntegrationTests.csproj'

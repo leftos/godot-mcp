@@ -1,0 +1,13 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://ticker.gd" id="1_ticker"]
+
+[node name="TimeProbe" type="Node"]
+script = ExtResource("1_ticker")
+
+[node name="Swatch" type="ColorRect" parent="."]
+offset_left = 580.0
+offset_top = 290.0
+offset_right = 620.0
+offset_bottom = 330.0
+color = Color(0, 0, 0, 1)
