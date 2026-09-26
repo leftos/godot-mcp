@@ -51,12 +51,12 @@ func test_axis_value_range_is_per_axis() -> void:
 	assert_eq(pads._check_axis_value(JOY_AXIS_TRIGGER_LEFT, 0.0), "", "a trigger takes 0")
 	assert_eq(
 		pads._check_axis_value(JOY_AXIS_TRIGGER_LEFT, -0.5),
-		"axis TRIGGER_LEFT takes a value from 0 to 1; got -0.5",
+		"TRIGGER_LEFT takes values from 0 to 1; got -0.5.",
 		"a trigger refuses a negative value"
 	)
 	assert_eq(
 		pads._check_axis_value(JOY_AXIS_RIGHT_Y, 1.5),
-		"axis RIGHT_Y takes a value from -1 to 1; got 1.5",
+		"RIGHT_Y takes values from -1 to 1; got 1.5.",
 		"a stick refuses past 1"
 	)
 	assert_true(not pads._check_axis_value(JOY_AXIS_LEFT_Y, "1").is_empty(), "a string is refused")

@@ -260,7 +260,7 @@ func _check_axis_value(axis: int, value: Variant) -> String:
 	var low: int = 0 if axis >= JOY_AXIS_TRIGGER_LEFT else -1
 	if (value is float or value is int) and float(value) >= low and float(value) <= 1.0:
 		return ""
-	return "axis %s takes a value from %d to 1; got %s" % [JOY_AXIS_NAMES[axis], low, str(value)]
+	return "%s takes values from %d to 1; got %s." % [JOY_AXIS_NAMES[axis], low, str(value)]
 
 
 ## A device id 0-15 as an int; -1 for anything else. JSON numbers arrive as floats.
