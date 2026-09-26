@@ -31,7 +31,7 @@ internal sealed partial class GodotSession(BridgeListener listener, ILogger<Godo
             await RetirePreviousRunAsync();
             LaunchRequest validated = Validate(request);
             string godotPath = Installation.FindGodot();
-            OverrideFile.Write(validated.ProjectPath, Installation.FindBridgeScript());
+            OverrideFile.Write(validated.ProjectPath, Installation.FindBridgeScript(), validated.ShutOutRealGamepads);
             try
             {
                 return await StartRunAsync(godotPath, validated, cancellationToken);

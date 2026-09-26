@@ -20,8 +20,12 @@ internal sealed partial class GodotSession
     /// game started on the project to dial in. The attach file is gone whatever the outcome; the override file stays for the
     /// session, or is removed when no game connected.
     /// </summary>
+    /// <param name="projectPath">The project folder.</param>
+    /// <param name="wait">How long to wait for the game's bridge.</param>
+    /// <param name="shutOutRealGamepads">Whether the bridge shuts the machine's real pads out of the game.</param>
+    /// <param name="cancellationToken">Cancels the wait.</param>
     /// <exception cref="SessionException">A session is live, the project is missing, or no game connected in time.</exception>
-    public async Task<AttachResult> AttachAsync(string projectPath, TimeSpan wait, CancellationToken cancellationToken)
+    public async Task<AttachResult> AttachAsync(string projectPath, TimeSpan wait, bool shutOutRealGamepads, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
         try
@@ -32,7 +36,8 @@ internal sealed partial class GodotSession
             _attachingDir = projectDir;
             try
             {
-                _attached = new AttachedRun(projectDir, await InjectAndAwaitBridgeAsync(projectDir, bridgeScript, wait, cancellationToken));
+                BridgeConnection connection = await InjectAndAwaitBridgeAsync(projectDir, bridgeScript, shutOutRealGamepads, wait, cancellationToken);
+                _attached = new AttachedRun(projectDir, connection);
             }
             finally
             {
@@ -73,6 +78,7 @@ internal sealed partial class GodotSession
     private async Task<BridgeConnection> InjectAndAwaitBridgeAsync(
         string projectDir,
         string bridgeScript,
+        bool shutOutRealGamepads,
         TimeSpan wait,
         CancellationToken cancellationToken
     )
@@ -80,10 +86,10 @@ internal sealed partial class GodotSession
         string token = CreateToken();
 
         // The attach file goes first: a game that starts between the two writes then finds it once override.cfg loads the bridge.
-        AttachFile.Write(projectDir, new BridgeEndpoint(listener.Port, token));
+        AttachFile.Write(projectDir, new BridgeEndpoint(listener.Port, token), shutOutRealGamepads);
         try
         {
-            OverrideFile.Write(projectDir, bridgeScript);
+            OverrideFile.Write(projectDir, bridgeScript, shutOutRealGamepads);
             GitExclude.Ensure(projectDir, OverrideFile.FileName, logger);
             return await AcceptAttachedBridgeAsync(new HandshakeExpectation(token, projectDir), wait, cancellationToken);
         }

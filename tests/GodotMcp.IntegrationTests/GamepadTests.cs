@@ -33,7 +33,7 @@ public sealed class GamepadTests : IAsyncDisposable
     public async Task ButtonPressHoldsTheButtonAndItsActionUntilRelease()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await LaunchIsolatedAsync();
+        await LaunchAsync(background: false, shutOutRealGamepads: true);
 
         await _tools.GamepadButtonAsync("A", "press", 0, cancellation);
         JsonNode held = await RunAsync(ReadButtonAAndJump);
@@ -47,7 +47,7 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ButtonTapPressesTheActionOnce()
     {
-        await LaunchIsolatedAsync();
+        await LaunchAsync(background: false, shutOutRealGamepads: true);
 
         await _tools.GamepadButtonAsync("A", "tap", 0, TestContext.Current.CancellationToken);
 
@@ -62,7 +62,7 @@ public sealed class GamepadTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         const string ReadLeftX = "return [Input.get_joy_axis(0, JOY_AXIS_LEFT_X), Input.get_action_strength(\"probe_right\")]";
-        await LaunchIsolatedAsync();
+        await LaunchAsync(background: false, shutOutRealGamepads: true);
 
         await _tools.GamepadAxisAsync("LEFT_X", 0.6, 0, false, 0, cancellation);
         JsonNode pushed = await RunAsync(ReadLeftX);
@@ -78,7 +78,7 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task TriggerSweepTakesItsDurationAndEndsAtTheValue()
     {
-        await LaunchIsolatedAsync();
+        await LaunchAsync(background: false, shutOutRealGamepads: true);
 
         var sweep = Stopwatch.StartNew();
         await _tools.GamepadAxisAsync("TRIGGER_RIGHT", 1, 300, false, 0, TestContext.Current.CancellationToken);
@@ -92,7 +92,7 @@ public sealed class GamepadTests : IAsyncDisposable
     public async Task DpadDownTwiceMovesFocusTwoButtonsDown()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await LaunchIsolatedAsync();
+        await LaunchAsync(background: false, shutOutRealGamepads: true);
         string before = (await RunAsync(ReadFocusOwner)).GetValue<string>();
 
         await _tools.GamepadButtonAsync("DPAD_DOWN", "tap", 0, cancellation);
@@ -105,7 +105,7 @@ public sealed class GamepadTests : IAsyncDisposable
     public async Task StickPushedDownAndReleasedTwiceMovesFocusTwoButtonsDown()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await LaunchIsolatedAsync();
+        await LaunchAsync(background: false, shutOutRealGamepads: true);
         string before = (await RunAsync(ReadFocusOwner)).GetValue<string>();
 
         await _tools.GamepadStickAsync("left", Down, 0, true, 0, cancellation);
@@ -117,7 +117,7 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task APressOnDeviceOneIsNotOnDeviceZero()
     {
-        await LaunchIsolatedAsync();
+        await LaunchAsync(background: false, shutOutRealGamepads: true);
 
         await _tools.GamepadButtonAsync("A", "press", 1, TestContext.Current.CancellationToken);
 
@@ -128,7 +128,7 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task SimulateInputPlaysRawJoypadEvents()
     {
-        await LaunchIsolatedAsync();
+        await LaunchAsync(background: false, shutOutRealGamepads: true);
         JsonObject press = new()
         {
             ["type"] = "joypad_button",
@@ -151,45 +151,73 @@ public sealed class GamepadTests : IAsyncDisposable
         Assert.Equal(-0.25, pad[1]!.GetValue<double>());
     }
 
-    // The fixture turns ignore_joypad_on_unfocused_application on, with which losing focus clears the pad's buttons, axes
-    // and actions (Godot 4.7.2 input.cpp L1600-1623); the injection override.cfg turns it off. The focus loss is the
-    // application focus-out notification SceneTree handles (scene_tree.cpp L934-942), sent by hand, since a background
-    // window may never have had focus to lose.
+    // With shutOutRealGamepads, override.cfg turns ignore_joypad_on_unfocused_application on and the bridge marks the
+    // application unfocused. Turning the setting on again releases pressed input only while the application is unfocused
+    // (input.cpp L1324-1328), so the injected A being cleared by it proves the mark.
     [Fact(Timeout = TestTimeoutMs)]
-    public async Task PadStateSurvivesFocusLossInABackgroundRun()
+    public async Task ShuttingOutRealGamepadsMarksTheGameUnfocused()
+    {
+        await LaunchAsync(background: false, shutOutRealGamepads: true);
+        await _tools.GamepadButtonAsync("A", "press", 0, TestContext.Current.CancellationToken);
+
+        JsonNode state = await RunAsync(
+            ReadShutOut
+                + "\n\tvar held := Input.is_joy_button_pressed(0, JOY_BUTTON_A)\n\t"
+                + "Input.set_ignore_joypad_on_unfocused_application(true)\n\t"
+                + "return [shut_out, ignoring, held, Input.is_joy_button_pressed(0, JOY_BUTTON_A)]"
+        );
+        Assert.Equal("[true,true,true,false]", state.ToJsonString());
+    }
+
+    // The default leaves the real pads live: the fixture turns ignore_joypad_on_unfocused_application on, override.cfg
+    // turns it off, and the bridge sends no focus-out.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ADefaultRunSendsNoFocusOutAndTakesTheInjectedPad()
+    {
+        await LaunchAsync(background: false, shutOutRealGamepads: false);
+
+        await _tools.GamepadButtonAsync("A", "tap", 0, TestContext.Current.CancellationToken);
+
+        JsonNode state = await RunAsync(ReadShutOut + "\n\treturn [shut_out, ignoring, scene_tree.root.get_node(\"Main/PadProbe\").jump_count]");
+        Assert.Equal("[false,false,1]", state.ToJsonString());
+    }
+
+    // Every focus-out clears pressed pad state while ignore_joypad_on_unfocused_application is on (input.cpp L1600-1623), and
+    // a focus-in marks the application focused again (scene_tree.cpp L934-942): the bridge answers each change with a
+    // focus-out and sends the injected pads' held buttons and axes again. The notifications are sent by hand, since a
+    // background window may never have had focus to lose.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task InjectedPadStateSurvivesFocusChangesInABackgroundRun()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await LaunchAsync(background: true);
+        await LaunchAsync(background: true, shutOutRealGamepads: true);
 
         await _tools.GamepadButtonAsync("A", "press", 0, cancellation);
+        await _tools.GamepadAxisAsync("LEFT_X", 0.6, 0, false, 0, cancellation);
         await Task.Delay(500, cancellation);
 
         JsonNode state = await RunAsync(
-            "scene_tree.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)\n\treturn [Input.is_joy_button_pressed(0, JOY_BUTTON_A), "
-                + "Input.is_action_pressed(\"probe_jump\"), Input.is_ignoring_joypad_on_unfocused_application()]"
+            "scene_tree.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)\n\t"
+                + "scene_tree.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_IN)\n\t"
+                + "for frame in 3:\n\t\tawait scene_tree.process_frame\n\t"
+                + "var kept := [Input.is_joy_button_pressed(0, JOY_BUTTON_A), Input.get_joy_axis(0, JOY_AXIS_LEFT_X)]\n\t"
+                + "Input.set_ignore_joypad_on_unfocused_application(true)\n\t"
+                + "return kept + [Input.is_joy_button_pressed(0, JOY_BUTTON_A)]"
         );
-        Assert.Equal("[true,true,false]", state.ToJsonString());
+        Assert.True(state[0]!.GetValue<bool>(), state.ToJsonString());
+        Assert.Equal(0.6, state[1]!.GetValue<double>(), 5);
+        Assert.False(state[2]!.GetValue<bool>(), $"the application was focused again after the focus-in: {state.ToJsonString()}");
     }
 
-    private Task<LaunchResult> LaunchAsync(bool background) =>
-        _harness.Session.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], background), TestContext.Current.CancellationToken);
+    private const string ReadShutOut =
+        "var shut_out: bool = scene_tree.root.get_node(\"GodotMcpBridge/Gamepad\").real_pads_shut_out\n\t"
+        + "var ignoring := Input.is_ignoring_joypad_on_unfocused_application()";
 
-    // The machine's own pads feed the same all-device actions and ui_* bindings as the injected one: with four connected,
-    // one resting off centre moved focus off MenuA at startup and pressed probe_right mid-test (measured 2026-09-25). With
-    // ignore_joypad_on_unfocused_application on and the application focus-out notification sent, Godot drops the real pads'
-    // driver input (input.cpp L1652, L1684) and clears what they pressed, while injected events, which go through
-    // parse_input_event, pass unfiltered. Focus then goes back to MenuA and the jump count to 0.
-    private async Task LaunchIsolatedAsync()
-    {
-        await LaunchAsync(background: false);
-        await RunAsync(
-            "Input.set_ignore_joypad_on_unfocused_application(true)\n\t"
-                + "scene_tree.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)\n\t"
-                + "scene_tree.root.get_node(\"Main/Menu/MenuA\").grab_focus()\n\t"
-                + "scene_tree.root.get_node(\"Main/PadProbe\").jump_count = 0\n\t"
-                + "return Input.get_connected_joypads()"
+    private Task<LaunchResult> LaunchAsync(bool background, bool shutOutRealGamepads) =>
+        _harness.Session.LaunchAsync(
+            new LaunchRequest(_probe.Directory, null, [], [], background, shutOutRealGamepads),
+            TestContext.Current.CancellationToken
         );
-    }
 
     private async Task<JsonNode> RunAsync(string body)
     {

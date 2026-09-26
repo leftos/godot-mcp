@@ -4,13 +4,17 @@ using System.Text;
 
 namespace GodotMcp.Server.Session;
 
-/// <summary>What <c>run_project</c> asked for, with <see cref="ProjectPath"/> the project folder.</summary>
+/// <summary>
+/// What <c>run_project</c> asked for, with <see cref="ProjectPath"/> the project folder. With <see cref="ShutOutRealGamepads"/>
+/// the bridge shuts the machine's real pads out of the game.
+/// </summary>
 internal sealed record LaunchRequest(
     string ProjectPath,
     string? Scene,
     IReadOnlyList<string> EngineArgs,
     IReadOnlyList<string> UserArgs,
-    bool Background
+    bool Background,
+    bool ShutOutRealGamepads
 );
 
 /// <summary>Where the bridge dials and the token it proves itself with.</summary>
@@ -22,6 +26,7 @@ internal static class GodotCommandLine
     public const string PortVariable = "GODOT_MCP_PORT";
     public const string TokenVariable = "GODOT_MCP_TOKEN";
     public const string BackgroundVariable = "GODOT_MCP_BACKGROUND";
+    public const string ShutOutRealGamepadsVariable = "GODOT_MCP_SHUT_OUT_REAL_GAMEPADS";
 
     public static List<string> BuildArguments(LaunchRequest request)
     {
@@ -67,15 +72,21 @@ internal static class GodotCommandLine
 
         startInfo.Environment[PortVariable] = bridge.Port.ToString(CultureInfo.InvariantCulture);
         startInfo.Environment[TokenVariable] = bridge.Token;
-        if (request.Background)
+        SetFlag(startInfo, BackgroundVariable, request.Background);
+        SetFlag(startInfo, ShutOutRealGamepadsVariable, request.ShutOutRealGamepads);
+        return startInfo;
+    }
+
+    /// <summary>Sets the variable to 1 when the flag is on, and removes one the server's own environment passed down when off.</summary>
+    private static void SetFlag(ProcessStartInfo startInfo, string variable, bool on)
+    {
+        if (on)
         {
-            startInfo.Environment[BackgroundVariable] = "1";
+            startInfo.Environment[variable] = "1";
         }
         else
         {
-            startInfo.Environment.Remove(BackgroundVariable);
+            startInfo.Environment.Remove(variable);
         }
-
-        return startInfo;
     }
 }

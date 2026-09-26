@@ -98,7 +98,8 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.False(stopped.Killed);
     }
 
-    private LaunchRequest Request(string[]? userArgs = null, bool background = false) => new(_probe.Directory, null, [], userArgs ?? [], background);
+    private LaunchRequest Request(string[]? userArgs = null, bool background = false) =>
+        new(_probe.Directory, null, [], userArgs ?? [], background, false);
 
     private Task<bool> StdoutContainsAsync(string line) =>
         Poll.UntilAsync(

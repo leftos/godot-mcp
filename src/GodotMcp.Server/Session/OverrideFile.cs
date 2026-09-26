@@ -5,9 +5,10 @@ namespace GodotMcp.Server.Session;
 /// <summary>
 /// The <c>override.cfg</c> that injects the bridge into a game run. Godot reads it for game runs only, never for the
 /// editor or <c>--import</c>. The server's own file starts with <see cref="Marker"/>; a file without it is the project's
-/// and is never written over or deleted. It also turns off <see cref="IgnoreJoypadOnUnfocusedSetting"/>, which would
-/// clear the injected pad's buttons, axes and actions when the window loses focus (Godot 4.7.2 <c>input.cpp</c>
-/// L1600-1623), and a background run is unfocused.
+/// and is never written over or deleted. It also sets <see cref="IgnoreJoypadOnUnfocusedSetting"/>: off by default, so
+/// losing focus leaves pad state alone (Godot 4.7.2 <c>input.cpp</c> L1600-1623); on when the run shuts the real pads
+/// out, so that once the bridge marks the application unfocused Godot drops their driver input (L1652, L1684) while
+/// injected pad events still pass.
 /// </summary>
 internal static class OverrideFile
 {
@@ -23,8 +24,11 @@ internal static class OverrideFile
     public static string PathIn(string projectDir) => Path.Combine(projectDir, FileName);
 
     /// <summary>Writes the marked file, replacing a marked one a crashed run left behind.</summary>
+    /// <param name="projectDir">The project folder.</param>
+    /// <param name="bridgeScriptPath">The bridge script the autoload names.</param>
+    /// <param name="shutOutRealGamepads">Whether the bridge shuts the machine's real pads out; the setting is written to match.</param>
     /// <exception cref="SessionException">The project has its own override.cfg.</exception>
-    public static void Write(string projectDir, string bridgeScriptPath)
+    public static void Write(string projectDir, string bridgeScriptPath, bool shutOutRealGamepads)
     {
         string path = PathIn(projectDir);
         if (File.Exists(path) && !IsOurs(path))
@@ -36,7 +40,8 @@ internal static class OverrideFile
         }
 
         string script = Path.GetFullPath(bridgeScriptPath).Replace('\\', '/');
-        string content = $"{Marker}\n[autoload]\n\n{AutoloadName}=\"*{script}\"\n\n[input_devices]\n\n{IgnoreJoypadOnUnfocusedSetting}=false\n";
+        string content =
+            $"{Marker}\n[autoload]\n\n{AutoloadName}=\"*{script}\"\n\n[input_devices]\n\n{IgnoreJoypadOnUnfocusedSetting}={(shutOutRealGamepads ? "true" : "false")}\n";
         File.WriteAllText(path, content, Utf8NoBom);
     }
 

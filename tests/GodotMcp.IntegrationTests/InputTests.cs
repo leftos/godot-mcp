@@ -165,7 +165,7 @@ public sealed class InputTests : IAsyncDisposable
     }
 
     private Task<LaunchResult> LaunchAsync(string[] engineArgs) =>
-        _harness.Session.LaunchAsync(new LaunchRequest(_probe.Directory, null, engineArgs, [], false), TestContext.Current.CancellationToken);
+        _harness.Session.LaunchAsync(new LaunchRequest(_probe.Directory, null, engineArgs, [], false, false), TestContext.Current.CancellationToken);
 
     // Without the bars the letterboxed tests would prove nothing about mapping viewport points to the window.
     private async Task AssertLetterboxedAsync()

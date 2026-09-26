@@ -15,7 +15,7 @@ public sealed class OverrideFileTests : IDisposable
     {
         string bridge = _project.Combine("tools", "bridge.gd");
 
-        OverrideFile.Write(_project.Path, bridge);
+        OverrideFile.Write(_project.Path, bridge, false);
 
         string[] lines = File.ReadAllLines(OverrideFile.PathIn(_project.Path));
         Assert.Equal(OverrideFile.Marker, lines[0]);
@@ -24,13 +24,18 @@ public sealed class OverrideFileTests : IDisposable
     }
 
     [Fact]
-    public void WriteKeepsJoypadStateWhenTheWindowLosesFocus()
+    public void WriteKeepsJoypadsOnFocusLossByDefault() => AssertJoypadSetting(shutOutRealGamepads: false, "false");
+
+    [Fact]
+    public void WriteIgnoresUnfocusedJoypadsWhenShuttingOutRealGamepads() => AssertJoypadSetting(shutOutRealGamepads: true, "true");
+
+    private void AssertJoypadSetting(bool shutOutRealGamepads, string expected)
     {
-        OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"));
+        OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), shutOutRealGamepads);
 
         string[] lines = File.ReadAllLines(OverrideFile.PathIn(_project.Path));
         int section = Array.IndexOf(lines, "[input_devices]");
-        int setting = Array.IndexOf(lines, "joypads/ignore_joypad_on_unfocused_application=false");
+        int setting = Array.IndexOf(lines, $"joypads/ignore_joypad_on_unfocused_application={expected}");
         Assert.Equal(OverrideFile.Marker, lines[0]);
         Assert.True(section > 0, string.Join('\n', lines));
         Assert.True(setting > section, string.Join('\n', lines));
@@ -44,7 +49,7 @@ public sealed class OverrideFileTests : IDisposable
         File.WriteAllText(path, UserOverride);
         byte[] before = File.ReadAllBytes(path);
 
-        SessionException refused = Assert.Throws<SessionException>(() => OverrideFile.Write(_project.Path, _project.Combine("bridge.gd")));
+        SessionException refused = Assert.Throws<SessionException>(() => OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), false));
 
         Assert.Contains(path, refused.Message, StringComparison.Ordinal);
         Assert.Equal(before, File.ReadAllBytes(path));
@@ -57,7 +62,7 @@ public sealed class OverrideFileTests : IDisposable
         File.WriteAllText(path, $"{OverrideFile.Marker}\n[autoload]\n\nGodotMcpBridge=\"*D:/gone/old_bridge.gd\"\n");
         string bridge = _project.Combine("new_bridge.gd");
 
-        OverrideFile.Write(_project.Path, bridge);
+        OverrideFile.Write(_project.Path, bridge, false);
 
         string content = File.ReadAllText(path);
         Assert.DoesNotContain("old_bridge.gd", content, StringComparison.Ordinal);
@@ -67,7 +72,7 @@ public sealed class OverrideFileTests : IDisposable
     [Fact]
     public void RemoveDeletesAMarkedFile()
     {
-        OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"));
+        OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), false);
 
         Assert.True(OverrideFile.Remove(_project.Path));
         Assert.False(File.Exists(OverrideFile.PathIn(_project.Path)));

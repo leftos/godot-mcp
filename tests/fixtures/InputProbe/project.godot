@@ -31,7 +31,7 @@ probe_right={
 
 [input_devices]
 
-; On here, so GamepadTests prove the injection override.cfg turns it off.
+; On here, so GamepadTests prove a default run's override.cfg turns it off.
 joypads/ignore_joypad_on_unfocused_application=true
 
 [rendering]

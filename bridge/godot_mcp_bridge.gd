@@ -13,6 +13,7 @@ const HEADER_BYTES := 4
 const MAX_FRAME_BYTES := 16 * 1024 * 1024
 const SCREENSHOT_DIR := "res://.godot/godot-mcp/screenshots"
 const ATTACH_FILE := "res://.godot/godot-mcp/attach.json"
+const GAMEPAD_SCRIPT := "godot_mcp_gamepad.gd"
 const MIN_DRAG_STEPS := 3
 ## The device id every injected mouse event carries, so _input can tell it from the real mouse
 ## (DEVICE_ID_MOUSE, 32) and from the engine's own ids: 0-15 joypads, 16-31 keyboards, -1
@@ -25,18 +26,6 @@ const MOUSE_BUTTONS := {
 	"middle": MOUSE_BUTTON_MIDDLE,
 }
 const MODIFIER_KEYS := {KEY_SHIFT: "shift", KEY_CTRL: "ctrl", KEY_ALT: "alt", KEY_META: "meta"}
-## The highest joypad device id; 0-15 are joypads (core/input/input_event.h L64-67 in 4.7.2).
-const MAX_JOY_DEVICE := 15
-## Godot's JoyButton names without JOY_BUTTON_, at their enum values: A is 0, TOUCHPAD 20
-## (core/input/input_enums.h L80-102 in 4.7.2); JoyAxis likewise, LEFT_X 0 to TRIGGER_RIGHT 5.
-const JOY_BUTTON_NAMES: PackedStringArray = [
-	"A", "B", "X", "Y", "BACK", "GUIDE", "START", "LEFT_STICK", "RIGHT_STICK", "LEFT_SHOULDER",
-	"RIGHT_SHOULDER", "DPAD_UP", "DPAD_DOWN", "DPAD_LEFT", "DPAD_RIGHT", "MISC1", "PADDLE1",
-	"PADDLE2", "PADDLE3", "PADDLE4", "TOUCHPAD",
-]
-const JOY_AXIS_NAMES: PackedStringArray = [
-	"LEFT_X", "LEFT_Y", "RIGHT_X", "RIGHT_Y", "TRIGGER_LEFT", "TRIGGER_RIGHT"
-]
 ## A US keyboard's shifted symbols, and at the same index the key that types each unshifted.
 const SHIFTED_SYMBOLS := "~!@#$%^&*()_+{}|:\"<>?"
 const UNSHIFTED_KEYS := "`1234567890-=[]\\;',./"
@@ -56,8 +45,8 @@ var _held_mask: int = 0
 var _pointer: Vector2 = Vector2.ZERO
 ## Whether an input gesture is playing, including the frames that settle it.
 var _gesture_playing: bool = false
-## The value each injected joypad axis holds, keyed by _axis_key(device, axis).
-var _joy_axes: Dictionary = {}
+## The gamepad (godot_mcp_gamepad.gd beside this script), a child once the bridge is on.
+var _pads: Node
 
 
 func _ready() -> void:
@@ -76,6 +65,12 @@ func _ready() -> void:
 	var port: int = endpoint["port"]
 	if OS.get_environment("GODOT_MCP_BACKGROUND") == "1":
 		_enter_background()
+	var script_dir: String = (get_script() as Script).resource_path.get_base_dir()
+	_pads = (load(script_dir.path_join(GAMEPAD_SCRIPT)) as GDScript).new()
+	_pads.name = "Gamepad"
+	add_child(_pads)
+	if endpoint["shutOutRealGamepads"]:
+		_pads.shut_out_real_pads()
 	_stream = StreamPeerTCP.new()
 	_stream.big_endian = true
 	var error: Error = _stream.connect_to_host(HOST, port)
@@ -84,13 +79,16 @@ func _ready() -> void:
 		_stream = null
 
 
-## The server to dial, {port, token}: GODOT_MCP_PORT and GODOT_MCP_TOKEN from run_project, else
-## the attach file attach_project writes; empty when there is neither.
+## The server to dial and whether to shut the real pads out, {port, token,
+## shutOutRealGamepads}: GODOT_MCP_PORT, GODOT_MCP_TOKEN and GODOT_MCP_SHUT_OUT_REAL_GAMEPADS
+## from run_project, else the attach file attach_project writes; empty when there is neither.
+## override.cfg's joypad setting is written to match, but the bridge reads only these.
 func _find_endpoint() -> Dictionary:
 	var port_text: String = OS.get_environment("GODOT_MCP_PORT")
 	var token: String = OS.get_environment("GODOT_MCP_TOKEN")
 	if port_text.is_valid_int() and not token.is_empty():
-		return {"port": port_text.to_int(), "token": token}
+		var shut_out_real_gamepads: bool = OS.get_environment("GODOT_MCP_SHUT_OUT_REAL_GAMEPADS") == "1"
+		return {"port": port_text.to_int(), "token": token, "shutOutRealGamepads": shut_out_real_gamepads}
 	var path: String = ProjectSettings.globalize_path(ATTACH_FILE)
 	if not FileAccess.file_exists(path):
 		return {}
@@ -102,7 +100,11 @@ func _find_endpoint() -> Dictionary:
 	):
 		push_warning("godot-mcp bridge: %s holds no {port, token}; the bridge is off." % path)
 		return {}
-	return {"port": int(attach["port"]), "token": str(attach["token"])}
+	return {
+		"port": int(attach["port"]),
+		"token": str(attach["token"]),
+		"shutOutRealGamepads": bool(attach.get("shutOutRealGamepads", false)),
+	}
 
 
 func _process(_delta: float) -> void:
@@ -358,9 +360,9 @@ func _play_gesture(params: Dictionary) -> String:
 		"mouse_button":
 			error = await _play_mouse_button(params)
 		"gamepad_button":
-			error = await _play_gamepad_button(params)
+			error = await _pads.play_button(params)
 		"gamepad_axes":
-			error = await _play_gamepad_axes(params)
+			error = await _pads.play_axes(params)
 		"events":
 			error = await _play_events(params.get("events"))
 	return error
@@ -528,9 +530,9 @@ func _play_event(event: Variant) -> String:
 		"mouse_motion":
 			error = _play_raw_motion(spec)
 		"joypad_button":
-			error = await _play_raw_joy_button(spec)
+			error = await _pads.play_raw_button(spec)
 		"joypad_motion":
-			error = _play_raw_joy_motion(spec)
+			error = _pads.play_raw_motion(spec)
 		"action":
 			error = _play_action(spec)
 		"click_element":
@@ -610,112 +612,6 @@ func _play_action(spec: Dictionary) -> String:
 	event.pressed = bool(spec.get("pressed", true))
 	event.strength = float(spec.get("strength", 1.0))
 	_dispatch(event)
-	return ""
-
-
-func _play_gamepad_button(params: Dictionary) -> String:
-	var button: int = _parse_joy_button(params.get("button"))
-	if button < 0:
-		return _unknown_joy_button(params.get("button"))
-	var device: int = _parse_joy_device(params.get("device", 0))
-	if device < 0:
-		return _bad_joy_device(params.get("device"))
-	var action: String = str(params.get("action", "tap"))
-	if not action in ["tap", "press", "release"]:
-		return "unknown gamepad_button action '%s'; use tap, press or release" % action
-	if action != "release":
-		_send_joy_button(device, button, true)
-	if action == "tap":
-		await get_tree().process_frame
-	if action != "press":
-		_send_joy_button(device, button, false)
-	return ""
-
-
-## Moves every axis in params.axes ({axis, value}) from the value it holds to its value, over
-## params.durationMs; with params.release, sends 0.0 on each a frame after they arrive.
-func _play_gamepad_axes(params: Dictionary) -> String:
-	var device: int = _parse_joy_device(params.get("device", 0))
-	if device < 0:
-		return _bad_joy_device(params.get("device"))
-	if not params.get("axes") is Array:
-		return "axes must be an array of {axis, value}"
-	var targets: Dictionary = {}
-	for spec: Variant in params["axes"]:
-		var error: String = _read_axis_target(spec, targets)
-		if not error.is_empty():
-			return error
-	await _sweep_axes(device, targets, maxi(0, int(params.get("durationMs", 0))))
-	if bool(params.get("release", false)):
-		await get_tree().process_frame
-		for axis: int in targets:
-			_send_joy_motion(device, axis, 0.0)
-	return ""
-
-
-## Adds {axis, value} to targets as JoyAxis -> value; a String says why it cannot.
-func _read_axis_target(spec: Variant, targets: Dictionary) -> String:
-	if not spec is Dictionary:
-		return "an axis target must be an object {axis, value}"
-	var axis: int = _parse_joy_axis((spec as Dictionary).get("axis"))
-	if axis < 0:
-		return _unknown_joy_axis((spec as Dictionary).get("axis"))
-	var value: Variant = (spec as Dictionary).get("value")
-	var error: String = _check_axis_value(axis, value)
-	if error.is_empty():
-		targets[axis] = float(value)
-	return error
-
-
-## Sends each axis at its target at once, or, over duration_ms, one event per axis a frame along
-## the straight line from the value it holds.
-func _sweep_axes(device: int, targets: Dictionary, duration_ms: int) -> void:
-	if duration_ms == 0:
-		for axis: int in targets:
-			_send_joy_motion(device, axis, targets[axis])
-		return
-	var starts: Dictionary = {}
-	for axis: int in targets:
-		starts[axis] = float(_joy_axes.get(_axis_key(device, axis), 0.0))
-	var began: int = Time.get_ticks_msec()
-	var progress: float = 0.0
-	while progress < 1.0:
-		await get_tree().process_frame
-		progress = clampf(float(Time.get_ticks_msec() - began) / float(duration_ms), 0.0, 1.0)
-		for axis: int in targets:
-			var value: float = targets[axis]
-			if progress < 1.0:
-				value = lerpf(starts[axis], targets[axis], progress)
-			_send_joy_motion(device, axis, value)
-
-
-## A joypad button event; with pressed omitted, a press and a release one frame apart.
-func _play_raw_joy_button(spec: Dictionary) -> String:
-	var button: int = _parse_joy_button(spec.get("button"))
-	if button < 0:
-		return _unknown_joy_button(spec.get("button"))
-	var device: int = _parse_joy_device(spec.get("device", 0))
-	if device < 0:
-		return _bad_joy_device(spec.get("device"))
-	if spec.has("pressed"):
-		_send_joy_button(device, button, bool(spec["pressed"]))
-		return ""
-	_send_joy_button(device, button, true)
-	await get_tree().process_frame
-	_send_joy_button(device, button, false)
-	return ""
-
-
-func _play_raw_joy_motion(spec: Dictionary) -> String:
-	var targets: Dictionary = {}
-	var error: String = _read_axis_target(spec, targets)
-	if not error.is_empty():
-		return error
-	var device: int = _parse_joy_device(spec.get("device", 0))
-	if device < 0:
-		return _bad_joy_device(spec.get("device"))
-	for axis: int in targets:
-		_send_joy_motion(device, axis, targets[axis])
 	return ""
 
 
@@ -816,69 +712,6 @@ func _send_key(keycode: int, pressed: bool, unicode: int, modifiers: PackedStrin
 	event.alt_pressed = held.has("alt")
 	event.meta_pressed = held.has("meta")
 	_dispatch(event)
-
-
-## A joypad event carries its pad's device id, not the injected mark: Godot keys the pad state
-## and the actions by device, and _input filters only mouse events.
-func _send_joy_button(device: int, button: int, pressed: bool) -> void:
-	var event := InputEventJoypadButton.new()
-	event.device = device
-	event.button_index = button as JoyButton
-	event.pressed = pressed
-	event.pressure = 1.0 if pressed else 0.0
-	_dispatch(event)
-
-
-func _send_joy_motion(device: int, axis: int, value: float) -> void:
-	var event := InputEventJoypadMotion.new()
-	event.device = device
-	event.axis = axis as JoyAxis
-	event.axis_value = value
-	_joy_axes[_axis_key(device, axis)] = value
-	_dispatch(event)
-
-
-func _axis_key(device: int, axis: int) -> String:
-	return "%d:%d" % [device, axis]
-
-
-## The JoyButton a name like A or DPAD_DOWN stands for, in any case; -1 for an unknown name.
-func _parse_joy_button(value: Variant) -> int:
-	return JOY_BUTTON_NAMES.find(str(value).to_upper()) if value is String else -1
-
-
-func _unknown_joy_button(value: Variant) -> String:
-	var names: String = ", ".join(JOY_BUTTON_NAMES)
-	return "unknown gamepad button '%s'; the buttons are %s" % [str(value), names]
-
-
-## The JoyAxis a name like LEFT_X or TRIGGER_RIGHT stands for, in any case; -1 for an unknown name.
-func _parse_joy_axis(value: Variant) -> int:
-	return JOY_AXIS_NAMES.find(str(value).to_upper()) if value is String else -1
-
-
-func _unknown_joy_axis(value: Variant) -> String:
-	return "unknown gamepad axis '%s'; the axes are %s" % [str(value), ", ".join(JOY_AXIS_NAMES)]
-
-
-## Empty when value is a number in the axis's range: -1 to 1 for a stick, 0 to 1 for a trigger.
-func _check_axis_value(axis: int, value: Variant) -> String:
-	var low: float = 0.0 if axis >= JOY_AXIS_TRIGGER_LEFT else -1.0
-	if (value is float or value is int) and float(value) >= low and float(value) <= 1.0:
-		return ""
-	return "axis %s takes a value from %s to 1; got %s" % [JOY_AXIS_NAMES[axis], low, str(value)]
-
-
-## A device id 0-15 as an int; -1 for anything else. JSON numbers arrive as floats.
-func _parse_joy_device(value: Variant) -> int:
-	if not (value is float or value is int) or float(value) != floorf(float(value)):
-		return -1
-	var device: int = int(value)
-	return device if device >= 0 and device <= MAX_JOY_DEVICE else -1
-
-
-func _bad_joy_device(value: Variant) -> String:
-	return "device %s is not a joypad id; the pads are 0 (the first) to %d" % [value, MAX_JOY_DEVICE]
 
 
 ## Sends a new event object through Input, as the display server's own events go, and

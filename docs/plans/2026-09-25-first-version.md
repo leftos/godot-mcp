@@ -72,7 +72,11 @@ The user asked for our own plugin and MCP server for all their Godot projects. G
     - Pad state is cleared only in a project that sets it true, on `NOTIFICATION_APPLICATION_FOCUS_OUT` (`scene_tree.cpp` L934-942, `input.cpp` L1600-1623).
     - While it is true and the application is unfocused, the driver's real pad input is ignored (`input.cpp` L1652, L1684), but events injected through `parse_input_event` still get through.
     - Enum values were checked against `input_enums.h` L68-102.
-  - **Real pads are shut out by default** (user, 2026-09-25). This machine has four pads connected, and in the step 4b tests they moved menu focus and pushed an action's strength mid-test. Agent runs start with the setting true and the game marked unfocused, so only injected pad input reaches the game; a `run_project` option lets real pads through. Built after 4b as its follow-up; 4b itself shipped with the setting written false.
+  - **Shutting real pads out is opt-in** (user, 2026-09-25). This machine has four pads connected, and in the step 4b tests they moved menu focus and pushed an action's strength mid-test.
+    - The only script-reachable shut-out is to set the setting true and mark the game unfocused: pad state updates in `Input` before any script sees the event. A real focus-in turns the pads back on (`scene_tree.cpp` L934-942), so the bridge re-sends a focus-out after every focus change and restores held injected pad state.
+    - The costs: the game sees application focus-out notifications, and delve mutes on them (`Main.cs:340-352`, when its mute-in-background option is on). Held injected keys release on a real focus change, and held pad buttons fire "just pressed" again.
+    - So the default leaves real pads live (the setting written false). `shutOutRealGamepads: true` on `run_project`/`attach_project` turns the shut-out on, and the gamepad tests use it.
+    - This reverses a same-day first decision of "shut out by default", made before these costs were measured.
   - **Releases are sent explicitly** (`pressed=false`, or `axis_value=0.0`), and every event is a new object.
 - **Built (step 3):** the hold/release gestures are the `key` and `mouse_button` tools. The transform is `get_screen_transform()`, measured against a letterboxed window; the red proof is the three drag tests failing with `button_mask` forced to 0.
 
