@@ -5,13 +5,18 @@ namespace GodotMcp.Server.Session;
 /// <summary>
 /// The <c>override.cfg</c> that injects the bridge into a game run. Godot reads it for game runs only, never for the
 /// editor or <c>--import</c>. The server's own file starts with <see cref="Marker"/>; a file without it is the project's
-/// and is never written over or deleted.
+/// and is never written over or deleted. It also turns off <see cref="IgnoreJoypadOnUnfocusedSetting"/>, which would
+/// clear the injected pad's buttons, axes and actions when the window loses focus (Godot 4.7.2 <c>input.cpp</c>
+/// L1600-1623), and a background run is unfocused.
 /// </summary>
 internal static class OverrideFile
 {
     public const string FileName = "override.cfg";
     public const string Marker = "; godot-mcp: bridge injection, removed when the run stops";
     public const string AutoloadName = "GodotMcpBridge";
+
+    /// <summary>The project setting under its <c>[input_devices]</c> section, as <c>override.cfg</c> writes it.</summary>
+    public const string IgnoreJoypadOnUnfocusedSetting = "joypads/ignore_joypad_on_unfocused_application";
 
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
@@ -31,7 +36,8 @@ internal static class OverrideFile
         }
 
         string script = Path.GetFullPath(bridgeScriptPath).Replace('\\', '/');
-        File.WriteAllText(path, $"{Marker}\n[autoload]\n\n{AutoloadName}=\"*{script}\"\n", Utf8NoBom);
+        string content = $"{Marker}\n[autoload]\n\n{AutoloadName}=\"*{script}\"\n\n[input_devices]\n\n{IgnoreJoypadOnUnfocusedSetting}=false\n";
+        File.WriteAllText(path, content, Utf8NoBom);
     }
 
     /// <summary>Deletes the file if it is the server's own; returns whether it deleted one.</summary>

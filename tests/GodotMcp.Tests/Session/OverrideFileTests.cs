@@ -24,6 +24,20 @@ public sealed class OverrideFileTests : IDisposable
     }
 
     [Fact]
+    public void WriteKeepsJoypadStateWhenTheWindowLosesFocus()
+    {
+        OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"));
+
+        string[] lines = File.ReadAllLines(OverrideFile.PathIn(_project.Path));
+        int section = Array.IndexOf(lines, "[input_devices]");
+        int setting = Array.IndexOf(lines, "joypads/ignore_joypad_on_unfocused_application=false");
+        Assert.Equal(OverrideFile.Marker, lines[0]);
+        Assert.True(section > 0, string.Join('\n', lines));
+        Assert.True(setting > section, string.Join('\n', lines));
+        Assert.DoesNotContain(lines[(section + 1)..setting], line => line.StartsWith('['));
+    }
+
+    [Fact]
     public void WriteRefusesAnUnmarkedFileAndLeavesItByteIdentical()
     {
         string path = OverrideFile.PathIn(_project.Path);

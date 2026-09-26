@@ -22,7 +22,17 @@ internal sealed partial class RuntimeTools
     private static readonly TimeSpan PerStepAllowance = TimeSpan.FromMilliseconds(100);
     private static readonly string[] Buttons = ["left", "right", "middle"];
     private static readonly string[] Modifiers = ["shift", "ctrl", "alt", "meta"];
-    private static readonly string[] EventTypes = ["key", "mouse_button", "mouse_motion", "action", "click_element", "wait"];
+    private static readonly string[] EventTypes =
+    [
+        "key",
+        "mouse_button",
+        "mouse_motion",
+        "joypad_button",
+        "joypad_motion",
+        "action",
+        "click_element",
+        "wait",
+    ];
 
     [McpServerTool(Name = "click")]
     [Description(
@@ -158,10 +168,13 @@ internal sealed partial class RuntimeTools
     [Description(
         "Sends raw events to the running game, one frame apart; x and y are viewport coordinates. Types: "
             + "key {key, pressed?, modifiers?, unicode?}; mouse_button {x, y, button?, pressed?, doubleClick?}; "
-            + "mouse_motion {x, y, relative_x?, relative_y?, button_mask?}; action {action, pressed?, strength?}; "
-            + "click_element {element, button?, doubleClick?}; wait {ms}. An omitted pressed on key or mouse_button is a press "
-            + "and a release a frame apart; a motion's relative defaults to the step from the last pointer position and its "
-            + "button_mask to the buttons held now."
+            + "mouse_motion {x, y, relative_x?, relative_y?, button_mask?}; joypad_button {button, pressed?, device?}; "
+            + "joypad_motion {axis, value, device?}; action {action, pressed?, strength?}; "
+            + "click_element {element, button?, doubleClick?}; wait {ms}. An omitted pressed on key, mouse_button or "
+            + "joypad_button is a press and a release a frame apart; a motion's relative defaults to the step from the last "
+            + "pointer position and its button_mask to the buttons held now. Joypad names and ranges are gamepad_button's and "
+            + "gamepad_axis's; device defaults to 0."
+            + PadNote
             + ErrorNote
     )]
     public Task<string> SimulateInputAsync(

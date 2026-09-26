@@ -16,6 +16,24 @@ window/size/viewport_height=360
 window/stretch/mode="canvas_items"
 window/stretch/aspect="keep"
 
+[input]
+
+probe_jump={
+"deadzone": 0.2,
+"events": [Object(InputEventJoypadButton,"resource_local_to_scene":false,"resource_name":"","device":-1,"button_index":0,"pressure":0.0,"pressed":true,"script":null)
+]
+}
+probe_right={
+"deadzone": 0.2,
+"events": [Object(InputEventJoypadMotion,"resource_local_to_scene":false,"resource_name":"","device":-1,"axis":0,"axis_value":1.0,"script":null)
+]
+}
+
+[input_devices]
+
+; On here, so GamepadTests prove the injection override.cfg turns it off.
+joypads/ignore_joypad_on_unfocused_application=true
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
