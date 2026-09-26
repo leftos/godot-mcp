@@ -4,7 +4,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 
 - [`plans/MAIN.md`](./plans/MAIN.md): open work, in order.
 - [`plans/2026-09-25-first-version.md`](./plans/2026-09-25-first-version.md): the first version's design, the user's decisions and the steps.
-- `DEVELOPMENT.md`: toolchain, commands and gates (written with step 0).
+- [`DEVELOPMENT.md`](./DEVELOPMENT.md): toolchain, commands, gates, test coverage and footguns.
 
 ## Glossary
 
@@ -15,7 +15,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Marker | The first-line comment that identifies an `override.cfg` as the server's own; one without it is the user's and is never touched |
 | Handshake | The bridge's first frame: the session token and the project path, which the server checks so a stale bridge from another run is refused |
 | Gesture | A high-level input tool (click, drag, type_text, hold/release) that sends the right sequence of events over frames, as against the raw event list of `simulate_input` |
-| Headless tool | A scene or node edit done by a one-off `godot --headless --script headless/operations.gd` run, with its request and result passed as JSON files |
+| Headless tool | A scene or node edit done by a one-off `godot --headless --script headless/operations.gd` run, with its request and result passed as JSON files (step 5; not built) |
 | InputProbe | The fixture Godot project the integration tests launch (`tests/fixtures/InputProbe`): a label, a button, a red square, a drag source, a drop target, a LineEdit and a 12x12 button at known places, at a 640x360 base size stretched `canvas_items`/`keep`, so launching it with `--resolution 1000x900` letterboxes it. For gamepads it has the actions `probe_jump` (A) and `probe_right` (left stick right), a `PadProbe` counting jumps, and a `Menu` column of three buttons with focus on the first |
 | Attached session, attach file | A session on a game `run_project` did not start: `attach_project` writes the injection `override.cfg` and a one-use `<project>/.godot/godot-mcp/attach.json` ({port, token}) and waits for a game launched after it to dial in; `detach_project` ends it and leaves the game running. It has no captured output |
 | Shut out (real gamepads) | The opt-in `shutOutRealGamepads` mode that keeps a machine's real pads from reaching a run, by marking the game unfocused; the bridge half is `bridge/godot_mcp_gamepad.gd` |

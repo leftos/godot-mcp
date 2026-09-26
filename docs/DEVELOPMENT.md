@@ -23,7 +23,7 @@ Everything runs from the repo root through `run.ps1`, and every command runs und
 | `pwsh run.ps1 itest [-Filter "*Class"]` | integration tests against the real Godot (`tests/GodotMcp.IntegrationTests`) | 300 s, plus MTP `--timeout 4m` | 36 tests, about 70 s |
 | `pwsh run.ps1 format` | `dotnet format style --severity info`, then CSharpier | 180 s per pass | |
 | `pwsh run.ps1 publish` | framework-dependent win-x64 to `bin/publish/godot-mcp.exe`, with `bin/publish/bridge/` beside it | 300 s | |
-| `prek run --all-files` | CSharpier check, `dotnet build -warnaserror`, unit tests, gdlint on `bridge/` and `headless/` | | sees tracked files only |
+| `prek run --all-files` | CSharpier check, `dotnet build -warnaserror`, unit tests, gdlint on `bridge/` and `headless/` (empty until step 5) | | sees tracked files only |
 
 `-Filter` becomes `--filter-class`; a class filter needs the full name or a wildcard.
 
