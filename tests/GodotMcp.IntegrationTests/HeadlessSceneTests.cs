@@ -361,9 +361,41 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
             _tools.SaveSceneAsync(csProbe.Directory, "main.tscn", cancellationToken: cancellation)
         );
 
-        Assert.Equal(
-            "save_scene failed: res://main.tscn uses C# scripts and the project's C# build failed; fix it first (validate lists the errors).",
-            refused.Message
+        // The C# script's missing class is what Godot logs while the scene loads.
+        Assert.StartsWith(
+            "save_scene failed: res://main.tscn uses C# scripts and the project's C# build failed; fix it first (validate lists the errors)."
+                + "\nGodot logged:\n",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(before, File.ReadAllText(scene));
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task SaveSceneRefusesWhenAnInstancedSceneUsesCSharpAndTheBuildFailed()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        string source = File.ReadAllText(csProbe.SourcePath("CsProbeNode.cs"));
+        csProbe.WriteSource("CsProbeNode.cs", source.Replace("\"hidden\";", "\"hidden\"", StringComparison.Ordinal));
+        string scene = Path.Combine(csProbe.Directory, "holder.tscn");
+        File.WriteAllText(
+            scene,
+            "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"PackedScene\" path=\"res://main.tscn\" id=\"1_main\"]\n\n"
+                + "[node name=\"Holder\" type=\"Node\"]\n\n[node name=\"Probe\" parent=\".\" instance=ExtResource(\"1_main\")]\nSpeed = 5\n"
+        );
+        string before = File.ReadAllText(scene);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SaveSceneAsync(csProbe.Directory, "holder.tscn", cancellationToken: cancellation)
+        );
+
+        // The C# script's missing class is what Godot logs while the instanced scene loads.
+        Assert.StartsWith(
+            "save_scene failed: res://holder.tscn uses C# scripts and the project's C# build failed; fix it first (validate lists the errors)."
+                + "\nGodot logged:\n",
+            refused.Message,
+            StringComparison.Ordinal
         );
         Assert.Equal(before, File.ReadAllText(scene));
     }

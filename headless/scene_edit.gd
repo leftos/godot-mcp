@@ -109,20 +109,21 @@ static func csharp_refusal(scene_path: String, uses_csharp: bool, build: String)
 	)
 
 
-## Whether the scene file at path uses a C# script directly.
+## Whether the scene file at path uses a C# script, directly or through a scene it instances or
+## inherits (a base scene is among its dependencies), however deep.
 static func file_uses_csharp(path: String) -> bool:
-	if not FileAccess.file_exists(path):
-		return false
-	return not csharp_dependencies(ResourceLoader.get_dependencies(path)).is_empty()
+	return _scene_uses_csharp(path, {})
 
 
-## Whether root or a node under it, instanced ones included, has a C# script.
+## Whether root or a node under it, instanced ones included, has a C# script, or is the root of an
+## instanced scene whose file uses one: a C# script that cannot load while the build is red leaves
+## its node with no script, so the instance's file is read instead.
 static func tree_uses_csharp(root: Node) -> bool:
 	var nodes: Array[Node] = root.find_children("*", "", true, false)
 	nodes.append(root)
+	var visited: Dictionary = {}
 	for node in nodes:
-		var script := node.get_script() as Script
-		if script != null and script.resource_path.ends_with(".cs"):
+		if _node_uses_csharp(node, visited):
 			return true
 	return false
 
@@ -130,12 +131,52 @@ static func tree_uses_csharp(root: Node) -> bool:
 ## The res:// paths of the C# scripts among ResourceLoader.get_dependencies entries, which read
 ## "<path>[::<type>]" or, for a dependency saved with its UID, "<uid>::<type>::<path>".
 static func csharp_dependencies(dependencies: PackedStringArray) -> PackedStringArray:
+	return _dependency_paths(dependencies, [".cs"])
+
+
+static func _node_uses_csharp(node: Node, visited: Dictionary) -> bool:
+	var script := node.get_script() as Script
+	if script != null and script.resource_path.ends_with(".cs"):
+		return true
+	return not node.scene_file_path.is_empty() and _scene_uses_csharp(node.scene_file_path, visited)
+
+
+## Whether the scene file at path, or a scene among its dependencies followed recursively, has a C#
+## script among its dependencies. visited holds the scenes already read, so a cycle ends.
+static func _scene_uses_csharp(path: String, visited: Dictionary) -> bool:
+	if visited.has(path) or not FileAccess.file_exists(path):
+		return false
+	visited[path] = true
+	var dependencies: PackedStringArray = ResourceLoader.get_dependencies(path)
+	if not csharp_dependencies(dependencies).is_empty():
+		return true
+	for scene in _dependency_paths(dependencies, [".tscn", ".scn"]):
+		if _scene_uses_csharp(scene, visited):
+			return true
+	return false
+
+
+## The res:// paths among ResourceLoader.get_dependencies entries that end in one of extensions.
+static func _dependency_paths(
+	dependencies: PackedStringArray, extensions: Array
+) -> PackedStringArray:
 	var found: PackedStringArray = []
 	for dependency in dependencies:
 		for part in dependency.split("::"):
-			if part.begins_with(RES_PREFIX) and part.ends_with(".cs") and not found.has(part):
+			if (
+				part.begins_with(RES_PREFIX)
+				and _ends_with_any(part, extensions)
+				and not found.has(part)
+			):
 				found.append(part)
 	return found
+
+
+static func _ends_with_any(text: String, suffixes: Array) -> bool:
+	for suffix: String in suffixes:
+		if text.ends_with(suffix):
+			return true
+	return false
 
 
 ## Packs root and saves it to the text scene at path with the uid uid, as SceneFiles.save_resource

@@ -216,6 +216,28 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetNodePropertiesRefusesAnArrayOfNodesSayingWhy()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "squad.gd"), "extends Node2D\n\n@export var targets: Array[Node2D]\n");
+        string scene =
+            "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"Script\" path=\"res://squad.gd\" id=\"1\"]\n\n"
+            + "[node name=\"Squad\" type=\"Node2D\"]\nscript = ExtResource(\"1\")\n\n[node name=\"T\" type=\"Node2D\" parent=\".\"]\n";
+        File.WriteAllText(Path.Combine(probe.Directory, "squad.tscn"), scene);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SetNodePropertiesAsync(probe.Directory, "squad.tscn", [new PropertyUpdate(".", "targets", Json("[\"T\"]"))], cancellation)
+        );
+
+        Assert.Equal(
+            "set_node_properties failed: Property 'targets' on '.': arrays of Object types (here Array[Node2D]) cannot be set from JSON.",
+            refused.Message
+        );
+        Assert.Equal(scene, Read(probe.Directory, "squad.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task SetNodePropertiesIsAllOrNothing()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -501,7 +523,11 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
             _tools.SetNodePropertiesAsync(probe.Directory, "level.tscn", updates, cancellation)
         );
 
-        Assert.Equal("set_node_properties failed: Property 'hframes' on 'Pic' did not take the value: it read 1 after the set.", refused.Message);
+        Assert.Equal(
+            "set_node_properties failed: Property 'hframes' on 'Pic' did not take the value: it read 1 after the set.\nGodot logged:\n"
+                + "Amount of hframes cannot be smaller than 1. (scene/2d/sprite_2d.cpp:347)",
+            refused.Message
+        );
         Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
     }
 

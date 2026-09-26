@@ -202,7 +202,8 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
             _tools.ConnectSignalAsync(csProbe.Directory, "main.tscn", ".", "ready", new ConnectTarget(".", "PlayStep"), cancellation)
         );
 
-        Assert.Equal("connect_signal failed: " + CSharpBuildFailed, refused.Message);
+        // The C# script's missing class is what Godot logs while the scene loads.
+        Assert.StartsWith("connect_signal failed: " + CSharpBuildFailed + "\nGodot logged:\n", refused.Message, StringComparison.Ordinal);
         Assert.Equal(before, Read(csProbe.Directory, "main.tscn"));
     }
 

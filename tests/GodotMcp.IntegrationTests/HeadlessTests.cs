@@ -311,6 +311,23 @@ public sealed class HeadlessTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task GetSceneFileTreeQuotesTheErrorsGodotLoggedForABrokenScene()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteFile(probe.Directory, "broken.tscn", "[gd_scene format=3]\n\n[node name=\"Broken\" type=\"Node2D\"]\n\nposition = )\n");
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => TreeAsync(probe.Directory, "broken.tscn", null, cancellation));
+
+        Assert.StartsWith(
+            "get_scene_file_tree failed: res://broken.tscn did not load as a scene; engineErrors say why\nGodot logged:\n",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Contains("Parse Error", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task GetSceneFileTreePages()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

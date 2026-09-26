@@ -1,7 +1,9 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using GodotMcp.Server.Tools;
 using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Session;
@@ -168,8 +170,52 @@ internal static class HeadlessRunner
             return reply;
         }
 
+        throw new SessionException(FailureMessage(request.Operation, reply));
+    }
+
+    /// <summary>
+    /// The message of an operation that refused: its error, then under "Godot logged:" one line for each error (not warning)
+    /// Godot logged while it ran, <c>message (file:line)</c>, at most <see cref="ErrorReport.MaxPerResult"/> of them with each
+    /// message cut to <see cref="ErrorReport.MaxMessageLength"/> characters, and "(n more)" for the rest.
+    /// </summary>
+    internal static string FailureMessage(string operation, JsonObject reply)
+    {
         string error = reply["error"]?.GetValueKind() == JsonValueKind.String ? reply["error"]!.GetValue<string>() : "it gave no reason";
-        throw new SessionException($"{request.Operation} failed: {error}");
+        string message = $"{operation} failed: {error}";
+        JsonArray logged = reply["engineErrors"] as JsonArray ?? [];
+        List<JsonObject> errors = [.. logged.OfType<JsonObject>().Where(entry => Text(entry, "type") == "error")];
+        if (errors.Count == 0)
+        {
+            return message;
+        }
+
+        StringBuilder text = new(message);
+        text.Append("\nGodot logged:");
+        foreach (JsonObject entry in errors.Take(ErrorReport.MaxPerResult))
+        {
+            string cut = OutputBuffer.Cut(Text(entry, "message"), ErrorReport.MaxMessageLength);
+            text.Append('\n').Append(cut).Append(" (").Append(Text(entry, "file")).Append(':').Append(Line(entry)).Append(')');
+        }
+
+        if (errors.Count > ErrorReport.MaxPerResult)
+        {
+            text.Append(CultureInfo.InvariantCulture, $"\n({errors.Count - ErrorReport.MaxPerResult} more)");
+        }
+
+        return text.ToString();
+    }
+
+    private static string Text(JsonObject entry, string name) =>
+        entry[name]?.GetValueKind() == JsonValueKind.String ? entry[name]!.GetValue<string>() : string.Empty;
+
+    /// <summary>The entry's line as an integer; GDScript may write it as a float.</summary>
+    private static string Line(JsonObject entry)
+    {
+        JsonNode? value = entry["line"];
+        bool isNumber = value?.GetValueKind() == JsonValueKind.Number;
+        return isNumber && double.TryParse(value!.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double line)
+            ? line.ToString("0", CultureInfo.InvariantCulture)
+            : "0";
     }
 
     /// <exception cref="SessionException">The text is not a JSON object.</exception>

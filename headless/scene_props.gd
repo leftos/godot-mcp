@@ -245,6 +245,8 @@ static func _converted(
 	if info.type == TYPE_NIL and held != null:
 		info = {"type": typeof(held)}
 	var converted: Array = SceneValues.from_json(value, info, root)
+	if not converted[0] and converted.size() > 2:
+		return {"error": "Property '%s' on '%s': %s." % [property, path, converted[2]]}
 	if not converted[0]:
 		return {
 			"error":

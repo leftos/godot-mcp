@@ -148,7 +148,19 @@ func test_from_json_builds_a_typed_array_and_keeps_an_untyped_one() -> void:
 	var node_info: Dictionary = {
 		"type": TYPE_ARRAY, "hint": PROPERTY_HINT_ARRAY_TYPE, "hint_string": "Node"
 	}
-	assert_eq(_json.from_json([], node_info), REFUSED, "an Array of objects")
+	var refusal: String = "arrays of Object types (here Array[Node]) cannot be set from JSON"
+	assert_eq(_json.from_json([], node_info), [false, null, refusal], "an Array of objects")
+
+
+func test_from_json_refuses_an_exported_array_of_objects() -> void:
+	# An exported Array[Node2D]'s entry, as 4.7.2 gdscript_parser.cpp L4977-4985 writes it.
+	var exported: Dictionary = {
+		"type": TYPE_ARRAY,
+		"hint": PROPERTY_HINT_TYPE_STRING,
+		"hint_string": "%d/%d:Node2D" % [TYPE_OBJECT, PROPERTY_HINT_NODE_TYPE],
+	}
+	var refusal: String = "arrays of Object types (here Array[Node2D]) cannot be set from JSON"
+	assert_eq(_json.from_json(["T"], exported), [false, null, refusal], "an exported Array[Node2D]")
 
 
 func test_from_json_builds_a_dictionary_with_typed_keys() -> void:
