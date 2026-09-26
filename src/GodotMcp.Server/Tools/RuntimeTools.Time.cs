@@ -63,14 +63,18 @@ internal sealed partial class RuntimeTools
             + "equal to a value, a signal's next emission, or a Godot Expression returning true. Returns {met, elapsedMs, "
             + "frames, value} (args instead of value for a signal); on timeout {met: false, elapsedMs, frames, last}, the last "
             + "value seen (a signal wait's timeout has no last), which is not an error. While the game is paused only a "
-            + "signal wait is accepted. A property the node does not have fails the call once the node is found. An "
-            + "expression that does not parse fails the call; one that fails while it runs counts as not met, and its error "
-            + "is in errors."
+            + "signal wait or a check-once wait (timeoutMs 0) is accepted. A property the node does not have fails the call "
+            + "once the node is found. An expression that does not parse fails the call; one that fails while it runs counts "
+            + "as not met, and its error is in errors."
     )]
     public async Task<string> WaitForAsync(
         [Description("Exactly one of {node, exists}, {node, property, equals}, {node, signal}, {expression} (with node optional).")]
             WaitCondition condition,
-        [Description("How long to wait, in milliseconds, 1 to 120000.")] int timeoutMs = 10_000,
+        [Description(
+            "How long to wait, in milliseconds, 0 to 120000. 0 checks the condition once, now, and works while the game is paused; "
+                + "it is refused for a signal wait."
+        )]
+            int timeoutMs = 10_000,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
@@ -109,13 +113,18 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>The bridge's wait parameters: the condition's fields as given, its kind, and timeoutMs.</summary>
-    /// <exception cref="McpException">The condition is not exactly one kind, or timeoutMs is out of range.</exception>
+    /// <exception cref="McpException">The condition is not exactly one kind, timeoutMs is out of range, or 0 for a signal wait.</exception>
     internal static JsonObject BuildWaitParameters(WaitCondition? condition, int timeoutMs)
     {
         string kind = CheckCondition(condition);
-        if (timeoutMs is < 1 or > MaxWaitMs)
+        if (timeoutMs is < 0 or > MaxWaitMs)
         {
-            throw new McpException($"timeoutMs must be between 1 and {MaxWaitMs}.");
+            throw new McpException($"timeoutMs must be between 0 and {MaxWaitMs}.");
+        }
+
+        if (timeoutMs == 0 && kind == "signal")
+        {
+            throw new McpException("timeoutMs 0 checks once, which a signal wait cannot do; give it a timeout.");
         }
 
         JsonObject parameters = JsonSerializer.SerializeToNode(condition, Json)!.AsObject();

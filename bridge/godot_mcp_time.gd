@@ -25,7 +25,8 @@ signal step_woken(arrived: bool)
 ## Numbers in a property wait match within this.
 const EQUAL_TOLERANCE := 1e-6
 const PAUSED_REFUSAL := (
-	"The game is paused, so only a signal wait can be met; " + "resume or step it first."
+	"The game is paused, so only a signal wait or a check-once wait (timeoutMs 0) can be met; "
+	+ "resume or step it first."
 )
 const STEPPING_REFUSAL := (
 	"A step is still running on this game; wait for its reply before pause, resume or "
@@ -253,18 +254,26 @@ func _run_ticks(count: int) -> int:
 
 ## Waits for params.kind (exists, property, signal or expression) with params {node, exists,
 ## property, equals, signal, expression, timeoutMs}. Returns {result: {met, elapsedMs, frames,
-## value | args}}, with last instead of value on a timeout, or {error}.
+## value | args}}, with last instead of value on a timeout, or {error}. A timeoutMs of 0 checks
+## the condition once, now, paused or not.
 func wait_for(params: Dictionary) -> Dictionary:
 	var kind: String = str(params.get("kind", ""))
 	var timeout_ms: int = int(params.get("timeoutMs", 10000))
 	if kind == "signal":
 		return await _wait_for_signal(_text(params, "node"), _text(params, "signal"), timeout_ms)
-	if get_tree().paused:
-		return {"error": PAUSED_REFUSAL}
+	var refusal: String = _paused_refusal(get_tree().paused, timeout_ms)
+	if not refusal.is_empty():
+		return {"error": refusal}
 	var probe: Variant = _make_probe(kind, params)
 	if probe is String:
 		return {"error": probe}
 	return await _poll(probe, timeout_ms)
+
+
+## Why a non-signal wait cannot run now, or empty: a paused tree runs no frames to check it on,
+## so only a check-once wait (timeout_ms 0), which needs none, runs while paused.
+func _paused_refusal(paused: bool, timeout_ms: int) -> String:
+	return PAUSED_REFUSAL if paused and timeout_ms > 0 else ""
 
 
 ## A Callable returning [met, value], or [false, null, error] when the wait cannot be met, for

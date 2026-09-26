@@ -38,6 +38,7 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.Equal(
             [
                 "attach_project",
+                "batch_drive",
                 "call_method",
                 "click",
                 "compare_screenshot",
@@ -101,6 +102,7 @@ public sealed class McpServerSmokeTests : IDisposable
         Dictionary<string, (bool?, bool?, bool?)> expected = new()
         {
             ["attach_project"] = changesTheGame,
+            ["batch_drive"] = destructive,
             ["call_method"] = destructive,
             ["click"] = changesTheGame,
             ["compare_screenshot"] = readsTheGame,
@@ -139,7 +141,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(28, actual.Count);
+        Assert.Equal(29, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

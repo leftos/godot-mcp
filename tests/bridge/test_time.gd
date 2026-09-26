@@ -80,6 +80,28 @@ func test_parse_expression_accepts_its_inputs() -> void:
 	time.free()
 
 
+func test_paused_refusal_lets_only_a_check_once_wait_run_while_paused() -> void:
+	var time: Node = _time_script.new()
+	assert_eq(time._paused_refusal(true, 1), time.PAUSED_REFUSAL, "a timed wait while paused")
+	assert_eq(time._paused_refusal(true, 0), "", "a check-once wait while paused")
+	assert_eq(time._paused_refusal(false, 1), "", "a timed wait while running")
+	assert_eq(time._paused_refusal(false, 0), "", "a check-once wait while running")
+	time.free()
+
+
+func test_poll_with_timeout_zero_checks_once_without_a_frame() -> void:
+	var time: Node = _time_script.new()
+	var met: Dictionary = time._poll(func() -> Array: return [true, 7], 0)["result"]
+	var unmet: Dictionary = time._poll(func() -> Array: return [false, "idle"], 0)["result"]
+	assert_eq(met["met"], true, "met")
+	assert_eq(met["value"], 7, "the value seen")
+	assert_eq(met["frames"], 0, "no frame waited for when met")
+	assert_eq(unmet["met"], false, "not met is a result")
+	assert_eq(unmet["last"], "idle", "the last value seen")
+	assert_eq(unmet["frames"], 0, "no frame waited for when not met")
+	time.free()
+
+
 func test_text_reads_only_string_fields() -> void:
 	var time: Node = _time_script.new()
 	assert_eq(time._text({"node": "Main"}, "node"), "Main", "a string")

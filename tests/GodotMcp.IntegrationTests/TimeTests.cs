@@ -18,7 +18,8 @@ public sealed class TimeTests : IAsyncDisposable
     private const int TestTimeoutMs = 45_000;
     private const int ScriptTimeoutMs = 10_000;
     private const string Probe = "scene_tree.root.get_node(\"TimeProbe\")";
-    private const string PausedRefusal = "The game is paused, so only a signal wait can be met; resume or step it first.";
+    private const string PausedRefusal =
+        "The game is paused, so only a signal wait or a check-once wait (timeoutMs 0) can be met; resume or step it first.";
     private const string SteppingRefusal = "A step is still running on this game; wait for its reply before pause, resume or another step.";
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
@@ -243,6 +244,23 @@ public sealed class TimeTests : IAsyncDisposable
         );
 
         Assert.Contains(PausedRefusal, refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACheckOnceWaitWorksWhilePaused()
+    {
+        await StartAsync(TestContext.Current.CancellationToken);
+        await FrameAsync("pause");
+
+        JsonObject holds = await WaitAsync(new WaitCondition(Node: "TimeProbe", Property: "state", EqualsValue: Json("\"idle\"")), 0);
+        JsonObject fails = await WaitAsync(new WaitCondition(Node: "TimeProbe", Property: "state", EqualsValue: Json("\"done\"")), 0);
+
+        Assert.True(holds["met"]!.GetValue<bool>(), holds.ToJsonString());
+        Assert.Equal("idle", holds["value"]!.GetValue<string>());
+        Assert.Equal(0, holds["frames"]!.GetValue<int>());
+        Assert.False(fails["met"]!.GetValue<bool>(), fails.ToJsonString());
+        Assert.Equal("idle", fails["last"]!.GetValue<string>());
+        Assert.Equal(0, fails["frames"]!.GetValue<int>());
     }
 
     [Fact(Timeout = TestTimeoutMs)]

@@ -5,6 +5,9 @@ namespace GodotMcp.Server;
 /// <summary>Every message the server logs; all of it goes to stderr.</summary>
 internal static partial class Log
 {
+    [LoggerMessage(Level = LogLevel.Error, Message = "batch_drive step {Index} ({Step}) failed with an unexpected exception.")]
+    public static partial void BatchStepFailed(ILogger logger, Exception exception, int index, string step);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Bridge connection ended: {Reason}")]
     public static partial void BridgeConnectionEnded(ILogger logger, string reason);
 

@@ -32,7 +32,8 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Tool annotations | The MCP hints each tool declares (`readOnlyHint`, `destructiveHint`, `openWorldHint`) so a client's permission rules can allow the reads |
 | Frame control | Pausing, stepping N frames and scaling time in a running game, so a screenshot or check lands on an exact frame (`frame_control`; `wait_for` waits for a node, a property, a signal or an expression) |
 | Profile, preset | A project's `godot-mcp.json` beside `project.godot`: its launch defaults, and named launch presets that `run_project`'s `options.preset` layers over them |
-| Batch drive | One tool call that plays a list of steps (input, waits, method calls, assertions, screenshots) and stops at the first failed assertion (step 13; not built) |
+| Batch drive | `batch_drive`: one tool call that plays a list of steps (runtime tools and assertions) against a running game and stops at the first failed step |
+| Check-once wait | `wait_for` with `timeoutMs: 0`: the condition is checked once, now, even while the game is paused |
 | Hang watchdog | The server's report, when a request times out, of whether the game's main thread is still running (it answers a ping) or stuck (it does not), with the stuck process's CPU, threads and last stderr lines, in place of a bare timeout |
 | Baseline | A stored screenshot (and its crop) a new capture is compared against, giving the changed pixels, their bounding box and a diff image (`save_screenshot_baseline`, `compare_screenshot`) |
 | gdtest | The headless GDScript unit-test run (`pwsh run.ps1 gdtest`, `tests/bridge`): many bridge-logic tests in one Godot process, as against an integration test's launch per test |

@@ -100,7 +100,7 @@ public sealed class TimeValidationTests : IDisposable
     }
 
     [Theory]
-    [InlineData(0)]
+    [InlineData(-1)]
     [InlineData(-5)]
     [InlineData(120_001)]
     public async Task WaitForRefusesATimeoutOutOfRange(int timeoutMs)
@@ -109,7 +109,27 @@ public sealed class TimeValidationTests : IDisposable
             _tools.WaitForAsync(new WaitCondition(Expression: "true"), timeoutMs, null, TestContext.Current.CancellationToken)
         );
 
-        Assert.Equal("timeoutMs must be between 1 and 120000.", refused.Message);
+        Assert.Equal("timeoutMs must be between 0 and 120000.", refused.Message);
+    }
+
+    [Fact]
+    public async Task ACheckOnceWaitIsAccepted()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(Expression: "true"), 0, null, TestContext.Current.CancellationToken)
+        );
+
+        Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACheckOnceSignalWaitIsRefused()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(Node: "Main", Signal: "fired"), 0, null, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("timeoutMs 0 checks once, which a signal wait cannot do; give it a timeout.", refused.Message);
     }
 
     [Fact]
