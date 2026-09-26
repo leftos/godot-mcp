@@ -285,6 +285,9 @@ func _json_text(value: Variant) -> String:
 ## Whether the property reads back what was set. A native float property may store 32 bits, so
 ## a float compares approximately; anything else must match in type and value.
 static func _same(after: Variant, value: Variant) -> bool:
+	# A cleared native Object property reads back as a null Ref, which is TYPE_OBJECT, not TYPE_NIL.
+	if typeof(value) == TYPE_NIL:
+		return typeof(after) == TYPE_NIL or (typeof(after) == TYPE_OBJECT and after == null)
 	if typeof(after) == TYPE_FLOAT and typeof(value) == TYPE_FLOAT:
 		return is_equal_approx(after, value)
 	return typeof(after) == typeof(value) and after == value

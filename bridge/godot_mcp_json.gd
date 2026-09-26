@@ -118,7 +118,8 @@ static func _array_to_json(values: Variant, depth: int) -> Array:
 ## (_resource_to_json), any other Object as {class, string}, and a freed one as "<freed object>".
 static func _object_to_json(value: Variant, depth: int) -> Variant:
 	if not is_instance_valid(value):
-		return "<freed object>"
+		# A native getter's null Ref is an invalid Object too; only str() tells it from a freed one.
+		return null if str(value) == "<Object#null>" else "<freed object>"
 	if value is Node:
 		return _node_to_json(value)
 	if value is Resource:

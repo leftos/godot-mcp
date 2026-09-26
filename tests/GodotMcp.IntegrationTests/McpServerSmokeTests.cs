@@ -37,6 +37,7 @@ public sealed class McpServerSmokeTests : IDisposable
 
         Assert.Equal(
             [
+                "add_node",
                 "attach_project",
                 "batch_drive",
                 "call_method",
@@ -52,6 +53,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "gamepad_stick",
                 "get_debug_output",
                 "get_errors",
+                "get_node_properties",
                 "get_scene_file_tree",
                 "get_scene_tree",
                 "get_ui_elements",
@@ -65,6 +67,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "run_script",
                 "save_scene",
                 "save_screenshot_baseline",
+                "set_node_properties",
                 "set_property",
                 "simulate_input",
                 "stop_project",
@@ -107,6 +110,7 @@ public sealed class McpServerSmokeTests : IDisposable
         (bool?, bool?, bool?) destructive = (false, true, false);
         Dictionary<string, (bool?, bool?, bool?)> expected = new()
         {
+            ["add_node"] = changesTheGame,
             ["attach_project"] = changesTheGame,
             ["batch_drive"] = destructive,
             ["call_method"] = destructive,
@@ -122,6 +126,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["gamepad_stick"] = changesTheGame,
             ["get_debug_output"] = readsTheGame,
             ["get_errors"] = readsTheGame,
+            ["get_node_properties"] = readsTheGame,
             ["get_scene_file_tree"] = readsTheGame,
             ["get_scene_tree"] = readsTheGame,
             ["get_ui_elements"] = readsTheGame,
@@ -135,6 +140,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["run_script"] = destructive,
             ["save_scene"] = changesTheGame,
             ["save_screenshot_baseline"] = changesTheGame,
+            ["set_node_properties"] = changesTheGame,
             ["set_property"] = changesTheGame,
             ["simulate_input"] = changesTheGame,
             ["stop_project"] = destructive,
@@ -153,7 +159,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(35, actual.Count);
+        Assert.Equal(38, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

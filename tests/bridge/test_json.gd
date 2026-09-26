@@ -263,6 +263,19 @@ func test_node_reads_relative_to_node_root() -> void:
 	root.free()
 
 
+func test_null_ref_reads_null_and_a_freed_object_reads_freed() -> void:
+	var sprite := Sprite2D.new()
+	var empty: Variant = sprite.texture
+	assert_eq(typeof(empty), TYPE_OBJECT, "a native getter's empty Ref is an Object")
+	assert_eq(_json.to_json(empty), null, "a null Ref at the top level")
+	assert_eq(_json.to_json([empty]), [null], "a null Ref in an Array")
+	assert_eq(_json.to_json({"texture": empty}), {"texture": null}, "a null Ref in a Dictionary")
+	sprite.free()
+	var gone := Node.new()
+	gone.free()
+	assert_eq(_json.to_json(gone), "<freed object>", "a freed object")
+
+
 func test_node_outside_node_root_reads_null() -> void:
 	var outer := Node.new()
 	var root := Node.new()

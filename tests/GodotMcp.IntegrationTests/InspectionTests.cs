@@ -401,6 +401,19 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
         Assert.Equal("hidden", called["value"]!.GetValue<string>());
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetPropertyNullClearsAnObjectProperty()
+    {
+        await LaunchWithInspectProbeAsync(TestContext.Current.CancellationToken);
+        await SetAsync("Sprite", "material", """{"type": "CanvasItemMaterial"}""");
+
+        JsonNode cleared = await SetAsync("Sprite", "material", "null");
+
+        Assert.Equal("CanvasItemMaterial", cleared["before"]!["class"]!.GetValue<string>());
+        Assert.Null(cleared["after"]);
+        Assert.Null((await InspectAsync("Sprite", ["material"]))["properties"]!["material"]);
+    }
+
     private async Task LaunchWithInspectProbeAsync(CancellationToken cancellation)
     {
         await LaunchAsync(_probe.Directory, cancellation);

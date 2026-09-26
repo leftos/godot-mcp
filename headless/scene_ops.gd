@@ -9,6 +9,7 @@ extends RefCounted
 ## adds to every request).
 
 const SceneEdit := preload("scene_edit.gd")
+const SceneProps := preload("scene_props.gd")
 
 
 ## The reply to op, {ok, result} or {ok: false, error}; every op but create_scene and save_scene
@@ -19,6 +20,8 @@ static func run(op: String, params: Dictionary) -> Dictionary:
 			return create_scene(params)
 		"save_scene":
 			return save_scene(params)
+		"get_node_properties":
+			return read_scene(op, params)
 	return edit_scene(op, params)
 
 
@@ -27,6 +30,12 @@ static func apply(op: String, root: Node, params: Dictionary) -> Dictionary:
 	match op:
 		"delete_nodes":
 			return apply_delete_nodes(root, params)
+		"add_node":
+			return SceneProps.apply_add_node(root, params)
+		"set_node_properties":
+			return SceneProps.apply_set_node_properties(root, params)
+		"get_node_properties":
+			return SceneProps.apply_get_node_properties(root, params)
 	return {"error": "unknown operation '%s'" % op}
 
 
@@ -78,6 +87,19 @@ static func edit_scene(op: String, params: Dictionary) -> Dictionary:
 		var saved: Dictionary = _save_checked(root, scene_path, scene_path, params)
 		if saved.has("error"):
 			applied = saved
+	root.free()
+	if applied.has("error"):
+		return _fail(applied["error"])
+	return {"ok": true, "result": applied["result"]}
+
+
+## Opens params.scene, applies the read op and frees the scene without saving it.
+static func read_scene(op: String, params: Dictionary) -> Dictionary:
+	var opened: Dictionary = SceneEdit.open(params.get("scene", ""))
+	if opened.has("error"):
+		return _fail(opened["error"])
+	var root: Node = opened["root"]
+	var applied: Dictionary = apply(op, root, params)
 	root.free()
 	if applied.has("error"):
 		return _fail(applied["error"])
