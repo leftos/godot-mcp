@@ -33,11 +33,35 @@ const PACKED_ELEMENTS := {
 	TYPE_PACKED_VECTOR4_ARRAY: TYPE_VECTOR4,
 }
 const NOT_CONVERTED: Array = [false, null]
+## How deep built-in resources nest inside one another before one is read by its class alone,
+## which ends a cycle of resources holding each other.
+const MAX_RESOURCE_DEPTH := 8
+## What separates a scene's path from a built-in resource's id in that resource's resource_path.
+const SUB_RESOURCE_SEPARATOR := "::"
+## The stored properties a built-in resource's reading leaves out: its path and id, read apart,
+## and its script.
+const SKIPPED_RESOURCE_PROPERTIES: Array[String] = [
+	"resource_path", "resource_scene_unique_id", "script"
+]
+## Property list entries that head a section of the inspector rather than hold a value.
+const SECTION_USAGE := PROPERTY_USAGE_CATEGORY | PROPERTY_USAGE_GROUP | PROPERTY_USAGE_SUBGROUP
+
+## The node a Node's path is read relative to: set by the headless runner to the root of the
+## scene it edits, whose nodes are in no scene tree; null in the running game, where a node reads
+## as its path in the tree.
+static var node_root: Node = null
 
 
-## A JSON-safe copy of value: vectors, colours and rects become objects, a Node its path, any
-## other Object its class and to_string(), containers recursively, anything else its str().
+## A JSON-safe copy of value: vectors, colours and rects become objects, containers are copied
+## recursively, and anything else not JSON becomes its str(). A Node becomes its path (see
+## _node_to_json), a Resource its path or its properties (see _resource_to_json), and any other
+## Object {class, string}, its class and to_string().
 static func to_json(value: Variant) -> Variant:
+	return _to_json(value, 0)
+
+
+## to_json at depth, the number of built-in resources value is nested in.
+static func _to_json(value: Variant, depth: int) -> Variant:
 	var json: Variant
 	match typeof(value):
 		TYPE_NIL, TYPE_BOOL, TYPE_INT, TYPE_STRING:
@@ -45,17 +69,17 @@ static func to_json(value: Variant) -> Variant:
 		TYPE_FLOAT:
 			json = value if is_finite(value) else str(value)
 		TYPE_DICTIONARY:
-			json = _dictionary_to_json(value)
+			json = _dictionary_to_json(value, depth)
 		TYPE_OBJECT:
-			json = _object_to_json(value)
+			json = _object_to_json(value, depth)
 		_:
-			json = _other_to_json(value)
+			json = _other_to_json(value, depth)
 	return json
 
 
 ## Vectors, colours and rects as objects, arrays and packed arrays as lists, anything else its
 ## str().
-static func _other_to_json(value: Variant) -> Variant:
+static func _other_to_json(value: Variant, depth: int) -> Variant:
 	var json: Variant
 	match typeof(value):
 		TYPE_VECTOR2, TYPE_VECTOR2I:
@@ -72,41 +96,113 @@ static func _other_to_json(value: Variant) -> Variant:
 				"height": value.size.y,
 			}
 		_:
-			json = _array_to_json(value) if typeof(value) >= TYPE_ARRAY else str(value)
+			json = _array_to_json(value, depth) if typeof(value) >= TYPE_ARRAY else str(value)
 	return json
 
 
-static func _dictionary_to_json(values: Dictionary) -> Dictionary:
+static func _dictionary_to_json(values: Dictionary, depth: int) -> Dictionary:
 	var json: Dictionary = {}
 	for key: Variant in values:
-		json[str(key)] = to_json(values[key])
+		json[str(key)] = _to_json(values[key], depth)
 	return json
 
 
-static func _array_to_json(values: Variant) -> Array:
+static func _array_to_json(values: Variant, depth: int) -> Array:
 	var json: Array = []
 	for item: Variant in values:
-		json.append(to_json(item))
+		json.append(_to_json(item, depth))
 	return json
 
 
-static func _object_to_json(value: Variant) -> Variant:
+## A Node as its path (_node_to_json), a Resource as its path or its properties
+## (_resource_to_json), any other Object as {class, string}, and a freed one as "<freed object>".
+static func _object_to_json(value: Variant, depth: int) -> Variant:
 	if not is_instance_valid(value):
 		return "<freed object>"
 	if value is Node:
-		return str((value as Node).get_path())
+		return _node_to_json(value)
+	if value is Resource:
+		return _resource_to_json(value, depth)
 	return {"class": (value as Object).get_class(), "string": (value as Object).to_string()}
+
+
+## With node_root set, the node's path relative to it ("." for the root itself), or null for a
+## node outside it. Without, the node's path in the scene tree, or null for a node in none, whose
+## get_path() logs an error (scene/main/node.cpp L2431 in 4.7.2).
+static func _node_to_json(node: Node) -> Variant:
+	if is_instance_valid(node_root):
+		if node == node_root or node_root.is_ancestor_of(node):
+			return str(node_root.get_path_to(node))
+		return null
+	return str(node.get_path()) if node.is_inside_tree() else null
+
+
+## A resource saved in its own file as {resource, uid?, class}: its path, the UID the loader knows
+## for it and its class, never its contents. A built-in one (a scene's sub-resource, its path
+## "<scene>::<id>") or an unsaved one (no path) as {class, subResource?, properties}: its class,
+## the id after "::" when built-in, and its stored properties that differ from the class's
+## defaults (a script's properties when not null), resources among them read the same way. A
+## built-in resource nested MAX_RESOURCE_DEPTH deep is read without its properties. The class is
+## the resource's script class when it has one (_class_title), so the read shape converts back.
+static func _resource_to_json(resource: Resource, depth: int) -> Dictionary:
+	var path: String = resource.resource_path
+	if not path.is_empty() and not path.contains(SUB_RESOURCE_SEPARATOR):
+		return _external_resource_to_json(resource)
+	var json: Dictionary = {"class": _class_title(resource)}
+	if not path.is_empty():
+		var id_start: int = path.find(SUB_RESOURCE_SEPARATOR) + SUB_RESOURCE_SEPARATOR.length()
+		json["subResource"] = path.substr(id_start)
+	if depth < MAX_RESOURCE_DEPTH:
+		json["properties"] = _changed_properties(resource, depth + 1)
+	return json
+
+
+static func _external_resource_to_json(resource: Resource) -> Dictionary:
+	var path: String = resource.resource_path
+	var json: Dictionary = {"resource": path, "class": _class_title(resource)}
+	var uid: int = ResourceLoader.get_resource_uid(path)
+	if uid != ResourceUID.INVALID_ID:
+		json["uid"] = ResourceUID.id_to_text(uid)
+	return json
+
+
+## The class a resource reads out as: the nearest global class name along its script and base
+## scripts, or else its native class.
+static func _class_title(resource: Resource) -> String:
+	var script_classes: PackedStringArray = _script_class_names(resource)
+	return script_classes[0] if not script_classes.is_empty() else resource.get_class()
+
+
+## {name: value} for the resource's stored properties that differ from its class's default, a
+## property the class does not declare (a script's) counting as defaulting to null.
+static func _changed_properties(resource: Resource, depth: int) -> Dictionary:
+	var properties: Dictionary = {}
+	var class_title: String = resource.get_class()
+	for info: Dictionary in resource.get_property_list():
+		var property_name: String = info["name"]
+		if not int(info["usage"]) & PROPERTY_USAGE_STORAGE:
+			continue
+		if property_name in SKIPPED_RESOURCE_PROPERTIES:
+			continue
+		var value: Variant = resource.get(property_name)
+		var default: Variant = ClassDB.class_get_property_default_value(class_title, property_name)
+		if typeof(value) != typeof(default) or value != default:
+			properties[property_name] = _to_json(value, depth)
+	return properties
 
 
 ## [true, value] with a JSON value converted to the type a property or parameter entry declares
 ## ({type, hint, hint_string}), the reverse of to_json, or [false, null] when it does not
 ## convert; a TYPE_BOOL entry given anything but a bool is refused as [false, value]. TYPE_NIL
-## (an untyped parameter, or an untyped property holding null) takes the JSON value as it is; an
-## Object converts from nothing.
+## (an untyped parameter, or an untyped property holding null) takes the JSON value as it is. A
+## Resource-typed entry (PROPERTY_HINT_RESOURCE_TYPE) converts as _resource_from_json says; any
+## other Object converts from nothing.
 static func from_json(value: Variant, info: Dictionary) -> Array:
 	var type: int = int(info.get("type", TYPE_NIL))
 	if type == TYPE_NIL:
 		return [true, value]
+	if type == TYPE_OBJECT:
+		return _resource_from_json(value, info)
 	if VECTOR_KEYS.has(type):
 		return _vector_from_json(value, info)
 	if PACKED_ELEMENTS.has(type):
@@ -285,6 +381,163 @@ static func _type_info(type_name: String) -> Dictionary:
 		if type_string(type) == type_name:
 			return {"type": type}
 	return {"type": TYPE_INT if type_name.contains(".") else TYPE_OBJECT, "class_name": type_name}
+
+
+## A Resource for a Resource-typed entry, of a class its hint_string names ("A,B"; any Resource
+## when empty; a script class by its class_name): null clears it; a "res://" or "uid://" path, or
+## to_json's {resource} (its other keys ignored), loads the saved resource; {type, ...} makes a
+## new resource of the class type and sets each other key as a property, converted by the new
+## resource's own entry for it, so a property named "type" cannot be set in this shape;
+## to_json's {class, properties, subResource?} (subResource ignored) makes a new resource of
+## class with properties set the same way. The class is a ClassDB class or a script class of the
+## project (see _new_script_resource). Anything else, a missing or unloadable path, a class that
+## does not fit, an unknown property or a value that does not convert is refused, as is every
+## Object entry that is not Resource-typed.
+static func _resource_from_json(value: Variant, info: Dictionary) -> Array:
+	if int(info.get("hint", PROPERTY_HINT_NONE)) != PROPERTY_HINT_RESOURCE_TYPE:
+		return NOT_CONVERTED
+	if typeof(value) == TYPE_NIL:
+		return [true, null]
+	var hint_string: String = str(info.get("hint_string", ""))
+	if value is Dictionary:
+		return _resource_from_dictionary(value, hint_string)
+	return _loaded_resource(value, hint_string)
+
+
+## A Resource from {resource}, {type, ...} or {class, properties, subResource?}, as
+## _resource_from_json says.
+static func _resource_from_dictionary(values: Dictionary, hint_string: String) -> Array:
+	if values.has("resource"):
+		return _loaded_resource(values["resource"], hint_string)
+	if values.has("type"):
+		var properties: Dictionary = values.duplicate()
+		properties.erase("type")
+		return _new_resource_from_json(values["type"], properties, hint_string)
+	var read_properties: Variant = values.get("properties", {})
+	if not (values.has("class") and read_properties is Dictionary):
+		return NOT_CONVERTED
+	return _new_resource_from_json(values["class"], read_properties, hint_string)
+
+
+## [true, the resource saved at path] when it loads and fits hint_string.
+static func _loaded_resource(path: Variant, hint_string: String) -> Array:
+	if not _is_resource_path(path) or not ResourceLoader.exists(path):
+		return NOT_CONVERTED
+	var resource: Resource = load(path) as Resource
+	if resource == null or not _fits_hint(resource, hint_string):
+		return NOT_CONVERTED
+	return [true, resource]
+
+
+static func _is_resource_path(path: Variant) -> bool:
+	if not path is String:
+		return false
+	return (path as String).begins_with("res://") or (path as String).begins_with("uid://")
+
+
+## [true, a new resource] of the class type_name, with properties set on it.
+static func _new_resource_from_json(
+	type_name: Variant, properties: Dictionary, hint_string: String
+) -> Array:
+	var resource: Resource = _new_resource(type_name)
+	if resource == null:
+		return NOT_CONVERTED
+	if not _fits_hint(resource, hint_string) or not _set_properties(resource, properties):
+		return NOT_CONVERTED
+	return [true, resource]
+
+
+## A new resource of the class type_name, a ClassDB class or else a script class of the project,
+## or null when it names no instantiable Resource class.
+static func _new_resource(type_name: Variant) -> Resource:
+	if not type_name is String:
+		return null
+	if ClassDB.class_exists(type_name):
+		return ClassDB.instantiate(type_name) if _is_resource_class(type_name) else null
+	return _new_script_resource(type_name, ProjectSettings.get_global_class_list())
+
+
+static func _is_resource_class(type_name: String) -> bool:
+	return ClassDB.is_parent_class(type_name, "Resource") and ClassDB.can_instantiate(type_name)
+
+
+## A new resource of the script class type_name, looked up in classes (the entries {class, base,
+## path} of ProjectSettings.get_global_class_list()), or null when classes has no such class, its
+## script does not instantiate, or its bases, followed through classes to the first ClassDB
+## class, do not reach Resource.
+static func _new_script_resource(type_name: String, classes: Array) -> Resource:
+	var entry: Dictionary = _global_class_entry(type_name, classes)
+	if entry.is_empty() or not _extends_resource(entry, classes):
+		return null
+	var script: Script = load(str(entry.get("path", ""))) as Script
+	if script == null or not script.can_instantiate():
+		return null
+	return script.new() as Resource
+
+
+static func _global_class_entry(type_name: String, classes: Array) -> Dictionary:
+	for entry: Dictionary in classes:
+		if str(entry.get("class", "")) == type_name:
+			return entry
+	return {}
+
+
+## Whether the script class entry's bases, followed through classes, reach a ClassDB class that
+## is a Resource; a chain longer than classes (a cycle) does not.
+static func _extends_resource(entry: Dictionary, classes: Array) -> bool:
+	var base: String = str(entry.get("base", ""))
+	for _step in classes.size() + 1:
+		if ClassDB.class_exists(base):
+			return ClassDB.is_parent_class(base, "Resource")
+		base = str(_global_class_entry(base, classes).get("base", ""))
+	return false
+
+
+## Whether every key of properties names a property of resource and converts to it; each that
+## does is set.
+static func _set_properties(resource: Resource, properties: Dictionary) -> bool:
+	for key: Variant in properties:
+		var info: Dictionary = _property_info(resource, str(key))
+		if info.is_empty():
+			return false
+		var converted: Array = from_json(properties[key], info)
+		if not converted[0]:
+			return false
+		resource.set(str(key), converted[1])
+	return true
+
+
+## The property's entry in the object's property list, or {} when it has none of that name.
+static func _property_info(object: Object, property_name: String) -> Dictionary:
+	for info: Dictionary in object.get_property_list():
+		if info["name"] == property_name and not int(info["usage"]) & SECTION_USAGE:
+			return info
+	return {}
+
+
+## Whether the resource is of one of the classes hint_string lists ("A,B"), a native class or the
+## class_name of its script or of one of that script's bases, or hint_string is empty.
+static func _fits_hint(resource: Resource, hint_string: String) -> bool:
+	if hint_string.is_empty():
+		return true
+	var script_classes: PackedStringArray = _script_class_names(resource)
+	for class_title: String in hint_string.split(","):
+		var wanted: String = class_title.strip_edges()
+		if resource.is_class(wanted) or wanted in script_classes:
+			return true
+	return false
+
+
+## The global class names of the resource's script and its base scripts, nearest first.
+static func _script_class_names(resource: Resource) -> PackedStringArray:
+	var names: PackedStringArray = []
+	var script: Script = resource.get_script() as Script
+	while script != null:
+		var global_name: String = str(script.get_global_name())
+		if not global_name.is_empty():
+			names.append(global_name)
+		script = script.get_base_script()
+	return names
 
 
 static func _is_number(value: Variant, integral: bool) -> bool:

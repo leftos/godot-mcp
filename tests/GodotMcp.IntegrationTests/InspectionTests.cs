@@ -103,6 +103,9 @@ public sealed class InspectionTests : IAsyncDisposable, IClassFixture<CsProbeBui
         Assert.Equal([0.0, 0.0], Components(properties["offset"], "x", "y"));
         Assert.Equal([0.0, 0.0], Components(properties["position"], "x", "y"));
         Assert.Equal([1.0, 1.0, 1.0, 1.0], Components(properties["modulate"], Rgba));
+        // A saved resource reads as its path and class (and its uid when the project has one), not its contents.
+        Assert.Equal("res://inspect_probe.gd", properties["script"]!["resource"]!.GetValue<string>());
+        Assert.Equal("GDScript", properties["script"]!["class"]!.GetValue<string>());
         Assert.Equal([0.0, 0.0, 1.0, 1.0], Components(swatch["properties"]!["color"], Rgba));
     }
 
