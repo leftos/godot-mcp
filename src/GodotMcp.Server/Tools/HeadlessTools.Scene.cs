@@ -110,19 +110,23 @@ internal sealed partial class HeadlessTools
         CancellationToken cancellationToken = default
     )
     {
-        IReadOnlyList<string> paths = CheckNodePaths(nodePaths);
+        // Refused before the project is read; the builder checks it again.
+        _ = CheckNodePaths(nodePaths);
         HeadlessResult run = await RunAsync(() =>
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
-            JsonObject parameters = new()
-            {
-                ["scene"] = CheckEditableScenePath(projectDir, scenePath),
-                ["nodePaths"] = new JsonArray([.. paths.Select(path => (JsonNode)path)]),
-            };
+            string scene = CheckEditableScenePath(projectDir, scenePath);
+            JsonObject parameters = DeleteNodesParameters(projectDir, nodePaths);
+            parameters["scene"] = scene;
             return RunWriteAsync(projectDir, "delete_nodes", parameters, cancellationToken);
         });
         return WithErrors(run);
     }
+
+    /// <summary>delete_nodes' request parameters but the scene: <c>{nodePaths}</c>.</summary>
+    /// <exception cref="McpException">As <see cref="CheckNodePaths"/>.</exception>
+    internal static JsonObject DeleteNodesParameters(string projectDir, string[] nodePaths) =>
+        new() { ["nodePaths"] = new JsonArray([.. CheckNodePaths(nodePaths).Select(path => (JsonNode)path)]) };
 
     [McpServerTool(Name = "attach_script", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
@@ -142,20 +146,23 @@ internal sealed partial class HeadlessTools
         CancellationToken cancellationToken = default
     )
     {
-        string node = CheckNodePath(nodePath);
+        // Refused before the project is read; the builder checks it again.
+        _ = CheckNodePath(nodePath);
         HeadlessResult run = await RunAsync(() =>
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
-            JsonObject parameters = new()
-            {
-                ["scene"] = CheckEditableScenePath(projectDir, scenePath),
-                ["nodePath"] = node,
-                ["script"] = CheckScriptPath(projectDir, scriptPath),
-            };
+            string scene = CheckEditableScenePath(projectDir, scenePath);
+            JsonObject parameters = AttachScriptParameters(projectDir, nodePath, scriptPath);
+            parameters["scene"] = scene;
             return RunWriteAsync(projectDir, "attach_script", parameters, cancellationToken);
         });
         return WithErrors(run);
     }
+
+    /// <summary>attach_script's request parameters but the scene: <c>{nodePath, script}</c>.</summary>
+    /// <exception cref="McpException">As <see cref="CheckNodePath"/>, then as <see cref="CheckScriptPath"/>.</exception>
+    internal static JsonObject AttachScriptParameters(string projectDir, string nodePath, string scriptPath) =>
+        new() { ["nodePath"] = CheckNodePath(nodePath), ["script"] = CheckScriptPath(projectDir, scriptPath) };
 
     [McpServerTool(Name = "duplicate_node", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
@@ -182,22 +189,33 @@ internal sealed partial class HeadlessTools
         CancellationToken cancellationToken = default
     )
     {
-        string node = CheckDuplicatedNodePath(nodePath);
-        string parent = options?.Parent is null ? string.Empty : CheckNodePath(options.Parent);
+        // Refused before the project is read; the builder checks them again.
+        _ = CheckDuplicatedNodePath(nodePath);
+        _ = CheckDuplicateParent(options);
         HeadlessResult run = await RunAsync(() =>
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
-            JsonObject parameters = new()
-            {
-                ["scene"] = CheckEditableScenePath(projectDir, scenePath),
-                ["nodePath"] = node,
-                ["newName"] = newName?.Trim() ?? string.Empty,
-                ["parent"] = parent,
-            };
+            string scene = CheckEditableScenePath(projectDir, scenePath);
+            JsonObject parameters = DuplicateNodeParameters(projectDir, nodePath, newName, options);
+            parameters["scene"] = scene;
             return RunWriteAsync(projectDir, "duplicate_node", parameters, cancellationToken);
         });
         return WithErrors(run);
     }
+
+    /// <summary>duplicate_node's request parameters but the scene: <c>{nodePath, newName, parent}</c>.</summary>
+    /// <exception cref="McpException">As <see cref="CheckDuplicatedNodePath"/>, then as <see cref="CheckNodePath"/> for the parent.</exception>
+    internal static JsonObject DuplicateNodeParameters(string projectDir, string nodePath, string? newName, DuplicateNodeOptions? options) =>
+        new()
+        {
+            ["nodePath"] = CheckDuplicatedNodePath(nodePath),
+            ["newName"] = newName?.Trim() ?? string.Empty,
+            ["parent"] = CheckDuplicateParent(options),
+        };
+
+    /// <summary>duplicate_node's options.parent checked and trimmed, or "" for the node's own parent.</summary>
+    private static string CheckDuplicateParent(DuplicateNodeOptions? options) =>
+        options?.Parent is null ? string.Empty : CheckNodePath(options.Parent);
 
     [McpServerTool(Name = "load_sprite", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
@@ -221,22 +239,31 @@ internal sealed partial class HeadlessTools
         CancellationToken cancellationToken = default
     )
     {
-        string node = CheckNodePath(nodePath);
+        // Refused before the project is read; the builder checks it again.
+        _ = CheckNodePath(nodePath);
         HeadlessResult run = await RunAsync(() =>
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
-            string texture = CheckTexturePath(projectDir, texturePath);
-            JsonObject parameters = new()
+            JsonObject parameters = LoadSpriteParameters(projectDir, nodePath, texturePath);
+            parameters["scene"] = CheckEditableScenePath(projectDir, scenePath);
+            HeadlessRequest request = new(projectDir, "load_sprite", parameters, Prepare: true, RunCeiling)
             {
-                ["scene"] = CheckEditableScenePath(projectDir, scenePath),
-                ["nodePath"] = node,
-                ["texture"] = ResOf(projectDir, texture),
+                ImportAssets = LoadSpriteImportAssets(projectDir, texturePath),
             };
-            HeadlessRequest request = new(projectDir, "load_sprite", parameters, Prepare: true, RunCeiling) { ImportAssets = [texture] };
             return HeadlessRunner.RunAsync(sessions, request, cancellationToken);
         });
         return WithErrors(run);
     }
+
+    /// <summary>load_sprite's request parameters but the scene: <c>{nodePath, texture}</c>, the texture as a res:// path.</summary>
+    /// <exception cref="McpException">As <see cref="CheckNodePath"/>, then as <see cref="CheckTexturePath"/>.</exception>
+    internal static JsonObject LoadSpriteParameters(string projectDir, string nodePath, string texturePath) =>
+        new() { ["nodePath"] = CheckNodePath(nodePath), ["texture"] = ResOf(projectDir, CheckTexturePath(projectDir, texturePath)) };
+
+    /// <summary>The files load_sprite loads, which the prep imports first when they need it: the texture's full path.</summary>
+    /// <exception cref="McpException">As <see cref="CheckTexturePath"/>.</exception>
+    internal static IReadOnlyList<string> LoadSpriteImportAssets(string projectDir, string texturePath) =>
+        [CheckTexturePath(projectDir, texturePath)];
 
     /// <summary>A script attach_script takes, as a res:// path.</summary>
     /// <exception cref="McpException">The path is empty, outside the project, missing, or not a .gd or .cs.</exception>

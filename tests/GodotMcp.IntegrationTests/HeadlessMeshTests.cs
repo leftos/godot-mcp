@@ -148,6 +148,8 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         )!;
 
         Assert.Null(exported["errors"]);
+        // No two MeshInstance3D nodes share a name, so no item was taken over.
+        Assert.Null(exported["replaced"]);
         Assert.Equal("res://lib/tiles.tres", exported["outputPath"]!.GetValue<string>());
         Assert.Equal(
             """[{"id":0,"name":"Crate","shapes":1,"navigation":true},{"id":1,"name":"Ball","shapes":0,"navigation":false}]""",
@@ -332,6 +334,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         )!;
 
         Assert.Equal("""[{"id":0,"name":"Crate","shapes":0,"navigation":true}]""", exported["items"]!.ToJsonString());
+        Assert.Equal("""[{"name":"Crate","count":2}]""", exported["replaced"]?.ToJsonString());
         string[] library = File.ReadAllLines(Path.Combine(probe.Directory, "twins.tres"));
         // The later node's mesh and transform, and the earlier node's navigation mesh, placed as it was under that node.
         Assert.Contains(library, line => line.StartsWith("[sub_resource type=\"SphereMesh\"", StringComparison.Ordinal));

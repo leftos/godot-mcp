@@ -20,8 +20,11 @@ const SceneFiles := preload("scene_files.gd")
 
 
 ## Builds the library from the scene rooted at root (context.scene) and saves it to params.output:
-## {result: {outputPath, items: [{id, name, shapes, navigation}]}}, or {error} with nothing
-## written. params.meshItemNames, when not empty, keeps only the items of those names.
+## {result: {outputPath, items: [{id, name, shapes, navigation}], replaced?: [{name, count}]}}, or
+## {error} with nothing written. params.meshItemNames, when not empty, keeps only the items of
+## those names. replaced lists each item more than one MeshInstance3D is named for, count being how
+## many; it is left out when there is none. When context holds pending_writes (an Array), the
+## library is not saved: the write is appended to it for write_pending, and the result is the same.
 static func apply_export_mesh_library(
 	root: Node, params: Dictionary, context: Dictionary
 ) -> Dictionary:
@@ -35,17 +38,58 @@ static func apply_export_mesh_library(
 	if not refusal.is_empty():
 		return {"error": refusal}
 	var library := MeshLibrary.new()
-	var items: Array = []
-	for item_name: String in found:
-		if wanted.is_empty() or wanted.has(item_name):
-			items.append(_add_item(library, found[item_name]))
+	var result: Dictionary = {"outputPath": output}
+	result.merge(_fill(library, found, wanted))
 	var source: String = FileAccess.get_file_as_string(ProjectSettings.globalize_path(scene_path))
-	var saved: Dictionary = SceneFiles.save_resource(
-		library, output, SceneFiles.uid_for(output), SceneFiles.ext_uids_in(source)
-	)
+	var write: Dictionary = {
+		"library": library, "output": output, "ext_uids": SceneFiles.ext_uids_in(source)
+	}
+	var pending: Variant = context.get("pending_writes")
+	if pending is Array:
+		(pending as Array).append(write)
+		return {"result": result}
+	var saved: Dictionary = _write(write)
 	if saved.has("error"):
 		return saved
-	return {"result": {"outputPath": output, "items": items}}
+	return {"result": result}
+
+
+## Saves each of pending's writes ({library, output, ext_uids}, as apply_export_mesh_library
+## defers them) in order, each output keeping the uid it has when it is written: {} when every one
+## is saved, else {error} naming the output of the first that is not, the rest left unwritten.
+static func write_pending(pending: Array) -> Dictionary:
+	for write: Dictionary in pending:
+		var saved: Dictionary = _write(write)
+		if saved.has("error"):
+			return {"error": saved["error"]}
+	return {}
+
+
+## Saves write's library to its output with the uid the output has now (a new one for a new file)
+## and the scene's ext_resource uids: {uid} or {error} naming the output.
+static func _write(write: Dictionary) -> Dictionary:
+	var output: String = write["output"]
+	return SceneFiles.save_resource(
+		write["library"], output, SceneFiles.uid_for(output), write["ext_uids"]
+	)
+
+
+## Adds found's items (all, or those wanted names) to library: {items, replaced?}, replaced the
+## items more than one node is named for, with how many.
+static func _fill(library: MeshLibrary, found: Dictionary, wanted: Array) -> Dictionary:
+	var items: Array = []
+	var replaced: Array = []
+	for item_name: String in found:
+		if not wanted.is_empty() and not wanted.has(item_name):
+			continue
+		var nodes: Array = found[item_name]
+		items.append(_add_item(library, nodes))
+		if nodes.size() > 1:
+			replaced.append({"name": item_name, "count": nodes.size()})
+	var filled: Dictionary = {"items": items}
+	if not replaced.is_empty():
+		filled["replaced"] = replaced
+	return filled
 
 
 ## Why output cannot be written because the scene uses it, or "": dependencies are the scene's
@@ -101,14 +145,7 @@ static func _collect(node: Node, found: Dictionary) -> void:
 	if mesh_instance.mesh == null:
 		return
 	var item_name: String = String(node.name)
-	if found.has(item_name):
-		push_warning(
-			(
-				"export_mesh_library: a second MeshInstance3D named '%s' takes the first's item over."
-				% item_name
-			)
-		)
-	else:
+	if not found.has(item_name):
 		found[item_name] = []
 	(found[item_name] as Array).append(mesh_instance)
 

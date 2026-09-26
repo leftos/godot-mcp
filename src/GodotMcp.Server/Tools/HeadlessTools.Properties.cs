@@ -47,23 +47,34 @@ internal sealed partial class HeadlessTools
         CancellationToken cancellationToken = default
     )
     {
-        (string name, string parent) = CheckNewNode(nodeName, options?.Parent);
+        // Refused before the project is read; the builder checks them again.
+        _ = CheckNewNode(nodeName, options?.Parent);
         HeadlessResult run = await RunAsync(() =>
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
-            JsonObject parameters = new()
-            {
-                ["scene"] = CheckEditableScenePath(projectDir, scenePath),
-                ["nodeType"] = CheckNodeType(projectDir, nodeType, CheckEditableScenePath(projectDir, scenePath)),
-                ["nodeName"] = name,
-                ["parent"] = parent,
-                ["properties"] = new JsonObject([
-                    .. (options?.Properties ?? []).Select(entry => KeyValuePair.Create(entry.Key, ToNode(entry.Value))),
-                ]),
-            };
+            string scene = CheckEditableScenePath(projectDir, scenePath);
+            JsonObject parameters = AddNodeParameters(projectDir, scene, nodeType, nodeName, options);
+            parameters["scene"] = scene;
             return RunWriteAsync(projectDir, "add_node", parameters, cancellationToken);
         });
         return WithErrors(run);
+    }
+
+    /// <summary>
+    /// add_node's request parameters but the scene: <c>{nodeType, nodeName, parent, properties}</c>. scene is the res:// path of
+    /// the scene being edited, which nodeType may not name.
+    /// </summary>
+    /// <exception cref="McpException">As <see cref="CheckNewNode"/>, then as <see cref="CheckNodeType"/>.</exception>
+    internal static JsonObject AddNodeParameters(string projectDir, string scene, string nodeType, string nodeName, AddNodeOptions? options)
+    {
+        (string name, string parent) = CheckNewNode(nodeName, options?.Parent);
+        return new JsonObject
+        {
+            ["nodeType"] = CheckNodeType(projectDir, nodeType, scene),
+            ["nodeName"] = name,
+            ["parent"] = parent,
+            ["properties"] = new JsonObject([.. (options?.Properties ?? []).Select(entry => KeyValuePair.Create(entry.Key, ToNode(entry.Value)))]),
+        };
     }
 
     [McpServerTool(Name = "set_node_properties", ReadOnly = false, Destructive = false, OpenWorld = false)]
@@ -85,11 +96,14 @@ internal sealed partial class HeadlessTools
         CancellationToken cancellationToken = default
     )
     {
-        JsonArray checkedUpdates = CheckPropertyUpdates(updates);
+        // Refused before the project is read; the builder checks them again.
+        _ = CheckPropertyUpdates(updates);
         HeadlessResult run = await RunAsync(() =>
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
-            JsonObject parameters = new() { ["scene"] = CheckEditableScenePath(projectDir, scenePath), ["updates"] = checkedUpdates };
+            string scene = CheckEditableScenePath(projectDir, scenePath);
+            JsonObject parameters = SetNodePropertiesParameters(projectDir, updates);
+            parameters["scene"] = scene;
             return RunWriteAsync(projectDir, "set_node_properties", parameters, cancellationToken);
         });
         return ShapeResults(
@@ -102,6 +116,11 @@ internal sealed partial class HeadlessTools
             )
             .ToJsonString();
     }
+
+    /// <summary>set_node_properties' request parameters but the scene: <c>{updates}</c>.</summary>
+    /// <exception cref="McpException">As <see cref="CheckPropertyUpdates"/>.</exception>
+    internal static JsonObject SetNodePropertiesParameters(string projectDir, PropertyUpdate[] updates) =>
+        new() { ["updates"] = CheckPropertyUpdates(updates) };
 
     [McpServerTool(Name = "get_node_properties", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(

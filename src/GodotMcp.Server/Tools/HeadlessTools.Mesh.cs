@@ -38,8 +38,10 @@ internal sealed partial class HeadlessTools
             + "file the scene uses is refused as outputPath. Missing folders are created; an existing file is refused unless "
             + "options.overwrite, and a replaced .tres "
             + "keeps its uid (a replaced .res gets a new one: a binary file's uid cannot be read outside the editor). Returns "
-            + "{outputPath, items: [{id, name, shapes, navigation}], errors?}: shapes counts the item's collision shapes, "
-            + "navigation says whether it has a navigation mesh. Runs the prep first, as run_project does (a C# build when stale, "
+            + "{outputPath, items: [{id, name, shapes, navigation}], replaced?: [{name, count}], errors?}: shapes counts the "
+            + "item's collision shapes, navigation says whether it has a navigation mesh, and replaced lists the item names more "
+            + "than one MeshInstance3D carried, count being how many; the last one's meshes make the item. Runs the prep first, "
+            + "as run_project does (a C# build when stale, "
             + "an import when needed)."
             + RefusedNote
     )]
@@ -56,20 +58,34 @@ internal sealed partial class HeadlessTools
         CancellationToken cancellationToken = default
     )
     {
-        IReadOnlyList<string> names = meshItemNames is null ? [] : CheckMeshItemNames(meshItemNames);
+        // Refused before the project is read; the builder checks them again.
+        _ = CheckOptionalMeshItemNames(meshItemNames);
         HeadlessResult run = await RunAsync(() =>
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
-            JsonObject parameters = new()
-            {
-                ["scene"] = CheckScenePath(projectDir, scenePath),
-                ["output"] = CheckMeshLibraryPath(projectDir, outputPath, options?.Overwrite == true),
-                ["meshItemNames"] = new JsonArray([.. names.Select(name => (JsonNode)name)]),
-            };
+            string scene = CheckScenePath(projectDir, scenePath);
+            JsonObject parameters = ExportMeshLibraryParameters(projectDir, outputPath, meshItemNames, options);
+            parameters["scene"] = scene;
             return RunWriteAsync(projectDir, "export_mesh_library", parameters, cancellationToken);
         });
         return WithErrors(run);
     }
+
+    /// <summary>export_mesh_library's request parameters but the scene: <c>{output, meshItemNames}</c>, no names meaning every item.</summary>
+    /// <exception cref="McpException">As <see cref="CheckMeshItemNames"/> for names given, then <see cref="CheckMeshLibraryPath"/>.</exception>
+    internal static JsonObject ExportMeshLibraryParameters(string projectDir, string outputPath, string[]? meshItemNames, SceneWriteOptions? options)
+    {
+        IReadOnlyList<string> names = CheckOptionalMeshItemNames(meshItemNames);
+        return new JsonObject
+        {
+            ["output"] = CheckMeshLibraryPath(projectDir, outputPath, options?.Overwrite == true),
+            ["meshItemNames"] = new JsonArray([.. names.Select(name => (JsonNode)name)]),
+        };
+    }
+
+    /// <summary>The mesh item names checked as <see cref="CheckMeshItemNames"/> does, or none when left out.</summary>
+    private static IReadOnlyList<string> CheckOptionalMeshItemNames(string[]? meshItemNames) =>
+        meshItemNames is null ? [] : CheckMeshItemNames(meshItemNames);
 
     /// <summary>The MeshLibrary file export_mesh_library writes, as a res:// path; its folders need not exist.</summary>
     /// <exception cref="McpException">The path is empty, outside the project, not a .tres or .res, or names a file and overwrite is false.</exception>

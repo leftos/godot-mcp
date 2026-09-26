@@ -72,23 +72,32 @@ internal sealed partial class HeadlessTools
         CancellationToken cancellationToken = default
     )
     {
-        string source = CheckNodePath(nodePath);
-        string signalName = CheckSignalName(signal);
-        JsonObject checkedTarget = CheckConnectTarget(target);
+        // Refused before the project is read; the builder checks them again.
+        _ = CheckNodePath(nodePath);
+        _ = CheckSignalName(signal);
+        _ = CheckConnectTarget(target);
         HeadlessResult run = await RunAsync(() =>
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
-            JsonObject parameters = new()
-            {
-                ["scene"] = CheckEditableScenePath(projectDir, scenePath),
-                ["nodePath"] = source,
-                ["signal"] = signalName,
-                ["target"] = checkedTarget,
-            };
+            string scene = CheckEditableScenePath(projectDir, scenePath);
+            JsonObject parameters = ConnectSignalParameters(projectDir, nodePath, signal, target);
+            parameters["scene"] = scene;
             return RunWriteAsync(projectDir, "connect_signal", parameters, cancellationToken);
         });
         return WithErrors(run);
     }
+
+    /// <summary>connect_signal's request parameters but the scene: <c>{nodePath, signal, target: {nodePath, method, binds}}</c>.</summary>
+    /// <exception cref="McpException">
+    /// As <see cref="CheckNodePath"/>, then <see cref="CheckSignalName"/>, then <see cref="CheckConnectTarget"/>.
+    /// </exception>
+    internal static JsonObject ConnectSignalParameters(string projectDir, string nodePath, string signal, ConnectTarget target) =>
+        new()
+        {
+            ["nodePath"] = CheckNodePath(nodePath),
+            ["signal"] = CheckSignalName(signal),
+            ["target"] = CheckConnectTarget(target),
+        };
 
     [McpServerTool(Name = "disconnect_signal", ReadOnly = false, Destructive = true, OpenWorld = false)]
     [Description(
@@ -109,23 +118,32 @@ internal sealed partial class HeadlessTools
         CancellationToken cancellationToken = default
     )
     {
-        string source = CheckNodePath(nodePath);
-        string signalName = CheckSignalName(signal);
-        JsonObject checkedTarget = CheckTargetMethod(target?.NodePath, target?.Method);
+        // Refused before the project is read; the builder checks them again.
+        _ = CheckNodePath(nodePath);
+        _ = CheckSignalName(signal);
+        _ = CheckTargetMethod(target?.NodePath, target?.Method);
         HeadlessResult run = await RunAsync(() =>
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
-            JsonObject parameters = new()
-            {
-                ["scene"] = CheckEditableScenePath(projectDir, scenePath),
-                ["nodePath"] = source,
-                ["signal"] = signalName,
-                ["target"] = checkedTarget,
-            };
+            string scene = CheckEditableScenePath(projectDir, scenePath);
+            JsonObject parameters = DisconnectSignalParameters(projectDir, nodePath, signal, target);
+            parameters["scene"] = scene;
             return RunWriteAsync(projectDir, "disconnect_signal", parameters, cancellationToken);
         });
         return WithErrors(run);
     }
+
+    /// <summary>disconnect_signal's request parameters but the scene: <c>{nodePath, signal, target: {nodePath, method}}</c>.</summary>
+    /// <exception cref="McpException">
+    /// As <see cref="CheckNodePath"/>, then <see cref="CheckSignalName"/>, then <see cref="CheckTargetMethod"/>.
+    /// </exception>
+    internal static JsonObject DisconnectSignalParameters(string projectDir, string nodePath, string signal, DisconnectTarget? target) =>
+        new()
+        {
+            ["nodePath"] = CheckNodePath(nodePath),
+            ["signal"] = CheckSignalName(signal),
+            ["target"] = CheckTargetMethod(target?.NodePath, target?.Method),
+        };
 
     /// <summary>A signal's name, trimmed.</summary>
     /// <exception cref="McpException">The name is empty.</exception>
