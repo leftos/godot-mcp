@@ -50,8 +50,20 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <summary>Whether the run was started quiet; an attached game never is.</summary>
     public bool Quiet { get; } = spec.Quiet;
 
-    /// <summary>The launched game's process id, once it has started; null for an attached game.</summary>
+    /// <summary>
+    /// The process the server started, once it has; null for an attached game. On Windows that is the Godot_console.exe
+    /// wrapper, not the game: <see cref="GameProcessId"/> is the game's.
+    /// </summary>
     public int? ProcessId { get; private set; }
+
+    /// <summary>The game's own process id, as its bridge's hello reported it; null before the handshake or from an older bridge.</summary>
+    public int? GameProcessId { get; private set; }
+
+    /// <summary>Where the session logs.</summary>
+    public ILogger Logger => _logger;
+
+    /// <summary>The exit code of the process the server started, once it has exited; null while it runs and for an attached game.</summary>
+    public int? RunExitCode => _run?.ExitCode;
 
     /// <summary>Plays one input call at a time on this session; calls to other sessions play alongside.</summary>
     public SemaphoreSlim InputGate { get; } = new(1, 1);
@@ -92,7 +104,10 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
-    /// <summary>Asks the game to quit, kills it if it has not within 3 s, and releases the override file.</summary>
+    /// <summary>
+    /// Pings the game first: one silent for 2 s is stuck and is killed at once, without the shutdown command. One that answers
+    /// is asked to quit and killed if it has not within 3 s. Either way the override file is released.
+    /// </summary>
     /// <exception cref="SessionException">No run was ever launched, or the session is attached.</exception>
     public async Task<StopResult> StopAsync(CancellationToken cancellationToken)
     {
@@ -109,7 +124,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
             GodotRun run =
                 _run ?? throw new SessionException("No Godot session has been started, so there is nothing to stop. Start one with run_project.");
-            bool killed = run.IsRunning && !await ShutDownGracefullyAsync(run);
+            bool killed = run.IsRunning && (await IsSilentAsync(run) || !await ShutDownGracefullyAsync(run));
             if (killed)
             {
                 await KillAsync(run);
@@ -134,6 +149,17 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <exception cref="SessionException">The run is not live, or the attached game's connection has ended.</exception>
     public Task<JsonNode?> SendAsync(string command, JsonObject? parameters, TimeSpan timeout, CancellationToken cancellationToken) =>
         FindLiveConnection().SendAsync(command, parameters, timeout, cancellationToken);
+
+    /// <summary>The run's newest stderr lines, oldest first; null for an attached game, which has no captured output.</summary>
+    public IReadOnlyList<string>? LastStderrLines(int count)
+    {
+        if (Kind == SessionKind.Attach)
+        {
+            return null;
+        }
+
+        return _run is { } run ? run.Stderr.Tail(count) : [];
+    }
 
     /// <exception cref="SessionException">The session is attached, so there is no captured output.</exception>
     public DebugOutput GetDebugOutput(int limit, long? before)
@@ -272,6 +298,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         BridgeConnection connection = await WaitForHandshakeAsync(run, new HandshakeExpectation(token, ProjectDir), cancellationToken);
         connection.OnErrors(Errors.Receive);
         run.Connection = connection;
+        GameProcessId = connection.GameProcessId;
         Log.RunStarted(_logger, processId, run.ProjectDir);
         return new LaunchResult(Name, run.ProjectDir, processId, request.Quiet);
     }
@@ -359,6 +386,35 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             $"Launching {run.ProjectDir} failed: {what}. Check that the project runs on its own "
                 + $"(godot --path <project>) and that nothing blocks connections to 127.0.0.1. Last stderr lines:\n{stderr}"
         );
+    }
+
+    /// <summary>
+    /// Whether the run's bridge left a ping unanswered for <see cref="HangProbe.PingTimeout"/>: its main thread is stuck, so a
+    /// shutdown command would go unread too. A run without a connection, or whose connection ends meanwhile, is not silent:
+    /// it gets the usual shutdown and grace.
+    /// </summary>
+    private async Task<bool> IsSilentAsync(GodotRun run)
+    {
+        if (run.Connection is not { IsOpen: true } connection)
+        {
+            return false;
+        }
+
+        try
+        {
+            await connection.SendAsync("ping", null, HangProbe.PingTimeout, CancellationToken.None);
+            return false;
+        }
+        catch (TimeoutException)
+        {
+            Log.StopFoundGameStuck(_logger, run.ProjectDir, HangProbe.PingTimeout.TotalSeconds);
+            return true;
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException)
+        {
+            Log.StopPingFailed(_logger, e, run.ProjectDir);
+            return false;
+        }
     }
 
     private async Task<bool> ShutDownGracefullyAsync(GodotRun run)

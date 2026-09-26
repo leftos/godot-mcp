@@ -283,12 +283,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
         }
         catch (TimeoutException e)
         {
-            string hint = tool == "run_script" ? "; a script that needs longer can raise timeoutMs" : string.Empty;
-            throw new McpException(
-                $"The game of session '{target.Name}' did not answer {tool} within {timeout.TotalSeconds:0.###} s: it may be "
-                    + $"paused, busy or hung{hint}. Check get_debug_output, or stop_project session '{target.Name}' and run it again.",
-                e
-            );
+            throw await DescribeTimeoutAsync(target, call, e, cancellationToken);
         }
         catch (InvalidOperationException e)
         {
@@ -301,6 +296,20 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
                 e
             );
         }
+    }
+
+    /// <summary>Probes a game whose reply timed out, logs what the probe found, and says whether its main thread is running or stuck.</summary>
+    private static async Task<McpException> DescribeTimeoutAsync(
+        GodotSession target,
+        BridgeCall call,
+        TimeoutException timedOut,
+        CancellationToken cancellationToken
+    )
+    {
+        HangReport report = await HangProbe.RunAsync(target, cancellationToken);
+        Log.RequestTimedOut(target.Logger, call.Tool, target.Name, report.Outcome, report.ProcessState);
+        string hint = call.Tool == "run_script" ? "; a script that needs longer can raise timeoutMs" : string.Empty;
+        return new McpException(report.Describe(call.Tool, call.Timeout, hint), timedOut);
     }
 
     private static ScreenshotMode ParseMode(string responseMode) =>

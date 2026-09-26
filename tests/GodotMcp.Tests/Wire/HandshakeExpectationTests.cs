@@ -62,6 +62,37 @@ public sealed class HandshakeExpectationTests
         Assert.Equal("the first frame is not a hello", _expected.FindMismatch(hello));
     }
 
+    [Fact]
+    public void ReadsTheGamesProcessIdFromTheHello()
+    {
+        JsonObject hello = Hello(Token, BridgeProjectPath);
+        JsonObject asFloat = Hello(Token, BridgeProjectPath);
+        hello["pid"] = 4242;
+        asFloat["pid"] = 4242.0;
+
+        Assert.Equal(4242, HandshakeExpectation.ReadProcessId(hello));
+        Assert.Equal(4242, HandshakeExpectation.ReadProcessId(asFloat));
+        Assert.Null(_expected.FindMismatch(hello));
+    }
+
+    [Fact]
+    public void AHelloWithoutAUsablePidHasNoProcessIdAndStillMatches()
+    {
+        JsonObject without = Hello(Token, BridgeProjectPath);
+        JsonObject text = Hello(Token, BridgeProjectPath);
+        JsonObject fraction = Hello(Token, BridgeProjectPath);
+        JsonObject zero = Hello(Token, BridgeProjectPath);
+        text["pid"] = "4242";
+        fraction["pid"] = 42.5;
+        zero["pid"] = 0;
+
+        Assert.Null(HandshakeExpectation.ReadProcessId(without));
+        Assert.Null(HandshakeExpectation.ReadProcessId(text));
+        Assert.Null(HandshakeExpectation.ReadProcessId(fraction));
+        Assert.Null(HandshakeExpectation.ReadProcessId(zero));
+        Assert.Null(_expected.FindMismatch(without));
+    }
+
     private static JsonObject Hello(string token, string projectPath) =>
         new()
         {

@@ -8,7 +8,12 @@ namespace GodotMcp.Tests.Wire;
 /// <summary>The game's side of the wire, without Godot: dials, says hello, and answers a request with a name of its own.</summary>
 internal sealed class FakeBridge(TcpClient client) : IDisposable
 {
-    public static async Task<FakeBridge> DialAsync(int port, string token, string projectPath, CancellationToken cancellationToken)
+    /// <summary>Dials with a hello that carries no pid, as a bridge older than the field does.</summary>
+    public static Task<FakeBridge> DialAsync(int port, string token, string projectPath, CancellationToken cancellationToken) =>
+        DialAsync(port, token, projectPath, null, cancellationToken);
+
+    /// <summary>Dials with a hello that carries <paramref name="processId"/> as its pid, when it is not null.</summary>
+    public static async Task<FakeBridge> DialAsync(int port, string token, string projectPath, int? processId, CancellationToken cancellationToken)
     {
         TcpClient client = new();
         await client.ConnectAsync(IPAddress.Loopback, port, cancellationToken);
@@ -18,8 +23,45 @@ internal sealed class FakeBridge(TcpClient client) : IDisposable
             ["token"] = token,
             ["projectPath"] = projectPath,
         };
+        if (processId is not null)
+        {
+            hello["pid"] = processId;
+        }
+
         await client.GetStream().WriteAsync(FrameCodec.EncodeJson(hello), cancellationToken);
         return new FakeBridge(client);
+    }
+
+    /// <summary>
+    /// Answers every ping and leaves every other request unanswered, as a game whose main thread runs while a command awaits,
+    /// until the server closes the connection or <paramref name="cancellationToken"/> is cancelled.
+    /// </summary>
+    public async Task AnswerPingsOnlyAsync(CancellationToken cancellationToken)
+    {
+        FrameDecoder decoder = new();
+        byte[] chunk = new byte[4096];
+        try
+        {
+            while (true)
+            {
+                while (decoder.TryReadFrame(out byte[] payload))
+                {
+                    await AnswerIfPingAsync(FrameCodec.DecodeJson(payload), cancellationToken);
+                }
+
+                int read = await client.GetStream().ReadAsync(chunk, cancellationToken);
+                if (read == 0)
+                {
+                    return;
+                }
+
+                decoder.Append(chunk.AsSpan(0, read));
+            }
+        }
+        catch (Exception e) when (e is OperationCanceledException or IOException or ObjectDisposedException)
+        {
+            // The test is over, or the server let go of the connection.
+        }
     }
 
     public Task AnswerOneAsync(string name, CancellationToken cancellationToken) => AnswerOneAfterAsync([], name, cancellationToken);
@@ -79,4 +121,20 @@ internal sealed class FakeBridge(TcpClient client) : IDisposable
     }
 
     public void Dispose() => client.Dispose();
+
+    private async Task AnswerIfPingAsync(JsonObject request, CancellationToken cancellationToken)
+    {
+        if (HandshakeExpectation.ReadString(request, "command") != "ping")
+        {
+            return;
+        }
+
+        JsonObject reply = new()
+        {
+            ["id"] = request["id"]?.DeepClone(),
+            ["ok"] = true,
+            ["result"] = new JsonObject { ["pong"] = true },
+        };
+        await WriteAsync(reply, cancellationToken);
+    }
 }

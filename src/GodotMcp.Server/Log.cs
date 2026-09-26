@@ -53,6 +53,21 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Warning, Message = "Removing the {What} of {Project} after a failed start failed.")]
     public static partial void CleanupFailed(ILogger logger, Exception exception, string what, string project);
 
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Godot for {Project} did not answer a ping within {Seconds} s; killing it without a shutdown."
+    )]
+    public static partial void StopFoundGameStuck(ILogger logger, string project, double seconds);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "The ping before stopping Godot for {Project} failed; shutting it down as usual.")]
+    public static partial void StopPingFailed(ILogger logger, Exception exception, string project);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "'{Tool}' timed out on session {Session}; the hang probe found the main thread {Outcome}. {ProcessState}"
+    )]
+    public static partial void RequestTimedOut(ILogger logger, string tool, string session, string outcome, string processState);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Attached to a game on {Project}; the bridge is connected.")]
     public static partial void Attached(ILogger logger, string project);
 

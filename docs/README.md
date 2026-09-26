@@ -31,7 +31,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Frame control | Pausing, stepping N frames and scaling time in a running game, so a screenshot or check lands on an exact frame (step 10; not built) |
 | Profile, preset | A project's `godot-mcp.json`: its launch defaults, and named launch presets (step 13; not built) |
 | Batch drive | One tool call that plays a list of steps (input, waits, method calls, assertions, screenshots) and stops at the first failed assertion (step 13; not built) |
-| Hang watchdog | The server's report that a game's main thread has stopped answering the bridge, in place of a bare timeout (step 14; not built) |
+| Hang watchdog | The server's report, when a request times out, of whether the game's main thread is still running (it answers a ping) or stuck (it does not), with the stuck process's CPU, threads and last stderr lines, in place of a bare timeout |
 | Baseline | A stored screenshot a new one is compared against, giving a difference score and a diff image (step 14; not built) |
 | Gate, ceiling | A gate is one command run by `tools/gate.ps1` with its own log; its ceiling is the wall-clock limit after which the gate kills the process tree and exits 124 |
 | Parity | The first version covers every godot tool the user's projects call, so it replaces the old server everywhere at once |

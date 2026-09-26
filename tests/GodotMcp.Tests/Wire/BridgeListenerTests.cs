@@ -93,5 +93,22 @@ public sealed class BridgeListenerTests : IDisposable
         Assert.True(connection.IsOpen);
     }
 
+    [Theory]
+    [InlineData(4242)]
+    [InlineData(null)]
+    public async Task TheConnectionCarriesTheHellosPidOrNone(int? processId)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        timeout.CancelAfter(Wait);
+        Task<BridgeConnection> waiter = _listener.AcceptBridgeAsync(new HandshakeExpectation("AAAA", ProjectDir), timeout.Token);
+
+        using FakeBridge game = await FakeBridge.DialAsync(_listener.Port, "AAAA", ProjectDir, processId, cancellation);
+        await using BridgeConnection connection = await waiter;
+
+        Assert.True(connection.IsOpen);
+        Assert.Equal(processId, connection.GameProcessId);
+    }
+
     private static string? NameIn(JsonNode? reply) => reply?["name"]?.GetValue<string>();
 }

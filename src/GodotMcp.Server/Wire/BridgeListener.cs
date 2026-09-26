@@ -145,7 +145,7 @@ internal sealed class BridgeListener : IDisposable
             return;
         }
 
-        await HandOverAsync(waiter, new BridgeConnection(client, decoder, _logger));
+        await HandOverAsync(waiter, new BridgeConnection(client, decoder, HandshakeExpectation.ReadProcessId(hello), _logger));
     }
 
     /// <summary>Completes the waiter with the connection, or closes the connection when the waiter was withdrawn meanwhile.</summary>

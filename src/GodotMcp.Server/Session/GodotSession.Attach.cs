@@ -29,6 +29,7 @@ internal sealed partial class GodotSession
             try
             {
                 _attached = await InjectAndAwaitBridgeAsync(bridgeScript, wait, cancellationToken);
+                GameProcessId = _attached.GameProcessId;
             }
             finally
             {

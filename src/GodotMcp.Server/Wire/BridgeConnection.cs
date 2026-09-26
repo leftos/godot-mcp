@@ -29,17 +29,22 @@ internal sealed class BridgeConnection : IAsyncDisposable
 
     /// <param name="client">The accepted connection, its hello already read.</param>
     /// <param name="decoder">The decoder that read the hello, holding any bytes that arrived after it.</param>
+    /// <param name="gameProcessId">The game's own process id from the hello, or null when the hello carried none.</param>
     /// <param name="logger">Where dropped replies and the connection's end are reported.</param>
-    public BridgeConnection(TcpClient client, FrameDecoder decoder, ILogger logger)
+    public BridgeConnection(TcpClient client, FrameDecoder decoder, int? gameProcessId, ILogger logger)
     {
         _client = client;
         _stream = client.GetStream();
         _decoder = decoder;
         _logger = logger;
+        GameProcessId = gameProcessId;
         _readLoop = Task.Run(ReadLoopAsync);
     }
 
     public bool IsOpen => !_readLoop.IsCompleted;
+
+    /// <summary>The game's own process id, as its hello reported it; null when the bridge predates the field.</summary>
+    public int? GameProcessId { get; }
 
     /// <summary>Sends one command and waits for its reply's <c>result</c>.</summary>
     /// <exception cref="TimeoutException">No reply within <paramref name="timeout"/>; a later reply is dropped.</exception>

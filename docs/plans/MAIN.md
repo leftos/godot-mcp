@@ -16,9 +16,11 @@ Steps 0 to 4b and Wave 1 (steps 7-9: named sessions, the error feed and compact 
 ### Wave 3: the run's lifecycle (`GodotRun`, `GodotCommandLine`, `GodotSession`, `ProjectTools`)
 
 - [ ] Step 11: the edit-build-look loop: `restart_project` (rebuild C# when sources changed, relaunch with the same scene and arguments) and fresh-worktree prep (a missing `.godot/` import cache or C# build is made before launch, under ceilings). Depends on step 12 (its `CsProbe` C# fixture)
-- [ ] Step 14: hang watchdog (a bridge that stops answering is reported as a stuck main thread with the process state and last stderr lines; stop always force-kills) and screenshot baselines (compare a screenshot or crop to a stored baseline; a difference score and a diff image)
+- [ ] Step 14: screenshot baselines (compare a screenshot or crop to a stored baseline; a difference score and a diff image)
 
 ### Wave 4: singles
+
+- [ ] Measure the full `pwsh run.ps1 itest` on a quiet machine: it took 3 m 30 s for 58 tests with three implementers running Godot at once (2026-09-26), against MTP's 4 min timeout and the gate's 300 s ceiling (95 s for 53 tests on 2026-09-25); if the suite itself has grown past the ceiling, ask the user how to split or speed it up rather than raising the ceiling
 
 - [ ] Step 15: in-engine recording (video and audio from inside the engine, frame-perfect, headless or hidden). Absorbs the "in-engine recording" item from Later
 - [ ] Step 5: the 16 headless scene and node tools and validate

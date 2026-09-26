@@ -1,10 +1,10 @@
 extends Node
 ## The godot-mcp bridge: an autoload injected into a game run through override.cfg.
 ##
-## It dials the server at 127.0.0.1:GODOT_MCP_PORT, says hello with GODOT_MCP_TOKEN and the
-## project path, then answers the server's requests. A game run_project did not launch finds
-## the port and token in the attach file attach_project writes instead; with neither, the
-## bridge stays off. Frames are a 4-byte big-endian length
+## It dials the server at 127.0.0.1:GODOT_MCP_PORT, says hello with GODOT_MCP_TOKEN, the
+## project path and its own process id, then answers the server's requests. A game run_project
+## did not launch finds the port and token in the attach file attach_project writes instead;
+## with neither, the bridge stays off. Frames are a 4-byte big-endian length
 ## followed by UTF-8 JSON. Requests are {id, command, params}; replies are
 ## {id, ok: true, result} or {id, ok: false, error}. The errors and warnings the game logs
 ## (godot_mcp_logger.gd) go out as {type: "errors", entries, dropped} frames without an id,
@@ -153,6 +153,7 @@ func _process(_delta: float) -> void:
 				"type": "hello",
 				"token": _token,
 				"projectPath": ProjectSettings.globalize_path("res://"),
+				"pid": OS.get_process_id(),
 			}
 		)
 	_flush_errors()
