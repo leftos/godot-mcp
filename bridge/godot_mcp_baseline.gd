@@ -120,11 +120,11 @@ func _reply(saved: Dictionary, compared: Dictionary, preview_max_width: int) -> 
 	if error != OK:
 		return "saving %s failed: %s" % [diff_path, error_string(error)]
 	reply["diffPath"] = diff_path
-	if preview_max_width > 0 and diff.get_width() > preview_max_width:
-		var preview: Dictionary = {}
-		var preview_path: String = diff_path.get_basename() + "_preview.png"
-		error = bridge._save_preview(diff, preview_path, preview_max_width, preview)
-		if error != OK:
-			return "saving %s failed: %s" % [preview_path, error_string(error)]
+	var preview: Dictionary = {}
+	var preview_path: String = diff_path.get_basename() + "_preview.png"
+	error = bridge._save_preview(diff, preview_path, preview_max_width, preview)
+	if error != OK:
+		return "saving %s failed: %s" % [preview_path, error_string(error)]
+	if preview.has("previewPath"):
 		reply["diffPreviewPath"] = preview["previewPath"]
 	return reply

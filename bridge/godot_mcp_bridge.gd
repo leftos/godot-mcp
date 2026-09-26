@@ -354,12 +354,9 @@ func _save_screenshot(image: Image, params: Dictionary) -> Variant:
 		"path": path, "width": image.get_width(), "height": image.get_height()
 	}
 	var preview_max_width: int = int(params.get("previewMaxWidth", 0))
-	if preview_max_width > 0 and image.get_width() > preview_max_width:
-		error = _save_preview(
-			image, path.get_basename() + "_preview.png", preview_max_width, result
-		)
-		if error != OK:
-			return "saving the preview of %s failed: %s" % [path, error_string(error)]
+	error = _save_preview(image, path.get_basename() + "_preview.png", preview_max_width, result)
+	if error != OK:
+		return "saving the preview of %s failed: %s" % [path, error_string(error)]
 	return result
 
 
@@ -377,7 +374,12 @@ func _crop(image: Image, crop: Dictionary) -> Variant:
 	return image.get_region(inside)
 
 
+## Writes image scaled to max_width as a PNG at path, adding previewPath, previewWidth and
+## previewHeight to result. Returns OK writing nothing and leaving result alone when max_width is
+## zero or less, or image is no wider than it.
 func _save_preview(image: Image, path: String, max_width: int, result: Dictionary) -> Error:
+	if max_width <= 0 or image.get_width() <= max_width:
+		return OK
 	var height: int = maxi(1, int(round(float(image.get_height()) * max_width / image.get_width())))
 	var preview: Image = image.duplicate()
 	preview.resize(max_width, height, Image.INTERPOLATE_LANCZOS)

@@ -214,8 +214,9 @@ static func _array_from_json(value: Variant, info: Dictionary) -> Array:
 
 
 ## A Dictionary from a JSON object; a typed one (PROPERTY_HINT_DICTIONARY_TYPE, "key;value") with
-## each key and value converted and the dictionary built typed. JSON keys are strings, so a
-## numeric key is read from its text.
+## each key and value converted and the dictionary built typed, an Object key or value type refused
+## as _array_from_json refuses an Object element, since no JSON value converts to an Object. JSON
+## keys are strings, so a numeric key is read from its text.
 static func _dictionary_from_json(value: Variant, info: Dictionary) -> Array:
 	if not value is Dictionary:
 		return NOT_CONVERTED
@@ -224,6 +225,8 @@ static func _dictionary_from_json(value: Variant, info: Dictionary) -> Array:
 	var types: PackedStringArray = str(info["hint_string"]).split(";")
 	var key_info: Dictionary = _type_info(types[0])
 	var value_info: Dictionary = _type_info(types[1] if types.size() > 1 else "Variant")
+	if key_info["type"] == TYPE_OBJECT or value_info["type"] == TYPE_OBJECT:
+		return NOT_CONVERTED
 	var entries: Variant = _convert_entries(value, key_info, value_info)
 	if entries == null:
 		return NOT_CONVERTED

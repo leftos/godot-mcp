@@ -158,6 +158,23 @@ func test_from_json_builds_a_dictionary_with_typed_keys() -> void:
 	assert_eq(_json.from_json([], {"type": TYPE_DICTIONARY}), REFUSED, "an array is no Dictionary")
 
 
+func test_from_json_refuses_a_dictionary_of_objects() -> void:
+	var node_value: Dictionary = {
+		"type": TYPE_DICTIONARY,
+		"hint": PROPERTY_HINT_DICTIONARY_TYPE,
+		"hint_string": "int;Node",
+	}
+	var node_key: Dictionary = {
+		"type": TYPE_DICTIONARY,
+		"hint": PROPERTY_HINT_DICTIONARY_TYPE,
+		"hint_string": "Node;int",
+	}
+	assert_eq(_json.from_json({"1": null}, node_value), REFUSED, "a Node value type")
+	assert_eq(_json.from_json({}, node_value), REFUSED, "an empty object, a Node value type")
+	assert_eq(_json.from_json({"1": null}, node_key), REFUSED, "a Node key type")
+	assert_eq(_json.from_json({}, node_key), REFUSED, "an empty object, a Node key type")
+
+
 func test_from_json_builds_a_packed_array_element_by_element() -> void:
 	var points: Array = [{"x": 1.0, "y": 2.0}, {"x": 3.0, "y": 4.0}]
 	var converted: Array = _json.from_json(points, {"type": TYPE_PACKED_VECTOR2_ARRAY})

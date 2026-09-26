@@ -13,9 +13,7 @@ Steps 0 to 4b, Wave 1 (steps 7-9: named sessions, the error feed and compact out
 
 ### Wave 4: singles
 
-- [ ] `godot_mcp_json.gd` `_dictionary_from_json` builds a typed Dictionary whose key or value type is an Object (hint `"int;Node"`), which the property set then refuses; refuse it up front as `_array_from_json` does for an Object element, with a gdtest (review of the JSON move, 2026-09-26)
 - [ ] Measure whether prep's `dotnet build` fails on a locked assembly while another session's game on the same folder has it loaded (delve's server and clients); Godot loads assemblies into memory (`PluginLoadContext.cs` L59-69), so it should not, but it is unverified. If it does, refuse the build as the import is refused, with a test (step 11 review, 2026-09-26)
-- [ ] The bridge's `_save_preview` enlarges an image narrower than `max_width` when called directly; only `_save_screenshot` guards against it. Move the guard into `_save_preview`, with a gdtest (step 14 report, 2026-09-26)
 - [ ] `SessionRegistryTests`' still-starting restart test needs Godot at `GODOT_PATH` or the default path (it parks a launch on the prep lock after `FindGodot`), the only unit test that does; make it Godot-free, e.g. by taking the lock before the Godot lookup or faking the lookup (step 11b report, 2026-09-26)
 
 - [ ] Step 15: in-engine recording (video and audio from inside the engine, frame-perfect, headless or hidden). Absorbs the "in-engine recording" item from Later
