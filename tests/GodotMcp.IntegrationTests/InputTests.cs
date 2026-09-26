@@ -37,7 +37,7 @@ public sealed class InputTests : IAsyncDisposable
     private readonly SessionHarness _harness = new();
     private readonly RuntimeTools _tools;
 
-    public InputTests() => _tools = new RuntimeTools(_harness.Session);
+    public InputTests() => _tools = new RuntimeTools(_harness.Sessions);
 
     public async ValueTask DisposeAsync()
     {
@@ -50,7 +50,7 @@ public sealed class InputTests : IAsyncDisposable
     {
         await LaunchAsync([]);
 
-        await _tools.DragAsync(DragSource, DropTarget, 300, "left", TestContext.Current.CancellationToken);
+        await _tools.DragAsync(DragSource, DropTarget, 300, "left", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(("dropped:DragSource", 1), await ReadDropAsync());
     }
@@ -61,7 +61,7 @@ public sealed class InputTests : IAsyncDisposable
         await LaunchAsync([]);
 
         // DragSource's centre is (90, 190); 5 px is under the default 10 px drag threshold.
-        await _tools.DragAsync(new(null, 90, 190), new(null, 95, 190), 300, "left", TestContext.Current.CancellationToken);
+        await _tools.DragAsync(new(null, 90, 190), new(null, 95, 190), 300, "left", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(("drop here", 0), await ReadDropAsync());
     }
@@ -72,7 +72,7 @@ public sealed class InputTests : IAsyncDisposable
         await LaunchAsync(Letterboxed);
         await AssertLetterboxedAsync();
 
-        await _tools.DragAsync(DragSource, DropTarget, 300, "left", TestContext.Current.CancellationToken);
+        await _tools.DragAsync(DragSource, DropTarget, 300, "left", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(("dropped:DragSource", 1), await ReadDropAsync());
     }
@@ -84,12 +84,12 @@ public sealed class InputTests : IAsyncDisposable
         await LaunchAsync(Letterboxed);
         await AssertLetterboxedAsync();
 
-        await _tools.ClickAsync(new InputTarget("SmallButton"), "left", false, cancellation);
+        await _tools.ClickAsync(new InputTarget("SmallButton"), "left", false, cancellationToken: cancellation);
         int afterElement = (await RunAsync("return scene_tree.root.get_node(\"Main/SmallButton\").press_count")).GetValue<int>();
         JsonNode rect = await FindRectAsync("Button", "SmallButton");
         double x = rect["x"]!.GetValue<double>() + (rect["width"]!.GetValue<double>() / 2);
         double y = rect["y"]!.GetValue<double>() + (rect["height"]!.GetValue<double>() / 2);
-        await _tools.ClickAsync(new InputTarget(null, x, y), "left", false, cancellation);
+        await _tools.ClickAsync(new InputTarget(null, x, y), "left", false, cancellationToken: cancellation);
         int afterPoint = (await RunAsync("return scene_tree.root.get_node(\"Main/SmallButton\").press_count")).GetValue<int>();
 
         Assert.Equal((1, 2), (afterElement, afterPoint));
@@ -101,8 +101,8 @@ public sealed class InputTests : IAsyncDisposable
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await LaunchAsync([]);
 
-        await _tools.ClickAsync(new InputTarget("TextInput"), "left", false, cancellation);
-        await _tools.TypeTextAsync("Hello World!", cancellation);
+        await _tools.ClickAsync(new InputTarget("TextInput"), "left", false, cancellationToken: cancellation);
+        await _tools.TypeTextAsync("Hello World!", cancellationToken: cancellation);
 
         Assert.Equal("Hello World!", (await RunAsync("return scene_tree.root.get_node(\"Main/TextInput\").text")).GetValue<string>());
     }
@@ -113,9 +113,9 @@ public sealed class InputTests : IAsyncDisposable
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await LaunchAsync([]);
 
-        await _tools.KeyAsync("Shift", "press", null, cancellation);
+        await _tools.KeyAsync("Shift", "press", null, cancellationToken: cancellation);
         bool held = (await RunAsync("return Input.is_key_pressed(KEY_SHIFT)")).GetValue<bool>();
-        await _tools.KeyAsync("Shift", "release", null, cancellation);
+        await _tools.KeyAsync("Shift", "release", null, cancellationToken: cancellation);
         bool released = (await RunAsync("return Input.is_key_pressed(KEY_SHIFT)")).GetValue<bool>();
 
         Assert.Equal((true, false), (held, released));
@@ -128,9 +128,9 @@ public sealed class InputTests : IAsyncDisposable
         await LaunchAsync([]);
 
         // From DragSource's centre (90, 190) toward DropTarget's (480, 190), with no explicit button_mask.
-        await _tools.MouseButtonAsync(DragSource, "left", "press", cancellation);
-        await _tools.SimulateInputAsync([Motion(200, 190), Motion(340, 190), Motion(470, 190)], cancellation);
-        await _tools.MouseButtonAsync(DropTarget, "left", "release", cancellation);
+        await _tools.MouseButtonAsync(DragSource, "left", "press", cancellationToken: cancellation);
+        await _tools.SimulateInputAsync([Motion(200, 190), Motion(340, 190), Motion(470, 190)], cancellationToken: cancellation);
+        await _tools.MouseButtonAsync(DropTarget, "left", "release", cancellationToken: cancellation);
 
         Assert.Equal(("dropped:DragSource", 1), await ReadDropAsync());
     }
@@ -141,7 +141,7 @@ public sealed class InputTests : IAsyncDisposable
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await LaunchAsync([]);
 
-        Task<string> drag = _tools.DragAsync(DragSource, DropTarget, 1000, "left", cancellation);
+        Task<string> drag = _tools.DragAsync(DragSource, DropTarget, 1000, "left", cancellationToken: cancellation);
         int strayMotions = (await RunAsync(StrayMotionsScript)).GetValue<int>();
         await drag;
 
@@ -156,7 +156,7 @@ public sealed class InputTests : IAsyncDisposable
         await LaunchAsync([]);
         await RunAsync("scene_tree.root.get_node(\"Main/SmallButton\").fail_on_press = true\n\treturn true");
 
-        string clicked = await _tools.ClickAsync(new InputTarget("SmallButton"), "left", false, cancellation);
+        string clicked = await _tools.ClickAsync(new InputTarget("SmallButton"), "left", false, cancellationToken: cancellation);
         int pressCount = (await RunAsync("return scene_tree.root.get_node(\"Main/SmallButton\").press_count")).GetValue<int>();
 
         Assert.Equal(1, pressCount);
@@ -165,7 +165,11 @@ public sealed class InputTests : IAsyncDisposable
     }
 
     private Task<LaunchResult> LaunchAsync(string[] engineArgs) =>
-        _harness.Session.LaunchAsync(new LaunchRequest(_probe.Directory, null, engineArgs, [], false, false), TestContext.Current.CancellationToken);
+        _harness.Sessions.LaunchAsync(
+            new LaunchRequest(_probe.Directory, null, engineArgs, [], false, false),
+            null,
+            TestContext.Current.CancellationToken
+        );
 
     // Without the bars the letterboxed tests would prove nothing about mapping viewport points to the window.
     private async Task AssertLetterboxedAsync()
@@ -189,14 +193,14 @@ public sealed class InputTests : IAsyncDisposable
 
     private async Task<JsonNode> FindRectAsync(string classFilter, string name)
     {
-        string json = await _tools.GetUiElementsAsync(true, classFilter, TestContext.Current.CancellationToken);
+        string json = await _tools.GetUiElementsAsync(true, classFilter, cancellationToken: TestContext.Current.CancellationToken);
         return Assert.Single(JsonNode.Parse(json)!["elements"]!.AsArray(), element => element!["name"]!.GetValue<string>() == name)!["rect"]!;
     }
 
     private async Task<JsonNode> RunAsync(string body)
     {
         string script = $"extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t{body}\n";
-        string json = await _tools.RunScriptAsync(script, ScriptTimeoutMs, TestContext.Current.CancellationToken);
+        string json = await _tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: TestContext.Current.CancellationToken);
         return JsonNode.Parse(json)!;
     }
 

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json.Nodes;
@@ -7,13 +8,19 @@ namespace GodotMcp.Server.Wire;
 
 /// <summary>
 /// The loopback socket the bridge dials. It binds an ephemeral port once and keeps listening for the server's lifetime,
-/// so the port handed to a launched game is never raced for.
+/// so the port handed to a launched game is never raced for. One accept loop reads each connection's hello and hands the
+/// connection to the waiter registered under the hello's token, so several sessions can wait for their games at once.
 /// </summary>
 internal sealed class BridgeListener : IDisposable
 {
     private static readonly TimeSpan HelloTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan AcceptRetryDelay = TimeSpan.FromMilliseconds(100);
     private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
     private readonly ILogger<BridgeListener> _logger;
+    private readonly ConcurrentDictionary<string, Waiter> _waiters = new(StringComparer.Ordinal);
+    private readonly CancellationTokenSource _stopping = new();
+    private readonly Lock _startLock = new();
+    private Task? _acceptLoop;
 
     public BridgeListener(ILogger<BridgeListener> logger)
     {
@@ -25,53 +32,138 @@ internal sealed class BridgeListener : IDisposable
     public int Port { get; }
 
     /// <summary>
-    /// Accepts connections until one says hello with the expected token and project; any other connection is closed.
+    /// Waits for the connection whose hello carries the expected token and project; any other connection is closed.
+    /// Cancelling <paramref name="cancellationToken"/> withdraws the wait, and a bridge that dials after that is closed.
     /// </summary>
+    /// <exception cref="InvalidOperationException">Another wait is registered under the same token.</exception>
     public async Task<BridgeConnection> AcceptBridgeAsync(HandshakeExpectation expected, CancellationToken cancellationToken)
     {
-        while (true)
+        Waiter waiter = new(expected);
+        if (!_waiters.TryAdd(expected.Token, waiter))
         {
-            TcpClient client = await _listener.AcceptTcpClientAsync(cancellationToken);
-            BridgeConnection? connection = await TryHandshakeAsync(client, expected, cancellationToken);
-            if (connection is not null)
+            throw new InvalidOperationException("A bridge is already awaited under this session token.");
+        }
+
+        EnsureAcceptLoop();
+        await using CancellationTokenRegistration registration = cancellationToken.Register(() =>
+        {
+            if (Withdraw(waiter))
             {
-                return connection;
+                waiter.Completion.TrySetCanceled(cancellationToken);
+            }
+        });
+        return await waiter.Completion.Task;
+    }
+
+    public void Dispose()
+    {
+        _stopping.Cancel();
+        _listener.Dispose();
+        FailWaiters();
+        _stopping.Dispose();
+    }
+
+    private void FailWaiters()
+    {
+        foreach (Waiter waiter in _waiters.Values)
+        {
+            if (Withdraw(waiter))
+            {
+                waiter.Completion.TrySetException(new ObjectDisposedException(nameof(BridgeListener)));
             }
         }
     }
 
-    public void Dispose() => _listener.Dispose();
+    private bool Withdraw(Waiter waiter) => _waiters.TryRemove(new KeyValuePair<string, Waiter>(waiter.Expected.Token, waiter));
 
-    private async Task<BridgeConnection?> TryHandshakeAsync(TcpClient client, HandshakeExpectation expected, CancellationToken cancellationToken)
+    private void EnsureAcceptLoop()
     {
-        client.NoDelay = true;
+        lock (_startLock)
+        {
+            _acceptLoop ??= AcceptLoopAsync(_stopping.Token);
+        }
+    }
+
+    private async Task AcceptLoopAsync(CancellationToken stopping)
+    {
+        while (!stopping.IsCancellationRequested)
+        {
+            try
+            {
+                TcpClient client = await _listener.AcceptTcpClientAsync(stopping);
+                _ = HandleConnectionAsync(client, stopping);
+            }
+            catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (ObjectDisposedException e)
+            {
+                // The socket is gone for good: nothing more can dial in, so every wait ends now instead of at its timeout.
+                Log.RefusedBridgeConnection(_logger, $"the listening socket closed ({e.Message})");
+                FailWaiters();
+                return;
+            }
+            catch (SocketException e) when (!stopping.IsCancellationRequested)
+            {
+                Log.RefusedBridgeConnection(_logger, $"accepting it failed ({e.Message})");
+                await Task.Delay(AcceptRetryDelay, stopping).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            }
+        }
+    }
+
+    /// <summary>Reads the connection's hello and hands the connection to its waiter, or closes it.</summary>
+    private async Task HandleConnectionAsync(TcpClient client, CancellationToken stopping)
+    {
         FrameDecoder decoder = new();
-        string? mismatch;
+        JsonObject hello;
         try
         {
-            using var helloTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            client.NoDelay = true;
+            using var helloTimeout = CancellationTokenSource.CreateLinkedTokenSource(stopping);
             helloTimeout.CancelAfter(HelloTimeout);
-            JsonObject hello = await ReadFirstFrameAsync(client.GetStream(), decoder, helloTimeout.Token);
-            mismatch = expected.FindMismatch(hello);
+            hello = await ReadFirstFrameAsync(client.GetStream(), decoder, helloTimeout.Token);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception e)
+            when (e is IOException or InvalidDataException or OperationCanceledException or ObjectDisposedException or SocketException)
         {
-            client.Dispose();
-            throw;
-        }
-        catch (Exception e) when (e is IOException or InvalidDataException or OperationCanceledException)
-        {
-            mismatch = $"no valid hello arrived ({e.Message})";
+            Refuse(client, $"no valid hello arrived ({e.Message})");
+            return;
         }
 
-        if (mismatch is null)
+        string? token = HandshakeExpectation.ReadString(hello, "token");
+        if (token is null || !_waiters.TryGetValue(token, out Waiter? waiter))
         {
-            return new BridgeConnection(client, decoder, _logger);
+            Refuse(client, "no session is waiting for the token its hello carries");
+            return;
         }
 
-        Log.RefusedBridgeConnection(_logger, mismatch);
+        string? mismatch = waiter.Expected.FindMismatch(hello);
+        if (mismatch is not null)
+        {
+            Refuse(client, mismatch);
+            return;
+        }
+
+        await HandOverAsync(waiter, new BridgeConnection(client, decoder, _logger));
+    }
+
+    /// <summary>Completes the waiter with the connection, or closes the connection when the waiter was withdrawn meanwhile.</summary>
+    private async Task HandOverAsync(Waiter waiter, BridgeConnection connection)
+    {
+        if (Withdraw(waiter) && waiter.Completion.TrySetResult(connection))
+        {
+            return;
+        }
+
+        Log.RefusedBridgeConnection(_logger, "its session stopped waiting for it");
+        await connection.DisposeAsync();
+    }
+
+    private void Refuse(TcpClient client, string reason)
+    {
+        Log.RefusedBridgeConnection(_logger, reason);
         client.Dispose();
-        return null;
     }
 
     private static async Task<JsonObject> ReadFirstFrameAsync(NetworkStream stream, FrameDecoder decoder, CancellationToken cancellationToken)
@@ -92,5 +184,13 @@ internal sealed class BridgeListener : IDisposable
 
             decoder.Append(chunk.AsSpan(0, read));
         }
+    }
+
+    /// <summary>One AcceptBridgeAsync call waiting for its bridge.</summary>
+    private sealed class Waiter(HandshakeExpectation expected)
+    {
+        public HandshakeExpectation Expected { get; } = expected;
+
+        public TaskCompletionSource<BridgeConnection> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }

@@ -21,7 +21,7 @@ public sealed class RuntimeReadTests : IAsyncDisposable
     private readonly SessionHarness _harness = new();
     private readonly RuntimeTools _tools;
 
-    public RuntimeReadTests() => _tools = new RuntimeTools(_harness.Session);
+    public RuntimeReadTests() => _tools = new RuntimeTools(_harness.Sessions);
 
     public async ValueTask DisposeAsync()
     {
@@ -35,7 +35,7 @@ public sealed class RuntimeReadTests : IAsyncDisposable
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await LaunchAsync(TestContext.Current.CancellationToken);
 
-        List<ContentBlock> blocks = [.. await _tools.TakeScreenshotAsync("full", null, 960, cancellation)];
+        List<ContentBlock> blocks = [.. await _tools.TakeScreenshotAsync("full", null, 960, cancellationToken: cancellation)];
         JsonNode reply = JsonNode.Parse(Text(blocks))!;
         string path = reply["path"]!.GetValue<string>();
         byte[] png = Image(blocks);
@@ -43,7 +43,7 @@ public sealed class RuntimeReadTests : IAsyncDisposable
         JsonNode pixel = await RunAsync(
             $"var c := Image.load_from_file(\"{path.Replace('\\', '/')}\").get_pixel(460, 80)\n\treturn [c.r8, c.g8, c.b8]"
         );
-        await _harness.Session.StopAsync(cancellation);
+        await _harness.Sessions.StopAsync(null, cancellation);
 
         Assert.Equal((viewport["x"]!.GetValue<double>(), viewport["y"]!.GetValue<double>()), PngSize(png));
         Assert.Equal(PngSize(png), (reply["width"]!.GetValue<double>(), reply["height"]!.GetValue<double>()));
@@ -58,7 +58,10 @@ public sealed class RuntimeReadTests : IAsyncDisposable
     {
         await LaunchAsync(TestContext.Current.CancellationToken);
 
-        List<ContentBlock> blocks = [.. await _tools.TakeScreenshotAsync("full", RedSquare, 960, TestContext.Current.CancellationToken)];
+        List<ContentBlock> blocks =
+        [
+            .. await _tools.TakeScreenshotAsync("full", RedSquare, 960, cancellationToken: TestContext.Current.CancellationToken),
+        ];
 
         Assert.Equal((120.0, 80.0), PngSize(Image(blocks)));
     }
@@ -68,7 +71,10 @@ public sealed class RuntimeReadTests : IAsyncDisposable
     {
         await LaunchAsync(TestContext.Current.CancellationToken);
 
-        List<ContentBlock> blocks = [.. await _tools.TakeScreenshotAsync("preview", null, 320, TestContext.Current.CancellationToken)];
+        List<ContentBlock> blocks =
+        [
+            .. await _tools.TakeScreenshotAsync("preview", null, 320, cancellationToken: TestContext.Current.CancellationToken),
+        ];
         JsonNode reply = JsonNode.Parse(Text(blocks))!;
 
         Assert.True(PngSize(Image(blocks)).Width <= 320);
@@ -81,7 +87,10 @@ public sealed class RuntimeReadTests : IAsyncDisposable
     {
         await LaunchAsync(TestContext.Current.CancellationToken);
 
-        List<ContentBlock> blocks = [.. await _tools.TakeScreenshotAsync("path_only", null, 960, TestContext.Current.CancellationToken)];
+        List<ContentBlock> blocks =
+        [
+            .. await _tools.TakeScreenshotAsync("path_only", null, 960, cancellationToken: TestContext.Current.CancellationToken),
+        ];
 
         Assert.IsType<TextContentBlock>(Assert.Single(blocks));
         Assert.True(File.Exists(JsonNode.Parse(Text(blocks))!["path"]!.GetValue<string>()));
@@ -92,7 +101,7 @@ public sealed class RuntimeReadTests : IAsyncDisposable
     {
         await LaunchAsync(TestContext.Current.CancellationToken);
 
-        string json = await _tools.GetUiElementsAsync(true, "Label", TestContext.Current.CancellationToken);
+        string json = await _tools.GetUiElementsAsync(true, "Label", cancellationToken: TestContext.Current.CancellationToken);
 
         JsonArray elements = JsonNode.Parse(json)!["elements"]!.AsArray();
         Assert.All(elements, element => Assert.Equal("Label", element!["class"]!.GetValue<string>()));
@@ -139,12 +148,12 @@ public sealed class RuntimeReadTests : IAsyncDisposable
     }
 
     private Task<LaunchResult> LaunchAsync(CancellationToken cancellation) =>
-        _harness.Session.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], false, false), cancellation);
+        _harness.Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], false, false), null, cancellation);
 
     private async Task<JsonNode> RunAsync(string body)
     {
         string script = $"extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t{body}\n";
-        string json = await _tools.RunScriptAsync(script, ScriptTimeoutMs, TestContext.Current.CancellationToken);
+        string json = await _tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: TestContext.Current.CancellationToken);
         return JsonNode.Parse(json)!;
     }
 

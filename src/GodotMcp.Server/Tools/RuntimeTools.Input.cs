@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text.Json.Nodes;
+using GodotMcp.Server.Session;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
@@ -8,15 +9,12 @@ namespace GodotMcp.Server.Tools;
 /// <summary>
 /// Input into the running game. The bridge plays each gesture over frames with new event objects, tracking the held
 /// buttons and the pointer itself, and answers once the gesture has ended and two more frames have run. One input call
-/// plays at a time, and script errors the game printed while it played are appended to its result.
+/// plays at a time on a session (sessions play alongside each other), and script errors the game printed while it played are appended to its result.
 /// </summary>
 internal sealed partial class RuntimeTools
 {
     private const string ErrorNote = " Script errors the game's handlers raise while the input plays are appended to the result.";
     private static readonly TimeSpan InputTimeout = TimeSpan.FromSeconds(10);
-
-    // Static because the SDK may create a tool object per call; one server plays one input call at a time.
-    private static readonly SemaphoreSlim InputGate = new(1, 1);
 
     // A generous allowance per character or event on top of InputTimeout: each takes a frame or two.
     private static readonly TimeSpan PerStepAllowance = TimeSpan.FromMilliseconds(100);
@@ -44,6 +42,7 @@ internal sealed partial class RuntimeTools
         [Description("Where to click.")] InputTarget target,
         [Description("left, right or middle.")] string button = "left",
         [Description("Follow the click with a second press marked double_click.")] bool doubleClick = false,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -54,7 +53,7 @@ internal sealed partial class RuntimeTools
             ["button"] = CheckButton(button),
             ["doubleClick"] = doubleClick,
         };
-        return SendInputAsync("click", parameters, TimeSpan.Zero, cancellationToken);
+        return SendInputAsync(session, "click", parameters, TimeSpan.Zero, cancellationToken);
     }
 
     [McpServerTool(Name = "drag")]
@@ -70,6 +69,7 @@ internal sealed partial class RuntimeTools
         [Description("Where the drag ends and the button is released.")] InputTarget to,
         [Description("How long the moving part takes, in milliseconds.")] int durationMs = 300,
         [Description("left, right or middle.")] string button = "left",
+        [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -86,7 +86,7 @@ internal sealed partial class RuntimeTools
             ["durationMs"] = durationMs,
             ["button"] = CheckButton(button),
         };
-        return SendInputAsync("drag", parameters, TimeSpan.FromMilliseconds(durationMs), cancellationToken);
+        return SendInputAsync(session, "drag", parameters, TimeSpan.FromMilliseconds(durationMs), cancellationToken);
     }
 
     [McpServerTool(Name = "type_text")]
@@ -95,7 +95,11 @@ internal sealed partial class RuntimeTools
             + "keycode on a US layout, its unicode, and shift where the character needs it, one frame apart. \\n is Enter, \\t Tab."
             + ErrorNote
     )]
-    public Task<string> TypeTextAsync([Description("The text, case and symbols kept.")] string text, CancellationToken cancellationToken = default)
+    public Task<string> TypeTextAsync(
+        [Description("The text, case and symbols kept.")] string text,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
+        CancellationToken cancellationToken = default
+    )
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -103,7 +107,7 @@ internal sealed partial class RuntimeTools
         }
 
         JsonObject parameters = new() { ["gesture"] = "type_text", ["text"] = text };
-        return SendInputAsync("type_text", parameters, PerStepAllowance * text.Length, cancellationToken);
+        return SendInputAsync(session, "type_text", parameters, PerStepAllowance * text.Length, cancellationToken);
     }
 
     [McpServerTool(Name = "key")]
@@ -116,6 +120,7 @@ internal sealed partial class RuntimeTools
         [Description("A Godot Key constant without KEY_: Enter, Escape, Space, A, 1, F1, Up, Shift, Ctrl.")] string key,
         [Description("tap, press or release.")] string action = "tap",
         [Description("Modifiers held with the key: any of shift, ctrl, alt, meta.")] string[]? modifiers = null,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -131,7 +136,7 @@ internal sealed partial class RuntimeTools
             ["action"] = action,
             ["modifiers"] = CheckModifiers(modifiers ?? []),
         };
-        return SendInputAsync("key", parameters, TimeSpan.Zero, cancellationToken);
+        return SendInputAsync(session, "key", parameters, TimeSpan.Zero, cancellationToken);
     }
 
     [McpServerTool(Name = "mouse_button")]
@@ -146,6 +151,7 @@ internal sealed partial class RuntimeTools
         [Description("Where to press or release.")] InputTarget target,
         [Description("left, right or middle.")] string button = "left",
         [Description("press or release.")] string action = "press",
+        [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -161,7 +167,7 @@ internal sealed partial class RuntimeTools
             ["button"] = CheckButton(button),
             ["action"] = action,
         };
-        return SendInputAsync("mouse_button", parameters, TimeSpan.Zero, cancellationToken);
+        return SendInputAsync(session, "mouse_button", parameters, TimeSpan.Zero, cancellationToken);
     }
 
     [McpServerTool(Name = "simulate_input")]
@@ -179,6 +185,7 @@ internal sealed partial class RuntimeTools
     )]
     public Task<string> SimulateInputAsync(
         [Description("The events, each an object with a type and that type's fields.")] JsonObject[] events,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -198,27 +205,35 @@ internal sealed partial class RuntimeTools
 
         JsonObject parameters = new() { ["gesture"] = "events", ["events"] = list };
         TimeSpan allowance = (PerStepAllowance * events.Length) + TimeSpan.FromMilliseconds(waitMs);
-        return SendInputAsync("simulate_input", parameters, allowance, cancellationToken);
+        return SendInputAsync(session, "simulate_input", parameters, allowance, cancellationToken);
     }
 
     /// <summary>
-    /// Plays one input call once any earlier one has finished, and appends the script errors Godot printed while it played
-    /// (read once, after the stderr settle; the call still succeeds).
+    /// Plays one input call on the session once any earlier one on it has finished, and appends the script errors Godot
+    /// printed while it played (read once, after the stderr settle; the call still succeeds).
     /// </summary>
-    private async Task<string> SendInputAsync(string tool, JsonObject parameters, TimeSpan allowance, CancellationToken cancellationToken)
+    private async Task<string> SendInputAsync(
+        string? session,
+        string tool,
+        JsonObject parameters,
+        TimeSpan allowance,
+        CancellationToken cancellationToken
+    )
     {
-        await InputGate.WaitAsync(cancellationToken);
+        GodotSession target = Find(session);
+        await target.InputGate.WaitAsync(cancellationToken);
         try
         {
-            long mark = session.MarkStderr();
-            JsonNode? reply = await CallBridgeAsync(tool, "input", parameters, InputTimeout + allowance, cancellationToken);
+            long mark = target.MarkStderr();
+            BridgeCall call = new(tool, "input", parameters, InputTimeout + allowance);
+            JsonNode? reply = await CallBridgeAsync(target, call, cancellationToken);
             string result = reply?.ToJsonString() ?? "{}";
-            IReadOnlyList<string> errors = await CollectScriptErrorsAsync(mark, StderrSettle, cancellationToken);
+            IReadOnlyList<string> errors = await CollectScriptErrorsAsync(target, mark, StderrSettle, cancellationToken);
             return errors.Count == 0 ? result : $"{result}\nGodot reported errors while the input played:\n{string.Join('\n', errors)}";
         }
         finally
         {
-            InputGate.Release();
+            target.InputGate.Release();
         }
     }
 

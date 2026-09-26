@@ -16,7 +16,7 @@ namespace GodotMcp.Server.Tools;
 /// RuntimeTools.Input.cs.
 /// </summary>
 [McpServerToolType]
-internal sealed partial class RuntimeTools(GodotSession session)
+internal sealed partial class RuntimeTools(SessionRegistry sessions)
 {
     private const int MaxScriptErrorLines = 20;
     private static readonly TimeSpan ScreenshotTimeout = TimeSpan.FromSeconds(10);
@@ -48,12 +48,14 @@ internal sealed partial class RuntimeTools(GodotSession session)
         )]
             ScreenshotCrop? crop = null,
         [Description("The widest the preview image may be, in pixels.")] int previewMaxWidth = 960,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
         ScreenshotMode mode = ParseMode(responseMode);
         JsonObject parameters = BuildScreenshotParameters(mode, crop, previewMaxWidth);
-        JsonNode? reply = await CallBridgeAsync("take_screenshot", "screenshot", parameters, ScreenshotTimeout, cancellationToken);
+        BridgeCall call = new("take_screenshot", "screenshot", parameters, ScreenshotTimeout);
+        JsonNode? reply = await CallBridgeAsync(Find(session), call, cancellationToken);
         ScreenshotFiles files = ReadScreenshotFiles(reply);
         List<ContentBlock> blocks = [new TextContentBlock { Text = JsonSerializer.Serialize(files, Json) }];
         string? imagePath = mode switch
@@ -79,11 +81,13 @@ internal sealed partial class RuntimeTools(GodotSession session)
     public async Task<string> GetUiElementsAsync(
         [Description("Skip every Control that is not visible in the tree, and everything under it.")] bool visibleOnly = true,
         [Description("Only Controls of this engine class or a subclass of it, e.g. BaseButton.")] string? filter = null,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
         JsonObject parameters = new() { ["visibleOnly"] = visibleOnly, ["classFilter"] = filter ?? string.Empty };
-        JsonNode? reply = await CallBridgeAsync("get_ui_elements", "ui_elements", parameters, UiElementsTimeout, cancellationToken);
+        BridgeCall call = new("get_ui_elements", "ui_elements", parameters, UiElementsTimeout);
+        JsonNode? reply = await CallBridgeAsync(Find(session), call, cancellationToken);
         return reply?.ToJsonString() ?? "{\"elements\":[]}";
     }
 
@@ -98,6 +102,7 @@ internal sealed partial class RuntimeTools(GodotSession session)
     public async Task<string> RunScriptAsync(
         [Description("The GDScript source.")] string script,
         [Description("How long to wait for execute to return, in milliseconds.")] int timeoutMs = 30000,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -113,13 +118,14 @@ internal sealed partial class RuntimeTools(GodotSession session)
             throw new McpException($"timeoutMs must be at least 1; got {timeoutMs}.");
         }
 
-        long mark = session.MarkStderr();
-        JsonNode? reply = await RunScriptOnBridgeAsync(script, TimeSpan.FromMilliseconds(timeoutMs), mark, cancellationToken);
+        GodotSession target = Find(session);
+        long mark = target.MarkStderr();
+        JsonNode? reply = await RunScriptOnBridgeAsync(target, script, TimeSpan.FromMilliseconds(timeoutMs), mark, cancellationToken);
         JsonNode? value = reply?["value"];
         if (value is null)
         {
             // GDScript has no exceptions: a runtime error ends execute with null, and the error itself goes to stderr.
-            IReadOnlyList<string> errors = await CollectScriptErrorsAsync(mark, StderrWait, cancellationToken);
+            IReadOnlyList<string> errors = await CollectScriptErrorsAsync(target, mark, StderrWait, cancellationToken);
             if (errors.Count > 0)
             {
                 throw new McpException(
@@ -150,15 +156,22 @@ internal sealed partial class RuntimeTools(GodotSession session)
         return errors;
     }
 
-    private async Task<JsonNode?> RunScriptOnBridgeAsync(string script, TimeSpan timeout, long mark, CancellationToken cancellationToken)
+    private static async Task<JsonNode?> RunScriptOnBridgeAsync(
+        GodotSession target,
+        string script,
+        TimeSpan timeout,
+        long mark,
+        CancellationToken cancellationToken
+    )
     {
         try
         {
-            return await CallBridgeAsync("run_script", "run_script", new JsonObject { ["source"] = script }, timeout, cancellationToken);
+            BridgeCall call = new("run_script", "run_script", new JsonObject { ["source"] = script }, timeout);
+            return await CallBridgeAsync(target, call, cancellationToken);
         }
         catch (McpException e) when (e.InnerException is InvalidOperationException refused)
         {
-            IReadOnlyList<string> errors = await CollectScriptErrorsAsync(mark, StderrWait, cancellationToken);
+            IReadOnlyList<string> errors = await CollectScriptErrorsAsync(target, mark, StderrWait, cancellationToken);
             string detail =
                 errors.Count == 0
                     ? "\nGodot printed no SCRIPT ERROR line for it; check get_debug_output."
@@ -171,31 +184,44 @@ internal sealed partial class RuntimeTools(GodotSession session)
     /// The script errors on stderr since <paramref name="mark"/>, read after <see cref="StderrSettle"/> and then polled until
     /// <paramref name="wait"/> has passed while there are none.
     /// </summary>
-    private async Task<IReadOnlyList<string>> CollectScriptErrorsAsync(long mark, TimeSpan wait, CancellationToken cancellationToken)
+    private static async Task<IReadOnlyList<string>> CollectScriptErrorsAsync(
+        GodotSession target,
+        long mark,
+        TimeSpan wait,
+        CancellationToken cancellationToken
+    )
     {
         DateTime deadline = DateTime.UtcNow + wait;
         await Task.Delay(StderrSettle, cancellationToken);
-        List<string> errors = FindScriptErrors(session.GetStderrSince(mark));
+        List<string> errors = FindScriptErrors(target.GetStderrSince(mark));
         while (errors.Count == 0 && DateTime.UtcNow < deadline)
         {
             await Task.Delay(50, cancellationToken);
-            errors = FindScriptErrors(session.GetStderrSince(mark));
+            errors = FindScriptErrors(target.GetStderrSince(mark));
         }
 
         return errors;
     }
 
-    private async Task<JsonNode?> CallBridgeAsync(
-        string tool,
-        string command,
-        JsonObject parameters,
-        TimeSpan timeout,
-        CancellationToken cancellationToken
-    )
+    /// <summary>The session a tool addresses, resolved once its own arguments have been checked.</summary>
+    private GodotSession Find(string? session)
     {
         try
         {
-            return await session.SendAsync(command, parameters, timeout, cancellationToken);
+            return sessions.Resolve(session);
+        }
+        catch (SessionException e)
+        {
+            throw new McpException(e.Message, e);
+        }
+    }
+
+    private static async Task<JsonNode?> CallBridgeAsync(GodotSession target, BridgeCall call, CancellationToken cancellationToken)
+    {
+        (string tool, string command, JsonObject parameters, TimeSpan timeout) = call;
+        try
+        {
+            return await target.SendAsync(command, parameters, timeout, cancellationToken);
         }
         catch (SessionException e)
         {
@@ -205,8 +231,8 @@ internal sealed partial class RuntimeTools(GodotSession session)
         {
             string hint = tool == "run_script" ? "; a script that needs longer can raise timeoutMs" : string.Empty;
             throw new McpException(
-                $"The game did not answer {tool} within {timeout.TotalSeconds:0.###} s: it may be paused, busy or hung{hint}. "
-                    + "Check get_debug_output, or stop_project and run it again.",
+                $"The game of session '{target.Name}' did not answer {tool} within {timeout.TotalSeconds:0.###} s: it may be "
+                    + $"paused, busy or hung{hint}. Check get_debug_output, or stop_project session '{target.Name}' and run it again.",
                 e
             );
         }
@@ -290,6 +316,9 @@ internal sealed partial class RuntimeTools(GodotSession session)
 
     // GDScript's JSON reads and writes every number it parsed as a float, so an integer may arrive as 640.0.
     private static int? ReadInt(JsonNode? node) => node is JsonValue value && value.TryGetValue(out double number) ? (int)number : null;
+
+    /// <summary>One request to the bridge: the tool it serves (for messages), the bridge command, its parameters and its timeout.</summary>
+    private sealed record BridgeCall(string Tool, string Command, JsonObject Parameters, TimeSpan Timeout);
 
     [GeneratedRegex("SCRIPT ERROR|Parse Error")]
     private static partial Regex ScriptErrorLine();

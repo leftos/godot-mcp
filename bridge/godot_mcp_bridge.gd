@@ -229,7 +229,9 @@ func _handle_screenshot(id: int, params: Dictionary) -> void:
 		image = image.get_region(inside)
 	var directory: String = ProjectSettings.globalize_path(SCREENSHOT_DIR)
 	DirAccess.make_dir_recursive_absolute(directory)
-	var path: String = directory.path_join(_utc_stamp() + ".png")
+	# The process id keeps two games on one project from writing one file in the same millisecond.
+	var file_name: String = "%s-%d.png" % [_utc_stamp(), OS.get_process_id()]
+	var path: String = directory.path_join(file_name)
 	var error: Error = image.save_png(path)
 	if error != OK:
 		_reply_error(id, "saving %s failed: %s" % [path, error_string(error)])

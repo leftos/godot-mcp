@@ -10,12 +10,12 @@ HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
 
 builder.Services.AddSingleton<BridgeListener>();
-builder.Services.AddSingleton<GodotSession>();
+builder.Services.AddSingleton<SessionRegistry>();
 builder.Services.AddMcpServer().WithStdioServerTransport().WithToolsFromAssembly();
 
 using IHost host = builder.Build();
-GodotSession session = host.Services.GetRequiredService<GodotSession>();
-host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(session.Shutdown);
-AppDomain.CurrentDomain.ProcessExit += (_, _) => session.Shutdown();
+SessionRegistry sessions = host.Services.GetRequiredService<SessionRegistry>();
+host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(sessions.Shutdown);
+AppDomain.CurrentDomain.ProcessExit += (_, _) => sessions.Shutdown();
 
 await host.RunAsync();

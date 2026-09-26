@@ -47,6 +47,9 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Warning, Message = "Removing the override.cfg of {Project} after Godot exited failed.")]
     public static partial void OverrideRemovalFailed(ILogger logger, Exception exception, string project);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Removing the {What} of {Project} after a failed start failed.")]
+    public static partial void CleanupFailed(ILogger logger, Exception exception, string what, string project);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Attached to a game on {Project}; the bridge is connected.")]
     public static partial void Attached(ILogger logger, string project);
 

@@ -27,18 +27,18 @@ public sealed class InputValidationTests : IDisposable
     private static readonly string[] MixedCaseButtons = ["a", "Dpad_Down", "paddle4", "TOUCHPAD", "left_shoulder"];
     private static readonly string[] MixedCaseAxes = ["left_x", "Trigger_Right"];
     private readonly BridgeListener _listener = new(NullLogger<BridgeListener>.Instance);
-    private readonly GodotSession _session;
+    private readonly SessionRegistry _sessions;
     private readonly RuntimeTools _tools;
 
     public InputValidationTests()
     {
-        _session = new GodotSession(_listener, NullLogger<GodotSession>.Instance);
-        _tools = new RuntimeTools(_session);
+        _sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance);
+        _tools = new RuntimeTools(_sessions);
     }
 
     public void Dispose()
     {
-        _session.Dispose();
+        _sessions.Dispose();
         _listener.Dispose();
     }
 
@@ -167,7 +167,7 @@ public sealed class InputValidationTests : IDisposable
     public async Task GamepadButtonRefusesAnUnknownAction()
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
-            _tools.GamepadButtonAsync("A", "hold", 0, TestContext.Current.CancellationToken)
+            _tools.GamepadButtonAsync("A", "hold", 0, cancellationToken: TestContext.Current.CancellationToken)
         );
 
         Assert.Equal("action 'hold' is not one of tap, press, release.", refused.Message);
@@ -177,7 +177,7 @@ public sealed class InputValidationTests : IDisposable
     public async Task GamepadStickRefusesAnUnknownStick()
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
-            _tools.GamepadStickAsync("middle", Centre, 0, false, 0, TestContext.Current.CancellationToken)
+            _tools.GamepadStickAsync("middle", Centre, 0, null, null, TestContext.Current.CancellationToken)
         );
 
         Assert.Equal("stick 'middle' is not one of left, right.", refused.Message);
@@ -186,14 +186,14 @@ public sealed class InputValidationTests : IDisposable
     [Fact]
     public async Task GamepadStickRefusesAPositionOffTheStick() =>
         await Assert.ThrowsAsync<McpException>(() =>
-            _tools.GamepadStickAsync("left", new StickPosition(0, 2), 0, false, 0, TestContext.Current.CancellationToken)
+            _tools.GamepadStickAsync("left", new StickPosition(0, 2), 0, null, null, TestContext.Current.CancellationToken)
         );
 
     [Fact]
     public async Task GamepadAxisRefusesANegativeDuration()
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
-            _tools.GamepadAxisAsync("LEFT_X", 0.5, -1, false, 0, TestContext.Current.CancellationToken)
+            _tools.GamepadAxisAsync("LEFT_X", 0.5, 0, new SweepOptions(DurationMs: -1), null, TestContext.Current.CancellationToken)
         );
 
         Assert.Equal("durationMs must be 0 or more; got -1.", refused.Message);
@@ -203,7 +203,7 @@ public sealed class InputValidationTests : IDisposable
     public async Task AValidGamepadCallWithoutASessionSaysNoneIsRunning()
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
-            _tools.GamepadAxisAsync("TRIGGER_LEFT", 0.5, 0, true, 3, TestContext.Current.CancellationToken)
+            _tools.GamepadAxisAsync("TRIGGER_LEFT", 0.5, 3, new SweepOptions(Release: true), null, TestContext.Current.CancellationToken)
         );
 
         Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
@@ -216,7 +216,9 @@ public sealed class InputValidationTests : IDisposable
     [Fact]
     public async Task SimulateInputRefusesAnEmptyList()
     {
-        McpException refused = await Assert.ThrowsAsync<McpException>(() => _tools.SimulateInputAsync([], TestContext.Current.CancellationToken));
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SimulateInputAsync([], cancellationToken: TestContext.Current.CancellationToken)
+        );
 
         Assert.StartsWith("events is empty", refused.Message, StringComparison.Ordinal);
     }
@@ -225,7 +227,7 @@ public sealed class InputValidationTests : IDisposable
     public async Task KeyRefusesAnUnknownAction()
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
-            _tools.KeyAsync("A", "hold", null, TestContext.Current.CancellationToken)
+            _tools.KeyAsync("A", "hold", null, cancellationToken: TestContext.Current.CancellationToken)
         );
 
         Assert.Equal("action 'hold' is not one of tap, press, release.", refused.Message);
@@ -235,7 +237,7 @@ public sealed class InputValidationTests : IDisposable
     public async Task MouseButtonRefusesTap()
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
-            _tools.MouseButtonAsync(Point, "left", "tap", TestContext.Current.CancellationToken)
+            _tools.MouseButtonAsync(Point, "left", "tap", cancellationToken: TestContext.Current.CancellationToken)
         );
 
         Assert.Equal("action 'tap' is not one of press, release.", refused.Message);
@@ -245,7 +247,7 @@ public sealed class InputValidationTests : IDisposable
     public async Task DragRefusesANegativeDuration()
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
-            _tools.DragAsync(Point, Point, -1, "left", TestContext.Current.CancellationToken)
+            _tools.DragAsync(Point, Point, -1, "left", cancellationToken: TestContext.Current.CancellationToken)
         );
 
         Assert.Equal("durationMs must be 0 or more; got -1.", refused.Message);
@@ -253,13 +255,13 @@ public sealed class InputValidationTests : IDisposable
 
     [Fact]
     public async Task TypeTextRefusesEmptyText() =>
-        await Assert.ThrowsAsync<McpException>(() => _tools.TypeTextAsync(string.Empty, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<McpException>(() => _tools.TypeTextAsync(string.Empty, cancellationToken: TestContext.Current.CancellationToken));
 
     [Fact]
     public async Task AValidCallWithoutASessionSaysNoneIsRunning()
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
-            _tools.ClickAsync(Point, "left", false, TestContext.Current.CancellationToken)
+            _tools.ClickAsync(Point, "left", false, cancellationToken: TestContext.Current.CancellationToken)
         );
 
         Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);

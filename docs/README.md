@@ -21,7 +21,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Attached session, attach file | A session on a game `run_project` did not start: `attach_project` writes the injection `override.cfg` and a one-use `<project>/.godot/godot-mcp/attach.json` ({port, token}) and waits for a game launched after it to dial in; `detach_project` ends it and leaves the game running. It has no captured output |
 | Shut out (real gamepads) | The opt-in `shutOutRealGamepads` mode that keeps a machine's real pads from reaching a run, by marking the game unfocused; the bridge half is `bridge/godot_mcp_gamepad.gd` |
 | Injected mark | The `InputEvent.device` value `0x6D6370` every injected mouse event carries, so the bridge can swallow the real mouse while a gesture plays |
-| Session name | The key a run is known by once several games run at once (a worktree's, or delve's "server" and "client-1"); a runtime tool defaults to the only session (step 7; not built) |
+| Session, session name | One run or attached game the server drives, known by a name (by default its project folder's; delve's "server" and "client-1" share one folder); a tool may omit the name while only one session exists. `list_sessions` lists them |
 | Error feed | Engine and script errors raised while a tool call ran, attached to that call's result so no failure is silent (step 8; not built) |
 | Compact output | A result held to a size budget: a screenshot as a path or a small preview, a long list or log truncated with a count and a way to page (step 8; not built) |
 | Quiet by default | Agent runs start off-screen, unfocused, muted and deaf to the real mouse unless asked otherwise (step 9; not built) |

@@ -34,12 +34,14 @@ public sealed class McpServerSmokeTests : IDisposable
         IList<McpClientTool> tools = await client.ListToolsAsync(cancellationToken: cancellation);
         CallToolResult run = await CallAsync(client, "run_project", new() { ["projectPath"] = _probe.Directory, ["userArgs"] = SmokeArgs });
         bool sawProbe = await WaitForProbeLineAsync(client, "[probe] ready args=[\"--smoke\"]");
+        CallToolResult listed = await CallAsync(client, "list_sessions", []);
         CallToolResult screenshot = await CallAsync(client, "take_screenshot", new() { ["responseMode"] = "preview" });
         CallToolResult script = await CallAsync(client, "run_script", new() { ["script"] = ChildCountScript });
         Dictionary<string, object?> smallButton = new() { ["element"] = "SmallButton" };
         CallToolResult click = await CallAsync(client, "click", new() { ["target"] = smallButton });
         CallToolResult pressCount = await CallAsync(client, "run_script", new() { ["script"] = PressCountScript });
         CallToolResult stop = await CallAsync(client, "stop_project", []);
+        CallToolResult listedAfterStop = await CallAsync(client, "list_sessions", []);
 
         Assert.Equal(
             [
@@ -53,6 +55,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "get_debug_output",
                 "get_ui_elements",
                 "key",
+                "list_sessions",
                 "mouse_button",
                 "run_project",
                 "run_script",
@@ -65,6 +68,10 @@ public sealed class McpServerSmokeTests : IDisposable
         );
         Assert.True(run.IsError is not true, Text(run));
         Assert.True(sawProbe);
+        JsonElement session = Assert.Single(JsonDocument.Parse(Text(listed)).RootElement.GetProperty("sessions").EnumerateArray());
+        Assert.Equal("InputProbe", session.GetProperty("name").GetString());
+        Assert.Equal("run", session.GetProperty("kind").GetString());
+        Assert.True(session.GetProperty("live").GetBoolean());
         Assert.True(screenshot.IsError is not true, Text(screenshot));
         Assert.Equal("image/png", Assert.Single(screenshot.Content.OfType<ImageContentBlock>()).MimeType);
         Assert.True(script.IsError is not true, Text(script));
@@ -73,6 +80,8 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.Equal("1", Text(pressCount));
         Assert.True(stop.IsError is not true, Text(stop));
         Assert.False(JsonDocument.Parse(Text(stop)).RootElement.GetProperty("killed").GetBoolean());
+        JsonElement stopped = Assert.Single(JsonDocument.Parse(Text(listedAfterStop)).RootElement.GetProperty("sessions").EnumerateArray());
+        Assert.False(stopped.GetProperty("live").GetBoolean());
         Assert.False(File.Exists(_probe.OverrideFile));
     }
 

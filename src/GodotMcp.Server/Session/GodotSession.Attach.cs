@@ -9,65 +9,64 @@ namespace GodotMcp.Server.Session;
 /// </summary>
 internal sealed partial class GodotSession
 {
-    private AttachedRun? _attached;
-    private string? _attachingDir;
-
-    /// <summary>Whether the session is one attach_project started and detach_project has not ended.</summary>
-    public bool IsAttached => _attached is not null;
+    /// <summary>The attached game's bridge connection; the server holds no process for it.</summary>
+    private BridgeConnection? _attached;
 
     /// <summary>
     /// Injects the bridge into the project and writes the one-use attach file, then waits up to <paramref name="wait"/> for a
     /// game started on the project to dial in. The attach file is gone whatever the outcome; the override file stays for the
-    /// session, or is removed when no game connected.
+    /// session, or is released when no game connected, and a failed attach leaves the registry without this session.
     /// </summary>
-    /// <param name="projectPath">The project folder.</param>
+    /// <param name="bridgeScript">The bridge script the override's autoload names.</param>
     /// <param name="wait">How long to wait for the game's bridge.</param>
-    /// <param name="shutOutRealGamepads">Whether the bridge shuts the machine's real pads out of the game.</param>
     /// <param name="cancellationToken">Cancels the wait.</param>
-    /// <exception cref="SessionException">A session is live, the project is missing, or no game connected in time.</exception>
-    public async Task<AttachResult> AttachAsync(string projectPath, TimeSpan wait, bool shutOutRealGamepads, CancellationToken cancellationToken)
+    /// <exception cref="SessionException">The project has its own override.cfg, or no game connected in time.</exception>
+    public async Task<AttachResult> AttachAsync(string bridgeScript, TimeSpan wait, CancellationToken cancellationToken)
     {
-        await _gate.WaitAsync(cancellationToken);
         try
         {
-            await RetirePreviousRunAsync();
-            string projectDir = NormaliseProjectDir(projectPath);
-            string bridgeScript = Installation.FindBridgeScript();
-            _attachingDir = projectDir;
+            await _gate.WaitAsync(cancellationToken);
             try
             {
-                BridgeConnection connection = await InjectAndAwaitBridgeAsync(projectDir, bridgeScript, shutOutRealGamepads, wait, cancellationToken);
-                _attached = new AttachedRun(projectDir, connection);
+                _attached = await InjectAndAwaitBridgeAsync(bridgeScript, wait, cancellationToken);
             }
             finally
             {
-                _attachingDir = null;
-                AttachFile.Remove(projectDir);
+                _gate.Release();
             }
-
-            Log.Attached(logger, projectDir);
-            return new AttachResult(projectDir);
+        }
+        catch (OperationCanceledException e) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new SessionException(DescribeAttachTimeout(wait, AbandonStart(forget: true)), e);
+        }
+        catch
+        {
+            AbandonStart(forget: true);
+            throw;
         }
         finally
         {
-            _gate.Release();
+            _pending = false;
         }
+
+        Log.Attached(_logger, ProjectDir);
+        return new AttachResult(Name, ProjectDir);
     }
 
-    /// <summary>Closes the attached game's connection and removes the override file; the game keeps running.</summary>
-    /// <exception cref="SessionException">No session is attached.</exception>
+    /// <summary>Closes the attached game's connection, drops the session and releases the override file; the game keeps running.</summary>
+    /// <exception cref="SessionException">The session is not an attached one.</exception>
     public async Task<DetachResult> DetachAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            AttachedRun attached = _attached ?? throw new SessionException(DescribeNothingToDetach());
+            BridgeConnection attached = _attached ?? throw new SessionException(DescribeNothingToDetach());
             _attached = null;
-            await attached.Connection.DisposeAsync();
-            bool removed = OverrideFile.Remove(attached.ProjectDir);
-            AttachFile.Remove(attached.ProjectDir);
-            Log.Detached(logger, attached.ProjectDir);
-            return new DetachResult(attached.ProjectDir, removed);
+            await attached.DisposeAsync();
+            registry.Forget(this);
+            bool removed = registry.ReleaseFolder(this);
+            Log.Detached(_logger, ProjectDir);
+            return new DetachResult(Name, ProjectDir, removed);
         }
         finally
         {
@@ -75,95 +74,81 @@ internal sealed partial class GodotSession
         }
     }
 
-    private async Task<BridgeConnection> InjectAndAwaitBridgeAsync(
-        string projectDir,
-        string bridgeScript,
-        bool shutOutRealGamepads,
-        TimeSpan wait,
-        CancellationToken cancellationToken
-    )
+    /// <summary>
+    /// Writes the attach file and the override, waits for the game, and removes the attach file before the connection is
+    /// kept, so a failed removal closes the connection instead of leaking it.
+    /// </summary>
+    private async Task<BridgeConnection> InjectAndAwaitBridgeAsync(string bridgeScript, TimeSpan wait, CancellationToken cancellationToken)
     {
         string token = CreateToken();
 
         // The attach file goes first: a game that starts between the two writes then finds it once override.cfg loads the bridge.
-        AttachFile.Write(projectDir, new BridgeEndpoint(listener.Port, token), shutOutRealGamepads);
+        AttachFile.Write(ProjectDir, new BridgeEndpoint(registry.Listener.Port, token), ShutOutRealGamepads);
+        BridgeConnection connection;
         try
         {
-            OverrideFile.Write(projectDir, bridgeScript, shutOutRealGamepads);
-            GitExclude.Ensure(projectDir, OverrideFile.FileName, logger);
-            return await AcceptAttachedBridgeAsync(new HandshakeExpectation(token, projectDir), wait, cancellationToken);
+            registry.WriteOverride(this, bridgeScript);
+            GitExclude.Ensure(ProjectDir, OverrideFile.FileName, _logger);
+            connection = await AcceptAttachedBridgeAsync(new HandshakeExpectation(token, ProjectDir), wait, cancellationToken);
         }
         catch
         {
-            OverrideFile.Remove(projectDir);
+            RemoveAttachFileAfterFailure();
             throw;
         }
+
+        try
+        {
+            AttachFile.Remove(ProjectDir);
+        }
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
+
+        return connection;
     }
 
     private async Task<BridgeConnection> AcceptAttachedBridgeAsync(HandshakeExpectation expected, TimeSpan wait, CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(wait);
-        try
-        {
-            return await listener.AcceptBridgeAsync(expected, timeout.Token);
-        }
-        catch (OperationCanceledException e) when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new SessionException(
-                $"No game on {expected.ProjectPath} connected within {wait.TotalSeconds:0} s, so the attach is abandoned and its "
-                    + "override.cfg and attach file are removed. A game attaches only when it starts after attach_project has written "
-                    + "them: launch it (a script, godot --path <project>, the editor's Play button) within waitSeconds of the call, "
-                    + "then call attach_project again.",
-                e
-            );
-        }
+        return await registry.Listener.AcceptBridgeAsync(expected, timeout.Token);
     }
 
-    /// <summary>Fails when an attached game is still connected; otherwise forgets a session whose game has gone.</summary>
-    private async Task RetireAttachedAsync()
+    /// <summary>Removes the attach file after a failed attach; a failure is logged so the attach's own error still reaches the caller.</summary>
+    private void RemoveAttachFileAfterFailure()
     {
-        if (_attached is null)
-        {
-            return;
-        }
-
-        if (_attached.Connection.IsOpen)
-        {
-            throw new SessionException($"A session is attached to {_attached.ProjectDir}; detach_project first.");
-        }
-
-        await _attached.Connection.DisposeAsync();
-        OverrideFile.Remove(_attached.ProjectDir);
-        _attached = null;
-    }
-
-    private string DescribeNothingToDetach() =>
-        _run is { IsRunning: true }
-            ? $"The session for {_run.ProjectDir} was started by run_project; stop_project ends it."
-            : "No session is attached, so there is nothing to detach. attach_project starts one.";
-
-    /// <summary>The last-resort cleanup at the server's exit: the attached or attaching project's override and attach files.</summary>
-    private void RemoveAttachFiles()
-    {
-        string? projectDir = _attached?.ProjectDir ?? _attachingDir;
-        if (projectDir is null)
-        {
-            return;
-        }
-
         try
         {
-            OverrideFile.Remove(projectDir);
-            AttachFile.Remove(projectDir);
+            AttachFile.Remove(ProjectDir);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            // Logging may already be torn down while the process exits, so this goes straight to stderr.
-            Console.Error.WriteLine($"godot-mcp: cleanup of {projectDir} at shutdown failed: {e.Message}");
+            Log.CleanupFailed(_logger, e, "attach file", ProjectDir);
         }
     }
 
-    /// <summary>A game attach_project connected to: only its bridge connection, since the server holds no process for it.</summary>
-    private sealed record AttachedRun(string ProjectDir, BridgeConnection Connection);
+    private string DescribeAttachTimeout(TimeSpan wait, bool overrideRemoved)
+    {
+        string removed = overrideRemoved
+            ? "its override.cfg and attach file are removed"
+            : "its attach file is removed (override.cfg stays while another live session uses the folder)";
+        return $"No game on {ProjectDir} connected within {wait.TotalSeconds:0} s, so the attach is abandoned and {removed}. A game "
+            + "attaches only when it starts after attach_project has written them: launch it (a script, godot --path <project>, "
+            + "the editor's Play button) within waitSeconds of the call, then call attach_project again.";
+    }
+
+    private string DescribeNothingToDetach()
+    {
+        if (Kind == SessionKind.Attach)
+        {
+            return "No session is attached, so there is nothing to detach. attach_project starts one.";
+        }
+
+        return _run is { IsRunning: true }
+            ? $"The session for {ProjectDir} was started by run_project; stop_project ends it."
+            : $"Session '{Name}' was started by run_project; use stop_project.";
+    }
 }

@@ -14,6 +14,8 @@ namespace GodotMcp.Server.Tools;
 internal sealed partial class RuntimeTools
 {
     private const int MaxDevice = 15;
+    private const string SweepDescription =
+        "{durationMs, release}: sweep over durationMs instead of at once, then let go; 0 and false when left out.";
     private const string PadNote =
         " The injected pad never shows as connected: Input.get_connected_joypads, is_joy_known and get_joy_name are filled only "
         + "by the platform's pad driver, so a game that waits for a connected pad needs an OS-level virtual pad.";
@@ -61,6 +63,7 @@ internal sealed partial class RuntimeTools
             string button,
         [Description("tap, press or release.")] string action = "tap",
         [Description("The pad's device id, 0 (the first pad) to 15.")] int device = 0,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -76,44 +79,51 @@ internal sealed partial class RuntimeTools
             ["action"] = action,
             ["device"] = CheckDevice(device),
         };
-        return SendInputAsync("gamepad_button", parameters, TimeSpan.Zero, cancellationToken);
+        return SendInputAsync(session, "gamepad_button", parameters, TimeSpan.Zero, cancellationToken);
     }
 
     [McpServerTool(Name = "gamepad_axis")]
     [Description(
         "Moves one gamepad axis in the running game: Input.get_joy_axis reads the raw value, and an action bound to the axis "
             + "is pressed past its deadzone with strength inverse_lerp(deadzone, 1, |value|). With durationMs the axis sweeps "
-            + "from the value it holds to value, one event a frame; with release a 0.0 follows a frame after it arrives."
+            + "from the value it holds to value, one event a frame; with release a 0.0 follows a frame after it arrives (both in options)."
             + PadNote
             + ErrorNote
     )]
     public Task<string> GamepadAxisAsync(
         [Description("A Godot JoyAxis without JOY_AXIS_, any case: LEFT_X, LEFT_Y, RIGHT_X, RIGHT_Y, TRIGGER_LEFT, TRIGGER_RIGHT.")] string axis,
         [Description("-1 to 1 for a stick axis (Y is down-positive), 0 to 1 for a trigger.")] double value,
-        [Description("How long the sweep to value takes, in milliseconds; 0 sends it at once.")] int durationMs = 0,
-        [Description("Send 0.0 a frame after value is reached, as a pad does when let go.")] bool release = false,
         [Description("The pad's device id, 0 (the first pad) to 15.")] int device = 0,
+        [Description(SweepDescription)] SweepOptions? options = null,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
         string name = CheckJoyAxis(axis);
         JsonArray axes = [AxisTarget(name, CheckAxisValue(name, value))];
-        return SendAxesAsync("gamepad_axis", axes, durationMs, release, device, cancellationToken);
+        SweepOptions sweep = CheckSweep(options);
+        return SendInputAsync(
+            session,
+            "gamepad_axis",
+            AxesParameters(axes, device, sweep),
+            TimeSpan.FromMilliseconds(sweep.DurationMs),
+            cancellationToken
+        );
     }
 
     [McpServerTool(Name = "gamepad_stick")]
     [Description(
         "Pushes a gamepad stick in the running game, sending both of its axes each frame. A push moves GUI focus once, on the "
-            + "change from released to pressed, so the next move needs a release first (release: true, or a push to 0, 0)."
+            + "change from released to pressed, so the next move needs a release first (options.release: true, or a push to 0, 0)."
             + PadNote
             + ErrorNote
     )]
     public Task<string> GamepadStickAsync(
         [Description("left or right.")] string stick,
         [Description("The stick's position, {x, y}, each -1 to 1; y is down-positive.")] StickPosition position,
-        [Description("How long the sweep to position takes, in milliseconds; 0 sends it at once.")] int durationMs = 0,
-        [Description("Send 0.0 on both axes a frame after position is reached, as a pad does when let go.")] bool release = false,
         [Description("The pad's device id, 0 (the first pad) to 15.")] int device = 0,
+        [Description(SweepDescription)] SweepOptions? options = null,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -125,26 +135,32 @@ internal sealed partial class RuntimeTools
         };
         StickPosition checkedPosition = position ?? throw new McpException("position needs x and y, each -1 to 1.");
         JsonArray axes = [AxisTarget(xAxis, CheckAxisValue(xAxis, checkedPosition.X)), AxisTarget(yAxis, CheckAxisValue(yAxis, checkedPosition.Y))];
-        return SendAxesAsync("gamepad_stick", axes, durationMs, release, device, cancellationToken);
+        SweepOptions sweep = CheckSweep(options);
+        return SendInputAsync(
+            session,
+            "gamepad_stick",
+            AxesParameters(axes, device, sweep),
+            TimeSpan.FromMilliseconds(sweep.DurationMs),
+            cancellationToken
+        );
     }
 
-    private Task<string> SendAxesAsync(string tool, JsonArray axes, int durationMs, bool release, int device, CancellationToken cancellationToken)
+    /// <exception cref="McpException">The sweep's duration is negative.</exception>
+    private static SweepOptions CheckSweep(SweepOptions? options)
     {
-        if (durationMs < 0)
-        {
-            throw new McpException($"durationMs must be 0 or more; got {durationMs}.");
-        }
+        SweepOptions sweep = options ?? new SweepOptions();
+        return sweep.DurationMs >= 0 ? sweep : throw new McpException($"durationMs must be 0 or more; got {sweep.DurationMs}.");
+    }
 
-        JsonObject parameters = new()
+    private static JsonObject AxesParameters(JsonArray axes, int device, SweepOptions sweep) =>
+        new()
         {
             ["gesture"] = "gamepad_axes",
             ["axes"] = axes,
-            ["durationMs"] = durationMs,
-            ["release"] = release,
+            ["durationMs"] = sweep.DurationMs,
+            ["release"] = sweep.Release,
             ["device"] = CheckDevice(device),
         };
-        return SendInputAsync(tool, parameters, TimeSpan.FromMilliseconds(durationMs), cancellationToken);
-    }
 
     private static JsonObject AxisTarget(string axis, double value) => new() { ["axis"] = axis, ["value"] = value };
 

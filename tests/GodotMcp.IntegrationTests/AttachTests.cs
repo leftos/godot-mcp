@@ -29,8 +29,8 @@ public sealed class AttachTests : IAsyncDisposable
 
     public AttachTests()
     {
-        _project = new ProjectTools(_harness.Session);
-        _runtime = new RuntimeTools(_harness.Session);
+        _project = new ProjectTools(_harness.Sessions);
+        _runtime = new RuntimeTools(_harness.Sessions);
     }
 
     private string AttachFilePath => AttachFile.PathIn(_probe.Directory);
@@ -47,18 +47,18 @@ public sealed class AttachTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
 
-        Task<string> attach = _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, false, cancellation);
+        Task<string> attach = _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, false, cancellationToken: cancellation);
         Assert.True(await Poll.UntilAsync(() => File.Exists(AttachFilePath), TimeSpan.FromSeconds(10), cancellation));
         StartGame();
         JsonNode attached = JsonNode.Parse(await attach)!;
         bool attachFileLeft = File.Exists(AttachFilePath);
         bool overrideWhileAttached = File.Exists(_probe.OverrideFile);
-        JsonNode? pong = await _harness.Session.SendAsync("ping", null, PingTimeout, cancellation);
+        JsonNode? pong = await _harness.Sessions.Resolve(null).SendAsync("ping", null, PingTimeout, cancellation);
         int gameProcessId = (await RunAsync("return OS.get_process_id()")).GetValue<int>();
         _games.Add(Process.GetProcessById(gameProcessId));
         McpException output = Assert.Throws<McpException>(() => _project.GetDebugOutput(10));
-        McpException stop = await Assert.ThrowsAsync<McpException>(() => _project.StopProjectAsync(cancellation));
-        JsonNode detached = JsonNode.Parse(await _project.DetachProjectAsync(cancellation))!;
+        McpException stop = await Assert.ThrowsAsync<McpException>(() => _project.StopProjectAsync(cancellationToken: cancellation));
+        JsonNode detached = JsonNode.Parse(await _project.DetachProjectAsync(cancellationToken: cancellation))!;
         await Task.Delay(TimeSpan.FromSeconds(1), cancellation);
 
         Assert.Equal(ProjectPaths.Normalise(_probe.Directory), attached["projectPath"]!.GetValue<string>());
@@ -68,7 +68,7 @@ public sealed class AttachTests : IAsyncDisposable
         Assert.Contains("attached sessions have no captured output", output.Message, StringComparison.Ordinal);
         Assert.Contains("use detach_project", stop.Message, StringComparison.Ordinal);
         Assert.True(detached["overrideRemoved"]!.GetValue<bool>());
-        Assert.False(_harness.Session.IsAttached);
+        Assert.Empty(_harness.Sessions.List());
         Assert.False(_games[^1].HasExited);
         Assert.False(File.Exists(_probe.OverrideFile));
         Assert.False(File.Exists(AttachFilePath));
@@ -79,11 +79,11 @@ public sealed class AttachTests : IAsyncDisposable
     public async Task AttachWithoutALaunchTimesOutAndLeavesNoFiles()
     {
         McpException timedOut = await Assert.ThrowsAsync<McpException>(() =>
-            _project.AttachProjectAsync(_probe.Directory, 1, false, TestContext.Current.CancellationToken)
+            _project.AttachProjectAsync(_probe.Directory, 1, false, cancellationToken: TestContext.Current.CancellationToken)
         );
 
         Assert.Contains("connected within 1 s", timedOut.Message, StringComparison.Ordinal);
-        Assert.False(_harness.Session.IsAttached);
+        Assert.Empty(_harness.Sessions.List());
         Assert.False(File.Exists(_probe.OverrideFile));
         Assert.False(File.Exists(AttachFilePath));
         Assert.Equal(string.Empty, Git.Status(_probe.Directory));
@@ -133,7 +133,7 @@ public sealed class AttachTests : IAsyncDisposable
     private async Task<JsonNode> RunAsync(string body)
     {
         string script = $"extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t{body}\n";
-        string json = await _runtime.RunScriptAsync(script, 10_000, TestContext.Current.CancellationToken);
+        string json = await _runtime.RunScriptAsync(script, 10_000, cancellationToken: TestContext.Current.CancellationToken);
         return JsonNode.Parse(json)!;
     }
 }
