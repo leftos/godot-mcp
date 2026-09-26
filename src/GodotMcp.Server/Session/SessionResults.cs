@@ -1,7 +1,7 @@
 namespace GodotMcp.Server.Session;
 
 /// <summary>A run that launched and whose bridge said hello.</summary>
-internal sealed record LaunchResult(string Session, string ProjectPath, int ProcessId, bool Background);
+internal sealed record LaunchResult(string Session, string ProjectPath, int ProcessId, bool Quiet);
 
 /// <summary>How a run ended: its exit code, whether it had to be killed, whether the server's override.cfg was deleted.</summary>
 internal sealed record StopResult(string Session, string ProjectPath, int? ExitCode, bool Killed, bool OverrideRemoved);

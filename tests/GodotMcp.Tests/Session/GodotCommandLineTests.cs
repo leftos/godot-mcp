@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using GodotMcp.Server.Session;
+using GodotMcp.Server.Tools;
 
 namespace GodotMcp.Tests.Session;
 
@@ -15,6 +16,27 @@ public sealed class GodotCommandLineTests
         List<string> arguments = GodotCommandLine.BuildArguments(request);
 
         Assert.Equal(["--path", Project, "res://levels/test.tscn", "--resolution", "640x360", "--", "--hello", "a b"], arguments);
+    }
+
+    [Fact]
+    public void ADefaultRunChoosesTheDummyAudioDriverBeforeTheEngineArgs()
+    {
+        RunOptions defaults = new();
+        LaunchRequest request = new(Project, null, ["--audio-driver", "WASAPI"], [], defaults.Quiet, defaults.ShutOutRealGamepads);
+
+        List<string> arguments = GodotCommandLine.BuildArguments(request);
+
+        Assert.Equal(["--path", Project, "--audio-driver", "Dummy", "--audio-driver", "WASAPI"], arguments);
+    }
+
+    [Fact]
+    public void ANotQuietRunLeavesTheAudioDriverAlone()
+    {
+        LaunchRequest request = new(Project, null, [], [], false, false);
+
+        List<string> arguments = GodotCommandLine.BuildArguments(request);
+
+        Assert.DoesNotContain("--audio-driver", arguments);
     }
 
     [Fact]
@@ -39,17 +61,39 @@ public sealed class GodotCommandLineTests
     }
 
     [Fact]
-    public void PassesThePortAndTokenAndBackgroundOnlyWhenAskedInTheEnvironment()
+    public void PassesThePortAndTokenInTheEnvironment()
     {
         BridgeEndpoint bridge = new(4321, "t0k3n");
 
-        ProcessStartInfo background = GodotCommandLine.CreateStartInfo("godot.exe", new LaunchRequest(Project, null, [], [], true, false), bridge);
-        ProcessStartInfo windowed = GodotCommandLine.CreateStartInfo("godot.exe", new LaunchRequest(Project, null, [], [], false, false), bridge);
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", new LaunchRequest(Project, null, [], [], true, false), bridge);
 
-        Assert.Equal("4321", background.Environment[GodotCommandLine.PortVariable]);
-        Assert.Equal("t0k3n", background.Environment[GodotCommandLine.TokenVariable]);
-        Assert.Equal("1", background.Environment[GodotCommandLine.BackgroundVariable]);
-        Assert.False(windowed.Environment.ContainsKey(GodotCommandLine.BackgroundVariable));
+        Assert.Equal("4321", startInfo.Environment[GodotCommandLine.PortVariable]);
+        Assert.Equal("t0k3n", startInfo.Environment[GodotCommandLine.TokenVariable]);
+    }
+
+    [Fact]
+    public void RunsQuietByDefault()
+    {
+        BridgeEndpoint bridge = new(4321, "t0k3n");
+        RunOptions defaults = new();
+
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(
+            "godot.exe",
+            new LaunchRequest(Project, null, [], [], defaults.Quiet, defaults.ShutOutRealGamepads),
+            bridge
+        );
+
+        Assert.Equal("1", startInfo.Environment[GodotCommandLine.QuietVariable]);
+    }
+
+    [Fact]
+    public void RemovesTheQuietVariableWhenNotQuiet()
+    {
+        BridgeEndpoint bridge = new(4321, "t0k3n");
+
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", new LaunchRequest(Project, null, [], [], false, false), bridge);
+
+        Assert.False(startInfo.Environment.ContainsKey(GodotCommandLine.QuietVariable));
     }
 
     [Fact]

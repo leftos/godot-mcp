@@ -25,7 +25,8 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Error feed | Engine and script errors (with file, line and Godot's stack) raised while a tool call ran, attached to that call's result as `errors` so no failure is silent; `get_errors` reads a session's errors and warnings from a cursor |
 | Errors frame | The id-less `{type: "errors", entries, dropped}` frame the bridge sends every frame and before each reply, carrying what its `Logger` caught |
 | Compact output | A result held to a size budget: a screenshot as a path or a 480 px preview, a long list or log paged with a total, long lines and values cut with their length |
-| Quiet by default | Agent runs start off-screen, unfocused, muted and deaf to the real mouse unless asked otherwise (step 9; not built) |
+| Quiet run | The default for `run_project`: the window created unfocused, then moved off-screen and made click-through, on the Dummy audio driver, so it takes no focus, shows nothing, plays nothing and receives no real input; `options.quiet: false` gives a normal window. Sessions on one folder share the setting; attached games are never quiet |
+| Tool annotations | The MCP hints each tool declares (`readOnlyHint`, `destructiveHint`, `openWorldHint`) so a client's permission rules can allow the reads |
 | Frame control | Pausing, stepping N frames and scaling time in a running game, so a screenshot or check lands on an exact frame (step 10; not built) |
 | Profile, preset | A project's `godot-mcp.json`: its launch defaults, and named launch presets (step 13; not built) |
 | Batch drive | One tool call that plays a list of steps (input, waits, method calls, assertions, screenshots) and stops at the first failed assertion (step 13; not built) |

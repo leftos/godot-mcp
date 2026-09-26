@@ -5,15 +5,16 @@ using System.Text;
 namespace GodotMcp.Server.Session;
 
 /// <summary>
-/// What <c>run_project</c> asked for, with <see cref="ProjectPath"/> the project folder. With <see cref="ShutOutRealGamepads"/>
-/// the bridge shuts the machine's real pads out of the game.
+/// What <c>run_project</c> asked for, with <see cref="ProjectPath"/> the project folder. With <see cref="Quiet"/> the window is
+/// created unfocused, off-screen and click-through, with the Dummy audio driver; with
+/// <see cref="ShutOutRealGamepads"/> it shuts the machine's real pads out of the game.
 /// </summary>
 internal sealed record LaunchRequest(
     string ProjectPath,
     string? Scene,
     IReadOnlyList<string> EngineArgs,
     IReadOnlyList<string> UserArgs,
-    bool Background,
+    bool Quiet,
     bool ShutOutRealGamepads
 );
 
@@ -25,8 +26,14 @@ internal static class GodotCommandLine
 {
     public const string PortVariable = "GODOT_MCP_PORT";
     public const string TokenVariable = "GODOT_MCP_TOKEN";
-    public const string BackgroundVariable = "GODOT_MCP_BACKGROUND";
+    public const string QuietVariable = "GODOT_MCP_QUIET";
     public const string ShutOutRealGamepadsVariable = "GODOT_MCP_SHUT_OUT_REAL_GAMEPADS";
+
+    /// <summary>
+    /// A quiet run's audio driver. The Dummy driver still mixes on its own thread, so playback advances
+    /// (4.7.2 <c>servers/audio/audio_driver_dummy.cpp</c> L49-51, L56-73), and plays nothing.
+    /// </summary>
+    public static readonly IReadOnlyList<string> QuietAudioDriverArgs = ["--audio-driver", "Dummy"];
 
     public static List<string> BuildArguments(LaunchRequest request)
     {
@@ -34,6 +41,12 @@ internal static class GodotCommandLine
         if (!string.IsNullOrWhiteSpace(request.Scene))
         {
             arguments.Add(request.Scene);
+        }
+
+        // Godot keeps the last --audio-driver it reads (main.cpp L1234-1237 in 4.7.2), so one in EngineArgs wins.
+        if (request.Quiet)
+        {
+            arguments.AddRange(QuietAudioDriverArgs);
         }
 
         arguments.AddRange(request.EngineArgs);
@@ -72,7 +85,7 @@ internal static class GodotCommandLine
 
         startInfo.Environment[PortVariable] = bridge.Port.ToString(CultureInfo.InvariantCulture);
         startInfo.Environment[TokenVariable] = bridge.Token;
-        SetFlag(startInfo, BackgroundVariable, request.Background);
+        SetFlag(startInfo, QuietVariable, request.Quiet);
         SetFlag(startInfo, ShutOutRealGamepadsVariable, request.ShutOutRealGamepads);
         return startInfo;
     }

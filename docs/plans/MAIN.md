@@ -5,13 +5,7 @@ Open work only, in working order: the next item is the first line from the top; 
 
 ## Now: the first version, replacing godot-mcp-runtime at parity
 
-Steps 0 to 4b have shipped. Sixteen features the user added 2026-09-25 ("world's our oyster") come before the cutover (user's call). Every wave's command acceptance is `pwsh run.ps1 test` and `pwsh run.ps1 itest`; its human check is a drive of the InputProbe fixture through the new tools.
-
-### Wave 1: the tool surface (every tool in `Tools/`, `GodotSession`, the bridge's `_handle_frame`)
-
-These change every tool's signature or result, so they run one after another, before the rest.
-
-- [ ] Step 9: tool annotations (MCP `readOnlyHint` / `destructiveHint` on every tool, so permission rules can allow the reads), plus quiet by default (agent runs start in background mode with audio muted unless asked; real input ignored)
+Steps 0 to 4b and Wave 1 (steps 7-9: named sessions, the error feed and compact outputs, tool annotations and quiet runs) have shipped. Sixteen features the user added 2026-09-25 ("world's our oyster") come before the cutover (user's call). Every wave's command acceptance is `pwsh run.ps1 test` and `pwsh run.ps1 itest`; its human check is a drive of the InputProbe fixture through the new tools.
 
 ### Wave 2: driving the running game (new `RuntimeTools` partials and bridge handlers)
 
@@ -26,6 +20,7 @@ These change every tool's signature or result, so they run one after another, be
 
 ### Wave 4: singles
 
+- [ ] With `input_devices/pointing/emulate_touch_from_mouse` on, a real click during a gesture still reaches the GUI through its emulated touch event (`input.cpp` L850-861, L876-891), which the bridge's mouse swallow does not catch; swallow the unmarked touch twins too while a gesture plays (step 9 review, 2026-09-26)
 - [ ] Step 15: in-engine recording (video and audio from inside the engine, frame-perfect, headless or hidden). Absorbs the "in-engine recording" item from Later
 - [ ] Step 5: the 16 headless scene and node tools and validate
 - [ ] Step 6: cutover in opening-hand and delve-the-dungeon (registration, their docs and conventions, the debugger agent's allow-list; one scratch drive each; git status clean)

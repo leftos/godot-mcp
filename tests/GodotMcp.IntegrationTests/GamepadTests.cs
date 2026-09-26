@@ -33,7 +33,7 @@ public sealed class GamepadTests : IAsyncDisposable
     public async Task ButtonPressHoldsTheButtonAndItsActionUntilRelease()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await LaunchAsync(background: false, shutOutRealGamepads: true);
+        await LaunchAsync(shutOutRealGamepads: true);
 
         await _tools.GamepadButtonAsync("A", "press", 0, cancellationToken: cancellation);
         JsonNode held = await RunAsync(ReadButtonAAndJump);
@@ -47,7 +47,7 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ButtonTapPressesTheActionOnce()
     {
-        await LaunchAsync(background: false, shutOutRealGamepads: true);
+        await LaunchAsync(shutOutRealGamepads: true);
 
         await _tools.GamepadButtonAsync("A", "tap", 0, cancellationToken: TestContext.Current.CancellationToken);
 
@@ -62,7 +62,7 @@ public sealed class GamepadTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         const string ReadLeftX = "return [Input.get_joy_axis(0, JOY_AXIS_LEFT_X), Input.get_action_strength(\"probe_right\")]";
-        await LaunchAsync(background: false, shutOutRealGamepads: true);
+        await LaunchAsync(shutOutRealGamepads: true);
 
         await _tools.GamepadAxisAsync("LEFT_X", 0.6, 0, null, null, cancellation);
         JsonNode pushed = await RunAsync(ReadLeftX);
@@ -78,7 +78,7 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task TriggerSweepTakesItsDurationAndEndsAtTheValue()
     {
-        await LaunchAsync(background: false, shutOutRealGamepads: true);
+        await LaunchAsync(shutOutRealGamepads: true);
 
         var sweep = Stopwatch.StartNew();
         await _tools.GamepadAxisAsync("TRIGGER_RIGHT", 1, 0, new SweepOptions(DurationMs: 300), null, TestContext.Current.CancellationToken);
@@ -92,7 +92,7 @@ public sealed class GamepadTests : IAsyncDisposable
     public async Task DpadDownTwiceMovesFocusTwoButtonsDown()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await LaunchAsync(background: false, shutOutRealGamepads: true);
+        await LaunchAsync(shutOutRealGamepads: true);
         string before = (await RunAsync(ReadFocusOwner)).GetValue<string>();
 
         await _tools.GamepadButtonAsync("DPAD_DOWN", "tap", 0, cancellationToken: cancellation);
@@ -105,7 +105,7 @@ public sealed class GamepadTests : IAsyncDisposable
     public async Task StickPushedDownAndReleasedTwiceMovesFocusTwoButtonsDown()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await LaunchAsync(background: false, shutOutRealGamepads: true);
+        await LaunchAsync(shutOutRealGamepads: true);
         string before = (await RunAsync(ReadFocusOwner)).GetValue<string>();
 
         await _tools.GamepadStickAsync("left", Down, 0, new SweepOptions(Release: true), null, cancellation);
@@ -117,7 +117,7 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task APressOnDeviceOneIsNotOnDeviceZero()
     {
-        await LaunchAsync(background: false, shutOutRealGamepads: true);
+        await LaunchAsync(shutOutRealGamepads: true);
 
         await _tools.GamepadButtonAsync("A", "press", 1, cancellationToken: TestContext.Current.CancellationToken);
 
@@ -128,7 +128,7 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task SimulateInputPlaysRawJoypadEvents()
     {
-        await LaunchAsync(background: false, shutOutRealGamepads: true);
+        await LaunchAsync(shutOutRealGamepads: true);
         JsonObject press = new()
         {
             ["type"] = "joypad_button",
@@ -157,7 +157,7 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ShuttingOutRealGamepadsMarksTheGameUnfocused()
     {
-        await LaunchAsync(background: false, shutOutRealGamepads: true);
+        await LaunchAsync(shutOutRealGamepads: true);
         await _tools.GamepadButtonAsync("A", "press", 0, cancellationToken: TestContext.Current.CancellationToken);
 
         JsonNode state = await RunAsync(
@@ -174,7 +174,7 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ADefaultRunSendsNoFocusOutAndTakesTheInjectedPad()
     {
-        await LaunchAsync(background: false, shutOutRealGamepads: false);
+        await LaunchAsync(shutOutRealGamepads: false);
 
         await _tools.GamepadButtonAsync("A", "tap", 0, cancellationToken: TestContext.Current.CancellationToken);
 
@@ -185,12 +185,12 @@ public sealed class GamepadTests : IAsyncDisposable
     // Every focus-out clears pressed pad state while ignore_joypad_on_unfocused_application is on (input.cpp L1600-1623), and
     // a focus-in marks the application focused again (scene_tree.cpp L934-942): the bridge answers each change with a
     // focus-out and sends the injected pads' held buttons and axes again. The notifications are sent by hand, since a
-    // background window may never have had focus to lose.
+    // quiet window may never have had focus to lose.
     [Fact(Timeout = TestTimeoutMs)]
-    public async Task InjectedPadStateSurvivesFocusChangesInABackgroundRun()
+    public async Task InjectedPadStateSurvivesFocusChanges()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await LaunchAsync(background: true, shutOutRealGamepads: true);
+        await LaunchAsync(shutOutRealGamepads: true);
 
         await _tools.GamepadButtonAsync("A", "press", 0, cancellationToken: cancellation);
         await _tools.GamepadAxisAsync("LEFT_X", 0.6, 0, null, null, cancellation);
@@ -213,9 +213,9 @@ public sealed class GamepadTests : IAsyncDisposable
         "var shut_out: bool = scene_tree.root.get_node(\"GodotMcpBridge/Gamepad\").real_pads_shut_out\n\t"
         + "var ignoring := Input.is_ignoring_joypad_on_unfocused_application()";
 
-    private Task<LaunchResult> LaunchAsync(bool background, bool shutOutRealGamepads) =>
+    private Task<LaunchResult> LaunchAsync(bool shutOutRealGamepads) =>
         _harness.Sessions.LaunchAsync(
-            new LaunchRequest(_probe.Directory, null, [], [], background, shutOutRealGamepads),
+            new LaunchRequest(_probe.Directory, null, [], [], true, shutOutRealGamepads),
             null,
             TestContext.Current.CancellationToken
         );

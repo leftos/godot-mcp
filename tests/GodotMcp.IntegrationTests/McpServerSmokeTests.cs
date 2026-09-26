@@ -21,15 +21,7 @@ public sealed class McpServerSmokeTests : IDisposable
     public async Task ListsTheToolsRunsTheProbeReadsItClicksItAndStopsIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        StdioClientTransport transport = new(
-            new StdioClientTransportOptions
-            {
-                Name = "godot",
-                Command = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "godot-mcp.exe" : "godot-mcp"),
-                ShutdownTimeout = TimeSpan.FromSeconds(10),
-            }
-        );
-        await using McpClient client = await McpClient.CreateAsync(transport, cancellationToken: cancellation);
+        await using McpClient client = await ConnectAsync();
 
         IList<McpClientTool> tools = await client.ListToolsAsync(cancellationToken: cancellation);
         CallToolResult run = await CallAsync(client, "run_project", new() { ["projectPath"] = _probe.Directory, ["userArgs"] = SmokeArgs });
@@ -84,6 +76,66 @@ public sealed class McpServerSmokeTests : IDisposable
         JsonElement stopped = Assert.Single(JsonDocument.Parse(Text(listedAfterStop)).RootElement.GetProperty("sessions").EnumerateArray());
         Assert.False(stopped.GetProperty("live").GetBoolean());
         Assert.False(File.Exists(_probe.OverrideFile));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task ToolsCarryTheirAnnotations()
+    {
+        await using McpClient client = await ConnectAsync();
+
+        IList<McpClientTool> tools = await client.ListToolsAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+        // (readOnly, destructive, openWorld) as each tool sets them; null is a hint left unset.
+        (bool?, bool?, bool?) readOnly = (true, null, false);
+        (bool?, bool?, bool?) changesTheGame = (null, false, false);
+        (bool?, bool?, bool?) destructive = (null, true, false);
+        Dictionary<string, (bool?, bool?, bool?)> expected = new()
+        {
+            ["attach_project"] = changesTheGame,
+            ["click"] = changesTheGame,
+            ["detach_project"] = changesTheGame,
+            ["drag"] = changesTheGame,
+            ["gamepad_axis"] = changesTheGame,
+            ["gamepad_button"] = changesTheGame,
+            ["gamepad_stick"] = changesTheGame,
+            ["get_debug_output"] = readOnly,
+            ["get_errors"] = readOnly,
+            ["get_ui_elements"] = readOnly,
+            ["key"] = changesTheGame,
+            ["list_sessions"] = readOnly,
+            ["mouse_button"] = changesTheGame,
+            ["run_project"] = changesTheGame,
+            ["run_script"] = destructive,
+            ["simulate_input"] = changesTheGame,
+            ["stop_project"] = destructive,
+            ["take_screenshot"] = readOnly,
+            ["type_text"] = changesTheGame,
+        };
+        Dictionary<string, (bool?, bool?, bool?)> actual = tools.ToDictionary(
+            tool => tool.Name,
+            tool =>
+                (
+                    tool.ProtocolTool.Annotations?.ReadOnlyHint,
+                    tool.ProtocolTool.Annotations?.DestructiveHint,
+                    tool.ProtocolTool.Annotations?.OpenWorldHint
+                )
+        );
+
+        Assert.Equal(19, actual.Count);
+        Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
+    }
+
+    private static Task<McpClient> ConnectAsync()
+    {
+        StdioClientTransport transport = new(
+            new StdioClientTransportOptions
+            {
+                Name = "godot",
+                Command = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "godot-mcp.exe" : "godot-mcp"),
+                ShutdownTimeout = TimeSpan.FromSeconds(10),
+            }
+        );
+        return McpClient.CreateAsync(transport, cancellationToken: TestContext.Current.CancellationToken);
     }
 
     private static Task<CallToolResult> CallAsync(McpClient client, string tool, Dictionary<string, object?> arguments) =>

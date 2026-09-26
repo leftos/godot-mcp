@@ -41,7 +41,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         + "session to pick one, and may omit it while only one session exists; list_sessions lists them.";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    [McpServerTool(Name = "run_project")]
+    [McpServerTool(Name = "run_project", Destructive = false, OpenWorld = false)]
     [Description(
         "Runs a Godot project with the godot-mcp bridge injected through a temporary override.cfg (never project.godot), "
             + "and returns once the bridge has connected; stop_project ends the session."
@@ -55,19 +55,20 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         [Description("Arguments for the game, passed after --; the game reads them with OS.get_cmdline_user_args().")] string[]? userArgs = null,
         [Description("Arguments for the engine, placed before --, e.g. [\"--resolution\", \"1280x720\"].")] string[]? engineArgs = null,
         [Description(
-            "{background, shutOutRealGamepads, session}; the flags are false and the session is named after the project folder when left out."
+            "{quiet, shutOutRealGamepads, session}; when left out, quiet is true, shutOutRealGamepads is false and the session is "
+                + "named after the project folder."
         )]
             RunOptions? options = null,
         CancellationToken cancellationToken = default
     )
     {
         RunOptions chosen = options ?? new RunOptions();
-        LaunchRequest request = new(projectPath, scene, engineArgs ?? [], userArgs ?? [], chosen.Background, chosen.ShutOutRealGamepads);
+        LaunchRequest request = new(projectPath, scene, engineArgs ?? [], userArgs ?? [], chosen.Quiet, chosen.ShutOutRealGamepads);
         LaunchResult result = await RunAsync(() => sessions.LaunchAsync(request, chosen.Session, cancellationToken));
         return JsonSerializer.Serialize(result, Json);
     }
 
-    [McpServerTool(Name = "attach_project")]
+    [McpServerTool(Name = "attach_project", Destructive = false, OpenWorld = false)]
     [Description(
         "Attaches to a Godot game that run_project does not start (a second client, a --server run, a smoke script, the "
             + "editor's Play button): injects the bridge through a temporary override.cfg plus a one-use attach file under "
@@ -98,7 +99,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         return JsonSerializer.Serialize(result, Json);
     }
 
-    [McpServerTool(Name = "detach_project")]
+    [McpServerTool(Name = "detach_project", Destructive = false, OpenWorld = false)]
     [Description(
         "Ends a session attach_project started: closes the connection and removes the injected override.cfg, unless another "
             + "live session uses the project folder. The game keeps running; its bridge goes idle."
@@ -112,7 +113,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         return JsonSerializer.Serialize(result, Json);
     }
 
-    [McpServerTool(Name = "stop_project")]
+    [McpServerTool(Name = "stop_project", Destructive = true, OpenWorld = false)]
     [Description(
         "Stops a session run_project started (asks the game to quit, kills it after 3 s) and removes the injected "
             + "override.cfg, unless another live session uses the project folder. An attached session is ended with "
@@ -127,7 +128,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         return JsonSerializer.Serialize(result, Json);
     }
 
-    [McpServerTool(Name = "get_debug_output")]
+    [McpServerTool(Name = "get_debug_output", ReadOnly = true, OpenWorld = false)]
     [Description(
         "The newest stdout and stderr lines of a session's run (the current or the last one under its name), whether it is "
             + "still running, and its exit code. Lines are numbered from 1 across everything a stream has printed; "
@@ -157,7 +158,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         }
     }
 
-    [McpServerTool(Name = "list_sessions")]
+    [McpServerTool(Name = "list_sessions", ReadOnly = true, OpenWorld = false)]
     [Description(
         "Lists the server's sessions, ordered by name: each one's name, project folder, kind (run or attach), whether it is "
             + "live, and its process id (null for an attached game). A session stays listed after its run ends, until its name "

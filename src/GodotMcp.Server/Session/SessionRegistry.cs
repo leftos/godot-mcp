@@ -26,7 +26,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     public async Task<LaunchResult> LaunchAsync(LaunchRequest request, string? session, CancellationToken cancellationToken)
     {
         string projectDir = NormaliseProjectDir(request.ProjectPath);
-        SessionSpec spec = new(NameFor(session, projectDir), projectDir, SessionKind.Run, request.ShutOutRealGamepads);
+        SessionSpec spec = new(NameFor(session, projectDir), projectDir, SessionKind.Run, request.ShutOutRealGamepads, request.Quiet);
         GodotSession created = await ReserveAsync(spec);
         return await created.LaunchAsync(request with { ProjectPath = projectDir }, cancellationToken);
     }
@@ -43,7 +43,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     {
         string projectDir = NormaliseProjectDir(projectPath);
         string bridgeScript = Installation.FindBridgeScript();
-        SessionSpec spec = new(NameFor(session, projectDir), projectDir, SessionKind.Attach, shutOutRealGamepads);
+        SessionSpec spec = new(NameFor(session, projectDir), projectDir, SessionKind.Attach, shutOutRealGamepads, Quiet: false);
         GodotSession created = await ReserveAsync(spec);
         return await created.AttachAsync(bridgeScript, wait, cancellationToken);
     }
@@ -147,7 +147,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                 return;
             }
 
-            OverrideFile.Write(session.ProjectDir, bridgeScript, session.ShutOutRealGamepads);
+            OverrideFile.Write(session.ProjectDir, bridgeScript, session.ShutOutRealGamepads, session.Quiet);
         }
     }
 
@@ -225,6 +225,18 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         return created;
     }
 
+    /// <summary>Refuses a session whose setting differs from the live ones' on its folder: they share one override.cfg.</summary>
+    private static void CheckSameSetting(SessionSpec spec, GodotSession[] onFolder, string option, Func<GodotSession, bool> setting, bool wanted)
+    {
+        if (onFolder.FirstOrDefault(other => setting(other) != wanted) is { } differing)
+        {
+            string value = setting(differing) ? "true" : "false";
+            throw new SessionException(
+                $"Sessions on {spec.ProjectDir} run with {option}={value}; start this one with the same value, or stop them first."
+            );
+        }
+    }
+
     private void CheckCanStart(SessionSpec spec, GodotSession? holder)
     {
         if (holder is { IsLive: true })
@@ -235,14 +247,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
 
         GodotSession[] onFolder = [.. _sessions.Values.Where(other => other.IsLive && ProjectPaths.AreSame(other.ProjectDir, spec.ProjectDir))];
-        if (onFolder.FirstOrDefault(other => other.ShutOutRealGamepads != spec.ShutOutRealGamepads) is { } differing)
-        {
-            string value = differing.ShutOutRealGamepads ? "true" : "false";
-            throw new SessionException(
-                $"Sessions on {spec.ProjectDir} run with shutOutRealGamepads={value}; start this one with the same value, or stop them first."
-            );
-        }
-
+        CheckSameSetting(spec, onFolder, "shutOutRealGamepads", session => session.ShutOutRealGamepads, spec.ShutOutRealGamepads);
+        CheckSameSetting(spec, onFolder, "quiet", session => session.Quiet, spec.Quiet);
         if (spec.Kind == SessionKind.Attach && onFolder.Any(other => other.IsWaitingForGame))
         {
             throw new SessionException($"Another attach on {spec.ProjectDir} is still waiting for its game; wait for it or let it time out first.");

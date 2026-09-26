@@ -19,7 +19,7 @@ public sealed class AttachTests : IAsyncDisposable
     [
         GodotCommandLine.PortVariable,
         GodotCommandLine.TokenVariable,
-        GodotCommandLine.BackgroundVariable,
+        GodotCommandLine.QuietVariable,
     ];
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();

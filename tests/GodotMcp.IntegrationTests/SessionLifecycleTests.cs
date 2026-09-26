@@ -128,6 +128,27 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.Equal(string.Empty, Git.Status(_probe.Directory));
     }
 
+    // A live run is needed on the folder, so this refusal is tested here rather than in SessionRegistryTests.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnAttachOnAFolderWithAQuietRunIsRefused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await _harness.Sessions.LaunchAsync(Request(quiet: true), "server", cancellation);
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _harness.Sessions.AttachAsync(_probe.Directory, "client", TimeSpan.FromSeconds(5), false, cancellation)
+        );
+        bool serverAnswered = await PingAsync("server");
+
+        Assert.Equal(
+            $"Sessions on {ProjectPaths.Normalise(_probe.Directory)} run with quiet=true; start this one with the same value, or stop "
+                + "them first.",
+            refused.Message
+        );
+        Assert.True(serverAnswered);
+        Assert.Equal(["server"], _harness.Sessions.List().Select(session => session.Name));
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ADifferentGamepadShutOutOnTheSameProjectIsRefused()
     {
@@ -206,20 +227,20 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
-    public async Task BackgroundRunStillHandshakes()
+    public async Task AQuietRunStillHandshakes()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        LaunchResult launched = await _harness.Sessions.LaunchAsync(Request(background: true), null, cancellation);
+        LaunchResult launched = await _harness.Sessions.LaunchAsync(Request(quiet: true), null, cancellation);
         bool answered = await PingAsync(null);
         StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
 
-        Assert.True(launched.Background);
+        Assert.True(launched.Quiet);
         Assert.True(answered);
         Assert.False(stopped.Killed);
     }
 
-    private LaunchRequest Request(string[]? userArgs = null, bool background = false, bool shutOutRealGamepads = false) =>
-        new(_probe.Directory, null, [], userArgs ?? [], background, shutOutRealGamepads);
+    private LaunchRequest Request(string[]? userArgs = null, bool quiet = true, bool shutOutRealGamepads = false) =>
+        new(_probe.Directory, null, [], userArgs ?? [], quiet, shutOutRealGamepads);
 
     private async Task<bool> PingAsync(string? session)
     {

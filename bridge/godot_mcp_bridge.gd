@@ -82,8 +82,8 @@ func _ready() -> void:
 		return
 	_token = _endpoint["token"]
 	var port: int = _endpoint["port"]
-	if OS.get_environment("GODOT_MCP_BACKGROUND") == "1":
-		_enter_background()
+	if OS.get_environment("GODOT_MCP_QUIET") == "1":
+		_park_window()
 	var script_dir: String = (get_script() as Script).resource_path.get_base_dir()
 	_pads = (load(script_dir.path_join(GAMEPAD_SCRIPT)) as GDScript).new()
 	_pads.name = "Gamepad"
@@ -180,10 +180,12 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
-func _enter_background() -> void:
-	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_NO_FOCUS, true)
+## A quiet run's window: its override.cfg created it unfocused, and asked for an off-screen
+## position that Windows clamps onto the primary screen at creation
+## (platform/windows/display_server_windows.cpp L7180-7183, L7206-7211 in 4.7.2), so it is moved
+## off-screen here, where window_set_position does not clamp, and made click-through.
+func _park_window() -> void:
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_MOUSE_PASSTHROUGH, true)
-	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, true)
 	DisplayServer.window_set_position(Vector2i(-9999, -9999))
 
 

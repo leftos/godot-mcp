@@ -249,7 +249,7 @@ public sealed class RuntimeReadTests : IAsyncDisposable
     }
 
     private Task<LaunchResult> LaunchAsync(CancellationToken cancellation) =>
-        _harness.Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], false, false), null, cancellation);
+        _harness.Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], true, false), null, cancellation);
 
     private async Task<JsonNode> RunAsync(string body) => (await RunForResultAsync(body))["value"]!;
 

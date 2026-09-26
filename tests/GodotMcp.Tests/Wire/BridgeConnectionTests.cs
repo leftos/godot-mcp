@@ -52,6 +52,28 @@ public sealed class BridgeConnectionTests : IDisposable
         Assert.Equal(["first", "second"], atReply);
     }
 
+    [Fact]
+    public async Task AThrowingErrorsHandlerDoesNotStopReplies()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        await using BridgeConnection connection = await accept;
+        int calls = 0;
+        connection.OnErrors(_ =>
+        {
+            calls++;
+            throw new InvalidOperationException("the handler failed");
+        });
+
+        Task answer = bridge.AnswerOneAfterAsync([ErrorsFrame("boom")], "pong", cancellation);
+        JsonNode? reply = await connection.SendAsync("ping", null, Wait, cancellation);
+        await answer;
+
+        Assert.Equal(1, calls);
+        Assert.Equal("pong", reply?["name"]?.GetValue<string>());
+    }
+
     private async Task<BridgeConnection> AcceptAsync(CancellationToken cancellation)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);

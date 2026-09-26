@@ -25,8 +25,8 @@ How the server and the bridge fit together today, for anyone about to change the
 ## Session lifecycle
 
 - **Names**: `run_project` (`options.session`) and `attach_project` (`session`) name the new session, by default after the project folder (1-64 of letters, digits, `.`, `_`, `-`). Runs and attaches share one name space. A live name (running, attached, or still launching or waiting to attach) is refused; a stopped one is replaced. A stopped run stays listed so `get_debug_output` can read it; a detached session is forgotten.
-- **One folder, several sessions**: the marked `override.cfg` is written by the first live session on a folder and removed when the last one ends (stop, detach, the game exiting, a failed start, server exit). A new session whose `shutOutRealGamepads` differs from the live ones' is refused, and so is a second attach on a folder while one is still waiting.
-- **Run** (`run_project` → `GodotSession.LaunchAsync`): `OverrideFile.Write` writes the marked `override.cfg` naming the bridge as an autoload (refusing a user's unmarked one), `GitExclude` hides it, and `StartRunAsync` creates a random token, starts Godot with `GODOT_MCP_PORT` and `GODOT_MCP_TOKEN` in its environment (plus `GODOT_MCP_BACKGROUND` / `GODOT_MCP_SHUT_OUT_REAL_GAMEPADS` when asked), and waits for the handshake.
+- **One folder, several sessions**: the marked `override.cfg` is written by the first live session on a folder and removed when the last one ends (stop, detach, the game exiting, a failed start, server exit). A new session whose `shutOutRealGamepads` or `quiet` differs from the live ones' is refused (an attach counts as not quiet), and so is a second attach on a folder while one is still waiting.
+- **Run** (`run_project` → `GodotSession.LaunchAsync`): `OverrideFile.Write` writes the marked `override.cfg` naming the bridge as an autoload (refusing a user's unmarked one), `GitExclude` hides it, and `StartRunAsync` creates a random token, starts Godot with `GODOT_MCP_PORT` and `GODOT_MCP_TOKEN` in its environment (plus `GODOT_MCP_QUIET` unless `options.quiet` is false, and `GODOT_MCP_SHUT_OUT_REAL_GAMEPADS` when asked). A quiet run also gets `--audio-driver Dummy` before the user's engine arguments (a later `--audio-driver` of theirs wins), and its override adds `[display]` `window/size/no_focus=true` with an off-screen initial position, so the window is created unfocused, and waits for the handshake.
 - **Attach** (`attach_project` → `AttachAsync`): `AttachFile` writes the one-use `.godot/godot-mcp/attach.json` ({port, token, shutOutRealGamepads}) and the override, and waits for a game launched after it to dial in; the attach file is deleted once the wait ends.
 - **Handshake**: each session registers its expectation with `BridgeListener.AcceptBridgeAsync`. The listener's one accept loop reads each hello `{type: "hello", token, projectPath}` (5 s timeout, sockets handled concurrently), finds the waiter by a dictionary lookup on its token and checks the hello with `HandshakeExpectation` (the token, then the path). The lookup is not constant-time; the token is 32 random bytes on loopback only. An unknown token or a mismatch is logged and its socket closed; the waiter keeps waiting.
 - **Stop** (`stop_project`): a `shutdown` command, a kill after 3 s, the override removed if no other live session uses the folder.
@@ -38,7 +38,7 @@ How the server and the bridge fit together today, for anyone about to change the
 
 | Tool | File | Bridge command | Result |
 |---|---|---|---|
-| `run_project` | `ProjectTools.cs` | (launch) | `{session, projectPath, processId, background}` |
+| `run_project` | `ProjectTools.cs` | (launch) | `{session, projectPath, processId, quiet}` |
 | `attach_project` | `ProjectTools.cs` | (attach) | `{session, projectPath}` |
 | `detach_project` | `ProjectTools.cs` | — | `{session, projectPath, overrideRemoved}` |
 | `stop_project` | `ProjectTools.cs` | `shutdown` | `{session, projectPath, exitCode, killed, overrideRemoved}` |
@@ -55,9 +55,13 @@ Every runtime tool's result also carries `errors` when the call raised any (see 
 
 ## The bridge
 
-- **Start**: in `_init`, `_find_endpoint` reads the port and token from the environment, else from `res://.godot/godot-mcp/attach.json`; with one, the error-feed logger is registered there (and never removed: Godot drops script loggers at shutdown); with neither it warns and frees itself. `GODOT_MCP_BACKGROUND` makes `_enter_background` park the window off-screen, unfocusable, click-through and borderless.
+- **Start**: in `_init`, `_find_endpoint` reads the port and token from the environment, else from `res://.godot/godot-mcp/attach.json`; with one, the error-feed logger is registered there (and never removed: Godot drops script loggers at shutdown); with neither it warns and frees itself. With `GODOT_MCP_QUIET`, `_park_window` makes the window click-through and moves it off-screen: Windows clamps the override's off-screen initial position onto the primary screen at creation, so the window shows there, unfocused, until the bridge's `_ready`.
 - **Commands** (`_handle_frame`): `ping`, `screenshot` (saves `.godot/godot-mcp/screenshots/<stamp>-<pid>.png` and a Lanczos preview when wider than asked; replies with paths, never bytes), `ui_elements`, `run_script` (compiles a script with `execute`, returns its value), `input` (gestures and raw events, under `_handle_input`), `shutdown`.
-- **Real input**: `_input` swallows unmarked real mouse events while a gesture plays or an injected button is held; injected events carry the injected mark. The real keyboard is never swallowed. `godot_mcp_gamepad.gd`'s `shut_out_real_pads` keeps real pads out when asked.
+- **Real input**: injected mouse events carry the injected mark, and `_input` swallows unmarked (real) mouse events while a gesture plays or an injected button is held. Keys are never swallowed, and injected keys carry no mark (their device stays 16, which the built-in `ui_*` actions require). A quiet run keeps real input out by never receiving it: unfocused from creation, click-through and off-screen. `godot_mcp_gamepad.gd`'s `shut_out_real_pads` keeps real pads out when asked.
+
+## Tool annotations
+
+Every tool declares `openWorldHint: false`. `readOnlyHint: true`: `get_debug_output`, `list_sessions`, `take_screenshot` (its PNG goes under the ignored `.godot/`), `get_ui_elements`, `get_errors`. `destructiveHint: true`: `stop_project` (kills a process) and `run_script` (runs arbitrary code). Every other tool is `destructiveHint: false`. A new tool sets all three.
 
 ## Adding a runtime tool
 
@@ -65,4 +69,5 @@ Every runtime tool's result also carries `errors` when the call raised any (see 
 2. A handler branch in the bridge's `_handle_frame` (or `_handle_input` for a gesture).
 3. A unit test for the server-side checks (`tests/GodotMcp.Tests/Tools/`).
 4. An integration test against the InputProbe fixture (`tests/GodotMcp.IntegrationTests`), and the name in `McpServerSmokeTests`' list.
-5. This file's tool table and, for a new term, the glossary.
+5. Its annotations (`ReadOnly`, `Destructive`, `OpenWorld = false`) and `McpServerSmokeTests`' annotation check.
+6. This file's tool table and, for a new term, the glossary.

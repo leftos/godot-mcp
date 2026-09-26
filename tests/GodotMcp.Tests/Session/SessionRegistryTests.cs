@@ -157,6 +157,22 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         );
     }
 
+    // An attach counts as not quiet, so a waiting one stands in for a live session with quiet=false.
+    [Fact]
+    public async Task ADifferentQuietOnALiveFolderIsRefused()
+    {
+        string alpha = Project("alpha");
+        await StartWaitingAttachAsync(alpha, "server");
+        LaunchRequest request = new(alpha, null, [], [], Quiet: true, ShutOutRealGamepads: false);
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _sessions.LaunchAsync(request, "client", TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal($"Sessions on {alpha} run with quiet=false; start this one with the same value, or stop them first.", refused.Message);
+        Assert.Equal(["server"], _sessions.List().Select(session => session.Name));
+    }
+
     [Fact]
     public async Task AWaitingAttachIsListedWithoutAProcess()
     {

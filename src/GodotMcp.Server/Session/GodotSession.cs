@@ -14,8 +14,8 @@ internal enum SessionKind
     Attach,
 }
 
-/// <summary>What a session is created for: its name, its project folder, its kind and its pad setting.</summary>
-internal sealed record SessionSpec(string Name, string ProjectDir, SessionKind Kind, bool ShutOutRealGamepads);
+/// <summary>What a session is created for: its name, its project folder, its kind, its pad setting and whether it runs quiet.</summary>
+internal sealed record SessionSpec(string Name, string ProjectDir, SessionKind Kind, bool ShutOutRealGamepads, bool Quiet);
 
 /// <summary>
 /// One named session in the <see cref="SessionRegistry"/>: a Godot run launched with the bridge injected, or a game
@@ -46,6 +46,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     public SessionKind Kind { get; } = spec.Kind;
 
     public bool ShutOutRealGamepads { get; } = spec.ShutOutRealGamepads;
+
+    /// <summary>Whether the run was started quiet; an attached game never is.</summary>
+    public bool Quiet { get; } = spec.Quiet;
 
     /// <summary>The launched game's process id, once it has started; null for an attached game.</summary>
     public int? ProcessId { get; private set; }
@@ -270,7 +273,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         connection.OnErrors(Errors.Receive);
         run.Connection = connection;
         Log.RunStarted(_logger, processId, run.ProjectDir);
-        return new LaunchResult(Name, run.ProjectDir, processId, request.Background);
+        return new LaunchResult(Name, run.ProjectDir, processId, request.Quiet);
     }
 
     private void StartProcess(GodotRun run)
