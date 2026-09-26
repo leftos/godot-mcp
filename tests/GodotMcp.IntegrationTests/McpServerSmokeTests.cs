@@ -10,13 +10,15 @@ public sealed class McpServerSmokeTests : IDisposable
 {
     private const string ChildCountScript =
         "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\treturn scene_tree.root.get_child_count()\n";
+    private const string PressCountScript =
+        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\treturn scene_tree.root.get_node(\"Main/SmallButton\").press_count\n";
     private static readonly string[] SmokeArgs = ["--smoke"];
     private readonly ProbeProject _probe = new();
 
     public void Dispose() => _probe.Dispose();
 
     [Fact(Timeout = 45_000)]
-    public async Task ListsTheSixToolsRunsTheProbeReadsItAndStopsIt()
+    public async Task ListsTheToolsRunsTheProbeReadsItClicksItAndStopsIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         StdioClientTransport transport = new(
@@ -34,10 +36,26 @@ public sealed class McpServerSmokeTests : IDisposable
         bool sawProbe = await WaitForProbeLineAsync(client, "[probe] ready args=[\"--smoke\"]");
         CallToolResult screenshot = await CallAsync(client, "take_screenshot", new() { ["responseMode"] = "preview" });
         CallToolResult script = await CallAsync(client, "run_script", new() { ["script"] = ChildCountScript });
+        Dictionary<string, object?> smallButton = new() { ["element"] = "SmallButton" };
+        CallToolResult click = await CallAsync(client, "click", new() { ["target"] = smallButton });
+        CallToolResult pressCount = await CallAsync(client, "run_script", new() { ["script"] = PressCountScript });
         CallToolResult stop = await CallAsync(client, "stop_project", []);
 
         Assert.Equal(
-            ["get_debug_output", "get_ui_elements", "run_project", "run_script", "stop_project", "take_screenshot"],
+            [
+                "click",
+                "drag",
+                "get_debug_output",
+                "get_ui_elements",
+                "key",
+                "mouse_button",
+                "run_project",
+                "run_script",
+                "simulate_input",
+                "stop_project",
+                "take_screenshot",
+                "type_text",
+            ],
             tools.Select(tool => tool.Name).Order()
         );
         Assert.True(run.IsError is not true, Text(run));
@@ -46,6 +64,8 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.Equal("image/png", Assert.Single(screenshot.Content.OfType<ImageContentBlock>()).MimeType);
         Assert.True(script.IsError is not true, Text(script));
         Assert.Equal("2", Text(script));
+        Assert.True(click.IsError is not true, Text(click));
+        Assert.Equal("1", Text(pressCount));
         Assert.True(stop.IsError is not true, Text(stop));
         Assert.False(JsonDocument.Parse(Text(stop)).RootElement.GetProperty("killed").GetBoolean());
         Assert.False(File.Exists(_probe.OverrideFile));

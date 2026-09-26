@@ -23,16 +23,9 @@ public sealed class RuntimeReadTests : IAsyncDisposable
 
     public RuntimeReadTests() => _tools = new RuntimeTools(_harness.Session);
 
-    // A test that leaves the game running stops it here: the harness's kill does not wait for the exit, and a live
-    // Godot keeps the probe's folder from being deleted.
     public async ValueTask DisposeAsync()
     {
-        if (_harness.Session.GetDebugOutput(1).Running)
-        {
-            await _harness.Session.StopAsync(CancellationToken.None);
-        }
-
-        _harness.Dispose();
+        await _harness.DisposeAsync();
         _probe.Dispose();
     }
 
@@ -101,7 +94,9 @@ public sealed class RuntimeReadTests : IAsyncDisposable
 
         string json = await _tools.GetUiElementsAsync(true, "Label", TestContext.Current.CancellationToken);
 
-        JsonNode label = Assert.Single(JsonNode.Parse(json)!["elements"]!.AsArray())!;
+        JsonArray elements = JsonNode.Parse(json)!["elements"]!.AsArray();
+        Assert.All(elements, element => Assert.Equal("Label", element!["class"]!.GetValue<string>()));
+        JsonNode label = Assert.Single(elements, element => element!["name"]!.GetValue<string>() == "ProbeLabel")!;
         Assert.Equal("ProbeLabel", label["name"]!.GetValue<string>());
         Assert.Equal("Label", label["class"]!.GetValue<string>());
         Assert.Equal("Probe ready", label["text"]!.GetValue<string>());

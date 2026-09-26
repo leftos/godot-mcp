@@ -1,6 +1,9 @@
 [gd_scene format=3]
 
 [ext_resource type="Script" path="res://main.gd" id="1_main"]
+[ext_resource type="Script" path="res://drag_source.gd" id="2_drag"]
+[ext_resource type="Script" path="res://drop_target.gd" id="3_drop"]
+[ext_resource type="Script" path="res://small_button.gd" id="4_small"]
 
 [node name="Main" type="Control"]
 layout_mode = 3
@@ -35,3 +38,44 @@ offset_top = 40.0
 offset_right = 520.0
 offset_bottom = 120.0
 color = Color(1, 0, 0, 1)
+
+[node name="DragSource" type="ColorRect" parent="."]
+layout_mode = 0
+offset_left = 40.0
+offset_top = 160.0
+offset_right = 140.0
+offset_bottom = 220.0
+color = Color(0.2, 0.4, 1, 1)
+script = ExtResource("2_drag")
+
+[node name="DropTarget" type="ColorRect" parent="."]
+layout_mode = 0
+offset_left = 400.0
+offset_top = 160.0
+offset_right = 560.0
+offset_bottom = 220.0
+color = Color(0.4, 0.4, 0.4, 1)
+script = ExtResource("3_drop")
+
+[node name="DropLabel" type="Label" parent="DropTarget"]
+layout_mode = 0
+offset_left = 8.0
+offset_top = 16.0
+offset_right = 152.0
+offset_bottom = 44.0
+text = "drop here"
+
+[node name="TextInput" type="LineEdit" parent="."]
+layout_mode = 0
+offset_left = 40.0
+offset_top = 260.0
+offset_right = 240.0
+offset_bottom = 292.0
+
+[node name="SmallButton" type="Button" parent="."]
+layout_mode = 0
+offset_left = 300.0
+offset_top = 270.0
+offset_right = 312.0
+offset_bottom = 282.0
+script = ExtResource("4_small")

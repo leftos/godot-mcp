@@ -16,6 +16,6 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Handshake | The bridge's first frame: the session token and the project path, which the server checks so a stale bridge from another run is refused |
 | Gesture | A high-level input tool (click, drag, type_text, hold/release) that sends the right sequence of events over frames, as against the raw event list of `simulate_input` |
 | Headless tool | A scene or node edit done by a one-off `godot --headless --script headless/operations.gd` run, with its request and result passed as JSON files |
-| InputProbe | The fixture Godot project the integration tests launch (`tests/fixtures/InputProbe`): today a label, a button and a red square at known places; step 3 adds a drag source, a drop target and a LineEdit |
+| InputProbe | The fixture Godot project the integration tests launch (`tests/fixtures/InputProbe`): a label, a button, a red square, a drag source, a drop target, a LineEdit and a 12x12 button at known places, at a 640x360 base size stretched `canvas_items`/`keep`, so launching it with `--resolution 1000x900` letterboxes it |
 | Gate, ceiling | A gate is one command run by `tools/gate.ps1` with its own log; its ceiling is the wall-clock limit after which the gate kills the process tree and exits 124 |
 | Parity | The first version covers every godot tool the user's projects call, so it replaces the old server everywhere at once |

@@ -8,8 +8,8 @@ Open work only, in working order: the next item is the first line from the top. 
 - [x] Step 1: wire and lifecycle (listener, handshake, override.cfg inject/clean/refuse, .git/info/exclude; run_project with pass-through arguments, stop_project, get_debug_output)
 - [x] Gate gaps from step 1: wall-clock ceilings (`tools/gate.ps1`), complexity ≤ 8 enforced (CA1502), the handshake's refusal cases tested, GitExclude through `--show-prefix`
 - [x] Step 2: runtime reads (take_screenshot with crop and preview, get_ui_elements, run_script with diagnostics)
-- [ ] Step 3: input (click, drag, type_text, key/button hold and release, raw simulate_input; viewport-to-window mapping); the fixture drag is the headline test
-- [ ] Step 4: attach_project and detach_project
+- [x] Step 3: input (click, drag, type_text, key/button hold and release, raw simulate_input; viewport-to-window mapping); the fixture drag is the headline test
+- [ ] Step 4: attach_project and detach_project, plus input hardening from step 3: real mouse events are swallowed while injected input plays or holds a button, input calls are serialised, the input tools report handler errors raised during a gesture (as run_script does), and unit tests for the server-side input validation
 - [ ] Step 5: the 16 headless scene and node tools and validate
 - [ ] Step 6: cutover in opening-hand and delve-the-dungeon (registration, their docs and conventions, the debugger agent's allow-list; one scratch drive each; git status clean)
 

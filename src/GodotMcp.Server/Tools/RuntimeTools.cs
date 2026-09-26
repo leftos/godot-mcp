@@ -11,7 +11,10 @@ using ModelContextProtocol.Server;
 
 namespace GodotMcp.Server.Tools;
 
-/// <summary>Reading the running game through its bridge: screenshots, the Control tree, and scripts run inside it.</summary>
+/// <summary>
+/// The running game through its bridge: screenshots, the Control tree and scripts run inside it here, input in
+/// RuntimeTools.Input.cs.
+/// </summary>
 [McpServerToolType]
 internal sealed partial class RuntimeTools(GodotSession session)
 {

@@ -6,16 +6,16 @@ using GodotMcp.TestSupport;
 namespace GodotMcp.IntegrationTests;
 
 /// <summary>Launching the real Godot on the InputProbe with the bridge injected, and leaving no trace after.</summary>
-public sealed class SessionLifecycleTests : IDisposable
+public sealed class SessionLifecycleTests : IAsyncDisposable
 {
     private const int TestTimeoutMs = 45_000;
     private static readonly TimeSpan PingTimeout = TimeSpan.FromSeconds(5);
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _harness.Dispose();
+        await _harness.DisposeAsync();
         _probe.Dispose();
     }
 

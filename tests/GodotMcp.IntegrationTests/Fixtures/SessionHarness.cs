@@ -4,8 +4,11 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GodotMcp.IntegrationTests.Fixtures;
 
-/// <summary>A <see cref="GodotSession"/> on its own listener; disposing it kills any live run and removes its override.</summary>
-internal sealed class SessionHarness : IDisposable
+/// <summary>
+/// A <see cref="GodotSession"/> on its own listener. Disposing it stops a live run the way stop_project does (quit, then
+/// kill after the grace), which waits for Godot to exit, so the probe's folder can be deleted after it.
+/// </summary>
+internal sealed class SessionHarness : IAsyncDisposable
 {
     private readonly BridgeListener _listener = new(NullLogger<BridgeListener>.Instance);
 
@@ -13,8 +16,14 @@ internal sealed class SessionHarness : IDisposable
 
     public GodotSession Session { get; }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
+        // A bare kill does not wait: Godot_console.exe exits before the Godot.exe it wraps lets go of the folder.
+        if (Session.GetDebugOutput(1).Running)
+        {
+            await Session.StopAsync(CancellationToken.None);
+        }
+
         Session.Dispose();
         _listener.Dispose();
     }

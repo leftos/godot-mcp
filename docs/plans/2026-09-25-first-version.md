@@ -56,6 +56,7 @@ The user asked for our own plugin and MCP server for all their Godot projects. G
   - `type_text` (unicode with case preserved)
   - `key` and `button` with hold/release
 - **`simulate_input`:** a raw event list, done right (motion with mask and relative; press and release separate).
+- **Built (step 3):** the hold/release gestures are the `key` and `mouse_button` tools. The transform is `get_screen_transform()`, measured against a letterboxed window; the red proof is the three drag tests failing with `button_mask` forced to 0.
 
 **Process and session:**
 - `run_project(projectPath, scene?, userArgs[], engineArgs[], background?)` spawns Godot with the user arguments after `--`.
