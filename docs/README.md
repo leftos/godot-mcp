@@ -12,7 +12,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Term | Meaning |
 |---|---|
 | Bridge | The GDScript autoload (`bridge/godot_mcp_bridge.gd`) that runs inside a launched game, dials the server and carries out its commands: screenshots, UI listing, input, scripts |
-| Hidden desktop | A Windows desktop nobody looks at (`CreateDesktopW`): the server starts quiet runs on its own (`godot-mcp-<pid>`), so their windows never reach the user's screen |
+| Hidden desktop | A Windows desktop nobody looks at (`CreateDesktopW`): the server starts quiet runs on its own (`godot-mcp-<pid>`), and `run.ps1 itest` runs the integration tests on another (`tools/hidden-desktop.ps1`), so no Godot window reaches the user's screen |
 | Injection | How the bridge gets into a run without touching the project: the server writes a marked `override.cfg` in the project folder naming the bridge as an autoload, hides it through `.git/info/exclude`, and deletes it when the run stops. Godot reads `override.cfg` for game runs only, never for the editor or `--import` |
 | Marker | The first-line comment that identifies an `override.cfg` as the server's own; one without it is the user's and is never touched |
 | Handshake | The bridge's first frame: the session token and the project path, which the server checks so a stale bridge from another run is refused |

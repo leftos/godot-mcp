@@ -16,7 +16,8 @@ exits with the command's own status, or 124 when it outlived its ceiling and was
            class exists, and stops with status 1 before running anything when not. It then builds the project once
            (.tmp/itest-build.log, ceiling 300 s) and runs each group as its own gate (.tmp/itest-<group>.log, ceiling
            300 s, the runner's own --timeout 4m). Every group runs even when an earlier one fails; a summary line per
-           group follows, and the exit status is the first non-zero group's.
+           group follows, and the exit status is the first non-zero group's. On Windows every test run (a group's or
+           a -Filter one) goes through tools/hidden-desktop.ps1, on a desktop of its own, so no Godot window shows.
   format   dotnet format style (info severity), then CSharpier, on the whole solution; ceiling 180 s each
   publish  a framework-dependent win-x64 server at bin/publish/godot-mcp.exe, with bridge/ beside it; ceiling 300 s
   gdtest   the bridge's GDScript unit tests (tests/bridge/test_*.gd) in headless Godot (GODOT_PATH, else
@@ -87,6 +88,20 @@ function Invoke-Logged {
         [Parameter(Mandatory)] [string[]]$Arguments
     )
     return Invoke-Gated -Name $Name -TimeoutSeconds $TimeoutSeconds -Program 'dotnet' -Arguments $Arguments
+}
+
+# Runs an integration test gate as Invoke-Logged does, on Windows through tools/hidden-desktop.ps1, so the Godot windows
+# the tests open appear on a desktop of their own and never on the user's screen.
+function Invoke-ItestGated {
+    param(
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string[]]$Arguments
+    )
+    if (-not $IsWindows) {
+        return Invoke-Logged -Name $Name -TimeoutSeconds 300 -Arguments $Arguments
+    }
+    $hidden = @('-NoProfile', '-File', (Join-Path $root 'tools/hidden-desktop.ps1'), '--', 'dotnet') + $Arguments
+    return Invoke-Gated -Name $Name -TimeoutSeconds 300 -Program 'pwsh' -Arguments $hidden
 }
 
 # The Godot executable as the server finds it (Installation.FindGodot): GODOT_PATH when set, else the default path;
@@ -189,7 +204,7 @@ function Invoke-ItestByGroup {
     foreach ($group in $itestGroups.Keys) {
         $classes = @($itestGroups[$group] | ForEach-Object { "$itestNamespace.$_" })
         $arguments = Get-TestArgumentList -Project $itestProject -Timeout '4m' -Classes $classes -NoBuild
-        $results[$group] = Invoke-Logged -Name "itest-$group" -TimeoutSeconds 300 -Arguments $arguments
+        $results[$group] = Invoke-ItestGated -Name "itest-$group" -Arguments $arguments
     }
     Write-ItestSummary -Results $results
     $failed = @($results.Values | Where-Object { $_ -ne 0 })
@@ -214,7 +229,7 @@ switch ($Command) {
             exit (Invoke-ItestByGroup)
         }
         $arguments = Get-TestArgumentList -Project $itestProject -Timeout '4m' -Classes $filterClasses
-        exit (Invoke-Logged -Name 'itest' -TimeoutSeconds 300 -Arguments $arguments)
+        exit (Invoke-ItestGated -Name 'itest' -Arguments $arguments)
     }
     'format' {
         $status = Invoke-Logged -Name 'format-style' -TimeoutSeconds 180 -Arguments @('format', 'style', $solution, '--severity', 'info')
