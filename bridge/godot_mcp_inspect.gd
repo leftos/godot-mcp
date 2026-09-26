@@ -2,8 +2,9 @@ extends Node
 ## The godot-mcp bridge's inspector, a child of the bridge: lists the scene tree, reads a node's
 ## properties, sets one and calls a method, for get_scene_tree, inspect_node, set_property and
 ## call_method. Each handler returns its result as a Dictionary, or a String saying why it
-## failed; the bridge replies with either. It finds nodes and writes values as JSON with the
-## bridge's own _find_node and _to_json, and never lists or reaches the bridge's own nodes.
+## failed; the bridge replies with either. It finds nodes with the bridge's own _find_node,
+## converts values to and from JSON with the JSON module the bridge loads (godot_mcp_json.gd),
+## and never lists or reaches the bridge's own nodes.
 ##
 ## JSON goes in by the declared type, and a set is read back, because Godot does not refuse a
 ## wrong type: Object.set gives script no validity flag, a native setter given the wrong type
@@ -13,75 +14,15 @@ extends Node
 ## silently (core/variant/variant.cpp L1745-1761). Every number arrives as a float, since JSON
 ## numbers always parse to one (core/io/json.cpp L390-396).
 
-## The component keys of each vector-like type, in constructor order, as _to_json writes them.
-const VECTOR_KEYS := {
-	TYPE_VECTOR2: ["x", "y"],
-	TYPE_VECTOR2I: ["x", "y"],
-	TYPE_VECTOR3: ["x", "y", "z"],
-	TYPE_VECTOR3I: ["x", "y", "z"],
-	TYPE_VECTOR4: ["x", "y", "z", "w"],
-	TYPE_VECTOR4I: ["x", "y", "z", "w"],
-	TYPE_RECT2: ["x", "y", "width", "height"],
-	TYPE_RECT2I: ["x", "y", "width", "height"],
-}
-const INTEGER_VECTORS: Array[int] = [TYPE_VECTOR2I, TYPE_VECTOR3I, TYPE_VECTOR4I, TYPE_RECT2I]
-## The element type of each packed array.
-const PACKED_ELEMENTS := {
-	TYPE_PACKED_BYTE_ARRAY: TYPE_INT,
-	TYPE_PACKED_INT32_ARRAY: TYPE_INT,
-	TYPE_PACKED_INT64_ARRAY: TYPE_INT,
-	TYPE_PACKED_FLOAT32_ARRAY: TYPE_FLOAT,
-	TYPE_PACKED_FLOAT64_ARRAY: TYPE_FLOAT,
-	TYPE_PACKED_STRING_ARRAY: TYPE_STRING,
-	TYPE_PACKED_VECTOR2_ARRAY: TYPE_VECTOR2,
-	TYPE_PACKED_VECTOR3_ARRAY: TYPE_VECTOR3,
-	TYPE_PACKED_COLOR_ARRAY: TYPE_COLOR,
-	TYPE_PACKED_VECTOR4_ARRAY: TYPE_VECTOR4,
-}
 ## Property list entries that head a section of the inspector rather than hold a value.
 const SECTION_USAGE := PROPERTY_USAGE_CATEGORY | PROPERTY_USAGE_GROUP | PROPERTY_USAGE_SUBGROUP
-const NOT_CONVERTED: Array = [false, null]
 
 ## The bridge (godot_mcp_bridge.gd), this node's parent.
 var _bridge: Node
-## Each Variant type by its name ("int", "Vector2"), as a typed container's hint string names it.
-var _type_by_name: Dictionary = {"Variant": TYPE_NIL}
-## The converter from JSON for each Variant type: func(value, info) -> [ok, converted].
-var _converters: Dictionary = {}
-## The constructor of each vector-like type from its numbers.
-var _vector_builders: Dictionary = {}
 
 
 func _ready() -> void:
 	_bridge = get_parent()
-	for type in TYPE_MAX:
-		_type_by_name[type_string(type)] = type
-	_converters = {
-		TYPE_NIL: func(value: Variant, _info: Dictionary) -> Array: return [true, value],
-		TYPE_BOOL: func(value: Variant, _info: Dictionary) -> Array: return [value is bool, value],
-		TYPE_INT: _int_from_json,
-		TYPE_FLOAT: _float_from_json,
-		TYPE_STRING: _text_from_json,
-		TYPE_STRING_NAME: _text_from_json,
-		TYPE_NODE_PATH: _text_from_json,
-		TYPE_COLOR: _color_from_json,
-		TYPE_ARRAY: _array_from_json,
-		TYPE_DICTIONARY: _dictionary_from_json,
-	}
-	for type: int in VECTOR_KEYS:
-		_converters[type] = _vector_from_json
-	for type: int in PACKED_ELEMENTS:
-		_converters[type] = _packed_from_json
-	_vector_builders = {
-		TYPE_VECTOR2: func(n: Array) -> Variant: return Vector2(n[0], n[1]),
-		TYPE_VECTOR2I: func(n: Array) -> Variant: return Vector2i(n[0], n[1]),
-		TYPE_VECTOR3: func(n: Array) -> Variant: return Vector3(n[0], n[1], n[2]),
-		TYPE_VECTOR3I: func(n: Array) -> Variant: return Vector3i(n[0], n[1], n[2]),
-		TYPE_VECTOR4: func(n: Array) -> Variant: return Vector4(n[0], n[1], n[2], n[3]),
-		TYPE_VECTOR4I: func(n: Array) -> Variant: return Vector4i(n[0], n[1], n[2], n[3]),
-		TYPE_RECT2: func(n: Array) -> Variant: return Rect2(n[0], n[1], n[2], n[3]),
-		TYPE_RECT2I: func(n: Array) -> Variant: return Rect2i(n[0], n[1], n[2], n[3]),
-	}
 
 
 func handle(command: String, params: Dictionary) -> Variant:
@@ -188,7 +129,7 @@ func _named_properties(node: Node, names: Array) -> Variant:
 	for property_name: Variant in names:
 		if _property_info(node, str(property_name)).is_empty():
 			return _no_property(node, str(property_name))
-		properties[str(property_name)] = _bridge._to_json(node.get(str(property_name)))
+		properties[str(property_name)] = _bridge._json.to_json(node.get(str(property_name)))
 	return properties
 
 
@@ -197,7 +138,7 @@ func _shown_properties(node: Node) -> Dictionary:
 	var properties: Dictionary = {}
 	for info: Dictionary in node.get_property_list():
 		if _is_shown(info):
-			properties[info["name"]] = _bridge._to_json(node.get(info["name"]))
+			properties[info["name"]] = _bridge._json.to_json(node.get(info["name"]))
 	return properties
 
 
@@ -224,7 +165,7 @@ func set_property(params: Dictionary) -> Variant:
 	if info["type"] == TYPE_NIL and before != null:
 		info = {"type": typeof(before)}
 	var raw: Variant = params.get("value")
-	var converted: Array = from_json(raw, info)
+	var converted: Array = _bridge._json.from_json(raw, info)
 	if not converted[0]:
 		return (
 			"Property '%s' on '%s' is %s; %s does not convert to it."
@@ -244,8 +185,8 @@ func set_property(params: Dictionary) -> Variant:
 	return {
 		"path": str(node.get_path()),
 		"property": property_name,
-		"before": _bridge._to_json(before),
-		"after": _bridge._to_json(after),
+		"before": _bridge._json.to_json(before),
+		"after": _bridge._json.to_json(after),
 	}
 
 
@@ -274,7 +215,7 @@ func call_method(params: Dictionary) -> Variant:
 	if value is Object and is_instance_valid(value):
 		if (value as Object).is_class("GDScriptFunctionState"):
 			value = await value
-	return {"path": path, "method": method, "value": _bridge._to_json(value)}
+	return {"path": path, "method": method, "value": _bridge._json.to_json(value)}
 
 
 ## The arguments converted by the method's declared parameter types, or a String saying why they
@@ -288,7 +229,7 @@ func _method_args(node: Node, method: String, given: Array) -> Variant:
 	var args: Array = []
 	for index in given.size():
 		var parameter: Dictionary = declared[index] if index < declared.size() else {}
-		var converted: Array = from_json(given[index], parameter)
+		var converted: Array = _bridge._json.from_json(given[index], parameter)
 		if not converted[0]:
 			return (
 				"Argument %d of '%s' on '%s' is %s; %s does not convert to it."
@@ -321,140 +262,6 @@ static func _count_error(node: Node, method: String, info: Dictionary, count: in
 	)
 
 
-## [true, value] with a JSON value converted to the type a property or parameter entry declares
-## ({type, hint, hint_string}), the reverse of the bridge's _to_json, or [false, null] when it
-## does not convert. TYPE_NIL (an untyped parameter, or an untyped property holding null) takes
-## the JSON value as it is; an Object converts from nothing.
-func from_json(value: Variant, info: Dictionary) -> Array:
-	var converter: Callable = _converters.get(int(info.get("type", TYPE_NIL)), _not_converted)
-	return converter.call(value, info)
-
-
-func _not_converted(_value: Variant, _info: Dictionary) -> Array:
-	return NOT_CONVERTED
-
-
-func _int_from_json(value: Variant, _info: Dictionary) -> Array:
-	return [true, int(value)] if _is_number(value, true) else NOT_CONVERTED
-
-
-func _float_from_json(value: Variant, _info: Dictionary) -> Array:
-	return [true, float(value)] if _is_number(value, false) else NOT_CONVERTED
-
-
-func _text_from_json(value: Variant, info: Dictionary) -> Array:
-	return [true, type_convert(value, info["type"])] if value is String else NOT_CONVERTED
-
-
-func _vector_from_json(value: Variant, info: Dictionary) -> Array:
-	var type: int = info["type"]
-	var keys: Array = VECTOR_KEYS[type]
-	var numbers: Array = []
-	if value is Dictionary:
-		for key: String in keys:
-			var number: Variant = (value as Dictionary).get(key)
-			if _is_number(number, type in INTEGER_VECTORS):
-				numbers.append(int(number) if type in INTEGER_VECTORS else float(number))
-	if numbers.size() != keys.size():
-		return NOT_CONVERTED
-	return [true, (_vector_builders[type] as Callable).call(numbers)]
-
-
-## A Color from {r, g, b, a?} (a is 1 when left out) or an HTML string such as "#rrggbb[aa]".
-func _color_from_json(value: Variant, _info: Dictionary) -> Array:
-	if value is String and Color.html_is_valid(value):
-		return [true, Color.html(value)]
-	if not value is Dictionary:
-		return NOT_CONVERTED
-	var channels: Dictionary = value
-	var alpha: Variant = channels.get("a", 1.0)
-	for channel: Variant in [channels.get("r"), channels.get("g"), channels.get("b"), alpha]:
-		if not _is_number(channel, false):
-			return NOT_CONVERTED
-	return [true, Color(channels["r"], channels["g"], channels["b"], alpha)]
-
-
-## An Array from a JSON array; a typed one (PROPERTY_HINT_ARRAY_TYPE, whose hint string names the
-## element type, @GlobalScope PropertyHint in 4.7.2) with each element converted and the array
-## built typed, since an untyped Array does not set an Array[int].
-func _array_from_json(value: Variant, info: Dictionary) -> Array:
-	if not value is Array:
-		return NOT_CONVERTED
-	if int(info.get("hint", PROPERTY_HINT_NONE)) != PROPERTY_HINT_ARRAY_TYPE:
-		return [true, value]
-	var element: Dictionary = _type_info(str(info["hint_string"]))
-	var items: Variant = _convert_all(value, element)
-	if items == null or element["type"] == TYPE_OBJECT:
-		return NOT_CONVERTED
-	return [true, Array(items, element["type"], &"", null)]
-
-
-## A Dictionary from a JSON object; a typed one (PROPERTY_HINT_DICTIONARY_TYPE, "key;value") with
-## each key and value converted and the dictionary built typed. JSON keys are strings, so a
-## numeric key is read from its text.
-func _dictionary_from_json(value: Variant, info: Dictionary) -> Array:
-	if not value is Dictionary:
-		return NOT_CONVERTED
-	if int(info.get("hint", PROPERTY_HINT_NONE)) != PROPERTY_HINT_DICTIONARY_TYPE:
-		return [true, value]
-	var types: PackedStringArray = str(info["hint_string"]).split(";")
-	var key_info: Dictionary = _type_info(types[0])
-	var value_info: Dictionary = _type_info(types[1] if types.size() > 1 else "Variant")
-	var entries: Variant = _convert_entries(value, key_info, value_info)
-	if entries == null:
-		return NOT_CONVERTED
-	var typed := Dictionary(entries, key_info["type"], &"", null, value_info["type"], &"", null)
-	return [true, typed]
-
-
-## Every key and value converted, or null when one does not convert.
-func _convert_entries(values: Dictionary, key_info: Dictionary, value_info: Dictionary) -> Variant:
-	var entries: Dictionary = {}
-	for key: Variant in values:
-		var converted_key: Array = _key_from_json(key, key_info)
-		var converted_value: Array = from_json(values[key], value_info)
-		if not (converted_key[0] and converted_value[0]):
-			return null
-		entries[converted_key[1]] = converted_value[1]
-	return entries
-
-
-func _key_from_json(key: Variant, key_info: Dictionary) -> Array:
-	var json_key: Variant = key
-	if key_info["type"] in [TYPE_INT, TYPE_FLOAT] and str(key).is_valid_float():
-		json_key = str(key).to_float()
-	return from_json(json_key, key_info)
-
-
-## A packed array from a JSON array, each element converted by the packed element type.
-func _packed_from_json(value: Variant, info: Dictionary) -> Array:
-	if not value is Array:
-		return NOT_CONVERTED
-	var items: Variant = _convert_all(value, {"type": PACKED_ELEMENTS[info["type"]]})
-	if items == null:
-		return NOT_CONVERTED
-	return [true, type_convert(items, info["type"])]
-
-
-## Every value converted by element, or null when one does not convert.
-func _convert_all(values: Array, element: Dictionary) -> Variant:
-	var items: Array = []
-	for item: Variant in values:
-		var converted: Array = from_json(item, element)
-		if not converted[0]:
-			return null
-		items.append(converted[1])
-	return items
-
-
-## The entry {type} for a type a typed container's hint string names: a Variant type's name, an
-## enum ("Node.ProcessMode", stored as int), or else a class, an Object.
-func _type_info(type_name: String) -> Dictionary:
-	if _type_by_name.has(type_name):
-		return {"type": _type_by_name[type_name]}
-	return {"type": TYPE_INT if type_name.contains(".") else TYPE_OBJECT, "class_name": type_name}
-
-
 ## The node a tool names, or a String saying why there is none to reach: missing, or the bridge
 ## or a node inside it.
 func _resolve(node_name: String) -> Variant:
@@ -472,13 +279,7 @@ func _resolve(node_name: String) -> Variant:
 
 
 func _json_text(value: Variant) -> String:
-	return JSON.stringify(_bridge._to_json(value))
-
-
-static func _is_number(value: Variant, integral: bool) -> bool:
-	if not (value is float or value is int):
-		return false
-	return not integral or float(value) == floorf(float(value))
+	return JSON.stringify(_bridge._json.to_json(value))
 
 
 ## Whether the property reads back what was set. A native float property may store 32 bits, so

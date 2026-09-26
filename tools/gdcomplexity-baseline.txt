@@ -1,7 +1,3 @@
 # Known GDScript functions over the complexity or length limit, let through by tools/gdcomplexity.py.
 # One <file>:<function> a line, the file relative to the repo root. An entry that no longer violates
 # fails the check, so this list only shrinks.
-bridge/godot_mcp_bridge.gd:_input  # fix after steps 10 and 12 land
-bridge/godot_mcp_bridge.gd:_handle_frame  # fix after steps 10 and 12 land
-bridge/godot_mcp_bridge.gd:_play_event  # fix after steps 10 and 12 land
-bridge/godot_mcp_bridge.gd:_to_json  # fix after steps 10 and 12 land

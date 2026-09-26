@@ -316,7 +316,7 @@ func _check_property(node_name: String, property: String, wanted: Variant) -> Ar
 	var first: String = property.get_slice(":", 0)
 	if not _has_property(node, first):
 		return [false, null, "'%s' has no property '%s'." % [node.get_path(), first]]
-	var value: Variant = bridge._to_json(node.get_indexed(NodePath(property)))
+	var value: Variant = bridge._json.to_json(node.get_indexed(NodePath(property)))
 	return [_json_equal(value, wanted), value]
 
 
@@ -359,7 +359,7 @@ func _run_expression(expression: Expression, node_name: String, reported: Dictio
 			reported[failure] = true
 			push_error("godot-mcp wait_for: the expression failed: %s" % failure)
 		return [false, null]
-	return [value is bool and value == true, bridge._to_json(value)]
+	return [value is bool and value == true, bridge._json.to_json(value)]
 
 
 ## Resolves on the node's next emission of signal_name, with its arguments. await has no
@@ -376,7 +376,7 @@ func _wait_for_signal(node_name: String, signal_name: String, timeout_ms: int) -
 			fired.append(args)
 	node.connect(signal_name, on_signal)
 	var caught := func() -> Array:
-		return [not fired.is_empty(), null if fired.is_empty() else bridge._to_json(fired[0])]
+		return [not fired.is_empty(), null if fired.is_empty() else bridge._json.to_json(fired[0])]
 	var outcome: Dictionary = await _poll(caught, timeout_ms)
 	var result: Dictionary = outcome["result"]
 	if is_instance_valid(node) and node.is_connected(signal_name, on_signal):

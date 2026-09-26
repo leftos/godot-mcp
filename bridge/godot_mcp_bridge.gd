@@ -20,6 +20,7 @@ const INSPECT_SCRIPT := "godot_mcp_inspect.gd"
 const TIME_SCRIPT := "godot_mcp_time.gd"
 const BASELINE_SCRIPT := "godot_mcp_baseline.gd"
 const LOGGER_SCRIPT := "godot_mcp_logger.gd"
+const JSON_SCRIPT := "godot_mcp_json.gd"
 const MIN_DRAG_STEPS := 3
 ## The device id every injected mouse event carries, so _input can tell it from the real mouse
 ## (DEVICE_ID_MOUSE, 32) and from the engine's own ids: 0-15 joypads, 16-31 keyboards, -1
@@ -61,6 +62,11 @@ var _inspect: Node
 var _time: Node
 ## The screenshot comparison (godot_mcp_baseline.gd beside this script).
 var _baseline: Node
+## The JSON conversion (godot_mcp_json.gd beside this script), static functions called on the
+## script itself, by this script and by the Inspect and Time modules.
+var _json: GDScript
+## Every command's handler, func(id, params), by command name (_command_handlers).
+var _handlers: Dictionary = {}
 ## The server to dial, found in _init; empty when the bridge is off.
 var _endpoint: Dictionary = {}
 ## The logger (godot_mcp_logger.gd beside this script) collecting the game's errors, registered
@@ -96,6 +102,7 @@ func _ready() -> void:
 	if OS.get_environment("GODOT_MCP_QUIET") == "1":
 		_park_window()
 	var script_dir: String = (get_script() as Script).resource_path.get_base_dir()
+	_json = load(script_dir.path_join(JSON_SCRIPT)) as GDScript
 	_pads = (load(script_dir.path_join(GAMEPAD_SCRIPT)) as GDScript).new()
 	_pads.name = "Gamepad"
 	add_child(_pads)
@@ -112,6 +119,7 @@ func _ready() -> void:
 	_baseline.name = "Baseline"
 	_baseline.bridge = self
 	add_child(_baseline)
+	_handlers = _command_handlers()
 	_stream = StreamPeerTCP.new()
 	_stream.big_endian = true
 	var error: Error = _stream.connect_to_host(HOST, port)
@@ -206,12 +214,18 @@ func _flush_errors() -> void:
 func _input(event: InputEvent) -> void:
 	if not (_gesture_playing or _held_mask != 0):
 		return
+	if _is_real_pointer_event(event):
+		get_viewport().set_input_as_handled()
+
+
+## Whether event is a mouse button or motion without the injected mark, or a touch twin raised
+## outside _dispatch: the real input _input swallows while injected input is in play.
+func _is_real_pointer_event(event: InputEvent) -> bool:
 	if event is InputEventMouseButton or event is InputEventMouseMotion:
-		if event.device != INJECTED_DEVICE:
-			get_viewport().set_input_as_handled()
-	elif event is InputEventScreenTouch or event is InputEventScreenDrag:
-		if event.device == InputEvent.DEVICE_ID_EMULATION and not _dispatching:
-			get_viewport().set_input_as_handled()
+		return event.device != INJECTED_DEVICE
+	if event is InputEventScreenTouch or event is InputEventScreenDrag:
+		return event.device == InputEvent.DEVICE_ID_EMULATION and not _dispatching
+	return false
 
 
 ## A quiet run's window: its override.cfg created it unfocused, and asked for an off-screen
@@ -253,38 +267,57 @@ func _handle_frame(text: String) -> void:
 	var params: Dictionary = {}
 	if request.get("params") is Dictionary:
 		params = request["params"]
-	match command:
-		"ping":
-			_reply_ok(id, {"pong": true})
-		"screenshot":
-			_handle_screenshot(id, params)
-		"ui_elements":
-			var elements: Array = []
-			var visible_only: bool = bool(params.get("visibleOnly", true))
-			_collect_controls(
-				get_tree().root, visible_only, str(params.get("classFilter", "")), elements
-			)
-			_reply_ok(id, {"elements": elements})
-		"run_script":
-			_handle_run_script(id, str(params.get("source", "")))
-		"input":
-			_handle_input(id, params)
-		"scene_tree", "inspect_node", "set_property", "call_method":
-			var result: Variant = await _inspect.handle(command, params)
-			if result is String:
-				_reply_error(id, result)
-			else:
-				_reply_ok(id, result)
-		"frame", "wait_for":
-			_handle_time(id, command, params)
-		"compare_screenshot":
-			_handle_compare(id, params)
-		"shutdown":
-			_reply_ok(id, {})
-			await get_tree().process_frame
-			get_tree().quit()
-		_:
-			_reply_error(id, "unknown command '%s'" % command)
+	if not _handlers.has(command):
+		_reply_error(id, "unknown command '%s'" % command)
+		return
+	(_handlers[command] as Callable).call(id, params)
+
+
+## Every command's handler, func(id, params), by command name; built once in _ready.
+func _command_handlers() -> Dictionary:
+	return {
+		"ping": _handle_ping,
+		"screenshot": _handle_screenshot,
+		"ui_elements": _handle_ui_elements,
+		"run_script": _handle_run_script,
+		"input": _handle_input,
+		"scene_tree": _handle_inspect.bind("scene_tree"),
+		"inspect_node": _handle_inspect.bind("inspect_node"),
+		"set_property": _handle_inspect.bind("set_property"),
+		"call_method": _handle_inspect.bind("call_method"),
+		"frame": _handle_time.bind("frame"),
+		"wait_for": _handle_time.bind("wait_for"),
+		"compare_screenshot": _handle_compare,
+		"shutdown": _handle_shutdown,
+	}
+
+
+func _handle_ping(id: int, _params: Dictionary) -> void:
+	_reply_ok(id, {"pong": true})
+
+
+func _handle_ui_elements(id: int, params: Dictionary) -> void:
+	var elements: Array = []
+	var visible_only: bool = bool(params.get("visibleOnly", true))
+	_collect_controls(get_tree().root, visible_only, str(params.get("classFilter", "")), elements)
+	_reply_ok(id, {"elements": elements})
+
+
+## Runs a scene_tree, inspect_node, set_property or call_method request on the Inspect child,
+## which answers a Dictionary or a String saying why it could not.
+func _handle_inspect(id: int, params: Dictionary, command: String) -> void:
+	var result: Variant = await _inspect.handle(command, params)
+	if result is String:
+		_reply_error(id, result)
+	else:
+		_reply_ok(id, result)
+
+
+## Replies, then quits once the reply has had a frame to go out.
+func _handle_shutdown(id: int, _params: Dictionary) -> void:
+	_reply_ok(id, {})
+	await get_tree().process_frame
+	get_tree().quit()
 
 
 ## Saves the next drawn frame of the root viewport as _save_screenshot does.
@@ -400,7 +433,7 @@ func _describe_control(control: Control) -> Dictionary:
 		"path": str(control.get_path()),
 		"name": str(control.name),
 		"class": control.get_class(),
-		"rect": _to_json(rect),
+		"rect": _json.to_json(rect),
 		"visible": control.is_visible_in_tree(),
 	}
 	if control is Label or control is Button or control is LineEdit or control is RichTextLabel:
@@ -415,9 +448,9 @@ func _describe_control(control: Control) -> Dictionary:
 ## Compiles source, runs its execute(scene_tree) and replies {value}. A runtime error inside
 ## execute ends the call with null; the error itself reaches the server through the logger,
 ## flushed before the reply.
-func _handle_run_script(id: int, source: String) -> void:
+func _handle_run_script(id: int, params: Dictionary) -> void:
 	var script := GDScript.new()
-	script.source_code = source
+	script.source_code = str(params.get("source", ""))
 	var error: Error = script.reload()
 	if error != OK:
 		_reply_error(id, "the script did not compile (%s, error %d)" % [error_string(error), error])
@@ -429,11 +462,11 @@ func _handle_run_script(id: int, source: String) -> void:
 		return
 	var value: Variant = await instance.execute(get_tree())
 	_free_unless_counted(instance)
-	_reply_ok(id, {"value": _to_json(value)})
+	_reply_ok(id, {"value": _json.to_json(value)})
 
 
 ## Runs a frame or wait_for request on the clock child, which answers {result} or {error}.
-func _handle_time(id: int, command: String, params: Dictionary) -> void:
+func _handle_time(id: int, params: Dictionary, command: String) -> void:
 	var outcome: Dictionary
 	if command == "frame":
 		outcome = await _time.frame_control(params)
@@ -467,7 +500,7 @@ func _handle_input(id: int, params: Dictionary) -> void:
 	if not error.is_empty():
 		_reply_error(id, error)
 		return
-	_reply_ok(id, {"pointer": _to_json(_to_viewport(_pointer)), "heldButtonMask": _held_mask})
+	_reply_ok(id, {"pointer": _json.to_json(_to_viewport(_pointer)), "heldButtonMask": _held_mask})
 
 
 func _play_gesture(params: Dictionary) -> String:
@@ -642,6 +675,11 @@ func _play_event(event: Variant) -> String:
 	if not event is Dictionary:
 		return "not an object"
 	var spec: Dictionary = event
+	return await _play_event_of_kind(spec)
+
+
+## Plays one raw event by its type, or says why it could not.
+func _play_event_of_kind(spec: Dictionary) -> String:
 	var kind: String = str(spec.get("type", ""))
 	var error: String = (
 		(
@@ -664,17 +702,28 @@ func _play_event(event: Variant) -> String:
 		"action":
 			error = _play_action(spec)
 		"click_element":
-			var click: Dictionary = {
-				"target": {"element": spec.get("element", "")},
-				"button": spec.get("button", "left"),
-				"doubleClick": spec.get("doubleClick", false),
-			}
-			error = await _play_click(click)
+			error = await _play_click_element(spec)
 		"wait":
-			var seconds: float = maxf(float(spec.get("ms", 0)), 0.0) / 1000.0
-			await get_tree().create_timer(seconds, true, false, true).timeout
-			error = ""
+			error = await _play_wait(spec)
 	return error
+
+
+## A click on the element spec names, with its button and doubleClick, as click plays it.
+func _play_click_element(spec: Dictionary) -> String:
+	var click: Dictionary = {
+		"target": {"element": spec.get("element", "")},
+		"button": spec.get("button", "left"),
+		"doubleClick": spec.get("doubleClick", false),
+	}
+	return await _play_click(click)
+
+
+## Waits spec.ms milliseconds (none when negative) of real time: the timer runs while the tree
+## is paused and ignores the time scale.
+func _play_wait(spec: Dictionary) -> String:
+	var seconds: float = maxf(float(spec.get("ms", 0)), 0.0) / 1000.0
+	await get_tree().create_timer(seconds, true, false, true).timeout
+	return ""
 
 
 ## A key event; with pressed omitted, a press and a release one frame apart.
@@ -892,54 +941,6 @@ func _key_unicode(keycode: int, modifiers: PackedStringArray) -> int:
 func _free_unless_counted(instance: Variant) -> void:
 	if instance is Object and not instance is RefCounted and is_instance_valid(instance):
 		(instance as Object).free()
-
-
-## A JSON-safe copy of value: vectors, colours and rects become objects, a Node its path, any
-## other Object its class and to_string(), containers recursively, anything else its str().
-func _to_json(value: Variant) -> Variant:
-	var json: Variant
-	match typeof(value):
-		TYPE_NIL, TYPE_BOOL, TYPE_INT, TYPE_STRING:
-			json = value
-		TYPE_FLOAT:
-			json = value if is_finite(value) else str(value)
-		TYPE_VECTOR2, TYPE_VECTOR2I:
-			json = {"x": value.x, "y": value.y}
-		TYPE_VECTOR3, TYPE_VECTOR3I:
-			json = {"x": value.x, "y": value.y, "z": value.z}
-		TYPE_COLOR:
-			json = {"r": value.r, "g": value.g, "b": value.b, "a": value.a}
-		TYPE_RECT2, TYPE_RECT2I:
-			json = {
-				"x": value.position.x,
-				"y": value.position.y,
-				"width": value.size.x,
-				"height": value.size.y,
-			}
-		TYPE_DICTIONARY:
-			json = {}
-			for key: Variant in value:
-				json[str(key)] = _to_json(value[key])
-		TYPE_OBJECT:
-			json = _object_to_json(value)
-		_:
-			json = _array_to_json(value) if typeof(value) >= TYPE_ARRAY else str(value)
-	return json
-
-
-func _array_to_json(values: Variant) -> Array:
-	var json: Array = []
-	for item: Variant in values:
-		json.append(_to_json(item))
-	return json
-
-
-func _object_to_json(value: Variant) -> Variant:
-	if not is_instance_valid(value):
-		return "<freed object>"
-	if value is Node:
-		return str((value as Node).get_path())
-	return {"class": (value as Object).get_class(), "string": (value as Object).to_string()}
 
 
 func _reply_ok(id: int, result: Variant) -> void:
