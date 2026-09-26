@@ -19,7 +19,6 @@ Steps 0 to 4b, Wave 1 (steps 7-9: named sessions, the error feed and compact out
 
 - [ ] Bring `godot_mcp_bridge.gd`'s four complexity-baseline entries within the limits (`_input` 10, `_handle_frame` 12, `_play_event` 9, `_to_json` 12, measured 2026-09-26) and empty `tools/gdcomplexity-baseline.txt`; `_to_json` goes with the JSON move below
 - [ ] Before step 5: move the bridge's `_to_json` and the `Inspect` module's `from_json` into a static `bridge/godot_mcp_json.gd` with gdtest unit tests, so step 5's headless tools share one set of conversion rules
-- [ ] `tools/gate.ps1`'s comment-based help does not render (`Get-Help` shows no DESCRIPTION): a `#requires` line touches `<#`, as the shebang did in `run.ps1`; separate them with a blank line
 
 
 - [ ] Step 15: in-engine recording (video and audio from inside the engine, frame-perfect, headless or hidden). Absorbs the "in-engine recording" item from Later

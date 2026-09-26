@@ -1,4 +1,5 @@
 #requires -Version 7
+
 <#
 .SYNOPSIS
 Runs one gate command under a ceiling: the whole output to a log, the last lines on the screen, the command's own exit
