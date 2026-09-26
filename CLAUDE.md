@@ -15,10 +15,7 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 
 ## Architecture
 
-- `Program.cs` hosts the MCP SDK over stdio with two singletons: `BridgeListener` (loopback TCP) and `GodotSession` (the one live run or attached game). Tools are `[McpServerTool]` methods in `Tools/`: `ProjectTools` (run, attach, detach, stop, debug output) and the `RuntimeTools` partials (screenshots, UI, scripts, input, gamepad). They validate arguments, then call `GodotSession.SendAsync(command, params, …)`.
-- A run: the session writes the marked `override.cfg` naming `bridge/godot_mcp_bridge.gd` as an autoload (`OverrideFile`), hides it (`GitExclude`), and starts Godot with `GODOT_MCP_PORT` and `GODOT_MCP_TOKEN` in its environment (`GodotCommandLine`, `GodotRun`). An attach writes `.godot/godot-mcp/attach.json` in place of the environment. Stop and detach remove what was written.
-- The wire (`Wire/`): frames of a 4-byte big-endian length plus UTF-8 JSON (`FrameCodec`). The bridge's first frame is the hello `HandshakeExpectation` checks; each later request carries an id.
-- The bridge dispatches commands in `_handle_frame` (`ping`, `screenshot`, `ui_elements`, `run_script`, `input`, `shutdown`), with gestures under `_handle_input`. A new runtime tool touches a `RuntimeTools` method, a bridge handler, a unit test for the server-side checks, and an integration test against the InputProbe fixture.
+- `docs/ARCHITECTURE.md`: the components, a request's path from tool to bridge and back, the session lifecycle, every tool with its bridge command and result, and the recipe for a new tool. Read it before exploring the code; a change to any of those updates it in the same commit.
 
 ## Non-negotiables
 

@@ -4,6 +4,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 
 - [`plans/MAIN.md`](./plans/MAIN.md): open work, in order.
 - [`plans/2026-09-25-first-version.md`](./plans/2026-09-25-first-version.md): the first version's design, the user's decisions and the steps.
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md): the components, a request's path, the session lifecycle, every tool and the recipe for a new one.
 - [`DEVELOPMENT.md`](./DEVELOPMENT.md): toolchain, commands, gates, test coverage and footguns.
 
 ## Glossary
