@@ -69,6 +69,35 @@ public sealed class ResultShapeTests
         Assert.StartsWith("\"vvv", preview, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(10)]
+    [InlineData(11)]
+    public void AValueWithinTheLimitHasNoPreview(int maxLength) =>
+        // The serialised value is the string and its two quotes: 10 characters.
+        Assert.Null(RuntimeTools.ValuePreview(JsonValue.Create("abcdefgh"), maxLength));
+
+    [Fact]
+    public void ANullValueHasNoPreview() => Assert.Null(RuntimeTools.ValuePreview(null, 4));
+
+    [Fact]
+    public void AValueOverTheLimitIsItsFirstCharactersAndItsLength()
+    {
+        JsonObject preview = RuntimeTools.ValuePreview(JsonValue.Create("abcdefgh"), 5)!;
+
+        Assert.Equal("\"abcd", preview["valuePreview"]!.GetValue<string>());
+        Assert.Equal(10, preview["valueLength"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void ALongPropertyValueIsCutAtTwoThousandCharacters()
+    {
+        JsonNode? cut = RuntimeTools.CutPropertyValue(JsonValue.Create(new string('v', RuntimeTools.MaxPropertyValueLength)));
+        JsonNode? kept = RuntimeTools.CutPropertyValue(JsonValue.Create(new string('v', RuntimeTools.MaxPropertyValueLength - 2)));
+
+        Assert.Equal(RuntimeTools.MaxPropertyValueLength + 2, cut!["valueLength"]!.GetValue<int>());
+        Assert.Equal(RuntimeTools.MaxPropertyValueLength - 2, kept!.GetValue<string>().Length);
+    }
+
     private static JsonObject Elements(int count) =>
         new() { ["elements"] = new JsonArray([.. Enumerable.Range(0, count).Select(index => new JsonObject { ["name"] = $"e{index}" })]) };
 }

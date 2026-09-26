@@ -10,7 +10,6 @@ Steps 0 to 4b and Wave 1 (steps 7-9: named sessions, the error feed and compact 
 ### Wave 2: driving the running game (new `RuntimeTools` partials and bridge handlers)
 
 - [ ] Step 10: time: frame control (pause, resume, step N frames, time_scale, screenshot at a frame) and `wait_for` (a node exists, a property equals, a signal fires, an expression is true; with a timeout)
-- [ ] Step 12: inspection: the running game's scene tree (filtered by path, class, group), `inspect_node`, `set_property`, and `call_method` (JSON arguments; reaches C# public methods through Godot's call, e.g. `ScratchScene.PlayStep`)
 - [ ] Step 13: project profiles (`godot-mcp.json` per project: main scene, arguments, resolution, background, named launch presets such as delve's server and clients) and the batch drive tool (one call runs input, wait_for, call_method, assertions and screenshots in order, stopping at the first failed assertion). Depends on steps 10, 11 and 12; its screenshot-baseline assertion on step 14
 
 ### Wave 3: the run's lifecycle (`GodotRun`, `GodotCommandLine`, `GodotSession`, `ProjectTools`)
@@ -32,6 +31,6 @@ Steps 0 to 4b and Wave 1 (steps 7-9: named sessions, the error feed and compact 
 
 ## Later (not in the first version)
 
-- [ ] C#-aware runtime tools beyond `call_method` (members Godot's call cannot reach, such as `internal` ones)
+- [ ] C#-aware runtime tools beyond `call_method`, for members Godot's call cannot reach: signatures with types Godot cannot marshal (generics, plain C# classes), static members, and overloads that share a name and argument count (`internal` methods are reached; step 12, 2026-09-26)
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see step 4b)
 - [ ] The profiler, autoload-editing and file-parsing tools, if a need shows up

@@ -16,6 +16,7 @@ const MAX_FRAME_BYTES := 16 * 1024 * 1024
 const SCREENSHOT_DIR := "res://.godot/godot-mcp/screenshots"
 const ATTACH_FILE := "res://.godot/godot-mcp/attach.json"
 const GAMEPAD_SCRIPT := "godot_mcp_gamepad.gd"
+const INSPECT_SCRIPT := "godot_mcp_inspect.gd"
 const LOGGER_SCRIPT := "godot_mcp_logger.gd"
 const MIN_DRAG_STEPS := 3
 ## The device id every injected mouse event carries, so _input can tell it from the real mouse
@@ -52,6 +53,8 @@ var _gesture_playing: bool = false
 var _dispatching: bool = false
 ## The gamepad (godot_mcp_gamepad.gd beside this script), a child once the bridge is on.
 var _pads: Node
+## The inspector (godot_mcp_inspect.gd beside this script), a child once the bridge is on.
+var _inspect: Node
 ## The server to dial, found in _init; empty when the bridge is off.
 var _endpoint: Dictionary = {}
 ## The logger (godot_mcp_logger.gd beside this script) collecting the game's errors, registered
@@ -90,6 +93,9 @@ func _ready() -> void:
 	_pads = (load(script_dir.path_join(GAMEPAD_SCRIPT)) as GDScript).new()
 	_pads.name = "Gamepad"
 	add_child(_pads)
+	_inspect = (load(script_dir.path_join(INSPECT_SCRIPT)) as GDScript).new()
+	_inspect.name = "Inspect"
+	add_child(_inspect)
 	if _endpoint["shutOutRealGamepads"]:
 		_pads.shut_out_real_pads()
 	_stream = StreamPeerTCP.new()
@@ -249,6 +255,12 @@ func _handle_frame(text: String) -> void:
 			_handle_run_script(id, str(params.get("source", "")))
 		"input":
 			_handle_input(id, params)
+		"scene_tree", "inspect_node", "set_property", "call_method":
+			var result: Variant = await _inspect.handle(command, params)
+			if result is String:
+				_reply_error(id, result)
+			else:
+				_reply_ok(id, result)
 		"shutdown":
 			_reply_ok(id, {})
 			await get_tree().process_frame

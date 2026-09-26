@@ -1,0 +1,19 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://inspect_probe.gd" id="1_inspect"]
+
+[node name="InspectProbe" type="Node2D" groups=["probe_group"]]
+script = ExtResource("1_inspect")
+
+[node name="Sprite" type="Sprite2D" parent="."]
+
+[node name="Swatch" type="ColorRect" parent="."]
+offset_left = 580.0
+offset_top = 300.0
+offset_right = 630.0
+offset_bottom = 350.0
+color = Color(0, 0, 1, 1)
+
+[node name="Inner" type="Node2D" parent="."]
+
+[node name="Leaf" type="Node" parent="Inner"]

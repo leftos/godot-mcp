@@ -7,10 +7,10 @@ How the server and the bridge fit together today, for anyone about to change the
 | Part | Where | Job |
 |---|---|---|
 | Host | `src/GodotMcp.Server/Program.cs` | The MCP SDK over stdio (stdout is the protocol; every log goes to stderr). Registers two singletons, `BridgeListener` and `SessionRegistry`, and calls `SessionRegistry.Shutdown` on application stop and process exit |
-| Tools | `src/GodotMcp.Server/Tools/` | `[McpServerTool]` methods: `ProjectTools` (lifecycle, output, `list_sessions`) and the `RuntimeTools` partials (`RuntimeTools.cs` reads and scripts, `.Input.cs` mouse and keyboard, `.Gamepad.cs` pads). They validate arguments, resolve their `session` through the registry, then call that `GodotSession` |
+| Tools | `src/GodotMcp.Server/Tools/` | `[McpServerTool]` methods: `ProjectTools` (lifecycle, output, `list_sessions`) and the `RuntimeTools` partials (`RuntimeTools.cs` reads and scripts, `.Input.cs` mouse and keyboard, `.Gamepad.cs` pads, `.Inspect.cs` the running game's nodes). They validate arguments, resolve their `session` through the registry, then call that `GodotSession` |
 | Session | `src/GodotMcp.Server/Session/` | `SessionRegistry` holds the named sessions and the rules between them (names, one folder shared by several sessions, the override's lifetime). A `GodotSession` is one of them: a run (`GodotRun`: process, stdout and stderr ring buffers of `GodotRun.OutputCapacity` lines, connection) or an attached game (`GodotSession.Attach.cs`), with its own input gate. `OverrideFile`, `AttachFile` and `GitExclude` own the files a session writes into a project; `GodotCommandLine` builds the launch |
 | Wire | `src/GodotMcp.Server/Wire/` | `BridgeListener` (one loopback TCP listener on a free port for the server's lifetime, with one accept loop that routes each bridge by the token in its hello), `BridgeConnection` (id-keyed requests; id-less errors frames go to the session's `ErrorFeed`), `FrameCodec`/`FrameDecoder`, `HandshakeExpectation` |
-| Bridge | `bridge/godot_mcp_bridge.gd`, `bridge/godot_mcp_gamepad.gd` | The autoload injected into the game: dials the server, answers commands, plays input; the gamepad half emulates pads and the real-pad shut-out |
+| Bridge | `bridge/godot_mcp_bridge.gd`, `bridge/godot_mcp_gamepad.gd`, `bridge/godot_mcp_inspect.gd` | The autoload injected into the game: dials the server, answers commands, plays input. Its modules are child nodes: `Gamepad` emulates pads and the real-pad shut-out; `Inspect` lists, reads, sets and calls on the game's nodes, converting JSON to the declared Godot type |
 
 ## A request's path
 
@@ -48,6 +48,10 @@ How the server and the bridge fit together today, for anyone about to change the
 | `get_ui_elements` | `RuntimeTools.cs` | `ui_elements` | `{elements, total, offset, next?}`, a page of the bridge's list |
 | `run_script` | `RuntimeTools.cs` | `run_script` | `{value}` (or `{valuePreview, valueLength}`); a compile failure, or a null value with an error in the script's own source, fails with the errors |
 | `get_errors` | `RuntimeTools.cs` | — | `{errors: [{seq, type, …}], next, dropped}`: the session's errors and warnings after `since`, oldest first |
+| `get_scene_tree` | `RuntimeTools.Inspect.cs` | `scene_tree` | `{nodes: [{path, name, class, script?, groups?, childCount}], total, offset, next?}`: depth-first from `root` (default the tree's root), filtered by `className` (`is_class`) and `group`, down to `options.maxDepth`, paged by `options.offset`/`limit` (100, at most 500); the bridge's own subtree is left out |
+| `inspect_node` | `RuntimeTools.Inspect.cs` | `inspect_node` | `{path, class, script?, properties: {name: value}}`: script variables and editor-visible properties, or exactly `properties`; a value over 2000 characters becomes `{valuePreview, valueLength}` |
+| `set_property` | `RuntimeTools.Inspect.cs` | `set_property` | `{path, property, before, after}`: the JSON value converted to the property's declared type (an untyped property: to the type it holds), set and read back; a read-back that differs puts `before` back and fails |
+| `call_method` | `RuntimeTools.Inspect.cs` | `call_method` | `{path, method, value}`: arguments counted and converted by the method's declared types, called with `callv`, a coroutine awaited; C# methods, `internal` ones included, are reached; `options.timeoutMs` (10000, at most 120000) |
 | `click`, `drag`, `type_text`, `key`, `mouse_button`, `simulate_input` | `RuntimeTools.Input.cs` | `input` | `{pointer, heldButtonMask}` |
 | `gamepad_button`, `gamepad_axis`, `gamepad_stick` | `RuntimeTools.Gamepad.cs` | `input` | as the input tools |
 
@@ -56,12 +60,12 @@ Every runtime tool's result also carries `errors` when the call raised any (see 
 ## The bridge
 
 - **Start**: in `_init`, `_find_endpoint` reads the port and token from the environment, else from `res://.godot/godot-mcp/attach.json`; with one, the error-feed logger is registered there (and never removed: Godot drops script loggers at shutdown); with neither it warns and frees itself. With `GODOT_MCP_QUIET`, `_park_window` makes the window click-through and moves it off-screen: Windows clamps the override's off-screen initial position onto the primary screen at creation, so the window shows there, unfocused, until the bridge's `_ready`.
-- **Commands** (`_handle_frame`): `ping`, `screenshot` (saves `.godot/godot-mcp/screenshots/<stamp>-<pid>.png` and a Lanczos preview when wider than asked; replies with paths, never bytes), `ui_elements`, `run_script` (compiles a script with `execute`, returns its value), `input` (gestures and raw events, under `_handle_input`), `shutdown`.
+- **Commands** (`_handle_frame`): `ping`, `screenshot` (saves `.godot/godot-mcp/screenshots/<stamp>-<pid>.png` and a Lanczos preview when wider than asked; replies with paths, never bytes), `ui_elements`, `run_script` (compiles a script with `execute`, returns its value), `input` (gestures and raw events, under `_handle_input`), `shutdown`; `scene_tree`, `inspect_node`, `set_property` and `call_method` are forwarded to the `Inspect` module, which refuses the bridge's own nodes.
 - **Real input**: injected mouse events carry the injected mark, and `_input` swallows unmarked (real) mouse events while a gesture plays or an injected button is held, and with them the touch twins of real mouse events (those not raised while `_dispatch` runs). Keys are never swallowed, and injected keys carry no mark (their device stays 16, which the built-in `ui_*` actions require). A quiet run keeps real input out by never receiving it: unfocused from creation, click-through and off-screen. `godot_mcp_gamepad.gd`'s `shut_out_real_pads` keeps real pads out when asked.
 
 ## Tool annotations
 
-Every tool declares `openWorldHint: false`. `readOnlyHint: true`: `get_debug_output`, `list_sessions`, `take_screenshot` (its PNG goes under the ignored `.godot/`), `get_ui_elements`, `get_errors`. `destructiveHint: true`: `stop_project` (kills a process) and `run_script` (runs arbitrary code). Every other tool is `destructiveHint: false`. A new tool sets all three.
+Every tool declares `openWorldHint: false`. `readOnlyHint: true`: `get_debug_output`, `list_sessions`, `take_screenshot` (its PNG goes under the ignored `.godot/`), `get_ui_elements`, `get_errors`, `get_scene_tree`, `inspect_node`. `destructiveHint: true`: `stop_project` (kills a process), `run_script` and `call_method` (run arbitrary game code). Every other tool is `destructiveHint: false`. A new tool sets all three.
 
 ## Adding a runtime tool
 

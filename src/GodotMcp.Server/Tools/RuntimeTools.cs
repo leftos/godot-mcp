@@ -112,13 +112,19 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
     /// The bridge's element list cut to <paramref name="limit"/> elements from <paramref name="offset"/>:
     /// <c>{elements, total, offset}</c>, plus <c>next</c> while elements remain after the page.
     /// </summary>
-    internal static JsonObject PageElements(JsonNode? reply, int offset, int limit)
+    internal static JsonObject PageElements(JsonNode? reply, int offset, int limit) => PageList(reply, "elements", offset, limit);
+
+    /// <summary>
+    /// The bridge's list under <paramref name="key"/> cut to <paramref name="limit"/> items from <paramref name="offset"/>:
+    /// <c>{key, total, offset}</c>, plus <c>next</c> while items remain after the page.
+    /// </summary>
+    internal static JsonObject PageList(JsonNode? reply, string key, int offset, int limit)
     {
-        JsonArray all = reply?["elements"] as JsonArray ?? [];
+        JsonArray all = reply?[key] as JsonArray ?? [];
         JsonArray page = [.. all.Skip(offset).Take(limit).Select(element => element?.DeepClone())];
         JsonObject result = new()
         {
-            ["elements"] = page,
+            [key] = page,
             ["total"] = all.Count,
             ["offset"] = offset,
         };
@@ -182,12 +188,17 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
     /// <c>{value}</c>, or <c>{valuePreview, valueLength}</c> when the value's JSON is longer than <see cref="MaxValueLength"/>
     /// characters: its first <see cref="MaxValueLength"/> characters and its whole length.
     /// </summary>
-    internal static JsonObject ShapeScriptValue(JsonNode? value)
+    internal static JsonObject ShapeScriptValue(JsonNode? value) =>
+        ValuePreview(value, MaxValueLength) ?? new JsonObject { ["value"] = value?.DeepClone() };
+
+    /// <summary>
+    /// <c>{valuePreview, valueLength}</c> when the value's JSON is longer than <paramref name="maxLength"/> characters: its first
+    /// <paramref name="maxLength"/> characters and its whole length; null when it fits.
+    /// </summary>
+    internal static JsonObject? ValuePreview(JsonNode? value, int maxLength)
     {
         string json = value?.ToJsonString() ?? "null";
-        return json.Length <= MaxValueLength
-            ? new JsonObject { ["value"] = value?.DeepClone() }
-            : new JsonObject { ["valuePreview"] = json[..MaxValueLength], ["valueLength"] = json.Length };
+        return json.Length <= maxLength ? null : new JsonObject { ["valuePreview"] = json[..maxLength], ["valueLength"] = json.Length };
     }
 
     [McpServerTool(Name = "get_errors", ReadOnly = true, OpenWorld = false)]
@@ -308,7 +319,12 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
     {
         HangReport report = await HangProbe.RunAsync(target, cancellationToken);
         Log.RequestTimedOut(target.Logger, call.Tool, target.Name, report.Outcome, report.ProcessState);
-        string hint = call.Tool == "run_script" ? "; a script that needs longer can raise timeoutMs" : string.Empty;
+        string hint = call.Tool switch
+        {
+            "run_script" => "; a script that needs longer can raise timeoutMs",
+            "call_method" => "; a method that needs longer can raise options.timeoutMs",
+            _ => string.Empty,
+        };
         return new McpException(report.Describe(call.Tool, call.Timeout, hint), timedOut);
     }
 

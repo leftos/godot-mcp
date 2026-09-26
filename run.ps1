@@ -44,7 +44,7 @@ $ErrorActionPreference = 'Stop'
 $itestGroups = [ordered]@{
     lifecycle = @('SessionLifecycleTests', 'AttachTests', 'QuietTests', 'WatchdogTests', 'McpServerSmokeTests')
     input     = @('InputTests', 'GamepadTests')
-    reads     = @('RuntimeReadTests')
+    reads     = @('RuntimeReadTests', 'InspectionTests')
 }
 $itestNamespace = 'GodotMcp.IntegrationTests'
 $itestProject = 'tests/GodotMcp.IntegrationTests/GodotMcp.IntegrationTests.csproj'

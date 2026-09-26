@@ -38,6 +38,7 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.Equal(
             [
                 "attach_project",
+                "call_method",
                 "click",
                 "detach_project",
                 "drag",
@@ -46,12 +47,15 @@ public sealed class McpServerSmokeTests : IDisposable
                 "gamepad_stick",
                 "get_debug_output",
                 "get_errors",
+                "get_scene_tree",
                 "get_ui_elements",
+                "inspect_node",
                 "key",
                 "list_sessions",
                 "mouse_button",
                 "run_project",
                 "run_script",
+                "set_property",
                 "simulate_input",
                 "stop_project",
                 "take_screenshot",
@@ -89,9 +93,15 @@ public sealed class McpServerSmokeTests : IDisposable
         (bool?, bool?, bool?) readOnly = (true, null, false);
         (bool?, bool?, bool?) changesTheGame = (null, false, false);
         (bool?, bool?, bool?) destructive = (null, true, false);
+
+        // The inspection tools set all three hints.
+        (bool?, bool?, bool?) readsTheGame = (true, false, false);
+        (bool?, bool?, bool?) setsTheGame = (false, false, false);
+        (bool?, bool?, bool?) runsGameCode = (false, true, false);
         Dictionary<string, (bool?, bool?, bool?)> expected = new()
         {
             ["attach_project"] = changesTheGame,
+            ["call_method"] = runsGameCode,
             ["click"] = changesTheGame,
             ["detach_project"] = changesTheGame,
             ["drag"] = changesTheGame,
@@ -100,12 +110,15 @@ public sealed class McpServerSmokeTests : IDisposable
             ["gamepad_stick"] = changesTheGame,
             ["get_debug_output"] = readOnly,
             ["get_errors"] = readOnly,
+            ["get_scene_tree"] = readsTheGame,
             ["get_ui_elements"] = readOnly,
+            ["inspect_node"] = readsTheGame,
             ["key"] = changesTheGame,
             ["list_sessions"] = readOnly,
             ["mouse_button"] = changesTheGame,
             ["run_project"] = changesTheGame,
             ["run_script"] = destructive,
+            ["set_property"] = setsTheGame,
             ["simulate_input"] = changesTheGame,
             ["stop_project"] = destructive,
             ["take_screenshot"] = readOnly,
@@ -121,7 +134,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(19, actual.Count);
+        Assert.Equal(23, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

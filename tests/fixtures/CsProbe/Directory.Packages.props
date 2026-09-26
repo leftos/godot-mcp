@@ -1,0 +1,6 @@
+<Project>
+  <!-- Stops the search upward for central package management: Godot.NET.Sdk versions its own package references. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+</Project>
