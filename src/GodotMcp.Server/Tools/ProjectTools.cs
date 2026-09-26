@@ -41,7 +41,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         + "session to pick one, and may omit it while only one session exists; list_sessions lists them.";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    [McpServerTool(Name = "run_project", Destructive = false, OpenWorld = false)]
+    [McpServerTool(Name = "run_project", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Runs a Godot project with the godot-mcp bridge injected through a temporary override.cfg (never project.godot), "
             + "and returns once the bridge has connected; stop_project ends the session."
@@ -68,7 +68,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         return JsonSerializer.Serialize(result, Json);
     }
 
-    [McpServerTool(Name = "attach_project", Destructive = false, OpenWorld = false)]
+    [McpServerTool(Name = "attach_project", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Attaches to a Godot game that run_project does not start (a second client, a --server run, a smoke script, the "
             + "editor's Play button): injects the bridge through a temporary override.cfg plus a one-use attach file under "
@@ -99,7 +99,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         return JsonSerializer.Serialize(result, Json);
     }
 
-    [McpServerTool(Name = "detach_project", Destructive = false, OpenWorld = false)]
+    [McpServerTool(Name = "detach_project", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Ends a session attach_project started: closes the connection and removes the injected override.cfg, unless another "
             + "live session uses the project folder. The game keeps running; its bridge goes idle."
@@ -113,7 +113,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         return JsonSerializer.Serialize(result, Json);
     }
 
-    [McpServerTool(Name = "stop_project", Destructive = true, OpenWorld = false)]
+    [McpServerTool(Name = "stop_project", ReadOnly = false, Destructive = true, OpenWorld = false)]
     [Description(
         "Stops a session run_project started (asks the game to quit, kills it after 3 s) and removes the injected "
             + "override.cfg, unless another live session uses the project folder. An attached session is ended with "
@@ -128,7 +128,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         return JsonSerializer.Serialize(result, Json);
     }
 
-    [McpServerTool(Name = "get_debug_output", ReadOnly = true, OpenWorld = false)]
+    [McpServerTool(Name = "get_debug_output", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
         "The newest stdout and stderr lines of a session's run (the current or the last one under its name), whether it is "
             + "still running, and its exit code. Lines are numbered from 1 across everything a stream has printed; "
@@ -158,7 +158,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         }
     }
 
-    [McpServerTool(Name = "list_sessions", ReadOnly = true, OpenWorld = false)]
+    [McpServerTool(Name = "list_sessions", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
         "Lists the server's sessions, ordered by name: each one's name, project folder, kind (run or attach), whether it is "
             + "live, and its process id (null for an attached game). A session stays listed after its run ends, until its name "

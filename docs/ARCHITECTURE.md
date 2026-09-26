@@ -67,7 +67,7 @@ Every runtime tool's result also carries `errors` when the call raised any (see 
 
 ## Tool annotations
 
-Every tool declares `openWorldHint: false`. `readOnlyHint: true`: `get_debug_output`, `list_sessions`, `take_screenshot` (its PNG goes under the ignored `.godot/`), `get_ui_elements`, `get_errors`, `get_scene_tree`, `inspect_node`. `destructiveHint: true`: `stop_project` (kills a process), `run_script` and `call_method` (run arbitrary game code). Every other tool is `destructiveHint: false`. A new tool sets all three.
+Every tool declares `openWorldHint: false`. `readOnlyHint: true`: `get_debug_output`, `list_sessions`, `take_screenshot` (its PNG goes under the ignored `.godot/`), `get_ui_elements`, `get_errors`, `get_scene_tree`, `inspect_node`. `destructiveHint: true`: `stop_project` (kills a process), `run_script` and `call_method` (run arbitrary game code). Every tool sets all three hints explicitly: a read-only tool is also `destructiveHint: false`, every tool not listed as read-only is `readOnlyHint: false`, and every tool not listed as destructive is `destructiveHint: false`. `McpServerSmokeTests` checks all three for every tool.
 
 ## Adding a runtime tool
 

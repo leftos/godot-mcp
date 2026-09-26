@@ -28,7 +28,7 @@ internal sealed partial class RuntimeTools
     // waits this much longer for that answer.
     private static readonly TimeSpan WaitReplyAllowance = TimeSpan.FromSeconds(5);
 
-    [McpServerTool(Name = "frame_control", Destructive = false, OpenWorld = false)]
+    [McpServerTool(Name = "frame_control", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Controls the running game's clock. pause and resume set SceneTree.paused: nodes whose process_mode lets them "
             + "pause stop, the bridge keeps answering. step advances exactly count whole frames (unit process) or count "
@@ -57,7 +57,7 @@ internal sealed partial class RuntimeTools
         return await ShapeFrameResultAsync(result, cancellationToken);
     }
 
-    [McpServerTool(Name = "wait_for", Destructive = false, OpenWorld = false)]
+    [McpServerTool(Name = "wait_for", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Waits in the running game until a condition holds, checking it each frame: a node present or absent, a property "
             + "equal to a value, a signal's next emission, or a Godot Expression returning true. Returns {met, elapsedMs, "

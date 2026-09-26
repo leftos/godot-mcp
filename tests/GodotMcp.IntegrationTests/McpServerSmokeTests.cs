@@ -91,19 +91,14 @@ public sealed class McpServerSmokeTests : IDisposable
 
         IList<McpClientTool> tools = await client.ListToolsAsync(cancellationToken: TestContext.Current.CancellationToken);
 
-        // (readOnly, destructive, openWorld) as each tool sets them; null is a hint left unset.
-        (bool?, bool?, bool?) readOnly = (true, null, false);
-        (bool?, bool?, bool?) changesTheGame = (null, false, false);
-        (bool?, bool?, bool?) destructive = (null, true, false);
-
-        // The inspection tools set all three hints.
+        // (readOnly, destructive, openWorld): every tool sets all three.
         (bool?, bool?, bool?) readsTheGame = (true, false, false);
-        (bool?, bool?, bool?) setsTheGame = (false, false, false);
-        (bool?, bool?, bool?) runsGameCode = (false, true, false);
+        (bool?, bool?, bool?) changesTheGame = (false, false, false);
+        (bool?, bool?, bool?) destructive = (false, true, false);
         Dictionary<string, (bool?, bool?, bool?)> expected = new()
         {
             ["attach_project"] = changesTheGame,
-            ["call_method"] = runsGameCode,
+            ["call_method"] = destructive,
             ["click"] = changesTheGame,
             ["detach_project"] = changesTheGame,
             ["drag"] = changesTheGame,
@@ -111,20 +106,20 @@ public sealed class McpServerSmokeTests : IDisposable
             ["gamepad_axis"] = changesTheGame,
             ["gamepad_button"] = changesTheGame,
             ["gamepad_stick"] = changesTheGame,
-            ["get_debug_output"] = readOnly,
-            ["get_errors"] = readOnly,
+            ["get_debug_output"] = readsTheGame,
+            ["get_errors"] = readsTheGame,
             ["get_scene_tree"] = readsTheGame,
-            ["get_ui_elements"] = readOnly,
+            ["get_ui_elements"] = readsTheGame,
             ["inspect_node"] = readsTheGame,
             ["key"] = changesTheGame,
-            ["list_sessions"] = readOnly,
+            ["list_sessions"] = readsTheGame,
             ["mouse_button"] = changesTheGame,
             ["run_project"] = changesTheGame,
             ["run_script"] = destructive,
-            ["set_property"] = setsTheGame,
+            ["set_property"] = changesTheGame,
             ["simulate_input"] = changesTheGame,
             ["stop_project"] = destructive,
-            ["take_screenshot"] = readOnly,
+            ["take_screenshot"] = readsTheGame,
             ["type_text"] = changesTheGame,
             ["wait_for"] = changesTheGame,
         };

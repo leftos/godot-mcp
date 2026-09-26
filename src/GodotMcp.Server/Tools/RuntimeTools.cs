@@ -28,7 +28,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
-    [McpServerTool(Name = "take_screenshot", ReadOnly = true, OpenWorld = false)]
+    [McpServerTool(Name = "take_screenshot", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
         "Captures the running game's next drawn frame and saves it as a PNG under the project's .godot/godot-mcp/screenshots/ "
             + "(which git ignores). Returns the file's absolute path and size, plus an image unless responseMode is path_only: by "
@@ -71,7 +71,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
         return blocks;
     }
 
-    [McpServerTool(Name = "get_ui_elements", ReadOnly = true, OpenWorld = false)]
+    [McpServerTool(Name = "get_ui_elements", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
         "Lists the running game's Controls, depth first: path, name, class, rect ({x, y, width, height} in viewport coordinates, "
             + "from get_global_rect), visible, and where they apply text (Label, Button, LineEdit, RichTextLabel), disabled "
@@ -136,7 +136,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
         return result;
     }
 
-    [McpServerTool(Name = "run_script", Destructive = true, OpenWorld = false)]
+    [McpServerTool(Name = "run_script", ReadOnly = false, Destructive = true, OpenWorld = false)]
     [Description(
         "Runs GDScript inside the running game. The script must `extends RefCounted` and define "
             + "`func execute(scene_tree: SceneTree) -> Variant`, which may await. Returns {value}, execute's value as JSON: "
@@ -201,7 +201,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
         return json.Length <= maxLength ? null : new JsonObject { ["valuePreview"] = json[..maxLength], ["valueLength"] = json.Length };
     }
 
-    [McpServerTool(Name = "get_errors", ReadOnly = true, OpenWorld = false)]
+    [McpServerTool(Name = "get_errors", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
         "The errors and warnings a session's game has logged (engine errors, script errors, push_error, push_warning), "
             + "oldest first: {errors: [{seq, type, message, file, line, function, stack}], next, dropped}. seq numbers them "

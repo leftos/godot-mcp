@@ -48,7 +48,7 @@ internal sealed partial class RuntimeTools
     private static readonly string[] StickAxes = ["LEFT_X", "LEFT_Y", "RIGHT_X", "RIGHT_Y"];
     private static readonly string[] TriggerAxes = ["TRIGGER_LEFT", "TRIGGER_RIGHT"];
 
-    [McpServerTool(Name = "gamepad_button", Destructive = false, OpenWorld = false)]
+    [McpServerTool(Name = "gamepad_button", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Presses, releases or taps (press, a frame, release) one gamepad button in the running game, as a pad's driver "
             + "would: Input.is_joy_button_pressed and the actions bound to the button follow it, and the d-pad moves GUI focus."
@@ -82,7 +82,7 @@ internal sealed partial class RuntimeTools
         return SendInputAsync(session, "gamepad_button", parameters, TimeSpan.Zero, cancellationToken);
     }
 
-    [McpServerTool(Name = "gamepad_axis", Destructive = false, OpenWorld = false)]
+    [McpServerTool(Name = "gamepad_axis", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Moves one gamepad axis in the running game: Input.get_joy_axis reads the raw value, and an action bound to the axis "
             + "is pressed past its deadzone with strength inverse_lerp(deadzone, 1, |value|). With durationMs the axis sweeps "
@@ -111,7 +111,7 @@ internal sealed partial class RuntimeTools
         );
     }
 
-    [McpServerTool(Name = "gamepad_stick", Destructive = false, OpenWorld = false)]
+    [McpServerTool(Name = "gamepad_stick", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Pushes a gamepad stick in the running game, sending both of its axes each frame. A push moves GUI focus once, on the "
             + "change from released to pressed, so the next move needs a release first (options.release: true, or a push to 0, 0)."

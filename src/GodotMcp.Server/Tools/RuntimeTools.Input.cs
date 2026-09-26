@@ -35,7 +35,7 @@ internal sealed partial class RuntimeTools
         "wait",
     ];
 
-    [McpServerTool(Name = "click", Destructive = false, OpenWorld = false)]
+    [McpServerTool(Name = "click", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Clicks in the running game: moves the pointer to the target, presses, and releases a frame later. Points are "
             + "viewport coordinates, as get_ui_elements reports them; the bridge maps them to the window, stretched or letterboxed."
@@ -59,7 +59,7 @@ internal sealed partial class RuntimeTools
         return SendInputAsync(session, "click", parameters, TimeSpan.Zero, cancellationToken);
     }
 
-    [McpServerTool(Name = "drag", Destructive = false, OpenWorld = false)]
+    [McpServerTool(Name = "drag", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Drags in the running game: presses at from, moves one step a frame in a straight line to to over durationMs (at "
             + "least 3 frames), each motion carrying the held button and its step, and releases at to. Godot starts a drag "
@@ -92,7 +92,7 @@ internal sealed partial class RuntimeTools
         return SendInputAsync(session, "drag", parameters, TimeSpan.FromMilliseconds(durationMs), cancellationToken);
     }
 
-    [McpServerTool(Name = "type_text", Destructive = false, OpenWorld = false)]
+    [McpServerTool(Name = "type_text", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Types text into the focused Control (click a LineEdit first): per character a key press and release with its "
             + "keycode on a US layout, its unicode, and shift where the character needs it, one frame apart. \\n is Enter, \\t Tab."
@@ -113,7 +113,7 @@ internal sealed partial class RuntimeTools
         return SendInputAsync(session, "type_text", parameters, PerStepAllowance * text.Length, cancellationToken);
     }
 
-    [McpServerTool(Name = "key", Destructive = false, OpenWorld = false)]
+    [McpServerTool(Name = "key", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Presses, releases or taps (press, a frame, release) one key in the running game. A printable key also carries "
             + "the character it types unless ctrl, alt or meta is held."
@@ -142,7 +142,7 @@ internal sealed partial class RuntimeTools
         return SendInputAsync(session, "key", parameters, TimeSpan.Zero, cancellationToken);
     }
 
-    [McpServerTool(Name = "mouse_button", Destructive = false, OpenWorld = false)]
+    [McpServerTool(Name = "mouse_button", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Holds or releases a mouse button at a target: moves the pointer there (carrying any buttons already held), then "
             + "presses or releases. The held buttons stay in later motions' button_mask, so press, simulate_input motions "
@@ -173,7 +173,7 @@ internal sealed partial class RuntimeTools
         return SendInputAsync(session, "mouse_button", parameters, TimeSpan.Zero, cancellationToken);
     }
 
-    [McpServerTool(Name = "simulate_input", Destructive = false, OpenWorld = false)]
+    [McpServerTool(Name = "simulate_input", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Sends raw events to the running game, one frame apart; x and y are viewport coordinates. Types: "
             + "key {key, pressed?, modifiers?, unicode?}; mouse_button {x, y, button?, pressed?, doubleClick?}; "

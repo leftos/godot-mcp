@@ -15,7 +15,6 @@ Steps 0 to 4b, Wave 1 (steps 7-9: named sessions, the error feed and compact out
 
 ### Wave 4: singles
 
-- [ ] Tool annotations: the tools before step 10 set two hints (`ReadOnly` or `Destructive`, plus `OpenWorld`) while ARCHITECTURE.md says every tool sets all three; set the third on each and tighten `McpServerSmokeTests`' annotation check to require all three
 
 - [ ] Bring `godot_mcp_bridge.gd`'s four complexity-baseline entries within the limits (`_input` 10, `_handle_frame` 12, `_play_event` 9, `_to_json` 12, measured 2026-09-26) and empty `tools/gdcomplexity-baseline.txt`; `_to_json` goes with the JSON move below
 - [ ] Before step 5: move the bridge's `_to_json` and the `Inspect` module's `from_json` into a static `bridge/godot_mcp_json.gd` with gdtest unit tests, so step 5's headless tools share one set of conversion rules
