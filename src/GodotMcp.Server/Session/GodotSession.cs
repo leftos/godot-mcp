@@ -11,7 +11,7 @@ namespace GodotMcp.Server.Session;
 /// The one Godot run the server manages at a time: launch with the bridge injected, talk to the bridge, stop, and remove
 /// the injected override.cfg on every way out (stop, a failed launch, the game exiting, the server shutting down).
 /// </summary>
-internal sealed class GodotSession(BridgeListener listener, ILogger<GodotSession> logger) : IDisposable
+internal sealed partial class GodotSession(BridgeListener listener, ILogger<GodotSession> logger) : IDisposable
 {
     public static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan ShutdownReplyTimeout = TimeSpan.FromSeconds(2);
@@ -49,12 +49,20 @@ internal sealed class GodotSession(BridgeListener listener, ILogger<GodotSession
     }
 
     /// <summary>Asks the game to quit, kills it if it has not within 3 s, and removes the override file.</summary>
-    /// <exception cref="SessionException">No run was ever launched.</exception>
+    /// <exception cref="SessionException">No run was ever launched, or the session is attached.</exception>
     public async Task<StopResult> StopAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            if (_attached is not null)
+            {
+                throw new SessionException(
+                    $"The session for {_attached.ProjectDir} is attached to a game godot-mcp did not start: use detach_project; "
+                        + "stop_project only stops games run_project started."
+                );
+            }
+
             GodotRun run =
                 _run ?? throw new SessionException("No Godot session has been started, so there is nothing to stop. Start one with run_project.");
             bool killed = run.IsRunning && !await ShutDownGracefullyAsync(run);
@@ -79,14 +87,9 @@ internal sealed class GodotSession(BridgeListener listener, ILogger<GodotSession
     }
 
     /// <summary>Sends a command to the live run's bridge.</summary>
-    /// <exception cref="SessionException">No run is live.</exception>
-    public Task<JsonNode?> SendAsync(string command, JsonObject? parameters, TimeSpan timeout, CancellationToken cancellationToken)
-    {
-        BridgeConnection connection = _run is { IsRunning: true, Connection: { IsOpen: true } live }
-            ? live
-            : throw new SessionException("No Godot session is running; start one with run_project.");
-        return connection.SendAsync(command, parameters, timeout, cancellationToken);
-    }
+    /// <exception cref="SessionException">No run is live, or the attached game's connection has ended.</exception>
+    public Task<JsonNode?> SendAsync(string command, JsonObject? parameters, TimeSpan timeout, CancellationToken cancellationToken) =>
+        FindLiveConnection().SendAsync(command, parameters, timeout, cancellationToken);
 
     /// <summary>How many stderr lines the current or last run has produced: a mark to pass to <see cref="GetStderrSince"/>.</summary>
     public long MarkStderr() => _run?.Stderr.TotalLines ?? 0;
@@ -94,8 +97,17 @@ internal sealed class GodotSession(BridgeListener listener, ILogger<GodotSession
     /// <summary>The current or last run's stderr lines produced after <paramref name="mark"/>, oldest first.</summary>
     public IReadOnlyList<string> GetStderrSince(long mark) => _run?.Stderr.Since(mark) ?? [];
 
+    /// <exception cref="SessionException">The session is attached, so there is no captured output.</exception>
     public DebugOutput GetDebugOutput(int limit)
     {
+        if (_attached is not null)
+        {
+            throw new SessionException(
+                $"The session for {_attached.ProjectDir} is attached: attached sessions have no captured output; the game's own "
+                    + "console or log has it."
+            );
+        }
+
         GodotRun? run = _run;
         if (run is null)
         {
@@ -115,11 +127,12 @@ internal sealed class GodotSession(BridgeListener listener, ILogger<GodotSession
     }
 
     /// <summary>
-    /// The last-resort cleanup for the server's own exit: kills a live game and removes the override file, without
-    /// waiting on the gate or the bridge.
+    /// The last-resort cleanup for the server's own exit: kills a live game it launched and removes the override file (and an
+    /// attach file), without waiting on the gate or the bridge. An attached game is left running.
     /// </summary>
     public void Shutdown()
     {
+        RemoveAttachFiles();
         GodotRun? run = _run;
         if (run is null)
         {
@@ -148,8 +161,26 @@ internal sealed class GodotSession(BridgeListener listener, ILogger<GodotSession
         _gate.Dispose();
     }
 
+    private BridgeConnection FindLiveConnection()
+    {
+        if (_attached is { } attached)
+        {
+            return attached.Connection.IsOpen
+                ? attached.Connection
+                : throw new SessionException(
+                    $"The attached game on {attached.ProjectDir} has closed its connection (it may have quit). "
+                        + "detach_project, then attach_project again."
+                );
+        }
+
+        return _run is { IsRunning: true, Connection: { IsOpen: true } live }
+            ? live
+            : throw new SessionException("No Godot session is running; start one with run_project or attach_project.");
+    }
+
     private async Task RetirePreviousRunAsync()
     {
+        await RetireAttachedAsync();
         if (_run is null)
         {
             return;
@@ -165,29 +196,28 @@ internal sealed class GodotSession(BridgeListener listener, ILogger<GodotSession
         _run = null;
     }
 
-    private static LaunchRequest Validate(LaunchRequest request)
+    private static LaunchRequest Validate(LaunchRequest request) => request with { ProjectPath = NormaliseProjectDir(request.ProjectPath) };
+
+    /// <exception cref="SessionException">The path is empty or holds no project.godot.</exception>
+    private static string NormaliseProjectDir(string projectPath)
     {
-        if (string.IsNullOrWhiteSpace(request.ProjectPath))
+        if (string.IsNullOrWhiteSpace(projectPath))
         {
             throw new SessionException("projectPath is empty. Pass the folder that holds the project's project.godot.");
         }
 
-        string projectDir = ProjectPaths.Normalise(request.ProjectPath);
-        if (!File.Exists(Path.Combine(projectDir, "project.godot")))
-        {
-            throw new SessionException($"{projectDir} holds no project.godot. Pass the folder that holds the project's project.godot.");
-        }
-
-        return request with
-        {
-            ProjectPath = projectDir,
-        };
+        string projectDir = ProjectPaths.Normalise(projectPath);
+        return File.Exists(Path.Combine(projectDir, "project.godot"))
+            ? projectDir
+            : throw new SessionException($"{projectDir} holds no project.godot. Pass the folder that holds the project's project.godot.");
     }
+
+    private static string CreateToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
 
     private async Task<LaunchResult> StartRunAsync(string godotPath, LaunchRequest request, CancellationToken cancellationToken)
     {
         GitExclude.Ensure(request.ProjectPath, OverrideFile.FileName, logger);
-        string token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        string token = CreateToken();
         ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(godotPath, request, new BridgeEndpoint(listener.Port, token));
         GodotRun run = new(request.ProjectPath, new Process { StartInfo = startInfo, EnableRaisingEvents = true });
         StartProcess(run);

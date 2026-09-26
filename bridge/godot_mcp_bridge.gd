@@ -2,7 +2,9 @@ extends Node
 ## The godot-mcp bridge: an autoload injected into a game run through override.cfg.
 ##
 ## It dials the server at 127.0.0.1:GODOT_MCP_PORT, says hello with GODOT_MCP_TOKEN and the
-## project path, then answers the server's requests. Frames are a 4-byte big-endian length
+## project path, then answers the server's requests. A game run_project did not launch finds
+## the port and token in the attach file attach_project writes instead; with neither, the
+## bridge stays off. Frames are a 4-byte big-endian length
 ## followed by UTF-8 JSON. Requests are {id, command, params}; replies are
 ## {id, ok: true, result} or {id, ok: false, error}.
 
@@ -10,7 +12,12 @@ const HOST := "127.0.0.1"
 const HEADER_BYTES := 4
 const MAX_FRAME_BYTES := 16 * 1024 * 1024
 const SCREENSHOT_DIR := "res://.godot/godot-mcp/screenshots"
+const ATTACH_FILE := "res://.godot/godot-mcp/attach.json"
 const MIN_DRAG_STEPS := 3
+## The device id every injected mouse event carries, so _input can tell it from the real mouse
+## (DEVICE_ID_MOUSE, 32) and from the engine's own ids: 0-15 joypads, 16-31 keyboards, -1
+## emulation, -2 internal (core/input/input_event.h L64-67 in 4.7.2).
+const INJECTED_DEVICE := 0x6D6370
 const SETTLE_FRAMES := 2
 const MOUSE_BUTTONS := {
 	"left": MOUSE_BUTTON_LEFT,
@@ -35,24 +42,53 @@ var _connection_lost: bool = false
 var _held_mask: int = 0
 ## Where the injected pointer last was, in window coordinates.
 var _pointer: Vector2 = Vector2.ZERO
+## Whether an input gesture is playing, including the frames that settle it.
+var _gesture_playing: bool = false
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	var port_text: String = OS.get_environment("GODOT_MCP_PORT")
-	_token = OS.get_environment("GODOT_MCP_TOKEN")
-	if not port_text.is_valid_int() or _token.is_empty():
-		push_warning("godot-mcp bridge: GODOT_MCP_PORT or GODOT_MCP_TOKEN is not set; the bridge is off.")
+	var endpoint: Dictionary = _find_endpoint()
+	if endpoint.is_empty():
+		push_warning(
+			(
+				"godot-mcp bridge: GODOT_MCP_PORT and GODOT_MCP_TOKEN are not set and there is no "
+				+ "attach file; the bridge is off."
+			)
+		)
 		queue_free()
 		return
+	_token = endpoint["token"]
+	var port: int = endpoint["port"]
 	if OS.get_environment("GODOT_MCP_BACKGROUND") == "1":
 		_enter_background()
 	_stream = StreamPeerTCP.new()
 	_stream.big_endian = true
-	var error: Error = _stream.connect_to_host(HOST, port_text.to_int())
+	var error: Error = _stream.connect_to_host(HOST, port)
 	if error != OK:
-		push_error("godot-mcp bridge: cannot dial %s:%s (error %d)." % [HOST, port_text, error])
+		push_error("godot-mcp bridge: cannot dial %s:%d (error %d)." % [HOST, port, error])
 		_stream = null
+
+
+## The server to dial, {port, token}: GODOT_MCP_PORT and GODOT_MCP_TOKEN from run_project, else
+## the attach file attach_project writes; empty when there is neither.
+func _find_endpoint() -> Dictionary:
+	var port_text: String = OS.get_environment("GODOT_MCP_PORT")
+	var token: String = OS.get_environment("GODOT_MCP_TOKEN")
+	if port_text.is_valid_int() and not token.is_empty():
+		return {"port": port_text.to_int(), "token": token}
+	var path: String = ProjectSettings.globalize_path(ATTACH_FILE)
+	if not FileAccess.file_exists(path):
+		return {}
+	var attach: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if (
+		not attach is Dictionary
+		or not (attach as Dictionary).has("port")
+		or not (attach as Dictionary).has("token")
+	):
+		push_warning("godot-mcp bridge: %s holds no {port, token}; the bridge is off." % path)
+		return {}
+	return {"port": int(attach["port"]), "token": str(attach["token"])}
 
 
 func _process(_delta: float) -> void:
@@ -77,6 +113,19 @@ func _process(_delta: float) -> void:
 			}
 		)
 	_read_frames()
+
+
+## Keeps the real mouse out of injected input: while a gesture plays or injected input holds a
+## button, a mouse button or motion event without the injected mark is marked handled here.
+## The root viewport runs every _input before its GUI (Viewport::push_input), so the GUI never
+## sees it; hover still follows the real pointer, since push_input updates it before _input.
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventMouseButton or event is InputEventMouseMotion):
+		return
+	if event.device == INJECTED_DEVICE:
+		return
+	if _gesture_playing or _held_mask != 0:
+		get_viewport().set_input_as_handled()
 
 
 func _enter_background() -> void:
@@ -269,9 +318,11 @@ func _handle_run_script(id: int, source: String) -> void:
 ## Plays one gesture over frames, then waits two more frames before replying, so errors its
 ## handlers raise reach stderr first. Every point arrives in viewport coordinates.
 func _handle_input(id: int, params: Dictionary) -> void:
+	_gesture_playing = true
 	var error: String = await _play_gesture(params)
 	for _frame in SETTLE_FRAMES:
 		await get_tree().process_frame
+	_gesture_playing = false
 	if not error.is_empty():
 		_reply_error(id, error)
 		return
@@ -597,6 +648,7 @@ func _move_to(window_point: Vector2) -> void:
 
 func _send_motion(window_point: Vector2, relative: Vector2, button_mask: int) -> void:
 	var motion := InputEventMouseMotion.new()
+	motion.device = INJECTED_DEVICE
 	motion.position = window_point
 	motion.global_position = window_point
 	motion.relative = relative
@@ -610,6 +662,7 @@ func _send_button(window_point: Vector2, button: int, pressed: bool, double_clic
 	var bit: int = 1 << (button - 1)
 	_held_mask = (_held_mask | bit) if pressed else (_held_mask & ~bit)
 	var event := InputEventMouseButton.new()
+	event.device = INJECTED_DEVICE
 	event.button_index = button as MouseButton
 	event.pressed = pressed
 	event.double_click = double_click

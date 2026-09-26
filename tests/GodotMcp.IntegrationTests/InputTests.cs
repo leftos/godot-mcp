@@ -16,6 +16,23 @@ public sealed class InputTests : IAsyncDisposable
     private static readonly string[] Letterboxed = ["--resolution", "1000x900"];
     private static readonly InputTarget DragSource = new("DragSource");
     private static readonly InputTarget DropTarget = new("DropTarget");
+
+    // A real mouse moving over the window, as Godot sees one: a plain motion (device DEVICE_ID_MOUSE, no button_mask) at
+    // (600, 20), away from both the source and the target, every frame for 1.4 s, so one lands between the drag's last
+    // motion and its release.
+    private const string StrayMotionsScript =
+        "var far := scene_tree.root.get_screen_transform() * Vector2(600, 20)\n\t"
+        + "var until := Time.get_ticks_msec() + 1400\n\t"
+        + "var sent := 0\n\t"
+        + "while Time.get_ticks_msec() < until:\n\t\t"
+        + "var motion := InputEventMouseMotion.new()\n\t\t"
+        + "motion.position = far\n\t\t"
+        + "motion.global_position = far\n\t\t"
+        + "Input.parse_input_event(motion)\n\t\t"
+        + "Input.flush_buffered_events()\n\t\t"
+        + "sent += 1\n\t\t"
+        + "await scene_tree.process_frame\n\t"
+        + "return sent";
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
     private readonly RuntimeTools _tools;
@@ -116,6 +133,35 @@ public sealed class InputTests : IAsyncDisposable
         await _tools.MouseButtonAsync(DropTarget, "left", "release", cancellation);
 
         Assert.Equal(("dropped:DragSource", 1), await ReadDropAsync());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task DragDropsWhileTheRealMouseMovesElsewhere()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await LaunchAsync([]);
+
+        Task<string> drag = _tools.DragAsync(DragSource, DropTarget, 1000, "left", cancellation);
+        int strayMotions = (await RunAsync(StrayMotionsScript)).GetValue<int>();
+        await drag;
+
+        Assert.True(strayMotions > 10, $"only {strayMotions} stray motions were sent");
+        Assert.Equal(("dropped:DragSource", 1), await ReadDropAsync());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ClickReportsTheScriptErrorItsHandlerRaised()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await LaunchAsync([]);
+        await RunAsync("scene_tree.root.get_node(\"Main/SmallButton\").fail_on_press = true\n\treturn true");
+
+        string clicked = await _tools.ClickAsync(new InputTarget("SmallButton"), "left", false, cancellation);
+        int pressCount = (await RunAsync("return scene_tree.root.get_node(\"Main/SmallButton\").press_count")).GetValue<int>();
+
+        Assert.Equal(1, pressCount);
+        Assert.Contains("Godot reported errors while the input played:", clicked, StringComparison.Ordinal);
+        Assert.Contains("SCRIPT ERROR", clicked, StringComparison.Ordinal);
     }
 
     private Task<LaunchResult> LaunchAsync(string[] engineArgs) =>

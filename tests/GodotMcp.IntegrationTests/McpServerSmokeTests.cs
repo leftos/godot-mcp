@@ -43,7 +43,9 @@ public sealed class McpServerSmokeTests : IDisposable
 
         Assert.Equal(
             [
+                "attach_project",
                 "click",
+                "detach_project",
                 "drag",
                 "get_debug_output",
                 "get_ui_elements",

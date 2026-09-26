@@ -18,10 +18,17 @@ The user asked for our own plugin and MCP server for all their Godot projects. G
    - Godot's source: game runs read `override.cfg`; the editor, `--import` and `--export` never do (`main/main.cpp:2107`, `p_ignore_override`).
 3. **C# / .NET 10 server, GDScript bridge.**
 4. **Its own repo at `D:\godot-mcp`.**
-5. **First-version must-have: faithful input**, offered as gestures plus raw events.
+5. **First-version must-have: faithful input**, offered as gestures plus raw events. Gamepad input is part of it: buttons, sticks and triggers per device (user, 2026-09-25, step 4b).
 6. **The 16 headless scene and node tools are included.**
 7. **`run_project` takes pass-through arguments.**
 8. **Cutover at parity**, in every project at once; the old registration is removed.
+9. **Sixteen friction features, all before the cutover** (user, 2026-09-25, choosing every option offered and "all before cutover" over building only the structural ones first):
+   - Time: frame control, `wait_for`, `restart_project`, fresh-worktree prep.
+   - Inspection: the running scene tree, `inspect_node`/`set_property`, `call_method`, an error feed on every result, screenshot baselines.
+   - Scale: several sessions, a hang watchdog, quiet by default, in-engine recording.
+   - Ergonomics: tool annotations, a batch drive tool, compact outputs, project profiles.
+
+   This reverses decision 5's "several sessions" and "in-engine recording" as later work. The order is in `MAIN.md` (steps 7-15, structural first).
 
 ## Design
 
@@ -56,6 +63,13 @@ The user asked for our own plugin and MCP server for all their Godot projects. G
   - `type_text` (unicode with case preserved)
   - `key` and `button` with hold/release
 - **`simulate_input`:** a raw event list, done right (motion with mask and relative; press and release separate).
+- **Gamepad (step 4b), from Godot 4.7.2's source** (librarian, 2026-09-25; copies fetched under `D:\opening-hand\.tmp\ovr\r\47_*`):
+  - **What works.** A parsed `InputEventJoypadButton` updates `is_joy_button_pressed` (`input.cpp:977-987`). A parsed `InputEventJoypadMotion` updates `get_joy_axis`, raw with no deadzone (`input.cpp:989-993`, `601-614`). Actions match through `InputMap::event_get_index`: pressed means `|value| >= deadzone` (default 0.2, `input_map.h:55`), and strength is `inverse_lerp(deadzone, 1, |v|)` (`input_event.cpp:1133-1171`). Joypad events are never merged by accumulated input, and `is_echo()` is always false.
+  - **Focus navigation.** The default `ui_left/right/up/down` have d-pad buttons plus the left stick at ±1.0 (`input_map.cpp:490-512`) and all devices (-1), so they react to injected events. A stick push moves focus only on the released-to-pressed change, so the next move needs a 0.0 release first (`viewport.cpp:2340-2380`, `input.cpp:1033-1034`). `ui_accept`, `ui_cancel` and `ui_focus_next` have no joypad binding by default; `ui_select` is Y.
+  - **Devices.** The first pad is device 0; ids 0-15 are joypads (`input_event.h:64-67`).
+  - **Not reachable from script.** `get_connected_joypads`, `is_joy_known`, `get_joy_name`/guid/info and vibration are filled only by the platform driver's `joy_connection_changed`, and only its signal is bound (`input.cpp:239`, `711`, `747`, `2291-2301`). An injected pad never shows as connected. Neither project calls those queries (checked 2026-09-25). A game that does would need an OS-level virtual pad.
+  - **Losing focus clears pad state.** With `ignore_joypad_on_unfocused_application`, pad buttons, axes and pressed actions are cleared when the window loses focus (`input.cpp:1600-1623`), and a background run is unfocused. The injection `override.cfg` therefore also sets that project setting to false (verify its exact settings path).
+  - **Releases are sent explicitly** (`pressed=false`, or `axis_value=0.0`), and every event is a new object.
 - **Built (step 3):** the hold/release gestures are the `key` and `mouse_button` tools. The transform is `get_screen_transform()`, measured against a letterboxed window; the red proof is the three drag tests failing with `button_mask` forced to 0.
 
 **Process and session:**

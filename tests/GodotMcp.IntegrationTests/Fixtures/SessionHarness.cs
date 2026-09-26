@@ -19,7 +19,11 @@ internal sealed class SessionHarness : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         // A bare kill does not wait: Godot_console.exe exits before the Godot.exe it wraps lets go of the folder.
-        if (Session.GetDebugOutput(1).Running)
+        if (Session.IsAttached)
+        {
+            await Session.DetachAsync(CancellationToken.None);
+        }
+        else if (Session.GetDebugOutput(1).Running)
         {
             await Session.StopAsync(CancellationToken.None);
         }

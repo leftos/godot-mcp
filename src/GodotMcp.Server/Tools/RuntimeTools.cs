@@ -119,7 +119,7 @@ internal sealed partial class RuntimeTools(GodotSession session)
         if (value is null)
         {
             // GDScript has no exceptions: a runtime error ends execute with null, and the error itself goes to stderr.
-            IReadOnlyList<string> errors = await CollectScriptErrorsAsync(mark, cancellationToken);
+            IReadOnlyList<string> errors = await CollectScriptErrorsAsync(mark, StderrWait, cancellationToken);
             if (errors.Count > 0)
             {
                 throw new McpException(
@@ -158,7 +158,7 @@ internal sealed partial class RuntimeTools(GodotSession session)
         }
         catch (McpException e) when (e.InnerException is InvalidOperationException refused)
         {
-            IReadOnlyList<string> errors = await CollectScriptErrorsAsync(mark, cancellationToken);
+            IReadOnlyList<string> errors = await CollectScriptErrorsAsync(mark, StderrWait, cancellationToken);
             string detail =
                 errors.Count == 0
                     ? "\nGodot printed no SCRIPT ERROR line for it; check get_debug_output."
@@ -167,9 +167,13 @@ internal sealed partial class RuntimeTools(GodotSession session)
         }
     }
 
-    private async Task<IReadOnlyList<string>> CollectScriptErrorsAsync(long mark, CancellationToken cancellationToken)
+    /// <summary>
+    /// The script errors on stderr since <paramref name="mark"/>, read after <see cref="StderrSettle"/> and then polled until
+    /// <paramref name="wait"/> has passed while there are none.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> CollectScriptErrorsAsync(long mark, TimeSpan wait, CancellationToken cancellationToken)
     {
-        DateTime deadline = DateTime.UtcNow + StderrWait;
+        DateTime deadline = DateTime.UtcNow + wait;
         await Task.Delay(StderrSettle, cancellationToken);
         List<string> errors = FindScriptErrors(session.GetStderrSince(mark));
         while (errors.Count == 0 && DateTime.UtcNow < deadline)
