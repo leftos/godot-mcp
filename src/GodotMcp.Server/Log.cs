@@ -106,4 +106,19 @@ internal static partial class Log
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "{File} was still running {Seconds} s after it was killed.")]
     public static partial void ToolStillRunningAfterKill(ILogger logger, string file, double seconds);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The game on {Project} was still running {Seconds} s after its run ended; its recording is cut anyway."
+    )]
+    public static partial void GameExitWaitEnded(ILogger logger, Exception exception, string project, double seconds);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The game on {Project} (pid {ProcessId}) could not be watched for its exit; its recording is cut anyway."
+    )]
+    public static partial void GameExitNotObserved(ILogger logger, Exception exception, string project, int processId);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "The game on {Project} (pid {ProcessId}) had already exited when its recording was finished.")]
+    public static partial void GameAlreadyExited(ILogger logger, Exception exception, string project, int processId);
 }

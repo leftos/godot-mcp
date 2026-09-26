@@ -51,6 +51,7 @@ $itestGroups = [ordered]@{
     reads     = @('RuntimeReadTests', 'InspectionTests', 'BaselineTests')
     time      = @('TimeTests', 'BatchTests')
     prep      = @('PrepTests', 'RestartTests')
+    recording = @('RecordingTests')
 }
 $itestNamespace = 'GodotMcp.IntegrationTests'
 $itestProject = 'tests/GodotMcp.IntegrationTests/GodotMcp.IntegrationTests.csproj'

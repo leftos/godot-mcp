@@ -5,7 +5,7 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// How run_project sets up the game's window and pads, the session's name, whether the project is prepared first, and which
-/// preset of the project's godot-mcp.json it launches. <see cref="Quiet"/> is null when not given.
+/// preset of the project's godot-mcp.json it launches, and whether it is recorded. <see cref="Quiet"/> is null when not given.
 /// </summary>
 internal sealed record RunOptions(
     [property: Description(
@@ -22,7 +22,15 @@ internal sealed record RunOptions(
             + "defaults, and run_project's own arguments override both (userArgs and engineArgs append). The file's top level "
             + "applies even with no preset."
     )]
-        string? Preset = null
+        string? Preset = null,
+    [property: Description(
+        "Records the run with Godot's Movie Maker from launch: video and audio, frame-perfect, at a fixed 60 fps, to "
+            + "<project>/.godot/godot-mcp/recordings/<stamp>-<session>.avi. Game time then advances 1/60 s per frame whatever "
+            + "the wall clock does, so millisecond timeouts and gesture durations no longer match game time. Mark the parts to "
+            + "keep with record_mark; stop_project finalises the file and cuts them. Capped at 10 minutes of frames. Not with "
+            + "--headless. If the server itself exits, a recording game is killed and its movie is not finalised."
+    )]
+        bool? Record = null
 )
 {
     /// <summary>The prepare option, for run_project's options and restart_project's.</summary>

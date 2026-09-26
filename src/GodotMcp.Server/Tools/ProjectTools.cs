@@ -56,10 +56,10 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         [Description("Arguments for the game, passed after --; the game reads them with OS.get_cmdline_user_args().")] string[]? userArgs = null,
         [Description("Arguments for the engine, placed before --, e.g. [\"--resolution\", \"1280x720\"].")] string[]? engineArgs = null,
         [Description(
-            "{quiet, shutOutRealGamepads, session, prepare, preset}; when left out, quiet is true unless godot-mcp.json sets it, "
-                + "shutOutRealGamepads is false, prepare is auto (a stale C# assembly is built and missing imports are run first; "
-                + "the result's prep says what was done), no preset is used, and the session is named by the preset's session, "
-                + "else after the project folder."
+            "{quiet, shutOutRealGamepads, session, prepare, preset, record}; when left out, quiet is true unless godot-mcp.json "
+                + "sets it, shutOutRealGamepads is false, prepare is auto (a stale C# assembly is built and missing imports are run "
+                + "first; the result's prep says what was done), no preset is used, the session is named by the preset's session, "
+                + "else after the project folder, and record is false (with record, the result's recording.path is the movie)."
         )]
             RunOptions? options = null,
         CancellationToken cancellationToken = default
@@ -121,9 +121,11 @@ internal sealed class ProjectTools(SessionRegistry sessions)
 
     [McpServerTool(Name = "stop_project", ReadOnly = false, Destructive = true, OpenWorld = false)]
     [Description(
-        "Stops a session run_project started (asks the game to quit, kills it after 3 s) and removes the injected "
-            + "override.cfg, unless another live session uses the project folder. An attached session is ended with "
-            + "detach_project instead."
+        "Stops a session run_project started (asks the game to quit, kills it after 3 s, or after 30 s for a recording run, "
+            + "whose quit finalises its movie) and removes the injected override.cfg, unless another live session uses the "
+            + "project folder. For a recording run the result's recording is {path} (the full movie, kept when there were no "
+            + "marks), or {clips} (one file per record_mark start-stop pair, cut with ffmpeg; the full movie is then deleted), "
+            + "plus error with path when the cut could not be made. An attached session is ended with detach_project instead."
     )]
     public async Task<string> StopProjectAsync(
         [Description(SessionDescription)] string? session = null,
@@ -141,8 +143,9 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "game's lines from the new one's. First, while the old game still runs, a stale C# assembly is built and missing "
             + "imports are run, as run_project does; a failed build or import is an error and leaves the old game running. Then "
             + "the old game is stopped as stop_project stops it, and the new one started. A session whose game has quit or been "
-            + "stopped is started again. To change the scene or arguments, use stop_project then run_project. An attached "
-            + "session cannot be restarted."
+            + "stopped is started again. To change the scene or arguments, use stop_project then run_project. A recording run "
+            + "records the new game to a new file (recording.path); the old game's recording is finished as stop_project "
+            + "finishes it and returned as previousRecording. An attached session cannot be restarted."
     )]
     public async Task<string> RestartProjectAsync(
         [Description(
@@ -192,8 +195,9 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     [McpServerTool(Name = "list_sessions", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
         "Lists the server's sessions, ordered by name: each one's name, project folder, kind (run or attach), whether it is "
-            + "live, and its process id (null for an attached game). A session stays listed after its run ends, until its name "
-            + "is reused; detach_project removes an attached one."
+            + "live, and its process id (null for an attached game), plus for a recording run its recording: {path} while it "
+            + "runs, and once it has ended, stopped or quit, what stop_project returns for it. A session stays listed after its "
+            + "run ends, until its name is reused; detach_project removes an attached one."
     )]
     public string ListSessions() => JsonSerializer.Serialize(new SessionList(sessions.List()), Json);
 

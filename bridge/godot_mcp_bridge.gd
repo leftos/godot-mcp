@@ -288,12 +288,21 @@ func _command_handlers() -> Dictionary:
 		"frame": _handle_time.bind("frame"),
 		"wait_for": _handle_time.bind("wait_for"),
 		"compare_screenshot": _handle_compare,
+		"movie_frame": _handle_movie_frame,
 		"shutdown": _handle_shutdown,
 	}
 
 
 func _handle_ping(id: int, _params: Dictionary) -> void:
 	_reply_ok(id, {"pong": true})
+
+
+## Replies with the number of frames Movie Maker has written so far, the index of the next one.
+## The writer begins before the first iteration (4.7.2 main.cpp L4855) and adds one frame at
+## the end of every iteration, after the process frame count is raised (L5119, L5151), so a
+## command handled during an iteration sees exactly the frames written before it.
+func _handle_movie_frame(id: int, _params: Dictionary) -> void:
+	_reply_ok(id, {"frame": Engine.get_process_frames()})
 
 
 func _handle_ui_elements(id: int, params: Dictionary) -> void:

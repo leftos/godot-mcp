@@ -2,8 +2,29 @@ using System.Text.Json.Serialization;
 
 namespace GodotMcp.Server.Session;
 
-/// <summary>A run that launched and whose bridge said hello, and what the prep did before it.</summary>
-internal sealed record LaunchResult(string Session, string ProjectPath, int ProcessId, bool Quiet, PrepResult Prep);
+/// <summary>A run that launched and whose bridge said hello, what the prep did before it, and the file it records to.</summary>
+internal sealed record LaunchResult(string Session, string ProjectPath, int ProcessId, bool Quiet, PrepResult Prep)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public RecordingResult? Recording { get; init; }
+}
+
+/// <summary>
+/// A recording run's file: <see cref="Path"/> is the full movie while it is kept (during the run, and after it when there were
+/// no marks or the cut failed), <see cref="Clips"/> the files cut from the marks, <see cref="Error"/> why the cut did not
+/// finish.
+/// </summary>
+internal sealed record RecordingResult
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Path { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Clips { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Error { get; init; }
+}
 
 /// <summary>
 /// What run_project's prep did: <see cref="Build"/> is up-to-date, built, no-csproj or skipped; <see cref="Import"/> is
@@ -39,10 +60,26 @@ internal sealed record RestartResult(
     int PreviousProcessId,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PreviousExitCode,
     PrepResult Prep
-);
+)
+{
+    /// <summary>The file the new game records to.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public RecordingResult? Recording { get; init; }
 
-/// <summary>How a run ended: its exit code, whether it had to be killed, whether the server's override.cfg was deleted.</summary>
-internal sealed record StopResult(string Session, string ProjectPath, int? ExitCode, bool Killed, bool OverrideRemoved);
+    /// <summary>How the replaced game's recording ended: its full file or its clips.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public RecordingResult? PreviousRecording { get; init; }
+}
+
+/// <summary>
+/// How a run ended: its exit code, whether it had to be killed, whether the server's override.cfg was deleted, and for a
+/// recording run its full file or its clips.
+/// </summary>
+internal sealed record StopResult(string Session, string ProjectPath, int? ExitCode, bool Killed, bool OverrideRemoved)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public RecordingResult? Recording { get; init; }
+}
 
 /// <summary>A game attach_project reached: its bridge said hello.</summary>
 internal sealed record AttachResult(string Session, string ProjectPath);

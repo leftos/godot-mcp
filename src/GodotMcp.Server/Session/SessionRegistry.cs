@@ -385,7 +385,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     private static SessionInfo Describe(GodotSession session) =>
-        new(session.Name, session.ProjectDir, session.Kind == SessionKind.Run ? "run" : "attach", session.IsLive, session.ProcessId);
+        new(session.Name, session.ProjectDir, session.Kind == SessionKind.Run ? "run" : "attach", session.IsLive, session.ProcessId)
+        {
+            Recording = session.RecordingState,
+        };
 
     private static void CheckName(string? session)
     {
@@ -426,5 +429,9 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     private static partial Regex ValidName();
 }
 
-/// <summary>One entry of list_sessions.</summary>
-internal sealed record SessionInfo(string Name, string ProjectPath, string Kind, bool Live, int? ProcessId);
+/// <summary>One entry of list_sessions; <see cref="Recording"/> is set for a session whose latest run records.</summary>
+internal sealed record SessionInfo(string Name, string ProjectPath, string Kind, bool Live, int? ProcessId)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public RecordingResult? Recording { get; init; }
+}

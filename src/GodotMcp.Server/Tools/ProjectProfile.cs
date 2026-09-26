@@ -100,7 +100,10 @@ internal sealed partial class ProjectProfile
             QuietFor(preset, options.Quiet),
             options.ShutOutRealGamepads,
             options.ShouldPrepare()
-        );
+        )
+        {
+            Record = options.Record ?? false,
+        };
         return new ProfileLaunch(request, options.Session ?? preset.Session);
     }
 

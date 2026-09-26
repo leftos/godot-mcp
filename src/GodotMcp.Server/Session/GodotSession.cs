@@ -89,6 +89,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     {
         try
         {
+            GodotCommandLine.RefuseUnrecordable(request);
             await _gate.WaitAsync(cancellationToken);
             try
             {
@@ -112,7 +113,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>
     /// Pings the game first: one silent for 2 s is stuck and is killed at once, without the shutdown command. One that answers
-    /// is asked to quit and killed if it has not within 3 s. Either way the override file is released.
+    /// is asked to quit and killed if it has not within 3 s, or 30 s while it records. Either way the override file is
+    /// released, after a recording's clips are cut.
     /// </summary>
     /// <exception cref="SessionException">No run was ever launched, or the session is attached.</exception>
     public async Task<StopResult> StopAsync(CancellationToken cancellationToken)
@@ -131,8 +133,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             GodotRun run =
                 _run ?? throw new SessionException("No Godot session has been started, so there is nothing to stop. Start one with run_project.");
             bool killed = await EndRunAsync(run);
+            RecordingResult? recording = await FinishRecordingAsync();
             bool removed = registry.ReleaseFolder(this);
-            return new StopResult(Name, run.ProjectDir, run.ExitCode, killed, removed);
+            return new StopResult(Name, run.ProjectDir, run.ExitCode, killed, removed) { Recording = recording };
         }
         finally
         {
@@ -308,15 +311,19 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 cancellationToken.ThrowIfCancellationRequested();
                 await EndRunAsync(previous);
                 StopOutputCapture(previous);
+                await FinishRecordingAsync();
             }
 
             registry.WriteOverride(this, bridgeScript);
             GitExclude.Ensure(ProjectDir, OverrideFile.FileName, _logger);
             string token = CreateToken();
-            ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(godotPath, request, new BridgeEndpoint(registry.Listener.Port, token));
+            string? moviePath = PrepareMoviePath(request);
+            BridgeEndpoint bridge = new(registry.Listener.Port, token);
+            ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(godotPath, request, bridge, moviePath);
             GodotRun run = new(ProjectDir, new Process { StartInfo = startInfo, EnableRaisingEvents = true }, previous);
             StartProcess(run, previous is null ? null : ProcessId);
             _run = run;
+            _recording = moviePath is null ? null : new Recording(moviePath);
             ProcessId = run.Process.Id;
             return (run, prep, token);
         }
@@ -336,7 +343,10 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         GameProcessId = connection.GameProcessId;
         Log.RunStarted(_logger, processId, run.ProjectDir);
         LastLaunch = request;
-        return new LaunchResult(Name, run.ProjectDir, processId, request.Quiet, prep);
+        return new LaunchResult(Name, run.ProjectDir, processId, request.Quiet, prep)
+        {
+            Recording = _recording is { } recording ? new RecordingResult { Path = recording.Path } : null,
+        };
     }
 
     /// <summary>
@@ -478,7 +488,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             }
         }
 
-        using CancellationTokenSource grace = new(ExitGrace);
+        TimeSpan exitGrace = CurrentExitGrace;
+        using CancellationTokenSource grace = new(exitGrace);
         try
         {
             await run.Process.WaitForExitAsync(grace.Token);
@@ -486,7 +497,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
         catch (OperationCanceledException)
         {
-            Log.ExitGraceExpired(_logger, run.ProjectDir, ExitGrace.TotalSeconds);
+            Log.ExitGraceExpired(_logger, run.ProjectDir, exitGrace.TotalSeconds);
             return false;
         }
     }
@@ -534,6 +545,11 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     private async Task KillAsync(GodotRun run)
     {
+        if (ReferenceEquals(run, _run) && _recording is { } recording)
+        {
+            recording.Killed = true;
+        }
+
         try
         {
             run.Process.Kill(entireProcessTree: true);
@@ -578,6 +594,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 return;
             }
 
+            await FinishRecordingAsync();
             if (registry.ReleaseFolder(this))
             {
                 Log.OverrideRemovedAfterExit(_logger, run.ProjectDir);

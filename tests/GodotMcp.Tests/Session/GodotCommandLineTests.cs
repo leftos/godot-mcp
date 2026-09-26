@@ -13,7 +13,7 @@ public sealed class GodotCommandLineTests
     {
         LaunchRequest request = new(Project, "res://levels/test.tscn", ["--resolution", "640x360"], ["--hello", "a b"], false, false, Prepare: true);
 
-        List<string> arguments = GodotCommandLine.BuildArguments(request);
+        List<string> arguments = GodotCommandLine.BuildArguments(request, moviePath: null);
 
         Assert.Equal(["--path", Project, "res://levels/test.tscn", "--resolution", "640x360", "--", "--hello", "a b"], arguments);
     }
@@ -23,7 +23,7 @@ public sealed class GodotCommandLineTests
     {
         LaunchRequest request = ProjectProfile.Empty(Project).Merge(null, [], ["--audio-driver", "WASAPI"], new RunOptions()).Request;
 
-        List<string> arguments = GodotCommandLine.BuildArguments(request);
+        List<string> arguments = GodotCommandLine.BuildArguments(request, moviePath: null);
 
         Assert.Equal(["--path", Project, "--audio-driver", "Dummy", "--audio-driver", "WASAPI"], arguments);
     }
@@ -33,9 +33,105 @@ public sealed class GodotCommandLineTests
     {
         LaunchRequest request = new(Project, null, [], [], false, false, Prepare: true);
 
-        List<string> arguments = GodotCommandLine.BuildArguments(request);
+        List<string> arguments = GodotCommandLine.BuildArguments(request, moviePath: null);
 
         Assert.DoesNotContain("--audio-driver", arguments);
+    }
+
+    [Fact]
+    public void ARecordingRunWritesAMovieAtSixtyFpsWithACap()
+    {
+        const string movie = @"C:\My Games\Probe\.godot\godot-mcp\recordings\20260926-120000-000-Probe.avi";
+        LaunchRequest request = ProjectProfile
+            .Empty(Project)
+            .Merge("res://main.tscn", ["--smoke"], ["--resolution", "640x360"], new RunOptions(Record: true))
+            .Request;
+
+        List<string> arguments = GodotCommandLine.BuildArguments(request, movie);
+
+        Assert.Equal(
+            [
+                "--path",
+                Project,
+                "res://main.tscn",
+                "--audio-driver",
+                "Dummy",
+                "--write-movie",
+                movie,
+                "--fixed-fps",
+                "60",
+                "--quit-after",
+                "36000",
+                "--resolution",
+                "640x360",
+                "--",
+                "--smoke",
+            ],
+            arguments
+        );
+    }
+
+    [Fact]
+    public void ARecordingWithHeadlessIsRefused()
+    {
+        LaunchRequest headless = ProjectProfile.Empty(Project).Merge(null, [], ["--headless"], new RunOptions(Record: true)).Request;
+        LaunchRequest notRecording = headless with { Record = false };
+
+        SessionException refused = Assert.Throws<SessionException>(() => GodotCommandLine.RefuseUnrecordable(headless));
+        GodotCommandLine.RefuseUnrecordable(notRecording);
+
+        Assert.Equal(
+            "options.record cannot record a --headless run: the headless renderer draws nothing. Drop --headless; a quiet run is already hidden.",
+            refused.Message
+        );
+    }
+
+    [Theory]
+    [InlineData(
+        "--display-driver",
+        "headless",
+        "options.record cannot record a --display-driver headless run: the headless renderer draws nothing. Drop --display-driver "
+            + "headless; a quiet run is already hidden."
+    )]
+    [InlineData(
+        "--fixed-fps",
+        "30",
+        "options.record sets --fixed-fps itself (60, which record_mark's frames and the clip cuts rely on); drop it from engineArgs or "
+            + "godot-mcp.json."
+    )]
+    [InlineData(
+        "--write-movie",
+        "mine.avi",
+        "options.record sets --write-movie itself (the movie under .godot/godot-mcp/recordings/, which stop_project finalises and "
+            + "cuts); drop it from engineArgs or godot-mcp.json."
+    )]
+    [InlineData(
+        "--quit-after",
+        "100",
+        "options.record sets --quit-after itself (36000 frames, the 10 minute cap); drop it from engineArgs or godot-mcp.json."
+    )]
+    public void ARecordingRefusesTheEngineArgumentsItSetsItself(string flag, string value, string refusal)
+    {
+        LaunchRequest recording = ProjectProfile
+            .Empty(Project)
+            .Merge(null, [], ["--resolution", "640x360", flag, value], new RunOptions(Record: true))
+            .Request;
+
+        SessionException refused = Assert.Throws<SessionException>(() => GodotCommandLine.RefuseUnrecordable(recording));
+        GodotCommandLine.RefuseUnrecordable(recording with { Record = false });
+
+        Assert.Equal(refusal, refused.Message);
+    }
+
+    [Fact]
+    public void ARecordingAcceptsAnotherDisplayDriver()
+    {
+        LaunchRequest recording = ProjectProfile
+            .Empty(Project)
+            .Merge(null, [], ["--display-driver", "windows"], new RunOptions(Record: true))
+            .Request;
+
+        GodotCommandLine.RefuseUnrecordable(recording);
     }
 
     [Fact]
@@ -43,7 +139,7 @@ public sealed class GodotCommandLineTests
     {
         LaunchRequest request = new(Project, " ", [], [], false, false, Prepare: true);
 
-        List<string> arguments = GodotCommandLine.BuildArguments(request);
+        List<string> arguments = GodotCommandLine.BuildArguments(request, moviePath: null);
 
         Assert.Equal(["--path", Project], arguments);
     }
@@ -53,7 +149,7 @@ public sealed class GodotCommandLineTests
     {
         LaunchRequest request = new(Project, null, [], ["--hello", "a b"], false, false, Prepare: true);
 
-        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", request, new BridgeEndpoint(4321, "t0k3n"));
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", request, new BridgeEndpoint(4321, "t0k3n"), moviePath: null);
 
         Assert.Equal(["--path", Project, "--", "--hello", "a b"], startInfo.ArgumentList);
         Assert.Equal(string.Empty, startInfo.Arguments);
@@ -67,7 +163,8 @@ public sealed class GodotCommandLineTests
         ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(
             "godot.exe",
             new LaunchRequest(Project, null, [], [], true, false, Prepare: true),
-            bridge
+            bridge,
+            moviePath: null
         );
 
         Assert.Equal("4321", startInfo.Environment[GodotCommandLine.PortVariable]);
@@ -80,7 +177,7 @@ public sealed class GodotCommandLineTests
         BridgeEndpoint bridge = new(4321, "t0k3n");
         LaunchRequest defaults = ProjectProfile.Empty(Project).Merge(null, [], [], new RunOptions()).Request;
 
-        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", defaults, bridge);
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", defaults, bridge, moviePath: null);
 
         Assert.Equal("1", startInfo.Environment[GodotCommandLine.QuietVariable]);
     }
@@ -93,7 +190,8 @@ public sealed class GodotCommandLineTests
         ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(
             "godot.exe",
             new LaunchRequest(Project, null, [], [], false, false, Prepare: true),
-            bridge
+            bridge,
+            moviePath: null
         );
 
         Assert.False(startInfo.Environment.ContainsKey(GodotCommandLine.QuietVariable));
@@ -107,12 +205,14 @@ public sealed class GodotCommandLineTests
         ProcessStartInfo shutOut = GodotCommandLine.CreateStartInfo(
             "godot.exe",
             new LaunchRequest(Project, null, [], [], false, true, Prepare: true),
-            bridge
+            bridge,
+            moviePath: null
         );
         ProcessStartInfo byDefault = GodotCommandLine.CreateStartInfo(
             "godot.exe",
             new LaunchRequest(Project, null, [], [], false, false, Prepare: true),
-            bridge
+            bridge,
+            moviePath: null
         );
 
         Assert.Equal("1", shutOut.Environment[GodotCommandLine.ShutOutRealGamepadsVariable]);

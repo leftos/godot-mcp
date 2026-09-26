@@ -4,6 +4,7 @@ namespace GodotMcp.Server.Session;
 internal static class Installation
 {
     public const string GodotPathVariable = "GODOT_PATH";
+    public const string FfmpegPathVariable = "FFMPEG_PATH";
     public const string DefaultGodotPath = @"F:\Godot\Godot_console.exe";
     public const string SolutionFileName = "GodotMcp.slnx";
 
@@ -33,18 +34,45 @@ internal static class Installation
 
     /// <summary>The <c>dotnet</c> executable in the first folder of <c>PATH</c> that has one.</summary>
     /// <exception cref="SessionException">No folder on <c>PATH</c> has it.</exception>
-    public static string FindDotnet()
+    public static string FindDotnet() =>
+        FindOnPath("dotnet")
+        ?? throw new SessionException(
+            "dotnet was not found on PATH, and the project's C# assembly needs building before the run. Install the .NET SDK "
+                + "and put dotnet on PATH, or pass options.prepare: \"never\" to launch without building."
+        );
+
+    /// <summary>
+    /// <c>FFMPEG_PATH</c> when set, else the <c>ffmpeg</c> executable in the first folder of <c>PATH</c> that has one, else
+    /// null. A set <c>FFMPEG_PATH</c> that names no file is not looked past: the result is null and
+    /// <paramref name="configuredButMissing"/> is its value.
+    /// </summary>
+    public static string? FindFfmpeg(out string? configuredButMissing)
     {
-        string executable = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
+        configuredButMissing = null;
+        string? configured = Environment.GetEnvironmentVariable(FfmpegPathVariable);
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            return FindOnPath("ffmpeg");
+        }
+
+        if (File.Exists(configured))
+        {
+            return configured;
+        }
+
+        configuredButMissing = configured;
+        return null;
+    }
+
+    /// <summary>The executable in the first folder of <c>PATH</c> that has one, or null.</summary>
+    private static string? FindOnPath(string name)
+    {
+        string executable = OperatingSystem.IsWindows() ? name + ".exe" : name;
         string[] folders = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(
             Path.PathSeparator,
             StringSplitOptions.RemoveEmptyEntries
         );
-        return folders.Select(folder => Path.Combine(folder.Trim('"'), executable)).FirstOrDefault(File.Exists)
-            ?? throw new SessionException(
-                "dotnet was not found on PATH, and the project's C# assembly needs building before the run. Install the .NET SDK "
-                    + "and put dotnet on PATH, or pass options.prepare: \"never\" to launch without building."
-            );
+        return folders.Select(folder => Path.Combine(folder.Trim('"'), executable)).FirstOrDefault(File.Exists);
     }
 
     public static string FindBridgeScript() => FindBridgeScript(AppContext.BaseDirectory);
