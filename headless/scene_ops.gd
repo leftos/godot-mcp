@@ -2,8 +2,9 @@ extends RefCounted
 ## The headless scene edits operations.gd dispatches: create_scene, save_scene, and the edits that
 ## open a scene, apply one change and save it: delete_nodes and the edits of one node
 ## (attach_script, duplicate_node, load_sprite) in scene_nodes.gd, add_node and the property ops
-## (set_node_properties, and get_node_properties, a read) in scene_props.gd, and the signal ops
-## (get_node_signals, a read, connect_signal, disconnect_signal) in scene_signals.gd.
+## (set_node_properties, and get_node_properties, a read) in scene_props.gd, the signal ops
+## (get_node_signals, a read, connect_signal, disconnect_signal) in scene_signals.gd, and
+## export_mesh_library in scene_mesh.gd, which never saves the scene and writes a file of its own.
 ##
 ## Each edit is apply_<op>(root, params, context) -> {result} or {error}, on a scene already open,
 ## and changes nothing when it refuses; opening and saving are separate, so several edits can be
@@ -18,6 +19,7 @@ const SceneFiles := preload("scene_files.gd")
 const SceneNodes := preload("scene_nodes.gd")
 const SceneProps := preload("scene_props.gd")
 const SceneSignals := preload("scene_signals.gd")
+const SceneMesh := preload("scene_mesh.gd")
 ## The module whose apply_<op>(root, params, context) applies each op on an open scene.
 const EDIT_MODULES := {
 	"delete_nodes": SceneNodes,
@@ -30,9 +32,11 @@ const EDIT_MODULES := {
 	"get_node_signals": SceneSignals,
 	"connect_signal": SceneSignals,
 	"disconnect_signal": SceneSignals,
+	"export_mesh_library": SceneMesh,
 }
-## The ops in EDIT_MODULES that read the open scene and never save it.
-const READ_OPS: Array[String] = ["get_node_properties", "get_node_signals"]
+## The ops in EDIT_MODULES that never save the open scene: the reads, and export_mesh_library,
+## which writes a file of its own.
+const READ_OPS: Array[String] = ["get_node_properties", "get_node_signals", "export_mesh_library"]
 
 
 ## The reply to op, {ok, result} or {ok: false, error}; every op but create_scene and save_scene
