@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # godot-mcp
 
 An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScript, `bridge/`) that let agents run, see and drive the user's Godot projects; it replaces the third-party `godot-mcp-runtime`. This file is a router: each line names the document that owns a question.
@@ -6,7 +10,15 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 
 - `docs/README.md`: the map and the glossary.
 - `docs/plans/MAIN.md`: open work, in order; the design and the user's decisions are in `docs/plans/2026-09-25-first-version.md`.
-- `docs/DEVELOPMENT.md`: toolchain, commands, gates.
+- `docs/DEVELOPMENT.md`: toolchain, commands, gates, what each test class covers, and the footguns: read the footguns before touching process launching, a tool's signature, logging, or the bridge's input handling.
+- Everyday commands: `pwsh run.ps1 build`, `pwsh run.ps1 test` (unit), `pwsh run.ps1 itest` (real Godot); `-Filter "*ClassName"` runs one test class. Each writes `.tmp/<command>.log` and prints its tail.
+
+## Architecture
+
+- `Program.cs` hosts the MCP SDK over stdio with two singletons: `BridgeListener` (loopback TCP) and `GodotSession` (the one live run or attached game). Tools are `[McpServerTool]` methods in `Tools/`: `ProjectTools` (run, attach, detach, stop, debug output) and the `RuntimeTools` partials (screenshots, UI, scripts, input, gamepad). They validate arguments, then call `GodotSession.SendAsync(command, params, …)`.
+- A run: the session writes the marked `override.cfg` naming `bridge/godot_mcp_bridge.gd` as an autoload (`OverrideFile`), hides it (`GitExclude`), and starts Godot with `GODOT_MCP_PORT` and `GODOT_MCP_TOKEN` in its environment (`GodotCommandLine`, `GodotRun`). An attach writes `.godot/godot-mcp/attach.json` in place of the environment. Stop and detach remove what was written.
+- The wire (`Wire/`): frames of a 4-byte big-endian length plus UTF-8 JSON (`FrameCodec`). The bridge's first frame is the hello `HandshakeExpectation` checks; each later request carries an id.
+- The bridge dispatches commands in `_handle_frame` (`ping`, `screenshot`, `ui_elements`, `run_script`, `input`, `shutdown`), with gestures under `_handle_input`. A new runtime tool touches a `RuntimeTools` method, a bridge handler, a unit test for the server-side checks, and an integration test against the InputProbe fixture.
 
 ## Non-negotiables
 
