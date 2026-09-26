@@ -38,7 +38,8 @@ internal static class GitRunner
 
         try
         {
-            using Process process = Process.Start(startInfo)!;
+            using Process process = new() { StartInfo = startInfo };
+            ChildProcesses.Start(process);
             process.StandardInput.Close();
             // stderr is drained so a chatty git never blocks on a full pipe; outside a repository it only says so.
             Task<string> drainError = process.StandardError.ReadToEndAsync();

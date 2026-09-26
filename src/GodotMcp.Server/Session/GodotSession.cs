@@ -320,7 +320,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             string? moviePath = PrepareMoviePath(request);
             BridgeEndpoint bridge = new(registry.Listener.Port, token);
             ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(godotPath, request, bridge, moviePath);
-            GodotRun run = new(ProjectDir, new Process { StartInfo = startInfo, EnableRaisingEvents = true }, previous);
+            GodotRun run = new(ProjectDir, CreateRunProcess(startInfo, request.Quiet), previous);
             StartProcess(run, previous is null ? null : ProcessId);
             _run = run;
             _recording = moviePath is null ? null : new Recording(moviePath);
@@ -350,28 +350,28 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     }
 
     /// <summary>
+    /// The run's process, not yet running. A quiet run on Windows is created suspended on the server's hidden desktop, so
+    /// none of its windows ever shows on the user's; every other run starts through <see cref="Process.Start()"/>.
+    /// </summary>
+    /// <exception cref="SessionException">The hidden desktop or the suspended process could not be created.</exception>
+    private static IRunProcess CreateRunProcess(ProcessStartInfo startInfo, bool quiet)
+    {
+        if (quiet && OperatingSystem.IsWindows())
+        {
+            return DesktopProcess.CreateSuspended(startInfo, HiddenDesktop.Name);
+        }
+
+        return new StartInfoProcess(new Process { StartInfo = startInfo, EnableRaisingEvents = true });
+    }
+
+    /// <summary>
     /// Starts the run's process and its output capture. On a restart (<paramref name="previousProcessId"/> set) a marker line
     /// goes into both carried-over streams once the new process has its id and before any of its output is read.
     /// </summary>
     private void StartProcess(GodotRun run, int? previousProcessId)
     {
-        run.Process.OutputDataReceived += (_, e) => AddLine(run.Stdout, e.Data);
-        run.Process.ErrorDataReceived += (_, e) => AddLine(run.Stderr, e.Data);
         run.Process.Exited += (_, _) => _ = OnRunExitedAsync(run);
-        try
-        {
-            run.Process.Start();
-        }
-        catch (Win32Exception e)
-        {
-            run.Process.Dispose();
-            throw new SessionException(
-                $"Godot could not be started from {run.Process.StartInfo.FileName}: {e.Message}. "
-                    + $"Set {Installation.GodotPathVariable} to the Godot 4.7 console executable.",
-                e
-            );
-        }
-
+        run.Launcher.Start();
         if (previousProcessId is { } previous)
         {
             string marker = $"[godot-mcp] restarted: the previous game (pid {previous}) was stopped; output below is from pid {run.Process.Id}.";
@@ -379,17 +379,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             run.Stderr.Add(marker);
         }
 
-        run.Process.StandardInput.Close();
-        run.Process.BeginOutputReadLine();
-        run.Process.BeginErrorReadLine();
-    }
-
-    private static void AddLine(OutputBuffer buffer, string? line)
-    {
-        if (line is not null)
-        {
-            buffer.Add(line);
-        }
+        run.Launcher.BeginRead(run.Stdout.Add, run.Stderr.Add);
     }
 
     private async Task<BridgeConnection> WaitForHandshakeAsync(GodotRun run, HandshakeExpectation expected, CancellationToken cancellationToken)
@@ -530,16 +520,13 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// </summary>
     private void StopOutputCapture(GodotRun run)
     {
-        foreach (Action cancelRead in new Action[] { run.Process.CancelOutputRead, run.Process.CancelErrorRead })
+        try
         {
-            try
-            {
-                cancelRead();
-            }
-            catch (InvalidOperationException e)
-            {
-                Log.OutputCaptureStopFailed(_logger, e, run.ProjectDir);
-            }
+            run.Launcher.CancelRead();
+        }
+        catch (InvalidOperationException e)
+        {
+            Log.OutputCaptureStopFailed(_logger, e, run.ProjectDir);
         }
     }
 
@@ -590,7 +577,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         {
             if (!ReferenceEquals(run, _run))
             {
-                Log.ReplacedRunExited(_logger, run.ProjectDir);
+                // With no run of its own the session never owned this one: a quiet start that failed ended it.
+                if (_run is not null)
+                {
+                    Log.ReplacedRunExited(_logger, run.ProjectDir);
+                }
+
                 return;
             }
 

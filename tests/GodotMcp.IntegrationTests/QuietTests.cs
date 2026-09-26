@@ -1,5 +1,7 @@
+using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
+using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 
 namespace GodotMcp.IntegrationTests;
@@ -9,6 +11,9 @@ public sealed class QuietTests : IAsyncDisposable
 {
     private const int TestTimeoutMs = 45_000;
     private const int ScriptTimeoutMs = 10_000;
+
+    // How long the window watch goes on once the game answers: its window is created and shown before the bridge's _ready.
+    private const int WatchAfterLaunchMs = 500;
 
     // Whether the window has focus, whether its rect meets any screen's, and the audio driver in use
     // (AudioServer.get_driver_name, servers/audio/audio_server.cpp L1498-1500 in 4.7.2).
@@ -53,12 +58,40 @@ public sealed class QuietTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ANotQuietRunIsOnScreenAndAudible()
     {
-        await LaunchAsync(false, TestContext.Current.CancellationToken);
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await LaunchAsync(false, cancellation);
 
         JsonNode state = await RunAsync(ReadWindowAndAudio);
 
         Assert.True(state["onScreen"]!.GetValue<bool>(), state.ToJsonString());
         Assert.NotEqual("Dummy", state["driver"]!.GetValue<string>());
+        if (OperatingSystem.IsWindows())
+        {
+            // The window check of the quiet test below can see a Godot window: a not-quiet one is on the caller's desktop.
+            int game = _harness.Sessions.Resolve(null).GameProcessId!.Value;
+            Assert.True(await Poll.UntilAsync(() => WindowOwners(visibleOnly: true).Contains(game), TimeSpan.FromSeconds(5), cancellation));
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AQuietRunShowsNoWindowOnTheCallersDesktop()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Desktops are a Windows feature; elsewhere a quiet window is parked off-screen.");
+        // A test process already on a non-interactive desktop cannot tell the paths apart; this was proven red on an interactive one.
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using CancellationTokenSource stopWatching = new();
+        Task<HashSet<int>> watching = Task.Run(() => WatchShownWindows(stopWatching.Token), cancellation);
+
+        await LaunchAsync(true, cancellation);
+        await RunAsync("return 0");
+        await Task.Delay(WatchAfterLaunchMs, cancellation);
+        await stopWatching.CancelAsync();
+        HashSet<int> shownDuringLaunch = await watching;
+
+        GodotSession session = _harness.Sessions.Resolve(null);
+        int[] godot = [session.ProcessId!.Value, session.GameProcessId!.Value];
+        Assert.Empty(shownDuringLaunch.Intersect(godot));
+        Assert.Empty(WindowOwners(visibleOnly: false).Intersect(godot));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -86,4 +119,50 @@ public sealed class QuietTests : IAsyncDisposable
         string json = await _runtime.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: TestContext.Current.CancellationToken);
         return JsonNode.Parse(json)!["value"]!;
     }
+
+    /// <summary>Every process that showed a visible top-level window on this thread's desktop, sampled every 10 ms until stopped.</summary>
+    private static HashSet<int> WatchShownWindows(CancellationToken stop)
+    {
+        HashSet<int> owners = [];
+        while (!stop.IsCancellationRequested)
+        {
+            owners.UnionWith(WindowOwners(visibleOnly: true));
+            Thread.Sleep(10);
+        }
+
+        return owners;
+    }
+
+    /// <summary>The processes owning a top-level window on the calling thread's desktop (EnumWindows).</summary>
+    private static HashSet<int> WindowOwners(bool visibleOnly)
+    {
+        HashSet<int> owners = [];
+        EnumWindows(
+            (window, parameter) =>
+            {
+                if (!visibleOnly || IsWindowVisible(window))
+                {
+                    _ = GetWindowThreadProcessId(window, out int processId);
+                    owners.Add(processId);
+                }
+
+                return true;
+            },
+            0
+        );
+        return owners;
+    }
+
+    private delegate bool EnumWindowsCallback(nint window, nint parameter);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumWindows(EnumWindowsCallback callback, nint parameter);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(nint window);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint window, out int processId);
 }

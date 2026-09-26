@@ -5,6 +5,8 @@
     <AssemblyName>godot-mcp</AssemblyName>
     <RootNamespace>GodotMcp.Server</RootNamespace>
     <IsPackable>false</IsPackable>
+    <!-- LibraryImport's generated P/Invoke stubs are unsafe code (Session/HiddenDesktop.cs, Session/DesktopProcess.cs). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

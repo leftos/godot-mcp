@@ -51,7 +51,7 @@ internal static class ToolProcess
         using LogSink sink = new(new StreamWriter(request.LogPath, request.AppendToLog, Utf8NoBom));
         using Process process = new() { StartInfo = CreateStartInfo(request) };
         var clock = Stopwatch.StartNew();
-        process.Start();
+        ChildProcesses.Start(process);
         // Never inherit the server's stdin, the MCP pipe (see GodotCommandLine.CreateStartInfo).
         process.StandardInput.Close();
         var drain = Task.WhenAll(sink.CopyAsync(process.StandardOutput), sink.CopyAsync(process.StandardError));
