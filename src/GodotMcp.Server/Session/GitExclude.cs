@@ -24,19 +24,23 @@ internal static class GitExclude
     private static readonly string[] InheritedGitVariables = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"];
 
     /// <summary>Adds <c>/&lt;path of fileName from the top level&gt;</c> to the exclude file unless it is there already.</summary>
+    /// <param name="projectDir">The folder that holds the file, in any form: an 8.3 short name reaches the same pattern.</param>
+    /// <param name="fileName">The file's name inside <paramref name="projectDir"/>.</param>
+    /// <param name="logger">Where a missing repository or a missing git is reported.</param>
     public static GitExcludeOutcome Ensure(string projectDir, string fileName, ILogger logger)
     {
         string? excludeGitPath = RunGit(projectDir, logger, "rev-parse", "--git-path", "info/exclude");
-        string? topLevel = excludeGitPath is null ? null : RunGit(projectDir, logger, "rev-parse", "--show-toplevel");
-        if (excludeGitPath is null || topLevel is null)
+        // git reports the folder's path from the top level itself ("game/", or empty at the top), with the long names
+        // however the folder was reached, so no path is compared here against one git resolved.
+        string? prefix = excludeGitPath is null ? null : RunGit(projectDir, logger, "rev-parse", "--show-prefix");
+        if (excludeGitPath is null || prefix is null)
         {
             Log.NotAGitRepository(logger, projectDir, fileName);
             return GitExcludeOutcome.NotARepository;
         }
 
         string excludePath = Path.GetFullPath(Path.Combine(projectDir, excludeGitPath));
-        string relative = Path.GetRelativePath(topLevel, Path.Combine(projectDir, fileName)).Replace('\\', '/');
-        return AppendOnce(excludePath, "/" + EscapeGlob(relative));
+        return AppendOnce(excludePath, "/" + EscapeGlob(prefix + fileName));
     }
 
     private static GitExcludeOutcome AppendOnce(string excludePath, string pattern)

@@ -32,6 +32,19 @@ internal sealed class OutputBuffer(int capacity)
         }
     }
 
+    /// <summary>
+    /// The lines produced after the first <paramref name="mark"/> lines (a past <see cref="TotalLines"/>) that the buffer
+    /// still holds, oldest first.
+    /// </summary>
+    public List<string> Since(long mark)
+    {
+        lock (_lock)
+        {
+            int count = (int)Math.Clamp(_totalLines - mark, 0, _lines.Count);
+            return [.. _lines.Skip(_lines.Count - count)];
+        }
+    }
+
     /// <summary>The newest <paramref name="limit"/> lines, oldest first.</summary>
     public List<string> Tail(int limit)
     {

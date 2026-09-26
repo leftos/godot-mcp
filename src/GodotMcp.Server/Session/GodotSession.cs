@@ -84,9 +84,15 @@ internal sealed class GodotSession(BridgeListener listener, ILogger<GodotSession
     {
         BridgeConnection connection = _run is { IsRunning: true, Connection: { IsOpen: true } live }
             ? live
-            : throw new SessionException("No Godot session is running. Start one with run_project.");
+            : throw new SessionException("No Godot session is running; start one with run_project.");
         return connection.SendAsync(command, parameters, timeout, cancellationToken);
     }
+
+    /// <summary>How many stderr lines the current or last run has produced: a mark to pass to <see cref="GetStderrSince"/>.</summary>
+    public long MarkStderr() => _run?.Stderr.TotalLines ?? 0;
+
+    /// <summary>The current or last run's stderr lines produced after <paramref name="mark"/>, oldest first.</summary>
+    public IReadOnlyList<string> GetStderrSince(long mark) => _run?.Stderr.Since(mark) ?? [];
 
     public DebugOutput GetDebugOutput(int limit)
     {

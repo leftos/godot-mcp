@@ -64,6 +64,9 @@ dotnet_diagnostic.IDE0301.severity = warning
 dotnet_diagnostic.IDE0305.severity = warning
 dotnet_diagnostic.ASP0027.severity = warning
 
+# Cyclomatic complexity ceiling of 8; the threshold lives in CodeMetricsConfig.txt, which the analyzer reads
+dotnet_diagnostic.CA1502.severity = warning
+
 # Naming: interfaces start with I, types and members are PascalCase
 dotnet_naming_rule.interfaces_start_with_i.symbols = interface_symbols
 dotnet_naming_rule.interfaces_start_with_i.style = i_prefixed

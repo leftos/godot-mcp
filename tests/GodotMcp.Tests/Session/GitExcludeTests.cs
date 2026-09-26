@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using GodotMcp.Server.Session;
 using GodotMcp.TestSupport;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -43,6 +44,25 @@ public sealed class GitExcludeTests : IDisposable
     }
 
     [Fact]
+    public void WritesTheLongPathPatternForAProjectReachedThroughAShortName()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "8.3 short names exist only on Windows.");
+        string repo = _temp.Combine("repo");
+        string game = Path.Combine(repo, "LongGameFolderName");
+        Directory.CreateDirectory(game);
+        File.WriteAllText(Path.Combine(game, "project.godot"), "config_version=5\n");
+        Git.InitAndCommitAll(repo);
+        string shortGame = ShortPath(game);
+        Assert.SkipWhen(string.Equals(shortGame, game, StringComparison.OrdinalIgnoreCase), $"The volume of {game} does not create 8.3 short names.");
+
+        GitExcludeOutcome outcome = GitExclude.Ensure(shortGame, OverrideFile.FileName, NullLogger.Instance);
+
+        Assert.Equal(GitExcludeOutcome.Added, outcome);
+        Assert.Contains("/LongGameFolderName/override.cfg", File.ReadAllLines(Path.Combine(repo, ".git", "info", "exclude")));
+        AssertOverrideHidden(repo, game);
+    }
+
+    [Fact]
     public void SkipsAFolderOutsideAnyRepository()
     {
         GitExcludeOutcome outcome = GitExclude.Ensure(_temp.Path, OverrideFile.FileName, NullLogger.Instance);
@@ -58,6 +78,21 @@ public sealed class GitExcludeTests : IDisposable
         File.WriteAllText(Path.Combine(repo, "game", "project.godot"), "config_version=5\n");
         Git.InitAndCommitAll(repo);
         return repo;
+    }
+
+    // cmd's %~s modifier prints the 8.3 form of every component that has one, and the long name of every other.
+    private static string ShortPath(string path)
+    {
+        ProcessStartInfo startInfo = new("cmd.exe", $"/d /c for %I in (\"{path}\") do @echo %~sI")
+        {
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        using Process process = Process.Start(startInfo)!;
+        string output = process.StandardOutput.ReadToEnd();
+        process.WaitForExit();
+        return output.Trim();
     }
 
     private static void AssertOverrideHidden(string workTree, string game)

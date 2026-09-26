@@ -146,15 +146,19 @@ internal sealed class BridgeConnection : IAsyncDisposable
             return;
         }
 
-        if (reply["ok"] is JsonValue ok && ok.TryGetValue(out bool succeeded) && succeeded)
+        if (IsSuccess(reply))
         {
             pending.Reply.TrySetResult(reply["result"]?.DeepClone());
             return;
         }
 
-        string error = HandshakeExpectation.ReadString(reply, "error") ?? reply["error"]?.ToJsonString() ?? "no error message";
-        pending.Reply.TrySetException(new InvalidOperationException($"The bridge refused '{pending.Command}': {error}"));
+        pending.Reply.TrySetException(new InvalidOperationException($"The bridge refused '{pending.Command}': {ReadError(reply)}"));
     }
+
+    private static bool IsSuccess(JsonObject reply) => reply["ok"] is JsonValue ok && ok.TryGetValue(out bool succeeded) && succeeded;
+
+    private static string ReadError(JsonObject reply) =>
+        HandshakeExpectation.ReadString(reply, "error") ?? reply["error"]?.ToJsonString() ?? "no error message";
 
     private static bool TryReadId(JsonObject reply, out long id)
     {

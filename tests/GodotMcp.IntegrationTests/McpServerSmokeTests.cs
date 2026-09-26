@@ -8,13 +8,15 @@ namespace GodotMcp.IntegrationTests;
 /// <summary>The built server exe over stdio, driven by the MCP SDK's own client, as an agent's host would.</summary>
 public sealed class McpServerSmokeTests : IDisposable
 {
+    private const string ChildCountScript =
+        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\treturn scene_tree.root.get_child_count()\n";
     private static readonly string[] SmokeArgs = ["--smoke"];
     private readonly ProbeProject _probe = new();
 
     public void Dispose() => _probe.Dispose();
 
     [Fact(Timeout = 45_000)]
-    public async Task ListsTheThreeToolsAndRunsReadsAndStopsTheProbe()
+    public async Task ListsTheSixToolsRunsTheProbeReadsItAndStopsIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         StdioClientTransport transport = new(
@@ -30,11 +32,20 @@ public sealed class McpServerSmokeTests : IDisposable
         IList<McpClientTool> tools = await client.ListToolsAsync(cancellationToken: cancellation);
         CallToolResult run = await CallAsync(client, "run_project", new() { ["projectPath"] = _probe.Directory, ["userArgs"] = SmokeArgs });
         bool sawProbe = await WaitForProbeLineAsync(client, "[probe] ready args=[\"--smoke\"]");
+        CallToolResult screenshot = await CallAsync(client, "take_screenshot", new() { ["responseMode"] = "preview" });
+        CallToolResult script = await CallAsync(client, "run_script", new() { ["script"] = ChildCountScript });
         CallToolResult stop = await CallAsync(client, "stop_project", []);
 
-        Assert.Equal(["get_debug_output", "run_project", "stop_project"], tools.Select(tool => tool.Name).Order());
+        Assert.Equal(
+            ["get_debug_output", "get_ui_elements", "run_project", "run_script", "stop_project", "take_screenshot"],
+            tools.Select(tool => tool.Name).Order()
+        );
         Assert.True(run.IsError is not true, Text(run));
         Assert.True(sawProbe);
+        Assert.True(screenshot.IsError is not true, Text(screenshot));
+        Assert.Equal("image/png", Assert.Single(screenshot.Content.OfType<ImageContentBlock>()).MimeType);
+        Assert.True(script.IsError is not true, Text(script));
+        Assert.Equal("2", Text(script));
         Assert.True(stop.IsError is not true, Text(stop));
         Assert.False(JsonDocument.Parse(Text(stop)).RootElement.GetProperty("killed").GetBoolean());
         Assert.False(File.Exists(_probe.OverrideFile));
