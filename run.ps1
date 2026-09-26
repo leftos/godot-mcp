@@ -46,7 +46,7 @@ $ErrorActionPreference = 'Stop'
 # The integration test classes, one gate per group, run in this order. A new test class goes into one group; itest
 # refuses to run while a class is in no group or a listed class no longer exists.
 $itestGroups = [ordered]@{
-    lifecycle = @('SessionLifecycleTests', 'AttachTests', 'QuietTests', 'WatchdogTests', 'McpServerSmokeTests')
+    lifecycle = @('SessionLifecycleTests', 'AttachTests', 'QuietTests', 'WatchdogTests', 'McpServerSmokeTests', 'ProfileTests')
     input     = @('InputTests', 'GamepadTests')
     reads     = @('RuntimeReadTests', 'InspectionTests', 'BaselineTests')
     time      = @('TimeTests')

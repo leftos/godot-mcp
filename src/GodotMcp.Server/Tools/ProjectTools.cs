@@ -44,7 +44,8 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     [McpServerTool(Name = "run_project", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Runs a Godot project with the godot-mcp bridge injected through a temporary override.cfg (never project.godot), "
-            + "and returns once the bridge has connected; stop_project ends the session."
+            + "and returns once the bridge has connected; stop_project ends the session. A godot-mcp.json beside project.godot "
+            + "supplies launch defaults and presets (see options.preset)."
             + SessionsNote
             + " "
             + RealPadsNote
@@ -55,25 +56,21 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         [Description("Arguments for the game, passed after --; the game reads them with OS.get_cmdline_user_args().")] string[]? userArgs = null,
         [Description("Arguments for the engine, placed before --, e.g. [\"--resolution\", \"1280x720\"].")] string[]? engineArgs = null,
         [Description(
-            "{quiet, shutOutRealGamepads, session, prepare}; when left out, quiet is true, shutOutRealGamepads is false, prepare is "
-                + "auto (a stale C# assembly is built and missing imports are run first; the result's prep says what was done) and "
-                + "the session is named after the project folder."
+            "{quiet, shutOutRealGamepads, session, prepare, preset}; when left out, quiet is true unless godot-mcp.json sets it, "
+                + "shutOutRealGamepads is false, prepare is auto (a stale C# assembly is built and missing imports are run first; "
+                + "the result's prep says what was done), no preset is used, and the session is named by the preset's session, "
+                + "else after the project folder."
         )]
             RunOptions? options = null,
         CancellationToken cancellationToken = default
     )
     {
         RunOptions chosen = options ?? new RunOptions();
-        LaunchRequest request = new(
-            projectPath,
-            scene,
-            engineArgs ?? [],
-            userArgs ?? [],
-            chosen.Quiet,
-            chosen.ShutOutRealGamepads,
-            chosen.ShouldPrepare()
-        );
-        LaunchResult result = await RunAsync(() => sessions.LaunchAsync(request, chosen.Session, cancellationToken));
+        LaunchResult result = await RunAsync(() =>
+        {
+            ProfileLaunch launch = ProfileFor(projectPath).Merge(scene, userArgs ?? [], engineArgs ?? [], chosen);
+            return sessions.LaunchAsync(launch.Request, launch.Session, cancellationToken);
+        });
         return JsonSerializer.Serialize(result, Json);
     }
 
@@ -199,6 +196,13 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "is reused; detach_project removes an attached one."
     )]
     public string ListSessions() => JsonSerializer.Serialize(new SessionList(sessions.List()), Json);
+
+    /// <summary>
+    /// The project's godot-mcp.json, loaded from the normalised folder. An empty path gets an empty profile, so the launch
+    /// reports the empty path itself.
+    /// </summary>
+    private static ProjectProfile ProfileFor(string projectPath) =>
+        string.IsNullOrWhiteSpace(projectPath) ? ProjectProfile.Empty(projectPath) : ProjectProfile.Load(ProjectPaths.Normalise(projectPath));
 
     private static async Task<T> RunAsync<T>(Func<Task<T>> operation)
     {

@@ -21,8 +21,7 @@ public sealed class GodotCommandLineTests
     [Fact]
     public void ADefaultRunChoosesTheDummyAudioDriverBeforeTheEngineArgs()
     {
-        RunOptions defaults = new();
-        LaunchRequest request = new(Project, null, ["--audio-driver", "WASAPI"], [], defaults.Quiet, defaults.ShutOutRealGamepads, Prepare: true);
+        LaunchRequest request = ProjectProfile.Empty(Project).Merge(null, [], ["--audio-driver", "WASAPI"], new RunOptions()).Request;
 
         List<string> arguments = GodotCommandLine.BuildArguments(request);
 
@@ -79,13 +78,9 @@ public sealed class GodotCommandLineTests
     public void RunsQuietByDefault()
     {
         BridgeEndpoint bridge = new(4321, "t0k3n");
-        RunOptions defaults = new();
+        LaunchRequest defaults = ProjectProfile.Empty(Project).Merge(null, [], [], new RunOptions()).Request;
 
-        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(
-            "godot.exe",
-            new LaunchRequest(Project, null, [], [], defaults.Quiet, defaults.ShutOutRealGamepads, Prepare: true),
-            bridge
-        );
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", defaults, bridge);
 
         Assert.Equal("1", startInfo.Environment[GodotCommandLine.QuietVariable]);
     }
