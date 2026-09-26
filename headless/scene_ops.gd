@@ -12,7 +12,8 @@ extends RefCounted
 ## scene the edit is applied to, and the prep's C# build state (params.build, which the server adds
 ## to every request); an edit reads them there, never in its own params. A new op is registered in
 ## EDIT_MODULES alone, and in READ_OPS too when it never saves. A scene that uses C# scripts is
-## not saved while the build failed.
+## not saved while the build failed. batch_scene_operations applies several edits to one open
+## scene and saves it once, export_mesh_library's writes deferred until after the save.
 
 const SceneEdit := preload("scene_edit.gd")
 const SceneFiles := preload("scene_files.gd")
@@ -48,6 +49,8 @@ static func run(op: String, params: Dictionary) -> Dictionary:
 			return create_scene(params)
 		"save_scene":
 			return save_scene(params)
+		"batch_scene_operations":
+			return batch_scene(params)
 	if op in READ_OPS:
 		return read_scene(op, params)
 	return edit_scene(op, params)
@@ -127,6 +130,66 @@ static func read_scene(op: String, params: Dictionary) -> Dictionary:
 	if applied.has("error"):
 		return _fail(applied["error"])
 	return {"ok": true, "result": applied["result"]}
+
+
+## Opens params.scene once and applies each of params.steps ({op, params}) to it in order; at the
+## first step that fails nothing is saved and nothing written. When every step passes, the scene is
+## saved once (unless every step is export_mesh_library), then the libraries the steps deferred to
+## context.pending_writes are written. {ok, result: {passed, steps: [{index, tool, ok, result |
+## error}], failedAt?: {index, tool, error}, uid?}}; a failed save or write is {ok: false, error}.
+static func batch_scene(params: Dictionary) -> Dictionary:
+	var opened: Dictionary = SceneEdit.open(params.get("scene", ""))
+	if opened.has("error"):
+		return _fail(opened["error"])
+	var root: Node = opened["root"]
+	var context: Dictionary = _context_of(params)
+	var pending: Array = []
+	context["pending_writes"] = pending
+	var steps: Array = params.get("steps", [])
+	var report: Dictionary = _apply_steps(root, steps, context)
+	if report.has("failedAt"):
+		root.free()
+		return {"ok": true, "result": report}
+	var saved: Dictionary = _save_batch(root, steps, params)
+	root.free()
+	if saved.has("error"):
+		return _fail(saved["error"])
+	if saved.has("uid"):
+		report["uid"] = saved["uid"]
+	var written: Dictionary = SceneMesh.write_pending(pending)
+	if written.has("error"):
+		var prefix: String = "the scene was saved, but " if saved.has("uid") else ""
+		return _fail(prefix + str(written["error"]))
+	return {"ok": true, "result": report}
+
+
+## Applies steps ({op, params}) to root in order, stopping at the first that fails: {passed,
+## steps: [{index, tool, ok, result | error}], failedAt?: {index, tool, error}}.
+static func _apply_steps(root: Node, steps: Array, context: Dictionary) -> Dictionary:
+	var entries: Array = []
+	for index in steps.size():
+		var step: Dictionary = steps[index]
+		var op: String = str(step.get("op", ""))
+		var applied: Dictionary = apply(op, root, step.get("params", {}), context)
+		var entry: Dictionary = {"index": index, "tool": op, "ok": not applied.has("error")}
+		if applied.has("error"):
+			entry["error"] = applied["error"]
+			entries.append(entry)
+			var failed: Dictionary = {"index": index, "tool": op, "error": applied["error"]}
+			return {"passed": false, "steps": entries, "failedAt": failed}
+		entry["result"] = applied["result"]
+		entries.append(entry)
+	return {"passed": true, "steps": entries}
+
+
+## Saves the batch's scene in place unless every step is export_mesh_library: {uid}, {error}, or
+## {} when it is not saved.
+static func _save_batch(root: Node, steps: Array, params: Dictionary) -> Dictionary:
+	for step: Dictionary in steps:
+		if step.get("op", "") != "export_mesh_library":
+			var scene_path: String = params.get("scene", "")
+			return _save_checked(root, scene_path, scene_path, params)
+	return {}
 
 
 ## Saves root to target with the uid target has (a new one for a new file), unless the scene uses
