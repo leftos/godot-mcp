@@ -13,7 +13,6 @@ Steps 0 to 4b, Wave 1 (steps 7-9: named sessions, the error feed and compact out
 
 ### Wave 4: singles
 
-- [ ] Measure whether prep's `dotnet build` fails on a locked assembly while another session's game on the same folder has it loaded (delve's server and clients); Godot loads assemblies into memory (`PluginLoadContext.cs` L59-69), so it should not, but it is unverified. If it does, refuse the build as the import is refused, with a test (step 11 review, 2026-09-26)
 - [ ] `SessionRegistryTests`' still-starting restart test needs Godot at `GODOT_PATH` or the default path (it parks a launch on the prep lock after `FindGodot`), the only unit test that does; make it Godot-free, e.g. by taking the lock before the Godot lookup or faking the lookup (step 11b report, 2026-09-26)
 
 - [ ] Step 15: in-engine recording (video and audio from inside the engine, frame-perfect, headless or hidden). Absorbs the "in-engine recording" item from Later
