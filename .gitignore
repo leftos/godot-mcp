@@ -3,3 +3,5 @@ obj/
 .tmp/
 .godot/
 *.user
+__pycache__/
+.pytest_cache/

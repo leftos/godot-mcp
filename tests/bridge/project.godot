@@ -1,0 +1,9 @@
+; Engine configuration file.
+; The bridge's headless GDScript unit tests: `pwsh run.ps1 gdtest` runs run_tests.gd in this project.
+
+config_version=5
+
+[application]
+
+config/name="godot-mcp bridge tests"
+config/features=PackedStringArray("4.7")

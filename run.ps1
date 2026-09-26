@@ -1,4 +1,5 @@
 #!/usr/bin/env pwsh
+
 <#
 .SYNOPSIS
 Builds, tests, formats and publishes godot-mcp.
@@ -18,6 +19,9 @@ exits with the command's own status, or 124 when it outlived its ceiling and was
            group follows, and the exit status is the first non-zero group's.
   format   dotnet format style (info severity), then CSharpier, on the whole solution; ceiling 180 s each
   publish  a framework-dependent win-x64 server at bin/publish/godot-mcp.exe, with bridge/ beside it; ceiling 300 s
+  gdtest   the bridge's GDScript unit tests (tests/bridge/test_*.gd) in headless Godot (GODOT_PATH, else
+           F:\Godot\Godot_console.exe): godot --headless --path tests/bridge --script res://run_tests.gd. Each failure
+           prints as "FAIL <file>::<test>: <message>", then "gdtest: <passed> passed, <failed> failed"; ceiling 60 s
 
 -Filter narrows test or itest to one test class, e.g. -Filter "*SessionLifecycleTests". A filtered itest skips the
 groups: one gate, .tmp/itest.log, ceiling 300 s, --timeout 4m.
@@ -30,7 +34,7 @@ pwsh run.ps1 itest -Filter "*McpServerSmokeTests"
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('build', 'test', 'itest', 'format', 'publish', 'help')]
+    [ValidateSet('build', 'test', 'itest', 'format', 'publish', 'gdtest', 'help')]
     [string]$Command = 'help',
 
     [string]$Filter = ''
@@ -56,18 +60,46 @@ $solution = Join-Path $root 'GodotMcp.slnx'
 
 $gate = Join-Path $root 'tools/gate.ps1'
 
-# Runs dotnet under tools/gate.ps1: the whole output to .tmp/<Name>.log, the last 15 lines on the screen, and the
+# Runs a program under tools/gate.ps1: the whole output to .tmp/<Name>.log, the last 15 lines on the screen, and the
 # process tree killed with status 124 when it outlives its ceiling (a run that reaches one has hung, not slowed).
+function Invoke-Gated {
+    param(
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [int]$TimeoutSeconds,
+        [Parameter(Mandatory)] [string]$Program,
+        [Parameter(Mandatory)] [string[]]$Arguments
+    )
+    $log = Join-Path $logDir "$Name.log"
+    Write-Host "$Program $($Arguments -join ' ')  (log: $log, ceiling: $TimeoutSeconds s)"
+    & $gate -Log $log -TimeoutSeconds $TimeoutSeconds -Tail 15 -- $Program @Arguments | Out-Host
+    return $LASTEXITCODE
+}
+
+# Runs dotnet under tools/gate.ps1, as Invoke-Gated does.
 function Invoke-Logged {
     param(
         [Parameter(Mandatory)] [string]$Name,
         [Parameter(Mandatory)] [int]$TimeoutSeconds,
         [Parameter(Mandatory)] [string[]]$Arguments
     )
-    $log = Join-Path $logDir "$Name.log"
-    Write-Host "dotnet $($Arguments -join ' ')  (log: $log, ceiling: $TimeoutSeconds s)"
-    & $gate -Log $log -TimeoutSeconds $TimeoutSeconds -Tail 15 -- dotnet @Arguments | Out-Host
-    return $LASTEXITCODE
+    return Invoke-Gated -Name $Name -TimeoutSeconds $TimeoutSeconds -Program 'dotnet' -Arguments $Arguments
+}
+
+# The Godot executable as the server finds it (Installation.FindGodot): GODOT_PATH when set, else the default path;
+# stops the script when the one it names does not exist.
+function Get-GodotPath {
+    $configured = $env:GODOT_PATH
+    if (-not [string]::IsNullOrWhiteSpace($configured)) {
+        if (-not (Test-Path -LiteralPath $configured -PathType Leaf)) {
+            throw "GODOT_PATH is '$configured', which does not exist. Point it at the Godot 4.7 console executable."
+        }
+        return $configured
+    }
+    $default = 'F:\Godot\Godot_console.exe'
+    if (-not (Test-Path -LiteralPath $default -PathType Leaf)) {
+        throw "Godot was not found: GODOT_PATH is not set and $default does not exist. Set GODOT_PATH to the Godot 4.7 console executable."
+    }
+    return $default
 }
 
 # xUnit v3 under Microsoft Testing Platform takes several classes after one --filter-class and runs a test in any of
@@ -193,6 +225,10 @@ switch ($Command) {
             '-c', 'Release', '-r', 'win-x64', '--self-contained', 'false', '-o', (Join-Path $root 'bin/publish')
         )
         exit (Invoke-Logged -Name 'publish' -TimeoutSeconds 300 -Arguments $arguments)
+    }
+    'gdtest' {
+        $arguments = @('--headless', '--path', (Join-Path $root 'tests/bridge'), '--script', 'res://run_tests.gd')
+        exit (Invoke-Gated -Name 'gdtest' -TimeoutSeconds 60 -Program (Get-GodotPath) -Arguments $arguments)
     }
     default {
         Get-Help $PSCommandPath -Detailed

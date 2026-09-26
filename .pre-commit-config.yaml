@@ -1,5 +1,7 @@
 # prek hooks (prek install; prek run --all-files). The format check runs first, the warnings-as-errors build gates
-# the result, then the unit tests; gdlint checks the GDScript the server ships.
+# the result, then the unit tests; gdlint checks the GDScript the server ships, gdcomplexity holds it to the same
+# complexity and length limits as the C#, and gdtest runs the bridge's GDScript unit tests in headless Godot. Ruff
+# (ruff.toml) and pytest check the Python tools and their tests.
 repos:
   - repo: local
     hooks:
@@ -25,9 +27,36 @@ repos:
         name: gdformat check
         entry: gdformat --check
         language: system
-        files: ^(bridge|headless|tests/fixtures)/.*\.gd$
+        files: ^(bridge|headless|tests/fixtures|tests/bridge)/.*\.gd$
       - id: gdlint
         name: gdlint
         entry: gdlint
         language: system
+        files: ^(bridge|headless|tests/bridge)/.*\.gd$
+      - id: gdcomplexity
+        name: GDScript complexity and length
+        entry: uv run --quiet --with "gdtoolkit>=4,<5" tools/gdcomplexity.py
+        language: system
         files: ^(bridge|headless)/.*\.gd$
+      - id: gdtest
+        name: GDScript unit tests
+        entry: pwsh -NoProfile -File run.ps1 gdtest
+        language: system
+        pass_filenames: false
+        files: ^(bridge|tests/bridge)/
+      - id: ruff-format
+        name: ruff format check
+        entry: uvx ruff@0.16.9 format --check
+        language: system
+        files: ^(tools|tests/tools)/.*\.py$
+      - id: ruff-check
+        name: ruff check
+        entry: uvx ruff@0.16.9 check
+        language: system
+        files: ^(tools|tests/tools)/.*\.py$
+      - id: pytest-tools
+        name: pytest tests/tools
+        entry: uv run --quiet --with pytest --with "gdtoolkit>=4,<5" pytest -q tests/tools
+        language: system
+        pass_filenames: false
+        files: ^(tools/.*\.py|tests/tools/)

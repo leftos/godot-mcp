@@ -1,0 +1,6 @@
+# Ruff for the repo's Python tools (tools/*.py) and their tests (tests/tools); the prek hooks run it.
+line-length = 150
+target-version = "py313"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]

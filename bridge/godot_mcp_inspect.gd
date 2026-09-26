@@ -122,16 +122,21 @@ func scene_tree(params: Dictionary) -> Variant:
 func _collect(node: Node, depth: int, filter: Dictionary, into: Array) -> void:
 	if node == _bridge:
 		return
-	var class_name_filter: String = filter["class"]
-	var group: String = filter["group"]
-	var matches_class: bool = class_name_filter.is_empty() or node.is_class(class_name_filter)
-	if matches_class and (group.is_empty() or node.is_in_group(group)):
+	if _matches(node, filter):
 		into.append(_describe(node))
 	var max_depth: int = filter["maxDepth"]
 	if max_depth >= 0 and depth >= max_depth:
 		return
 	for child in node.get_children():
 		_collect(child, depth + 1, filter, into)
+
+
+## Whether node is of filter.class or a subclass and in filter.group, where those are set.
+static func _matches(node: Node, filter: Dictionary) -> bool:
+	var class_name_filter: String = filter["class"]
+	var group: String = filter["group"]
+	var matches_class: bool = class_name_filter.is_empty() or node.is_class(class_name_filter)
+	return matches_class and (group.is_empty() or node.is_in_group(group))
 
 
 func _describe(node: Node) -> Dictionary:
@@ -160,17 +165,14 @@ func inspect_node(params: Dictionary) -> Variant:
 	if found is String:
 		return found
 	var node: Node = found
-	var properties: Dictionary = {}
 	var names: Variant = params.get("properties")
+	var properties: Variant
 	if names is Array and not (names as Array).is_empty():
-		for property_name: Variant in names:
-			if _property_info(node, str(property_name)).is_empty():
-				return _no_property(node, str(property_name))
-			properties[str(property_name)] = _bridge._to_json(node.get(str(property_name)))
+		properties = _named_properties(node, names)
 	else:
-		for info: Dictionary in node.get_property_list():
-			if _is_shown(info):
-				properties[info["name"]] = _bridge._to_json(node.get(info["name"]))
+		properties = _shown_properties(node)
+	if properties is String:
+		return properties
 	var result: Dictionary = {
 		"path": str(node.get_path()), "class": node.get_class(), "properties": properties
 	}
@@ -178,6 +180,25 @@ func inspect_node(params: Dictionary) -> Variant:
 	if not script_path.is_empty():
 		result["script"] = script_path
 	return result
+
+
+## {name: value} for each of names, or a String naming the first property the node lacks.
+func _named_properties(node: Node, names: Array) -> Variant:
+	var properties: Dictionary = {}
+	for property_name: Variant in names:
+		if _property_info(node, str(property_name)).is_empty():
+			return _no_property(node, str(property_name))
+		properties[str(property_name)] = _bridge._to_json(node.get(str(property_name)))
+	return properties
+
+
+## {name: value} for the node's script variables and the properties the inspector shows.
+func _shown_properties(node: Node) -> Dictionary:
+	var properties: Dictionary = {}
+	for info: Dictionary in node.get_property_list():
+		if _is_shown(info):
+			properties[info["name"]] = _bridge._to_json(node.get(info["name"]))
+	return properties
 
 
 static func _is_shown(info: Dictionary) -> bool:
