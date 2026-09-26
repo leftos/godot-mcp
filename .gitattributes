@@ -1,0 +1,2 @@
+# gdformat on Windows rewrites a file with CRLF endings; GDScript is stored and checked out LF.
+*.gd text eol=lf

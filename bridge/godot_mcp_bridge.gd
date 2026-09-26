@@ -30,7 +30,7 @@ const MOUSE_BUTTONS := {
 }
 const MODIFIER_KEYS := {KEY_SHIFT: "shift", KEY_CTRL: "ctrl", KEY_ALT: "alt", KEY_META: "meta"}
 ## A US keyboard's shifted symbols, and at the same index the key that types each unshifted.
-const SHIFTED_SYMBOLS := "~!@#$%^&*()_+{}|:\"<>?"
+const SHIFTED_SYMBOLS := '~!@#$%^&*()_+{}|:"<>?'
 const UNSHIFTED_KEYS := "`1234567890-=[]\\;',./"
 const UNKNOWN_KEY_HINT := (
 	"Key names are Godot's Key constants without KEY_: Enter, Escape, Space, A, 1, F1, Up, "
@@ -106,8 +106,14 @@ func _find_endpoint() -> Dictionary:
 	var port_text: String = OS.get_environment("GODOT_MCP_PORT")
 	var token: String = OS.get_environment("GODOT_MCP_TOKEN")
 	if port_text.is_valid_int() and not token.is_empty():
-		var shut_out_real_gamepads: bool = OS.get_environment("GODOT_MCP_SHUT_OUT_REAL_GAMEPADS") == "1"
-		return {"port": port_text.to_int(), "token": token, "shutOutRealGamepads": shut_out_real_gamepads}
+		var shut_out_real_gamepads: bool = (
+			OS.get_environment("GODOT_MCP_SHUT_OUT_REAL_GAMEPADS") == "1"
+		)
+		return {
+			"port": port_text.to_int(),
+			"token": token,
+			"shutOutRealGamepads": shut_out_real_gamepads
+		}
 	var path: String = ProjectSettings.globalize_path(ATTACH_FILE)
 	if not FileAccess.file_exists(path):
 		return {}
@@ -196,9 +202,7 @@ func _read_frames() -> void:
 		if chunk[0] == OK:
 			_buffer.append_array(chunk[1])
 	while _buffer.size() >= HEADER_BYTES:
-		var length: int = (
-			(_buffer[0] << 24) | (_buffer[1] << 16) | (_buffer[2] << 8) | _buffer[3]
-		)
+		var length: int = (_buffer[0] << 24) | (_buffer[1] << 16) | (_buffer[2] << 8) | _buffer[3]
 		if length > MAX_FRAME_BYTES:
 			push_error("godot-mcp bridge: a frame of %d bytes is over the limit; closing." % length)
 			_stream.disconnect_from_host()
@@ -229,7 +233,9 @@ func _handle_frame(text: String) -> void:
 		"ui_elements":
 			var elements: Array = []
 			var visible_only: bool = bool(params.get("visibleOnly", true))
-			_collect_controls(get_tree().root, visible_only, str(params.get("classFilter", "")), elements)
+			_collect_controls(
+				get_tree().root, visible_only, str(params.get("classFilter", "")), elements
+			)
 			_reply_ok(id, {"elements": elements})
 		"run_script":
 			_handle_run_script(id, str(params.get("source", "")))
@@ -262,7 +268,9 @@ func _handle_screenshot(id: int, params: Dictionary) -> void:
 		)
 		var inside: Rect2i = wanted.intersection(Rect2i(Vector2i.ZERO, image.get_size()))
 		if not inside.has_area():
-			_reply_error(id, "the crop %s lies outside the %s screenshot" % [wanted, image.get_size()])
+			_reply_error(
+				id, "the crop %s lies outside the %s screenshot" % [wanted, image.get_size()]
+			)
 			return
 		image = image.get_region(inside)
 	var directory: String = ProjectSettings.globalize_path(SCREENSHOT_DIR)
@@ -274,10 +282,14 @@ func _handle_screenshot(id: int, params: Dictionary) -> void:
 	if error != OK:
 		_reply_error(id, "saving %s failed: %s" % [path, error_string(error)])
 		return
-	var result: Dictionary = {"path": path, "width": image.get_width(), "height": image.get_height()}
+	var result: Dictionary = {
+		"path": path, "width": image.get_width(), "height": image.get_height()
+	}
 	var preview_max_width: int = int(params.get("previewMaxWidth", 0))
 	if preview_max_width > 0 and image.get_width() > preview_max_width:
-		error = _save_preview(image, path.get_basename() + "_preview.png", preview_max_width, result)
+		error = _save_preview(
+			image, path.get_basename() + "_preview.png", preview_max_width, result
+		)
 		if error != OK:
 			_reply_error(id, "saving the preview of %s failed: %s" % [path, error_string(error)])
 			return
@@ -560,9 +572,12 @@ func _play_event(event: Variant) -> String:
 	var spec: Dictionary = event
 	var kind: String = str(spec.get("type", ""))
 	var error: String = (
-		"unknown type '%s'; the types are key, mouse_button, mouse_motion, joypad_button, "
-		+ "joypad_motion, action, click_element and wait"
-	) % kind
+		(
+			"unknown type '%s'; the types are key, mouse_button, mouse_motion, joypad_button, "
+			+ "joypad_motion, action, click_element and wait"
+		)
+		% kind
+	)
 	match kind:
 		"key":
 			error = await _play_raw_key(spec)
@@ -677,7 +692,9 @@ func _resolve_element(element: String) -> Variant:
 			% element
 		)
 	if not node is Control:
-		return "'%s' is a %s, not a Control, so it has no rect to aim at" % [element, node.get_class()]
+		return (
+			"'%s' is a %s, not a Control, so it has no rect to aim at" % [element, node.get_class()]
+		)
 	return (node as Control).get_global_rect().get_center()
 
 

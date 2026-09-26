@@ -67,16 +67,9 @@ static func _format_stack(backtraces: Array[ScriptBacktrace]) -> Array:
 		for index in backtrace.get_frame_count():
 			if frames.size() == MAX_FRAMES:
 				return frames
-			frames.append(
-				(
-					"%s:%d in %s"
-					% [
-						backtrace.get_frame_file(index),
-						backtrace.get_frame_line(index),
-						backtrace.get_frame_function(index),
-					]
-				)
-			)
+			var file: String = backtrace.get_frame_file(index)
+			var line: int = backtrace.get_frame_line(index)
+			frames.append("%s:%d in %s" % [file, line, backtrace.get_frame_function(index)])
 	return frames
 
 

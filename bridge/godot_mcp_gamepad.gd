@@ -17,9 +17,27 @@ const MAX_JOY_DEVICE := 15
 ## Godot's JoyButton names without JOY_BUTTON_, at their enum values: A is 0, TOUCHPAD 20
 ## (core/input/input_enums.h L80-102 in 4.7.2); JoyAxis likewise, LEFT_X 0 to TRIGGER_RIGHT 5.
 const JOY_BUTTON_NAMES: PackedStringArray = [
-	"A", "B", "X", "Y", "BACK", "GUIDE", "START", "LEFT_STICK", "RIGHT_STICK", "LEFT_SHOULDER",
-	"RIGHT_SHOULDER", "DPAD_UP", "DPAD_DOWN", "DPAD_LEFT", "DPAD_RIGHT", "MISC1", "PADDLE1",
-	"PADDLE2", "PADDLE3", "PADDLE4", "TOUCHPAD",
+	"A",
+	"B",
+	"X",
+	"Y",
+	"BACK",
+	"GUIDE",
+	"START",
+	"LEFT_STICK",
+	"RIGHT_STICK",
+	"LEFT_SHOULDER",
+	"RIGHT_SHOULDER",
+	"DPAD_UP",
+	"DPAD_DOWN",
+	"DPAD_LEFT",
+	"DPAD_RIGHT",
+	"MISC1",
+	"PADDLE1",
+	"PADDLE2",
+	"PADDLE3",
+	"PADDLE4",
+	"TOUCHPAD",
 ]
 const JOY_AXIS_NAMES: PackedStringArray = [
 	"LEFT_X", "LEFT_Y", "RIGHT_X", "RIGHT_Y", "TRIGGER_LEFT", "TRIGGER_RIGHT"
@@ -254,4 +272,6 @@ func _parse_device(value: Variant) -> int:
 
 
 func _bad_device(value: Variant) -> String:
-	return "device %s is not a joypad id; the pads are 0 (the first) to %d" % [value, MAX_JOY_DEVICE]
+	return (
+		"device %s is not a joypad id; the pads are 0 (the first) to %d" % [value, MAX_JOY_DEVICE]
+	)

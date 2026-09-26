@@ -21,6 +21,11 @@ repos:
         language: system
         pass_filenames: false
         files: \.(cs|csproj|props|slnx)$|^bridge/
+      - id: gdformat
+        name: gdformat check
+        entry: gdformat --check
+        language: system
+        files: ^(bridge|headless|tests/fixtures)/.*\.gd$
       - id: gdlint
         name: gdlint
         entry: gdlint

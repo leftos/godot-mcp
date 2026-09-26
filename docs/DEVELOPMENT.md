@@ -7,7 +7,7 @@
 | .NET SDK | 10.0.401 (`global.json`, `latestFeature`) | test runner: Microsoft.Testing.Platform |
 | Godot | 4.7.2 stable | `$env:GODOT_PATH`, else `F:\Godot\Godot_console.exe`; the server and the tests look it up the same way (`Session/Installation.cs`) |
 | CSharpier | 1.3.0 (local tool) | `dotnet tool restore` |
-| gdlint | gdtoolkit 4.5.0 | `uv tool install "gdtoolkit>=4,<5"` |
+| gdlint, gdformat | gdtoolkit 4.5.0 | `uv tool install "gdtoolkit>=4,<5"`; `gdformat bridge/ tests/fixtures/` formats (it writes CRLF on Windows, which `.gitattributes` turns back into LF for `*.gd`) |
 | prek | any | `prek install` once per clone |
 
 Package versions live in `Directory.Packages.props` (looked up on nuget.org 2026-09-25): ModelContextProtocol 2.2.0, Microsoft.Extensions.Hosting 10.0.12, xunit.v3 4.0.1 (MTP v2 by default; no Microsoft.NET.Test.Sdk or xunit.runner.visualstudio, which serve only VSTest).
@@ -23,7 +23,7 @@ Everything runs from the repo root through `run.ps1`, and every command runs und
 | `pwsh run.ps1 itest [-Filter "*Class"]` | integration tests against the real Godot (`tests/GodotMcp.IntegrationTests`) | 300 s, plus MTP `--timeout 4m` | 53 tests, about 95 s |
 | `pwsh run.ps1 format` | `dotnet format style --severity info`, then CSharpier | 180 s per pass | |
 | `pwsh run.ps1 publish` | framework-dependent win-x64 to `bin/publish/godot-mcp.exe`, with `bin/publish/bridge/` beside it | 300 s | |
-| `prek run --all-files` | CSharpier check, `dotnet build -warnaserror`, unit tests, gdlint on `bridge/` and `headless/` (empty until step 5) | | sees tracked files only |
+| `prek run --all-files` | CSharpier check, `dotnet build -warnaserror`, unit tests, `gdformat --check` on `bridge/`, `headless/` and `tests/fixtures/`, gdlint on `bridge/` and `headless/` (empty until step 5) | | sees tracked files only |
 
 `-Filter` becomes `--filter-class`; a class filter needs the full name or a wildcard.
 
