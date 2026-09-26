@@ -76,6 +76,25 @@ internal sealed partial class GodotSession
     }
 
     /// <summary>
+    /// Writes the override under the folder's prep lock, so it never lands while a launch prepares or a headless run (which
+    /// reads override.cfg) holds the folder; the lock is let go before the wait for the game.
+    /// </summary>
+    private async Task WriteOverrideUnderPrepLockAsync(string bridgeScript, CancellationToken cancellationToken)
+    {
+        SemaphoreSlim folderLock = registry.PrepLock(ProjectDir);
+        await folderLock.WaitAsync(cancellationToken);
+        try
+        {
+            registry.WriteOverride(this, bridgeScript);
+            GitExclude.Ensure(ProjectDir, OverrideFile.FileName, _logger);
+        }
+        finally
+        {
+            folderLock.Release();
+        }
+    }
+
+    /// <summary>
     /// Writes the attach file and the override, waits for the game, and removes the attach file before the connection is
     /// kept, so a failed removal closes the connection instead of leaking it.
     /// </summary>
@@ -88,8 +107,7 @@ internal sealed partial class GodotSession
         BridgeConnection connection;
         try
         {
-            registry.WriteOverride(this, bridgeScript);
-            GitExclude.Ensure(ProjectDir, OverrideFile.FileName, _logger);
+            await WriteOverrideUnderPrepLockAsync(bridgeScript, cancellationToken);
             connection = await AcceptAttachedBridgeAsync(new HandshakeExpectation(token, ProjectDir), wait, cancellationToken);
         }
         catch

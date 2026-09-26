@@ -34,6 +34,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Profile, preset | A project's `godot-mcp.json` beside `project.godot`: its launch defaults, and named launch presets that `run_project`'s `options.preset` layers over them |
 | Batch drive | `batch_drive`: one tool call that plays a list of steps (runtime tools and assertions) against a running game and stops at the first failed step |
 | Recording, mark, clip | A recording is a run launched with `options.record`, filmed by Godot's Movie Maker from launch to quit into one AVI; a mark (`record_mark` start or stop) notes a movie frame; a clip is the part between a start and its stop, cut out with ffmpeg when the run ends |
+| Headless run | A `godot --headless --script headless/operations.gd` run on a project's files, with no game started and the autoloads freed, that backs `validate` and `get_scene_file_tree` |
 | Check-once wait | `wait_for` with `timeoutMs: 0`: the condition is checked once, now, even while the game is paused |
 | Hang watchdog | The server's report, when a request times out, of whether the game's main thread is still running (it answers a ping) or stuck (it does not), with the stuck process's CPU, threads and last stderr lines, in place of a bare timeout |
 | Baseline | A stored screenshot (and its crop) a new capture is compared against, giving the changed pixels, their bounding box and a diff image (`save_screenshot_baseline`, `compare_screenshot`) |

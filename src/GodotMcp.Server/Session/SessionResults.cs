@@ -27,7 +27,8 @@ internal sealed record RecordingResult
 }
 
 /// <summary>
-/// What run_project's prep did: <see cref="Build"/> is up-to-date, built, no-csproj or skipped; <see cref="Import"/> is
+/// What run_project's prep did: <see cref="Build"/> is up-to-date, built, no-csproj or skipped, or failed for a headless run's
+/// prep, which reports a red build instead of refusing (<see cref="ProjectPrep.RunReportingBuildAsync"/>); <see cref="Import"/> is
 /// not-needed, done or skipped (both skipped under prepare "never"); the times are set for a step that ran.
 /// </summary>
 internal sealed record PrepResult

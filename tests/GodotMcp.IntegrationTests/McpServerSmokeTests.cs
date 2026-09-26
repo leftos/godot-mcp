@@ -50,6 +50,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "gamepad_stick",
                 "get_debug_output",
                 "get_errors",
+                "get_scene_file_tree",
                 "get_scene_tree",
                 "get_ui_elements",
                 "inspect_node",
@@ -66,6 +67,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "stop_project",
                 "take_screenshot",
                 "type_text",
+                "validate",
                 "wait_for",
             ],
             tools.Select(tool => tool.Name).Order()
@@ -115,6 +117,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["gamepad_stick"] = changesTheGame,
             ["get_debug_output"] = readsTheGame,
             ["get_errors"] = readsTheGame,
+            ["get_scene_file_tree"] = readsTheGame,
             ["get_scene_tree"] = readsTheGame,
             ["get_ui_elements"] = readsTheGame,
             ["inspect_node"] = readsTheGame,
@@ -131,6 +134,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["stop_project"] = destructive,
             ["take_screenshot"] = readsTheGame,
             ["type_text"] = changesTheGame,
+            ["validate"] = readsTheGame,
             ["wait_for"] = changesTheGame,
         };
         Dictionary<string, (bool?, bool?, bool?)> actual = tools.ToDictionary(
@@ -143,7 +147,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(30, actual.Count);
+        Assert.Equal(32, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

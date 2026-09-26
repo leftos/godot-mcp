@@ -12,9 +12,10 @@
     <PackageReference Include="ModelContextProtocol" />
   </ItemGroup>
 
-  <!-- The bridge ships beside the published exe; a dev build finds the checkout's bridge/ instead. -->
+  <!-- The bridge and the headless operations ship beside the published exe; a dev build finds the checkout's folders instead. -->
   <ItemGroup>
     <Content Include="..\..\bridge\**\*.gd" LinkBase="bridge" CopyToOutputDirectory="Never" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\headless\**\*.gd" LinkBase="headless" CopyToOutputDirectory="Never" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

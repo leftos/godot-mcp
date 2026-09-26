@@ -222,6 +222,18 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
     }
 
+    /// <summary>
+    /// The names of the live sessions on the folder (running, attached, or still launching or waiting to attach), ordered:
+    /// every one of them has or will have the bridge's override.cfg in the folder.
+    /// </summary>
+    internal IReadOnlyList<string> LiveSessionNames(string projectDir)
+    {
+        lock (_lock)
+        {
+            return [.. Ordered().Where(other => other.IsLive && ProjectPaths.AreSame(other.ProjectDir, projectDir)).Select(other => other.Name)];
+        }
+    }
+
     /// <summary>Drops the session from the registry, if it still holds its name.</summary>
     internal void Forget(GodotSession session)
     {
@@ -399,7 +411,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <exception cref="SessionException">The path is empty or holds no project.godot.</exception>
-    private static string NormaliseProjectDir(string projectPath)
+    internal static string NormaliseProjectDir(string projectPath)
     {
         if (string.IsNullOrWhiteSpace(projectPath))
         {

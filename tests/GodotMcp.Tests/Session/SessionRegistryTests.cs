@@ -336,6 +336,48 @@ public sealed class SessionRegistryTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task AHeadlessRunIsRefusedWhileASessionIsLive()
+    {
+        string alpha = Project("alpha");
+        using FakeBridge game = await AttachFakeGameAsync(alpha, "server");
+        HeadlessRequest request = new(alpha, "validate", [], Prepare: false);
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            HeadlessRunner.RunAsync(_sessions, request, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(
+            $"a headless run is refused while session(s) server run on {alpha}: a --script run would load the bridge from its override.cfg. "
+                + "stop_project or detach_project them first.",
+            refused.Message
+        );
+        Assert.True(OverrideFile.IsOurs(OverrideFile.PathIn(alpha)));
+    }
+
+    [Fact]
+    public async Task AnAttachWritesItsOverrideOnlyOnceThePrepLockIsFree()
+    {
+        string alpha = Project("alpha");
+        string overrideFile = OverrideFile.PathIn(alpha);
+        SemaphoreSlim folderLock = _sessions.PrepLock(alpha);
+        await folderLock.WaitAsync(TestContext.Current.CancellationToken);
+        Task<AttachResult> attach;
+        try
+        {
+            attach = _sessions.AttachAsync(alpha, "server", TimeSpan.FromSeconds(2), false, TestContext.Current.CancellationToken);
+            await Task.Delay(200, TestContext.Current.CancellationToken);
+            Assert.False(File.Exists(overrideFile));
+        }
+        finally
+        {
+            folderLock.Release();
+        }
+
+        await WaitUntilAsync(() => File.Exists(overrideFile));
+        await Assert.ThrowsAsync<SessionException>(() => attach);
+    }
+
+    [Fact]
     public async Task AWaitingAttachIsNotAGameRunningOnItsFolder()
     {
         string alpha = Project("alpha");

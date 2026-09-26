@@ -16,9 +16,14 @@ internal sealed record CsprojLookup(CsprojKind Kind, string? ProjectFile, string
 
 /// <summary>
 /// The files the prep looks at, as full paths: the C# build's inputs from the whole git top level (or the project folder
-/// outside git), and the project folder's <c>.import</c> sidecars and whether it holds <c>.uid</c> files.
+/// outside git), and the project folder's <c>.import</c> sidecars, whether it holds <c>.uid</c> files, and its GDScript files.
 /// </summary>
-internal sealed record ProjectFiles(IReadOnlyList<string> BuildInputs, IReadOnlyList<string> ImportFiles, bool HasUidFiles);
+internal sealed record ProjectFiles(
+    IReadOnlyList<string> BuildInputs,
+    IReadOnlyList<string> ImportFiles,
+    bool HasUidFiles,
+    IReadOnlyList<string> Scripts
+);
 
 /// <summary>What run_project's prep finds in a project before deciding to build or import.</summary>
 internal static partial class PrepScan
@@ -89,9 +94,13 @@ internal static partial class PrepScan
         return new ProjectFiles(
             [.. topFiles.Where(IsBuildInput)],
             [.. projectFiles.Where(file => HasExtension(file, ".import"))],
-            projectFiles.Any(file => HasExtension(file, ".uid"))
+            projectFiles.Any(file => HasExtension(file, ".uid")),
+            [.. projectFiles.Where(file => HasExtension(file, ".gd"))]
         );
     }
+
+    /// <summary>Where the editor's scan writes the <c>class_name</c> globals a run reads (<c>project_settings.cpp</c> L1469).</summary>
+    public static string ClassCachePath(string projectDir) => Path.Combine(projectDir, ".godot", "global_script_class_cache.cfg");
 
     /// <summary>
     /// Whether the assembly is missing, or an input is newer than both the assembly and the stamp (an input that leaves the
@@ -113,7 +122,8 @@ internal static partial class PrepScan
 
     /// <summary>
     /// Whether a Godot import is needed: a <c>.import</c> sidecar whose <c>dest_files</c> are not all present, or
-    /// <c>.uid</c> files with no <c>.godot/uid_cache.bin</c>. A missing <c>.godot/</c> alone is not a reason.
+    /// <c>.uid</c> files with no <c>.godot/uid_cache.bin</c>, or a script declaring <c>class_name</c> that the class cache
+    /// may not hold yet. A missing <c>.godot/</c> alone is not a reason.
     /// </summary>
     public static bool ImportNeeded(string projectDir, ProjectFiles files)
     {
@@ -122,8 +132,22 @@ internal static partial class PrepScan
             return true;
         }
 
-        return files.ImportFiles.Any(sidecar => HasMissingTarget(projectDir, sidecar));
+        return files.ImportFiles.Any(sidecar => HasMissingTarget(projectDir, sidecar)) || IsClassCacheStale(projectDir, files.Scripts);
     }
+
+    /// <summary>
+    /// Whether a script declaring <c>class_name</c> is newer than the class cache, or the cache is missing while any script
+    /// declares one: a run reads the globals from the cache only, and only the editor's scan writes it.
+    /// </summary>
+    public static bool IsClassCacheStale(string projectDir, IEnumerable<string> scripts)
+    {
+        string cache = ClassCachePath(projectDir);
+        bool cached = File.Exists(cache);
+        DateTime written = File.GetLastWriteTimeUtc(cache);
+        return scripts.Where(File.Exists).Where(script => !cached || File.GetLastWriteTimeUtc(script) > written).Any(DeclaresClassName);
+    }
+
+    private static bool DeclaresClassName(string script) => File.ReadLines(script).Any(line => ClassNameLine().IsMatch(line));
 
     private static bool HasMissingTarget(string projectDir, string sidecar)
     {
@@ -218,4 +242,8 @@ internal static partial class PrepScan
 
     [GeneratedRegex("\"res://([^\"]*)\"")]
     private static partial Regex ResourcePath();
+
+    // class_name at the start of a line, after any annotations (@tool, @icon("res://x.svg")) or an extends clause on the same line.
+    [GeneratedRegex(@"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:extends\s+\S+\s+)?class_name\s+[A-Za-z_]")]
+    private static partial Regex ClassNameLine();
 }

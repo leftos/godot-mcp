@@ -1,6 +1,6 @@
 namespace GodotMcp.Server.Session;
 
-/// <summary>Finds the Godot executable and the bridge script a run needs.</summary>
+/// <summary>Finds the Godot executable, dotnet, and the bridge and headless scripts the server ships.</summary>
 internal static class Installation
 {
     public const string GodotPathVariable = "GODOT_PATH";
@@ -75,6 +75,8 @@ internal static class Installation
         return folders.Select(folder => Path.Combine(folder.Trim('"'), executable)).FirstOrDefault(File.Exists);
     }
 
+    public static readonly string HeadlessRelativePath = Path.Combine("headless", "operations.gd");
+
     public static string FindBridgeScript() => FindBridgeScript(AppContext.BaseDirectory);
 
     /// <summary>
@@ -82,9 +84,21 @@ internal static class Installation
     /// godot-mcp checkout the server was built in.
     /// </summary>
     /// <exception cref="SessionException">Neither exists.</exception>
-    public static string FindBridgeScript(string serverDirectory)
+    public static string FindBridgeScript(string serverDirectory) => FindShippedScript(serverDirectory, BridgeRelativePath, "The bridge script");
+
+    public static string FindHeadlessScript() => FindHeadlessScript(AppContext.BaseDirectory);
+
+    /// <summary>
+    /// The headless operations script published beside the server (<c>headless/</c> next to the exe), else the
+    /// <c>headless/</c> of the godot-mcp checkout the server was built in.
+    /// </summary>
+    /// <exception cref="SessionException">Neither exists.</exception>
+    public static string FindHeadlessScript(string serverDirectory) =>
+        FindShippedScript(serverDirectory, HeadlessRelativePath, "The headless operations script");
+
+    private static string FindShippedScript(string serverDirectory, string relativePath, string what)
     {
-        string besideServer = Path.Combine(serverDirectory, BridgeRelativePath);
+        string besideServer = Path.Combine(serverDirectory, relativePath);
         if (File.Exists(besideServer))
         {
             return besideServer;
@@ -92,7 +106,7 @@ internal static class Installation
 
         for (DirectoryInfo? directory = new(serverDirectory); directory is not null; directory = directory.Parent)
         {
-            string candidate = Path.Combine(directory.FullName, BridgeRelativePath);
+            string candidate = Path.Combine(directory.FullName, relativePath);
             if (File.Exists(Path.Combine(directory.FullName, SolutionFileName)) && File.Exists(candidate))
             {
                 return candidate;
@@ -100,7 +114,7 @@ internal static class Installation
         }
 
         throw new SessionException(
-            $"The bridge script was not found beside the server ({besideServer}) or in a godot-mcp checkout above it. "
+            $"{what} was not found beside the server ({besideServer}) or in a godot-mcp checkout above it. "
                 + "Reinstall the server with 'pwsh run.ps1 publish'."
         );
     }

@@ -101,6 +101,9 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Information, Message = "Preparing {Project} was cancelled; the game is not started.")]
     public static partial void PrepCancelled(ILogger logger, Exception exception, string project);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Deleting the headless run's file {Path} failed; it is left behind.")]
+    public static partial void HeadlessFileDeleteFailed(ILogger logger, Exception exception, string path);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Killing {File} and the processes it started failed; some of them may still run.")]
     public static partial void ToolKillFailed(ILogger logger, Exception exception, string file);
 

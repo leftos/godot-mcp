@@ -323,6 +323,46 @@ public sealed class ProjectPrepTests : IDisposable
         Assert.Equal($"prepare takes \"auto\" or \"never\"; got \"{prepare}\".", refused.Message);
     }
 
+    [Fact]
+    public void AClassNameNewerThanTheCacheIsDueAnImport()
+    {
+        string game = CreateGame(null);
+        string player = Path.Combine(game, "actors", "player.gd");
+        WriteFile(PrepScan.ClassCachePath(game), "list=[]\n", Built);
+        WriteFile(player, "extends Node\nclass_name Player\n", Old);
+        Assert.False(IsImportNeeded(game));
+
+        File.SetLastWriteTimeUtc(player, Later);
+
+        Assert.True(IsImportNeeded(game));
+    }
+
+    [Theory]
+    [InlineData("@tool\nextends Node2D\n\nclass_name Enemy\n")]
+    [InlineData("class_name Enemy extends Node2D\n")]
+    [InlineData("extends Node class_name Enemy\n")]
+    [InlineData("@icon(\"res://enemy.svg\") class_name Enemy\nextends Node2D\n")]
+    [InlineData("@tool @icon(\"res://enemy.svg\") class_name Enemy\n")]
+    public void AMissingCacheWithAClassNameIsDueAnImport(string source)
+    {
+        string game = CreateGame(null);
+        WriteFile(Path.Combine(game, "enemy.gd"), source, Old);
+
+        Assert.True(IsImportNeeded(game));
+    }
+
+    [Fact]
+    public void NoClassNameNeedsNoImportForTheCache()
+    {
+        string game = CreateGame(null);
+        WriteFile(Path.Combine(game, "main.gd"), "extends Node\n# class_name Main would name it\nvar class_name_text := \"class_name X\"\n", Later);
+        Assert.False(IsImportNeeded(game));
+
+        WriteFile(PrepScan.ClassCachePath(game), "list=[]\n", Old);
+
+        Assert.False(IsImportNeeded(game));
+    }
+
     private static bool IsStale(string game) =>
         PrepScan.IsStale(PrepScan.AssemblyPath(game, "Game"), PrepScan.StampPath(game), PrepScan.Scan(game, NullLogger.Instance).BuildInputs);
 

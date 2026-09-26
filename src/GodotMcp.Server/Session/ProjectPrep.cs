@@ -24,13 +24,24 @@ internal static class ProjectPrep
     public static string LogFolder(string projectDir) => Path.Combine(projectDir, ".godot", "godot-mcp");
 
     /// <exception cref="SessionException">The build failed or hit its ceiling, or an import is due and cannot run.</exception>
-    public static async Task<PrepResult> RunAsync(PrepContext context, CancellationToken cancellationToken)
+    public static async Task<PrepResult> RunAsync(PrepContext context, CancellationToken cancellationToken) =>
+        (await RunCoreAsync(context, reportRedBuild: false, cancellationToken)).Result;
+
+    /// <summary>
+    /// The prep for a headless run: a build that fails is reported as build <c>failed</c> with its compiler errors instead of
+    /// thrown, and the import still runs.
+    /// </summary>
+    /// <exception cref="SessionException">The build hit its ceiling, or an import is due and cannot run.</exception>
+    public static Task<PrepOutcome> RunReportingBuildAsync(PrepContext context, CancellationToken cancellationToken) =>
+        RunCoreAsync(context, reportRedBuild: true, cancellationToken);
+
+    private static async Task<PrepOutcome> RunCoreAsync(PrepContext context, bool reportRedBuild, CancellationToken cancellationToken)
     {
         Log.PrepStarted(context.Logger, context.ProjectDir);
         try
         {
             ProjectFiles files = PrepScan.Scan(context.ProjectDir, context.Logger);
-            PrepStep build = await BuildAsync(context, files, cancellationToken);
+            PrepStep build = await BuildAsync(context, files, reportRedBuild, cancellationToken);
             PrepStep import = await ImportAsync(context, files, cancellationToken);
             string[] notes = [.. new[] { build.Note, import.Note }.OfType<string>()];
             PrepResult result = new()
@@ -42,7 +53,7 @@ internal static class ProjectPrep
                 Note = notes.Length == 0 ? null : string.Join(' ', notes),
             };
             Log.PrepFinished(context.Logger, context.ProjectDir, result.Build, result.Import);
-            return result;
+            return new PrepOutcome(result, build.Errors);
         }
         catch (SessionException e)
         {
@@ -56,7 +67,7 @@ internal static class ProjectPrep
         }
     }
 
-    private static async Task<PrepStep> BuildAsync(PrepContext context, ProjectFiles files, CancellationToken cancellationToken)
+    private static async Task<PrepStep> BuildAsync(PrepContext context, ProjectFiles files, bool reportRedBuild, CancellationToken cancellationToken)
     {
         string projectDir = context.ProjectDir;
         CsprojLookup lookup = PrepScan.FindCsproj(projectDir);
@@ -79,9 +90,16 @@ internal static class ProjectPrep
             context.Logger,
             cancellationToken
         );
+        long milliseconds = (long)built.Elapsed.TotalMilliseconds;
+        if (reportRedBuild && !built.KilledByCeiling && built.ExitCode != 0)
+        {
+            string note = $"The C# build of {csproj} failed (dotnet exited {built.ExitCode}); its log: {log}";
+            return new PrepStep("failed", milliseconds, note) { Errors = CompilerErrors.Parse(File.ReadAllText(log)) };
+        }
+
         CheckBuild(built, csproj, log);
         File.WriteAllText(stamp, string.Empty);
-        return new PrepStep("built", (long)built.Elapsed.TotalMilliseconds, null);
+        return new PrepStep("built", milliseconds, null);
     }
 
     private static ToolProcessRequest BuildRequest(string dotnet, string csproj, string log) =>
@@ -199,6 +217,12 @@ internal static class ProjectPrep
         }
     }
 
-    /// <summary>One prep step's outcome: its state for the result, how long it ran when it ran, and a note.</summary>
-    private sealed record PrepStep(string State, long? Milliseconds, string? Note);
+    /// <summary>One prep step's outcome: its state for the result, how long it ran when it ran, a note, and a failed build's errors.</summary>
+    private sealed record PrepStep(string State, long? Milliseconds, string? Note)
+    {
+        public CompilerErrorList? Errors { get; init; }
+    }
 }
+
+/// <summary>What a headless run's prep did, and the compiler errors of a build that failed (its build is then <c>failed</c>).</summary>
+internal sealed record PrepOutcome(PrepResult Result, CompilerErrorList? BuildErrors);

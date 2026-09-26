@@ -22,7 +22,7 @@ repos:
         entry: pwsh -NoProfile -File run.ps1 test
         language: system
         pass_filenames: false
-        files: \.(cs|csproj|props|slnx)$|^bridge/
+        files: \.(cs|csproj|props|slnx)$|^(bridge|headless)/
       - id: gdformat
         name: gdformat check
         entry: gdformat --check
@@ -43,7 +43,7 @@ repos:
         entry: pwsh -NoProfile -File run.ps1 gdtest
         language: system
         pass_filenames: false
-        files: ^(bridge|tests/bridge)/
+        files: ^(bridge|headless|tests/bridge)/
       - id: ruff-format
         name: ruff format check
         entry: uvx ruff@0.16.9 format --check
