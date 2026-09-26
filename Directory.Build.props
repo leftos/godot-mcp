@@ -1,0 +1,17 @@
+<Project>
+  <!-- The style gate every C# repo carries. TargetFramework stays in each csproj. -->
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <!-- Code-quality (CA) analyzers, taken from the first commit. -->
+  <PropertyGroup>
+    <CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,28 @@
+# prek hooks (prek install; prek run --all-files). The format check runs first, the warnings-as-errors build gates
+# the result, then the unit tests; gdlint checks the GDScript the server ships.
+repos:
+  - repo: local
+    hooks:
+      - id: csharpier
+        name: csharpier check
+        entry: dotnet csharpier check .
+        language: system
+        pass_filenames: false
+        types: [c#]
+      - id: dotnet-build
+        name: dotnet build -warnaserror
+        entry: dotnet build GodotMcp.slnx -warnaserror
+        language: system
+        pass_filenames: false
+        files: \.(cs|csproj|props|slnx|editorconfig)$|^global\.json$
+      - id: unit-tests
+        name: unit tests
+        entry: pwsh -NoProfile -File run.ps1 test
+        language: system
+        pass_filenames: false
+        files: \.(cs|csproj|props|slnx)$|^bridge/
+      - id: gdlint
+        name: gdlint
+        entry: gdlint
+        language: system
+        files: ^(bridge|headless)/.*\.gd$
