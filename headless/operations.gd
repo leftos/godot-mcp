@@ -18,6 +18,7 @@ extends SceneTree
 
 const SceneOps := preload("scene_ops.gd")
 const SceneEdit := preload("scene_edit.gd")
+const ScenePaths := preload("scene_paths.gd")
 const RES_PREFIX := "res://"
 ## How deep instanced scenes are expanded; Godot refuses a scene that instances itself.
 const MAX_INSTANCE_DEPTH := 64
@@ -141,29 +142,6 @@ static func results_of(groups: Dictionary) -> Array:
 	return results
 
 
-## The res:// paths of the C# scripts among ResourceLoader.get_dependencies entries, which read
-## "<path>[::<type>]" or, for a dependency saved with its UID, "<uid>::<type>::<path>".
-static func csharp_dependencies(dependencies: PackedStringArray) -> PackedStringArray:
-	return SceneEdit.csharp_dependencies(dependencies)
-
-
-## A node path relative to a scene's root, without "." or empty segments; the root is ".".
-static func normalise_node_path(path: String) -> String:
-	var names: PackedStringArray = []
-	for part in path.split("/"):
-		if not part.is_empty() and part != ".":
-			names.append(part)
-	return "." if names.is_empty() else "/".join(names)
-
-
-## The path of relative (a scene's own node path) inside an instance placed at prefix.
-static func join_node_path(prefix: String, relative: String) -> String:
-	var inner: String = normalise_node_path(relative)
-	if inner == ".":
-		return prefix
-	return inner if prefix == "." else prefix + "/" + inner
-
-
 func _dispatch(op: String, params: Dictionary) -> Dictionary:
 	match op:
 		"validate":
@@ -205,7 +183,7 @@ func _check_file(path: String, groups: Dictionary) -> void:
 	group_errors(entries, path, groups)
 	if path.ends_with(".gd"):
 		return
-	for script_path in csharp_dependencies(ResourceLoader.get_dependencies(path)):
+	for script_path in SceneEdit.csharp_dependencies(ResourceLoader.get_dependencies(path)):
 		start = _log.count()
 		var script := load(script_path) as Script
 		if script != null:
@@ -222,7 +200,7 @@ func _scene_file_tree(params: Dictionary) -> Dictionary:
 		}
 	var tree: Dictionary = {"nodes": {}, "children": {}}
 	add_state(scene.get_state(), ".", tree, 0)
-	var root_path: String = normalise_node_path(str(params.get("root", ".")))
+	var root_path: String = ScenePaths.normalise_node_path(str(params.get("root", ".")))
 	if not tree["nodes"].has(root_path):
 		var hint := "get_scene_file_tree without root lists its nodes"
 		return {"ok": false, "error": "%s has no node %s; %s" % [scene_path, root_path, hint]}
@@ -235,7 +213,7 @@ func _scene_file_tree(params: Dictionary) -> Dictionary:
 ## the instancing node's own values, and the nodes the state adds inside it, land over them.
 static func add_state(state: SceneState, prefix: String, tree: Dictionary, depth: int) -> void:
 	for index in state.get_node_count():
-		var path: String = join_node_path(prefix, String(state.get_node_path(index)))
+		var path: String = ScenePaths.join_node_path(prefix, String(state.get_node_path(index)))
 		var instance: PackedScene = state.get_node_instance(index)
 		if instance != null and depth < MAX_INSTANCE_DEPTH:
 			add_state(instance.get_state(), path, tree, depth + 1)

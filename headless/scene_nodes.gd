@@ -1,7 +1,7 @@
 extends RefCounted
-## The headless edits of one node of an open scene, which scene_ops.gd dispatches and saves:
-## attach_script, duplicate_node and load_sprite. Each is apply_<op>(root, params) -> {result} or
-## {error}, and changes nothing when it refuses.
+## The headless node edits of an open scene, which scene_ops.gd dispatches and saves:
+## delete_nodes, and the edits of one node, attach_script, duplicate_node and load_sprite. Each is
+## apply_<op>(root, params, context) -> {result} or {error}, and changes nothing when it refuses.
 ##
 ## duplicate_node packs the node under a bare holder and instantiates the pack, so an instance in
 ## the copy stays an instance with its overrides (Node.duplicate bakes instances and doubles their
@@ -11,6 +11,7 @@ extends RefCounted
 ## back, and made again from the copy, as the editor's duplicate keeps it.
 
 const SceneEdit := preload("scene_edit.gd")
+const SceneFiles := preload("scene_files.gd")
 ## The connection flags a copy keeps: those scripts can set, not the engine's own (an inherited
 ## connection's copy is the scene's own).
 const SCRIPT_CONNECT_FLAGS := (
@@ -21,18 +22,37 @@ const ROOT_DUPLICATE_REFUSAL := (
 )
 
 
+## Deletes the nodes at params.nodePaths, each with its children: {result: {deleted}}, or {error}
+## naming every path that cannot be deleted, with nothing deleted.
+static func apply_delete_nodes(root: Node, params: Dictionary, context: Dictionary) -> Dictionary:
+	var paths: Array = params.get("nodePaths", [])
+	var refusals: PackedStringArray = []
+	for path: String in paths:
+		var refusal: String = _delete_refusal(root, path, context["scene"])
+		if not refusal.is_empty():
+			refusals.append(refusal)
+	if not refusals.is_empty():
+		return {"error": " ".join(refusals)}
+	for path: String in paths:
+		# Null when a path listed earlier deleted an ancestor of it.
+		var node: Node = SceneEdit.find(root, path)
+		if node != null:
+			node.get_parent().remove_child(node)
+			node.free()
+	return {"result": {"deleted": paths}}
+
+
 ## Attaches the script at params.script to the node at params.nodePath: {result: {path, script,
 ## previous?}}, or {error} with nothing changed. The script must compile and extend the node's
 ## class or a parent class of it; a C# script is refused while the prep's C# build failed.
-static func apply_attach_script(root: Node, params: Dictionary) -> Dictionary:
-	var found: Dictionary = _editable_node(root, params)
+static func apply_attach_script(root: Node, params: Dictionary, context: Dictionary) -> Dictionary:
+	var found: Dictionary = _editable_node(root, params, context["scene"])
 	if found.has("error"):
 		return found
 	var node: Node = found["node"]
 	var script_path: String = params.get("script", "")
-	var build: String = str(params.get("build", ""))
 	var refusal: String = SceneEdit.csharp_refusal(
-		params.get("scene", ""), script_path.ends_with(".cs"), build
+		context["scene"], script_path.ends_with(".cs"), context["build"]
 	)
 	var loaded: Dictionary = (
 		{"error": refusal} if not refusal.is_empty() else _load_script(script_path)
@@ -55,14 +75,15 @@ static func apply_attach_script(root: Node, params: Dictionary) -> Dictionary:
 ## Copies the node at params.nodePath, with its children, right after it under its parent or last
 ## under params.parent, named params.newName or as the editor names a duplicate (copy_name):
 ## {result: {originalPath, newPath}}, or {error} with nothing changed.
-static func apply_duplicate_node(root: Node, params: Dictionary) -> Dictionary:
-	var found: Dictionary = _editable_node(root, params)
+static func apply_duplicate_node(root: Node, params: Dictionary, context: Dictionary) -> Dictionary:
+	var found: Dictionary = _editable_node(root, params, context["scene"])
 	if found.has("error"):
 		return found
 	var source: Node = found["node"]
 	if source == root:
 		return {"error": ROOT_DUPLICATE_REFUSAL}
-	var parent: Dictionary = _copy_parent(root, source, params)
+	var given_parent: String = str(params.get("parent", ""))
+	var parent: Dictionary = _copy_parent(root, source, given_parent, context["scene"])
 	if parent.has("error"):
 		return parent
 	var given: String = str(params.get("newName", ""))
@@ -81,8 +102,8 @@ static func apply_duplicate_node(root: Node, params: Dictionary) -> Dictionary:
 
 ## Sets the texture of the node at params.nodePath to the Texture2D at params.texture: {result:
 ## {path, texture}}, or {error} with nothing changed.
-static func apply_load_sprite(root: Node, params: Dictionary) -> Dictionary:
-	var found: Dictionary = _editable_node(root, params)
+static func apply_load_sprite(root: Node, params: Dictionary, context: Dictionary) -> Dictionary:
+	var found: Dictionary = _editable_node(root, params, context["scene"])
 	if found.has("error"):
 		return found
 	var node: Node = found["node"]
@@ -131,11 +152,12 @@ static func takes_texture_2d(entry: Dictionary) -> bool:
 
 ## {node, path} for the node at params.nodePath, path relative to root; or {error} for a missing
 ## node or one inside an instance.
-static func _editable_node(root: Node, params: Dictionary) -> Dictionary:
+static func _editable_node(root: Node, params: Dictionary, scene: String) -> Dictionary:
 	var given: String = params.get("nodePath", "")
-	var node: Node = SceneEdit.find(root, given)
-	if node == null:
-		return {"error": "%s has no node %s." % [params.get("scene", ""), given]}
+	var found: Dictionary = SceneEdit.node_or_error(root, given, scene)
+	if found.has("error"):
+		return found
+	var node: Node = found["node"]
 	var refusal: String = SceneEdit.instance_refusal(root, node, given)
 	if not refusal.is_empty():
 		return {"error": refusal}
@@ -176,7 +198,7 @@ static func _load_texture(path: String) -> Dictionary:
 ## {resource, uid?} for a resource saved in its own file.
 static func _resource_facts(resource: Resource) -> Dictionary:
 	var facts: Dictionary = {"resource": resource.resource_path}
-	var uid: int = SceneEdit.uid_of(resource.resource_path)
+	var uid: int = SceneFiles.uid_of(resource.resource_path)
 	if uid != ResourceUID.INVALID_ID:
 		facts["uid"] = ResourceUID.id_to_text(uid)
 	return facts
@@ -197,15 +219,16 @@ static func _logged_since(start: int) -> String:
 	return "Godot logged no error" if messages.is_empty() else "; ".join(messages)
 
 
-## {node}: the parent a copy of source goes under, params.parent or source's own; or {error} for a
-## missing parent or one inside an instance (an instance's root may be the parent).
-static func _copy_parent(root: Node, source: Node, params: Dictionary) -> Dictionary:
-	var given: String = params.get("parent", "")
+## {node}: the parent a copy of source goes under, given (a path from root) or, when empty,
+## source's own; or {error} for a missing parent or one inside an instance (an instance's root may
+## be the parent).
+static func _copy_parent(root: Node, source: Node, given: String, scene: String) -> Dictionary:
 	if given.is_empty():
 		return {"node": source.get_parent()}
-	var parent: Node = SceneEdit.find(root, given)
-	if parent == null:
-		return {"error": "%s has no node %s." % [params.get("scene", ""), given]}
+	var found: Dictionary = SceneEdit.node_or_error(root, given, scene)
+	if found.has("error"):
+		return found
+	var parent: Node = found["node"]
 	var refusal: String = SceneEdit.instance_refusal(root, parent, given)
 	return {"node": parent} if refusal.is_empty() else {"error": refusal}
 
@@ -322,3 +345,16 @@ static func _place(copy: Node, parent: Node, source: Node, owned: Array[Node], r
 		parent.move_child(copy, source.get_index() + 1)
 	for node: Node in owned:
 		node.owner = root
+
+
+static func _delete_refusal(root: Node, path: String, scene_path: String) -> String:
+	var found: Dictionary = SceneEdit.node_or_error(root, path, scene_path)
+	if found.has("error"):
+		return found["error"]
+	var node: Node = found["node"]
+	if node == root:
+		return "The scene root cannot be deleted; create a new scene instead."
+	var refusal: String = SceneEdit.instance_refusal(root, node, path)
+	if refusal.is_empty():
+		refusal = SceneEdit.inherited_delete_refusal(scene_path, root, node, path)
+	return refusal

@@ -3,8 +3,9 @@ extends Node
 ## properties, sets one and calls a method, for get_scene_tree, inspect_node, set_property and
 ## call_method. Each handler returns its result as a Dictionary, or a String saying why it
 ## failed; the bridge replies with either. It finds nodes with the bridge's own _find_node,
-## converts values to and from JSON with the JSON module the bridge loads (godot_mcp_json.gd),
-## and never lists or reaches the bridge's own nodes.
+## converts values to and from JSON, finds a property, picks the shown ones and compares a
+## read-back with the JSON module the bridge loads (godot_mcp_json.gd), and never lists or reaches
+## the bridge's own nodes.
 ##
 ## JSON goes in by the declared type, and a set is read back, because Godot does not refuse a
 ## wrong type: Object.set gives script no validity flag, a native setter given the wrong type
@@ -13,9 +14,6 @@ extends Node
 ## untyped Array for an Array[int] member is one), and C# converts a Dictionary to Vector2()
 ## silently (core/variant/variant.cpp L1745-1761). Every number arrives as a float, since JSON
 ## numbers always parse to one (core/io/json.cpp L390-396).
-
-## Property list entries that head a section of the inspector rather than hold a value.
-const SECTION_USAGE := PROPERTY_USAGE_CATEGORY | PROPERTY_USAGE_GROUP | PROPERTY_USAGE_SUBGROUP
 
 ## The bridge (godot_mcp_bridge.gd), this node's parent.
 var _bridge: Node
@@ -127,7 +125,7 @@ func inspect_node(params: Dictionary) -> Variant:
 func _named_properties(node: Node, names: Array) -> Variant:
 	var properties: Dictionary = {}
 	for property_name: Variant in names:
-		if _property_info(node, str(property_name)).is_empty():
+		if _bridge._json.property_info(node, str(property_name)).is_empty():
 			return _no_property(node, str(property_name))
 		properties[str(property_name)] = _bridge._json.to_json(node.get(str(property_name)))
 	return properties
@@ -137,16 +135,9 @@ func _named_properties(node: Node, names: Array) -> Variant:
 func _shown_properties(node: Node) -> Dictionary:
 	var properties: Dictionary = {}
 	for info: Dictionary in node.get_property_list():
-		if _is_shown(info):
+		if _bridge._json.is_shown(info):
 			properties[info["name"]] = _bridge._json.to_json(node.get(info["name"]))
 	return properties
-
-
-static func _is_shown(info: Dictionary) -> bool:
-	var usage: int = info["usage"]
-	if usage & SECTION_USAGE:
-		return false
-	return usage & (PROPERTY_USAGE_SCRIPT_VARIABLE | PROPERTY_USAGE_EDITOR) != 0
 
 
 ## {path, property, before, after}: params.value converted by the property's declared type (an
@@ -158,7 +149,7 @@ func set_property(params: Dictionary) -> Variant:
 		return found
 	var node: Node = found
 	var property_name: String = str(params.get("property", ""))
-	var info: Dictionary = _property_info(node, property_name)
+	var info: Dictionary = _bridge._json.property_info(node, property_name)
 	if info.is_empty():
 		return _no_property(node, property_name)
 	var before: Variant = node.get(property_name)
@@ -169,11 +160,11 @@ func set_property(params: Dictionary) -> Variant:
 	if not converted[0]:
 		return (
 			"Property '%s' on '%s' is %s; %s does not convert to it."
-			% [property_name, node.get_path(), _type_name(info), JSON.stringify(raw)]
+			% [property_name, node.get_path(), _bridge._json.type_name(info), JSON.stringify(raw)]
 		)
 	node.set(property_name, converted[1])
 	var after: Variant = node.get(property_name)
-	if not _same(after, converted[1]):
+	if not _bridge._json.same(after, converted[1]):
 		node.set(property_name, before)
 		return (
 			(
@@ -237,7 +228,7 @@ func _method_args(node: Node, method: String, given: Array) -> Variant:
 					index + 1,
 					method,
 					node.get_path(),
-					_type_name(parameter),
+					_bridge._json.type_name(parameter),
 					JSON.stringify(given[index])
 				]
 			)
@@ -282,40 +273,11 @@ func _json_text(value: Variant) -> String:
 	return JSON.stringify(_bridge._json.to_json(value))
 
 
-## Whether the property reads back what was set. A native float property may store 32 bits, so
-## a float compares approximately; anything else must match in type and value.
-static func _same(after: Variant, value: Variant) -> bool:
-	# A cleared native Object property reads back as a null Ref, which is TYPE_OBJECT, not TYPE_NIL.
-	if typeof(value) == TYPE_NIL:
-		return typeof(after) == TYPE_NIL or (typeof(after) == TYPE_OBJECT and after == null)
-	if typeof(after) == TYPE_FLOAT and typeof(value) == TYPE_FLOAT:
-		return is_equal_approx(after, value)
-	return typeof(after) == typeof(value) and after == value
-
-
-## The property's entry in the node's property list, or {} when it has none of that name.
-static func _property_info(node: Node, property_name: String) -> Dictionary:
-	for info: Dictionary in node.get_property_list():
-		if info["name"] == property_name and not int(info["usage"]) & SECTION_USAGE:
-			return info
-	return {}
-
-
 static func _method_info(node: Node, method: String) -> Dictionary:
 	for info: Dictionary in node.get_method_list():
 		if info["name"] == method:
 			return info
 	return {}
-
-
-## The type a property or parameter entry declares: its class for an object, else the Variant
-## type's name.
-static func _type_name(info: Dictionary) -> String:
-	var type: int = info.get("type", TYPE_NIL)
-	var class_title: String = str(info.get("class_name", ""))
-	if type == TYPE_OBJECT and not class_title.is_empty():
-		return class_title
-	return type_string(type)
 
 
 static func _script_path(node: Node) -> String:

@@ -438,6 +438,38 @@ func test_script_class_builtin_round_trips() -> void:
 		assert_true(_json._fits_hint(made, "JsonTestResource"), "of the class read")
 
 
+func test_same_compares_a_read_back_by_type_and_value() -> void:
+	assert_true(_json.same(0.1 + 0.2, 0.3), "floats approximately")
+	assert_true(not _json.same(1.0, 1), "a float is not an int")
+	assert_true(_json.same(Vector2(1, 2), Vector2(1, 2)), "an equal vector")
+	assert_true(not _json.same(Vector2(1, 2), Vector2(2, 1)), "a different vector")
+	assert_true(_json.same(null, null), "null reads back as null")
+	var empty_ref: Variant = Sprite2D.new()
+	var cleared: Variant = (empty_ref as Sprite2D).texture
+	(empty_ref as Sprite2D).free()
+	assert_true(_json.same(cleared, null), "a cleared native Object property is null")
+	assert_true(not _json.same(0, null), "an int is not null")
+
+
+func test_is_shown_keeps_script_and_editor_properties() -> void:
+	assert_true(_json.is_shown({"usage": PROPERTY_USAGE_SCRIPT_VARIABLE}), "a script variable")
+	assert_true(_json.is_shown({"usage": PROPERTY_USAGE_DEFAULT}), "an editor property")
+	assert_true(not _json.is_shown({"usage": PROPERTY_USAGE_STORAGE}), "stored, not shown")
+	var heading: int = PROPERTY_USAGE_CATEGORY | PROPERTY_USAGE_EDITOR
+	assert_true(not _json.is_shown({"usage": heading}), "a section heading")
+	var group: int = PROPERTY_USAGE_GROUP | PROPERTY_USAGE_EDITOR
+	assert_true(not _json.is_shown({"usage": group}), "a group heading")
+
+
+func test_type_name_names_a_class_or_a_variant_type() -> void:
+	assert_eq(_json.type_name({"type": TYPE_INT}), "int", "a Variant type")
+	assert_eq(_json.type_name({"type": TYPE_VECTOR2}), "Vector2", "a vector")
+	assert_eq(_json.type_name({}), "Nil", "no type")
+	assert_eq(_json.type_name(_resource_info("Texture2D")), "Object", "an object without class")
+	var texture: Dictionary = {"type": TYPE_OBJECT, "class_name": "Texture2D"}
+	assert_eq(_json.type_name(texture), "Texture2D", "an object's class")
+
+
 ## The entry of a Resource-typed property whose hint string is hint.
 static func _resource_info(hint: String) -> Dictionary:
 	return {"type": TYPE_OBJECT, "hint": PROPERTY_HINT_RESOURCE_TYPE, "hint_string": hint}

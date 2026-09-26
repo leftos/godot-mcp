@@ -44,9 +44,11 @@ public sealed class McpServerSmokeTests : IDisposable
                 "call_method",
                 "click",
                 "compare_screenshot",
+                "connect_signal",
                 "create_scene",
                 "delete_nodes",
                 "detach_project",
+                "disconnect_signal",
                 "drag",
                 "duplicate_node",
                 "frame_control",
@@ -56,6 +58,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "get_debug_output",
                 "get_errors",
                 "get_node_properties",
+                "get_node_signals",
                 "get_scene_file_tree",
                 "get_scene_tree",
                 "get_ui_elements",
@@ -120,9 +123,11 @@ public sealed class McpServerSmokeTests : IDisposable
             ["call_method"] = destructive,
             ["click"] = changesTheGame,
             ["compare_screenshot"] = readsTheGame,
+            ["connect_signal"] = changesTheGame,
             ["create_scene"] = changesTheGame,
             ["delete_nodes"] = destructive,
             ["detach_project"] = changesTheGame,
+            ["disconnect_signal"] = destructive,
             ["drag"] = changesTheGame,
             ["duplicate_node"] = changesTheGame,
             ["frame_control"] = changesTheGame,
@@ -132,6 +137,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["get_debug_output"] = readsTheGame,
             ["get_errors"] = readsTheGame,
             ["get_node_properties"] = readsTheGame,
+            ["get_node_signals"] = readsTheGame,
             ["get_scene_file_tree"] = readsTheGame,
             ["get_scene_tree"] = readsTheGame,
             ["get_ui_elements"] = readsTheGame,
@@ -165,7 +171,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(41, actual.Count);
+        Assert.Equal(44, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

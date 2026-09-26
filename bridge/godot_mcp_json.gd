@@ -498,7 +498,7 @@ static func _extends_resource(entry: Dictionary, classes: Array) -> bool:
 ## does is set.
 static func _set_properties(resource: Resource, properties: Dictionary) -> bool:
 	for key: Variant in properties:
-		var info: Dictionary = _property_info(resource, str(key))
+		var info: Dictionary = property_info(resource, str(key))
 		if info.is_empty():
 			return false
 		var converted: Array = from_json(properties[key], info)
@@ -509,11 +509,41 @@ static func _set_properties(resource: Resource, properties: Dictionary) -> bool:
 
 
 ## The property's entry in the object's property list, or {} when it has none of that name.
-static func _property_info(object: Object, property_name: String) -> Dictionary:
+static func property_info(object: Object, property_name: String) -> Dictionary:
 	for info: Dictionary in object.get_property_list():
 		if info["name"] == property_name and not int(info["usage"]) & SECTION_USAGE:
 			return info
 	return {}
+
+
+## Whether a property-list entry is one the inspector shows: a script variable or an editor
+## property, not a section heading.
+static func is_shown(info: Dictionary) -> bool:
+	var usage: int = info["usage"]
+	if usage & SECTION_USAGE:
+		return false
+	return usage & (PROPERTY_USAGE_SCRIPT_VARIABLE | PROPERTY_USAGE_EDITOR) != 0
+
+
+## Whether a property reads back what was set. A native float property may store 32 bits, so
+## a float compares approximately; anything else must match in type and value.
+static func same(after: Variant, value: Variant) -> bool:
+	# A cleared native Object property reads back as a null Ref, which is TYPE_OBJECT, not TYPE_NIL.
+	if typeof(value) == TYPE_NIL:
+		return typeof(after) == TYPE_NIL or (typeof(after) == TYPE_OBJECT and after == null)
+	if typeof(after) == TYPE_FLOAT and typeof(value) == TYPE_FLOAT:
+		return is_equal_approx(after, value)
+	return typeof(after) == typeof(value) and after == value
+
+
+## The type a property or parameter entry declares: its class for an object, else the Variant
+## type's name.
+static func type_name(info: Dictionary) -> String:
+	var type: int = info.get("type", TYPE_NIL)
+	var class_title: String = str(info.get("class_name", ""))
+	if type == TYPE_OBJECT and not class_title.is_empty():
+		return class_title
+	return type_string(type)
 
 
 ## Whether the resource is of one of the classes hint_string lists ("A,B"), a native class or the

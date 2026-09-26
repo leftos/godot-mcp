@@ -1,11 +1,14 @@
 extends "res://gd_test.gd"
-## The headless operations' pure helpers (headless/operations.gd): the request file's parsing, the
-## grouping of logged errors by the file they name, the C# scripts among a scene's dependencies,
-## and the node tree get_scene_file_tree builds from scene states.
+## The headless operations' pure helpers (headless/operations.gd and the scene modules beside it):
+## the request file's parsing, the grouping of logged errors by the file they name, the C# scripts
+## among a scene's dependencies, node paths, the node tree get_scene_file_tree builds from scene
+## states, and the uids a save reads and writes back.
 
 const HEADLESS_SCRIPT := "../../headless/operations.gd"
 const SCENE_EDIT_SCRIPT := "../../headless/scene_edit.gd"
 const SCENE_NODES_SCRIPT := "../../headless/scene_nodes.gd"
+const SCENE_PATHS_SCRIPT := "../../headless/scene_paths.gd"
+const SCENE_FILES_SCRIPT := "../../headless/scene_files.gd"
 
 var _ops: GDScript = load(
 	ProjectSettings.globalize_path("res://").path_join(HEADLESS_SCRIPT).simplify_path()
@@ -15,6 +18,12 @@ var _edit: GDScript = load(
 )
 var _nodes: GDScript = load(
 	ProjectSettings.globalize_path("res://").path_join(SCENE_NODES_SCRIPT).simplify_path()
+)
+var _paths: GDScript = load(
+	ProjectSettings.globalize_path("res://").path_join(SCENE_PATHS_SCRIPT).simplify_path()
+)
+var _files: GDScript = load(
+	ProjectSettings.globalize_path("res://").path_join(SCENE_FILES_SCRIPT).simplify_path()
 )
 
 
@@ -96,16 +105,16 @@ func test_csharp_dependencies_read_every_entry_form() -> void:
 		"res://Player.cs",
 	]
 	var expected: PackedStringArray = ["res://Player.cs", "res://Enemy.cs", "res://Boss.cs"]
-	assert_eq(_ops.csharp_dependencies(dependencies), expected, "each C# script once")
+	assert_eq(_edit.csharp_dependencies(dependencies), expected, "each C# script once")
 
 
 func test_node_paths_are_relative_to_the_scene_root() -> void:
-	assert_eq(_ops.normalise_node_path(""), ".", "empty is the root")
-	assert_eq(_ops.normalise_node_path("./A/B/"), "A/B", "a SceneState path")
-	assert_eq(_ops.join_node_path(".", "."), ".", "the scene's own root")
-	assert_eq(_ops.join_node_path(".", "./A"), "A", "a child of the scene's root")
-	assert_eq(_ops.join_node_path("A", "."), "A", "an instance's root is the instancing node")
-	assert_eq(_ops.join_node_path("A", "./B/C"), "A/B/C", "a node inside an instance")
+	assert_eq(_paths.normalise_node_path(""), ".", "empty is the root")
+	assert_eq(_paths.normalise_node_path("./A/B/"), "A/B", "a SceneState path")
+	assert_eq(_paths.join_node_path(".", "."), ".", "the scene's own root")
+	assert_eq(_paths.join_node_path(".", "./A"), "A", "a child of the scene's root")
+	assert_eq(_paths.join_node_path("A", "."), "A", "an instance's root is the instancing node")
+	assert_eq(_paths.join_node_path("A", "./B/C"), "A/B/C", "a node inside an instance")
 
 
 func test_an_instancing_node_lays_its_values_over_the_instance() -> void:
@@ -162,7 +171,7 @@ func test_ext_resources_get_their_uids_back() -> void:
 	var uids: Dictionary = {
 		"res://a.gd": "uid://aaa", "res://b.tscn": "uid://other", "res://z.gd": "uid://zzz"
 	}
-	var lines: PackedStringArray = _edit.with_ext_uids(text, uids).split("\n")
+	var lines: PackedStringArray = _files.with_ext_uids(text, uids).split("\n")
 	assert_eq(lines.size(), 8, "no line added or lost")
 	assert_eq(
 		lines[2],
@@ -178,11 +187,11 @@ func test_ext_resources_get_their_uids_back() -> void:
 		lines[4], '[ext_resource type="Texture2D" path="res://c.png" id="3_c"]', "no uid known"
 	)
 	assert_eq(lines[7], 'script_path = " path="res://a.gd"', "a line that is not a tag")
-	assert_eq(_edit.ext_resource_path('[ext_resource type="Script" id="1"]'), "", "no path")
+	assert_eq(_files.ext_resource_path('[ext_resource type="Script" id="1"]'), "", "no path")
 	var header := '[gd_scene load_steps=2 format=3 uid="uid://abc"]'
-	assert_eq(_edit.quoted_value(header, "uid"), "uid://abc", "a header's uid")
-	assert_eq(_edit.quoted_value('uid="uid://imp"', "uid"), "uid://imp", "an .import line")
-	assert_eq(_edit.quoted_value('[x myuid="uid://no"]', "uid"), "", "only the whole key")
+	assert_eq(_files.quoted_value(header, "uid"), "uid://abc", "a header's uid")
+	assert_eq(_files.quoted_value('uid="uid://imp"', "uid"), "uid://imp", "an .import line")
+	assert_eq(_files.quoted_value('[x myuid="uid://no"]', "uid"), "", "only the whole key")
 
 
 func test_a_file_s_own_uid_is_read_from_it_or_its_sidecar() -> void:
@@ -192,11 +201,11 @@ func test_a_file_s_own_uid_is_read_from_it_or_its_sidecar() -> void:
 		'[remap]\n\nimporter="texture"\nuid="uid://cimport"\npath="res://.godot/p.ctex"\n'
 	)
 	_write("user://uid_probe.tscn", '[gd_scene format=3 uid="uid://cscene"]\n\n[node name="A"]\n')
-	assert_eq(_edit._uid_text_of("user://uid_probe.gd"), "uid://cscript", "a script's .uid file")
-	assert_eq(_edit._uid_text_of("user://uid_probe.png"), "uid://cimport", "an .import uid line")
-	assert_eq(_edit._uid_text_of("user://uid_probe.tscn"), "uid://cscene", "a text scene's header")
-	assert_eq(_edit._uid_text_of("user://uid_missing.gd"), "", "no file and no sidecar")
-	assert_eq(_edit._sidecar_uid("user://uid_missing.gd.uid"), "", "a missing sidecar")
+	assert_eq(_files._uid_text_of("user://uid_probe.gd"), "uid://cscript", "a script's .uid file")
+	assert_eq(_files._uid_text_of("user://uid_probe.png"), "uid://cimport", "an .import uid line")
+	assert_eq(_files._uid_text_of("user://uid_probe.tscn"), "uid://cscene", "a text scene's header")
+	assert_eq(_files._uid_text_of("user://uid_missing.gd"), "", "no file and no sidecar")
+	assert_eq(_files._sidecar_uid("user://uid_missing.gd.uid"), "", "a missing sidecar")
 
 
 func test_the_source_s_ext_resource_uids_are_read_by_path() -> void:
@@ -210,7 +219,7 @@ func test_the_source_s_ext_resource_uids_are_read_by_path() -> void:
 			]
 		)
 	)
-	assert_eq(_edit.ext_uids_in(text), {"res://s.gd": "uid://sgd"}, "only tags carrying a uid")
+	assert_eq(_files.ext_uids_in(text), {"res://s.gd": "uid://sgd"}, "only tags carrying a uid")
 
 
 func test_a_copy_is_named_as_the_editor_names_a_duplicate() -> void:

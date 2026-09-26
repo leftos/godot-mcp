@@ -1,14 +1,15 @@
 extends RefCounted
 ## The headless property edits scene_ops.gd applies to an open scene: add_node,
 ## set_node_properties and get_node_properties. Values convert through scene_values.gd (a node as
-## its path from the scene's root), and the running game's inspector (bridge/godot_mcp_inspect.gd)
-## supplies the rules the two share: which properties a read shows, how a property is found, and
-## how a read-back is compared with the value set. Godot does not refuse a wrong type (see the
-## inspector's header), so every set is read back.
+## its path from the scene's root), and the JSON module (bridge/godot_mcp_json.gd) supplies the
+## rules these share with the running game's inspector: which properties a read shows, how a
+## property is found, and how a read-back is compared with the value set. Godot does not refuse a
+## wrong type (see bridge/godot_mcp_inspect.gd's header), so every set is read back.
 
 const SceneEdit := preload("scene_edit.gd")
+const ScenePaths := preload("scene_paths.gd")
 const SceneValues := preload("scene_values.gd")
-const Inspect := preload("../bridge/godot_mcp_inspect.gd")
+const Json := preload("../bridge/godot_mcp_json.gd")
 const SCENE_PREFIX := "res://"
 
 
@@ -16,10 +17,10 @@ const SCENE_PREFIX := "res://"
 ## params.properties set on it before it is added: {result: {path, type, instance?}}, or {error}
 ## naming every failing property, with nothing added. The new node is owned by the scene's root;
 ## an instanced scene's own nodes keep the instance's owners.
-static func apply_add_node(root: Node, params: Dictionary) -> Dictionary:
+static func apply_add_node(root: Node, params: Dictionary, context: Dictionary) -> Dictionary:
 	var parent_path: String = str(params.get("parent", "."))
 	var node_name: String = str(params.get("nodeName", ""))
-	var scene: String = str(params.get("scene", ""))
+	var scene: String = context["scene"]
 	var refusal: String = _add_refusal(root, parent_path, node_name, scene)
 	if refusal.is_empty():
 		refusal = _reserved_key(params.get("properties", {}))
@@ -52,8 +53,10 @@ static func apply_add_node(root: Node, params: Dictionary) -> Dictionary:
 ## Sets each of params.updates ({nodePath, property, value}) and reads it back:
 ## {result: {results: [{nodePath, property, before, after}]}}, or {error} naming every failing
 ## entry. Every entry is found and converted before any is set.
-static func apply_set_node_properties(root: Node, params: Dictionary) -> Dictionary:
-	var scene: String = str(params.get("scene", ""))
+static func apply_set_node_properties(
+	root: Node, params: Dictionary, context: Dictionary
+) -> Dictionary:
+	var scene: String = context["scene"]
 	var planned: Array = []
 	var failures: PackedStringArray = []
 	for update: Dictionary in params.get("updates", []):
@@ -91,10 +94,12 @@ static func apply_set_node_properties(root: Node, params: Dictionary) -> Diction
 ## Reads each of params.nodes ({nodePath, properties?, changedOnly?}):
 ## {result: {results: [{nodePath, type, script?, properties} | {nodePath, error}]}}. A node or
 ## property that is missing gives its own entry an error.
-static func apply_get_node_properties(root: Node, params: Dictionary) -> Dictionary:
+static func apply_get_node_properties(
+	root: Node, params: Dictionary, context: Dictionary
+) -> Dictionary:
 	var results: Array = []
 	for query: Dictionary in params.get("nodes", []):
-		results.append(_read_node(root, query, str(params.get("scene", ""))))
+		results.append(_read_node(root, query, context["scene"]))
 	return {"result": {"results": results}}
 
 
@@ -105,17 +110,18 @@ static func stored_names(scene_path: String, node_path: String) -> Array:
 	var names: Array = []
 	var scene := ResourceLoader.load(scene_path) as PackedScene
 	if scene != null:
-		_add_stored(scene.get_state(), ".", _normalised(node_path), names, 0)
+		_add_stored(scene.get_state(), ".", ScenePaths.normalise_node_path(node_path), names, 0)
 	return names
 
 
 static func _add_refusal(
 	root: Node, parent_path: String, node_name: String, scene: String
 ) -> String:
-	var parent: Node = SceneEdit.find(root, parent_path)
-	if parent == null:
-		return "%s has no node %s." % [scene, parent_path]
-	var refusal: String = _set_refusal(root, parent, parent_path)
+	var found: Dictionary = SceneEdit.node_or_error(root, parent_path, scene)
+	if found.has("error"):
+		return found["error"]
+	var parent: Node = found["node"]
+	var refusal: String = SceneEdit.unsaved_edit_refusal(root, parent, parent_path)
 	if not refusal.is_empty():
 		return refusal
 	if node_name.validate_node_name() != node_name:
@@ -212,10 +218,11 @@ static func _set_all(
 ## that does not convert.
 static func _plan_update(root: Node, update: Dictionary, scene: String) -> Dictionary:
 	var path: String = str(update.get("nodePath", ""))
-	var node: Node = SceneEdit.find(root, path)
-	if node == null:
-		return {"error": "%s has no node %s." % [scene, path]}
-	var refusal: String = _set_refusal(root, node, path)
+	var found: Dictionary = SceneEdit.node_or_error(root, path, scene)
+	if found.has("error"):
+		return found
+	var node: Node = found["node"]
+	var refusal: String = SceneEdit.unsaved_edit_refusal(root, node, path)
 	if not refusal.is_empty():
 		return {"error": refusal}
 	var property: String = str(update.get("property", ""))
@@ -225,24 +232,13 @@ static func _plan_update(root: Node, update: Dictionary, scene: String) -> Dicti
 	return {"node": node, "nodePath": path, "property": property, "value": converted.value}
 
 
-## Why a change to node (found at path) would not be saved, or "". A node inherited from the base
-## scene saves its overrides; a node inside an instance saves them only when the instance is an
-## editable instance (its children shown in the editor).
-static func _set_refusal(root: Node, node: Node, path: String) -> String:
-	var instance: Node = node.owner
-	if node != root and instance != null and instance != root:
-		if root.is_editable_instance(instance):
-			return ""
-	return SceneEdit.instance_refusal(root, node, path)
-
-
 ## {value}: value converted by the property's declared type (an untyped property's by the type of
 ## the value it holds, unless that is null), as the running game's set_property converts it; or
 ## {error}.
 static func _converted(
 	node: Node, path: String, property: String, value: Variant, root: Node
 ) -> Dictionary:
-	var info: Dictionary = Inspect._property_info(node, property)
+	var info: Dictionary = Json.property_info(node, property)
 	if info.is_empty():
 		return {"error": "%s has no property %s." % [path, property]}
 	var held: Variant = node.get(property)
@@ -254,7 +250,7 @@ static func _converted(
 			"error":
 			(
 				"Property '%s' on '%s' is %s; %s does not convert to it."
-				% [property, path, Inspect._type_name(info), JSON.stringify(value)]
+				% [property, path, Json.type_name(info), JSON.stringify(value)]
 			)
 		}
 	return {"value": converted[1]}
@@ -268,7 +264,7 @@ static func _set_checked(
 	var before: Variant = node.get(property)
 	node.set(property, value)
 	var after: Variant = node.get(property)
-	if not Inspect._same(after, value):
+	if not Json.same(after, value):
 		var read: String = JSON.stringify(SceneValues.to_json(after, root))
 		return {
 			"error":
@@ -282,9 +278,10 @@ static func _set_checked(
 
 static func _read_node(root: Node, query: Dictionary, scene: String) -> Dictionary:
 	var path: String = str(query.get("nodePath", ""))
-	var node: Node = SceneEdit.find(root, path)
-	if node == null:
-		return {"nodePath": path, "error": "%s has no node %s." % [scene, path]}
+	var found: Dictionary = SceneEdit.node_or_error(root, path, scene)
+	if found.has("error"):
+		return {"nodePath": path, "error": found["error"]}
+	var node: Node = found["node"]
 	var names: Variant = _names_to_read(root, node, path, query, scene)
 	if names is String:
 		return {"nodePath": path, "error": names}
@@ -307,7 +304,7 @@ static func _names_to_read(
 ) -> Variant:
 	var wanted: Array = []
 	for property: Variant in query.get("properties", []):
-		if Inspect._property_info(node, str(property)).is_empty():
+		if Json.property_info(node, str(property)).is_empty():
 			return "%s has no property %s." % [path, property]
 		wanted.append(str(property))
 	var names: Array = wanted if not wanted.is_empty() else _shown_names(node)
@@ -320,7 +317,7 @@ static func _names_to_read(
 static func _shown_names(node: Node) -> Array:
 	var names: Array = []
 	for info: Dictionary in node.get_property_list():
-		if Inspect._is_shown(info):
+		if Json.is_shown(info):
 			names.append(info.name)
 	return names
 
@@ -331,7 +328,7 @@ static func _add_stored(
 	state: SceneState, prefix: String, node_path: String, names: Array, depth: int
 ) -> void:
 	for index in state.get_node_count():
-		var path: String = _joined(prefix, String(state.get_node_path(index)))
+		var path: String = ScenePaths.join_node_path(prefix, String(state.get_node_path(index)))
 		var instance: PackedScene = state.get_node_instance(index)
 		if instance != null and depth < SceneEdit.MAX_BASE_DEPTH and _holds(path, node_path):
 			_add_stored(instance.get_state(), path, node_path, names, depth + 1)
@@ -349,20 +346,3 @@ static func _add_names(state: SceneState, index: int, names: Array) -> void:
 ## Whether the node at node_path is the one at path or under it.
 static func _holds(path: String, node_path: String) -> bool:
 	return path == "." or node_path == path or node_path.begins_with(path + "/")
-
-
-## The path of relative (a scene state's node path) inside an instance placed at prefix.
-static func _joined(prefix: String, relative: String) -> String:
-	var inner: String = _normalised(relative)
-	if inner == ".":
-		return prefix
-	return inner if prefix == "." else prefix + "/" + inner
-
-
-## A node path relative to a scene's root without "." or empty segments; the root is ".".
-static func _normalised(path: String) -> String:
-	var names: PackedStringArray = []
-	for part in path.split("/"):
-		if not part.is_empty() and part != ".":
-			names.append(part)
-	return "." if names.is_empty() else "/".join(names)
