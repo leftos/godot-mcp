@@ -340,7 +340,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
     {
         string alpha = Project("alpha");
         using FakeBridge game = await AttachFakeGameAsync(alpha, "server");
-        HeadlessRequest request = new(alpha, "validate", [], Prepare: false);
+        HeadlessRequest request = new(alpha, "validate", [], Prepare: false, Ceiling: TimeSpan.FromSeconds(60));
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
             HeadlessRunner.RunAsync(_sessions, request, TestContext.Current.CancellationToken)

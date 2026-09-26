@@ -10,12 +10,14 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// Tools that read a project's files in a headless Godot (headless/operations.gd) without running the game: validate and
-/// get_scene_file_tree. Each runs the prep first, as run_project does, and is refused while a session is live on the folder.
+/// get_scene_file_tree here, the scene edits in HeadlessTools.Scene.cs. Each runs the prep first, as run_project does, and is
+/// refused while a session is live on the folder.
 /// </summary>
 [McpServerToolType]
-internal sealed class HeadlessTools(SessionRegistry sessions)
+internal sealed partial class HeadlessTools(SessionRegistry sessions)
 {
     internal const int MaxTargets = 50;
+    private static readonly TimeSpan RunCeiling = TimeSpan.FromSeconds(60);
     internal const int MaxSweep = 500;
 
     internal const string PrepareDescription =
@@ -64,7 +66,8 @@ internal sealed class HeadlessTools(SessionRegistry sessions)
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
             IReadOnlyList<string> checkedFiles = targets is null ? VersionedTargets(projectDir, sessions.Logger) : CheckTargets(projectDir, targets);
             JsonObject parameters = new() { ["targets"] = new JsonArray([.. checkedFiles.Select(path => (JsonNode)path)]) };
-            return HeadlessRunner.RunAsync(sessions, new HeadlessRequest(projectDir, "validate", parameters, prepare), cancellationToken);
+            HeadlessRequest request = new(projectDir, "validate", parameters, prepare, RunCeiling);
+            return HeadlessRunner.RunAsync(sessions, request, cancellationToken);
         });
         return ShapeValidation(run).ToJsonString();
     }
@@ -106,7 +109,7 @@ internal sealed class HeadlessTools(SessionRegistry sessions)
                 ["root"] = string.IsNullOrWhiteSpace(root) ? "." : root.Trim(),
                 ["maxDepth"] = maxDepth,
             };
-            HeadlessRequest request = new(projectDir, "get_scene_file_tree", parameters, prepare);
+            HeadlessRequest request = new(projectDir, "get_scene_file_tree", parameters, prepare, RunCeiling);
             return HeadlessRunner.RunAsync(sessions, request, cancellationToken);
         });
         JsonObject page = RuntimeTools.PageList(run.Result, "nodes", offset, limit);
@@ -136,12 +139,10 @@ internal sealed class HeadlessTools(SessionRegistry sessions)
     }
 
     /// <exception cref="McpException">The path is empty, outside the project, missing, or not a .tscn or .scn.</exception>
-    internal static string CheckScenePath(string projectDir, string scenePath) =>
-        ToResPath(
-            projectDir,
-            scenePath,
-            new PathRule("scenePath", SceneExtensions, "is not a scene: get_scene_file_tree reads .tscn and .scn files.")
-        );
+    internal static string CheckScenePath(string projectDir, string scenePath) => ToResPath(projectDir, scenePath, SceneRule("scenePath"));
+
+    private static PathRule SceneRule(string argument) =>
+        new(argument, SceneExtensions, "is not a scene: the scene tools take .tscn and .scn files.");
 
     /// <summary>The project folder's git-versioned scripts, scenes and resources that exist, as res:// paths in ordinal order.</summary>
     /// <exception cref="McpException">The folder is not in a git repository, or it has more than <see cref="MaxSweep"/>.</exception>
@@ -213,8 +214,19 @@ internal sealed class HeadlessTools(SessionRegistry sessions)
         return csharp;
     }
 
-    /// <exception cref="McpException">The path breaks the rule.</exception>
+    /// <exception cref="McpException">The path breaks the rule, or the file does not exist.</exception>
     private static string ToResPath(string projectDir, string path, PathRule rule)
+    {
+        string full = ResolvePath(projectDir, path, rule);
+        return File.Exists(full) ? ResOf(projectDir, full) : throw new McpException($"{rule.Argument} '{path}' does not exist: {full}.");
+    }
+
+    /// <summary>The res:// path of a full path inside the project.</summary>
+    private static string ResOf(string projectDir, string full) => "res://" + Path.GetRelativePath(projectDir, full).Replace('\\', '/');
+
+    /// <summary>The full path a res:// or project-relative path names, checked to be inside the project and of the rule's kind.</summary>
+    /// <exception cref="McpException">The path is empty, outside the project, or of another kind.</exception>
+    private static string ResolvePath(string projectDir, string path, PathRule rule)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -234,9 +246,7 @@ internal sealed class HeadlessTools(SessionRegistry sessions)
             throw new McpException($"{rule.Argument} '{path}' {rule.Refusal}");
         }
 
-        return File.Exists(full)
-            ? "res://" + inProject.Replace('\\', '/')
-            : throw new McpException($"{rule.Argument} '{path}' does not exist: {full}.");
+        return full;
     }
 
     /// <summary>Whether a path relative to the project folder leaves it: up out of it, or onto another drive.</summary>

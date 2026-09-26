@@ -4,9 +4,13 @@ extends "res://gd_test.gd"
 ## and the node tree get_scene_file_tree builds from scene states.
 
 const HEADLESS_SCRIPT := "../../headless/operations.gd"
+const SCENE_EDIT_SCRIPT := "../../headless/scene_edit.gd"
 
 var _ops: GDScript = load(
 	ProjectSettings.globalize_path("res://").path_join(HEADLESS_SCRIPT).simplify_path()
+)
+var _edit: GDScript = load(
+	ProjectSettings.globalize_path("res://").path_join(SCENE_EDIT_SCRIPT).simplify_path()
 )
 
 
@@ -125,6 +129,90 @@ func test_an_instancing_node_lays_its_values_over_the_instance() -> void:
 	var shallow: Array = []
 	_ops.list_nodes(tree, "Foe", 0, shallow)
 	assert_eq(shallow.size(), 1, "maxDepth 0 lists the root alone")
+
+
+func test_a_new_scene_root_is_named_after_its_file() -> void:
+	assert_eq(_edit.root_name_for("res://player_ship.tscn"), "PlayerShip", "snake_case")
+	assert_eq(_edit.root_name_for("res://rooms/boss-room.tscn"), "BossRoom", "kebab-case")
+	assert_eq(_edit.root_name_for("res://Level1.tscn"), "Level1", "already PascalCase")
+	assert_eq(_edit.root_name_for("res://hud_HUDMenu.scn"), "HudHUDMenu", "inner capitals kept")
+	assert_eq(_edit.root_name_for("res://__.tscn"), "Root", "no word at all")
+
+
+func test_ext_resources_get_their_uids_back() -> void:
+	var text := (
+		"\n"
+		. join(
+			[
+				"[gd_scene format=3]",
+				"",
+				'[ext_resource type="Script" path="res://a.gd" id="1_a"]',
+				'[ext_resource type="PackedScene" uid="uid://kept" path="res://b.tscn" id="2_b"]',
+				'[ext_resource type="Texture2D" path="res://c.png" id="3_c"]',
+				"",
+				'[node name="A" type="Node2D"]',
+				'script_path = " path="res://a.gd"',
+			]
+		)
+	)
+	var uids: Dictionary = {
+		"res://a.gd": "uid://aaa", "res://b.tscn": "uid://other", "res://z.gd": "uid://zzz"
+	}
+	var lines: PackedStringArray = _edit.with_ext_uids(text, uids).split("\n")
+	assert_eq(lines.size(), 8, "no line added or lost")
+	assert_eq(
+		lines[2],
+		'[ext_resource type="Script" uid="uid://aaa" path="res://a.gd" id="1_a"]',
+		"a uid added before the path"
+	)
+	assert_eq(
+		lines[3],
+		'[ext_resource type="PackedScene" uid="uid://kept" path="res://b.tscn" id="2_b"]',
+		"a uid already there is kept"
+	)
+	assert_eq(
+		lines[4], '[ext_resource type="Texture2D" path="res://c.png" id="3_c"]', "no uid known"
+	)
+	assert_eq(lines[7], 'script_path = " path="res://a.gd"', "a line that is not a tag")
+	assert_eq(_edit.ext_resource_path('[ext_resource type="Script" id="1"]'), "", "no path")
+	var header := '[gd_scene load_steps=2 format=3 uid="uid://abc"]'
+	assert_eq(_edit.quoted_value(header, "uid"), "uid://abc", "a header's uid")
+	assert_eq(_edit.quoted_value('uid="uid://imp"', "uid"), "uid://imp", "an .import line")
+	assert_eq(_edit.quoted_value('[x myuid="uid://no"]', "uid"), "", "only the whole key")
+
+
+func test_a_file_s_own_uid_is_read_from_it_or_its_sidecar() -> void:
+	_write("user://uid_probe.gd.uid", "uid://cscript\n")
+	_write(
+		"user://uid_probe.png.import",
+		'[remap]\n\nimporter="texture"\nuid="uid://cimport"\npath="res://.godot/p.ctex"\n'
+	)
+	_write("user://uid_probe.tscn", '[gd_scene format=3 uid="uid://cscene"]\n\n[node name="A"]\n')
+	assert_eq(_edit._uid_text_of("user://uid_probe.gd"), "uid://cscript", "a script's .uid file")
+	assert_eq(_edit._uid_text_of("user://uid_probe.png"), "uid://cimport", "an .import uid line")
+	assert_eq(_edit._uid_text_of("user://uid_probe.tscn"), "uid://cscene", "a text scene's header")
+	assert_eq(_edit._uid_text_of("user://uid_missing.gd"), "", "no file and no sidecar")
+	assert_eq(_edit._sidecar_uid("user://uid_missing.gd.uid"), "", "a missing sidecar")
+
+
+func test_the_source_s_ext_resource_uids_are_read_by_path() -> void:
+	var text := (
+		"\n"
+		. join(
+			[
+				'[gd_scene format=3 uid="uid://self"]',
+				'[ext_resource type="Script" uid="uid://sgd" path="res://s.gd" id="1"]',
+				'[ext_resource type="Texture2D" path="res://t.png" id="2"]',
+			]
+		)
+	)
+	assert_eq(_edit.ext_uids_in(text), {"res://s.gd": "uid://sgd"}, "only tags carrying a uid")
+
+
+func _write(path: String, text: String) -> void:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(text)
+	file.close()
 
 
 func _entry(type: String, message: String, file: String, line: int) -> Dictionary:

@@ -14,8 +14,10 @@ extends SceneTree
 ## and checks each C# script a scene or resource uses with can_instantiate; an error is grouped
 ## under the res:// file it names, else under the file being checked. get_scene_file_tree reads a
 ## scene's SceneState, expanding instanced scenes and an inherited scene's base in place, without
-## instantiating anything.
+## instantiating anything. Every other op is a scene edit, run by scene_ops.gd.
 
+const SceneOps := preload("scene_ops.gd")
+const SceneEdit := preload("scene_edit.gd")
 const RES_PREFIX := "res://"
 ## How deep instanced scenes are expanded; Godot refuses a scene that instances itself.
 const MAX_INSTANCE_DEPTH := 64
@@ -140,12 +142,7 @@ static func results_of(groups: Dictionary) -> Array:
 ## The res:// paths of the C# scripts among ResourceLoader.get_dependencies entries, which read
 ## "<path>[::<type>]" or, for a dependency saved with its UID, "<uid>::<type>::<path>".
 static func csharp_dependencies(dependencies: PackedStringArray) -> PackedStringArray:
-	var found: PackedStringArray = []
-	for dependency in dependencies:
-		for part in dependency.split("::"):
-			if part.begins_with(RES_PREFIX) and part.ends_with(".cs") and not found.has(part):
-				found.append(part)
-	return found
+	return SceneEdit.csharp_dependencies(dependencies)
 
 
 ## A node path relative to a scene's root, without "." or empty segments; the root is ".".
@@ -171,7 +168,7 @@ func _dispatch(op: String, params: Dictionary) -> Dictionary:
 			return {"ok": true, "result": _validate(params.get("targets", []))}
 		"get_scene_file_tree":
 			return _scene_file_tree(params)
-	return {"ok": false, "error": "unknown operation '%s'" % op}
+	return SceneOps.run(op, params)
 
 
 func _write_reply(path: String, reply: Dictionary) -> void:

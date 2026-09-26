@@ -6,8 +6,11 @@ using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Session;
 
-/// <summary>One headless operation: the normalised project folder, the operation's name and parameters, and whether to prepare first.</summary>
-internal sealed record HeadlessRequest(string ProjectDir, string Operation, JsonObject Parameters, bool Prepare);
+/// <summary>
+/// One headless operation: the normalised project folder, the operation's name and parameters, whether to prepare first, and
+/// how long the Godot run may take before it is stopped.
+/// </summary>
+internal sealed record HeadlessRequest(string ProjectDir, string Operation, JsonObject Parameters, bool Prepare, TimeSpan Ceiling);
 
 /// <summary>
 /// What a headless operation returned, every error and warning Godot logged while it ran (<c>{type, message, file, line}</c>),
@@ -19,11 +22,11 @@ internal sealed record HeadlessResult(JsonNode? Result, JsonArray EngineErrors, 
 /// Runs <c>headless/operations.gd</c> in <c>godot --headless --script</c> on a project folder, under the folder's prep lock
 /// through the prep and the run. The request and the result cross as JSON files under <c>.godot/godot-mcp/headless/</c>.
 /// A <c>--script</c> run reads <c>override.cfg</c> (4.7.2 <c>main.cpp</c> L2107), so it is refused while a session is live
-/// on the folder, and a marked file a crashed session left is removed first.
+/// on the folder, and a marked file a crashed session left is removed first. The operation's parameters reach the script
+/// with the prep's C# build state added as <c>build</c>.
 /// </summary>
 internal static class HeadlessRunner
 {
-    public static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(60);
     private const int LogTailLines = 20;
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
@@ -45,7 +48,7 @@ internal static class HeadlessRunner
             PrepOutcome prep = request.Prepare
                 ? await ProjectPrep.RunReportingBuildAsync(context, cancellationToken)
                 : new PrepOutcome(PrepResult.Skipped, null);
-            JsonObject reply = await RunGodotAsync(new GodotCall(godot, script, request, registry), cancellationToken);
+            JsonObject reply = await RunGodotAsync(new GodotCall(godot, script, request, registry, prep.Result.Build), cancellationToken);
             JsonArray engineErrors = reply["engineErrors"]?.DeepClone() as JsonArray ?? [];
             return new HeadlessResult(reply["result"]?.DeepClone(), engineErrors, prep.Result, prep.BuildErrors);
         }
@@ -81,16 +84,18 @@ internal static class HeadlessRunner
         string log = Path.Combine(ProjectPrep.LogFolder(projectDir), "headless.log");
         try
         {
+            JsonObject parameters = call.Request.Parameters.DeepClone().AsObject();
+            parameters["build"] = call.Build;
             JsonObject body = new()
             {
                 ["op"] = call.Request.Operation,
-                ["params"] = call.Request.Parameters.DeepClone(),
+                ["params"] = parameters,
                 ["result"] = ForGodot(resultPath),
             };
             await File.WriteAllTextAsync(requestPath, body.ToJsonString(), Utf8NoBom, cancellationToken);
             string[] arguments = ["--headless", "--path", projectDir, "--script", ForGodot(call.Script), "--", ForGodot(requestPath)];
             ToolProcessResult ran = await StartAsync(
-                new ToolProcessRequest(call.Godot, arguments, projectDir, log, Ceiling),
+                new ToolProcessRequest(call.Godot, arguments, projectDir, log, call.Request.Ceiling),
                 call,
                 cancellationToken
             );
@@ -135,7 +140,9 @@ internal static class HeadlessRunner
         string what = $"The headless {request.Operation} run on {request.ProjectDir}";
         if (ran.KilledByCeiling)
         {
-            throw new SessionException($"{what} passed {Ceiling.TotalSeconds:0} s, so it was stopped with its whole process tree. Its log: {log}");
+            throw new SessionException(
+                $"{what} passed {request.Ceiling.TotalSeconds:0} s, so it was stopped with its whole process tree. Its log: {log}"
+            );
         }
 
         if (!File.Exists(resultPath))
@@ -169,6 +176,9 @@ internal static class HeadlessRunner
 
     private static string ForGodot(string path) => Path.GetFullPath(path).Replace('\\', '/');
 
-    /// <summary>The Godot executable, the operations script, the request and the registry whose logger the run uses.</summary>
-    private sealed record GodotCall(string Godot, string Script, HeadlessRequest Request, SessionRegistry Registry);
+    /// <summary>
+    /// The Godot executable, the operations script, the request, the registry whose logger the run uses, and the prep's C# build
+    /// state (<see cref="PrepResult.Build"/>).
+    /// </summary>
+    private sealed record GodotCall(string Godot, string Script, HeadlessRequest Request, SessionRegistry Registry, string Build);
 }

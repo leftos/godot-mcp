@@ -103,7 +103,7 @@ public sealed class HeadlessValidationTests : IDisposable
     {
         McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckScenePath(_project, "res://main.gd"));
 
-        Assert.Equal("scenePath 'res://main.gd' is not a scene: get_scene_file_tree reads .tscn and .scn files.", refused.Message);
+        Assert.Equal("scenePath 'res://main.gd' is not a scene: the scene tools take .tscn and .scn files.", refused.Message);
         Assert.Equal("res://levels/a.tscn", HeadlessTools.CheckScenePath(_project, "levels/a.tscn"));
     }
 
