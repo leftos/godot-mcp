@@ -55,6 +55,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "key",
                 "list_sessions",
                 "mouse_button",
+                "restart_project",
                 "run_project",
                 "run_script",
                 "save_screenshot_baseline",
@@ -117,6 +118,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["key"] = changesTheGame,
             ["list_sessions"] = readsTheGame,
             ["mouse_button"] = changesTheGame,
+            ["restart_project"] = destructive,
             ["run_project"] = changesTheGame,
             ["run_script"] = destructive,
             ["save_screenshot_baseline"] = changesTheGame,
@@ -137,7 +139,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(27, actual.Count);
+        Assert.Equal(28, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

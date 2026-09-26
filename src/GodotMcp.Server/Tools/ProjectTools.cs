@@ -137,6 +137,31 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         return JsonSerializer.Serialize(result, Json);
     }
 
+    [McpServerTool(Name = "restart_project", ReadOnly = false, Destructive = true, OpenWorld = false)]
+    [Description(
+        "Relaunches a session run_project started, with the scene, arguments and options it was launched with, keeping the "
+            + "session: its name, its errors (seq keeps counting) and its debug output, where a marker line separates the old "
+            + "game's lines from the new one's. First, while the old game still runs, a stale C# assembly is built and missing "
+            + "imports are run, as run_project does; a failed build or import is an error and leaves the old game running. Then "
+            + "the old game is stopped as stop_project stops it, and the new one started. A session whose game has quit or been "
+            + "stopped is started again. To change the scene or arguments, use stop_project then run_project. An attached "
+            + "session cannot be restarted."
+    )]
+    public async Task<string> RestartProjectAsync(
+        [Description(
+            "{prepare}; when left out, prepare is auto (a stale C# assembly is built and missing imports are run first; the "
+                + "result's prep says what was done)."
+        )]
+            RestartOptions? options = null,
+        [Description(SessionDescription)] string? session = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        bool prepare = (options ?? new RestartOptions()).ShouldPrepare();
+        RestartResult result = await RunAsync(() => sessions.RestartAsync(session, prepare, cancellationToken));
+        return JsonSerializer.Serialize(result, Json);
+    }
+
     [McpServerTool(Name = "get_debug_output", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
         "The newest stdout and stderr lines of a session's run (the current or the last one under its name), whether it is "

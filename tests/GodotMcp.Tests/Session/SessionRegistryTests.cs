@@ -1,9 +1,12 @@
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
+using GodotMcp.Server.Tools;
 using GodotMcp.Server.Wire;
 using GodotMcp.Tests.Wire;
 using GodotMcp.TestSupport;
 using Microsoft.Extensions.Logging.Abstractions;
+using ModelContextProtocol;
 
 namespace GodotMcp.Tests.Session;
 
@@ -217,6 +220,111 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         Assert.False(detached.OverrideRemoved);
         Assert.True(File.Exists(attachFile));
         Assert.True(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
+    // An attached session has no run, so any run's exit is the exit of a run that is not its current one, as the old run's is
+    // once a restart has replaced it. A guard of "_run is null" would pass this too: the real case, an old run exiting while
+    // the session's current run is a newer one, needs a launched Godot to make that newer run, so it is covered by the
+    // integration test RestartTests.TheOverrideSurvivesTheRestartAndGoesWithTheStop, not here.
+    [Fact]
+    public async Task AReplacedRunsExitLeavesTheOverrideAndTheFolderReserved()
+    {
+        string alpha = Project("alpha");
+        using FakeBridge game = await AttachFakeGameAsync(alpha, "server");
+        GodotSession session = _sessions.Resolve("server");
+        using Process neverStarted = new();
+
+        await session.OnRunExitedAsync(new GodotRun(alpha, neverStarted, previous: null));
+
+        Assert.True(File.Exists(OverrideFile.PathIn(alpha)));
+        Assert.True(session.IsLive);
+    }
+
+    // The launch is parked on the folder's prep lock, which the test holds, so the session stays starting. The launch looks
+    // Godot up before taking the lock, so this needs Godot where the server finds it (GODOT_PATH or the default path).
+    [Fact]
+    public async Task RestartingASessionStillStartingIsRefused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = Project("alpha");
+        SemaphoreSlim folderLock = _sessions.PrepLock(alpha);
+        await folderLock.WaitAsync(cancellation);
+        using CancellationTokenSource cancelLaunch = new();
+        LaunchRequest request = new(alpha, null, [], [], true, false, Prepare: true);
+        Task<LaunchResult> launch = _sessions.LaunchAsync(request, "server", cancelLaunch.Token);
+        try
+        {
+            await WaitUntilAsync(() => _sessions.List().Any(session => session.Name == "server"));
+
+            SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+                _sessions.RestartAsync("server", prepare: true, cancellation)
+            );
+
+            Assert.Equal("session 'server' is still starting or restarting; wait for its call to return, or stop_project it.", refused.Message);
+        }
+        finally
+        {
+            await cancelLaunch.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => launch);
+            folderLock.Release();
+        }
+    }
+
+    [Fact]
+    public async Task RestartingAnAttachedSessionIsRefused()
+    {
+        string alpha = Project("alpha");
+        using FakeBridge game = await AttachFakeGameAsync(alpha, "server");
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _sessions.RestartAsync("server", prepare: true, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(
+            "session 'server' is attached, not started by run_project, so it cannot be restarted; detach_project, then start the game "
+                + "again yourself.",
+            refused.Message
+        );
+        Assert.True(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
+    [Fact]
+    public async Task RestartingWithNoSessionOrAnUnknownNameIsRefused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        SessionException none = await Assert.ThrowsAsync<SessionException>(() => _sessions.RestartAsync(null, prepare: true, cancellation));
+        SessionException unknown = await Assert.ThrowsAsync<SessionException>(() => _sessions.RestartAsync("client", prepare: true, cancellation));
+
+        Assert.Equal("No Godot session is running; start one with run_project or attach_project.", none.Message);
+        Assert.Equal("No session named 'client'. Sessions: none.", unknown.Message);
+    }
+
+    [Fact]
+    public async Task RestartsPrepareTakesAutoOrNever()
+    {
+        ProjectTools tools = new(_sessions);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            tools.RestartProjectAsync(new RestartOptions("sometimes"), cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("prepare takes \"auto\" or \"never\"; got \"sometimes\".", refused.Message);
+        Assert.True(new RestartOptions().ShouldPrepare());
+        Assert.True(new RestartOptions("auto").ShouldPrepare());
+        Assert.False(new RestartOptions("never").ShouldPrepare());
+    }
+
+    private async Task<FakeBridge> AttachFakeGameAsync(string projectDir, string name)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string attachFile = AttachFile.PathIn(projectDir);
+        Task<AttachResult> attach = _sessions.AttachAsync(projectDir, name, LongWait, false, cancellation);
+        await WaitUntilAsync(() => File.Exists(attachFile));
+        string token = JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>();
+        FakeBridge game = await FakeBridge.DialAsync(_listener.Port, token, projectDir, cancellation);
+        await attach;
+        return game;
     }
 
     private string Project(string folder)

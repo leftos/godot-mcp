@@ -92,7 +92,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             await _gate.WaitAsync(cancellationToken);
             try
             {
-                return await StartRunAsync(request, cancellationToken);
+                return await StartRunAsync(request, previous: null, cancellationToken);
             }
             finally
             {
@@ -130,18 +130,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
             GodotRun run =
                 _run ?? throw new SessionException("No Godot session has been started, so there is nothing to stop. Start one with run_project.");
-            bool killed = run.IsRunning && (await IsSilentAsync(run) || !await ShutDownGracefullyAsync(run));
-            if (killed)
-            {
-                await KillAsync(run);
-            }
-
-            if (run.Connection is not null)
-            {
-                await run.Connection.DisposeAsync();
-                run.Connection = null;
-            }
-
+            bool killed = await EndRunAsync(run);
             bool removed = registry.ReleaseFolder(this);
             return new StopResult(Name, run.ProjectDir, run.ExitCode, killed, removed);
         }
@@ -291,13 +280,19 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>
     /// Under the folder's prep lock, which every launch takes, so no game starts on the folder while a prep builds or
-    /// imports there: builds a stale C# assembly and runs a due import (unless the request says never), writes the
-    /// override and starts Godot. The prep runs before the override is written, so a failed prep leaves nothing to undo.
+    /// imports there: builds a stale C# assembly and runs a due import (unless the request says never), stops the run a
+    /// restart replaces, writes the override and starts Godot. The prep runs before anything is stopped or written, so a
+    /// failed prep leaves nothing to undo and a restart's old game running.
     /// </summary>
+    /// <param name="godotPath">The Godot executable.</param>
+    /// <param name="request">What to launch.</param>
+    /// <param name="previous">The run a restart replaces, stopped after the prep and continued by the new run's output; null for a launch.</param>
+    /// <param name="cancellationToken">Cancels the wait for the lock and the prep.</param>
     /// <exception cref="SessionException">The prep failed, the project has its own override.cfg, or Godot could not start.</exception>
     private async Task<(GodotRun Run, PrepResult Prep, string Token)> PrepareAndStartAsync(
         string godotPath,
         LaunchRequest request,
+        GodotRun? previous,
         CancellationToken cancellationToken
     )
     {
@@ -307,12 +302,21 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         {
             PrepContext context = new(ProjectDir, _logger, () => registry.RunningSessionNames(ProjectDir, this));
             PrepResult prep = request.Prepare ? await ProjectPrep.RunAsync(context, cancellationToken) : PrepResult.Skipped;
-            registry.WriteOverride(this, Installation.FindBridgeScript());
+            string bridgeScript = Installation.FindBridgeScript();
+            if (previous is not null)
+            {
+                // A restart cancelled by now must not stop a healthy game that the handshake wait would then kill.
+                cancellationToken.ThrowIfCancellationRequested();
+                await EndRunAsync(previous);
+                StopOutputCapture(previous);
+            }
+
+            registry.WriteOverride(this, bridgeScript);
             GitExclude.Ensure(ProjectDir, OverrideFile.FileName, _logger);
             string token = CreateToken();
             ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(godotPath, request, new BridgeEndpoint(registry.Listener.Port, token));
-            GodotRun run = new(ProjectDir, new Process { StartInfo = startInfo, EnableRaisingEvents = true });
-            StartProcess(run);
+            GodotRun run = new(ProjectDir, new Process { StartInfo = startInfo, EnableRaisingEvents = true }, previous);
+            StartProcess(run, previous is null ? null : ProcessId);
             _run = run;
             ProcessId = run.Process.Id;
             return (run, prep, token);
@@ -323,10 +327,10 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
-    private async Task<LaunchResult> StartRunAsync(LaunchRequest request, CancellationToken cancellationToken)
+    private async Task<LaunchResult> StartRunAsync(LaunchRequest request, GodotRun? previous, CancellationToken cancellationToken)
     {
         string godotPath = Installation.FindGodot();
-        (GodotRun run, PrepResult prep, string token) = await PrepareAndStartAsync(godotPath, request, cancellationToken);
+        (GodotRun run, PrepResult prep, string token) = await PrepareAndStartAsync(godotPath, request, previous, cancellationToken);
         int processId = run.Process.Id;
         BridgeConnection connection = await WaitForHandshakeAsync(run, new HandshakeExpectation(token, ProjectDir), cancellationToken);
         connection.OnErrors(Errors.Receive);
@@ -337,7 +341,11 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         return new LaunchResult(Name, run.ProjectDir, processId, request.Quiet, prep);
     }
 
-    private void StartProcess(GodotRun run)
+    /// <summary>
+    /// Starts the run's process and its output capture. On a restart (<paramref name="previousProcessId"/> set) a marker line
+    /// goes into both carried-over streams once the new process has its id and before any of its output is read.
+    /// </summary>
+    private void StartProcess(GodotRun run, int? previousProcessId)
     {
         run.Process.OutputDataReceived += (_, e) => AddLine(run.Stdout, e.Data);
         run.Process.ErrorDataReceived += (_, e) => AddLine(run.Stderr, e.Data);
@@ -354,6 +362,13 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                     + $"Set {Installation.GodotPathVariable} to the Godot 4.7 console executable.",
                 e
             );
+        }
+
+        if (previousProcessId is { } previous)
+        {
+            string marker = $"[godot-mcp] restarted: the previous game (pid {previous}) was stopped; output below is from pid {run.Process.Id}.";
+            run.Stdout.Add(marker);
+            run.Stderr.Add(marker);
         }
 
         run.Process.StandardInput.Close();
@@ -478,6 +493,47 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
+    /// <summary>
+    /// Ends a run the way stop_project does, without releasing the folder: a silent game is killed at once, one that answers
+    /// is asked to quit and killed after the grace; then its connection is closed.
+    /// </summary>
+    /// <returns>Whether the game had to be killed.</returns>
+    private async Task<bool> EndRunAsync(GodotRun run)
+    {
+        bool killed = run.IsRunning && (await IsSilentAsync(run) || !await ShutDownGracefullyAsync(run));
+        if (killed)
+        {
+            await KillAsync(run);
+        }
+
+        if (run.Connection is not null)
+        {
+            await run.Connection.DisposeAsync();
+            run.Connection = null;
+        }
+
+        return killed;
+    }
+
+    /// <summary>
+    /// Stops reading a replaced run's output, so a game the kill could not end, or output still in flight, never lands in the
+    /// buffers the new run continues. A stream that is not being read is logged and skipped.
+    /// </summary>
+    private void StopOutputCapture(GodotRun run)
+    {
+        foreach (Action cancelRead in new Action[] { run.Process.CancelOutputRead, run.Process.CancelErrorRead })
+        {
+            try
+            {
+                cancelRead();
+            }
+            catch (InvalidOperationException e)
+            {
+                Log.OutputCaptureStopFailed(_logger, e, run.ProjectDir);
+            }
+        }
+    }
+
     private async Task KillAsync(GodotRun run)
     {
         try
@@ -500,7 +556,11 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
-    private async Task OnRunExitedAsync(GodotRun run)
+    /// <summary>
+    /// Releases the folder once the session's current run has exited. The exit of a run a restart has replaced only logs:
+    /// the folder and its override belong to the newer run. Internal so the unit tests can raise an exit.
+    /// </summary>
+    internal async Task OnRunExitedAsync(GodotRun run)
     {
         try
         {
@@ -514,6 +574,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
         try
         {
+            if (!ReferenceEquals(run, _run))
+            {
+                Log.ReplacedRunExited(_logger, run.ProjectDir);
+                return;
+            }
+
             if (registry.ReleaseFolder(this))
             {
                 Log.OverrideRemovedAfterExit(_logger, run.ProjectDir);

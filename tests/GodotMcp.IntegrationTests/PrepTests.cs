@@ -151,7 +151,7 @@ public sealed partial class PrepTests : IAsyncDisposable
     }
 
     /// <summary>Adds a PNG, imports it with Godot the way the editor would, then deletes .godot/; returns the import's target.</summary>
-    private static async Task<string> ImportIconThenDeleteGodotFolderAsync(string project, CancellationToken cancellation)
+    internal static async Task<string> ImportIconThenDeleteGodotFolderAsync(string project, CancellationToken cancellation)
     {
         File.WriteAllBytes(Path.Combine(project, "icon.png"), Convert.FromBase64String(OnePixelPng));
         string log = Path.Combine(Path.GetTempPath(), "godot-mcp-tests", $"import-{Guid.NewGuid():N}.log");

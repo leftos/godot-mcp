@@ -28,6 +28,19 @@ internal sealed record PrepResult
     public string? Note { get; init; }
 }
 
+/// <summary>
+/// A restarted run: the new process, the one it replaced and that one's exit code (left out while unknown), and what the
+/// prep did before the relaunch.
+/// </summary>
+internal sealed record RestartResult(
+    string Session,
+    string ProjectPath,
+    int ProcessId,
+    int PreviousProcessId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PreviousExitCode,
+    PrepResult Prep
+);
+
 /// <summary>How a run ended: its exit code, whether it had to be killed, whether the server's override.cfg was deleted.</summary>
 internal sealed record StopResult(string Session, string ProjectPath, int? ExitCode, bool Killed, bool OverrideRemoved);
 

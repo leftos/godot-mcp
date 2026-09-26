@@ -50,7 +50,7 @@ $itestGroups = [ordered]@{
     input     = @('InputTests', 'GamepadTests')
     reads     = @('RuntimeReadTests', 'InspectionTests', 'BaselineTests')
     time      = @('TimeTests')
-    prep      = @('PrepTests')
+    prep      = @('PrepTests', 'RestartTests')
 }
 $itestNamespace = 'GodotMcp.IntegrationTests'
 $itestProject = 'tests/GodotMcp.IntegrationTests/GodotMcp.IntegrationTests.csproj'

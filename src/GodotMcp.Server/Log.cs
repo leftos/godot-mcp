@@ -47,6 +47,18 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Information, Message = "Godot for {Project} exited; its override.cfg is removed.")]
     public static partial void OverrideRemovedAfterExit(ILogger logger, string project);
 
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "A replaced Godot run on {Project} exited; the session runs a newer one, so its override.cfg stays."
+    )]
+    public static partial void ReplacedRunExited(ILogger logger, string project);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Stopping the output capture of the replaced Godot run on {Project} failed.")]
+    public static partial void OutputCaptureStopFailed(ILogger logger, Exception exception, string project);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Restarted {Project}: Godot {PreviousPid} was stopped and Godot {Pid} runs it now.")]
+    public static partial void RunRestarted(ILogger logger, string project, int previousPid, int pid);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Removing the override.cfg of {Project} after Godot exited failed.")]
     public static partial void OverrideRemovalFailed(ILogger logger, Exception exception, string project);
 

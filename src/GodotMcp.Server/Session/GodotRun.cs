@@ -4,7 +4,10 @@ using GodotMcp.Server.Wire;
 namespace GodotMcp.Server.Session;
 
 /// <summary>One Godot process the server launched, its captured output and its bridge connection.</summary>
-internal sealed class GodotRun(string projectDir, Process process) : IAsyncDisposable
+/// <param name="projectDir">The project folder the process runs.</param>
+/// <param name="process">The Godot process, not yet started.</param>
+/// <param name="previous">The run this one replaces on a restart, whose output buffers it continues; null for a first launch.</param>
+internal sealed class GodotRun(string projectDir, Process process, GodotRun? previous) : IAsyncDisposable
 {
     public const int OutputCapacity = 500;
 
@@ -12,9 +15,9 @@ internal sealed class GodotRun(string projectDir, Process process) : IAsyncDispo
 
     public Process Process { get; } = process;
 
-    public OutputBuffer Stdout { get; } = new(OutputCapacity);
+    public OutputBuffer Stdout { get; } = previous?.Stdout ?? new(OutputCapacity);
 
-    public OutputBuffer Stderr { get; } = new(OutputCapacity);
+    public OutputBuffer Stderr { get; } = previous?.Stderr ?? new(OutputCapacity);
 
     public BridgeConnection? Connection { get; set; }
 

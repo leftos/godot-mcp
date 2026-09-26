@@ -63,6 +63,28 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         return target.StopAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Restarts the named or only run with the request it was launched with. The session is marked starting under the
+    /// registry's lock, so its name is never free during the restart, after the folder's live sessions are checked again:
+    /// one may have started on it with another setting since the session's game exited.
+    /// </summary>
+    /// <exception cref="SessionException">
+    /// No session answers, the session is attached, still starting or never launched, the folder's live sessions rule it
+    /// out, the prep failed, or the new game did not start.
+    /// </exception>
+    public Task<RestartResult> RestartAsync(string? session, bool prepare, CancellationToken cancellationToken)
+    {
+        GodotSession target;
+        lock (_lock)
+        {
+            target = FindSession(session) ?? throw new SessionException(GodotSession.NoneRunning);
+            CheckCanRestart(target);
+            target.BeginRestart();
+        }
+
+        return target.RestartAsync(prepare, cancellationToken);
+    }
+
     /// <exception cref="SessionException">No session answers to the name, or the session is not an attached one.</exception>
     public Task<DetachResult> DetachAsync(string? session, CancellationToken cancellationToken)
     {
@@ -216,22 +238,27 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     {
         lock (_lock)
         {
-            if (session is not null)
-            {
-                return _sessions.GetValueOrDefault(session)
-                    ?? throw new SessionException($"No session named '{session}'. Sessions: {DescribeAll()}.");
-            }
-
-            GodotSession[] live = [.. _sessions.Values.Where(candidate => candidate.IsLive)];
-            if (live.Length == 1)
-            {
-                return live[0];
-            }
-
-            return live.Length == 0 && _sessions.Count <= 1
-                ? _sessions.Values.FirstOrDefault()
-                : throw new SessionException($"Several sessions exist ({DescribeAll()}); pass session to choose one.");
+            return FindSession(session);
         }
+    }
+
+    /// <summary>The named session, else the only live one, else the only one there is; the caller holds the lock.</summary>
+    private GodotSession? FindSession(string? session)
+    {
+        if (session is not null)
+        {
+            return _sessions.GetValueOrDefault(session) ?? throw new SessionException($"No session named '{session}'. Sessions: {DescribeAll()}.");
+        }
+
+        GodotSession[] live = [.. _sessions.Values.Where(candidate => candidate.IsLive)];
+        if (live.Length == 1)
+        {
+            return live[0];
+        }
+
+        return live.Length == 0 && _sessions.Count <= 1
+            ? _sessions.Values.FirstOrDefault()
+            : throw new SessionException($"Several sessions exist ({DescribeAll()}); pass session to choose one.");
     }
 
     /// <summary>Registers a new pending session under the spec's name, then lets go of the ended session it replaces.</summary>
@@ -286,13 +313,49 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             );
         }
 
-        GodotSession[] onFolder = [.. _sessions.Values.Where(other => other.IsLive && ProjectPaths.AreSame(other.ProjectDir, spec.ProjectDir))];
-        CheckSameSetting(spec, onFolder, "shutOutRealGamepads", session => session.ShutOutRealGamepads, spec.ShutOutRealGamepads);
-        CheckSameSetting(spec, onFolder, "quiet", session => session.Quiet, spec.Quiet);
+        GodotSession[] onFolder = CheckFolder(spec, except: null);
         if (spec.Kind == SessionKind.Attach && onFolder.Any(other => other.IsWaitingForGame))
         {
             throw new SessionException($"Another attach on {spec.ProjectDir} is still waiting for its game; wait for it or let it time out first.");
         }
+    }
+
+    /// <summary>Refuses an attached session, one still starting or never launched, and one the folder's live sessions rule out.</summary>
+    private void CheckCanRestart(GodotSession target)
+    {
+        if (target.Kind == SessionKind.Attach)
+        {
+            throw new SessionException(
+                $"session '{target.Name}' is attached, not started by run_project, so it cannot be restarted; detach_project, then start "
+                    + "the game again yourself."
+            );
+        }
+
+        if (target.IsStarting)
+        {
+            throw new SessionException($"session '{target.Name}' is still starting or restarting; wait for its call to return, or stop_project it.");
+        }
+
+        if (target.LastLaunch is null)
+        {
+            throw new SessionException(GodotSession.NoneRunning);
+        }
+
+        CheckFolder(new SessionSpec(target.Name, target.ProjectDir, target.Kind, target.ShutOutRealGamepads, target.Quiet), except: target);
+    }
+
+    /// <summary>The live sessions on the spec's folder but <paramref name="except"/>, once they are checked to share its settings.</summary>
+    private GodotSession[] CheckFolder(SessionSpec spec, GodotSession? except)
+    {
+        GodotSession[] onFolder =
+        [
+            .. _sessions.Values.Where(other =>
+                !ReferenceEquals(other, except) && other.IsLive && ProjectPaths.AreSame(other.ProjectDir, spec.ProjectDir)
+            ),
+        ];
+        CheckSameSetting(spec, onFolder, "shutOutRealGamepads", session => session.ShutOutRealGamepads, spec.ShutOutRealGamepads);
+        CheckSameSetting(spec, onFolder, "quiet", session => session.Quiet, spec.Quiet);
+        return onFolder;
     }
 
     private async Task RetireAsync(GodotSession replaced)
