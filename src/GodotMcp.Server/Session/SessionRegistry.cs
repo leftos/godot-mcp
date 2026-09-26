@@ -67,7 +67,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
     /// <summary>The named or only session's output; empty while there is no session at all.</summary>
     /// <exception cref="SessionException">No session answers to the name, or the session is attached.</exception>
-    public DebugOutput GetDebugOutput(string? session, int limit) => TryResolve(session)?.GetDebugOutput(limit) ?? new DebugOutput();
+    public DebugOutput GetDebugOutput(string? session, int limit, long? before) =>
+        TryResolve(session)?.GetDebugOutput(limit, before) ?? new DebugOutput();
 
     /// <summary>The session a tool addresses: the named one, else the only live one, else the only one there is.</summary>
     /// <exception cref="SessionException">No session answers to the name, there is none at all, or several could be meant.</exception>

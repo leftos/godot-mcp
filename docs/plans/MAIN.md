@@ -11,7 +11,6 @@ Steps 0 to 4b have shipped. Sixteen features the user added 2026-09-25 ("world's
 
 These change every tool's signature or result, so they run one after another, before the rest.
 
-- [ ] Step 8: error feed on every result (engine and script errors with the stack Godot gives, raised during any call, attached to its result; `get_errors(since)`), plus compact outputs (a size budget per result: screenshots default to path only or a small preview, long lists and logs truncated with a count and paging)
 - [ ] Step 9: tool annotations (MCP `readOnlyHint` / `destructiveHint` on every tool, so permission rules can allow the reads), plus quiet by default (agent runs start in background mode with audio muted unless asked; real input ignored)
 
 ### Wave 2: driving the running game (new `RuntimeTools` partials and bridge handlers)

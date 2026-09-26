@@ -130,17 +130,25 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     [McpServerTool(Name = "get_debug_output")]
     [Description(
         "The newest stdout and stderr lines of a session's run (the current or the last one under its name), whether it is "
-            + "still running, and its exit code. "
-            + "An attached session has no captured output."
+            + "still running, and its exit code. Lines are numbered from 1 across everything a stream has printed; "
+            + "stdoutFirstLine and stderrFirstLine give the number of the first line returned, to pass as before for the lines "
+            + "ahead of it (the server keeps the last 500 of each stream). A line longer than 1000 characters is cut, ending "
+            + "\"… (+N chars)\". An attached session has no captured output."
     )]
     public string GetDebugOutput(
-        [Description("How many of the newest lines of each stream to return, 1 to 500.")] int limit = 200,
+        [Description("How many lines of each stream to return, 1 to 500.")] int limit = 100,
+        [Description("Return the lines just before this line number (in each stream) instead of the newest.")] long? before = null,
         [Description(SessionDescription)] string? session = null
     )
     {
+        if (before < 1)
+        {
+            throw new McpException($"before must be a line number, 1 or more; got {before}.");
+        }
+
         try
         {
-            DebugOutput output = sessions.GetDebugOutput(session, Math.Clamp(limit, 1, MaxDebugLines));
+            DebugOutput output = sessions.GetDebugOutput(session, Math.Clamp(limit, 1, MaxDebugLines), before);
             return JsonSerializer.Serialize(output, Json);
         }
         catch (SessionException e)

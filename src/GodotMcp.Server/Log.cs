@@ -11,6 +11,9 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Warning, Message = "Dropped a {Length}-byte bridge frame without a numeric id.")]
     public static partial void DroppedFrameWithoutId(ILogger logger, int length);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Dropped a bridge errors frame: handling it failed.")]
+    public static partial void ErrorsFrameDropped(ILogger logger, Exception exception);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Dropped the bridge's reply to request {Id}: it timed out or was never sent.")]
     public static partial void DroppedLateReply(ILogger logger, long id);
 

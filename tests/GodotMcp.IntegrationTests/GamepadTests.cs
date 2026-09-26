@@ -224,6 +224,6 @@ public sealed class GamepadTests : IAsyncDisposable
     {
         string script = $"extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t{body}\n";
         string json = await _tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: TestContext.Current.CancellationToken);
-        return JsonNode.Parse(json)!;
+        return JsonNode.Parse(json)!["value"]!;
     }
 }

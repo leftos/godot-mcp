@@ -15,7 +15,10 @@ internal sealed record DetachResult(string Session, string ProjectPath, bool Ove
 /// <summary>What list_sessions returns: every session, ordered by name.</summary>
 internal sealed record SessionList(IReadOnlyList<SessionInfo> Sessions);
 
-/// <summary>The latest run's state and the newest lines of its output.</summary>
+/// <summary>
+/// The latest run's state and a page of each stream: its lines, and the number of the first of them (null when there are
+/// none), to pass as before for the page ahead of it.
+/// </summary>
 internal sealed record DebugOutput
 {
     public string? Session { get; init; }
@@ -29,6 +32,10 @@ internal sealed record DebugOutput
     public IReadOnlyList<string> Stdout { get; init; } = [];
 
     public IReadOnlyList<string> Stderr { get; init; } = [];
+
+    public long? StdoutFirstLine { get; init; }
+
+    public long? StderrFirstLine { get; init; }
 
     public long StdoutTotalLines { get; init; }
 

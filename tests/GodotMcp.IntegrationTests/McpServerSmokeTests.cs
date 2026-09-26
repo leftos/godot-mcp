@@ -53,6 +53,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "gamepad_button",
                 "gamepad_stick",
                 "get_debug_output",
+                "get_errors",
                 "get_ui_elements",
                 "key",
                 "list_sessions",
@@ -75,9 +76,9 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.True(screenshot.IsError is not true, Text(screenshot));
         Assert.Equal("image/png", Assert.Single(screenshot.Content.OfType<ImageContentBlock>()).MimeType);
         Assert.True(script.IsError is not true, Text(script));
-        Assert.Equal("2", Text(script));
+        Assert.Equal("""{"value":2}""", Text(script));
         Assert.True(click.IsError is not true, Text(click));
-        Assert.Equal("1", Text(pressCount));
+        Assert.Equal("""{"value":1}""", Text(pressCount));
         Assert.True(stop.IsError is not true, Text(stop));
         Assert.False(JsonDocument.Parse(Text(stop)).RootElement.GetProperty("killed").GetBoolean());
         JsonElement stopped = Assert.Single(JsonDocument.Parse(Text(listedAfterStop)).RootElement.GetProperty("sessions").EnumerateArray());

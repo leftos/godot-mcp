@@ -59,7 +59,7 @@ The user asked for our own plugin and MCP server for all their Godot projects. G
   - `screenshot`: full-resolution PNG path, an inline preview, and an optional crop rectangle (this replaces `Crop-Screenshot.ps1`). The reference's `force_draw` fallback is kept for an occluded window.
   - `ui_elements`
   - `input`
-  - `run_script`: user GDScript with `execute(scene_tree)`; compile diagnostics are taken from stderr lines marked for that call.
+  - `run_script`: user GDScript with `execute(scene_tree)`; compile diagnostics come from the error feed (step 8).
   - `shutdown`
 
 **Input** (`Input.parse_input_event` with a new event object each time, so `Input` button state stays consistent; the Godot 4.7.2 source behaviour is quoted in the research):
@@ -87,9 +87,15 @@ The user asked for our own plugin and MCP server for all their Godot projects. G
   - **Releases are sent explicitly** (`pressed=false`, or `axis_value=0.0`), and every event is a new object.
 - **Built (step 3):** the hold/release gestures are the `key` and `mouse_button` tools. The transform is `get_screen_transform()`, measured against a letterboxed window; the red proof is the three drag tests failing with `button_mask` forced to 0.
 
+**The error feed (step 8), from Godot 4.7.2's source** (librarian, 2026-09-25, tag `4.7.2-stable`):
+- `Logger` extends `RefCounted` with `_log_error(function, file, line, code, rationale, editor_notify, error_type, script_backtraces)` and `_log_message(message, error)` (`core/core_bind.h` L125-138); `ErrorType` is ERROR 0, WARNING 1, SCRIPT 2, SHADER 3. `OS.add_logger` catches only what is logged after it; the logging tutorial registers in an autoload's `_init()`. Script loggers are removed at shutdown (`core/object/script_language.cpp` L335-339); the list has no lock, so `remove_logger` while threads log is unsafe and the bridge never calls it.
+- `_log_error` runs on the thread that raised the error with no engine lock (`core/error/error_macros.cpp` L125-133, `core/os/os.cpp` L98-151); a per-thread guard sends an error raised inside it to stderr only (`error_macros.cpp` L49, L116-121). So it only appends under a `Mutex`, and the main thread sends.
+- Engine `_MSG` errors put the condition in `code` and the message in `rationale`; `push_error`, `push_warning` and GDScript runtime errors put the text in `code` (`core/error/error_macros.h` L426-428, `core/io/logger.cpp` L67-72). `push_error`'s function/file/line are its C++ site (`core/variant/variant_utility.cpp` L1023, L1033; Godot issue #119628), so the script's location is backtrace frame 0.
+- GDScript runtime errors reach loggers in debug builds only (`modules/gdscript/gdscript_vm.cpp` L3963-3993); backtraces are filled in debug and editor builds or with `debug/settings/gdscript/always_track_call_stacks` (default false, `gdscript.cpp` L2871-2875). Runtime `load()` parse errors arrive as `function="GDScript::reload"` (`gdscript.cpp` L824-853). Nothing arrives with `application/run/disable_stderr` on, or outside startup-to-shutdown (`main.cpp` L2363-2376, PR #117790). Loggers are additive: the console logger stays (`os.cpp` L829-835).
+
 **Process and session:**
 - `run_project(projectPath, scene?, userArgs[], engineArgs[], background?)` spawns Godot with the user arguments after `--`.
-- Output is assembled into whole lines across stdout/stderr chunks into ring buffers, with a mark per call so errors are attributed to it.
+- Output is assembled into whole lines across stdout/stderr chunks into ring buffers for `get_debug_output`; errors reach results through the error feed, not stderr.
 - Sessions are keyed by name (decision 10): `run_project` under a live name refuses with a message, rather than killing it silently as the reference does.
 - `attach_project` / `detach_project` / `stop_project` / `get_debug_output`, and `list_projects` / `get_project_info`.
 

@@ -43,7 +43,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.Equal("InputProbe", stopped.Session);
         Assert.False(stopped.Killed);
         Assert.True(stopped.OverrideRemoved);
-        Assert.False(_harness.Sessions.GetDebugOutput(null, 1).Running);
+        Assert.False(_harness.Sessions.GetDebugOutput(null, 1, null).Running);
         Assert.False(File.Exists(_probe.OverrideFile));
         Assert.Equal(projectBefore, File.ReadAllBytes(_probe.ProjectFile));
         Assert.Equal(string.Empty, Git.Status(_probe.Directory));
@@ -60,7 +60,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
 
         Assert.Contains("override.cfg", refused.Message, StringComparison.Ordinal);
         Assert.Equal(before, File.ReadAllBytes(_probe.OverrideFile));
-        Assert.False(_harness.Sessions.GetDebugOutput(null, 1).Running);
+        Assert.False(_harness.Sessions.GetDebugOutput(null, 1, null).Running);
         Assert.Empty(_harness.Sessions.List());
     }
 
@@ -240,7 +240,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
 
     private Task<bool> StdoutContainsAsync(string line) =>
         Poll.UntilAsync(
-            () => _harness.Sessions.GetDebugOutput(null, GodotRun.OutputCapacity).Stdout.Contains(line),
+            () => _harness.Sessions.GetDebugOutput(null, GodotRun.OutputCapacity, null).Stdout.Contains(line),
             TimeSpan.FromSeconds(10),
             TestContext.Current.CancellationToken
         );

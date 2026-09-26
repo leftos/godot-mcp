@@ -7,10 +7,13 @@ namespace GodotMcp.Server.Wire;
 
 /// <summary>
 /// One accepted, handshaken bridge. Requests <c>{id, command, params}</c> go out; replies <c>{id, ok, result|error}</c>
-/// come back in any order and are matched by id, so several requests may be in flight at once.
+/// come back in any order and are matched by id, so several requests may be in flight at once. Frames without an id whose
+/// type is "errors" carry the game's logged errors and go to the handler <see cref="OnErrors"/> sets, in arrival order,
+/// before any reply read after them.
 /// </summary>
 internal sealed class BridgeConnection : IAsyncDisposable
 {
+    private const string ErrorsFrameType = "errors";
     private readonly TcpClient _client;
     private readonly NetworkStream _stream;
     private readonly FrameDecoder _decoder;
@@ -18,7 +21,10 @@ internal sealed class BridgeConnection : IAsyncDisposable
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly ConcurrentDictionary<long, PendingRequest> _pending = new();
     private readonly CancellationTokenSource _closing = new();
+    private readonly Lock _errorsLock = new();
+    private readonly List<JsonObject> _unhandledErrors = [];
     private readonly Task _readLoop;
+    private Action<JsonObject>? _errorsHandler;
     private long _nextId;
 
     /// <param name="client">The accepted connection, its hello already read.</param>
@@ -65,6 +71,24 @@ internal sealed class BridgeConnection : IAsyncDisposable
         finally
         {
             _pending.TryRemove(id, out _);
+        }
+    }
+
+    /// <summary>
+    /// Sets the handler for the bridge's errors frames and hands it, first, those that arrived before it was set (the read
+    /// loop starts with the connection, before its session takes it).
+    /// </summary>
+    public void OnErrors(Action<JsonObject> handler)
+    {
+        lock (_errorsLock)
+        {
+            _errorsHandler = handler;
+            foreach (JsonObject frame in _unhandledErrors)
+            {
+                InvokeErrorsHandler(handler, frame);
+            }
+
+            _unhandledErrors.Clear();
         }
     }
 
@@ -136,6 +160,12 @@ internal sealed class BridgeConnection : IAsyncDisposable
     {
         if (!TryReadId(reply, out long id))
         {
+            if (HandshakeExpectation.ReadString(reply, "type") == ErrorsFrameType)
+            {
+                DeliverErrors(reply);
+                return;
+            }
+
             Log.DroppedFrameWithoutId(_logger, length);
             return;
         }
@@ -153,6 +183,33 @@ internal sealed class BridgeConnection : IAsyncDisposable
         }
 
         pending.Reply.TrySetException(new InvalidOperationException($"The bridge refused '{pending.Command}': {ReadError(reply)}"));
+    }
+
+    private void DeliverErrors(JsonObject frame)
+    {
+        lock (_errorsLock)
+        {
+            if (_errorsHandler is null)
+            {
+                _unhandledErrors.Add(frame);
+                return;
+            }
+
+            InvokeErrorsHandler(_errorsHandler, frame);
+        }
+    }
+
+    /// <summary>Hands one errors frame to the handler; a handler that throws loses that frame, never the read loop.</summary>
+    private void InvokeErrorsHandler(Action<JsonObject> handler, JsonObject frame)
+    {
+        try
+        {
+            handler(frame);
+        }
+        catch (Exception e)
+        {
+            Log.ErrorsFrameDropped(_logger, e);
+        }
     }
 
     private static bool IsSuccess(JsonObject reply) => reply["ok"] is JsonValue ok && ok.TryGetValue(out bool succeeded) && succeeded;

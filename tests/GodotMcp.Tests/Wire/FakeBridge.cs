@@ -22,7 +22,14 @@ internal sealed class FakeBridge(TcpClient client) : IDisposable
         return new FakeBridge(client);
     }
 
-    public async Task AnswerOneAsync(string name, CancellationToken cancellationToken)
+    public Task AnswerOneAsync(string name, CancellationToken cancellationToken) => AnswerOneAfterAsync([], name, cancellationToken);
+
+    /// <summary>Writes one frame as it is, as the bridge writes its unsolicited errors frames.</summary>
+    public async Task WriteAsync(JsonObject frame, CancellationToken cancellationToken) =>
+        await client.GetStream().WriteAsync(FrameCodec.EncodeJson(frame), cancellationToken);
+
+    /// <summary>Reads one request, then writes <paramref name="frames"/> and the reply after them, as the bridge flushes its errors before replying.</summary>
+    public async Task AnswerOneAfterAsync(JsonObject[] frames, string name, CancellationToken cancellationToken)
     {
         FrameDecoder decoder = new();
         byte[] chunk = new byte[4096];
@@ -39,6 +46,11 @@ internal sealed class FakeBridge(TcpClient client) : IDisposable
         }
 
         JsonObject request = FrameCodec.DecodeJson(payload);
+        foreach (JsonObject frame in frames)
+        {
+            await WriteAsync(frame, cancellationToken);
+        }
+
         JsonObject reply = new()
         {
             ["id"] = request["id"]?.DeepClone(),

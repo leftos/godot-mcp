@@ -6,7 +6,9 @@ extends Node
 ## the port and token in the attach file attach_project writes instead; with neither, the
 ## bridge stays off. Frames are a 4-byte big-endian length
 ## followed by UTF-8 JSON. Requests are {id, command, params}; replies are
-## {id, ok: true, result} or {id, ok: false, error}.
+## {id, ok: true, result} or {id, ok: false, error}. The errors and warnings the game logs
+## (godot_mcp_logger.gd) go out as {type: "errors", entries, dropped} frames without an id,
+## each frame, and before every reply, so a command's errors reach the server before its reply.
 
 const HOST := "127.0.0.1"
 const HEADER_BYTES := 4
@@ -14,6 +16,7 @@ const MAX_FRAME_BYTES := 16 * 1024 * 1024
 const SCREENSHOT_DIR := "res://.godot/godot-mcp/screenshots"
 const ATTACH_FILE := "res://.godot/godot-mcp/attach.json"
 const GAMEPAD_SCRIPT := "godot_mcp_gamepad.gd"
+const LOGGER_SCRIPT := "godot_mcp_logger.gd"
 const MIN_DRAG_STEPS := 3
 ## The device id every injected mouse event carries, so _input can tell it from the real mouse
 ## (DEVICE_ID_MOUSE, 32) and from the engine's own ids: 0-15 joypads, 16-31 keyboards, -1
@@ -47,12 +50,28 @@ var _pointer: Vector2 = Vector2.ZERO
 var _gesture_playing: bool = false
 ## The gamepad (godot_mcp_gamepad.gd beside this script), a child once the bridge is on.
 var _pads: Node
+## The server to dial, found in _init; empty when the bridge is off.
+var _endpoint: Dictionary = {}
+## The logger (godot_mcp_logger.gd beside this script) collecting the game's errors, registered
+## in _init when there is a server to send them to. It is never removed: the engine removes
+## script loggers at shutdown, and remove_logger is unsafe while other threads log.
+var _logger: Logger
+
+
+## Finds the server and registers the error logger as early as an autoload can: a logger sees
+## only what is logged after OS.add_logger.
+func _init() -> void:
+	_endpoint = _find_endpoint()
+	if _endpoint.is_empty():
+		return
+	var script_dir: String = (get_script() as Script).resource_path.get_base_dir()
+	_logger = (load(script_dir.path_join(LOGGER_SCRIPT)) as GDScript).new()
+	OS.add_logger(_logger)
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	var endpoint: Dictionary = _find_endpoint()
-	if endpoint.is_empty():
+	if _endpoint.is_empty():
 		push_warning(
 			(
 				"godot-mcp bridge: GODOT_MCP_PORT and GODOT_MCP_TOKEN are not set and there is no "
@@ -61,15 +80,15 @@ func _ready() -> void:
 		)
 		queue_free()
 		return
-	_token = endpoint["token"]
-	var port: int = endpoint["port"]
+	_token = _endpoint["token"]
+	var port: int = _endpoint["port"]
 	if OS.get_environment("GODOT_MCP_BACKGROUND") == "1":
 		_enter_background()
 	var script_dir: String = (get_script() as Script).resource_path.get_base_dir()
 	_pads = (load(script_dir.path_join(GAMEPAD_SCRIPT)) as GDScript).new()
 	_pads.name = "Gamepad"
 	add_child(_pads)
-	if endpoint["shutOutRealGamepads"]:
+	if _endpoint["shutOutRealGamepads"]:
 		_pads.shut_out_real_pads()
 	_stream = StreamPeerTCP.new()
 	_stream.big_endian = true
@@ -128,7 +147,24 @@ func _process(_delta: float) -> void:
 				"projectPath": ProjectSettings.globalize_path("res://"),
 			}
 		)
+	_flush_errors()
 	_read_frames()
+
+
+## Sends the errors logged since the last flush as one {type: "errors", entries, dropped}
+## frame, once the hello is out. While the socket is not connected they stay queued (the
+## logger caps them), so a failing send cannot feed its own errors back in a loop.
+func _flush_errors() -> void:
+	if _logger == null or not _hello_sent or _connection_lost:
+		return
+	if _stream.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+		return
+	var taken: Array = _logger.take_pending()
+	var entries: Array = taken[0]
+	var dropped: int = taken[1]
+	if entries.is_empty() and dropped == 0:
+		return
+	_send({"type": "errors", "entries": entries, "dropped": dropped})
 
 
 ## Keeps the real mouse out of injected input: while a gesture plays or injected input holds a
@@ -314,8 +350,8 @@ func _describe_control(control: Control) -> Dictionary:
 
 
 ## Compiles source, runs its execute(scene_tree) and replies {value}. A runtime error inside
-## execute ends the call with null; its SCRIPT ERROR lines go to stderr, where the server
-## reads them.
+## execute ends the call with null; the error itself reaches the server through the logger,
+## flushed before the reply.
 func _handle_run_script(id: int, source: String) -> void:
 	var script := GDScript.new()
 	script.source_code = source
@@ -333,8 +369,9 @@ func _handle_run_script(id: int, source: String) -> void:
 	_reply_ok(id, {"value": _to_json(value)})
 
 
-## Plays one gesture over frames, then waits two more frames before replying, so errors its
-## handlers raise reach stderr first. Every point arrives in viewport coordinates.
+## Plays one gesture over frames, then waits two more frames before replying, so the game's
+## handlers have run and their errors are flushed ahead of the reply. Every point arrives in
+## viewport coordinates.
 func _handle_input(id: int, params: Dictionary) -> void:
 	_gesture_playing = true
 	var error: String = await _play_gesture(params)
@@ -813,10 +850,12 @@ func _object_to_json(value: Variant) -> Variant:
 
 
 func _reply_ok(id: int, result: Variant) -> void:
+	_flush_errors()
 	_send({"id": id, "ok": true, "result": result})
 
 
 func _reply_error(id: int, message: String) -> void:
+	_flush_errors()
 	_send({"id": id, "ok": false, "error": message})
 
 

@@ -107,6 +107,7 @@ internal sealed partial class GodotSession
             throw;
         }
 
+        connection.OnErrors(Errors.Receive);
         return connection;
     }
 

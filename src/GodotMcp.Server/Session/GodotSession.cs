@@ -53,6 +53,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <summary>Plays one input call at a time on this session; calls to other sessions play alongside.</summary>
     public SemaphoreSlim InputGate { get; } = new(1, 1);
 
+    /// <summary>The errors and warnings the game's bridge has reported, from the run or the attached game.</summary>
+    public ErrorFeed Errors { get; } = new();
+
     /// <summary>Whether the session is starting, its run is running, or its attached game is still connected.</summary>
     public bool IsLive => _pending || (Kind == SessionKind.Run ? _run is { IsRunning: true } : _attached is { IsOpen: true });
 
@@ -129,14 +132,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     public Task<JsonNode?> SendAsync(string command, JsonObject? parameters, TimeSpan timeout, CancellationToken cancellationToken) =>
         FindLiveConnection().SendAsync(command, parameters, timeout, cancellationToken);
 
-    /// <summary>How many stderr lines the run has produced: a mark to pass to <see cref="GetStderrSince"/>.</summary>
-    public long MarkStderr() => _run?.Stderr.TotalLines ?? 0;
-
-    /// <summary>The run's stderr lines produced after <paramref name="mark"/>, oldest first.</summary>
-    public IReadOnlyList<string> GetStderrSince(long mark) => _run?.Stderr.Since(mark) ?? [];
-
     /// <exception cref="SessionException">The session is attached, so there is no captured output.</exception>
-    public DebugOutput GetDebugOutput(int limit)
+    public DebugOutput GetDebugOutput(int limit, long? before)
     {
         if (Kind == SessionKind.Attach)
         {
@@ -151,14 +148,18 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             return new DebugOutput { Session = Name, ProjectPath = ProjectDir };
         }
 
+        OutputPage stdout = run.Stdout.Page(limit, before);
+        OutputPage stderr = run.Stderr.Page(limit, before);
         return new DebugOutput
         {
             Session = Name,
             ProjectPath = run.ProjectDir,
             Running = run.IsRunning,
             ExitCode = run.ExitCode,
-            Stdout = run.Stdout.Tail(limit),
-            Stderr = run.Stderr.Tail(limit),
+            Stdout = stdout.Lines,
+            Stderr = stderr.Lines,
+            StdoutFirstLine = stdout.FirstLine,
+            StderrFirstLine = stderr.FirstLine,
             StdoutTotalLines = run.Stdout.TotalLines,
             StderrTotalLines = run.Stderr.TotalLines,
         };
@@ -265,7 +266,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         _run = run;
         int processId = run.Process.Id;
         ProcessId = processId;
-        run.Connection = await WaitForHandshakeAsync(run, new HandshakeExpectation(token, ProjectDir), cancellationToken);
+        BridgeConnection connection = await WaitForHandshakeAsync(run, new HandshakeExpectation(token, ProjectDir), cancellationToken);
+        connection.OnErrors(Errors.Receive);
+        run.Connection = connection;
         Log.RunStarted(_logger, processId, run.ProjectDir);
         return new LaunchResult(Name, run.ProjectDir, processId, request.Background);
     }

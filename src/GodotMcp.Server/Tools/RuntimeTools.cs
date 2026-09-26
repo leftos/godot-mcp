@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Wire;
 using ModelContextProtocol;
@@ -12,20 +11,18 @@ using ModelContextProtocol.Server;
 namespace GodotMcp.Server.Tools;
 
 /// <summary>
-/// The running game through its bridge: screenshots, the Control tree and scripts run inside it here, input in
-/// RuntimeTools.Input.cs.
+/// The running game through its bridge: screenshots, the Control tree, scripts run inside it and the session's errors here,
+/// input in RuntimeTools.Input.cs. Every call's result carries the errors the game raised while the call ran: the bridge
+/// sends them ahead of its reply, so they are in the session's feed once the reply is.
 /// </summary>
 [McpServerToolType]
 internal sealed partial class RuntimeTools(SessionRegistry sessions)
 {
-    private const int MaxScriptErrorLines = 20;
+    internal const int MaxErrorsLimit = ErrorFeed.Capacity;
+    internal const int MaxPageSize = 500;
+    internal const int MaxValueLength = 20000;
     private static readonly TimeSpan ScreenshotTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan UiElementsTimeout = TimeSpan.FromSeconds(10);
-
-    // Godot prints a script's errors before the bridge replies, but stderr is read from a pipe on another thread than
-    // the socket, so the lines may land a moment after the reply.
-    private static readonly TimeSpan StderrSettle = TimeSpan.FromMilliseconds(100);
-    private static readonly TimeSpan StderrWait = TimeSpan.FromMilliseconds(500);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -34,7 +31,8 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
     [McpServerTool(Name = "take_screenshot")]
     [Description(
         "Captures the running game's next drawn frame and saves it as a PNG under the project's .godot/godot-mcp/screenshots/ "
-            + "(which git ignores). Returns the file's absolute path and size, plus the image itself unless responseMode is path_only."
+            + "(which git ignores). Returns the file's absolute path and size, plus an image unless responseMode is path_only: by "
+            + "default a preview at most 480 px wide, saved beside the full-size PNG, whose path is always returned."
     )]
     public async Task<IEnumerable<ContentBlock>> TakeScreenshotAsync(
         [Description(
@@ -47,7 +45,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
                 + "stretch); any part outside the screenshot is dropped."
         )]
             ScreenshotCrop? crop = null,
-        [Description("The widest the preview image may be, in pixels.")] int previewMaxWidth = 960,
+        [Description("The widest the preview image may be, in pixels; 480 by default.")] int previewMaxWidth = 480,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
@@ -55,9 +53,10 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
         ScreenshotMode mode = ParseMode(responseMode);
         JsonObject parameters = BuildScreenshotParameters(mode, crop, previewMaxWidth);
         BridgeCall call = new("take_screenshot", "screenshot", parameters, ScreenshotTimeout);
-        JsonNode? reply = await CallBridgeAsync(Find(session), call, cancellationToken);
-        ScreenshotFiles files = ReadScreenshotFiles(reply);
-        List<ContentBlock> blocks = [new TextContentBlock { Text = JsonSerializer.Serialize(files, Json) }];
+        BridgeResult result = await CallWithErrorsAsync(Find(session), call, cancellationToken);
+        ScreenshotFiles files = ReadScreenshotFiles(result.Reply);
+        JsonObject text = JsonSerializer.SerializeToNode(files, Json)!.AsObject();
+        List<ContentBlock> blocks = [new TextContentBlock { Text = ErrorReport.AddTo(text, result.Errors).ToJsonString() }];
         string? imagePath = mode switch
         {
             ScreenshotMode.Preview => files.PreviewPath ?? files.Path,
@@ -76,28 +75,72 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
     [Description(
         "Lists the running game's Controls, depth first: path, name, class, rect ({x, y, width, height} in viewport coordinates, "
             + "from get_global_rect), visible, and where they apply text (Label, Button, LineEdit, RichTextLabel), disabled "
-            + "(buttons) and tooltip."
+            + "(buttons) and tooltip. Returns one page, {elements, total, offset}, plus next, the offset of the following page, "
+            + "while more remain."
     )]
     public async Task<string> GetUiElementsAsync(
         [Description("Skip every Control that is not visible in the tree, and everything under it.")] bool visibleOnly = true,
         [Description("Only Controls of this engine class or a subclass of it, e.g. BaseButton.")] string? filter = null,
+        [Description("How many Controls of the list to skip: 0, or the next of the previous page.")] int offset = 0,
+        [Description("How many Controls to return, 1 to 500.")] int limit = 100,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
+        CheckPage(offset, limit);
         JsonObject parameters = new() { ["visibleOnly"] = visibleOnly, ["classFilter"] = filter ?? string.Empty };
         BridgeCall call = new("get_ui_elements", "ui_elements", parameters, UiElementsTimeout);
-        JsonNode? reply = await CallBridgeAsync(Find(session), call, cancellationToken);
-        return reply?.ToJsonString() ?? "{\"elements\":[]}";
+        BridgeResult result = await CallWithErrorsAsync(Find(session), call, cancellationToken);
+        return ErrorReport.AddTo(PageElements(result.Reply, offset, limit), result.Errors).ToJsonString();
+    }
+
+    /// <exception cref="McpException">The offset is negative, or the limit is outside 1 to <see cref="MaxPageSize"/>.</exception>
+    internal static void CheckPage(int offset, int limit)
+    {
+        if (offset < 0)
+        {
+            throw new McpException($"offset must be 0 or more; got {offset}.");
+        }
+
+        if (limit is < 1 or > MaxPageSize)
+        {
+            throw new McpException($"limit must be 1 to {MaxPageSize}; got {limit}.");
+        }
+    }
+
+    /// <summary>
+    /// The bridge's element list cut to <paramref name="limit"/> elements from <paramref name="offset"/>:
+    /// <c>{elements, total, offset}</c>, plus <c>next</c> while elements remain after the page.
+    /// </summary>
+    internal static JsonObject PageElements(JsonNode? reply, int offset, int limit)
+    {
+        JsonArray all = reply?["elements"] as JsonArray ?? [];
+        JsonArray page = [.. all.Skip(offset).Take(limit).Select(element => element?.DeepClone())];
+        JsonObject result = new()
+        {
+            ["elements"] = page,
+            ["total"] = all.Count,
+            ["offset"] = offset,
+        };
+        if (offset + page.Count < all.Count)
+        {
+            result["next"] = offset + page.Count;
+        }
+
+        return result;
     }
 
     [McpServerTool(Name = "run_script")]
     [Description(
         "Runs GDScript inside the running game. The script must `extends RefCounted` and define "
-            + "`func execute(scene_tree: SceneTree) -> Variant`, which may await. Returns execute's value as JSON: Vector2/3 as "
-            + "{x, y[, z]}, Color as {r, g, b, a}, Rect2 as {x, y, width, height}, a Node as its path, another Object as "
-            + "{class, string}, Dictionaries and Arrays recursively. A compile error, or a runtime error that ends execute, fails "
-            + "the call with Godot's SCRIPT ERROR lines."
+            + "`func execute(scene_tree: SceneTree) -> Variant`, which may await. Returns {value}, execute's value as JSON: "
+            + "Vector2/3 as {x, y[, z]}, Color as {r, g, b, a}, Rect2 as {x, y, width, height}, a Node as its path, another "
+            + "Object as {class, string}, Dictionaries and Arrays recursively. A value whose JSON is longer than 20000 characters "
+            + "comes back as {valuePreview, valueLength}: its first 20000 characters and its length. Errors raised while it ran "
+            + "come back in errors, each with its file, line and stack. The call fails, with those errors, on a compile error, "
+            + "or when execute returns null and an error is located in the script itself (its file, or its most recent frame, is "
+            + "gdscript://…): a runtime error ends execute with null. A null value with errors located elsewhere (a game "
+            + "script execute called, another thread) still succeeds."
     )]
     public async Task<string> RunScriptAsync(
         [Description("The GDScript source.")] string script,
@@ -119,41 +162,67 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
         }
 
         GodotSession target = Find(session);
-        long mark = target.MarkStderr();
+        long mark = target.Errors.Mark();
         JsonNode? reply = await RunScriptOnBridgeAsync(target, script, TimeSpan.FromMilliseconds(timeoutMs), mark, cancellationToken);
+        IReadOnlyList<ErrorEntry> errors = target.Errors.ErrorsSince(mark);
         JsonNode? value = reply?["value"];
-        if (value is null)
+        if (value is null && errors.Any(error => error.IsInSourceScript))
         {
-            // GDScript has no exceptions: a runtime error ends execute with null, and the error itself goes to stderr.
-            IReadOnlyList<string> errors = await CollectScriptErrorsAsync(target, mark, StderrWait, cancellationToken);
-            if (errors.Count > 0)
-            {
-                throw new McpException(
-                    $"run_script failed: execute returned null and Godot reported errors while it ran:\n{string.Join('\n', errors)}"
-                );
-            }
+            // GDScript has no exceptions: a runtime error ends execute with null, and the error itself arrives through the feed.
+            // An error located elsewhere (a game script execute called, another thread) does not say execute failed.
+            throw new McpException(
+                $"run_script failed: execute returned null and Godot reported errors while it ran:\n{ErrorReport.Summarise(errors)}"
+            );
         }
 
-        return value?.ToJsonString() ?? "null";
+        return ErrorReport.AddTo(ShapeScriptValue(value), errors).ToJsonString();
     }
 
-    /// <summary>The lines of <paramref name="lines"/> that report a script error, each with the <c>at:</c> line under it.</summary>
-    internal static List<string> FindScriptErrors(IReadOnlyList<string> lines)
+    /// <summary>
+    /// <c>{value}</c>, or <c>{valuePreview, valueLength}</c> when the value's JSON is longer than <see cref="MaxValueLength"/>
+    /// characters: its first <see cref="MaxValueLength"/> characters and its whole length.
+    /// </summary>
+    internal static JsonObject ShapeScriptValue(JsonNode? value)
     {
-        List<string> errors = [];
-        bool previousKept = false;
-        foreach (string line in lines)
-        {
-            bool keep = ScriptErrorLine().IsMatch(line) || (previousKept && LocationLine().IsMatch(line));
-            if (keep && errors.Count < MaxScriptErrorLines)
-            {
-                errors.Add(line);
-            }
+        string json = value?.ToJsonString() ?? "null";
+        return json.Length <= MaxValueLength
+            ? new JsonObject { ["value"] = value?.DeepClone() }
+            : new JsonObject { ["valuePreview"] = json[..MaxValueLength], ["valueLength"] = json.Length };
+    }
 
-            previousKept = keep;
+    [McpServerTool(Name = "get_errors", ReadOnly = true)]
+    [Description(
+        "The errors and warnings a session's game has logged (engine errors, script errors, push_error, push_warning), "
+            + "oldest first: {errors: [{seq, type, message, file, line, function, stack}], next, dropped}. seq numbers them "
+            + "from 1 for the session. Pass since = the next of the previous call to read only what came after it; 0 reads "
+            + "from the oldest kept. The server keeps the last 500; dropped counts those lost. Other tools' results already "
+            + "carry the errors (not warnings) raised while they ran."
+    )]
+    public string GetErrors(
+        [Description("Return entries with a seq greater than this: 0, or the next of an earlier call.")] long since = 0,
+        [Description("How many entries to return at most, 1 to 500.")] int limit = 50,
+        [Description(ProjectTools.SessionDescription)] string? session = null
+    )
+    {
+        if (since < 0)
+        {
+            throw new McpException($"since must be 0 or more; got {since}.");
         }
 
-        return errors;
+        if (limit is < 1 or > MaxErrorsLimit)
+        {
+            throw new McpException($"limit must be 1 to {MaxErrorsLimit}; got {limit}.");
+        }
+
+        ErrorFeed feed = Find(session).Errors;
+        IReadOnlyList<ErrorEntry> entries = feed.Since(since, limit);
+        JsonObject result = new()
+        {
+            ["errors"] = new JsonArray([.. entries.Select(entry => ErrorReport.Describe(entry, withType: true))]),
+            ["next"] = entries.Count > 0 ? entries[^1].Seq : since,
+            ["dropped"] = feed.Dropped,
+        };
+        return result.ToJsonString();
     }
 
     private static async Task<JsonNode?> RunScriptOnBridgeAsync(
@@ -171,36 +240,21 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
         }
         catch (McpException e) when (e.InnerException is InvalidOperationException refused)
         {
-            IReadOnlyList<string> errors = await CollectScriptErrorsAsync(target, mark, StderrWait, cancellationToken);
+            IReadOnlyList<ErrorEntry> errors = target.Errors.ErrorsSince(mark);
             string detail =
                 errors.Count == 0
-                    ? "\nGodot printed no SCRIPT ERROR line for it; check get_debug_output."
-                    : $"\nGodot reported:\n{string.Join('\n', errors)}";
+                    ? "\nGodot reported no error for it; check get_errors and get_debug_output."
+                    : $"\nGodot reported:\n{ErrorReport.Summarise(errors)}";
             throw new McpException(e.Message + detail, refused);
         }
     }
 
-    /// <summary>
-    /// The script errors on stderr since <paramref name="mark"/>, read after <see cref="StderrSettle"/> and then polled until
-    /// <paramref name="wait"/> has passed while there are none.
-    /// </summary>
-    private static async Task<IReadOnlyList<string>> CollectScriptErrorsAsync(
-        GodotSession target,
-        long mark,
-        TimeSpan wait,
-        CancellationToken cancellationToken
-    )
+    /// <summary>Sends one request and collects the errors the game raised from just before it until its reply.</summary>
+    private static async Task<BridgeResult> CallWithErrorsAsync(GodotSession target, BridgeCall call, CancellationToken cancellationToken)
     {
-        DateTime deadline = DateTime.UtcNow + wait;
-        await Task.Delay(StderrSettle, cancellationToken);
-        List<string> errors = FindScriptErrors(target.GetStderrSince(mark));
-        while (errors.Count == 0 && DateTime.UtcNow < deadline)
-        {
-            await Task.Delay(50, cancellationToken);
-            errors = FindScriptErrors(target.GetStderrSince(mark));
-        }
-
-        return errors;
+        long mark = target.Errors.Mark();
+        JsonNode? reply = await CallBridgeAsync(target, call, cancellationToken);
+        return new BridgeResult(reply, target.Errors.ErrorsSince(mark));
     }
 
     /// <summary>The session a tool addresses, resolved once its own arguments have been checked.</summary>
@@ -320,9 +374,6 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
     /// <summary>One request to the bridge: the tool it serves (for messages), the bridge command, its parameters and its timeout.</summary>
     private sealed record BridgeCall(string Tool, string Command, JsonObject Parameters, TimeSpan Timeout);
 
-    [GeneratedRegex("SCRIPT ERROR|Parse Error")]
-    private static partial Regex ScriptErrorLine();
-
-    [GeneratedRegex(@"^\s+at: ")]
-    private static partial Regex LocationLine();
+    /// <summary>A bridge reply's result and the errors the game raised while it was on its way.</summary>
+    private sealed record BridgeResult(JsonNode? Reply, IReadOnlyList<ErrorEntry> Errors);
 }

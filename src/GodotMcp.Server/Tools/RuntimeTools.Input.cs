@@ -9,11 +9,14 @@ namespace GodotMcp.Server.Tools;
 /// <summary>
 /// Input into the running game. The bridge plays each gesture over frames with new event objects, tracking the held
 /// buttons and the pointer itself, and answers once the gesture has ended and two more frames have run. One input call
-/// plays at a time on a session (sessions play alongside each other), and script errors the game printed while it played are appended to its result.
+/// plays at a time on a session (sessions play alongside each other), and the errors the game raised while it played are in
+/// its result's errors.
 /// </summary>
 internal sealed partial class RuntimeTools
 {
-    private const string ErrorNote = " Script errors the game's handlers raise while the input plays are appended to the result.";
+    private const string ErrorNote =
+        " Errors the game's handlers raise while the input plays come back in the result's errors, with file, line and stack; "
+        + "the call still succeeds.";
     private static readonly TimeSpan InputTimeout = TimeSpan.FromSeconds(10);
 
     // A generous allowance per character or event on top of InputTimeout: each takes a frame or two.
@@ -209,8 +212,8 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>
-    /// Plays one input call on the session once any earlier one on it has finished, and appends the script errors Godot
-    /// printed while it played (read once, after the stderr settle; the call still succeeds).
+    /// Plays one input call on the session once any earlier one on it has finished, and adds the errors the game raised while
+    /// it played to the bridge's <c>{pointer, heldButtonMask}</c> (the call still succeeds).
     /// </summary>
     private async Task<string> SendInputAsync(
         string? session,
@@ -224,12 +227,10 @@ internal sealed partial class RuntimeTools
         await target.InputGate.WaitAsync(cancellationToken);
         try
         {
-            long mark = target.MarkStderr();
             BridgeCall call = new(tool, "input", parameters, InputTimeout + allowance);
-            JsonNode? reply = await CallBridgeAsync(target, call, cancellationToken);
-            string result = reply?.ToJsonString() ?? "{}";
-            IReadOnlyList<string> errors = await CollectScriptErrorsAsync(target, mark, StderrSettle, cancellationToken);
-            return errors.Count == 0 ? result : $"{result}\nGodot reported errors while the input played:\n{string.Join('\n', errors)}";
+            BridgeResult result = await CallWithErrorsAsync(target, call, cancellationToken);
+            JsonObject played = result.Reply as JsonObject ?? [];
+            return ErrorReport.AddTo(played, result.Errors).ToJsonString();
         }
         finally
         {

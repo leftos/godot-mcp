@@ -70,7 +70,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
     {
         SessionException resolved = Assert.Throws<SessionException>(() => _sessions.Resolve(null));
         SessionException stopped = await Assert.ThrowsAsync<SessionException>(() => _sessions.StopAsync(null, TestContext.Current.CancellationToken));
-        DebugOutput output = _sessions.GetDebugOutput(null, 10);
+        DebugOutput output = _sessions.GetDebugOutput(null, 10, null);
 
         Assert.Equal("No Godot session is running; start one with run_project or attach_project.", resolved.Message);
         Assert.Equal("No Godot session has been started, so there is nothing to stop. Start one with run_project.", stopped.Message);

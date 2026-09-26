@@ -89,6 +89,23 @@ public sealed class AttachTests : IAsyncDisposable
         Assert.Equal(string.Empty, Git.Status(_probe.Directory));
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnAttachedGameReportsErrors()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        Task<string> attach = _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, false, cancellationToken: cancellation);
+        Assert.True(await Poll.UntilAsync(() => File.Exists(AttachFilePath), TimeSpan.FromSeconds(10), cancellation));
+        StartGame();
+        await attach;
+        JsonNode result = await RunForResultAsync("push_error(\"attached probe error\")\n\treturn OS.get_process_id()");
+        _games.Add(Process.GetProcessById(result["value"]!.GetValue<int>()));
+
+        JsonNode error = Assert.Single(result["errors"]!.AsArray())!;
+        Assert.Equal("attached probe error", error["message"]!.GetValue<string>());
+        Assert.Equal(5, error["line"]!.GetValue<int>());
+    }
+
     // Godot as a user's script would start it: no GODOT_MCP_* variables, so the bridge can only find the attach file.
     private void StartGame()
     {
@@ -130,7 +147,9 @@ public sealed class AttachTests : IAsyncDisposable
         }
     }
 
-    private async Task<JsonNode> RunAsync(string body)
+    private async Task<JsonNode> RunAsync(string body) => (await RunForResultAsync(body))["value"]!;
+
+    private async Task<JsonNode> RunForResultAsync(string body)
     {
         string script = $"extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t{body}\n";
         string json = await _runtime.RunScriptAsync(script, 10_000, cancellationToken: TestContext.Current.CancellationToken);

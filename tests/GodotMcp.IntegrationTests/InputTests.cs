@@ -160,8 +160,11 @@ public sealed class InputTests : IAsyncDisposable
         int pressCount = (await RunAsync("return scene_tree.root.get_node(\"Main/SmallButton\").press_count")).GetValue<int>();
 
         Assert.Equal(1, pressCount);
-        Assert.Contains("Godot reported errors while the input played:", clicked, StringComparison.Ordinal);
-        Assert.Contains("SCRIPT ERROR", clicked, StringComparison.Ordinal);
+        JsonNode error = JsonNode.Parse(clicked)!["errors"]![0]!;
+        Assert.Equal("res://small_button.gd", error["file"]!.GetValue<string>());
+        // small_button.gd line 17: missing.call("free") on a null Object.
+        Assert.Equal(17, error["line"]!.GetValue<int>());
+        Assert.NotEmpty(error["stack"]!.AsArray());
     }
 
     private Task<LaunchResult> LaunchAsync(string[] engineArgs) =>
@@ -201,7 +204,7 @@ public sealed class InputTests : IAsyncDisposable
     {
         string script = $"extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t{body}\n";
         string json = await _tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: TestContext.Current.CancellationToken);
-        return JsonNode.Parse(json)!;
+        return JsonNode.Parse(json)!["value"]!;
     }
 
     private static JsonObject Motion(double x, double y) =>

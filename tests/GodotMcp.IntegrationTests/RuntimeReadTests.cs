@@ -83,6 +83,19 @@ public sealed class RuntimeReadTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task DefaultPreviewIsAtMost480PixelsWide()
+    {
+        await LaunchAsync(TestContext.Current.CancellationToken);
+
+        List<ContentBlock> blocks = [.. await _tools.TakeScreenshotAsync(cancellationToken: TestContext.Current.CancellationToken)];
+        JsonNode reply = JsonNode.Parse(Text(blocks))!;
+
+        Assert.True(PngSize(Image(blocks)).Width <= 480);
+        Assert.True(reply["width"]!.GetValue<int>() > 480);
+        Assert.True(File.Exists(reply["path"]!.GetValue<string>()));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task PathOnlyScreenshotReturnsNoImage()
     {
         await LaunchAsync(TestContext.Current.CancellationToken);
@@ -137,20 +150,110 @@ public sealed class RuntimeReadTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
-    public async Task RunScriptReportsARuntimeErrorWithItsScriptErrorLine()
+    public async Task RunScriptReportsARuntimeErrorWithItsLocation()
     {
         await LaunchAsync(TestContext.Current.CancellationToken);
 
         McpException failed = await Assert.ThrowsAsync<McpException>(() => RunAsync("var nothing: Variant = null\n\treturn nothing.foo"));
 
-        Assert.Contains("SCRIPT ERROR", failed.Message, StringComparison.Ordinal);
+        Assert.Contains("execute returned null and Godot reported errors", failed.Message, StringComparison.Ordinal);
         Assert.Contains("foo", failed.Message, StringComparison.Ordinal);
+        // The body's second line, `return nothing.foo`, is line 6 of the script RunAsync wraps it in.
+        Assert.True(failed.Message.Contains(":6 in execute", StringComparison.Ordinal), failed.Message);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task RunScriptReturnsItsValueAndThePushedErrors()
+    {
+        await LaunchAsync(TestContext.Current.CancellationToken);
+
+        JsonNode result = await RunForResultAsync("push_error(\"probe pushed an error\")\n\treturn 7");
+
+        Assert.Equal(7, result["value"]!.GetValue<int>());
+        JsonNode error = Assert.Single(result["errors"]!.AsArray())!;
+        Assert.Equal("probe pushed an error", error["message"]!.GetValue<string>());
+        Assert.Equal(5, error["line"]!.GetValue<int>());
+        Assert.Equal("execute", error["function"]!.GetValue<string>());
+        Assert.DoesNotContain("variant_utility", error["file"]?.GetValue<string>() ?? string.Empty, StringComparison.Ordinal);
+        Assert.EndsWith(":5 in execute", error["stack"]![0]!.GetValue<string>(), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnEngineErrorRaisedByAScriptIsLocatedAtTheScript()
+    {
+        await LaunchAsync(TestContext.Current.CancellationToken);
+
+        JsonNode result = await RunForResultAsync("scene_tree.root.get_node(\"Missing\")\n\treturn 1");
+
+        JsonNode error = result["errors"]![0]!;
+        Assert.StartsWith("gdscript://", error["file"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Equal(5, error["line"]!.GetValue<int>());
+        Assert.Contains(".cpp", error["engine"]?.GetValue<string>() ?? string.Empty, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ANullValueWithAnUnrelatedErrorStillSucceeds()
+    {
+        await LaunchAsync(TestContext.Current.CancellationToken);
+
+        JsonNode result = await RunForResultAsync("scene_tree.root.get_node(\"Main\").probe_push_error()\n\treturn null");
+
+        Assert.True(result.AsObject().ContainsKey("value"));
+        Assert.Null(result["value"]);
+        JsonNode error = Assert.Single(result["errors"]!.AsArray())!;
+        Assert.Equal("probe fixture error", error["message"]!.GetValue<string>());
+        Assert.Equal("res://main.gd", error["file"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnErrorOnAWorkerThreadReachesTheFeed()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await LaunchAsync(cancellation);
+
+        await RunAsync(
+            "var id := WorkerThreadPool.add_task(func() -> void: push_error(\"from a thread\"))\n\t"
+                + "WorkerThreadPool.wait_for_task_completion(id)\n\treturn 1"
+        );
+
+        // A worker's error may land after the bridge flushed for the reply, so it is looked for in the feed.
+        Assert.True(
+            await Poll.UntilAsync(
+                () => _tools.GetErrors(0).Contains("from a thread", StringComparison.Ordinal),
+                TimeSpan.FromSeconds(1),
+                cancellation
+            ),
+            _tools.GetErrors(0)
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task GetErrorsReturnsErrorsAndWarningsFromACursor()
+    {
+        await LaunchAsync(TestContext.Current.CancellationToken);
+
+        await RunAsync("push_warning(\"probe warning\")\n\tpush_error(\"probe error\")\n\treturn true");
+        JsonNode all = JsonNode.Parse(_tools.GetErrors(0))!;
+        long next = all["next"]!.GetValue<long>();
+        JsonNode later = JsonNode.Parse(_tools.GetErrors(next))!;
+
+        JsonNode[] entries = [.. all["errors"]!.AsArray().Select(entry => entry!)];
+        Assert.True(entries.Length >= 2, all.ToJsonString());
+        Assert.Equal(("warning", "probe warning"), (entries[^2]["type"]!.GetValue<string>(), entries[^2]["message"]!.GetValue<string>()));
+        Assert.Equal(("error", "probe error"), (entries[^1]["type"]!.GetValue<string>(), entries[^1]["message"]!.GetValue<string>()));
+        Assert.Equal(entries[^1]["seq"]!.GetValue<long>(), next);
+        Assert.Equal(entries[^2]["seq"]!.GetValue<long>() + 1, next);
+        Assert.Empty(later["errors"]!.AsArray());
+        Assert.Equal(next, later["next"]!.GetValue<long>());
+        Assert.Equal(0, all["dropped"]!.GetValue<long>());
     }
 
     private Task<LaunchResult> LaunchAsync(CancellationToken cancellation) =>
         _harness.Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], false, false), null, cancellation);
 
-    private async Task<JsonNode> RunAsync(string body)
+    private async Task<JsonNode> RunAsync(string body) => (await RunForResultAsync(body))["value"]!;
+
+    private async Task<JsonNode> RunForResultAsync(string body)
     {
         string script = $"extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t{body}\n";
         string json = await _tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: TestContext.Current.CancellationToken);
