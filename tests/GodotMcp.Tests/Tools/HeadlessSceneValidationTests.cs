@@ -1,3 +1,4 @@
+using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
 using ModelContextProtocol;
@@ -112,6 +113,113 @@ public sealed class HeadlessSceneValidationTests : IDisposable
         Assert.Equal("scenePath 'res://levels/c.SCN' is a binary scene; the scene edit tools write .tscn only.", edited.Message);
         Assert.Equal("res://levels/a.tscn", HeadlessTools.CheckEditableScenePath(_project, "levels/a.tscn"));
         Assert.Equal("res://levels/c.scn", HeadlessTools.CheckScenePath(_project, "levels/c.scn"));
+    }
+
+    [Fact]
+    public void AttachScriptRefusesANonScriptExtension()
+    {
+        McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckScriptPath(_project, "levels/a.tscn"));
+
+        Assert.Equal("scriptPath 'levels/a.tscn' is not a script: attach_script takes .gd and .cs files.", refused.Message);
+        Assert.Equal("res://main.gd", HeadlessTools.CheckScriptPath(_project, "res://main.gd"));
+    }
+
+    [Fact]
+    public void AttachScriptRefusesAPathOutsideTheProject()
+    {
+        foreach (string path in new[] { "../other.gd", "res://../other.gd", _temp.Combine("other.gd") })
+        {
+            McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckScriptPath(_project, path));
+
+            Assert.Equal($"scriptPath '{path}' is outside the project folder {_project}; pass a res:// path or a path inside it.", refused.Message);
+        }
+    }
+
+    [Theory]
+    [InlineData(".")]
+    [InlineData("./")]
+    [InlineData(" . ")]
+    public void DuplicateNodeRefusesTheRootPath(string path)
+    {
+        McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckDuplicatedNodePath(path));
+
+        Assert.Equal("The scene root cannot be duplicated; save_scene with newPath copies the whole scene.", refused.Message);
+        Assert.Equal("Boss/Sprite", HeadlessTools.CheckDuplicatedNodePath("Boss/Sprite"));
+    }
+
+    [Fact]
+    public void LoadSpriteRefusesATexturePathOutsideTheProject()
+    {
+        foreach (string path in new[] { "../t.png", "res://../t.png", _temp.Combine("t.png") })
+        {
+            McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckTexturePath(_project, path));
+
+            Assert.Equal($"texturePath '{path}' is outside the project folder {_project}; pass a res:// path or a path inside it.", refused.Message);
+        }
+    }
+
+    [Fact]
+    public void AnImageWithoutImportSidecarNeedsAnImport()
+    {
+        string image = Path.Combine(_project, "art.png");
+        File.WriteAllText(image, string.Empty);
+
+        Assert.True(PrepScan.AssetNeedsImport(_project, image));
+        File.WriteAllText(image + ".import", "[remap]\n");
+        Assert.False(PrepScan.AssetNeedsImport(_project, image));
+    }
+
+    [Fact]
+    public void AnImageWhoseImportedFileIsMissingNeedsAnImport()
+    {
+        string image = Path.Combine(_project, "art.png");
+        File.WriteAllText(image, string.Empty);
+        File.WriteAllText(image + ".import", "[remap]\n\n[deps]\n\ndest_files=[\"res://.godot/imported/art.png-1.ctex\"]\n");
+
+        Assert.True(PrepScan.AssetNeedsImport(_project, image));
+        Directory.CreateDirectory(Path.Combine(_project, ".godot", "imported"));
+        File.WriteAllText(Path.Combine(_project, ".godot", "imported", "art.png-1.ctex"), string.Empty);
+        Assert.False(PrepScan.AssetNeedsImport(_project, image));
+    }
+
+    [Theory]
+    [InlineData("gradient.tres")]
+    [InlineData("gradient.res")]
+    [InlineData("GRADIENT.TRES")]
+    [InlineData("atlas.dds")]
+    [InlineData("atlas.ktx")]
+    public void AFileThatLoadsWithoutAnImportNeverNeedsOne(string name)
+    {
+        string resource = Path.Combine(_project, name);
+        File.WriteAllText(resource, string.Empty);
+
+        Assert.False(PrepScan.AssetNeedsImport(_project, resource));
+    }
+
+    [Theory]
+    [InlineData(".hidden/art", "res://.hidden")]
+    [InlineData("ignored/deep", "res://ignored")]
+    public void LoadSpriteRefusesATextureInAFolderGodotDoesNotScan(string folder, string unscanned)
+    {
+        Directory.CreateDirectory(Path.Combine(_project, folder));
+        Directory.CreateDirectory(Path.Combine(_project, "ignored"));
+        File.WriteAllText(Path.Combine(_project, "ignored", ".gdignore"), string.Empty);
+        File.WriteAllText(Path.Combine(_project, folder, "t.png"), string.Empty);
+
+        McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckTexturePath(_project, $"{folder}/t.png"));
+
+        Assert.Equal($"res://{folder}/t.png is in {unscanned}, which Godot does not scan; move the asset out of it.", refused.Message);
+    }
+
+    [Fact]
+    public void ACaseVariantOfAFileOnDiskIsRefused()
+    {
+        McpException script = Assert.Throws<McpException>(() => HeadlessTools.CheckScriptPath(_project, "res://MAIN.gd"));
+        McpException scene = Assert.Throws<McpException>(() => HeadlessTools.CheckEditableScenePath(_project, "Levels/A.tscn"));
+
+        Assert.Equal("res://MAIN.gd differs in case from the file on disk, res://main.gd; use the exact case.", script.Message);
+        Assert.Equal("Levels/A.tscn differs in case from the file on disk, res://levels/a.tscn; use the exact case.", scene.Message);
+        Assert.Equal("res://levels/new.tscn", HeadlessTools.CheckNewScenePath(_project, "levels/new.tscn", "newPath", overwrite: false));
     }
 
     private static void AssertNodePathRefused(string path)

@@ -7,7 +7,8 @@ using ModelContextProtocol.Server;
 namespace GodotMcp.Server.Tools;
 
 /// <summary>
-/// The headless scene edits (headless/scene_ops.gd): create_scene, save_scene and delete_nodes. Each always runs the prep, opens
+/// The headless scene edits (headless/scene_ops.gd): create_scene, save_scene, delete_nodes, attach_script, duplicate_node and
+/// load_sprite. Each always runs the prep, opens
 /// the scene as the editor does, and saves it with its uids kept; an edit is all or nothing.
 /// </summary>
 internal sealed partial class HeadlessTools
@@ -21,6 +22,18 @@ internal sealed partial class HeadlessTools
 
     private const string ScenePathDescription =
         "The scene: a res:// path or a path relative to the project folder, ending .tscn (the edit tools write text scenes only).";
+
+    private const string NodePathDescription = "The node, by its path relative to the scene's root (\".\" for the root, Boss/Sprite).";
+
+    private const string RootDuplicateRefusal = "The scene root cannot be duplicated; save_scene with newPath copies the whole scene.";
+
+    private static readonly string[] ScriptExtensions = [".gd", ".cs"];
+
+    private static readonly PathRule TextureRule = new(
+        "texturePath",
+        [".png", ".jpg", ".jpeg", ".webp", ".svg", ".bmp", ".tga", ".exr", ".hdr", ".dds", ".ktx", ".tres", ".res"],
+        "is not a texture: load_sprite takes images (.png, .jpg, .jpeg, .webp, .svg, .bmp, .tga, .exr, .hdr, .dds, .ktx) and .tres or .res textures."
+    );
 
     [McpServerTool(Name = "create_scene", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
@@ -109,6 +122,169 @@ internal sealed partial class HeadlessTools
             return RunWriteAsync(projectDir, "delete_nodes", parameters, cancellationToken);
         });
         return WithErrors(run);
+    }
+
+    [McpServerTool(Name = "attach_script", ReadOnly = false, Destructive = false, OpenWorld = false)]
+    [Description(
+        "Attaches a script to a node of a scene file, replacing the script it had, and saves the scene, in a headless Godot, "
+            + "without running the game. The script must compile and extend the node's class or one of its parents. A node inside "
+            + "an instanced scene is refused (attach it in that scene's own file); an instance's root and a node an inherited "
+            + "scene gets from its base are allowed, saved as overrides. A C# script is refused while the project's C# build "
+            + "fails. Returns {path, script: {resource, uid?}, previous?: {resource, uid?}, errors?}: path is the node's path "
+            + "from the scene's root, previous the script it had."
+            + WriteNote
+    )]
+    public async Task<string> AttachScriptAsync(
+        [Description(ProjectPathDescription)] string projectPath,
+        [Description(ScenePathDescription)] string scenePath,
+        [Description(NodePathDescription)] string nodePath,
+        [Description("The script: a res:// path or a path relative to the project folder, ending .gd or .cs.")] string scriptPath,
+        CancellationToken cancellationToken = default
+    )
+    {
+        string node = CheckNodePath(nodePath);
+        HeadlessResult run = await RunAsync(() =>
+        {
+            string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
+            JsonObject parameters = new()
+            {
+                ["scene"] = CheckEditableScenePath(projectDir, scenePath),
+                ["nodePath"] = node,
+                ["script"] = CheckScriptPath(projectDir, scriptPath),
+            };
+            return RunWriteAsync(projectDir, "attach_script", parameters, cancellationToken);
+        });
+        return WithErrors(run);
+    }
+
+    [McpServerTool(Name = "duplicate_node", ReadOnly = false, Destructive = false, OpenWorld = false)]
+    [Description(
+        "Copies a node, with its children, within a scene file and saves the scene, in a headless Godot, without running the "
+            + "game. The copy goes right after the node under the same parent, or last under options.parent. Instanced scenes "
+            + "in the copy stay instances with their overridden values. Connections between the copied nodes, and from them to "
+            + "nodes outside the copy, are kept; connections coming into the copy from outside it are not. The scene's root, a "
+            + "node inside an instanced "
+            + "scene and a parent inside one are refused (an instance's root is a valid parent). Returns {originalPath, newPath, "
+            + "errors?}, both paths from the scene's root."
+            + WriteNote
+    )]
+    public async Task<string> DuplicateNodeAsync(
+        [Description(ProjectPathDescription)] string projectPath,
+        [Description(ScenePathDescription)] string scenePath,
+        [Description(NodePathDescription + " Not the root.")] string nodePath,
+        [Description(
+            "The copy's name; refused when the parent already has a child of that name. Left out, the node's name, or when that "
+                + "is taken, as the editor names a duplicate: trailing digits counted up (Sprite gives Sprite2, Sprite2 gives Sprite3)."
+        )]
+            string? newName = null,
+        [Description("{parent}: the node to put the copy under, by its path relative to the scene's root; the node's own parent by default.")]
+            DuplicateNodeOptions? options = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        string node = CheckDuplicatedNodePath(nodePath);
+        string parent = options?.Parent is null ? string.Empty : CheckNodePath(options.Parent);
+        HeadlessResult run = await RunAsync(() =>
+        {
+            string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
+            JsonObject parameters = new()
+            {
+                ["scene"] = CheckEditableScenePath(projectDir, scenePath),
+                ["nodePath"] = node,
+                ["newName"] = newName?.Trim() ?? string.Empty,
+                ["parent"] = parent,
+            };
+            return RunWriteAsync(projectDir, "duplicate_node", parameters, cancellationToken);
+        });
+        return WithErrors(run);
+    }
+
+    [McpServerTool(Name = "load_sprite", ReadOnly = false, Destructive = false, OpenWorld = false)]
+    [Description(
+        "Sets the texture of a node in a scene file (a Sprite2D, Sprite3D, TextureRect, NinePatchRect, Polygon2D, or any node "
+            + "whose texture property takes a Texture2D) and saves the scene, in a headless Godot, without running the game. An "
+            + "image that was never imported (no .import file beside it, or its imported file is missing) is imported first, by "
+            + "the editor's full scan of the project: it writes an .import file beside every asset never imported and a .uid file "
+            + "beside every script. An image in a folder Godot does not scan (a name starting with \".\", or holding a .gdignore) "
+            + "is refused. A node inside an instanced scene is "
+            + "refused. Returns {path, texture: {resource, uid?}, errors?}: path is the node's path from the scene's root."
+            + WriteNote
+    )]
+    public async Task<string> LoadSpriteAsync(
+        [Description(ProjectPathDescription)] string projectPath,
+        [Description(ScenePathDescription)] string scenePath,
+        [Description(NodePathDescription)] string nodePath,
+        [Description(
+            "The texture: a res:// path or a path relative to the project folder, an image (.png, .jpg, .svg...) or a .tres or .res texture."
+        )]
+            string texturePath,
+        CancellationToken cancellationToken = default
+    )
+    {
+        string node = CheckNodePath(nodePath);
+        HeadlessResult run = await RunAsync(() =>
+        {
+            string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
+            string texture = CheckTexturePath(projectDir, texturePath);
+            JsonObject parameters = new()
+            {
+                ["scene"] = CheckEditableScenePath(projectDir, scenePath),
+                ["nodePath"] = node,
+                ["texture"] = ResOf(projectDir, texture),
+            };
+            HeadlessRequest request = new(projectDir, "load_sprite", parameters, Prepare: true, RunCeiling) { ImportAssets = [texture] };
+            return HeadlessRunner.RunAsync(sessions, request, cancellationToken);
+        });
+        return WithErrors(run);
+    }
+
+    /// <summary>A script attach_script takes, as a res:// path.</summary>
+    /// <exception cref="McpException">The path is empty, outside the project, missing, or not a .gd or .cs.</exception>
+    internal static string CheckScriptPath(string projectDir, string scriptPath) =>
+        ToResPath(projectDir, scriptPath, new PathRule("scriptPath", ScriptExtensions, "is not a script: attach_script takes .gd and .cs files."));
+
+    /// <summary>The full path of a texture load_sprite takes.</summary>
+    /// <exception cref="McpException">The path is empty, outside the project, of another kind, or missing.</exception>
+    internal static string CheckTexturePath(string projectDir, string texturePath)
+    {
+        string full = ResolvePath(projectDir, texturePath, TextureRule);
+        if (!File.Exists(full))
+        {
+            throw new McpException($"{ResOf(projectDir, full)} does not exist.");
+        }
+
+        string? unscanned = UnscannedFolder(projectDir, full);
+        return unscanned is null
+            ? full
+            : throw new McpException($"{ResOf(projectDir, full)} is in {unscanned}, which Godot does not scan; move the asset out of it.");
+    }
+
+    /// <summary>
+    /// The res:// path of the outermost folder holding the file that Godot's scan skips (a name starting with "." or a folder
+    /// holding a .gdignore), or null. An import never reaches such a file, so it would be due on every request.
+    /// </summary>
+    private static string? UnscannedFolder(string projectDir, string full)
+    {
+        string folder = projectDir;
+        string relative = Path.GetRelativePath(projectDir, Path.GetDirectoryName(full)!);
+        foreach (string name in relative.Split(Path.DirectorySeparatorChar).Where(name => name != "."))
+        {
+            folder = Path.Combine(folder, name);
+            if (name.StartsWith('.') || File.Exists(Path.Combine(folder, ".gdignore")))
+            {
+                return ResOf(projectDir, folder);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The node path duplicate_node copies, checked as <see cref="CheckNodePath"/> does.</summary>
+    /// <exception cref="McpException">The path breaks <see cref="CheckNodePath"/>'s rules, or names the scene's root.</exception>
+    internal static string CheckDuplicatedNodePath(string nodePath)
+    {
+        string path = CheckNodePath(nodePath);
+        return path.Split('/').All(part => part is "" or ".") ? throw new McpException(RootDuplicateRefusal) : path;
     }
 
     /// <summary>The node paths, each checked and trimmed.</summary>
@@ -207,6 +383,12 @@ internal sealed partial class HeadlessTools
         return result.ToJsonString();
     }
 }
+
+/// <summary>Where duplicate_node puts the copy.</summary>
+internal sealed record DuplicateNodeOptions(
+    [property: Description("The node to put the copy under, by its path relative to the scene's root; the node's own parent by default.")]
+        string? Parent = null
+);
 
 /// <summary>Whether a scene tool may replace the file it writes.</summary>
 internal sealed record SceneWriteOptions(

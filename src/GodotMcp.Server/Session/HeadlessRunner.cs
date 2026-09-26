@@ -10,7 +10,14 @@ namespace GodotMcp.Server.Session;
 /// One headless operation: the normalised project folder, the operation's name and parameters, whether to prepare first, and
 /// how long the Godot run may take before it is stopped.
 /// </summary>
-internal sealed record HeadlessRequest(string ProjectDir, string Operation, JsonObject Parameters, bool Prepare, TimeSpan Ceiling);
+internal sealed record HeadlessRequest(string ProjectDir, string Operation, JsonObject Parameters, bool Prepare, TimeSpan Ceiling)
+{
+    /// <summary>The full paths of files the operation loads, which the prep imports first when they need it (<see cref="PrepContext.ImportAssets"/>).</summary>
+    public IReadOnlyList<string> ImportAssets { get; init; } = [];
+
+    /// <summary>What a refused import suggests besides stopping the sessions (<see cref="PrepContext.ImportSkipHint"/>); none by default.</summary>
+    public string ImportSkipHint { get; init; } = string.Empty;
+}
 
 /// <summary>
 /// What a headless operation returned, every error and warning Godot logged while it ran (<c>{type, message, file, line}</c>),
@@ -44,7 +51,11 @@ internal static class HeadlessRunner
             ClearFolder(registry, projectDir);
             string godot = Installation.FindGodot();
             string script = Installation.FindHeadlessScript();
-            PrepContext context = new(projectDir, registry.Logger, () => registry.RunningSessionNames(projectDir, except: null));
+            PrepContext context = new(projectDir, registry.Logger, () => registry.RunningSessionNames(projectDir, except: null))
+            {
+                ImportAssets = request.ImportAssets,
+                ImportSkipHint = request.ImportSkipHint,
+            };
             PrepOutcome prep = request.Prepare
                 ? await ProjectPrep.RunReportingBuildAsync(context, cancellationToken)
                 : new PrepOutcome(PrepResult.Skipped, null);

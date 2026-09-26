@@ -52,15 +52,24 @@ public sealed class HeadlessPropertyValidationTests : IDisposable
 
     [Theory]
     [InlineData("level.tscn")]
-    [InlineData("LEVEL.tscn")]
-    [InlineData("res://Level.TSCN")]
-    public void AddNodeRefusesTheSceneItselfInAnyCase(string nodeType)
+    [InlineData("res://level.tscn")]
+    public void AddNodeRefusesTheSceneItself(string nodeType)
     {
         McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckNodeType(_project, nodeType, "res://level.tscn"));
 
         Assert.Equal($"nodeType '{nodeType}' is the scene being edited; a scene cannot instance itself.", refused.Message);
         Assert.Equal("res://enemy.tscn", HeadlessTools.CheckNodeType(_project, "enemy.tscn", "res://level.tscn"));
         Assert.Equal("Sprite2D", HeadlessTools.CheckNodeType(_project, " Sprite2D ", "res://level.tscn"));
+    }
+
+    [Theory]
+    [InlineData("LEVEL.tscn")]
+    [InlineData("res://Level.TSCN")]
+    public void AddNodeRefusesACaseVariantOfTheSceneItselfForItsCase(string nodeType)
+    {
+        McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckNodeType(_project, nodeType, "res://level.tscn"));
+
+        Assert.StartsWith($"{nodeType} differs in case from the file on disk, res://level.tscn", refused.Message);
     }
 
     [Fact]

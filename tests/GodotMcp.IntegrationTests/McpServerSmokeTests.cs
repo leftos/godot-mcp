@@ -39,6 +39,7 @@ public sealed class McpServerSmokeTests : IDisposable
             [
                 "add_node",
                 "attach_project",
+                "attach_script",
                 "batch_drive",
                 "call_method",
                 "click",
@@ -47,6 +48,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "delete_nodes",
                 "detach_project",
                 "drag",
+                "duplicate_node",
                 "frame_control",
                 "gamepad_axis",
                 "gamepad_button",
@@ -60,6 +62,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "inspect_node",
                 "key",
                 "list_sessions",
+                "load_sprite",
                 "mouse_button",
                 "record_mark",
                 "restart_project",
@@ -112,6 +115,7 @@ public sealed class McpServerSmokeTests : IDisposable
         {
             ["add_node"] = changesTheGame,
             ["attach_project"] = changesTheGame,
+            ["attach_script"] = changesTheGame,
             ["batch_drive"] = destructive,
             ["call_method"] = destructive,
             ["click"] = changesTheGame,
@@ -120,6 +124,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["delete_nodes"] = destructive,
             ["detach_project"] = changesTheGame,
             ["drag"] = changesTheGame,
+            ["duplicate_node"] = changesTheGame,
             ["frame_control"] = changesTheGame,
             ["gamepad_axis"] = changesTheGame,
             ["gamepad_button"] = changesTheGame,
@@ -133,6 +138,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["inspect_node"] = readsTheGame,
             ["key"] = changesTheGame,
             ["list_sessions"] = readsTheGame,
+            ["load_sprite"] = changesTheGame,
             ["mouse_button"] = changesTheGame,
             ["record_mark"] = changesTheGame,
             ["restart_project"] = destructive,
@@ -159,7 +165,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(38, actual.Count);
+        Assert.Equal(41, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

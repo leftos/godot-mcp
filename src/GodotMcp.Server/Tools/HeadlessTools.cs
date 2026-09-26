@@ -25,6 +25,9 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
         + "Godot import when imported files are missing or a class_name script is newer than Godot's class cache, as run_project "
         + "does. never: use the project as it is.";
 
+    // What a refused import suggests to a tool that takes options.prepare.
+    private const string SkipPrepHint = ", or pass options.prepare: \"never\" to skip the prep";
+
     private const string ProjectPathDescription = "The folder that holds the project's project.godot.";
     private const string RefusedNote =
         " Refused while a session is live on the project (a headless run would load the bridge from its override.cfg); "
@@ -66,7 +69,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
             IReadOnlyList<string> checkedFiles = targets is null ? VersionedTargets(projectDir, sessions.Logger) : CheckTargets(projectDir, targets);
             JsonObject parameters = new() { ["targets"] = new JsonArray([.. checkedFiles.Select(path => (JsonNode)path)]) };
-            HeadlessRequest request = new(projectDir, "validate", parameters, prepare, RunCeiling);
+            HeadlessRequest request = new(projectDir, "validate", parameters, prepare, RunCeiling) { ImportSkipHint = SkipPrepHint };
             return HeadlessRunner.RunAsync(sessions, request, cancellationToken);
         });
         return ShapeValidation(run).ToJsonString();
@@ -109,7 +112,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
                 ["root"] = string.IsNullOrWhiteSpace(root) ? "." : root.Trim(),
                 ["maxDepth"] = maxDepth,
             };
-            HeadlessRequest request = new(projectDir, "get_scene_file_tree", parameters, prepare, RunCeiling);
+            HeadlessRequest request = new(projectDir, "get_scene_file_tree", parameters, prepare, RunCeiling) { ImportSkipHint = SkipPrepHint };
             return HeadlessRunner.RunAsync(sessions, request, cancellationToken);
         });
         JsonObject page = RuntimeTools.PageList(run.Result, "nodes", offset, limit);
@@ -246,7 +249,29 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             throw new McpException($"{rule.Argument} '{path}' {rule.Refusal}");
         }
 
-        return full;
+        // Windows finds a case variant, and Godot would then save the path as it was typed.
+        string onDisk = OnDiskCase(projectDir, full);
+        return string.Equals(onDisk, full, StringComparison.Ordinal)
+            ? full
+            : throw new McpException($"{path} differs in case from the file on disk, {ResOf(projectDir, onDisk)}; use the exact case.");
+    }
+
+    /// <summary>full, a path inside the project, with each segment that exists spelled as its directory lists it.</summary>
+    private static string OnDiskCase(string projectDir, string full)
+    {
+        string current = projectDir;
+        foreach (string segment in Path.GetRelativePath(projectDir, full).Split(Path.DirectorySeparatorChar))
+        {
+            string? listed = Directory.Exists(current)
+                ? Directory
+                    .EnumerateFileSystemEntries(current)
+                    .Select(Path.GetFileName)
+                    .FirstOrDefault(name => string.Equals(name, segment, StringComparison.OrdinalIgnoreCase))
+                : null;
+            current = Path.Combine(current, listed ?? segment);
+        }
+
+        return current;
     }
 
     /// <summary>Whether a path relative to the project folder leaves it: up out of it, or onto another drive.</summary>

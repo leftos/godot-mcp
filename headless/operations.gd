@@ -69,9 +69,11 @@ var _log := ErrorLog.new()
 
 
 ## The logger goes in first: this script's _init runs before Godot creates the project's
-## autoloads (4.7.2 main.cpp L4368-4389, then L4497-4564), so their _init errors are kept.
+## autoloads (4.7.2 main.cpp L4368-4389, then L4497-4564), so their _init errors are kept. The
+## scene edits read it too, to quote what a load they refuse logged.
 func _init() -> void:
 	OS.add_logger(_log)
+	SceneEdit.engine_log = _log
 
 
 func _initialize() -> void:

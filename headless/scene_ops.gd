@@ -1,6 +1,8 @@
 extends RefCounted
 ## The headless scene edits operations.gd dispatches: create_scene, save_scene, and the edits that
-## open a scene, apply one change and save it (delete_nodes).
+## open a scene, apply one change and save it: delete_nodes here, the edits of one node
+## (attach_script, duplicate_node, load_sprite) in scene_nodes.gd, and add_node and the property
+## ops (set_node_properties, and get_node_properties, a read that never saves) in scene_props.gd.
 ##
 ## Each edit is apply_<op>(root, params) -> {result} or {error}, on a scene already open, and
 ## changes nothing when it refuses; opening and saving are separate, so several edits can be
@@ -9,6 +11,7 @@ extends RefCounted
 ## adds to every request).
 
 const SceneEdit := preload("scene_edit.gd")
+const SceneNodes := preload("scene_nodes.gd")
 const SceneProps := preload("scene_props.gd")
 
 
@@ -30,6 +33,12 @@ static func apply(op: String, root: Node, params: Dictionary) -> Dictionary:
 	match op:
 		"delete_nodes":
 			return apply_delete_nodes(root, params)
+		"attach_script":
+			return SceneNodes.apply_attach_script(root, params)
+		"duplicate_node":
+			return SceneNodes.apply_duplicate_node(root, params)
+		"load_sprite":
+			return SceneNodes.apply_load_sprite(root, params)
 		"add_node":
 			return SceneProps.apply_add_node(root, params)
 		"set_node_properties":

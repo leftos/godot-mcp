@@ -7,7 +7,16 @@ namespace GodotMcp.Server.Session;
 /// What the prep needs from its caller: the project folder, where to log, and the names of the sessions whose game runs on
 /// the folder, asked only when an import is due (a launch leaves itself out; a restart can leave its own old game out too).
 /// </summary>
-internal sealed record PrepContext(string ProjectDir, ILogger Logger, Func<IReadOnlyList<string>> RunningSessions);
+internal sealed record PrepContext(string ProjectDir, ILogger Logger, Func<IReadOnlyList<string>> RunningSessions)
+{
+    /// <summary>The full paths of files the request loads; one that <see cref="PrepScan.AssetNeedsImport"/> makes the import due.</summary>
+    public IReadOnlyList<string> ImportAssets { get; init; } = [];
+
+    /// <summary>
+    /// What a refused import suggests besides stopping the sessions, starting ", or": run_project's options.prepare by default.
+    /// </summary>
+    public string ImportSkipHint { get; init; } = ", or pass options.prepare: \"never\" to launch without importing";
+}
 
 /// <summary>
 /// Makes a fresh checkout runnable before a launch: builds the C# assembly when it is missing or stale, then runs a Godot
@@ -143,7 +152,10 @@ internal static class ProjectPrep
 
     private static async Task<PrepStep> ImportAsync(PrepContext context, ProjectFiles files, CancellationToken cancellationToken)
     {
-        if (!PrepScan.ImportNeeded(context.ProjectDir, files))
+        if (
+            !PrepScan.ImportNeeded(context.ProjectDir, files)
+            && !context.ImportAssets.Any(asset => PrepScan.AssetNeedsImport(context.ProjectDir, asset))
+        )
         {
             return new PrepStep("not-needed", null, null);
         }
@@ -153,7 +165,7 @@ internal static class ProjectPrep
         {
             throw new SessionException(
                 $"the project at {context.ProjectDir} needs a Godot import, but session(s) {string.Join(", ", others)} are running on it; "
-                    + "stop them first, or pass options.prepare: \"never\" to launch without importing."
+                    + $"stop them first{context.ImportSkipHint}."
             );
         }
 

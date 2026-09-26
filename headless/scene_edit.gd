@@ -17,6 +17,10 @@ const UID_ATTRIBUTE := ' uid="'
 ## How many base scenes deep an inherited scene is followed.
 const MAX_BASE_DEPTH := 64
 
+## The engine log operations.gd keeps (its ErrorLog, with count() and since(start)), so an edit
+## can quote what a load it refuses logged; null when nothing set it.
+static var engine_log: Object = null
+
 
 ## {root} for the scene at path instantiated for editing, or {error}.
 static func open(path: String) -> Dictionary:

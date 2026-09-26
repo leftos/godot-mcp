@@ -5,12 +5,16 @@ extends "res://gd_test.gd"
 
 const HEADLESS_SCRIPT := "../../headless/operations.gd"
 const SCENE_EDIT_SCRIPT := "../../headless/scene_edit.gd"
+const SCENE_NODES_SCRIPT := "../../headless/scene_nodes.gd"
 
 var _ops: GDScript = load(
 	ProjectSettings.globalize_path("res://").path_join(HEADLESS_SCRIPT).simplify_path()
 )
 var _edit: GDScript = load(
 	ProjectSettings.globalize_path("res://").path_join(SCENE_EDIT_SCRIPT).simplify_path()
+)
+var _nodes: GDScript = load(
+	ProjectSettings.globalize_path("res://").path_join(SCENE_NODES_SCRIPT).simplify_path()
 )
 
 
@@ -207,6 +211,46 @@ func test_the_source_s_ext_resource_uids_are_read_by_path() -> void:
 		)
 	)
 	assert_eq(_edit.ext_uids_in(text), {"res://s.gd": "uid://sgd"}, "only tags carrying a uid")
+
+
+func test_a_copy_is_named_as_the_editor_names_a_duplicate() -> void:
+	var taken := PackedStringArray(["Sprite", "Sprite2", "Box09", "Tail", "7"])
+	assert_eq(_nodes.copy_name("Sprite", taken), "Sprite3", "Sprite2 is taken too")
+	assert_eq(_nodes.copy_name("Sprite2", taken), "Sprite3", "the trailing number counts up")
+	assert_eq(_nodes.copy_name("Tail", taken), "Tail2", "no number: 2 is added")
+	assert_eq(_nodes.copy_name("Box09", taken), "Box10", "leading zeros carry as in the engine")
+	assert_eq(_nodes.copy_name("7", taken), "8", "a name of digits alone")
+	assert_eq(_nodes.copy_name("Head", taken), "Head", "a free name is kept")
+
+
+func test_only_a_texture_2d_texture_property_takes_a_texture() -> void:
+	var texture := {
+		"name": "texture",
+		"type": TYPE_OBJECT,
+		"hint": PROPERTY_HINT_RESOURCE_TYPE,
+		"hint_string": "Texture2D"
+	}
+	assert_true(_nodes.takes_texture_2d(texture), "Sprite2D's texture")
+	texture["hint_string"] = "Texture"
+	assert_true(_nodes.takes_texture_2d(texture), "a parent class of Texture2D")
+	texture["hint_string"] = "Texture3D"
+	assert_true(not _nodes.takes_texture_2d(texture), "another texture type")
+	texture["hint_string"] = "Texture2D"
+	texture["name"] = "normal_map"
+	assert_true(not _nodes.takes_texture_2d(texture), "another property")
+	var found: Array = []
+	for type: String in [
+		"Sprite2D", "Sprite3D", "TextureRect", "NinePatchRect", "Polygon2D", "Node2D"
+	]:
+		var node: Node = ClassDB.instantiate(type)
+		if node.get_property_list().any(
+			func(entry: Dictionary) -> bool: return _nodes.takes_texture_2d(entry)
+		):
+			found.append(type)
+		node.free()
+	assert_eq(
+		found, ["Sprite2D", "Sprite3D", "TextureRect", "NinePatchRect", "Polygon2D"], "the classes"
+	)
 
 
 func _write(path: String, text: String) -> void:

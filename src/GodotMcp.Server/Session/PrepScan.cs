@@ -33,6 +33,10 @@ internal static partial class PrepScan
         StringComparer.OrdinalIgnoreCase
     );
 
+    // The files a load reads without an import: Godot's own resources, and the textures modules/dds and modules/ktx register
+    // a loader for (4.7.2 register_types.cpp of each).
+    private static readonly HashSet<string> LoadsWithoutImportExtensions = new([".tres", ".res", ".dds", ".ktx"], StringComparer.OrdinalIgnoreCase);
+
     private static readonly HashSet<string> InputNames = new(["global.json", "nuget.config", "packages.lock.json"], StringComparer.OrdinalIgnoreCase);
 
     // The folders a walk outside git skips: VCS data, Godot's cache and build outputs.
@@ -133,6 +137,19 @@ internal static partial class PrepScan
         }
 
         return files.ImportFiles.Any(sidecar => HasMissingTarget(projectDir, sidecar)) || IsClassCacheStale(projectDir, files.Scripts);
+    }
+
+    /// <summary>
+    /// Whether a file a request loads must be imported first: it is not one that loads without an import (<c>.tres</c>,
+    /// <c>.res</c>, <c>.dds</c>, <c>.ktx</c>), and it has no <c>.import</c> sidecar or one whose <c>dest_files</c> are not
+    /// all present (an ignored sidecar is not in <see cref="ProjectFiles.ImportFiles"/>). A never-imported image fails to
+    /// load with "No loader found" (4.7.2 <c>core/io/resource_loader.cpp</c> L332).
+    /// </summary>
+    public static bool AssetNeedsImport(string projectDir, string assetPath)
+    {
+        string sidecar = assetPath + ".import";
+        return !LoadsWithoutImportExtensions.Contains(Path.GetExtension(assetPath))
+            && (!File.Exists(sidecar) || HasMissingTarget(projectDir, sidecar));
     }
 
     /// <summary>
