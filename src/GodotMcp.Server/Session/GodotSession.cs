@@ -280,17 +280,15 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>
     /// Under the folder's prep lock, which every launch takes, so no game starts on the folder while a prep builds or
-    /// imports there: builds a stale C# assembly and runs a due import (unless the request says never), stops the run a
-    /// restart replaces, writes the override and starts Godot. The prep runs before anything is stopped or written, so a
-    /// failed prep leaves nothing to undo and a restart's old game running.
+    /// imports there: looks Godot up, builds a stale C# assembly and runs a due import (unless the request says never),
+    /// stops the run a restart replaces, writes the override and starts Godot. The prep runs before anything is stopped or
+    /// written, so a failed prep leaves nothing to undo and a restart's old game running.
     /// </summary>
-    /// <param name="godotPath">The Godot executable.</param>
     /// <param name="request">What to launch.</param>
     /// <param name="previous">The run a restart replaces, stopped after the prep and continued by the new run's output; null for a launch.</param>
     /// <param name="cancellationToken">Cancels the wait for the lock and the prep.</param>
-    /// <exception cref="SessionException">The prep failed, the project has its own override.cfg, or Godot could not start.</exception>
+    /// <exception cref="SessionException">Godot was not found, the prep failed, the project has its own override.cfg, or Godot could not start.</exception>
     private async Task<(GodotRun Run, PrepResult Prep, string Token)> PrepareAndStartAsync(
-        string godotPath,
         LaunchRequest request,
         GodotRun? previous,
         CancellationToken cancellationToken
@@ -300,6 +298,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         await folderLock.WaitAsync(cancellationToken);
         try
         {
+            string godotPath = Installation.FindGodot();
             PrepContext context = new(ProjectDir, _logger, () => registry.RunningSessionNames(ProjectDir, this));
             PrepResult prep = request.Prepare ? await ProjectPrep.RunAsync(context, cancellationToken) : PrepResult.Skipped;
             string bridgeScript = Installation.FindBridgeScript();
@@ -329,8 +328,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     private async Task<LaunchResult> StartRunAsync(LaunchRequest request, GodotRun? previous, CancellationToken cancellationToken)
     {
-        string godotPath = Installation.FindGodot();
-        (GodotRun run, PrepResult prep, string token) = await PrepareAndStartAsync(godotPath, request, previous, cancellationToken);
+        (GodotRun run, PrepResult prep, string token) = await PrepareAndStartAsync(request, previous, cancellationToken);
         int processId = run.Process.Id;
         BridgeConnection connection = await WaitForHandshakeAsync(run, new HandshakeExpectation(token, ProjectDir), cancellationToken);
         connection.OnErrors(Errors.Receive);

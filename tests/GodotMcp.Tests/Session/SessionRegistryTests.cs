@@ -240,8 +240,8 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         Assert.True(session.IsLive);
     }
 
-    // The launch is parked on the folder's prep lock, which the test holds, so the session stays starting. The launch looks
-    // Godot up before taking the lock, so this needs Godot where the server finds it (GODOT_PATH or the default path).
+    // The launch is parked on the folder's prep lock, which the test holds, so the session stays starting. It takes the lock
+    // before it looks Godot up, so this needs no Godot installed.
     [Fact]
     public async Task RestartingASessionStillStartingIsRefused()
     {
