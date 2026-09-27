@@ -122,7 +122,7 @@ public sealed class SharedProbeSession : IAsyncLifetime
     /// </summary>
     public async Task ResetAsync(CancellationToken cancellation)
     {
-        if (!Sessions.List().Any(session => session.Live))
+        if (!Sessions.List(includeStopped: true).Any(session => session.Live))
         {
             TestContext.Current.TestOutputHelper?.WriteLine("The shared InputProbe session was not live, so it was launched again.");
             await LaunchAsync(cancellation);

@@ -130,7 +130,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         Assert.Equal("No Godot session is running; start one with run_project or attach_project.", resolved.Message);
         Assert.Equal("No Godot session has been started, so there is nothing to stop. Start one with run_project.", stopped.Message);
         Assert.Null(output.Session);
-        Assert.Empty(_sessions.List());
+        Assert.Empty(_sessions.List(includeStopped: true));
     }
 
     [Fact]
@@ -141,8 +141,40 @@ public sealed class SessionRegistryTests : IAsyncDisposable
 
         SessionException withOne = Assert.Throws<SessionException>(() => _sessions.Resolve("client"));
 
-        Assert.Equal("No session named 'client'. Sessions: none.", withNone.Message);
-        Assert.Equal("No session named 'client'. Sessions: server (live).", withOne.Message);
+        Assert.Equal("No session named 'client'. Live sessions: none.", withNone.Message);
+        Assert.Equal("No session named 'client'. Live sessions: server.", withOne.Message);
+    }
+
+    [Fact]
+    public async Task ResolvingAmongOnlyStoppedSessionsCountsThem()
+    {
+        await EndAttachedGameAsync(Project("alpha"), "server");
+        await EndAttachedGameAsync(Project("beta"), "client");
+
+        SessionException unknown = Assert.Throws<SessionException>(() => _sessions.Resolve("other"));
+        SessionException unnamed = Assert.Throws<SessionException>(() => _sessions.Resolve(null));
+
+        Assert.Equal(
+            "No session named 'other'. Live sessions: none. 2 stopped (list_sessions with includeStopped: true lists them).",
+            unknown.Message
+        );
+        Assert.Equal(
+            "Several sessions exist (live: none); pass session to choose one. 2 stopped (list_sessions with includeStopped: true lists them).",
+            unnamed.Message
+        );
+    }
+
+    [Fact]
+    public async Task ListShowsStoppedSessionsOnlyWhenAsked()
+    {
+        await EndAttachedGameAsync(Project("alpha"), "server");
+        await StartWaitingAttachAsync(Project("beta"), "client");
+
+        IReadOnlyList<SessionInfo> live = _sessions.List(includeStopped: false);
+        IReadOnlyList<SessionInfo> all = _sessions.List(includeStopped: true);
+
+        Assert.Equal(["client"], live.Select(session => session.Name));
+        Assert.Equal([("client", true), ("server", false)], all.Select(session => (session.Name, session.Live)));
     }
 
     [Fact]
@@ -162,7 +194,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
 
         SessionException refused = Assert.Throws<SessionException>(() => _sessions.Resolve(null));
 
-        Assert.Equal("Several sessions exist (client (live), server (live)); pass session to choose one.", refused.Message);
+        Assert.Equal("Several sessions exist (live: client, server); pass session to choose one.", refused.Message);
     }
 
     [Fact]
@@ -192,7 +224,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         );
 
         Assert.Equal($"Another attach on {alpha} is still waiting for its game; wait for it or let it time out first.", refused.Message);
-        Assert.Equal(["server"], _sessions.List().Select(session => session.Name));
+        Assert.Equal(["server"], _sessions.List(includeStopped: true).Select(session => session.Name));
     }
 
     [Fact]
@@ -225,7 +257,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         );
 
         Assert.Equal($"Sessions on {alpha} run with quiet=false; start this one with the same value, or stop them first.", refused.Message);
-        Assert.Equal(["server"], _sessions.List().Select(session => session.Name));
+        Assert.Equal(["server"], _sessions.List(includeStopped: true).Select(session => session.Name));
     }
 
     [Fact]
@@ -234,7 +266,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         string alpha = Project("alpha");
         await StartWaitingAttachAsync(alpha, "server");
 
-        SessionInfo listed = Assert.Single(_sessions.List());
+        SessionInfo listed = Assert.Single(_sessions.List(includeStopped: true));
 
         Assert.Equal(new SessionInfo("server", alpha, "attach", true, null, null), listed);
         Assert.True(File.Exists(OverrideFile.PathIn(alpha)));
@@ -246,7 +278,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         string alpha = Project("alpha");
         using FakeBridge game = await AttachFakeGameAsync(alpha, "server", 4242);
 
-        SessionInfo listed = Assert.Single(_sessions.List());
+        SessionInfo listed = Assert.Single(_sessions.List(includeStopped: true));
 
         Assert.Equal(new SessionInfo("server", alpha, "attach", true, null, 4242), listed);
     }
@@ -260,7 +292,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
             _sessions.AttachAsync(alpha, null, TimeSpan.FromSeconds(1), false, TestContext.Current.CancellationToken)
         );
 
-        Assert.Empty(_sessions.List());
+        Assert.Empty(_sessions.List(includeStopped: true));
         Assert.False(File.Exists(OverrideFile.PathIn(alpha)));
     }
 
@@ -317,7 +349,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         Task<LaunchResult> launch = _sessions.LaunchAsync(request, "server", cancelLaunch.Token);
         try
         {
-            await WaitUntilAsync(() => _sessions.List().Any(session => session.Name == "server"));
+            await WaitUntilAsync(() => _sessions.List(includeStopped: true).Any(session => session.Name == "server"));
 
             SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
                 _sessions.RestartAsync("server", prepare: true, cancellation)
@@ -360,7 +392,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         SessionException unknown = await Assert.ThrowsAsync<SessionException>(() => _sessions.RestartAsync("client", prepare: true, cancellation));
 
         Assert.Equal("No Godot session is running; start one with run_project or attach_project.", none.Message);
-        Assert.Equal("No session named 'client'. Sessions: none.", unknown.Message);
+        Assert.Equal("No session named 'client'. Live sessions: none.", unknown.Message);
     }
 
     [Fact]
@@ -389,6 +421,14 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         FakeBridge game = await FakeBridge.DialAsync(_listener.Port, token, projectDir, processId, cancellation);
         await attach;
         return game;
+    }
+
+    /// <summary>Attaches a session to a fake game, then ends the game, leaving the session stopped.</summary>
+    private async Task EndAttachedGameAsync(string projectDir, string name)
+    {
+        FakeBridge game = await AttachFakeGameAsync(projectDir, name, null);
+        game.Dispose();
+        await WaitUntilAsync(() => !_sessions.Resolve(name).IsLive);
     }
 
     private string Project(string folder)
@@ -455,7 +495,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         CancellationTokenSource cancel = new();
         Task attach = _sessions.AttachAsync(projectDir, name, LongWait, false, cancel.Token);
         _waiting.Add((attach, cancel));
-        await WaitUntilAsync(() => _sessions.List().Any(session => session.Name == name));
+        await WaitUntilAsync(() => _sessions.List(includeStopped: true).Any(session => session.Name == name));
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

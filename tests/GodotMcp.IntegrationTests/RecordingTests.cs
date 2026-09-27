@@ -179,7 +179,10 @@ public sealed class RecordingTests : IAsyncDisposable
         DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
         while (DateTime.UtcNow < deadline)
         {
-            if (Assert.Single(_harness.Sessions.List()).Recording is { } recording && (recording.Clips is not null || recording.Error is not null))
+            if (
+                Assert.Single(_harness.Sessions.List(includeStopped: true)).Recording is { } recording
+                && (recording.Clips is not null || recording.Error is not null)
+            )
             {
                 return recording;
             }
@@ -187,7 +190,7 @@ public sealed class RecordingTests : IAsyncDisposable
             await Task.Delay(200, cancellationToken);
         }
 
-        throw new TimeoutException($"the recording had no outcome after 30 s: {Assert.Single(_harness.Sessions.List())}");
+        throw new TimeoutException($"the recording had no outcome after 30 s: {Assert.Single(_harness.Sessions.List(includeStopped: true))}");
     }
 
     private Task<LaunchResult> LaunchAsync(bool record) =>

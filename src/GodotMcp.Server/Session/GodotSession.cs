@@ -140,12 +140,20 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
             GodotRun run =
                 _run ?? throw new SessionException("No Godot session has been started, so there is nothing to stop. Start one with run_project.");
+            bool alreadyExited = !run.IsRunning;
             RunEnd ended = await EndRunAsync(run);
+            int? gameExitCode = await run.ReleaseGameAsync();
             Snapshots.Clear();
             registry.Captures.End(Name, CaptureStore.EndedByStop);
             RecordingResult? recording = await FinishRecordingAsync();
             bool removed = registry.ReleaseFolder(this);
-            return new StopResult(Name, run.ProjectDir, run.ExitCode, ended.Killed, removed) { Recording = recording, Warning = ended.Warning };
+            return new StopResult(Name, run.ProjectDir, run.ExitCode, ended.Killed, removed)
+            {
+                AlreadyExited = alreadyExited,
+                GameExitCode = gameExitCode,
+                Recording = recording,
+                Warning = ended.Warning,
+            };
         }
         finally
         {
@@ -420,6 +428,11 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         connection.OnCaptured(ReceiveCaptured);
         run.Connection = connection;
         GameProcessId = connection.GameProcessId;
+        if (GameProcessId is int gameProcessId)
+        {
+            run.KeepGameHandle(gameProcessId, _logger);
+        }
+
         Log.RunStarted(_logger, processId, run.ProjectDir);
         LastLaunch = request;
         LaunchResult started = new(Name, run.ProjectDir, processId, request.Quiet, prep)

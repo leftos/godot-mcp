@@ -34,7 +34,8 @@ public sealed class McpServerSmokeTests : IDisposable
         CallToolResult click = await CallAsync(client, "click", new() { ["target"] = smallButton });
         CallToolResult pressCount = await CallAsync(client, "run_script", new() { ["script"] = PressCountScript });
         CallToolResult stop = await CallAsync(client, "stop_project", []);
-        CallToolResult listedAfterStop = await CallAsync(client, "list_sessions", []);
+        CallToolResult listedLiveAfterStop = await CallAsync(client, "list_sessions", []);
+        CallToolResult listedAfterStop = await CallAsync(client, "list_sessions", new() { ["includeStopped"] = true });
 
         Assert.Equal(
             [
@@ -115,6 +116,8 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.Equal("""{"value":1}""", Text(pressCount));
         Assert.True(stop.IsError is not true, Text(stop));
         Assert.False(JsonDocument.Parse(Text(stop)).RootElement.GetProperty("killed").GetBoolean());
+        Assert.False(JsonDocument.Parse(Text(stop)).RootElement.GetProperty("alreadyExited").GetBoolean());
+        Assert.Empty(JsonDocument.Parse(Text(listedLiveAfterStop)).RootElement.GetProperty("sessions").EnumerateArray());
         JsonElement stopped = Assert.Single(JsonDocument.Parse(Text(listedAfterStop)).RootElement.GetProperty("sessions").EnumerateArray());
         Assert.False(stopped.GetProperty("live").GetBoolean());
         Assert.False(File.Exists(_probe.OverrideFile));

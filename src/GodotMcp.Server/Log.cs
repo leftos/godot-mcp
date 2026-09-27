@@ -53,6 +53,12 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Warning, Message = "Killing Godot for {Project} failed; it may have exited already.")]
     public static partial void KillFailed(ILogger logger, Exception exception, string project);
 
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Opening the game's own process {Pid} for {Project} failed; its stop and restart will report no gameExitCode."
+    )]
+    public static partial void GameHandleFailed(ILogger logger, Exception exception, int pid, string project);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Godot for {Project} was still running {Seconds} s after the kill.")]
     public static partial void StillRunningAfterKill(ILogger logger, string project, double seconds);
 

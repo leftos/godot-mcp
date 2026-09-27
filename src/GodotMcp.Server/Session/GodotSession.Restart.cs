@@ -56,12 +56,16 @@ internal sealed partial class GodotSession
         }
 
         Recording? replaced = _recording;
+        bool previousAlreadyExited = !previous.IsRunning;
         try
         {
             (LaunchResult started, string? warning) = await StartRunAsync(launched with { Prepare = prepare }, previous, cancellationToken);
+            int? previousGameExitCode = await previous.ReleaseGameAsync();
             Log.RunRestarted(_logger, ProjectDir, previousProcessId, started.ProcessId);
             return new RestartResult(Name, started.ProjectPath, started.ProcessId, previousProcessId, previous.ExitCode, started.Prep)
             {
+                PreviousAlreadyExited = previousAlreadyExited,
+                PreviousGameExitCode = previousGameExitCode,
                 Recording = started.Recording,
                 PreviousRecording = replaced?.Outcome,
                 Warning = warning,

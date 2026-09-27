@@ -83,7 +83,7 @@ public sealed partial class PrepTests : IAsyncDisposable
 
         Assert.Contains("CsProbeNode.cs:10: CS1002", refused.Message, StringComparison.Ordinal);
         Assert.Contains(Path.Combine(csProbe.Directory, ".godot", "godot-mcp", "build.log"), refused.Message, StringComparison.Ordinal);
-        Assert.Empty(_harness.Sessions.List());
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
         Assert.False(File.Exists(Path.Combine(csProbe.Directory, "override.cfg")));
     }
 
@@ -131,7 +131,7 @@ public sealed partial class PrepTests : IAsyncDisposable
                 + "stop them first, or pass options.prepare: \"never\" to launch without importing.",
             refused.Message
         );
-        Assert.Equal(["first"], _harness.Sessions.List().Select(session => session.Name));
+        Assert.Equal(["first"], _harness.Sessions.List(includeStopped: true).Select(session => session.Name));
     }
 
     [Fact(Timeout = TestTimeoutMs)]

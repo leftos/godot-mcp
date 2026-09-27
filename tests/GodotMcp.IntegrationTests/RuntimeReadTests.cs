@@ -112,14 +112,14 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await RunAsync("push_error(\"raised before the stop\")\n\treturn true", cancellation);
         await _shared.Sessions.StopAsync(null, cancellation);
-        bool liveAfterStop = _shared.Sessions.List().Any(session => session.Live);
+        bool liveAfterStop = _shared.Sessions.List(includeStopped: true).Any(session => session.Live);
 
         await _shared.ResetAsync(cancellation);
         JsonNode scene = await RunAsync("return scene_tree.current_scene.scene_file_path", cancellation);
         JsonNode errors = JsonNode.Parse(_tools.GetErrors(_shared.ErrorCursor))!;
 
         Assert.False(liveAfterStop);
-        Assert.Contains(_shared.Sessions.List(), session => session.Live);
+        Assert.Contains(_shared.Sessions.List(includeStopped: true), session => session.Live);
         Assert.Equal("res://main.tscn", scene.GetValue<string>());
         Assert.Empty(errors["errors"]!.AsArray());
     }

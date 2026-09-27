@@ -116,7 +116,7 @@ public sealed class PreviewTests : IAsyncDisposable
         List<ContentBlock> blocks = await PreviewAsync("res://preview_2d.tscn", "path_only", cancellation);
 
         Assert.True(File.Exists(JsonNode.Parse(Text(blocks))!["path"]!.GetValue<string>()));
-        SessionInfo session = Assert.Single(_harness.Sessions.List());
+        SessionInfo session = Assert.Single(_harness.Sessions.List(includeStopped: true));
         Assert.Equal("InputProbe", session.Name);
         Assert.True(session.Live);
         Assert.True(File.Exists(_probe.OverrideFile));
@@ -130,7 +130,7 @@ public sealed class PreviewTests : IAsyncDisposable
     {
         await PreviewAsync("res://preview_2d.tscn", "preview", TestContext.Current.CancellationToken);
 
-        Assert.Empty(_harness.Sessions.List());
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
         Assert.False(File.Exists(_probe.OverrideFile));
         Assert.Equal(string.Empty, Git.Status(_probe.Directory));
         string tree = await new HeadlessTools(_harness.Sessions).GetSceneFileTreeAsync(
@@ -149,7 +149,7 @@ public sealed class PreviewTests : IAsyncDisposable
         );
 
         Assert.Contains("is not a scene file", refused.Message);
-        Assert.Empty(_harness.Sessions.List());
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
         Assert.False(File.Exists(_probe.OverrideFile));
         Assert.False(Directory.Exists(Path.Combine(_probe.Directory, ".godot", "godot-mcp", "screenshots")));
     }

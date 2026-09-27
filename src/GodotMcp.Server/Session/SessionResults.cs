@@ -51,8 +51,8 @@ internal sealed record PrepResult
 }
 
 /// <summary>
-/// A restarted run: the new process, the one it replaced and that one's exit code (left out while unknown), and what the
-/// prep did before the relaunch.
+/// A restarted run: the new process, the one it replaced and that one's exit code (the wrapper's on Windows; left out while
+/// unknown), and what the prep did before the relaunch.
 /// </summary>
 internal sealed record RestartResult(
     string Session,
@@ -63,6 +63,13 @@ internal sealed record RestartResult(
     PrepResult Prep
 )
 {
+    /// <summary>Whether the replaced run had already ended when the restart began.</summary>
+    public required bool PreviousAlreadyExited { get; init; }
+
+    /// <summary>The replaced game's own exit code; left out without a handle on it, or when it could not be read.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public required int? PreviousGameExitCode { get; init; }
+
     /// <summary>The file the new game records to.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? Recording { get; init; }
@@ -77,11 +84,17 @@ internal sealed record RestartResult(
 }
 
 /// <summary>
-/// How a run ended: its exit code, whether it had to be killed, whether the server's override.cfg was deleted, and for a
-/// recording run its full file or its clips.
+/// How a run ended: its exit code (the wrapper's on Windows), whether it had to be killed, whether the server's override.cfg
+/// was deleted, and for a recording run its full file or its clips.
 /// </summary>
 internal sealed record StopResult(string Session, string ProjectPath, int? ExitCode, bool Killed, bool OverrideRemoved)
 {
+    /// <summary>Whether the run had already ended when the stop began: the game quit, crashed or was killed from outside.</summary>
+    public required bool AlreadyExited { get; init; }
+
+    /// <summary>The game's own exit code; null without a handle on it, or when it could not be read.</summary>
+    public required int? GameExitCode { get; init; }
+
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? Recording { get; init; }
 
@@ -96,7 +109,7 @@ internal sealed record AttachResult(string Session, string ProjectPath);
 /// <summary>How detach_project left the project: the game still runs; whether the server's override.cfg was deleted.</summary>
 internal sealed record DetachResult(string Session, string ProjectPath, bool OverrideRemoved);
 
-/// <summary>What list_sessions returns: every session, ordered by name.</summary>
+/// <summary>What list_sessions returns: the sessions it was asked for, ordered by name.</summary>
 internal sealed record SessionList(IReadOnlyList<SessionInfo> Sessions);
 
 /// <summary>

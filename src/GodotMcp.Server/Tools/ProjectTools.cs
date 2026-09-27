@@ -123,7 +123,9 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     [Description(
         "Stops a session run_project started (asks the game to quit, kills it after 3 s, or after 30 s for a recording run, "
             + "whose quit finalises its movie) and removes the injected override.cfg, unless another live session uses the "
-            + "project folder. For a recording run the result's recording is {path} (the full movie, kept when there were no "
+            + "project folder. exitCode is the process the server started (on Windows the console wrapper); gameExitCode is the "
+            + "game's own, null when unreadable; alreadyExited is true when the run had ended before the stop (the game quit, "
+            + "crashed or was killed from outside). For a recording run the result's recording is {path} (the full movie, kept when there were no "
             + "marks), or {clips} (one file per record_mark start-stop pair, cut with ffmpeg; the full movie is then deleted), "
             + "plus error with path when the cut could not be made. A game a debugger is attached to is stopped all the same, and "
             + "the result's warning says its debug session ended with it. An attached session is ended with detach_project instead."
@@ -145,7 +147,9 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "imports are run, as run_project does; a failed build or import is an error and leaves the old game running. Then "
             + "the old game is stopped as stop_project stops it (with its warning when a debugger was attached to it), and the "
             + "new one started. A session whose game has quit or been "
-            + "stopped is started again. To change the scene or arguments, use stop_project then run_project. A recording run "
+            + "stopped is started again. previousExitCode is the old run's process the server started (on Windows the console "
+            + "wrapper), previousGameExitCode the old game's own (both left out when unknown); previousAlreadyExited is true when "
+            + "the old run had ended before the restart. To change the scene or arguments, use stop_project then run_project. A recording run "
             + "records the new game to a new file (recording.path); the old game's recording is finished as stop_project "
             + "finishes it and returned as previousRecording. An attached session cannot be restarted."
     )]
@@ -196,14 +200,16 @@ internal sealed class ProjectTools(SessionRegistry sessions)
 
     [McpServerTool(Name = "list_sessions", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
-        "Lists the server's sessions, ordered by name: each one's name, project folder, kind (run or attach), whether it is "
-            + "live, its processId (the process run_project started, on Windows the Godot_console wrapper that stop_project ends; "
-            + "null for an attached game) and its gameProcessId (the game's own process, the one a debugger attaches to; null "
-            + "until the game's bridge has connected), plus for a recording run its recording: {path} while it "
-            + "runs, and once it has ended, stopped or quit, what stop_project returns for it. A session stays listed after its "
-            + "run ends, until its name is reused; detach_project removes an attached one."
+        "Lists the server's live sessions, ordered by name: each one's name, project folder, kind (run or attach), whether it "
+            + "is live, its processId (the process run_project started, on Windows the Godot_console wrapper that stop_project "
+            + "ends; null for an attached game) and its gameProcessId (the game's own process, the one a debugger attaches to; "
+            + "null until the game's bridge has connected), plus for a recording run its recording: {path} while it runs, and "
+            + "once it has ended, stopped or quit, what stop_project returns for it. A session whose run has ended is kept, "
+            + "until its name is reused (detach_project removes an attached one), and is listed only with includeStopped."
     )]
-    public string ListSessions() => JsonSerializer.Serialize(new SessionList(sessions.List()), Json);
+    public string ListSessions(
+        [Description("Also list sessions whose run has stopped; they stay until their name is reused.")] bool includeStopped = false
+    ) => JsonSerializer.Serialize(new SessionList(sessions.List(includeStopped)), Json);
 
     /// <summary>
     /// The project's godot-mcp.json, loaded from the normalised folder. An empty path gets an empty profile, so the launch

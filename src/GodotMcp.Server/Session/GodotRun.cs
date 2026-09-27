@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using GodotMcp.Server.Wire;
+using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Session;
 
@@ -79,6 +80,12 @@ internal sealed class GodotRun(string projectDir, IRunProcess launcher, GodotRun
 {
     public const int OutputCapacity = 500;
 
+    /// <summary>How long a released game handle waits for a game still ending with its wrapper, as a killed process tree may be.</summary>
+    private static readonly TimeSpan GameExitWait = TimeSpan.FromSeconds(1);
+
+    private Process? _game;
+    private int? _gameExitCode;
+
     /// <summary>A run of a process started with <see cref="System.Diagnostics.Process.Start()"/>, not yet started.</summary>
     public GodotRun(string projectDir, Process process, GodotRun? previous)
         : this(projectDir, new StartInfoProcess(process), previous) { }
@@ -128,6 +135,47 @@ internal sealed class GodotRun(string projectDir, IRunProcess launcher, GodotRun
         }
     }
 
+    /// <summary>
+    /// Opens and keeps a handle on the game's own process (on Windows the run's process only wraps it), so its exit code can
+    /// be read after it has exited. A game the server cannot open is logged and gets no handle.
+    /// </summary>
+    public void KeepGameHandle(int gameProcessId, ILogger logger)
+    {
+        Process? game = null;
+        try
+        {
+            game = Process.GetProcessById(gameProcessId);
+            // Reading Handle opens the process handle and keeps it on the object, which keeps the exit code readable.
+            _ = game.Handle;
+            _game = game;
+        }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException or Win32Exception)
+        {
+            game?.Dispose();
+            Log.GameHandleFailed(logger, e, gameProcessId, ProjectDir);
+        }
+    }
+
+    /// <summary>
+    /// Lets go of the game's handle and keeps its exit code, so a later call returns the same. It waits up to
+    /// <see cref="GameExitWait"/> for a game still ending; null with no handle, or while the game still runs.
+    /// </summary>
+    public async Task<int?> ReleaseGameAsync()
+    {
+        if (_game is not { } game)
+        {
+            return _gameExitCode;
+        }
+
+        _game = null;
+        using (game)
+        {
+            _gameExitCode = await ReadExitCodeAsync(game);
+        }
+
+        return _gameExitCode;
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (Connection is not null)
@@ -136,6 +184,26 @@ internal sealed class GodotRun(string projectDir, IRunProcess launcher, GodotRun
             Connection = null;
         }
 
+        _game?.Dispose();
+        _game = null;
         Process.Dispose();
+    }
+
+    private static async Task<int?> ReadExitCodeAsync(Process game)
+    {
+        using CancellationTokenSource wait = new(GameExitWait);
+        try
+        {
+            await game.WaitForExitAsync(wait.Token);
+            return game.ExitCode;
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
     }
 }

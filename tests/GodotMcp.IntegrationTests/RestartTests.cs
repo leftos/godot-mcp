@@ -75,11 +75,12 @@ public sealed class RestartTests : IAsyncDisposable
 
         // The old game answered and quit on the shutdown command, so its exit code is known and reported.
         Assert.Equal(0, restarted["previousExitCode"]!.GetValue<int>());
+        Assert.False(restarted["previousAlreadyExited"]!.GetValue<bool>());
         Assert.Equal("built", restarted["prep"]!["build"]!.GetValue<string>());
         Assert.Equal(6, called["value"]!.GetValue<int>());
         Assert.True(seqAfter > seqBefore, $"the error after the restart has seq {seqAfter}, not above {seqBefore}");
         Assert.Equal("up-to-date", unchanged["prep"]!["build"]!.GetValue<string>());
-        Assert.Equal(launched.Session, Assert.Single(_harness.Sessions.List()).Name);
+        Assert.Equal(launched.Session, Assert.Single(_harness.Sessions.List(includeStopped: true)).Name);
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
@@ -114,7 +115,7 @@ public sealed class RestartTests : IAsyncDisposable
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() => RestartAsync("first", cancellation));
         bool firstAnswered = await PingAsync("first", cancellation);
-        int? firstProcessId = _harness.Sessions.List().Single(session => session.Name == "first").ProcessId;
+        int? firstProcessId = _harness.Sessions.List(includeStopped: true).Single(session => session.Name == "first").ProcessId;
         await _project.StopProjectAsync("second", cancellation);
         JsonNode restarted = await RestartAsync("first", cancellation);
 
@@ -187,16 +188,22 @@ public sealed class RestartTests : IAsyncDisposable
         ProbeProject probe = Track(new ProbeProject());
         LaunchResult launched = await LaunchAsync(probe.Directory, cancellation);
         await _runtime.RunScriptAsync(QuitSoonScript, 10_000, cancellationToken: cancellation);
-        bool ended = await Poll.UntilAsync(() => !Assert.Single(_harness.Sessions.List()).Live, TimeSpan.FromSeconds(10), cancellation);
+        bool ended = await Poll.UntilAsync(
+            () => !Assert.Single(_harness.Sessions.List(includeStopped: true)).Live,
+            TimeSpan.FromSeconds(10),
+            cancellation
+        );
         await Task.Delay(TimeSpan.FromSeconds(1), cancellation);
 
         JsonNode restarted = await RestartAsync(null, cancellation);
         bool answered = await PingAsync(null, cancellation);
-        SessionInfo listed = Assert.Single(_harness.Sessions.List());
+        SessionInfo listed = Assert.Single(_harness.Sessions.List(includeStopped: true));
 
         Assert.True(ended);
         Assert.NotEqual(launched.ProcessId, restarted["processId"]!.GetValue<int>());
         Assert.NotNull(restarted["previousExitCode"]);
+        Assert.True(restarted["previousAlreadyExited"]!.GetValue<bool>());
+        Assert.Equal(0, restarted["previousGameExitCode"]!.GetValue<int>());
         Assert.True(answered);
         Assert.True(listed.Live);
         Assert.True(File.Exists(probe.OverrideFile));

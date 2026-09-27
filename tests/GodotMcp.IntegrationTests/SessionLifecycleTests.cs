@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
@@ -42,6 +43,8 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.Equal("InputProbe", launched.Session);
         Assert.Equal("InputProbe", stopped.Session);
         Assert.False(stopped.Killed);
+        Assert.False(stopped.AlreadyExited);
+        Assert.Equal(0, stopped.GameExitCode);
         Assert.True(stopped.OverrideRemoved);
         Assert.False(_harness.Sessions.GetDebugOutput(null, 1, null).Running);
         Assert.False(File.Exists(_probe.OverrideFile));
@@ -61,7 +64,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.Contains("override.cfg", refused.Message, StringComparison.Ordinal);
         Assert.Equal(before, File.ReadAllBytes(_probe.OverrideFile));
         Assert.False(_harness.Sessions.GetDebugOutput(null, 1, null).Running);
-        Assert.Empty(_harness.Sessions.List());
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -109,7 +112,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         string clientShot = await ScreenshotPathAsync(tools, "client");
         bool serverAnswered = await PingAsync("server");
         bool clientAnswered = await PingAsync("client");
-        IReadOnlyList<SessionInfo> listed = _harness.Sessions.List();
+        IReadOnlyList<SessionInfo> listed = _harness.Sessions.List(includeStopped: true);
         StopResult serverStopped = await _harness.Sessions.StopAsync("server", cancellation);
         bool overrideAfterFirstStop = File.Exists(_probe.OverrideFile);
         bool clientAnsweredAlone = await PingAsync("client");
@@ -147,7 +150,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
             refused.Message
         );
         Assert.True(serverAnswered);
-        Assert.Equal(["server"], _harness.Sessions.List().Select(session => session.Name));
+        Assert.Equal(["server"], _harness.Sessions.List(includeStopped: true).Select(session => session.Name));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -167,7 +170,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
             refused.Message
         );
         Assert.True(serverAnswered);
-        Assert.Equal(["server"], _harness.Sessions.List().Select(session => session.Name));
+        Assert.Equal(["server"], _harness.Sessions.List(includeStopped: true).Select(session => session.Name));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -180,7 +183,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() => tools.GetUiElementsAsync(cancellationToken: cancellation));
 
-        Assert.Equal("Several sessions exist (client (live), server (live)); pass session to choose one.", refused.Message);
+        Assert.Equal("Several sessions exist (live: client, server); pass session to choose one.", refused.Message);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -192,7 +195,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
 
         LaunchResult second = await _harness.Sessions.LaunchAsync(Request(), "a", cancellation);
         bool answered = await PingAsync("a");
-        SessionInfo listed = Assert.Single(_harness.Sessions.List());
+        SessionInfo listed = Assert.Single(_harness.Sessions.List(includeStopped: true));
 
         Assert.NotEqual(first.ProcessId, second.ProcessId);
         Assert.NotNull(listed.GameProcessId);
@@ -207,11 +210,11 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
-        int firstGame = Assert.Single(_harness.Sessions.List()).GameProcessId!.Value;
+        int firstGame = Assert.Single(_harness.Sessions.List(includeStopped: true)).GameProcessId!.Value;
         _harness.Sessions.IsDebuggerAttached = _ => true;
 
         RestartResult restarted = await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
-        int secondGame = Assert.Single(_harness.Sessions.List()).GameProcessId!.Value;
+        int secondGame = Assert.Single(_harness.Sessions.List(includeStopped: true)).GameProcessId!.Value;
         StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
 
         Assert.NotEqual(firstGame, secondGame);
@@ -231,7 +234,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
 
         await tools.RunScriptAsync(QuitSoonScript, 10_000, "client", cancellation);
         bool clientEnded = await Poll.UntilAsync(
-            () => !_harness.Sessions.List().Single(session => session.Name == "client").Live,
+            () => !_harness.Sessions.List(includeStopped: true).Single(session => session.Name == "client").Live,
             TimeSpan.FromSeconds(10),
             cancellation
         );
@@ -247,6 +250,30 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.True(serverAnswered);
         Assert.True(serverStopped.OverrideRemoved);
         Assert.False(File.Exists(_probe.OverrideFile));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task StopAfterTheGameWasKilledOutsideSaysSo()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProjectTools project = new(_harness.Sessions);
+        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        int gameProcessId = Assert.Single(_harness.Sessions.List(includeStopped: false)).GameProcessId!.Value;
+
+        using (var game = Process.GetProcessById(gameProcessId))
+        {
+            game.Kill();
+        }
+
+        bool ended = await Poll.UntilAsync(() => _harness.Sessions.List(includeStopped: false).Count == 0, TimeSpan.FromSeconds(10), cancellation);
+        JsonNode stopped = JsonNode.Parse(await project.StopProjectAsync(cancellationToken: cancellation))!;
+        int? gameExitCode = stopped["gameExitCode"]?.GetValue<int>();
+
+        Assert.True(ended);
+        Assert.True(stopped["alreadyExited"]?.GetValue<bool>(), stopped.ToJsonString());
+        Assert.False(stopped["killed"]!.GetValue<bool>());
+        Assert.NotNull(gameExitCode);
+        Assert.NotEqual(0, gameExitCode);
     }
 
     [Fact(Timeout = TestTimeoutMs)]

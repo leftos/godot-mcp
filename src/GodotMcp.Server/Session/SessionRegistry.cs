@@ -157,12 +157,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// <exception cref="SessionException">No session answers to the name, there is none at all, or several could be meant.</exception>
     public GodotSession Resolve(string? session) => TryResolve(session) ?? throw new SessionException(GodotSession.NoneRunning);
 
-    /// <summary>Every session, ordered by name.</summary>
-    public IReadOnlyList<SessionInfo> List()
+    /// <summary>The live sessions, ordered by name; with <paramref name="includeStopped"/>, the stopped ones too.</summary>
+    public IReadOnlyList<SessionInfo> List(bool includeStopped)
     {
         lock (_lock)
         {
-            return [.. Ordered().Select(Describe)];
+            return [.. Ordered().Where(session => includeStopped || session.IsLive).Select(Describe)];
         }
     }
 
@@ -370,7 +370,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     {
         if (session is not null)
         {
-            return _sessions.GetValueOrDefault(session) ?? throw new SessionException($"No session named '{session}'. Sessions: {DescribeAll()}.");
+            return _sessions.GetValueOrDefault(session)
+                ?? throw new SessionException($"No session named '{session}'. Live sessions: {DescribeLive()}.{DescribeStopped()}");
         }
 
         GodotSession[] live = [.. _sessions.Values.Where(candidate => candidate.IsLive)];
@@ -381,7 +382,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
         return live.Length == 0 && _sessions.Count <= 1
             ? _sessions.Values.FirstOrDefault()
-            : throw new SessionException($"Several sessions exist ({DescribeAll()}); pass session to choose one.");
+            : throw new SessionException($"Several sessions exist (live: {DescribeLive()}); pass session to choose one.{DescribeStopped()}");
     }
 
     /// <summary>Registers a new pending session under the spec's name, then lets go of the ended session it replaces.</summary>
@@ -554,10 +555,18 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
     private IEnumerable<GodotSession> Ordered() => _sessions.Values.OrderBy(session => session.Name, StringComparer.OrdinalIgnoreCase);
 
-    private string DescribeAll()
+    /// <summary>The live sessions' names, ordered and comma-separated, or "none".</summary>
+    private string DescribeLive()
     {
-        string[] entries = [.. Ordered().Select(session => $"{session.Name} ({(session.IsLive ? "live" : "stopped")})")];
-        return entries.Length == 0 ? "none" : string.Join(", ", entries);
+        string[] names = [.. Ordered().Where(session => session.IsLive).Select(session => session.Name)];
+        return names.Length == 0 ? "none" : string.Join(", ", names);
+    }
+
+    /// <summary>" N stopped (…)", counting the stopped sessions and saying how to list them; empty when none is stopped.</summary>
+    private string DescribeStopped()
+    {
+        int stopped = _sessions.Values.Count(session => !session.IsLive);
+        return stopped == 0 ? string.Empty : $" {stopped} stopped (list_sessions with includeStopped: true lists them).";
     }
 
     private static SessionInfo Describe(GodotSession session) =>

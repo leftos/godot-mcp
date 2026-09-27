@@ -56,7 +56,7 @@ public sealed class AttachTests : IAsyncDisposable
         JsonNode? pong = await _harness.Sessions.Resolve(null).SendAsync("ping", null, PingTimeout, cancellation);
         int gameProcessId = (await RunAsync("return OS.get_process_id()")).GetValue<int>();
         _games.Add(Process.GetProcessById(gameProcessId));
-        int? listedGameProcessId = Assert.Single(_harness.Sessions.List()).GameProcessId;
+        int? listedGameProcessId = Assert.Single(_harness.Sessions.List(includeStopped: true)).GameProcessId;
         McpException output = Assert.Throws<McpException>(() => _project.GetDebugOutput(10));
         McpException stop = await Assert.ThrowsAsync<McpException>(() => _project.StopProjectAsync(cancellationToken: cancellation));
         JsonNode detached = JsonNode.Parse(await _project.DetachProjectAsync(cancellationToken: cancellation))!;
@@ -70,7 +70,7 @@ public sealed class AttachTests : IAsyncDisposable
         Assert.Contains("attached sessions have no captured output", output.Message, StringComparison.Ordinal);
         Assert.Contains("use detach_project", stop.Message, StringComparison.Ordinal);
         Assert.True(detached["overrideRemoved"]!.GetValue<bool>());
-        Assert.Empty(_harness.Sessions.List());
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
         Assert.False(_games[^1].HasExited);
         Assert.False(File.Exists(_probe.OverrideFile));
         Assert.False(File.Exists(AttachFilePath));
@@ -85,7 +85,7 @@ public sealed class AttachTests : IAsyncDisposable
         );
 
         Assert.Contains("connected within 1 s", timedOut.Message, StringComparison.Ordinal);
-        Assert.Empty(_harness.Sessions.List());
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
         Assert.False(File.Exists(_probe.OverrideFile));
         Assert.False(File.Exists(AttachFilePath));
         Assert.Equal(string.Empty, Git.Status(_probe.Directory));
