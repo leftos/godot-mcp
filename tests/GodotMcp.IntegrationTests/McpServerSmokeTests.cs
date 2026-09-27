@@ -11,7 +11,8 @@ public sealed class McpServerSmokeTests : IDisposable
     private const string ChildCountScript =
         "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\treturn scene_tree.root.get_child_count()\n";
     private const string PressCountScript =
-        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\treturn scene_tree.root.get_node(\"Main/SmallButton\").press_count\n";
+        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
+        + "\treturn scene_tree.root.get_node(\"Main/SmallButton\").press_count\n";
     private static readonly string[] SmokeArgs = ["--smoke"];
     private readonly ProbeProject _probe = new();
 

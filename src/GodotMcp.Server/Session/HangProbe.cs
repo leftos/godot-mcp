@@ -25,7 +25,8 @@ internal sealed record HangReport(bool Answered, string ProcessState, IReadOnlyL
         }
 
         string stuck =
-            $"{timedOut} and the game did not answer a ping within {HangProbe.PingTimeout.TotalSeconds:0} s: its main thread is stuck.\n{ProcessState}";
+            $"{timedOut} and the game did not answer a ping within {HangProbe.PingTimeout.TotalSeconds:0} s: "
+            + $"its main thread is stuck.\n{ProcessState}";
         if (StderrLines is null)
         {
             return stuck;

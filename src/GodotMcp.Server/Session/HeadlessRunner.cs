@@ -14,7 +14,9 @@ namespace GodotMcp.Server.Session;
 /// </summary>
 internal sealed record HeadlessRequest(string ProjectDir, string Operation, JsonObject Parameters, bool Prepare, TimeSpan Ceiling)
 {
-    /// <summary>The full paths of files the operation loads, which the prep imports first when they need it (<see cref="PrepContext.ImportAssets"/>).</summary>
+    /// <summary>
+    /// The full paths of files the operation loads, which the prep imports first when they need it (<see cref="PrepContext.ImportAssets"/>).
+    /// </summary>
     public IReadOnlyList<string> ImportAssets { get; init; } = [];
 
     /// <summary>What a refused import suggests besides stopping the sessions (<see cref="PrepContext.ImportSkipHint"/>); none by default.</summary>

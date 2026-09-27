@@ -56,7 +56,8 @@ internal static class OverrideFile
 
         string script = Path.GetFullPath(bridgeScriptPath).Replace('\\', '/');
         string content =
-            $"{Marker}\n[autoload]\n\n{AutoloadName}=\"*{script}\"\n\n[input_devices]\n\n{IgnoreJoypadOnUnfocusedSetting}={(shutOutRealGamepads ? "true" : "false")}\n";
+            $"{Marker}\n[autoload]\n\n{AutoloadName}=\"*{script}\"\n\n[input_devices]\n\n"
+            + $"{IgnoreJoypadOnUnfocusedSetting}={(shutOutRealGamepads ? "true" : "false")}\n";
         if (quiet)
         {
             content +=

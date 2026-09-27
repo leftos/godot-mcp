@@ -88,7 +88,9 @@ internal sealed partial class HeadlessTools
         meshItemNames is null ? [] : CheckMeshItemNames(meshItemNames);
 
     /// <summary>The MeshLibrary file export_mesh_library writes, as a res:// path; its folders need not exist.</summary>
-    /// <exception cref="McpException">The path is empty, outside the project, not a .tres or .res, or names a file and overwrite is false.</exception>
+    /// <exception cref="McpException">
+    /// The path is empty, outside the project, not a .tres or .res, or names a file and overwrite is false.
+    /// </exception>
     internal static string CheckMeshLibraryPath(string projectDir, string outputPath, bool overwrite)
     {
         string full = ResolvePath(projectDir, outputPath, MeshLibraryRule);

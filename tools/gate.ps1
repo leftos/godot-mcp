@@ -26,7 +26,7 @@ holds everything, the output first and the errors after it. The command runs in 
 The three options below are read by hand out of $args rather than declared in a param block: a declared block sends
 this script's own arguments through PowerShell's parameter binder, which reads the bare -- of
 `pwsh tools/gate.ps1 -Log x -TimeoutSeconds 5 -- dotnet test -c Release` as a parameter name and stops with "the
-parameter name '' is ambiguous" (PowerShell 7.5, 2026-09-14). A script with no param block is handed every word
+parameter name '' is ambiguous" (PowerShell 7.5, 2026-09-14). A script that declares no parameters is handed every word
 untouched, separator and all, which is what lets the command keep its own -c. A caller in a session of its own
 (`& tools/gate.ps1 ... -- dotnet build`) has the separator eaten by the parser before the script ever sees it, so the
 command is read as everything past a --, or as the first word that is not one of the options above. It is then started
@@ -50,6 +50,9 @@ line: `gate: passed. Full output: <log>` on standard output, or `gate: FAILED (s
 standard error. The exit status is the command's own, 1 for a zero exit whose log reports a failure, 124 for the
 ceiling, and 2 for a usage this script could not read.
 #>
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingWriteHost', '', Justification = 'Its lines are for the person or agent reading the screen; the wrapped command''s output goes to the log.')]
+param()
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -67,15 +70,20 @@ function Write-Gate {
 }
 
 # Start-Process joins -ArgumentList with spaces and quotes nothing itself (Start-Process, Example 7:
-# https://learn.microsoft.com/powershell/module/microsoft.powershell.management/start-process), so an argument holding
-# a space - a test filter, a path under Program Files, a -Command script - is quoted here or the command reads it as
-# two arguments.
+# https://learn.microsoft.com/powershell/module/microsoft.powershell.management/start-process), so each argument is
+# written here the way the Windows command-line rules read it back into one argv entry (Parsing C command-line
+# arguments: https://learn.microsoft.com/cpp/c-language/parsing-c-command-line-arguments). An argument that is empty or
+# holds whitespace or a quote - a test filter, a path under Program Files, a -Command script - is wrapped in quotes; a
+# quote inside becomes \", and a run of backslashes before a quote, the closing one included, is doubled, since only
+# there are backslashes read as escapes. Any other argument is passed as it is.
 function Format-Argument {
     param([string]$Value)
-    if ($Value -match '\s' -and $Value -notmatch '"') {
-        return '"' + $Value + '"'
+    if ($Value -and $Value -notmatch '[\s"]') {
+        return $Value
     }
-    return $Value
+    $escaped = $Value -replace '(\\*)"', { $_.Groups[1].Value * 2 + '\"' }
+    $escaped = $escaped -replace '(\\+)$', { $_.Groups[1].Value * 2 }
+    return '"' + $escaped + '"'
 }
 
 # taskkill walks the tree itself with /T, in one documented call, and reaches what a gate leaves behind that killing
@@ -83,8 +91,11 @@ function Format-Argument {
 # run it was started as. A CIM walk of Win32_Process.ParentProcessId would do the same by hand and lose a branch whose
 # parent has already gone.
 function Stop-Tree {
+    [CmdletBinding(SupportsShouldProcess)]
     param([int]$ProcessId)
-    & taskkill.exe /PID $ProcessId /T /F 2>&1 | Out-Null
+    if ($PSCmdlet.ShouldProcess("process $ProcessId and its children", 'taskkill /T /F')) {
+        & taskkill.exe /PID $ProcessId /T /F 2>&1 | Out-Null
+    }
 }
 
 # On Windows a bare command name is resolved to the first file on PATH that Windows can start (an extension PATHEXT

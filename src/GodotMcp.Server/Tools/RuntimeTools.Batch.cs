@@ -300,8 +300,7 @@ internal sealed partial class RuntimeTools
     /// <summary>Invokes a tool from the server's own collection, as a client's call would, and keeps its text as JSON.</summary>
     private static async Task<StepOutcome> RunToolStepAsync(BatchRun run, string name, Dictionary<string, JsonElement> arguments)
     {
-        McpServerTool? tool = null;
-        if (run.Server.ServerOptions.ToolCollection?.TryGetPrimitive(name, out tool) is not true || tool is null)
+        if (run.Server.ServerOptions.ToolCollection?.TryGetPrimitive(name, out McpServerTool? tool) is not true || tool is null)
         {
             throw new McpException($"The server does not serve {name}, so the batch cannot run it.");
         }

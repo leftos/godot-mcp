@@ -2,7 +2,9 @@ using System.Text.RegularExpressions;
 
 namespace GodotMcp.Server.Session;
 
-/// <summary>A failed build's errors, each as <c>file:line: CODE message</c>, at most <see cref="CompilerErrors.Limit"/>, and how many there were.</summary>
+/// <summary>
+/// A failed build's errors, each as <c>file:line: CODE message</c>, at most <see cref="CompilerErrors.Limit"/>, and how many there were.
+/// </summary>
 internal sealed record CompilerErrorList(IReadOnlyList<string> Errors, int Total);
 
 /// <summary>Reads the errors out of an MSBuild console log.</summary>

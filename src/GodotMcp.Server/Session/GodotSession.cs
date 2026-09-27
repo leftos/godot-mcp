@@ -84,7 +84,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     public bool IsWaitingForGame => _pending && Kind == SessionKind.Attach;
 
     /// <summary>Starts the run; a launch that fails before Godot starts leaves the registry without this session.</summary>
-    /// <exception cref="SessionException">Godot or the bridge is missing, the project has its own override.cfg, or the bridge never connected.</exception>
+    /// <exception cref="SessionException">
+    /// Godot or the bridge is missing, the project has its own override.cfg, or the bridge never connected.
+    /// </exception>
     public async Task<LaunchResult> LaunchAsync(LaunchRequest request, CancellationToken cancellationToken)
     {
         try
@@ -290,7 +292,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <param name="request">What to launch.</param>
     /// <param name="previous">The run a restart replaces, stopped after the prep and continued by the new run's output; null for a launch.</param>
     /// <param name="cancellationToken">Cancels the wait for the lock and the prep.</param>
-    /// <exception cref="SessionException">Godot was not found, the prep failed, the project has its own override.cfg, or Godot could not start.</exception>
+    /// <exception cref="SessionException">
+    /// Godot was not found, the prep failed, the project has its own override.cfg, or Godot could not start.
+    /// </exception>
     private async Task<(GodotRun Run, PrepResult Prep, string Token)> PrepareAndStartAsync(
         LaunchRequest request,
         GodotRun? previous,

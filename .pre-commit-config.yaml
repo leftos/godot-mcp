@@ -1,5 +1,6 @@
-# prek hooks (prek install; prek run --all-files). The format check runs first, the warnings-as-errors build gates
-# the result, then the unit tests; gdlint checks the GDScript the server ships, gdcomplexity holds it to the same
+# prek hooks (prek install; prek run --all-files). The format check runs first, cs-line-length then catches the C# lines
+# over 150 characters that CSharpier does not wrap (comments), the warnings-as-errors build gates the result, then the
+# unit tests; gdlint checks the GDScript the server ships, gdcomplexity holds it to the same
 # complexity and length limits as the C#, and gdtest runs the bridge's GDScript unit tests in headless Godot. Ruff
 # (ruff.toml) and pytest check the Python tools and their tests.
 repos:
@@ -10,6 +11,11 @@ repos:
         entry: dotnet csharpier check .
         language: system
         pass_filenames: false
+        types: [c#]
+      - id: cs-line-length
+        name: C# line length
+        entry: uv run --quiet python tools/linelength.py
+        language: system
         types: [c#]
       - id: dotnet-build
         name: dotnet build -warnaserror

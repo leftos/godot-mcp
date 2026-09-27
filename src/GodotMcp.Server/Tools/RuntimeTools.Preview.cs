@@ -73,7 +73,9 @@ internal sealed class PreviewTools(SessionRegistry sessions)
     }
 
     /// <summary>The checked arguments: the quiet preview launch on the scene, the response mode and the bridge's capture parameters.</summary>
-    /// <exception cref="McpException">An argument is refused: the mode, previewMaxWidth, prepare, the project, the scene or the resolution.</exception>
+    /// <exception cref="McpException">
+    /// An argument is refused: the mode, previewMaxWidth, prepare, the project, the scene or the resolution.
+    /// </exception>
     internal static PreviewPlan Plan(string projectPath, string scene, PreviewOptions options, string responseMode, int previewMaxWidth)
     {
         ScreenshotMode mode = RuntimeTools.ParseMode(responseMode);

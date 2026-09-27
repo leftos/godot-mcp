@@ -625,7 +625,8 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         File.WriteAllText(
             Path.Combine(probe.Directory, "base.tscn"),
             "[gd_scene format=3]\n\n[node name=\"Body\" type=\"Node2D\"]\n\n[node name=\"Sprite\" type=\"Sprite2D\" parent=\".\"]\n"
-                + "offset = Vector2(3, 4)\n\n[node name=\"Glow\" type=\"Node2D\" parent=\"Sprite\"]\n\n[node name=\"Tail\" type=\"Node2D\" parent=\".\"]\n"
+                + "offset = Vector2(3, 4)\n\n[node name=\"Glow\" type=\"Node2D\" parent=\"Sprite\"]\n\n"
+                + "[node name=\"Tail\" type=\"Node2D\" parent=\".\"]\n"
         );
         File.WriteAllText(
             Path.Combine(probe.Directory, "derived.tscn"),
@@ -678,7 +679,8 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         ProbeProject probe = Track(new ProbeProject());
         File.WriteAllText(
             Path.Combine(probe.Directory, "tagged.tscn"),
-            "[gd_scene format=3]\n\n[node name=\"Stage\" type=\"Node2D\"]\n\n[node name=\"Tagged\" type=\"Node2D\" parent=\".\" groups=[\"enemies\"]]\n"
+            "[gd_scene format=3]\n\n[node name=\"Stage\" type=\"Node2D\"]\n\n"
+                + "[node name=\"Tagged\" type=\"Node2D\" parent=\".\" groups=[\"enemies\"]]\n"
         );
 
         await _tools.DuplicateNodeAsync(probe.Directory, "tagged.tscn", "Tagged", cancellationToken: cancellation);

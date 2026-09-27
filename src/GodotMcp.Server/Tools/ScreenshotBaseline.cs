@@ -42,7 +42,9 @@ internal static partial class ScreenshotBaseline
     /// <summary>The baselines folder of a project.</summary>
     internal static string Folder(string projectDir) => Path.Combine(projectDir, ".godot", "godot-mcp", "baselines");
 
-    /// <exception cref="McpException">The name is not 1-64 of letters, digits, '.', '_', '-' starting with a letter or digit, or is a Windows device name.</exception>
+    /// <exception cref="McpException">
+    /// The name is not 1-64 of letters, digits, '.', '_', '-' starting with a letter or digit, or is a Windows device name.
+    /// </exception>
     internal static void CheckName(string? name)
     {
         if (name is null || !NamePattern().IsMatch(name))

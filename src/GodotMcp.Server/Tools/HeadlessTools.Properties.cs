@@ -183,7 +183,9 @@ internal sealed partial class HeadlessTools
     }
 
     /// <summary>get_node_properties' queries as the request's <c>[{nodePath, properties, changedOnly}]</c>.</summary>
-    /// <exception cref="McpException">There are not 1 to <see cref="MaxNodeQueries"/>, or one has a node path not relative to the scene root.</exception>
+    /// <exception cref="McpException">
+    /// There are not 1 to <see cref="MaxNodeQueries"/>, or one has a node path not relative to the scene root.
+    /// </exception>
     internal static JsonArray CheckNodeQueries(IReadOnlyList<NodePropertyQuery>? nodes)
     {
         int count = nodes?.Count ?? 0;
@@ -254,7 +256,9 @@ internal sealed partial class HeadlessTools
 
     private static JsonNode? ToNode(JsonElement value) => JsonSerializer.SerializeToNode(value);
 
-    /// <summary>The run's result with <c>shape</c> applied to each entry of its <c>results</c>, and <c>errors</c> added when Godot logged any.</summary>
+    /// <summary>
+    /// The run's result with <c>shape</c> applied to each entry of its <c>results</c>, and <c>errors</c> added when Godot logged any.
+    /// </summary>
     private static JsonObject ShapeResults(HeadlessResult run, Action<JsonObject> shape)
     {
         JsonObject result = run.Result?.DeepClone() as JsonObject ?? [];

@@ -36,7 +36,7 @@ internal sealed partial class RuntimeTools
             target.ActiveRecording ?? throw new McpException($"session '{target.Name}' is not recording; launch it with options.record.");
         BridgeResult result = await CallWithErrorsAsync(
             target,
-            new BridgeCall("record_mark", "movie_frame", new JsonObject(), MovieFrameTimeout),
+            new BridgeCall("record_mark", "movie_frame", [], MovieFrameTimeout),
             cancellationToken
         );
         long frame = ReadMovieFrame(result.Reply);

@@ -295,7 +295,8 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
         await SetAsync("InspectProbe", "target", """{"x": 1, "y": 2}""");
         await SetAsync("InspectProbe", "loose", "7");
         JsonNode types = await RunAsync(
-            "var probe := scene_tree.root.get_node(\"InspectProbe\")\n\treturn [typeof(probe.target) == TYPE_VECTOR2, typeof(probe.loose) == TYPE_INT, probe.loose]"
+            "var probe := scene_tree.root.get_node(\"InspectProbe\")\n"
+                + "\treturn [typeof(probe.target) == TYPE_VECTOR2, typeof(probe.loose) == TYPE_INT, probe.loose]"
         );
 
         Assert.Equal("[true,true,7]", types.ToJsonString());

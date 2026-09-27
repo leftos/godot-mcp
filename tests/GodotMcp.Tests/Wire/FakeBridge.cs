@@ -70,7 +70,9 @@ internal sealed class FakeBridge(TcpClient client) : IDisposable
     public async Task WriteAsync(JsonObject frame, CancellationToken cancellationToken) =>
         await client.GetStream().WriteAsync(FrameCodec.EncodeJson(frame), cancellationToken);
 
-    /// <summary>Reads one request, then writes <paramref name="frames"/> and the reply after them, as the bridge flushes its errors before replying.</summary>
+    /// <summary>
+    /// Reads one request, then writes <paramref name="frames"/> and the reply after them, as the bridge flushes its errors before replying.
+    /// </summary>
     public async Task AnswerOneAfterAsync(JsonObject[] frames, string name, CancellationToken cancellationToken)
     {
         FrameDecoder decoder = new();
