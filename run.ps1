@@ -72,7 +72,9 @@ $itestGroups = [ordered]@{
     time      = @('TimeTests', 'BatchTests')
     prep      = @('PrepTests', 'RestartTests')
     recording = @('RecordingTests')
-    headless  = @('HeadlessTests', 'HeadlessSceneTests', 'HeadlessPropertyTests', 'HeadlessSignalTests', 'HeadlessMeshTests', 'HeadlessBatchTests')
+    headless  = @('HeadlessTests', 'HeadlessMeshTests')
+    scene     = @('HeadlessSceneTests', 'HeadlessBatchTests')
+    nodes     = @('HeadlessPropertyTests', 'HeadlessSignalTests')
     csharp    = @('CSharpToolTests')
 }
 $itestNamespace = 'GodotMcp.IntegrationTests'
