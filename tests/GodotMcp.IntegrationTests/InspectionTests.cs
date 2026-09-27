@@ -264,6 +264,52 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetExportedTypedArrayFromJsonArray()
+    {
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
+
+        JsonNode set = await SetAsync("InspectProbe", "exported_numbers", "[1, 2, 3]");
+        JsonNode read = await RunAsync(
+            "var numbers: Array = scene_tree.root.get_node(\"InspectProbe\").exported_numbers\n\treturn [numbers, numbers.get_typed_builtin()]"
+        );
+
+        Assert.Equal([1, 2, 3], set["after"]!.AsArray().Select(number => number!.GetValue<int>()));
+        Assert.Equal([1, 2, 3], read[0]!.AsArray().Select(number => number!.GetValue<int>()));
+        Assert.Equal(2, read[1]!.GetValue<int>()); // TYPE_INT
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetExportedTypedDictionaryFromJsonObject()
+    {
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
+
+        JsonNode set = await SetAsync("InspectProbe", "exported_scores", """{"a": 1}""");
+        JsonNode read = await RunAsync(
+            "var scores: Dictionary = scene_tree.root.get_node(\"InspectProbe\").exported_scores\n\t"
+                + "return [scores, scores.get_typed_key_builtin(), scores.get_typed_value_builtin()]"
+        );
+
+        Assert.Equal("""{"a":1}""", set["after"]!.ToJsonString());
+        Assert.Equal("""{"a":1}""", read[0]!.ToJsonString());
+        Assert.Equal(4, read[1]!.GetValue<int>()); // TYPE_STRING
+        Assert.Equal(2, read[2]!.GetValue<int>()); // TYPE_INT
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetPropertyRefusalCarriesTheReason()
+    {
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => SetAsync("InspectProbe", "exported_nodes", "[]"));
+
+        Assert.EndsWith(
+            $"Property 'exported_nodes' on '{Probe}': arrays of Object types (here Array[Node2D]) cannot be set from JSON.",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task CallMethodWithTypedArrayArg()
     {
         await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);

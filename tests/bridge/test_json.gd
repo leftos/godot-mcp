@@ -191,10 +191,76 @@ func test_from_json_refuses_a_dictionary_of_objects() -> void:
 		"hint": PROPERTY_HINT_DICTIONARY_TYPE,
 		"hint_string": "Node;int",
 	}
-	assert_eq(_json.from_json({"1": null}, node_value), REFUSED, "a Node value type")
-	assert_eq(_json.from_json({}, node_value), REFUSED, "an empty object, a Node value type")
-	assert_eq(_json.from_json({"1": null}, node_key), REFUSED, "a Node key type")
-	assert_eq(_json.from_json({}, node_key), REFUSED, "an empty object, a Node key type")
+	var value_refusal: Array = [false, null, _dictionary_refusal("int", "Node")]
+	var key_refusal: Array = [false, null, _dictionary_refusal("Node", "int")]
+	assert_eq(_json.from_json({"1": null}, node_value), value_refusal, "a Node value type")
+	assert_eq(_json.from_json({}, node_value), value_refusal, "an empty object, a Node value type")
+	assert_eq(_json.from_json({"1": null}, node_key), key_refusal, "a Node key type")
+	assert_eq(_json.from_json({}, node_key), key_refusal, "an empty object, a Node key type")
+
+
+func test_exported_int_array_converts_typed() -> void:
+	var converted: Array = _json.from_json([1.0, 2.0], _exported(TYPE_ARRAY, "2:"))
+	assert_eq(converted, [true, [1, 2]], "an exported Array[int] from floats")
+	if converted[0]:
+		var typed: Array = converted[1]
+		assert_true(typed.is_typed() and typed.get_typed_builtin() == TYPE_INT, "typed int")
+	assert_eq(_json.from_json([1.5], _exported(TYPE_ARRAY, "2:")), REFUSED, "an element no int")
+
+
+func test_exported_vector2_array_converts_typed() -> void:
+	var points: Array = [{"x": 1.0, "y": 2.0}, {"x": 3.0, "y": 4.0}]
+	var converted: Array = _json.from_json(points, _exported(TYPE_ARRAY, "5:"))
+	assert_eq(converted, [true, [Vector2(1, 2), Vector2(3, 4)]], "an exported Array[Vector2]")
+	if converted[0]:
+		var typed: Array = converted[1]
+		assert_true(typed.get_typed_builtin() == TYPE_VECTOR2, "typed Vector2")
+
+
+func test_exported_enum_array_keeps_the_element_hint() -> void:
+	var spec: String = "%d/%d:Up:0,Down:1" % [TYPE_INT, PROPERTY_HINT_ENUM]
+	var converted: Array = _json.from_json([0.0, 1.0], _exported(TYPE_ARRAY, spec))
+	assert_eq(converted, [true, [0, 1]], "an exported Array of an enum")
+	if converted[0]:
+		var typed: Array = converted[1]
+		assert_true(typed.get_typed_builtin() == TYPE_INT, "typed int")
+	var element: Dictionary = {
+		"type": TYPE_INT, "hint": PROPERTY_HINT_ENUM, "hint_string": "Up:0,Down:1"
+	}
+	assert_eq(_json._spec_info(spec), element, "split at the first colon, the hint kept")
+
+
+func test_exported_resource_array_is_refused_with_reason() -> void:
+	var spec: String = "%d/%d:Texture2D" % [TYPE_OBJECT, PROPERTY_HINT_RESOURCE_TYPE]
+	var refusal: String = "arrays of Object types (here Array[Texture2D]) cannot be set from JSON"
+	assert_eq(
+		_json.from_json([], _exported(TYPE_ARRAY, spec)),
+		[false, null, refusal],
+		"an exported Array[Texture2D]"
+	)
+
+
+func test_exported_typed_dictionary_converts_typed() -> void:
+	var converted: Array = _json.from_json({"a": 1.0}, _exported(TYPE_DICTIONARY, "4:;2:"))
+	assert_eq(converted, [true, {"a": 1}], "an exported Dictionary[String, int]")
+	if converted[0]:
+		var typed: Dictionary = converted[1]
+		assert_true(typed.get_typed_key_builtin() == TYPE_STRING, "String keys")
+		assert_true(typed.get_typed_value_builtin() == TYPE_INT, "int values")
+	var untyped_values: Array = _json.from_json({"a": "b"}, _exported(TYPE_DICTIONARY, "4:;0:"))
+	assert_eq(untyped_values, [true, {"a": "b"}], "a Variant value side takes any value")
+	assert_eq(
+		_json.from_json({"a": "b"}, _exported(TYPE_DICTIONARY, "4:;2:")), REFUSED, "a value no int"
+	)
+
+
+func test_exported_dictionary_with_object_value_is_refused_with_reason() -> void:
+	var spec: String = "%d:;%d/%d:Node2D" % [TYPE_INT, TYPE_OBJECT, PROPERTY_HINT_NODE_TYPE]
+	assert_eq(
+		_json.from_json({"1": null}, _exported(TYPE_DICTIONARY, spec)),
+		[false, null, _dictionary_refusal("int", "Node2D")],
+		"an exported Dictionary[int, Node2D]"
+	)
 
 
 func test_from_json_builds_a_packed_array_element_by_element() -> void:
@@ -480,6 +546,20 @@ func test_type_name_names_a_class_or_a_variant_type() -> void:
 	assert_eq(_json.type_name(_resource_info("Texture2D")), "Object", "an object without class")
 	var texture: Dictionary = {"type": TYPE_OBJECT, "class_name": "Texture2D"}
 	assert_eq(_json.type_name(texture), "Texture2D", "an object's class")
+
+
+## The entry of an exported typed container of type, as 4.7.2 gdscript_parser.cpp writes it: a
+## PROPERTY_HINT_TYPE_STRING hint whose hint string is spec.
+static func _exported(type: int, spec: String) -> Dictionary:
+	return {"type": type, "hint": PROPERTY_HINT_TYPE_STRING, "hint_string": spec}
+
+
+## The reason a dictionary of an Object key or value type is refused.
+static func _dictionary_refusal(key_type: String, value_type: String) -> String:
+	return (
+		"dictionaries with Object keys or values (here Dictionary[%s, %s]) cannot be set from JSON"
+		% [key_type, value_type]
+	)
 
 
 ## The entry of a Resource-typed property whose hint string is hint.

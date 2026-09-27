@@ -238,6 +238,26 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetNodePropertiesSetsAnExportedTypedArray()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "tally.gd"), "extends Node2D\n\n@export var counts: Array[int]\n");
+        string scene =
+            "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"Script\" path=\"res://tally.gd\" id=\"1\"]\n\n"
+            + "[node name=\"Tally\" type=\"Node2D\"]\nscript = ExtResource(\"1\")\n";
+        File.WriteAllText(Path.Combine(probe.Directory, "tally.tscn"), scene);
+
+        JsonNode set = JsonNode.Parse(
+            await _tools.SetNodePropertiesAsync(probe.Directory, "tally.tscn", [new PropertyUpdate(".", "counts", Json("[1, 2]"))], cancellation)
+        )!;
+        JsonNode read = await PropertiesAsync(probe.Directory, "tally.tscn", [new NodePropertyQuery(".", ["counts"])], cancellation);
+
+        Assert.Equal("[1,2]", set["results"]![0]!["after"]!.ToJsonString());
+        Assert.Equal("[1,2]", read["results"]![0]!["properties"]!["counts"]!.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task SetNodePropertiesIsAllOrNothing()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

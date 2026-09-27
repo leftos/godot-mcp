@@ -17,7 +17,6 @@ Grouped into waves by shared files; within the singles, order is not a ranking.
 
 Shared: `bridge/godot_mcp_json.gd`, `bridge/godot_mcp_inspect.gd`, `tests/bridge`, `run.ps1` (`gdtest`). Acceptance: `pwsh run.ps1 gdtest`, `pwsh run.ps1 itest`; human check: `set_node_properties` and `set_property` on an exported `Array[int]` in the fixture.
 
-- [ ] Typed-array and dictionary exports in `set_node_properties` (found 2026-09-26 landing the save guard): an exported `Array[int]` carries `PROPERTY_HINT_TYPE_STRING`, not `PROPERTY_HINT_ARRAY_TYPE` (4.7.2 `gdscript_parser.cpp` L4977-4985), so `_array_from_json` passes it untyped and it probably fails the read-back as `Array[Node2D]` did (unmeasured); an Object-typed Dictionary is refused with no reason; the running game's `set_property` and `call_method` (`bridge/godot_mcp_inspect.gd`) ignore the refusal reason `from_json` now returns. Decided (user, 2026-09-26): Resource element types stay refused, the reason naming the class
 - [ ] `pwsh run.ps1 gdtest` imports `tests/bridge` first, so a test can cover `from_json` finding a script class through the project's global class list (brief 5b-A, 2026-09-26). Decided (user, 2026-09-26): the import's `.uid` files beside `tests/bridge`'s scripts are committed. Waits on the prek-hang finding, since the import runs inside the `gdtest` hook
 
 ### Wave 6: ideas from a peer server

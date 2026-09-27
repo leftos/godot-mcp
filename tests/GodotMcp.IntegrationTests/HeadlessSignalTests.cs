@@ -18,7 +18,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
 
     private const string LevelScript =
         "extends Node2D\n\n\nfunc on_pressed() -> void:\n\tpass\n\n\nfunc on_bound(_count: int, _what: String) -> void:\n\tpass\n\n\n"
-        + "func on_untyped(_count, _what) -> void:\n\tpass\n";
+        + "func on_untyped(_count, _what) -> void:\n\tpass\n\n\nfunc on_squad(_units: Array[Node2D]) -> void:\n\tpass\n";
 
     // A connection a script makes itself is not persistent, so no signal tool lists or saves it.
     private const string ButtonScript = "extends Button\n\n\nfunc _init() -> void:\n\tpressed.connect(_ping)\n\n\nfunc _ping() -> void:\n\tpass\n";
@@ -188,6 +188,24 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         );
 
         Assert.Equal("connect_signal failed: Argument 1 of 'on_bound' on '.' is int; \"seven\" does not convert to it.", refused.Message);
+        Assert.Equal(LevelScene, Read(directory, "level.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ConnectSignalRefusesAnObjectArrayBindSayingWhy()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string directory = WriteScenes();
+        ConnectTarget target = new(".", "on_squad", [Json("[]")]);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.ConnectSignalAsync(directory, "level.tscn", "Btn", "pressed", target, cancellation)
+        );
+
+        Assert.Equal(
+            "connect_signal failed: Argument 1 of 'on_squad' on '.': arrays of Object types (here Array[Node2D]) cannot be set from JSON.",
+            refused.Message
+        );
         Assert.Equal(LevelScene, Read(directory, "level.tscn"));
     }
 

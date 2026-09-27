@@ -183,13 +183,13 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 - **Does:** sets one property of a live node, converting the JSON `value` by the property's declared type, and reads it back: `{path, property, before, after}`.
 - **Use:** putting the game into a state to test (`{x, y}` for a Vector2, `"#rrggbb"` or `{r, g, b, a}` for a Color).
-- **Edges:** fails, putting the old value back, when the read-back differs (a read-only property, a clamping setter).
+- **Edges:** fails, putting the old value back, when the read-back differs (a read-only property, a clamping setter). Typed arrays and dictionaries (`Array[int]`, `Dictionary[String, int]`), exported or not, take a JSON array or object; one whose elements, keys or values are Objects or Resources (`Array[Node2D]`, `Array[Texture2D]`) is refused, and the error says why.
 
 ### `call_method`
 
 - **Does:** calls `method` on a live `node` with `args` converted by the parameters' declared types, awaiting a coroutine: `{path, method, value}`.
 - **Use:** triggering game logic directly (spawn, damage, load a level); C# methods, `internal` ones included, are reached. `options {timeoutMs}` (1 to 120000, default 10000).
-- **Edges:** fails when the method is missing, the argument count does not fit, or Godot refuses the call. A GDScript error inside it ends it with a null `value` and comes back in `errors`; the call itself succeeds, so read `errors`.
+- **Edges:** fails when the method is missing, the argument count does not fit, an argument does not convert (an array of Objects says why), or Godot refuses the call. A GDScript error inside it ends it with a null `value` and comes back in `errors`; the call itself succeeds, so read `errors`.
 
 ### `run_script`
 
@@ -292,7 +292,7 @@ These run a headless Godot on the project's files with no game started. All are 
 ### `set_node_properties`
 
 - **Does:** sets 1 to 100 `updates` `{nodePath, property, value}`, reads each back, and saves: `{results: [{nodePath, property, before, after}]}`.
-- **Use:** values as `set_property` takes them; a resource as a `res://` or `uid://` path, `{resource: path}`, `{type, ...properties}` or null; a Node-typed export as a path from the scene's root.
+- **Use:** values as `set_property` takes them, typed arrays and dictionaries included; a resource as a `res://` or `uid://` path, `{resource: path}`, `{type, ...properties}` or null; a Node-typed export as a path from the scene's root.
 - **Edges:** a node from a base scene, or inside an editable instance, may be set (saved as an override); inside another instance it is refused. All or nothing.
 
 ### `get_node_properties`
@@ -310,7 +310,7 @@ These run a headless Godot on the project's files with no game started. All are 
 ### `connect_signal`
 
 - **Does:** saves a persistent connection from `signal` on `nodePath` to `target {nodePath, method, binds?}`: `{from, signal, target, method}`.
-- **Edges:** refused, saving nothing: a missing node, signal or method; an emitting node inside a non-editable instance; arguments plus binds that do not fit the method; a signal already connected to that method.
+- **Edges:** refused, saving nothing: a missing node, signal or method; an emitting node inside a non-editable instance; arguments plus binds that do not fit the method; a bind that does not convert (an array of Objects says why); a signal already connected to that method.
 
 ### `disconnect_signal`
 

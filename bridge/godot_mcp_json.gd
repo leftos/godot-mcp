@@ -35,6 +35,11 @@ const PACKED_ELEMENTS := {
 const NOT_CONVERTED: Array = [false, null]
 ## Why an array of an Object type is refused, with the element class in place of %s.
 const OBJECT_ARRAY_REFUSAL := "arrays of Object types (here Array[%s]) cannot be set from JSON"
+## Why a dictionary of an Object key or value type is refused, with the key and value types'
+## names (see _side_name) in place of the two %s.
+const OBJECT_DICTIONARY_REFUSAL := (
+	"dictionaries with Object keys or values (here Dictionary[%s, %s]) " + "cannot be set from JSON"
+)
 ## How deep built-in resources nest inside one another before one is read by its class alone,
 ## which ends a cycle of resources holding each other.
 const MAX_RESOURCE_DEPTH := 8
@@ -196,8 +201,9 @@ static func _changed_properties(resource: Resource, depth: int) -> Dictionary:
 
 ## [true, value] with a JSON value converted to the type a property or parameter entry declares
 ## ({type, hint, hint_string}), the reverse of to_json, or [false, null] when it does not
-## convert; a TYPE_BOOL entry given anything but a bool is refused as [false, value], an array of
-## an Object type as [false, null, reason] (see _array_from_json). TYPE_NIL
+## convert; a TYPE_BOOL entry given anything but a bool is refused as [false, value], an array or
+## a dictionary of an Object type as [false, null, reason] (see _array_from_json and
+## _dictionary_from_json). TYPE_NIL
 ## (an untyped parameter, or an untyped property holding null) takes the JSON value as it is. A
 ## Resource-typed entry (PROPERTY_HINT_RESOURCE_TYPE) converts as _resource_from_json says; any
 ## other Object converts from nothing.
@@ -298,59 +304,100 @@ static func _color_from_json(value: Variant) -> Array:
 	return [true, Color(channels["r"], channels["g"], channels["b"], alpha)]
 
 
-## An Array from a JSON array; a typed one (PROPERTY_HINT_ARRAY_TYPE, whose hint string names the
-## element type, @GlobalScope PropertyHint in 4.7.2) with each element converted and the array
-## built typed, since an untyped Array does not set an Array[int]. An array of an Object type is
-## refused as [false, null, reason], since no JSON value converts to an Object.
+## An Array from a JSON array; a typed one (see _element_info) with each element converted by its
+## element entry and the array built typed, since an untyped Array does not set an Array[int]. An
+## array of an Object type, a Resource one included, is refused as [false, null, reason], since no
+## JSON value converts to an Object.
 static func _array_from_json(value: Variant, info: Dictionary) -> Array:
 	if not value is Array:
 		return NOT_CONVERTED
-	var object_class: String = _object_element_class(info)
-	if not object_class.is_empty():
-		return [false, null, OBJECT_ARRAY_REFUSAL % object_class]
-	if int(info.get("hint", PROPERTY_HINT_NONE)) != PROPERTY_HINT_ARRAY_TYPE:
+	var element: Dictionary = _element_info(info)
+	var element_type: int = int(element.get("type", TYPE_NIL))
+	if element_type == TYPE_OBJECT:
+		return [false, null, OBJECT_ARRAY_REFUSAL % str(element.get("class_name", ""))]
+	if element_type == TYPE_NIL:
 		return [true, value]
-	var element: Dictionary = _type_info(str(info["hint_string"]))
 	var items: Variant = _convert_all(value, element)
 	if items == null:
 		return NOT_CONVERTED
-	return [true, Array(items, element["type"], &"", null)]
+	return [true, Array(items, element_type, &"", null)]
 
 
-## The class an array entry declares its elements to be when that is an Object type, else "". A
-## PROPERTY_HINT_ARRAY_TYPE hint string names the class; an exported array's
-## PROPERTY_HINT_TYPE_STRING hint string reads "<type>[/<hint>]:<hint_string>", "24/34:Node2D"
-## for an Array[Node2D] (4.7.2 modules/gdscript/gdscript_parser.cpp L4977-4985).
-static func _object_element_class(info: Dictionary) -> String:
+## The entry an array entry declares its elements to be, {type: TYPE_NIL} when untyped. A
+## PROPERTY_HINT_ARRAY_TYPE hint (a method parameter or a variable not exported, @GlobalScope
+## PropertyHint in 4.7.2) names the element type (see _type_info); an exported array's
+## PROPERTY_HINT_TYPE_STRING hint carries its spec (see _spec_info), "24/34:Node2D" for an
+## Array[Node2D] (4.7.2 modules/gdscript/gdscript_parser.cpp L4977-4985).
+static func _element_info(info: Dictionary) -> Dictionary:
 	var hint_string: String = str(info.get("hint_string", ""))
 	match int(info.get("hint", PROPERTY_HINT_NONE)):
 		PROPERTY_HINT_ARRAY_TYPE:
-			return hint_string if _type_info(hint_string)["type"] == TYPE_OBJECT else ""
+			return _type_info(hint_string)
 		PROPERTY_HINT_TYPE_STRING:
-			var element_type: String = hint_string.get_slice(":", 0).get_slice("/", 0)
-			return hint_string.get_slice(":", 1) if element_type == str(TYPE_OBJECT) else ""
-	return ""
+			return _spec_info(hint_string)
+	return {"type": TYPE_NIL}
 
 
-## A Dictionary from a JSON object; a typed one (PROPERTY_HINT_DICTIONARY_TYPE, "key;value") with
-## each key and value converted and the dictionary built typed, an Object key or value type refused
-## as _array_from_json refuses an Object element, since no JSON value converts to an Object. JSON
-## keys are strings, so a numeric key is read from its text.
+## The entry {type, hint, hint_string} one PROPERTY_HINT_TYPE_STRING spec
+## "<type>[/<hint>]:<hint_string>" declares, type and hint as numbers, split at the first ":"
+## since an enum's hint string ("Up:0,Down:1") holds more; an Object type's class, its hint
+## string, also as class_name, as _type_info gives it. An empty spec is TYPE_NIL, untyped.
+static func _spec_info(spec: String) -> Dictionary:
+	var colon: int = spec.find(":")
+	var head: String = spec if colon < 0 else spec.substr(0, colon)
+	var hint_string: String = "" if colon < 0 else spec.substr(colon + 1)
+	var type: int = int(head.get_slice("/", 0))
+	var hint: int = int(head.get_slice("/", 1)) if head.contains("/") else PROPERTY_HINT_NONE
+	var element: Dictionary = {"type": type, "hint": hint, "hint_string": hint_string}
+	if type == TYPE_OBJECT:
+		element["class_name"] = hint_string
+	return element
+
+
+## A Dictionary from a JSON object; a typed one (see _dictionary_sides) with each key and value
+## converted and the dictionary built typed. An Object key or value type, a Resource one included,
+## is refused as [false, null, reason], since no JSON value converts to an Object. JSON keys are
+## strings, so a numeric key is read from its text.
 static func _dictionary_from_json(value: Variant, info: Dictionary) -> Array:
 	if not value is Dictionary:
 		return NOT_CONVERTED
-	if int(info.get("hint", PROPERTY_HINT_NONE)) != PROPERTY_HINT_DICTIONARY_TYPE:
+	var sides: Array = _dictionary_sides(info)
+	if sides.is_empty():
 		return [true, value]
-	var types: PackedStringArray = str(info["hint_string"]).split(";")
-	var key_info: Dictionary = _type_info(types[0])
-	var value_info: Dictionary = _type_info(types[1] if types.size() > 1 else "Variant")
+	var key_info: Dictionary = sides[0]
+	var value_info: Dictionary = sides[1]
 	if key_info["type"] == TYPE_OBJECT or value_info["type"] == TYPE_OBJECT:
-		return NOT_CONVERTED
+		var names: Array = [_side_name(key_info), _side_name(value_info)]
+		return [false, null, OBJECT_DICTIONARY_REFUSAL % names]
 	var entries: Variant = _convert_entries(value, key_info, value_info)
 	if entries == null:
 		return NOT_CONVERTED
 	var typed := Dictionary(entries, key_info["type"], &"", null, value_info["type"], &"", null)
 	return [true, typed]
+
+
+## [key entry, value entry] a dictionary entry declares, or [] when untyped. A
+## PROPERTY_HINT_DICTIONARY_TYPE hint (a method parameter or a variable not exported) reads
+## "key;value", each a type's name (see _type_info), the value Variant when left out; an exported
+## dictionary's PROPERTY_HINT_TYPE_STRING hint reads "<key spec>;<value spec>", each a spec as
+## _spec_info reads it, "0:" (TYPE_NIL) for a Variant side (4.7.2
+## modules/gdscript/gdscript_parser.cpp L4866-4947).
+static func _dictionary_sides(info: Dictionary) -> Array:
+	var hint_string: String = str(info.get("hint_string", ""))
+	var split: int = hint_string.find(";")
+	var key_spec: String = hint_string if split < 0 else hint_string.substr(0, split)
+	var value_spec: String = "" if split < 0 else hint_string.substr(split + 1)
+	match int(info.get("hint", PROPERTY_HINT_NONE)):
+		PROPERTY_HINT_DICTIONARY_TYPE:
+			return [_type_info(key_spec), _type_info("Variant" if split < 0 else value_spec)]
+		PROPERTY_HINT_TYPE_STRING:
+			return [_spec_info(key_spec), _spec_info(value_spec)]
+	return []
+
+
+## The name a dictionary refusal gives one side's entry: Variant when untyped, else type_name's.
+static func _side_name(side: Dictionary) -> String:
+	return "Variant" if side["type"] == TYPE_NIL else type_name(side)
 
 
 ## Every key and value converted, or null when one does not convert.

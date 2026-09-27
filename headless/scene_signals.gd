@@ -270,6 +270,9 @@ static func _binds(root: Node, ends: Dictionary, given: Array) -> Dictionary:
 		var at: int = passed + index
 		var parameter: Dictionary = declared[at] if at < declared.size() else {}
 		var converted: Array = _bind_from_json(given[index], parameter, root)
+		if not converted[0] and converted.size() > 2:
+			var reason: Array = [at + 1, ends["method"], ends["to"], converted[2]]
+			return {"error": "Argument %d of '%s' on '%s': %s." % reason}
 		if not converted[0]:
 			var facts: Array = [
 				at + 1,
@@ -285,7 +288,8 @@ static func _binds(root: Node, ends: Dictionary, given: Array) -> Dictionary:
 	return {"binds": binds}
 
 
-## [true, value] with a bind converted to parameter's type, or [false, null]. An untyped
+## [true, value] with a bind converted to parameter's type, or [false, null], or [false, null,
+## reason] for a type no JSON converts to (an array of Objects). An untyped
 ## parameter keeps the JSON value, an integral number as an int.
 static func _bind_from_json(value: Variant, parameter: Dictionary, root: Node) -> Array:
 	var untyped: bool = int(parameter.get("type", TYPE_NIL)) == TYPE_NIL

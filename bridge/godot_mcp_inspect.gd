@@ -158,10 +158,7 @@ func set_property(params: Dictionary) -> Variant:
 	var raw: Variant = params.get("value")
 	var converted: Array = _bridge._json.from_json(raw, info)
 	if not converted[0]:
-		return (
-			"Property '%s' on '%s' is %s; %s does not convert to it."
-			% [property_name, node.get_path(), _bridge._json.type_name(info), JSON.stringify(raw)]
-		)
+		return _not_converted(node, property_name, info, raw, converted)
 	node.set(property_name, converted[1])
 	var after: Variant = node.get(property_name)
 	if not _bridge._json.same(after, converted[1]):
@@ -179,6 +176,19 @@ func set_property(params: Dictionary) -> Variant:
 		"before": _bridge._json.to_json(before),
 		"after": _bridge._json.to_json(after),
 	}
+
+
+## Why set_property's value did not convert: from_json's reason when converted carries one, else
+## the property's declared type and the value given.
+func _not_converted(
+	node: Node, property_name: String, info: Dictionary, raw: Variant, converted: Array
+) -> String:
+	if converted.size() > 2:
+		return "Property '%s' on '%s': %s." % [property_name, node.get_path(), converted[2]]
+	return (
+		"Property '%s' on '%s' is %s; %s does not convert to it."
+		% [property_name, node.get_path(), _bridge._json.type_name(info), JSON.stringify(raw)]
+	)
 
 
 ## {path, method, value}: the method called with params.args converted by its parameters' declared
@@ -221,6 +231,9 @@ func _method_args(node: Node, method: String, given: Array) -> Variant:
 	for index in given.size():
 		var parameter: Dictionary = declared[index] if index < declared.size() else {}
 		var converted: Array = _bridge._json.from_json(given[index], parameter)
+		if not converted[0] and converted.size() > 2:
+			var reason: Array = [index + 1, method, node.get_path(), converted[2]]
+			return "Argument %d of '%s' on '%s': %s." % reason
 		if not converted[0]:
 			return (
 				"Argument %d of '%s' on '%s' is %s; %s does not convert to it."

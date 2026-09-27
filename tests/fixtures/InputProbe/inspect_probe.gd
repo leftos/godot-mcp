@@ -6,6 +6,11 @@ var count: int = 0
 var label_text: String = "start"
 var offset: Vector2
 var numbers: Array[int] = []
+## Exported, so their entries carry PROPERTY_HINT_TYPE_STRING rather than an ARRAY_TYPE or
+## DICTIONARY_TYPE hint.
+@export var exported_numbers: Array[int] = []
+@export var exported_scores: Dictionary[String, int] = {}
+@export var exported_nodes: Array[Node2D] = []
 var points: PackedVector2Array
 ## Untyped: set_property keeps the type the value already has.
 var target = Vector2.ZERO
