@@ -9,7 +9,7 @@ Steps 0 to 4b, Wave 1 (steps 7-9: named sessions, the error feed and compact out
 
 ### Wave 4: singles
 
-- [ ] A godot MCP tutorial for agents in opening-hand and delve-the-dungeon, explaining every available tool, written with the cutover (step 6) (user, 2026-09-26)
+- [ ] A godot MCP tutorial for agents in opening-hand and delve-the-dungeon, explaining every available tool, written with the cutover (step 6) (user, 2026-09-26). Form (user, 2026-09-26): a skill shipped in this repo, updated in the same commit as `docs/TOOLS.md`, installed into `~/.claude/skills` and named by both repos' CLAUDE.md
 - [ ] Step 6: cutover in opening-hand and delve-the-dungeon (registration, their docs and conventions, the debugger agent's allow-list; one scratch drive each; git status clean)
 
 ## Later (not in the first version)
