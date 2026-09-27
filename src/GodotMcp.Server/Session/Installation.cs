@@ -1,6 +1,6 @@
 namespace GodotMcp.Server.Session;
 
-/// <summary>Finds the Godot executable, dotnet, and the bridge and headless scripts the server ships.</summary>
+/// <summary>Finds the Godot executable, dotnet, the bridge and headless scripts the server ships, and the C# helper's extension.</summary>
 internal static class Installation
 {
     public const string GodotPathVariable = "GODOT_PATH";
@@ -77,6 +77,11 @@ internal static class Installation
 
     public static readonly string HeadlessRelativePath = Path.Combine("headless", "operations.gd");
 
+    public const string DotnetExtensionFileName = "godot_mcp_dotnet.gdextension";
+
+    private static readonly string DotnetExtensionBesideServer = Path.Combine("dotnet", DotnetExtensionFileName);
+    private static readonly string DotnetExtensionInCheckout = Path.Combine("bin", "dotnet", DotnetExtensionFileName);
+
     public static string FindBridgeScript() => FindBridgeScript(AppContext.BaseDirectory);
 
     /// <summary>
@@ -96,26 +101,44 @@ internal static class Installation
     public static string FindHeadlessScript(string serverDirectory) =>
         FindShippedScript(serverDirectory, HeadlessRelativePath, "The headless operations script");
 
-    private static string FindShippedScript(string serverDirectory, string relativePath, string what)
+    public static string? FindDotnetExtension() => FindDotnetExtension(AppContext.BaseDirectory);
+
+    /// <summary>
+    /// The C# helper's extension published beside the server (<c>dotnet/</c> next to the exe), else the one
+    /// <c>pwsh run.ps1 dotnet</c> put in <c>bin/dotnet/</c> of the godot-mcp checkout the server was built in; null when
+    /// neither has it.
+    /// </summary>
+    public static string? FindDotnetExtension(string serverDirectory) =>
+        FindShippedFile(serverDirectory, DotnetExtensionBesideServer, DotnetExtensionInCheckout);
+
+    private static string FindShippedScript(string serverDirectory, string relativePath, string what) =>
+        FindShippedFile(serverDirectory, relativePath, relativePath)
+        ?? throw new SessionException(
+            $"{what} was not found beside the server ({Path.Combine(serverDirectory, relativePath)}) or in a godot-mcp checkout above it. "
+                + "Reinstall the server with 'pwsh run.ps1 publish'."
+        );
+
+    /// <summary>
+    /// <paramref name="besideServer"/> under the server's folder when it exists, else <paramref name="inCheckout"/> under
+    /// the first folder above the server that holds <see cref="SolutionFileName"/> and has it, else null.
+    /// </summary>
+    private static string? FindShippedFile(string serverDirectory, string besideServer, string inCheckout)
     {
-        string besideServer = Path.Combine(serverDirectory, relativePath);
-        if (File.Exists(besideServer))
+        string published = Path.Combine(serverDirectory, besideServer);
+        if (File.Exists(published))
         {
-            return besideServer;
+            return published;
         }
 
         for (DirectoryInfo? directory = new(serverDirectory); directory is not null; directory = directory.Parent)
         {
-            string candidate = Path.Combine(directory.FullName, relativePath);
+            string candidate = Path.Combine(directory.FullName, inCheckout);
             if (File.Exists(Path.Combine(directory.FullName, SolutionFileName)) && File.Exists(candidate))
             {
                 return candidate;
             }
         }
 
-        throw new SessionException(
-            $"{what} was not found beside the server ({besideServer}) or in a godot-mcp checkout above it. "
-                + "Reinstall the server with 'pwsh run.ps1 publish'."
-        );
+        return null;
     }
 }

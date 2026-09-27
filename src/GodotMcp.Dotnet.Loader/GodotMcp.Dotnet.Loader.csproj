@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Loaded by the shim into the game's runtime; references nothing of Godot's. Its runtimeconfig rolls forward to the
+       runtime the game runs, as GodotPlugins.runtimeconfig.json does. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+</Project>

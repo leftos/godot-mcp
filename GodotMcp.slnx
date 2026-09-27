@@ -1,5 +1,8 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/GodotMcp.Dotnet/GodotMcp.Dotnet.csproj" />
+    <Project Path="src/GodotMcp.Dotnet.Loader/GodotMcp.Dotnet.Loader.csproj" />
+    <Project Path="src/GodotMcp.Dotnet.Shim/GodotMcp.Dotnet.Shim.csproj" />
     <Project Path="src/GodotMcp.Server/GodotMcp.Server.csproj" />
   </Folder>
   <Folder Name="/tests/">

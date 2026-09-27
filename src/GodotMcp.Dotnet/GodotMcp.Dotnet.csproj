@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The helper, loaded by the loader into the game's GodotSharp load context: it compiles against GodotSharp and binds
+       the game's own at run time, so no GodotSharp.dll ships beside it. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="GodotSharp" PrivateAssets="all" ExcludeAssets="runtime" />
+  </ItemGroup>
+</Project>

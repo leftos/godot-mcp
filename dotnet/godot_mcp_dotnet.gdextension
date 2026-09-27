@@ -1,0 +1,9 @@
+[configuration]
+
+entry_symbol = "godot_mcp_dotnet_init"
+compatibility_minimum = "4.7"
+reloadable = false
+
+[libraries]
+
+windows.x86_64 = "godot_mcp_dotnet.dll"

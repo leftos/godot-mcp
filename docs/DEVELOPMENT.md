@@ -9,10 +9,11 @@
 | CSharpier | 1.3.0 (local tool) | `dotnet tool restore` |
 | gdlint, gdformat | gdtoolkit 4.5.0 | `uv tool install "gdtoolkit>=4,<5"`; `gdformat bridge/ tests/fixtures/` formats (it writes CRLF on Windows, which `.gitattributes` turns back into LF for `*.gd`) |
 | ffmpeg, ffprobe | 9.0.2 here | `winget install Gyan.FFmpeg`; `$env:FFMPEG_PATH`, else `PATH`. Cuts recording clips at run time (never bundled); `RecordingTests` also need `ffprobe` |
+| MSVC linker | VS Build Tools 2022 17.14, VC tools | the C# helper's shim is a NativeAOT dll, and ILCompiler links it with MSVC, found through `%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe` (its `findvcvarsall.bat` never searches `PATH`; `run.ps1` sets that variable to `C:\Program Files (x86)` when it is empty, as it can be under Git Bash). VS 2026 here has no VC tools. Only `run.ps1 dotnet`, `publish` and `install` link; `build` compiles the shim without it |
 | prek | any | `prek install` once per clone |
 | uv | any | runs `tools/gdcomplexity.py` with gdtoolkit and pytest supplied by `--with`, and ruff through `uvx ruff@0.16.9`; no `pyproject.toml`, so `uv run` makes no project venv |
 
-Package versions live in `Directory.Packages.props` (looked up on nuget.org 2026-09-25): ModelContextProtocol 2.2.0, Microsoft.Extensions.Hosting 10.0.12, xunit.v3 4.0.1 (MTP v2 by default; no Microsoft.NET.Test.Sdk or xunit.runner.visualstudio, which serve only VSTest).
+Package versions live in `Directory.Packages.props` (looked up on nuget.org 2026-09-25): ModelContextProtocol 2.2.0, Microsoft.Extensions.Hosting 10.0.12, xunit.v3 4.0.1 (MTP v2 by default; no Microsoft.NET.Test.Sdk or xunit.runner.visualstudio, which serve only VSTest), GodotSharp 4.7.2 (the C# helper compiles against it, `PrivateAssets=all`, `ExcludeAssets=runtime`: at run time it binds the game's own).
 
 ## Commands
 
@@ -21,11 +22,12 @@ Everything runs from the repo root through `run.ps1`, and every command runs und
 | Command | What it runs | Ceiling | Measured (2026-09-25) |
 |---|---|---|---|
 | `pwsh run.ps1 build` | `dotnet build GodotMcp.slnx -warnaserror` | 300 s | 1-4 s warm |
-| `pwsh run.ps1 test [-Filter "*Class"]` | unit tests (`tests/GodotMcp.Tests`) | 180 s, plus MTP `--timeout 3m` | 478 tests, about 8 s |
+| `pwsh run.ps1 test [-Filter "*Class"]` | unit tests (`tests/GodotMcp.Tests`) | 180 s, plus MTP `--timeout 3m` | 543 tests (2026-09-26), about 8 s |
 | `pwsh run.ps1 itest` | integration tests against the real Godot (`tests/GodotMcp.IntegrationTests`) in the class groups of `run.ps1`'s `$itestGroups` table (lifecycle, input, reads, time, prep, recording, headless): the table checked against the declared `*Tests` classes (a class in no group, or a listed class that is gone, stops the run before anything runs), one build (`.tmp/itest-build.log`), then one gate per group (`.tmp/itest-<group>.log`), every group run, a summary line each; on Windows each test gate runs `dotnet test` through `tools/hidden-desktop.ps1`, on a desktop of its own (`godot-mcp-itest-<pid>`, the tree in a job object killed with the launcher), so the not-quiet and attach tests' windows never show either; a plain `dotnet test` or an IDE run shows them | 300 s per group, plus MTP `--timeout 4m` each | seven groups, 280 tests, 429 s (measured 2026-09-26) |
 | `pwsh run.ps1 itest -Filter "*Class"` | one integration test class, one gate, `.tmp/itest.log` | 300 s, plus MTP `--timeout 4m` | |
 | `pwsh run.ps1 format` | `dotnet format style --severity info`, then CSharpier | 180 s per pass | |
-| `pwsh run.ps1 publish` | framework-dependent win-x64 to `bin/publish/godot-mcp.exe`, with `bridge/` and `headless/` beside it | 300 s | |
+| `pwsh run.ps1 dotnet` | the C# helper into `bin/dotnet/`: the NativeAOT shim `godot_mcp_dotnet.dll` and `godot_mcp_dotnet.gdextension` at the top, `loader/` (the loader dll and its runtimeconfig, rolling forward to the latest major) and `helper/`; each project publishes into `.tmp/dotnet-publish/<name>` under its own gate (`.tmp/dotnet-shim.log`, `dotnet-loader.log`, `dotnet-helper.log`), then `bin/dotnet` is rebuilt from the named files only (no pdb, no `GodotSharp.dll`) | 300 s per project | |
+| `pwsh run.ps1 publish` | framework-dependent win-x64 to `bin/publish/godot-mcp.exe`, with `bridge/` and `headless/` beside it, then `dotnet`, whose `bin/dotnet` is copied to `bin/publish/dotnet/` | 300 s, plus `dotnet`'s | |
 | `pwsh run.ps1 install` | the publish, then `tools/install.ps1`: mirrors `bin/publish` into `%LOCALAPPDATA%\godot-mcp` (`GODOT_MCP_INSTALL_DIR` overrides; robocopy `/MIR`, so files the publish lacks are removed) and links `~/.claude/skills/godot-mcp` to `skills/godot-mcp` as a directory junction (`GODOT_MCP_SKILLS_DIR` overrides the folder); `.tmp/publish.log`, `.tmp/install.log`. The game repos register the installed exe, so run it after pulling a server change | 300 s publish, 60 s copy and link | |
 | `pwsh run.ps1 gdtest` | the GDScript unit tests: `godot --headless --path tests/bridge --import` when a `tests/bridge` script is newer than the last import (`.tmp/gdtest-import.log`; its stamp sits in the ignored `tests/bridge/.godot/`), then `godot --headless --path tests/bridge --script res://run_tests.gd` | 120 s import, 60 s tests | 129 tests, about 1 s, plus the import when stale |
 | `uv run --with "gdtoolkit>=4,<5" tools/gdcomplexity.py [--no-baseline] <files>` | the GDScript complexity (≤ 8) and length (≤ 100 lines) check | | |

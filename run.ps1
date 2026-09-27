@@ -19,7 +19,14 @@ exits with the command's own status, or 124 when it outlived its ceiling and was
            group follows, and the exit status is the first non-zero group's. On Windows every test run (a group's or
            a -Filter one) goes through tools/hidden-desktop.ps1, on a desktop of its own, so no Godot window shows.
   format   dotnet format style (info severity), then CSharpier, on the whole solution; ceiling 180 s each
-  publish  a framework-dependent win-x64 server at bin/publish/godot-mcp.exe, with bridge/ beside it; ceiling 300 s
+  dotnet   the C# helper into bin/dotnet: the NativeAOT shim godot_mcp_dotnet.dll (win-x64, no pdb) and
+           dotnet/godot_mcp_dotnet.gdextension at the top, loader/ (GodotMcp.Dotnet.Loader.dll and its
+           runtimeconfig.json) and helper/ (GodotMcp.Dotnet.dll). Each project publishes into .tmp/dotnet-publish/<name>
+           under its own gate (.tmp/dotnet-<name>.log, ceiling 300 s); bin/dotnet is then rebuilt from those files.
+           The shim's link needs the MSVC linker (VS Build Tools' VC tools), which ILCompiler finds through vswhere under
+           ProgramFiles(x86); when that variable is empty (as it can be from Git Bash) it is set to C:\Program Files (x86).
+  publish  a framework-dependent win-x64 server at bin/publish/godot-mcp.exe, with bridge/ beside it, then the dotnet
+           command (as above), whose bin/dotnet is copied to bin/publish/dotnet; ceiling 300 s
   install  publish (as above), then mirror bin/publish into $env:LOCALAPPDATA\godot-mcp (robocopy /MIR, no retries), and
            link ~/.claude/skills/godot-mcp to skills/godot-mcp as a directory junction; ceiling 300 s for the publish,
            60 s for the copy. The copy and the link are tools/install.ps1, logged to .tmp/install.log. A junction
@@ -43,7 +50,7 @@ pwsh run.ps1 itest -Filter "*McpServerSmokeTests"
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('build', 'test', 'itest', 'format', 'publish', 'install', 'gdtest', 'help')]
+    [ValidateSet('build', 'test', 'itest', 'format', 'dotnet', 'publish', 'install', 'gdtest', 'help')]
     [string]$Command = 'help',
 
     [string]$Filter = ''
@@ -72,6 +79,8 @@ New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $solution = Join-Path $root 'GodotMcp.slnx'
 $gdtestDir = Join-Path $root 'tests/bridge'
 $gdtestStamp = Join-Path $gdtestDir '.godot/gdtest-import.stamp'
+$dotnetOut = Join-Path $root 'bin/dotnet'
+$dotnetStaging = Join-Path $logDir 'dotnet-publish'
 
 $gate = Join-Path $root 'tools/gate.ps1'
 
@@ -274,9 +283,92 @@ function Get-ConfiguredDirectory {
     return $Configured
 }
 
+# ILCompiler's findvcvarsall.bat runs "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" to find the
+# MSVC linker and never searches PATH, so that variable is set to its default when empty (as it can be under Git Bash).
+function Set-ProgramFilesX86 {
+    ${env:ProgramFiles(x86)} = Get-ConfiguredDirectory -Configured ${env:ProgramFiles(x86)} -Default 'C:\Program Files (x86)'
+}
+
+# The C# helper's projects, each published into .tmp/dotnet-publish/<name>, and the files bin/dotnet takes from it:
+# name = project, extra publish arguments, files, and the folder of bin/dotnet they go in ('' for the top).
+$dotnetProjects = [ordered]@{
+    shim   = @{
+        Project = 'src/GodotMcp.Dotnet.Shim/GodotMcp.Dotnet.Shim.csproj'; Extra = @('-r', 'win-x64')
+        Files = @('godot_mcp_dotnet.dll'); Folder = ''
+    }
+    loader = @{
+        Project = 'src/GodotMcp.Dotnet.Loader/GodotMcp.Dotnet.Loader.csproj'; Extra = @()
+        Files = @('GodotMcp.Dotnet.Loader.dll', 'GodotMcp.Dotnet.Loader.runtimeconfig.json'); Folder = 'loader'
+    }
+    helper = @{
+        Project = 'src/GodotMcp.Dotnet/GodotMcp.Dotnet.csproj'; Extra = @()
+        Files = @('GodotMcp.Dotnet.dll'); Folder = 'helper'
+    }
+}
+
+# Replaces a folder with a copy of another.
+function Copy-Folder {
+    param(
+        [Parameter(Mandatory)] [string]$Source,
+        [Parameter(Mandatory)] [string]$Destination
+    )
+    if (Test-Path -LiteralPath $Destination) {
+        Remove-Item -LiteralPath $Destination -Recurse -Force
+    }
+    Copy-Item -LiteralPath $Source -Destination $Destination -Recurse
+}
+
+# Rebuilds bin/dotnet from the staged publishes and the tracked .gdextension.
+function Copy-DotnetLayout {
+    if (Test-Path -LiteralPath $dotnetOut) {
+        Remove-Item -LiteralPath $dotnetOut -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $dotnetOut | Out-Null
+    Copy-Item -LiteralPath (Join-Path $root 'dotnet/godot_mcp_dotnet.gdextension') -Destination $dotnetOut
+    foreach ($name in $dotnetProjects.Keys) {
+        $project = $dotnetProjects[$name]
+        $folder = Join-Path $dotnetOut $project.Folder
+        New-Item -ItemType Directory -Force -Path $folder | Out-Null
+        foreach ($file in $project.Files) {
+            Copy-Item -LiteralPath (Join-Path $dotnetStaging $name $file) -Destination $folder
+        }
+    }
+}
+
+# Publishes the shim, the loader and the helper, each under its own gate, then lays out bin/dotnet. Returns the first
+# failing publish's status, else 0.
+function Invoke-DotnetPublish {
+    Set-ProgramFilesX86
+    foreach ($name in $dotnetProjects.Keys) {
+        $project = $dotnetProjects[$name]
+        $arguments = @('publish', (Join-Path $root $project.Project), '-c', 'Release', '-o', (Join-Path $dotnetStaging $name)) + $project.Extra
+        $status = Invoke-Logged -Name "dotnet-$name" -TimeoutSeconds 300 -Arguments $arguments
+        if ($status -ne 0) {
+            return $status
+        }
+    }
+    Copy-DotnetLayout
+    Write-Host "dotnet: the helper is in $dotnetOut"
+    return 0
+}
+
+# Publishes the server into bin/publish, then the C# helper, copying bin/dotnet to bin/publish/dotnet.
+function Invoke-Publish {
+    $status = Invoke-Logged -Name 'publish' -TimeoutSeconds 300 -Arguments (Get-PublishArgumentList)
+    if ($status -ne 0) {
+        return $status
+    }
+    $status = Invoke-DotnetPublish
+    if ($status -ne 0) {
+        return $status
+    }
+    Copy-Folder -Source $dotnetOut -Destination (Join-Path $root 'bin/publish/dotnet')
+    return 0
+}
+
 # Publishes, then runs tools/install.ps1 under its own gate: the mirror into the install folder and the skill junction.
 function Invoke-Install {
-    $status = Invoke-Logged -Name 'publish' -TimeoutSeconds 300 -Arguments (Get-PublishArgumentList)
+    $status = Invoke-Publish
     if ($status -ne 0) {
         return $status
     }
@@ -313,8 +405,11 @@ switch ($Command) {
         }
         exit (Invoke-Logged -Name 'format' -TimeoutSeconds 180 -Arguments @('csharpier', 'format', $root))
     }
+    'dotnet' {
+        exit (Invoke-DotnetPublish)
+    }
     'publish' {
-        exit (Invoke-Logged -Name 'publish' -TimeoutSeconds 300 -Arguments (Get-PublishArgumentList))
+        exit (Invoke-Publish)
     }
     'install' {
         exit (Invoke-Install)
