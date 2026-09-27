@@ -1,0 +1,82 @@
+# godot-mcp
+
+An [MCP](https://modelcontextprotocol.io) server that lets a coding agent (Claude Code, or any MCP client) run your Godot 4 game, see it, play it, inspect and change it while it runs, and edit its scenes, for GDScript and C# projects alike. It injects a small bridge into the game when it launches it, and never touches your project's tracked files.
+
+What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
+
+## What your agent can do with it
+
+**Run and watch the game**
+
+- Launch the game (or one scene), restart it, stop it, or attach to a game you started from the editor; run several sessions side by side.
+- Launch quietly by default: off-screen, unfocused, silent and deaf to your own mouse, keyboard and pads, so the agent can play while you work.
+- Preview a single scene as a picture without playing it, 2D or 3D, framing a 3D scene that has no camera.
+- Take screenshots, whole or cropped, and save baselines to catch visual regressions.
+- Record a run to video and cut the marked moments into MP4 clips, with the idle time between the agent's steps left out on request.
+- Read the game's errors with file, line and stack on every call, plus its full output log.
+
+**Play it**
+
+- Click, drag, hover (and read the tooltip), type text and press keys, aimed at a Control by name or at viewport coordinates.
+- Press InputMap actions, and drive virtual gamepad buttons, sticks and triggers.
+- Replay arbitrary input event sequences, record what a person played and replay it, and throw random input at the game to find what breaks it.
+- Pause, step single frames and change the time scale, so a check lands on an exact frame.
+- Wait for a condition (a node appears, a property changes, a signal fires) instead of sleeping.
+
+**Look inside it while it runs**
+
+- Browse the live scene tree, list the UI with its on-screen rects, and inspect any node's properties.
+- Set properties, call methods, and run a GDScript snippet in the game.
+- Watch a value over frames, or snapshot a subtree before and after an action and diff the two.
+- Look up any class's methods, properties and signals.
+- In C# games: list a C# object's members (private ones and overloads included), read and set members Godot cannot reach, call any method (generics, records, async `Task`s), and run a C# snippet that uses the game's own types.
+- Run a whole scripted sequence of steps and checks in one call.
+
+**Edit the project without running it**
+
+- Check that scripts and scenes load, including a C# file through the real build, with compiler errors quoted.
+- Create and save scenes; add, delete and duplicate nodes; attach scripts; load sprites; set properties; connect and disconnect signals; many edits in one batch.
+- Read a scene file's node tree, a node's properties and its signal connections.
+- For C# projects, build the game's assembly and run Godot's import first when either is stale.
+
+The full guide to every tool, with the edges that bite, is [docs/TOOLS.md](docs/TOOLS.md).
+
+## Requirements
+
+- Windows 10 or 11 (the server is built for win-x64).
+- [Godot 4.7.2](https://godotengine.org/download), the console executable (`..._console.exe`); the .NET edition if your game uses C#.
+- The [.NET 10 SDK](https://dotnet.microsoft.com/download), PowerShell 7 (`pwsh`), and Visual Studio Build Tools 2022 with the C++ workload, to build the server and its C# helper.
+- Optional: [ffmpeg](https://ffmpeg.org) on `PATH` (`winget install Gyan.FFmpeg`), to cut recordings into clips.
+- An MCP client; the steps below use [Claude Code](https://claude.com/claude-code).
+
+## Install it: tell your agent
+
+Paste this into Claude Code, in the folder of the Godot game you want it to drive, with the Godot path filled in:
+
+```text
+Install the godot-mcp server for this project:
+1. Clone https://github.com/leftos/godot-mcp to a folder of your choice (skip if it is already cloned there; git pull instead).
+2. In that clone, run `pwsh run.ps1 install`. It builds the server into %LOCALAPPDATA%\godot-mcp and links its skill into ~/.claude/skills/godot-mcp. It must end with "install: server at ... (version ...)".
+3. Back in this project's folder, register the server for this project:
+   claude mcp add godot -s local -e GODOT_PATH=<path to Godot_v4.7.2-stable_win64_console.exe> -- "%LOCALAPPDATA%\godot-mcp\godot-mcp.exe"
+   (expand %LOCALAPPDATA% to the real path).
+4. Tell me to restart Claude Code, then check that the `mcp__godot__*` tools are listed and load the godot-mcp skill before the first call.
+```
+
+After the restart, ask for anything in the list above ("run the game and click Start", "why does the inventory close when I drag an item?"). The agent loads the `godot-mcp` skill, which teaches it the drive loop.
+
+To update, run `git pull` and `pwsh run.ps1 install` in the clone again; restart the agent session to pick up the new server.
+
+## Configuration
+
+- `GODOT_PATH`: the Godot executable the server launches (default `F:\Godot\Godot_console.exe`).
+- `FFMPEG_PATH`: ffmpeg for recordings, when it is not on `PATH`.
+- A `godot-mcp.json` beside `project.godot` sets the project's launch defaults (scene, arguments, window size, quiet) and named presets; see [docs/TOOLS.md](docs/TOOLS.md#project-profiles-godot-mcpjson).
+
+## Working on godot-mcp itself
+
+Start at [docs/README.md](docs/README.md) (the map and the glossary) and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) (toolchain, commands, tests). Agents working in this repository follow [CLAUDE.md](CLAUDE.md).
+
+## License
+
+See [LICENSE](LICENSE).

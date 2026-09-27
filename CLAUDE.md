@@ -10,6 +10,7 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 
 - `docs/README.md`: the map and the glossary.
 - `docs/plans/MAIN.md`: open work, in order.
+- `README.md`: the user-facing page: what the server lets an agent do, and the prompt that installs it; a new tool or capability, or a change to install or requirements, updates it in the same commit (user, 2026-09-27).
 - `CHANGELOG.md`: what each version changed, newest first.
 - `docs/DECISIONS.md`: the user's decisions and the engine facts behind them; read it before reversing one.
 - `docs/TOOLS.md`: the agent-facing guide to every tool; a change to a tool's arguments, defaults or edges updates it in the same commit.
