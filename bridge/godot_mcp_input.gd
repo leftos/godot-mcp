@@ -26,15 +26,27 @@ const UNKNOWN_KEY_HINT := (
 var bridge: Node
 ## What the playing gesture hit: pressedOn, releasedOn, guiDragStarted, dropAccepted.
 var _hits: Dictionary = {}
+## The UI snapshot (godot_mcp_ui_snapshot.gd) taken as the first gesture since launch, or since
+## the last uiChanged wait was met, started: the baseline wait_for {uiChanged} compares with.
+## Empty while none is pending.
+var _ui_baseline: Dictionary = {}
+## The instance ids of the drag previews seen entering the tree, which the snapshot leaves out.
+var _drag_previews: Dictionary = {}
+
+
+func _ready() -> void:
+	get_tree().node_added.connect(_note_drag_preview)
 
 
 ## Plays one gesture over frames, then waits two more frames, so the game's handlers have run
 ## and their errors are flushed ahead of the reply. Every point arrives in viewport coordinates.
 ## Answers {result: {pointer, heldButtonMask}}, to which a click, drag or mouse_button adds the
-## Controls it hit, or {error}.
+## Controls it hit, or {error}. Takes the uiChanged baseline when none is pending.
 func play(params: Dictionary) -> Dictionary:
 	bridge._gesture_playing = true
 	_hits = {}
+	if _ui_baseline.is_empty():
+		_ui_baseline = _snapshot_ui()
 	var error: String = await _play_gesture(params)
 	for _frame in SETTLE_FRAMES:
 		await get_tree().process_frame
@@ -48,6 +60,41 @@ func play(params: Dictionary) -> Dictionary:
 	if HIT_GESTURES.has(str(params.get("gesture", ""))):
 		result.merge(_hits)
 	return {"result": result}
+
+
+## Whether a uiChanged baseline is pending.
+func has_ui_baseline() -> bool:
+	return not _ui_baseline.is_empty()
+
+
+## What changed in the UI since the baseline, as the snapshot's diff gives it; empty when nothing
+## did or no baseline is pending.
+func ui_change() -> Dictionary:
+	if _ui_baseline.is_empty():
+		return {}
+	return bridge._ui_snapshot.diff(_ui_baseline, _snapshot_ui())
+
+
+## Drops the baseline, which a met uiChanged wait uses up; the next gesture takes a new one.
+func use_up_ui_baseline() -> void:
+	_ui_baseline = {}
+
+
+func _snapshot_ui() -> Dictionary:
+	return bridge._ui_snapshot.capture(bridge, _drag_previews)
+
+
+## Records a drag preview as it enters the tree, dropping the ids of freed ones. Viewport adds a
+## preview as a top_level Control while the GUI drags (scene/main/viewport.cpp L2510-2525 in
+## 4.7.2; dragging is already set then, L2058 and L2497) and keeps it out of script's reach.
+func _note_drag_preview(node: Node) -> void:
+	var control := node as Control
+	if control == null or not control.top_level or not control.get_viewport().gui_is_dragging():
+		return
+	for id: int in _drag_previews.keys():
+		if not is_instance_id_valid(id):
+			_drag_previews.erase(id)
+	_drag_previews[control.get_instance_id()] = true
 
 
 func _play_gesture(params: Dictionary) -> String:

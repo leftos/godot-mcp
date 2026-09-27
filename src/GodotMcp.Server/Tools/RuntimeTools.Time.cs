@@ -17,7 +17,8 @@ internal sealed partial class RuntimeTools
     internal const double MaxTimeScale = 100;
     internal const int MaxWaitMs = 120_000;
     private const int StepPreviewMaxWidth = 480;
-    private const string ConditionMessage = "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}.";
+    private const string ConditionMessage =
+        "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}.";
     private static readonly string[] FrameActions = ["pause", "resume", "step", "time_scale"];
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(10);
 
@@ -65,10 +66,14 @@ internal sealed partial class RuntimeTools
             + "value seen (a signal wait's timeout has no last), which is not an error. While the game is paused only a "
             + "signal wait or a check-once wait (timeoutMs 0) is accepted. A property the node does not have fails the call "
             + "once the node is found. An expression that does not parse fails the call; one that fails while it runs counts "
-            + "as not met, and its error is in errors."
+            + "as not met, and its error is in errors. uiChanged compares the UI with the snapshot the bridge takes when the "
+            + "first input gesture since launch, or since the last met uiChanged wait, starts (later gestures keep it; a met "
+            + "wait uses it up, a timeout keeps it), and is refused when no gesture has taken one."
     )]
     public async Task<string> WaitForAsync(
-        [Description("Exactly one of {node, exists}, {node, property, equals}, {node, signal}, {expression} (with node optional).")]
+        [Description(
+            "Exactly one of {node, exists}, {node, property, equals}, {node, signal}, {expression} (with node optional), {uiChanged: true}."
+        )]
             WaitCondition condition,
         [Description(
             "How long to wait, in milliseconds, 0 to 120000. 0 checks the condition once, now, and works while the game is paused; "
@@ -190,7 +195,7 @@ internal sealed partial class RuntimeTools
         }
     }
 
-    /// <summary>The condition's one kind: exists, property, signal or expression.</summary>
+    /// <summary>The condition's one kind: exists, property, signal, expression or uiChanged.</summary>
     private static string CheckCondition(WaitCondition? condition)
     {
         string? kind = condition is null ? null : KindOf(condition);
@@ -205,6 +210,7 @@ internal sealed partial class RuntimeTools
             ("property", condition.Property is not null || HasEquals(condition)),
             ("signal", condition.Signal is not null),
             ("expression", condition.Expression is not null),
+            ("uiChanged", condition.UiChanged is not null),
         ];
         string[] given = [.. kinds.Where(kind => kind.Given).Select(kind => kind.Kind)];
         return given.Length == 1 ? given[0] : null;
@@ -214,9 +220,13 @@ internal sealed partial class RuntimeTools
         kind switch
         {
             "expression" => true,
+            "uiChanged" => IsUiChangedAlone(condition),
             "property" => !string.IsNullOrEmpty(condition.Node) && !string.IsNullOrEmpty(condition.Property) && HasEquals(condition),
             _ => !string.IsNullOrEmpty(condition.Node),
         };
+
+    // Only true is a kind, and it takes no node: the other kinds' fields already make a second kind.
+    private static bool IsUiChangedAlone(WaitCondition condition) => condition.UiChanged is true && condition.Node is null;
 
     // A JSON null arrives as a null JsonElement?, the same as a missing equals, so a null to compare with is not supported
     // either way; an explicit Null element is treated alike.

@@ -29,6 +29,7 @@ public class SharedProbeSession : IAsyncLifetime
         	_release_keys_and_actions()
         	var root: Window = scene_tree.root
         	root.get_node("GodotMcpBridge").set("_pointer", Vector2.ZERO)
+        	root.get_node("GodotMcpBridge/Gestures").set("_ui_baseline", {})
         	for child: Node in root.get_children():
         		if not ProjectSettings.has_setting("autoload/" + child.name):
         			root.remove_child(child)
@@ -78,6 +79,10 @@ public class SharedProbeSession : IAsyncLifetime
         	return events
 
         """;
+
+    private const string ClearUiBaselineScript =
+        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t"
+        + "scene_tree.root.get_node(\"GodotMcpBridge/Gestures\").set(\"_ui_baseline\", {})\n\treturn true\n";
 
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
@@ -138,6 +143,8 @@ public class SharedProbeSession : IAsyncLifetime
         if (releases.Length > 0)
         {
             await _tools.SimulateInputAsync(releases, cancellationToken: cancellation);
+            // The releases are a gesture, which takes a uiChanged baseline; a fresh launch has none.
+            await _tools.RunScriptAsync(ClearUiBaselineScript, ScriptTimeoutMs, cancellationToken: cancellation);
         }
 
         ErrorCursor = Sessions.Resolve(null).Errors.Mark();

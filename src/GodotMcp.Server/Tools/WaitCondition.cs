@@ -5,8 +5,8 @@ using System.Text.Json.Serialization;
 namespace GodotMcp.Server.Tools;
 
 /// <summary>
-/// What wait_for waits for, exactly one kind: {node, exists}, {node, property, equals}, {node, signal} or {expression}
-/// (node optional).
+/// What wait_for waits for, exactly one kind: {node, exists}, {node, property, equals}, {node, signal}, {expression}
+/// (node optional) or {uiChanged: true}.
 /// </summary>
 internal sealed record WaitCondition(
     [property: Description(
@@ -29,5 +29,11 @@ internal sealed record WaitCondition(
         "A Godot Expression evaluated each frame, met when it returns true. Its inputs are node (when node is given, which is "
             + "also its base instance), root, tree, Input and Engine; other singletons are out of its reach."
     )]
-        string? Expression = null
+        string? Expression = null,
+    [property: Description(
+        "true, alone: wait until the UI (the visible Controls, the focus owner, the top popup) differs from the snapshot taken "
+            + "when the first input gesture since launch, or since the last met uiChanged wait, started. Met, it carries "
+            + "{appeared, disappeared, appearedCount, disappearedCount}, plus focus and popup {before, after} when they changed."
+    )]
+        bool? UiChanged = null
 );

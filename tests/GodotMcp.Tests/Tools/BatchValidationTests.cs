@@ -95,7 +95,10 @@ public sealed class BatchValidationTests : IDisposable
     [InlineData("property", "step 0: the property assertion needs node, property and equals.")]
     [InlineData("expression", "step 0: the expression assertion needs expression.")]
     [InlineData("screenshot", "step 0: the screenshot assertion needs name.")]
-    [InlineData("wait", "step 0: condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}.")]
+    [InlineData(
+        "wait",
+        "step 0: condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}."
+    )]
     public async Task AnAssertionMissingAFieldIsRefused(string assert, string message)
     {
         McpException refused = await RefusedAsync([new BatchStep(Assert: assert, Node: "TimeProbe", Property: "state")]);
@@ -112,6 +115,17 @@ public sealed class BatchValidationTests : IDisposable
         McpException refused = await RefusedAsync([new BatchStep(Assert: "no_errors"), property]);
 
         Assert.Equal("step 1: timeoutMs must be between 0 and 120000.", refused.Message);
+    }
+
+    [Fact]
+    public void AUiChangedWaitAssertionIsAccepted() => RuntimeTools.CheckBatch([new BatchStep(Assert: "wait", UiChanged: true)]);
+
+    [Fact]
+    public async Task AUiChangedWaitAssertionWithANodeIsRefused()
+    {
+        McpException refused = await RefusedAsync([new BatchStep(Assert: "wait", Node: "Main", UiChanged: true)]);
+
+        Assert.StartsWith("step 0: condition needs exactly one of: ", refused.Message, StringComparison.Ordinal);
     }
 
     [Fact]

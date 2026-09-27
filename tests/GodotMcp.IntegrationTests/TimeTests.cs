@@ -21,6 +21,15 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     private const string PausedRefusal =
         "The game is paused, so only a signal wait or a check-once wait (timeoutMs 0) can be met; resume or step it first.";
     private const string SteppingRefusal = "A step is still running on this game; wait for its reply before pause, resume or another step.";
+    private const string NoUiBaseline =
+        "uiChanged has no baseline: no input gesture has started since launch or since the last uiChanged wait was met; " + "send the input first";
+    private const string TooltipShown =
+        "for window in scene_tree.root.get_embedded_subwindows():\n\t\t"
+        + "if window.visible and window.theme_type_variation == &\"TooltipPanel\":\n\t\t\t"
+        + "return true\n\t"
+        + "return false";
+    private static readonly WaitCondition UiChangedCondition = new(UiChanged: true);
+    private static readonly InputTarget OpenButton = new("OpenButton");
     private readonly SharedProbeSession _shared = shared;
     private readonly RuntimeTools _tools = new(shared.Sessions);
 
@@ -389,6 +398,110 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
 
         Assert.Contains("'/root/TimeProbe' has no property 'nope'.", refused.Message, StringComparison.Ordinal);
     }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task UiChangedWithoutGestureIsRefused()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(UiChangedCondition, 300, cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.Contains(NoUiBaseline, refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task UiChangedReportsPanelOpenedByClick()
+    {
+        string panel = await AddOpenerAsync();
+        await _tools.ClickAsync(OpenButton, "left", false, cancellationToken: TestContext.Current.CancellationToken);
+
+        JsonObject waited = await WaitAsync(UiChangedCondition, 2000);
+        McpException again = await Assert.ThrowsAsync<McpException>(() => WaitAsync(UiChangedCondition, 300));
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        JsonObject change = waited["value"]!.AsObject();
+        Assert.Contains(panel, Paths(change["appeared"]));
+        Assert.Equal(change["appeared"]!.AsArray().Count, change["appearedCount"]!.GetValue<int>());
+        Assert.Contains(NoUiBaseline, again.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task UiChangedSeesPressBeforeRelease()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string panel = await AddOpenerAsync();
+
+        await _tools.MouseButtonAsync(OpenButton, "left", "press", cancellationToken: cancellation);
+        await _tools.MouseButtonAsync(OpenButton, "left", "release", cancellationToken: cancellation);
+        JsonObject waited = await WaitAsync(UiChangedCondition, 1000);
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Contains(panel, Paths(waited["value"]!["appeared"]));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task UiChangedIgnoresTooltip()
+    {
+        // A motion with no button over ProbeButton (tooltip_text set, centre (80, 90)) starts its tooltip timer:
+        // gui/timers/tooltip_delay_sec, 0.5 s by default.
+        JsonObject hover = new()
+        {
+            ["type"] = "mouse_motion",
+            ["x"] = 80,
+            ["y"] = 90,
+        };
+        await _tools.SimulateInputAsync([hover], cancellationToken: TestContext.Current.CancellationToken);
+
+        JsonObject waited = await WaitAsync(UiChangedCondition, 1500);
+        bool tooltipShown = (await RunAsync(TooltipShown)).GetValue<bool>();
+
+        Assert.True(tooltipShown, "no tooltip showed over ProbeButton, so the wait proves nothing");
+        Assert.False(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.True(waited.ContainsKey("last") && waited["last"] is null, waited.ToJsonString());
+        Assert.False(waited.ContainsKey("value"), waited.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task UiChangedReportsFocusMove()
+    {
+        string before = (await RunAsync("return str(scene_tree.root.gui_get_focus_owner().get_path())")).GetValue<string>();
+
+        await _tools.KeyAsync("Down", "tap", null, cancellationToken: TestContext.Current.CancellationToken);
+        JsonObject waited = await WaitAsync(UiChangedCondition, 2000);
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        JsonNode focus = waited["value"]!["focus"]!;
+        Assert.EndsWith("Menu/MenuA", before, StringComparison.Ordinal);
+        Assert.Equal(before, focus["before"]!.GetValue<string>());
+        Assert.EndsWith("Menu/MenuB", focus["after"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Equal(0, waited["value"]!["appearedCount"]!.GetValue<int>());
+    }
+
+    // Adds OpenButton, a Button under the root, and OpenedPanel, a Panel hidden until the button is pressed; the button acts on
+    // the press (ACTION_MODE_BUTTON_PRESS), not the release, and takes no focus. Returns the panel's path.
+    private async Task<string> AddOpenerAsync() =>
+        (
+            await RunAsync(
+                "var button := Button.new()\n\t"
+                    + "button.name = \"OpenButton\"\n\t"
+                    + "button.text = \"Open\"\n\t"
+                    + "button.focus_mode = Control.FOCUS_NONE\n\t"
+                    + "button.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS\n\t"
+                    + "button.position = Vector2(540, 300)\n\t"
+                    + "button.size = Vector2(80, 40)\n\t"
+                    + "var panel := Panel.new()\n\t"
+                    + "panel.name = \"OpenedPanel\"\n\t"
+                    + "panel.position = Vector2(440, 200)\n\t"
+                    + "panel.size = Vector2(80, 60)\n\t"
+                    + "panel.visible = false\n\t"
+                    + "button.pressed.connect(panel.show)\n\t"
+                    + "scene_tree.root.add_child(button)\n\t"
+                    + "scene_tree.root.add_child(panel)\n\t"
+                    + "return str(panel.get_path())"
+            )
+        ).GetValue<string>();
+
+    private static IEnumerable<string> Paths(JsonNode? list) => list!.AsArray().Select(path => path!.GetValue<string>());
 
     /// <summary>Adds time_probe.tscn under the shared run's root as TimeProbe; InitializeAsync has already reset the run.</summary>
     private Task<string> AddTimeProbeAsync(CancellationToken cancellationToken) =>

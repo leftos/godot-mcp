@@ -21,6 +21,11 @@ internal sealed record BatchStep(
     [property: Description("wait: with node, the signal whose next emission is waited for.")] string? Signal = null,
     [property: Description("expression, wait: a Godot Expression that must return true, as wait_for evaluates it.")] string? Expression = null,
     [property: Description(
+        "wait: true, alone, to wait for the UI to change from the snapshot taken when the first input gesture since launch, or "
+            + "since the last met uiChanged wait, started, as wait_for's uiChanged."
+    )]
+        bool? UiChanged = null,
+    [property: Description(
         "property, expression: 0 by default, checked once, now, even while paused; wait: 10000 by default. 0 to 120000, as wait_for takes it."
     )]
         int? TimeoutMs = null,

@@ -220,7 +220,7 @@ internal sealed partial class RuntimeTools
         {
             "property" => new WaitCondition(Node: step.Node, Property: step.Property, EqualsValue: step.EqualsValue),
             "expression" => new WaitCondition(Node: step.Node, Expression: step.Expression),
-            _ => new WaitCondition(step.Node, step.Exists, step.Property, step.EqualsValue, step.Signal, step.Expression),
+            _ => new WaitCondition(step.Node, step.Exists, step.Property, step.EqualsValue, step.Signal, step.Expression, step.UiChanged),
         };
 
     private static int TimeoutOf(BatchStep step) => step.TimeoutMs ?? (step.Assert == "wait" ? WaitAssertionMs : 0);

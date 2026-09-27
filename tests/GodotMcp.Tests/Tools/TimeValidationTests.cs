@@ -10,7 +10,8 @@ namespace GodotMcp.Tests.Tools;
 /// <summary>frame_control's and wait_for's argument checks, which refuse before anything reaches a game; no Godot runs here.</summary>
 public sealed class TimeValidationTests : IDisposable
 {
-    private const string ConditionMessage = "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}.";
+    private const string ConditionMessage =
+        "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}.";
     private const string ScaleMessage = "time_scale needs scale, greater than 0 and at most 100.";
     private readonly BridgeListener _listener = new(NullLogger<BridgeListener>.Instance);
     private readonly SessionRegistry _sessions;
@@ -58,29 +59,36 @@ public sealed class TimeValidationTests : IDisposable
     }
 
     [Theory]
-    [InlineData(null, null, null, null, null, null)]
-    [InlineData("Main", null, null, null, null, null)]
-    [InlineData(null, true, null, null, null, null)]
-    [InlineData("Main", null, "state", null, null, null)]
-    [InlineData("Main", null, null, "\"done\"", null, null)]
-    [InlineData(null, null, "state", "\"done\"", null, null)]
-    [InlineData(null, null, null, null, "fired", null)]
-    [InlineData("Main", true, null, null, "fired", null)]
-    [InlineData("Main", null, "state", "\"done\"", null, "true")]
-    [InlineData(null, null, null, null, "fired", "true")]
-    [InlineData("", true, null, null, null, null)]
-    [InlineData("Main", null, "state", "null", null, null)]
+    [InlineData(null, null, null, null, null, null, null)]
+    [InlineData("Main", null, null, null, null, null, null)]
+    [InlineData(null, true, null, null, null, null, null)]
+    [InlineData("Main", null, "state", null, null, null, null)]
+    [InlineData("Main", null, null, "\"done\"", null, null, null)]
+    [InlineData(null, null, "state", "\"done\"", null, null, null)]
+    [InlineData(null, null, null, null, "fired", null, null)]
+    [InlineData("Main", true, null, null, "fired", null, null)]
+    [InlineData("Main", null, "state", "\"done\"", null, "true", null)]
+    [InlineData(null, null, null, null, "fired", "true", null)]
+    [InlineData("", true, null, null, null, null, null)]
+    [InlineData("Main", null, "state", "null", null, null, null)]
+    [InlineData(null, null, null, null, null, null, false)]
+    [InlineData("Main", null, null, null, null, null, true)]
+    [InlineData("", null, null, null, null, null, true)]
+    [InlineData(null, true, null, null, null, null, true)]
+    [InlineData(null, null, null, null, null, "true", true)]
+    [InlineData("Main", null, null, null, "fired", null, true)]
     public async Task WaitForRefusesAConditionThatIsNotExactlyOneKind(
         string? node,
         bool? exists,
         string? property,
         string? equalsJson,
         string? signal,
-        string? expression
+        string? expression,
+        bool? uiChanged
     )
     {
         JsonElement? equals = equalsJson is null ? null : JsonSerializer.Deserialize<JsonElement>(equalsJson);
-        WaitCondition condition = new(node, exists, property, equals, signal, expression);
+        WaitCondition condition = new(node, exists, property, equals, signal, expression, uiChanged);
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
             _tools.WaitForAsync(condition, 1000, null, TestContext.Current.CancellationToken)
@@ -117,6 +125,18 @@ public sealed class TimeValidationTests : IDisposable
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
             _tools.WaitForAsync(new WaitCondition(Expression: "true"), 0, null, TestContext.Current.CancellationToken)
+        );
+
+        Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1000)]
+    public async Task AUiChangedWaitIsAccepted(int timeoutMs)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(UiChanged: true), timeoutMs, null, TestContext.Current.CancellationToken)
         );
 
         Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);

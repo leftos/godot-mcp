@@ -23,6 +23,7 @@ const BASELINE_SCRIPT := "godot_mcp_baseline.gd"
 const LOGGER_SCRIPT := "godot_mcp_logger.gd"
 const JSON_SCRIPT := "godot_mcp_json.gd"
 const PREVIEW_SCRIPT := "godot_mcp_preview.gd"
+const UI_SNAPSHOT_SCRIPT := "godot_mcp_ui_snapshot.gd"
 ## A quiet run's frame-rate cap when the project sets none: its frames are never seen, so drawing
 ## at the monitor's refresh rate only burns the GPU.
 const QUIET_MAX_FPS := 60
@@ -59,6 +60,9 @@ var _preview: Node
 ## The JSON conversion (godot_mcp_json.gd beside this script), static functions called on the
 ## script itself, by this script and by the Inspect and Time modules.
 var _json: GDScript
+## The UI snapshot (godot_mcp_ui_snapshot.gd beside this script), static functions called on the
+## script itself by the input module, which owns wait_for {uiChanged}'s baseline.
+var _ui_snapshot: GDScript
 ## Every command's handler, func(id, params), by command name (_command_handlers).
 var _handlers: Dictionary = {}
 ## The server to dial, found in _init; empty when the bridge is off.
@@ -102,6 +106,7 @@ func _ready() -> void:
 		get_tree().paused = true
 	var script_dir: String = (get_script() as Script).resource_path.get_base_dir()
 	_json = load(script_dir.path_join(JSON_SCRIPT)) as GDScript
+	_ui_snapshot = load(script_dir.path_join(UI_SNAPSHOT_SCRIPT)) as GDScript
 	_pads = (load(script_dir.path_join(GAMEPAD_SCRIPT)) as GDScript).new()
 	_pads.name = "Gamepad"
 	add_child(_pads)
@@ -313,10 +318,16 @@ func _handle_movie_frame(id: int, _params: Dictionary) -> void:
 	_reply_ok(id, {"frame": Engine.get_process_frames()})
 
 
+## Replies with every Control (visible ones only unless visibleOnly is false), each described;
+## classFilter keeps Controls of that engine class or a subclass of it.
 func _handle_ui_elements(id: int, params: Dictionary) -> void:
+	var controls: Array[Control] = []
+	_gather_controls(get_tree().root, bool(params.get("visibleOnly", true)), Callable(), controls)
+	var class_filter: String = str(params.get("classFilter", ""))
 	var elements: Array = []
-	var visible_only: bool = bool(params.get("visibleOnly", true))
-	_collect_controls(get_tree().root, visible_only, str(params.get("classFilter", "")), elements)
+	for control in controls:
+		if class_filter.is_empty() or control.is_class(class_filter):
+			elements.append(_describe_control(control))
 	_reply_ok(id, {"elements": elements})
 
 
@@ -442,17 +453,19 @@ func _utc_stamp() -> String:
 	return "%s_%03dZ" % [stamp, int(fmod(now, 1.0) * 1000.0)]
 
 
-## Appends every Control under node, depth first. An invisible Control hides its subtree when
-## visible_only is set; class_filter keeps Controls of that engine class or a subclass of it.
-func _collect_controls(node: Node, visible_only: bool, class_filter: String, into: Array) -> void:
+## Appends every Control under node, depth first: the Controls get_ui_elements lists, and the UI
+## snapshot wait_for {uiChanged} compares. An invisible Control hides its subtree when
+## visible_only is set, and so does any node skip (when valid) returns true for.
+func _gather_controls(node: Node, visible_only: bool, skip: Callable, into: Array[Control]) -> void:
+	if skip.is_valid() and skip.call(node):
+		return
 	var control := node as Control
 	if control != null:
 		if visible_only and not control.is_visible_in_tree():
 			return
-		if class_filter.is_empty() or control.is_class(class_filter):
-			into.append(_describe_control(control))
+		into.append(control)
 	for child in node.get_children():
-		_collect_controls(child, visible_only, class_filter, into)
+		_gather_controls(child, visible_only, skip, into)
 
 
 func _describe_control(control: Control) -> Dictionary:

@@ -52,6 +52,10 @@ const STEP_STALLED := (
 ## An expression's inputs besides node. Expression resolves only its inputs and its base
 ## instance's members, not singletons (core/math/expression.cpp L707-734 in 4.7.2).
 const EXPRESSION_INPUTS: PackedStringArray = ["root", "tree", "Input", "Engine"]
+const NO_UI_BASELINE := (
+	"uiChanged has no baseline: no input gesture has started since launch or since the last "
+	+ "uiChanged wait was met; send the input first"
+)
 
 ## The bridge this clock belongs to, for its node lookup, JSON conversion and screenshots.
 var bridge: Node
@@ -252,10 +256,10 @@ func _run_ticks(count: int) -> int:
 	return counted
 
 
-## Waits for params.kind (exists, property, signal or expression) with params {node, exists,
-## property, equals, signal, expression, timeoutMs}. Returns {result: {met, elapsedMs, frames,
-## value | args}}, with last instead of value on a timeout, or {error}. A timeoutMs of 0 checks
-## the condition once, now, paused or not.
+## Waits for params.kind (exists, property, signal, expression or uiChanged) with params {node,
+## exists, property, equals, signal, expression, timeoutMs}. Returns {result: {met, elapsedMs,
+## frames, value | args}}, with last instead of value on a timeout, or {error}. A timeoutMs of 0
+## checks the condition once, now, paused or not.
 func wait_for(params: Dictionary) -> Dictionary:
 	var kind: String = str(params.get("kind", ""))
 	var timeout_ms: int = int(params.get("timeoutMs", 10000))
@@ -289,7 +293,19 @@ func _make_probe(kind: String, params: Dictionary) -> Variant:
 			probe = _check_property.bind(node_name, property, params.get("equals"))
 		"expression":
 			probe = _parse_expression(_text(params, "expression"), node_name)
+		"uiChanged":
+			probe = _check_ui_changed if bridge._gestures.has_ui_baseline() else NO_UI_BASELINE
 	return probe
+
+
+## Met on the first check whose UI differs from the input module's baseline, with the change as
+## its value; a met wait uses the baseline up, and one that times out leaves it.
+func _check_ui_changed() -> Array:
+	var change: Dictionary = bridge._gestures.ui_change()
+	if change.is_empty():
+		return [false, null]
+	bridge._gestures.use_up_ui_baseline()
+	return [true, change]
 
 
 ## Checks probe now and then once a frame until it is met, cannot be met, or timeout_ms has
