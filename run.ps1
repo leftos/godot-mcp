@@ -63,7 +63,7 @@ $ErrorActionPreference = 'Stop'
 # refuses to run while a class is in no group or a listed class no longer exists.
 $itestGroups = [ordered]@{
     lifecycle = @('SessionLifecycleTests', 'AttachTests', 'QuietTests', 'WatchdogTests', 'McpServerSmokeTests', 'ProfileTests')
-    input     = @('InputTests', 'GamepadTests', 'CaptureTests')
+    input     = @('InputTests', 'GamepadTests', 'CaptureTests', 'StressTests')
     reads     = @('RuntimeReadTests', 'InspectionTests', 'BaselineTests', 'PreviewTests')
     time      = @('TimeTests', 'BatchTests')
     prep      = @('PrepTests', 'RestartTests')

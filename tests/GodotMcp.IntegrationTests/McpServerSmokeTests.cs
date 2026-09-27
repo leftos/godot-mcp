@@ -87,6 +87,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "simulate_input",
                 "snapshot_subtree",
                 "stop_project",
+                "stress_input",
                 "take_screenshot",
                 "type_text",
                 "validate",
@@ -175,6 +176,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["simulate_input"] = changesTheGame,
             ["snapshot_subtree"] = readsTheGame,
             ["stop_project"] = destructive,
+            ["stress_input"] = changesTheGame,
             ["take_screenshot"] = readsTheGame,
             ["type_text"] = changesTheGame,
             ["validate"] = readsTheGame,
@@ -190,7 +192,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(53, actual.Count);
+        Assert.Equal(54, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

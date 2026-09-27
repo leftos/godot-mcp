@@ -386,6 +386,49 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         Assert.False(tooltipAfter, "a tooltip showed again after the clicks");
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AClickLosesItsPressWhenAPadMovesTheFocusBetweenPressAndRelease()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonNode rect = await FindRectAsync(_tools, "Button", "SmallButton");
+        double x = rect["x"]!.GetValue<double>() + (rect["width"]!.GetValue<double>() / 2);
+        double y = rect["y"]!.GetValue<double>() + (rect["height"]!.GetValue<double>() / 2);
+        int before = await PressCountAsync();
+
+        await _tools.SimulateInputAsync(
+            [
+                new JsonObject
+                {
+                    ["type"] = "mouse_button",
+                    ["x"] = x,
+                    ["y"] = y,
+                    ["button"] = "left",
+                    ["pressed"] = true,
+                },
+                new JsonObject
+                {
+                    ["type"] = "joypad_motion",
+                    ["axis"] = "left_y",
+                    ["value"] = -1,
+                    ["device"] = 0,
+                },
+                new JsonObject
+                {
+                    ["type"] = "mouse_button",
+                    ["x"] = x,
+                    ["y"] = y,
+                    ["button"] = "left",
+                    ["pressed"] = false,
+                },
+            ],
+            cancellationToken: cancellation
+        );
+
+        // 4.7.2's base_button.cpp L193-197: FOCUS_EXIT clears press_attempt, so the release emits no pressed.
+        Assert.Equal(before, await PressCountAsync());
+        Assert.Equal("TextInput", await FocusOwnerNameAsync());
+    }
+
     // A hit is {path, class}: the Control's path, which ends with its name, and its engine class.
     private static void AssertHit(JsonNode result, string field, string name, string className)
     {
@@ -443,6 +486,10 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         string json = await tools.GetUiElementsAsync(true, classFilter, cancellationToken: TestContext.Current.CancellationToken);
         return Assert.Single(JsonNode.Parse(json)!["elements"]!.AsArray(), element => element!["name"]!.GetValue<string>() == name)!["rect"]!;
     }
+
+    private async Task<int> PressCountAsync() => (await RunAsync(ReadSmallButtonPresses)).GetValue<int>();
+
+    private async Task<string> FocusOwnerNameAsync() => (await RunAsync("return str(scene_tree.root.gui_get_focus_owner().name)")).GetValue<string>();
 
     private Task<JsonNode> RunAsync(string body) => RunAsync(_tools, body);
 

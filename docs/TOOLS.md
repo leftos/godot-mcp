@@ -15,6 +15,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | Land a check on an exact frame | `frame_control` (`pause`, `step`), then `wait_for` with `timeoutMs: 0` | `wait_for` with a timeout on a running game |
 | Watch a value change over frames | `monitor_property` | a loop of `inspect_node` calls |
 | Press an InputMap action | `simulate_action` | `key` on a key bound to it |
+| Find the input a game cannot survive | `stress_input` | a hand-written loop of random `simulate_input` calls |
 | Wait for something to happen | `wait_for` | polling `inspect_node` or `run_script` |
 | Read or change a live node | `inspect_node`, `set_property`, `call_method` | `run_script`, which is for anything those three cannot say |
 | See everything an action changed in a subtree | `snapshot_subtree`, act, `diff_snapshots` | `inspect_node` on each node before and after |
@@ -151,6 +152,12 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 - **Does:** sends raw `events`, one frame apart: `key`, `mouse_button`, `mouse_motion`, `joypad_button`, `joypad_motion`, `action` (an InputMap action with `pressed?`, `strength?`), `click_element`, `wait {ms}`.
 - **Use:** input actions directly, curved mouse paths, precise event timing. An omitted `pressed` on a key, mouse or pad button is a press and a release a frame apart; a motion's `relative` and `button_mask` default from the pointer and held buttons.
 - **Edges:** `x`, `y` are viewport coordinates as everywhere.
+
+### `stress_input`
+
+- **Does:** fires `count` random inputs, one a bridge call, each drawn uniformly and seeded from `pool`, and reports `{survived, seed, iterations, stoppedAt?, drawn {actions, keys, elements}, errors, skipped}`. An action is tapped as `simulate_action` taps it, a key as `key` taps it, an element clicked as `click` clicks it. `errors` lists each new error once, keyed by message, file and line, with the `iteration` it first appeared at and its `count`.
+- **Use:** `pool {actions?, keys?, elements?}` (1 to 200 entries in all), `count` (1 to 1000, default 100), `seed` (0 or more; left out, one is drawn and returned), `options {gapMs}` (0 to 5000 real milliseconds after each input, default 0). The same seed and pool replay the same sequence, so a failing run is reproduced by passing its `seed` back.
+- **Edges:** a draw the bridge refuses (an action missing from the InputMap, an element hidden at that moment, an unknown key) does not end the run: it is counted under `skipped` with the bridge's reason, the iteration it was first refused at and its count. The run stops at the first input the game does not answer, with `survived: false` and `stoppedAt`; otherwise `survived` means the game still runs and answers a ping at the end. It cannot run inside `batch_drive` (a thousand inputs outrun its deadline), and its result has no ordinary `errors` key: the run's own `errors` replace it.
 
 ### `gamepad_button`
 
