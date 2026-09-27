@@ -20,6 +20,11 @@ exits with the command's own status, or 124 when it outlived its ceiling and was
            a -Filter one) goes through tools/hidden-desktop.ps1, on a desktop of its own, so no Godot window shows.
   format   dotnet format style (info severity), then CSharpier, on the whole solution; ceiling 180 s each
   publish  a framework-dependent win-x64 server at bin/publish/godot-mcp.exe, with bridge/ beside it; ceiling 300 s
+  install  publish (as above), then mirror bin/publish into $env:LOCALAPPDATA\godot-mcp (robocopy /MIR, no retries), and
+           link ~/.claude/skills/godot-mcp to skills/godot-mcp as a directory junction; ceiling 300 s for the publish,
+           60 s for the copy. The copy and the link are tools/install.ps1, logged to .tmp/install.log. A junction
+           that points elsewhere is replaced; anything else at the link path is refused, never deleted.
+           GODOT_MCP_INSTALL_DIR overrides the install folder, GODOT_MCP_SKILLS_DIR the folder the link is made in.
   gdtest   the bridge's GDScript unit tests (tests/bridge/test_*.gd) in headless Godot (GODOT_PATH, else
            F:\Godot\Godot_console.exe): godot --headless --path tests/bridge --script res://run_tests.gd. Each failure
            prints as "FAIL <file>::<test>: <message>", then "gdtest: <passed> passed, <failed> failed"; ceiling 60 s
@@ -35,7 +40,7 @@ pwsh run.ps1 itest -Filter "*McpServerSmokeTests"
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('build', 'test', 'itest', 'format', 'publish', 'gdtest', 'help')]
+    [ValidateSet('build', 'test', 'itest', 'format', 'publish', 'install', 'gdtest', 'help')]
     [string]$Command = 'help',
 
     [string]$Filter = ''
@@ -214,6 +219,41 @@ function Invoke-ItestByGroup {
     return 0
 }
 
+# The dotnet arguments of the publish, shared by publish and install.
+function Get-PublishArgumentList {
+    return @(
+        'publish', (Join-Path $root 'src/GodotMcp.Server/GodotMcp.Server.csproj'),
+        '-c', 'Release', '-r', 'win-x64', '--self-contained', 'false', '-o', (Join-Path $root 'bin/publish')
+    )
+}
+
+# The folder a variable names when it is set, else the default.
+function Get-ConfiguredDirectory {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyString()] [AllowNull()] [string]$Configured,
+        [Parameter(Mandatory)] [string]$Default
+    )
+    if ([string]::IsNullOrWhiteSpace($Configured)) {
+        return $Default
+    }
+    return $Configured
+}
+
+# Publishes, then runs tools/install.ps1 under its own gate: the mirror into the install folder and the skill junction.
+function Invoke-Install {
+    $status = Invoke-Logged -Name 'publish' -TimeoutSeconds 300 -Arguments (Get-PublishArgumentList)
+    if ($status -ne 0) {
+        return $status
+    }
+    $installDir = Get-ConfiguredDirectory -Configured $env:GODOT_MCP_INSTALL_DIR -Default (Join-Path $env:LOCALAPPDATA 'godot-mcp')
+    $skillsDir = Get-ConfiguredDirectory -Configured $env:GODOT_MCP_SKILLS_DIR -Default (Join-Path $HOME '.claude/skills')
+    $arguments = @(
+        '-NoProfile', '-File', (Join-Path $root 'tools/install.ps1'),
+        '-Root', $root, '-InstallDir', $installDir, '-SkillsDir', $skillsDir
+    )
+    return Invoke-Gated -Name 'install' -TimeoutSeconds 60 -Program 'pwsh' -Arguments $arguments
+}
+
 [string[]]$filterClasses = @($Filter | Where-Object { $_ })
 
 switch ($Command) {
@@ -239,11 +279,10 @@ switch ($Command) {
         exit (Invoke-Logged -Name 'format' -TimeoutSeconds 180 -Arguments @('csharpier', 'format', $root))
     }
     'publish' {
-        $arguments = @(
-            'publish', (Join-Path $root 'src/GodotMcp.Server/GodotMcp.Server.csproj'),
-            '-c', 'Release', '-r', 'win-x64', '--self-contained', 'false', '-o', (Join-Path $root 'bin/publish')
-        )
-        exit (Invoke-Logged -Name 'publish' -TimeoutSeconds 300 -Arguments $arguments)
+        exit (Invoke-Logged -Name 'publish' -TimeoutSeconds 300 -Arguments (Get-PublishArgumentList))
+    }
+    'install' {
+        exit (Invoke-Install)
     }
     'gdtest' {
         $arguments = @('--headless', '--path', (Join-Path $root 'tests/bridge'), '--script', 'res://run_tests.gd')
