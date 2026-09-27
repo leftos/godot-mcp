@@ -9,7 +9,8 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 ## Start here
 
 - `docs/README.md`: the map and the glossary.
-- `docs/plans/MAIN.md`: open work, in order; the design and the user's decisions are in `docs/plans/2026-09-25-first-version.md`.
+- `docs/plans/MAIN.md`: open work, in order.
+- `docs/DECISIONS.md`: the user's decisions and the engine facts behind them; read it before reversing one.
 - `docs/TOOLS.md`: the agent-facing guide to every tool; a change to a tool's arguments, defaults or edges updates it in the same commit.
 - `skills/godot-mcp/SKILL.md`: the tutorial agents in the game repos load (linked into `~/.claude/skills` by `pwsh run.ps1 install`); a new tool, or a change to the drive loop or the rules that bite, updates it in the same commit as `docs/TOOLS.md`.
 - `docs/DEVELOPMENT.md`: toolchain, commands, gates, what each test class covers, and the footguns: read the footguns before touching process launching, a tool's signature, logging, or the bridge's input handling.

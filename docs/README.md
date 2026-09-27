@@ -3,7 +3,7 @@
 The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let agents run, see and drive the user's Godot projects, written to replace the third-party `godot-mcp-runtime`.
 
 - [`plans/MAIN.md`](./plans/MAIN.md): open work, in order.
-- [`plans/2026-09-25-first-version.md`](./plans/2026-09-25-first-version.md): the first version's design, the user's decisions and the steps.
+- [`DECISIONS.md`](./DECISIONS.md): the user's decisions and the Godot 4.7.2 facts behind them: why the server exists, the wire, gamepad input, the error feed.
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md): the components, a request's path, the session lifecycle, every tool and the recipe for a new one.
 - [`DEVELOPMENT.md`](./DEVELOPMENT.md): toolchain, commands, gates, test coverage and footguns.
 - [`TOOLS.md`](./TOOLS.md): for an agent using the server: which tool fits a job, each tool's edges, and worked drives.

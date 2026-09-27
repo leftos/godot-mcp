@@ -1,13 +1,12 @@
 # Main Plan
 <!-- plan-doc-hygiene: 2026-09-26 917722f -->
 
-Open work only, in working order: the next item is the first line from the top; a finished line is deleted (git keeps the history). The design, the user's decisions and each step's proving test are in [2026-09-25-first-version.md](./2026-09-25-first-version.md).
+Open work only, in working order: the next item is the first line from the top; a finished line is deleted (git keeps the history). The user's decisions are in [DECISIONS.md](../DECISIONS.md).
 
 ## Now: the first version has shipped
 
-The first version replaced godot-mcp-runtime at parity and went further: every step of [2026-09-25-first-version.md](./2026-09-25-first-version.md) and the sixteen features the user added have landed, and opening-hand and delve-the-dungeon drive their clients through it (cutover 2026-09-26).
+The first version replaced godot-mcp-runtime at parity and went further: every planned step and the sixteen features the user added have landed, and opening-hand and delve-the-dungeon drive their clients through it (cutover 2026-09-26).
 
-- [ ] Promote what outlasts the first-version plan (the user's decisions and the design rationale) into `docs/ARCHITECTURE.md` or a decisions page, delete the plan file, and point `CLAUDE.md`'s "Start here" line at the new home
 
 ## Next
 
