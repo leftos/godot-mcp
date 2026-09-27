@@ -35,6 +35,7 @@ Shared: `bridge/` (new inspect and input handlers), `headless/operations.gd`, th
 
 ### Singles
 
+- [ ] `drag` and `click` results say what they hit: the Control under the press and the release, and whether a GUI drag started (#4)
 - [ ] C#-aware runtime tools beyond `call_method`, for members Godot's call cannot reach: signatures with types Godot cannot marshal (generics, plain C# classes), static members, and overloads that share a name and argument count (`internal` methods are reached; step 12, 2026-09-26)
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see step 4b)
 - [ ] A `git commit` in a worktree (`../godot-mcp.wt/mesh-library`, 2026-09-26) hung after every prek hook passed: `prek` stayed alive with no children, and after `dotnet build-server shutdown` it exited but the hook's `sh` did not; the cause is unknown (not the MSBuild nodes alone). Reproduce and fix, or record the footgun

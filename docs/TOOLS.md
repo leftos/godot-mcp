@@ -27,7 +27,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 ## Rules every tool shares
 
 - **Session.** Every runtime tool, and `restart_project`, `stop_project`, `detach_project` and `get_debug_output`, takes a last `session` argument. It may be left out while only one session exists; with several and no name the call is refused and lists them. A new session is named after its project folder, fitted to the name rule (1 to 64 letters, digits, `.`, `_`, `-`; any other character becomes `_`, so `My Game` becomes `My_Game`). Two sessions on one folder need distinct names: pass `options.session` (`run_project`) or `session` (`attach_project`). The headless tools and `preview_scene` take `projectPath` instead and no session.
-- **Errors ride along.** A runtime tool's result carries `errors` (file, line, stack) for every error the game raised while the call ran, and the call still succeeds, except `run_script` and `call_method` as their sections say. Read `errors` in every result before the next step.
+- **Errors ride along.** A runtime tool's result carries `errors` (file, line, stack) for every error the game raised while the call ran, and the call still succeeds, except `run_script` and `call_method` as their sections say. The key is present only when the game raised an error during the call: its absence means none. Read `errors` in every result before the next step.
 - **Viewport coordinates.** Every `x`, `y` an input tool takes is in viewport coordinates, as `get_ui_elements` reports rects; the bridge maps them to the window whether it is stretched or letterboxed. A screenshot's pixels are the window's, which differ from the viewport's when the project stretches (a 640x360 viewport in a 1000x900 letterboxed window captures 1000x562), so a point read off a screenshot is not a viewport point. Aim at `{element}` where a Control exists.
 - **Paging.** Long lists come back one page at a time with `total`, `offset` and, while more remain, `next`: pass `next` as the next call's `offset`. A value longer than its budget comes back as `{valuePreview, valueLength}`.
 - **Quiet by default.** `run_project` starts the game quiet: unfocused, off-screen, click-through, silent, with no real input reaching it. Pass `options.quiet: false` only when the user wants to watch or play along. Sessions on one folder must agree on quiet and on `shutOutRealGamepads`; a new session that differs is refused.
@@ -202,7 +202,7 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 ### `get_errors`
 
 - **Does:** the session's logged errors and warnings, oldest first: `{errors: [{seq, type, message, file, line, function, stack}], next, dropped}`.
-- **Use:** to see warnings (tool results carry errors only), or what happened between calls. Pass `since` = the previous call's `next` to read only newer entries; `limit` 1 to 500, default 50.
+- **Use:** to see warnings (tool results carry errors only), or what happened between calls. Pass `since` = the previous call's `next` to read only newer entries (`next` equals `since` when nothing new arrived); `limit` 1 to 500, default 50.
 - **Edges:** the server keeps the last 500; `dropped` counts those lost. See also `get_debug_output` above.
 
 ## Replay with checks
