@@ -1,0 +1,64 @@
+name: Release
+
+# A pushed tag vX.Y.Z whose version is VersionPrefix in Directory.Build.props: the gates, then `run.ps1 package`, then a
+# GitHub Release vX.Y.Z carrying the zip as godot-mcp-win-x64.zip and tools/install-release.ps1 as install.ps1, with
+# that version's CHANGELOG.md section as its notes.
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Gates, package and release
+    # Visual Studio Enterprise 2022 17.14 with Microsoft.VisualStudio.Component.VC.Tools.x86.x64 (the NativeAOT shim's
+    # linker) and the .NET 10.0.401 SDK (https://github.com/actions/runner-images/blob/main/images/windows/Windows2025-Readme.md).
+    runs-on: windows-2025
+    timeout-minutes: 40
+    permissions:
+      contents: write # gh release create
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the tag and extract the release notes
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: ./tools/release-check.ps1 -Tag $env:TAG -NotesPath .tmp/release/notes.md
+
+      - name: Gates
+        # The checkout above is the commit this workflow runs from, so ./ resolves as $/ would; actionlint 1.7.12 rejects $/
+        # (https://github.com/rhysd/actionlint/issues/711).
+        uses: ./.github/actions/gates # zizmor: ignore[self-repository]
+
+      - name: Package
+        shell: pwsh
+        run: ./run.ps1 package
+
+      - name: Create the release
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $expected = "godot-mcp-$($env:TAG.Substring(1))-win-x64.zip"
+          $zips = @(Get-ChildItem -LiteralPath .tmp/package -Filter 'godot-mcp-*-win-x64.zip')
+          if ($zips.Count -ne 1 -or $zips[0].Name -ne $expected) {
+            throw "Expected .tmp/package/$expected alone; found: $($zips.Name -join ', ')."
+          }
+          Copy-Item -LiteralPath $zips[0].FullName -Destination .tmp/release/godot-mcp-win-x64.zip
+          Copy-Item -LiteralPath tools/install-release.ps1 -Destination .tmp/release/install.ps1
+          gh release create $env:TAG .tmp/release/godot-mcp-win-x64.zip .tmp/release/install.ps1 `
+            --verify-tag --title $env:TAG --notes-file .tmp/release/notes.md
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }

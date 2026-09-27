@@ -1,0 +1,34 @@
+name: CI
+
+# The release gates on every push to main and every pull request into it; publishes nothing.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: Build, unit tests and gdtest
+    # Visual Studio Enterprise 2022 17.14 with Microsoft.VisualStudio.Component.VC.Tools.x86.x64 and the .NET 10.0.401
+    # SDK (https://github.com/actions/runner-images/blob/main/images/windows/Windows2025-Readme.md).
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Gates
+        # The checkout above is the commit this workflow runs from, so ./ resolves as $/ would; actionlint 1.7.12 rejects $/
+        # (https://github.com/rhysd/actionlint/issues/711).
+        uses: ./.github/actions/gates # zizmor: ignore[self-repository]

@@ -36,6 +36,10 @@ exits with the command's own status, or 124 when it outlived its ceiling and was
            60 s for the copy. The copy and the link are tools/install.ps1, logged to .tmp/install.log. A junction
            that points elsewhere is replaced; anything else at the link path is refused, never deleted.
            GODOT_MCP_INSTALL_DIR overrides the install folder, GODOT_MCP_SKILLS_DIR the folder the link is made in.
+  package  the release download: bin/publish removed, publish (as above), then tools/package.ps1 zips bin/publish with
+           skills/godot-mcp as skill/ and a VERSION file (the published product version) into
+           .tmp/package/godot-mcp-<X.Y.Z>-win-x64.zip and prints its path; .tmp/package.log, ceiling 300 s for the
+           publish, 60 s for the zip. The release workflow runs this command, so a local zip is built as CI builds it.
   gdtest   the bridge's GDScript unit tests (tests/bridge/test_*.gd) in headless Godot (GODOT_PATH, else
            F:\Godot\Godot_console.exe). It first imports tests/bridge (godot --headless --path tests/bridge --import,
            .tmp/gdtest-import.log, ceiling 120 s) when a test script is newer than the last import, so the project's
@@ -69,7 +73,7 @@ pwsh run.ps1 drive -Calls .tmp/calls.json
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('build', 'test', 'itest', 'format', 'dotnet', 'publish', 'install', 'gdtest', 'drive', 'help')]
+    [ValidateSet('build', 'test', 'itest', 'format', 'dotnet', 'publish', 'install', 'package', 'gdtest', 'drive', 'help')]
     [string]$Command = 'help',
 
     [string]$Filter = '',
@@ -434,6 +438,24 @@ function Invoke-Install {
     return Invoke-Gated -Name 'install' -TimeoutSeconds 60 -Program 'pwsh' -Arguments $arguments
 }
 
+# Publishes into an emptied bin/publish, so no file of an earlier publish reaches the zip, then runs tools/package.ps1
+# under its own gate.
+function Invoke-Package {
+    $publish = Join-Path $root 'bin/publish'
+    if (Test-Path -LiteralPath $publish) {
+        Remove-Item -LiteralPath $publish -Recurse -Force
+    }
+    $status = Invoke-Publish
+    if ($status -ne 0) {
+        return $status
+    }
+    $arguments = @(
+        '-NoProfile', '-File', (Join-Path $root 'tools/package.ps1'),
+        '-Root', $root, '-OutputDir', (Join-Path $logDir 'package')
+    )
+    return Invoke-Gated -Name 'package' -TimeoutSeconds 60 -Program 'pwsh' -Arguments $arguments
+}
+
 # Builds the server project, then runs tools/drive.py under its own gate: the calls of a file sent in order to the
 # server it built, over stdio. Returns 2 without building when no calls file is given.
 function Invoke-Drive {
@@ -495,6 +517,9 @@ switch ($Command) {
     }
     'install' {
         exit (Invoke-Install)
+    }
+    'package' {
+        exit (Invoke-Package)
     }
     'gdtest' {
         $import = Invoke-GdtestImport

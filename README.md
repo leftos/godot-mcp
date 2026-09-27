@@ -45,7 +45,7 @@ The full guide to every tool, with the edges that bite, is [docs/TOOLS.md](docs/
 
 - Windows 10 or 11 (the server is built for win-x64).
 - [Godot 4.7.2](https://godotengine.org/download), the console executable (`..._console.exe`); the .NET edition if your game uses C#.
-- The [.NET 10 SDK](https://dotnet.microsoft.com/download), PowerShell 7 (`pwsh`), and Visual Studio Build Tools 2022 with the C++ workload, to build the server and its C# helper.
+- The [.NET 10 runtime](https://dotnet.microsoft.com/download/dotnet/10.0); the installer offers to install it through winget when it is missing.
 - Optional: [ffmpeg](https://ffmpeg.org) on `PATH` (`winget install Gyan.FFmpeg`), to cut recordings into clips.
 - An MCP client; the steps below use [Claude Code](https://claude.com/claude-code).
 
@@ -55,17 +55,20 @@ Paste this into Claude Code, in the folder of the Godot game you want it to driv
 
 ```text
 Install the godot-mcp server for this project:
-1. Clone https://github.com/leftos/godot-mcp to a folder of your choice (skip if it is already cloned there; git pull instead).
-2. In that clone, run `pwsh run.ps1 install`. It builds the server into %LOCALAPPDATA%\godot-mcp and links its skill into ~/.claude/skills/godot-mcp. It must end with "install: server at ... (version ...)".
-3. Back in this project's folder, register the server for this project:
-   claude mcp add godot -s local -e GODOT_PATH=<path to Godot_v4.7.2-stable_win64_console.exe> -- "%LOCALAPPDATA%\godot-mcp\godot-mcp.exe"
-   (expand %LOCALAPPDATA% to the real path).
-4. Tell me to restart Claude Code, then check that the `mcp__godot__*` tools are listed and load the godot-mcp skill before the first call.
+1. Run this in PowerShell (it downloads the latest release into %LOCALAPPDATA%\godot-mcp, installs the .NET 10 runtime through winget if it is missing, and copies the godot-mcp skill into ~/.claude/skills):
+   & ([scriptblock]::Create((irm https://github.com/leftos/godot-mcp/releases/latest/download/install.ps1))) -InstallDotNet
+   It must end with "install: server at ... (version ...)" and print a `claude mcp add` line.
+2. Run that `claude mcp add` line from this project's folder, with GODOT_PATH set to <path to Godot_v4.7.2-stable_win64_console.exe>.
+3. Tell me to restart Claude Code, then check that the `mcp__godot__*` tools are listed and load the godot-mcp skill before the first call.
 ```
 
 After the restart, ask for anything in the list above ("run the game and click Start", "why does the inventory close when I drag an item?"). The agent loads the `godot-mcp` skill, which teaches it the drive loop.
 
-To update, run `git pull` and `pwsh run.ps1 install` in the clone again; restart the agent session to pick up the new server.
+To update, run the same install line again, and restart the agent session to pick up the new server. `-Version X.Y.Z` installs a given release instead of the latest; `-ZipPath <file>` installs a downloaded zip offline. Every release, with what changed, is on the [releases page](https://github.com/leftos/godot-mcp/releases).
+
+### From source
+
+To build it yourself, you need the [.NET 10 SDK](https://dotnet.microsoft.com/download), PowerShell 7 (`pwsh`), and Visual Studio Build Tools 2022 with the C++ workload (for the C# helper's native shim). Clone the repository and run `pwsh run.ps1 install` in it: it builds the server into the same `%LOCALAPPDATA%\godot-mcp` and links the skill folder back to the clone, so `git pull` and `pwsh run.ps1 install` update both. Then register it as in step 2.
 
 ## Configuration
 

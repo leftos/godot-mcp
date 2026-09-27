@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## 0.3.4 - 2026-09-27
 
+### Added
+
+- A prebuilt download on each GitHub release, with a one-line installer that also offers to install the .NET 10 runtime.
+
 ### Changed
 
 - Input targets, `wait_for` signal waits, `monitor_property` and `{"$node"}` arguments that name no node refuse with the base, deepest node and its children.

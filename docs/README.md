@@ -54,6 +54,8 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | gdtest | The headless GDScript unit-test run (`pwsh run.ps1 gdtest`, `tests/bridge`): many bridge-logic tests in one Godot process, as against an integration test's launch per test |
 | Complexity baseline | `tools/gdcomplexity-baseline.txt`: the GDScript functions still allowed over the complexity or length limit, a list that can only shrink |
 | Gate, ceiling | A gate is one command run by `tools/gate.ps1` with its own log; its ceiling is the wall-clock limit after which the gate kills the process tree and exits 124 |
+| Gates (CI) | The checks CI runs before it publishes anything: the warnings-as-errors build, the unit tests and `gdtest`, in `.github/actions/gates` |
+| Package, release | The package is the release zip `run.ps1 package` builds (the published server, `skill/`, `VERSION`); a release is a GitHub Release a pushed `vX.Y.Z` tag makes, carrying the package and `install.ps1` |
 | Parity | The first version covers every godot tool the user's projects call, so it replaces the old server everywhere at once |
 | Spike | A throwaway build that proves or disproves the unverified steps of a design before any tool is built on it |
 | Shim, C# helper | In the C#-runtime-tools design: the shim is a small native GDExtension the bridge loads at run time to reach Godot's .NET runtime; the helper is the managed assembly the shim loads into it, which reaches C# members Godot's call cannot |

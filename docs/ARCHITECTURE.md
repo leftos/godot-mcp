@@ -42,6 +42,10 @@ How the server and the bridge fit together today, for anyone about to change the
 - **Captures**: `SessionRegistry.Captures` (`CaptureStore`) holds `capture_input`'s events by session name, not on the `GodotSession`, so a capture outlives its game: a stop, a restart, the game exiting or a detach marks a running capture `ended` (`stop`, `restart`, `exit`; a detach counts as `stop`) and keeps what reached the server, until the next `capture_input stop` naming that session takes it or a new start replaces it. It holds at most 2000 events.
 - **Server exits**: `SessionRegistry.Shutdown` kills every run and removes every folder's files.
 
+## Distribution
+
+Two routes put the same files in `%LOCALAPPDATA%\godot-mcp` (the published server: `godot-mcp.exe` framework-dependent on .NET 10, `bridge/`, `headless/`, `dotnet/`, and `VERSION`). From source, `run.ps1 install` publishes and runs `tools/install.ps1`, which mirrors `bin/publish` and links `~/.claude/skills/godot-mcp` to the clone's `skills/godot-mcp` as a junction. From a release, `install.ps1` (`tools/install-release.ps1`) downloads `godot-mcp-win-x64.zip` (the latest, or `-Version`; `-ZipPath` for a local one), checks for the .NET 10 runtime where the apphost looks (`DOTNET_ROOT_X64`, `DOTNET_ROOT`, the registered install location, then `%ProgramFiles%\dotnet`) and installs `Microsoft.DotNet.Runtime.10` through winget when asked (`-InstallDotNet`) or allowed at a prompt, stops any server running from the install folder, replaces the folder's contents (refusing a non-empty folder that holds neither `godot-mcp.exe` nor `VERSION`), and copies the zip's `skill/` into `~/.claude/skills/godot-mcp`, removing a junction there without following it. The zip is `run.ps1 package`'s, built by the release workflow on a `vX.Y.Z` tag (see DEVELOPMENT.md, CI and releases).
+
 ## Tools
 
 | Tool | File | Bridge command | Result |
