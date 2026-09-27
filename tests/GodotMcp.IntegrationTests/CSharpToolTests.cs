@@ -696,7 +696,7 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
     public async Task RunCSharpRefusesAStaleBuild()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        string built = Path.Combine(_shared.ProbeDirectory, ".godot", "mono", "temp", "bin", "Debug", "CsProbe.dll");
+        string built = PrepScan.AssemblyPath(_shared.ProbeDirectory, "CsProbe");
         string aside = built + ".aside";
 
         // The game maps the built dll, which Windows lets be renamed but not overwritten, so the original moves aside.

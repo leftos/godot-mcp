@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using GodotMcp.Server.Session;
 
 namespace GodotMcp.TestSupport;
 
@@ -61,7 +62,16 @@ public sealed class CsProbeProject : IDisposable
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        string[] arguments = ["build", project, "-c", "Debug", "-p:GodotTargetPlatform=windows", "-p:UseSharedCompilation=false", "-nologo"];
+        string[] arguments =
+        [
+            "build",
+            project,
+            "-c",
+            ProjectPrep.Configuration,
+            "-p:GodotTargetPlatform=windows",
+            "-p:UseSharedCompilation=false",
+            "-nologo",
+        ];
         foreach (string argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);

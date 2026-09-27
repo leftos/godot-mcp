@@ -1,6 +1,7 @@
 using System.Runtime.Loader;
 using System.Text.Json;
 using GodotMcp.Server.CSharp;
+using GodotMcp.Server.Session;
 using GodotMcp.TestSupport;
 
 namespace GodotMcp.Tests.CSharp;
@@ -14,7 +15,7 @@ public sealed class SnippetReferencesTests : IDisposable
 
     public SnippetReferencesTests()
     {
-        _output = _temp.Combine(".godot", "mono", "temp", "bin", "Debug");
+        _output = _temp.Combine(".godot", "mono", "temp", "bin", ProjectPrep.Configuration);
         _helper = _temp.Combine("helper-copy", "helper");
         Directory.CreateDirectory(_output);
         Directory.CreateDirectory(_helper);

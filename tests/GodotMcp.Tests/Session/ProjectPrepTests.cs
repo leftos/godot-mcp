@@ -74,7 +74,7 @@ public sealed class ProjectPrepTests : IDisposable
     {
         string game = CreateGame(null, "Solo.csproj");
 
-        Assert.Equal(Path.Combine(game, ".godot", "mono", "temp", "bin", "Debug", "Solo.dll"), PrepScan.AssemblyPath(game, "Solo"));
+        Assert.Equal(Path.Combine(game, ".godot", "mono", "temp", "bin", ProjectPrep.Configuration, "Solo.dll"), PrepScan.AssemblyPath(game, "Solo"));
     }
 
     [Fact]

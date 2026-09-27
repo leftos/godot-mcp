@@ -174,15 +174,15 @@ function Get-GodotPath {
         if ([string]::IsNullOrWhiteSpace($folder)) {
             continue
         }
-        $matches = @(
+        $found = @(
             Get-ChildItem -LiteralPath $folder.Trim('"') -Filter 'Godot*console*.exe' -File -ErrorAction SilentlyContinue
         )
-        if ($matches.Count -eq 0) {
+        if ($found.Count -eq 0) {
             continue
         }
-        $names = [string[]]@($matches | ForEach-Object { $_.Name })
+        $names = [string[]]@($found | ForEach-Object { $_.Name })
         [array]::Sort($names, [System.StringComparer]::OrdinalIgnoreCase)
-        return ($matches | Where-Object { $_.Name -ceq $names[-1] } | Select-Object -First 1).FullName
+        return ($found | Where-Object { $_.Name -ceq $names[-1] } | Select-Object -First 1).FullName
     }
     $exe = "$env:LOCALAPPDATA\godot-mcp\godot-mcp.exe"
     throw "Godot was not found: GODOT_PATH is not set and no Godot*console*.exe is on PATH. Set GODOT_PATH to the Godot 4.7 console executable; with Claude Code, register this server with: claude mcp add godot -s local -e GODOT_PATH=<path to the Godot console exe> -- `"$exe`""
@@ -352,7 +352,7 @@ function Get-ConfiguredDirectory {
 # "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" to find the MSVC linker and never searches PATH, so
 # that variable is set to its default when empty (as it can be under Git Bash); a batch file the link runs afterwards
 # calls vswhere.exe by bare name, so vswhere's folder is put on PATH too.
-function Set-VswhereEnvironment {
+function Initialize-VswhereEnvironment {
     ${env:ProgramFiles(x86)} = Get-ConfiguredDirectory -Configured ${env:ProgramFiles(x86)} -Default 'C:\Program Files (x86)'
     $installerFolder = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
     $entries = @([string]$env:PATH -split [IO.Path]::PathSeparator)
@@ -410,7 +410,7 @@ function Copy-DotnetLayout {
 # Publishes the shim, the loader and the helper, each under its own gate, then lays out bin/dotnet. Returns the first
 # failing publish's status, else 0.
 function Invoke-DotnetPublish {
-    Set-VswhereEnvironment
+    Initialize-VswhereEnvironment
     foreach ($name in $dotnetProjects.Keys) {
         $project = $dotnetProjects[$name]
         $arguments = @('publish', (Join-Path $root $project.Project), '-c', 'Release', '-o', (Join-Path $dotnetStaging $name)) + $project.Extra

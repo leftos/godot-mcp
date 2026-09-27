@@ -26,5 +26,6 @@
   <ItemGroup>
     <InternalsVisibleTo Include="GodotMcp.Tests" />
     <InternalsVisibleTo Include="GodotMcp.IntegrationTests" />
+    <InternalsVisibleTo Include="GodotMcp.TestSupport" />
   </ItemGroup>
 </Project>

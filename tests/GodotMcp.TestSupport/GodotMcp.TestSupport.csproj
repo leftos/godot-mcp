@@ -5,4 +5,8 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>false</IsTestProject>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\GodotMcp.Server\GodotMcp.Server.csproj" />
+  </ItemGroup>
 </Project>
