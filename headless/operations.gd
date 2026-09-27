@@ -10,14 +10,16 @@ extends SceneTree
 ## runs the one operation and quits; _process returning true ends the main loop should a script
 ## error stop _initialize before its quit.
 ##
-## validate loads each target with the cache ignored, never instantiating a scene or resource,
-## and checks each C# script a scene or resource uses with can_instantiate; an error is grouped
-## under the res:// file it names, else under the file being checked. get_scene_file_tree reads a
+## validate loads each target with the cache ignored, never instantiating a scene or resource, and
+## checks each C# script the target's whole dependency closure reaches (however deep, each script
+## once a run) with can_instantiate; an error is grouped under the res:// file it names, else under
+## the file being checked. get_scene_file_tree reads a
 ## scene's SceneState, expanding instanced scenes and an inherited scene's base in place, without
 ## instantiating anything. Every other op is a scene edit, run by scene_ops.gd.
 
 const SceneOps := preload("scene_ops.gd")
 const SceneEdit := preload("scene_edit.gd")
+const SceneFiles := preload("scene_files.gd")
 const ScenePaths := preload("scene_paths.gd")
 const RES_PREFIX := "res://"
 ## How deep instanced scenes are expanded; Godot refuses a scene that instances itself.
@@ -169,12 +171,18 @@ func _validate(targets: Array) -> Dictionary:
 	group_errors(_log.since(0), "", groups)
 	var unattributed: Array = groups.get("", [])
 	groups.erase("")
+	var visited: Dictionary = {}
+	var checked: Dictionary = {}
 	for target: String in targets:
-		_check_file(target, groups)
+		_check_file(target, groups, checked, visited)
 	return {"checked": targets.size(), "results": results_of(groups), "engineErrors": unattributed}
 
 
-func _check_file(path: String, groups: Dictionary) -> void:
+## Checks the file at path and every C# script its dependency closure reaches here. checked holds
+## the scripts loaded so far this run, so a script many targets reach is loaded and checked once.
+func _check_file(
+	path: String, groups: Dictionary, checked: Dictionary, visited: Dictionary
+) -> void:
 	var start: int = _log.count()
 	var resource: Resource = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
 	var entries: Array = _log.since(start)
@@ -183,12 +191,20 @@ func _check_file(path: String, groups: Dictionary) -> void:
 	group_errors(entries, path, groups)
 	if path.ends_with(".gd"):
 		return
-	for script_path in SceneEdit.csharp_dependencies(ResourceLoader.get_dependencies(path)):
-		start = _log.count()
-		var script := load(script_path) as Script
-		if script != null:
-			script.can_instantiate()
-		group_errors(_log.since(start), script_path, groups)
+	for reached: String in SceneFiles.dependency_closure(path, visited):
+		if reached.ends_with(".cs") and not checked.has(reached):
+			checked[reached] = true
+			_check_script(reached, groups)
+
+
+## Loads the C# script at script_path and instantiates its class, so a script whose class the
+## assembly has none for logs its error; errors are grouped under the script's path.
+func _check_script(script_path: String, groups: Dictionary) -> void:
+	var start: int = _log.count()
+	var script := load(script_path) as Script
+	if script != null:
+		script.can_instantiate()
+	group_errors(_log.since(start), script_path, groups)
 
 
 func _scene_file_tree(params: Dictionary) -> Dictionary:

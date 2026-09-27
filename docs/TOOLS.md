@@ -243,7 +243,7 @@ These run a headless Godot on the project's files with no game started. All are 
 
 - **Does:** loads scripts, scenes and resources without running the game and reports errors: `{valid, checked, results, engineErrors?, csharp?, prep}`; `results` lists only files with errors.
 - **Use:** after edits, before a launch. `targets` (1 to 50 files), or none for every git-versioned `.gd`, `.tscn` and `.tres` (at most 500); `options {prepare}`.
-- **Edges:** Godot's parser reports only the first parse error in a file: fix it and validate again. A failed C# build comes back as `csharp {build: "failed", errors}` and makes `valid` false while GDScript is still checked. Autoloads' `_init` still runs.
+- **Edges:** Godot's parser reports only the first parse error in a file: fix it and validate again. A failed C# build comes back as `csharp {build: "failed", errors}` and makes `valid` false while GDScript is still checked. Autoloads' `_init` still runs. Every C# script a target reaches, through instanced scenes and resources however deep, is checked for its class.
 
 ### `get_scene_file_tree`
 

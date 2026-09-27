@@ -28,6 +28,12 @@ public sealed class HeadlessTests : IAsyncDisposable
         "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"PackedScene\" path=\"res://enemy.tscn\" id=\"1\"]\n\n"
         + "[node name=\"Elite\" instance=ExtResource(\"1\")]\n\n[node name=\"Shield\" type=\"Node2D\" parent=\".\"]\n";
 
+    private const string MissingClassSource = "namespace CsProbe;\n\n// No class here, so Godot finds none for the script.\n";
+
+    private const string MissingClassScene =
+        "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"Script\" path=\"res://Ghost.cs\" id=\"1\"]\n\n"
+        + "[node name=\"Ghost\" type=\"Node\"]\nscript = ExtResource(\"1\")\n";
+
     private readonly SessionHarness _harness = new();
     private readonly HeadlessTools _tools;
     private readonly List<IDisposable> _projects = [];
@@ -142,6 +148,40 @@ public sealed class HeadlessTests : IAsyncDisposable
         JsonNode ghost = Assert.Single(result["results"]!.AsArray())!;
         Assert.Equal("res://Ghost.cs", ghost["path"]!.GetValue<string>());
         Assert.Contains("associated class could not be found", ghost["errors"]!.ToJsonString(), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task ValidateReportsAMissingCSharpClassInAnInstancedScene()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        csProbe.WriteSource("Ghost.cs", MissingClassSource);
+        WriteFile(csProbe.Directory, "GhostInner.tscn", MissingClassScene);
+        WriteFile(csProbe.Directory, "GhostOuter.tscn", InstancingScene("GhostOuter"));
+
+        JsonNode result = await ValidateAsync(csProbe.Directory, ["GhostOuter.tscn"], cancellation);
+
+        Assert.False(result["valid"]!.GetValue<bool>(), result.ToJsonString());
+        Assert.Equal("built", result["csharp"]!["build"]!.GetValue<string>());
+        JsonNode ghost = Assert.Single(Groups(result, "res://Ghost.cs"))!;
+        Assert.Contains("associated class could not be found", ghost["errors"]!.ToJsonString(), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task ValidateChecksASharedCSharpScriptOnce()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        csProbe.WriteSource("Ghost.cs", MissingClassSource);
+        WriteFile(csProbe.Directory, "GhostInner.tscn", MissingClassScene);
+        WriteFile(csProbe.Directory, "GhostOne.tscn", InstancingScene("GhostOne"));
+        WriteFile(csProbe.Directory, "GhostTwo.tscn", InstancingScene("GhostTwo"));
+
+        JsonNode result = await ValidateAsync(csProbe.Directory, ["GhostOne.tscn", "GhostTwo.tscn"], cancellation);
+
+        Assert.False(result["valid"]!.GetValue<bool>(), result.ToJsonString());
+        JsonNode ghost = Assert.Single(Groups(result, "res://Ghost.cs"))!;
+        Assert.Single(ghost["errors"]!.AsArray());
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -359,6 +399,15 @@ public sealed class HeadlessTests : IAsyncDisposable
     }
 
     private static IEnumerable<string> Paths(JsonNode page) => page["nodes"]!.AsArray().Select(node => node!["path"]!.GetValue<string>());
+
+    /// <summary>An empty results entry for each group the validate result lists at path (one, or none).</summary>
+    private static IEnumerable<JsonNode> Groups(JsonNode result, string path) =>
+        result["results"]!.AsArray().Where(group => group!["path"]!.GetValue<string>() == path)!;
+
+    /// <summary>A scene that instances the missing-class scene, so the script is one dependency further away.</summary>
+    private static string InstancingScene(string name) =>
+        "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"PackedScene\" path=\"res://GhostInner.tscn\" id=\"1\"]\n\n"
+        + $"[node name=\"{name}\" type=\"Node2D\"]\n\n[node name=\"Inner\" parent=\".\" instance=ExtResource(\"1\")]\n";
 
     private static void WriteFile(string directory, string name, string content) => File.WriteAllText(Path.Combine(directory, name), content);
 

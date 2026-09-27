@@ -11,7 +11,6 @@ Steps 0 to 4b, Wave 1 (steps 7-9: named sessions, the error feed and compact out
 
 - [ ] Clean-ups found in the 2026-09-26 session (user: top of the plan):
   - [ ] Delete the empty leftover folder `../godot-mcp.wt/mesh-library` (from before 2026-09-26). Tried 2026-09-26 17:45: "being used by another process"; the orphaned `prek hook-impl` from the hung 12:02 commit (below) was still alive then and exited, the lock stayed; no command line names the folder, so find the holder with Sysinternals `handle.exe`, or delete it after a reboot
-- [ ] `validate`'s tool description (`HeadlessTools.cs` ~L45) says "every C# script a scene or resource uses" is checked, but `headless/operations.gd` ~L186 reads only a file's direct dependencies: walk the closure (`scene_files.gd`'s, once the mesh-library item lands) or say "directly" (found writing `docs/TOOLS.md`, 2026-09-26). Decided (user, 2026-09-26): walk the closure
 - [ ] A godot MCP tutorial for agents in opening-hand and delve-the-dungeon, explaining every available tool, written with the cutover (step 6) (user, 2026-09-26)
 - [ ] Step 6: cutover in opening-hand and delve-the-dungeon (registration, their docs and conventions, the debugger agent's allow-list; one scratch drive each; git status clean)
 
