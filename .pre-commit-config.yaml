@@ -65,4 +65,4 @@ repos:
         entry: uv run --quiet --with pytest --with "gdtoolkit>=4,<5" pytest -q tests/tools
         language: system
         pass_filenames: false
-        files: ^(tools/.*\.py|tests/tools/)
+        files: ^(tools/.*\.(py|ps1|psm1)|tests/tools/)
