@@ -6,6 +6,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 - [`plans/2026-09-25-first-version.md`](./plans/2026-09-25-first-version.md): the first version's design, the user's decisions and the steps.
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md): the components, a request's path, the session lifecycle, every tool and the recipe for a new one.
 - [`DEVELOPMENT.md`](./DEVELOPMENT.md): toolchain, commands, gates, test coverage and footguns.
+- [`TOOLS.md`](./TOOLS.md): for an agent using the server: which tool fits a job, each tool's edges, and worked drives.
 
 ## Glossary
 
@@ -17,7 +18,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Marker | The first-line comment that identifies an `override.cfg` as the server's own; one without it is the user's and is never touched |
 | Handshake | The bridge's first frame: the session token and the project path, which the server checks so a stale bridge from another run is refused |
 | Gesture | A high-level input tool (click, drag, type_text, hold/release) that sends the right sequence of events over frames, as against the raw event list of `simulate_input` |
-| Headless tool | A scene or node edit done by a one-off `godot --headless --script headless/operations.gd` run, with its request and result passed as JSON files: `create_scene`, `save_scene`, `delete_nodes`, `attach_script`, `duplicate_node`, `load_sprite`, `add_node`, `set_node_properties`, `get_node_properties`, `get_node_signals`, `connect_signal`, `disconnect_signal`, `export_mesh_library`; `batch_scene_operations` is next |
+| Headless tool | A scene or node edit done by a one-off `godot --headless --script headless/operations.gd` run, with its request and result passed as JSON files: `create_scene`, `save_scene`, `delete_nodes`, `attach_script`, `duplicate_node`, `load_sprite`, `add_node`, `set_node_properties`, `get_node_properties`, `get_node_signals`, `connect_signal`, `disconnect_signal`, `export_mesh_library`, and `batch_scene_operations` (several of them in one run); `validate` and `get_scene_file_tree` run the same way |
 | Inherited connection | A signal connection a scene gets from a scene it instances or inherits (flag 32, `CONNECT_INHERITED`); it can only be removed in the scene that makes it |
 | Editable instance | An instanced scene marked "Editable Children" in its parent scene (`[editable path=…]`): changes to its inner nodes save as overrides, so the property tools allow them |
 | Edit state | How `PackedScene.instantiate` builds a scene: `GEN_EDIT_STATE_MAIN`, as the editor opens one, keeps an inherited scene inherited and instances as instances, where the default flattens them into the saved file |
