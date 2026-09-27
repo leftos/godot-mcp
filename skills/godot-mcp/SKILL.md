@@ -38,7 +38,7 @@ A drive is always the same five moves: **start → look → act → wait → che
 
 ## Rules that bite
 
-- **Viewport coordinates everywhere** an input tool takes `x, y`. Prefer `{element}` targets.
+- **Viewport coordinates everywhere** an input tool takes `x, y`. Prefer `{element}` targets (full paths from `get_ui_elements` when names repeat). An element that is hidden, being freed, named by several nodes, or covered at its centre by another Control is refused with nothing pressed: the error names the cover and both rects, so click by `{x, y}` in the visible part or wait until it clears.
 - **One input at a time per session**, each answering once its gesture has ended and two frames have run.
 - **Headless tools refuse a live session** on the same folder: `stop_project` or `detach_project` first.
 - **Headless node paths are relative to the scene root** (`.`, `HUD/Score`); live node paths are absolute (`/root/Main/Button`), under the root (`Main/Button`) or a bare name.

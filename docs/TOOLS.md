@@ -111,7 +111,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ## Drive input
 
-All input tools answer `{pointer, heldButtonMask}` once the gesture has ended and two more frames have run; `click`, `drag` and `mouse_button` also say what they hit, each Control as `{path, class}` or null over none, a popup's included. One input call plays at a time per session. A target is `{element}` (a Control's path or name; its rect's centre) or `{x, y}` in viewport coordinates, never both.
+All input tools answer `{pointer, heldButtonMask}` once the gesture has ended and two more frames have run; `click`, `drag` and `mouse_button` also say what they hit, each Control as `{path, class}` or null over none, a popup's included. One input call plays at a time per session. A target is `{element}` (a Control's path or name; its rect's centre where it shows, through its CanvasLayer, a Camera2D's canvas transform or an embedded popup's offset) or `{x, y}` in viewport coordinates, never both. An `{element}` is checked before any event is sent: a hidden node, a node being freed, or a bare name that several nodes share (listing their paths) is refused. Then, after the gesture's first motion to the aim point, the Control Godot hovers there must be the target, one of its children or, for a target that ignores the mouse, the ancestor that takes its clicks. Otherwise nothing is pressed and the call fails naming what covers it, with both rects. This applies to a click, a drag's start, a hover and a `mouse_button` press or move; a drag's end may be covered. A tooltip showing over the centre counts as covering it. Aim by `{x, y}` inside the visible part instead.
 
 ### `click`
 

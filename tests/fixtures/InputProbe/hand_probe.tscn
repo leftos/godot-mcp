@@ -1,0 +1,128 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://hand_probe.gd" id="1_hand"]
+[ext_resource type="Script" path="res://drag_source.gd" id="2_drag"]
+
+[node name="HandProbe" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("1_hand")
+
+[node name="ViewerMonsters" type="Control" parent="."]
+layout_mode = 0
+offset_left = 10.0
+offset_top = 300.0
+offset_right = 210.0
+offset_bottom = 350.0
+mouse_filter = 2
+
+[node name="CardSlot" type="Control" parent="ViewerMonsters"]
+visible = false
+layout_mode = 0
+offset_right = 60.0
+offset_bottom = 50.0
+mouse_filter = 2
+
+[node name="CardFace" type="PanelContainer" parent="ViewerMonsters/CardSlot"]
+layout_mode = 0
+offset_right = 60.0
+offset_bottom = 50.0
+
+[node name="Covered" type="Button" parent="."]
+layout_mode = 0
+offset_left = 230.0
+offset_top = 300.0
+offset_right = 310.0
+offset_bottom = 350.0
+text = "under"
+
+[node name="Cover" type="ColorRect" parent="."]
+layout_mode = 0
+offset_left = 250.0
+offset_top = 310.0
+offset_right = 290.0
+offset_bottom = 340.0
+color = Color(0.8, 0.6, 0.2, 1)
+
+[node name="Left" type="Control" parent="."]
+layout_mode = 0
+offset_left = 330.0
+offset_top = 300.0
+offset_right = 390.0
+offset_bottom = 350.0
+mouse_filter = 2
+
+[node name="Twin" type="Button" parent="Left"]
+layout_mode = 0
+offset_right = 60.0
+offset_bottom = 50.0
+text = "L"
+
+[node name="Right" type="Control" parent="."]
+layout_mode = 0
+offset_left = 400.0
+offset_top = 300.0
+offset_right = 460.0
+offset_bottom = 350.0
+mouse_filter = 2
+
+[node name="Twin" type="Button" parent="Right"]
+layout_mode = 0
+offset_right = 60.0
+offset_bottom = 50.0
+text = "R"
+
+[node name="Play" type="Button" parent="."]
+layout_mode = 0
+offset_left = 480.0
+offset_top = 300.0
+offset_right = 560.0
+offset_bottom = 350.0
+
+[node name="PlayLabel" type="Label" parent="Play"]
+layout_mode = 0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = 70.0
+offset_bottom = 40.0
+mouse_filter = 2
+text = "play"
+
+[node name="Overlay" type="CanvasLayer" parent="."]
+offset = Vector2(560, 0)
+
+[node name="LayerCard" type="Button" parent="Overlay"]
+offset_left = 10.0
+offset_top = 230.0
+offset_right = 70.0
+offset_bottom = 290.0
+text = "layer"
+
+[node name="Tray" type="Control" parent="."]
+clip_contents = true
+layout_mode = 0
+offset_left = 570.0
+offset_top = 20.0
+offset_right = 630.0
+offset_bottom = 50.0
+mouse_filter = 2
+
+[node name="ClippedCard" type="Button" parent="Tray"]
+layout_mode = 0
+offset_top = 40.0
+offset_right = 60.0
+offset_bottom = 80.0
+
+[node name="DragCard" type="ColorRect" parent="."]
+layout_mode = 0
+offset_left = 570.0
+offset_top = 300.0
+offset_right = 630.0
+offset_bottom = 350.0
+color = Color(0.2, 0.7, 0.3, 1)
+script = ExtResource("2_drag")

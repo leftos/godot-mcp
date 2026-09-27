@@ -516,6 +516,164 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         Assert.Equal("TextInput", await FocusOwnerNameAsync());
     }
 
+    // hand_probe.tscn's CardSlot is hidden, and the first of HandProbe's unnamed cards lies over its place: a click aimed at
+    // the hidden CardFace's centre would press that card.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ClickingAHiddenElementIsRefused()
+    {
+        await AddHandAsync();
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.ClickAsync(
+                new InputTarget("/root/HandProbe/ViewerMonsters/CardSlot/CardFace"),
+                "left",
+                false,
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Contains(
+            "/root/HandProbe/ViewerMonsters/CardSlot/CardFace is hidden; get_ui_elements lists the visible Controls.",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal("[]", (await HandPressesAsync()).ToJsonString());
+    }
+
+    // Covered spans (230, 300) to (310, 350); Cover, a later sibling, spans (250, 310) to (290, 340) over its centre.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ClickingACoveredElementIsRefusedNamingTheCoverAndPressesNothing()
+    {
+        await AddHandAsync();
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.ClickAsync(new InputTarget("/root/HandProbe/Covered"), "left", false, cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        const string Expected =
+            "the centre of /root/HandProbe/Covered (270, 325) lands on /root/HandProbe/Cover, which covers it "
+            + "(target rect 230,300,80,50, hit rect 250,310,40,30); click by {x, y} inside the target's visible part, "
+            + "or wait until nothing covers it.";
+        Assert.True(refused.Message.EndsWith(Expected, StringComparison.Ordinal), refused.Message);
+        Assert.Equal("[]", (await HandPressesAsync()).ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ABareNameTwoNodesHaveIsRefusedListingBoth()
+    {
+        await AddHandAsync();
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.ClickAsync(new InputTarget("Twin"), "left", false, cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.Contains(
+            "'Twin' names 2 nodes: /root/HandProbe/Left/Twin, /root/HandProbe/Right/Twin; pass the full path.",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal("[]", (await HandPressesAsync()).ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AFullPathClickOnAVisibleCardPressesThatCard()
+    {
+        await AddHandAsync();
+        string card = (await RunAsync("return scene_tree.root.get_node(\"HandProbe\").cards[0]")).GetValue<string>();
+
+        JsonNode clicked = JsonNode.Parse(
+            await _tools.ClickAsync(new InputTarget(card), "left", false, cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+
+        Assert.Equal(card, clicked["pressedOn"]!["path"]!.GetValue<string>());
+        Assert.Equal("PanelContainer", clicked["pressedOn"]!["class"]!.GetValue<string>());
+        Assert.Equal(new JsonArray(card[(card.LastIndexOf('/') + 1)..]).ToJsonString(), (await HandPressesAsync()).ToJsonString());
+    }
+
+    // PlayLabel ignores the mouse and lies over its Button's centre, so the press goes to Play.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AClickOnALabelThatIgnoresTheMouseLandsOnItsButton()
+    {
+        await AddHandAsync();
+
+        JsonNode clicked = JsonNode.Parse(
+            await _tools.ClickAsync(
+                new InputTarget("/root/HandProbe/Play/PlayLabel"),
+                "left",
+                false,
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        )!;
+
+        AssertHit(clicked, "pressedOn", "Play", "Button");
+        Assert.Equal("""["Play"]""", (await HandPressesAsync()).ToJsonString());
+    }
+
+    // LayerCard spans (10, 230) to (70, 290) on Overlay, a CanvasLayer offset by (560, 0): it shows at (570, 230) to
+    // (630, 290), and its rect without the layer's offset would put the click on TextInput.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AFullPathClickOnACardUnderAnOffsetCanvasLayerPressesIt()
+    {
+        await AddHandAsync();
+
+        JsonNode clicked = JsonNode.Parse(
+            await _tools.ClickAsync(
+                new InputTarget("/root/HandProbe/Overlay/LayerCard"),
+                "left",
+                false,
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        )!;
+
+        Assert.Equal("/root/HandProbe/Overlay/LayerCard", clicked["pressedOn"]!["path"]!.GetValue<string>());
+        Assert.Equal("""["LayerCard"]""", (await HandPressesAsync()).ToJsonString());
+    }
+
+    // ClippedCard shows at (570, 60) to (630, 100), wholly outside its clipping parent Tray ((570, 20) to (630, 50)), so the
+    // GUI never finds it; with Main ignoring the mouse, no Control at all is under its centre.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ClickingAnElementWithNoControlUnderItsCentreIsRefusedAsLandingOnNothing()
+    {
+        await AddHandAsync();
+        await RunAsync("scene_tree.root.get_node(\"Main\").mouse_filter = Control.MOUSE_FILTER_IGNORE\n\treturn true");
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.ClickAsync(
+                new InputTarget("/root/HandProbe/Tray/ClippedCard"),
+                "left",
+                false,
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        const string Expected =
+            "the centre of /root/HandProbe/Tray/ClippedCard (600, 80) lands on <nothing>, which covers it (target rect 570,60,60,40); "
+            + "click by {x, y} inside the target's visible part, or wait until nothing covers it.";
+        Assert.True(refused.Message.EndsWith(Expected, StringComparison.Ordinal), refused.Message);
+        Assert.Equal("[]", (await HandPressesAsync()).ToJsonString());
+    }
+
+    // Only a drag's start is hit-tested: its end, Covered's centre, lies under Cover.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ADragWhoseEndIsCoveredStillDrags()
+    {
+        await AddHandAsync();
+
+        JsonNode dragged = JsonNode.Parse(
+            await _tools.DragAsync(
+                new InputTarget("/root/HandProbe/DragCard"),
+                new InputTarget("/root/HandProbe/Covered"),
+                300,
+                "left",
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        )!;
+
+        AssertHit(dragged, "pressedOn", "DragCard", "ColorRect");
+        AssertHit(dragged, "releasedOn", "Cover", "ColorRect");
+        Assert.True(dragged["guiDragStarted"]!.GetValue<bool>(), dragged.ToJsonString());
+    }
+
     // A hit is {path, class}: the Control's path, which ends with its name, and its engine class.
     private static void AssertHit(JsonNode result, string field, string name, string className)
     {
@@ -573,6 +731,13 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         string json = await tools.GetUiElementsAsync(true, classFilter, cancellationToken: TestContext.Current.CancellationToken);
         return Assert.Single(JsonNode.Parse(json)!["elements"]!.AsArray(), element => element!["name"]!.GetValue<string>() == name)!["rect"]!;
     }
+
+    // Adds hand_probe.tscn under the shared run's root as HandProbe, drawn over Main; InitializeAsync has already reset the run.
+    private async Task AddHandAsync() =>
+        await RunAsync("var hand: Node = load(\"res://hand_probe.tscn\").instantiate()\n\tscene_tree.root.add_child(hand)\n\treturn true");
+
+    // The names of the Controls HandProbe saw a mouse press reach, in order.
+    private Task<JsonNode> HandPressesAsync() => RunAsync("return scene_tree.root.get_node(\"HandProbe\").presses");
 
     private async Task<int> PressCountAsync() => (await RunAsync(ReadSmallButtonPresses)).GetValue<int>();
 
