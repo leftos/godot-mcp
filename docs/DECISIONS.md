@@ -60,6 +60,15 @@ Agents drive the user's two Godot projects (opening-hand and delve-the-dungeon, 
 - **Every request carries an id** and every reply echoes it. A reply for a timed-out id is dropped, not matched to the next request.
 - **Handshake:** the bridge's hello carries the token and the project path; a mismatch is refused, which catches a stale bridge.
 
+## Coexisting with a debugger (user, 2026-09-26 and 2026-09-27)
+
+An agent debugs a game godot-mcp holds with DebugMCP and netcoredbg; the two servers stay separate, and godot-mcp wraps no debugger.
+
+- `list_sessions` keeps `processId` (the wrapper `stop_project` kills) and adds `gameProcessId`, the hello's pid, the one a debugger attaches to.
+- While a debugger is attached to the game (`CheckRemoteDebuggerPresent`), each runtime call pings first for 500 ms and fails at once when the game does not answer: it is most likely paused at a breakpoint. A game with no debugger attached is untouched.
+- `stop_project` and `restart_project` go ahead while a debugger is attached, and warn that its debug session ended with the game.
+- No hold-until-attached launch option (decided 2026-09-27, after the trial recorded in the `debug-live` skill): a run stops Godot at its 15 s handshake timeout, and netcoredbg cannot attach before the runtime starts. Startup code is debugged by launching Godot under netcoredbg while `attach_project` waits; the listener holds a hello read open for as long as any session waits for a bridge, since the bridge dials in `_ready`, says hello in its first `_process` and never redials.
+
 ## Gamepad input, from Godot 4.7.2's source
 
 - **What works.** A parsed `InputEventJoypadButton` updates `is_joy_button_pressed` (`input.cpp:977-987`). A parsed `InputEventJoypadMotion` updates `get_joy_axis`, raw with no deadzone (`input.cpp:989-993`, `601-614`). Actions match through `InputMap::event_get_index`: pressed means `|value| >= deadzone` (default 0.2, `input_map.h:55`), and strength is `inverse_lerp(deadzone, 1, |v|)` (`input_event.cpp:1133-1171`). Joypad events are never merged by accumulated input, and `is_echo()` is always false.

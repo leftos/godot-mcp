@@ -10,6 +10,9 @@ namespace GodotMcp.Server.Wire;
 /// The loopback socket the bridge dials. It binds an ephemeral port once and keeps listening for the server's lifetime,
 /// so the port handed to a launched game is never raced for. One accept loop reads each connection's hello and hands the
 /// connection to the waiter registered under the hello's token, so several sessions can wait for their games at once.
+/// A connection that has not said hello within <see cref="HelloTimeout"/> is refused, unless a session is still waiting
+/// for a bridge: then the read is held open until the last waiter ends, so a game paused at a breakpoint before its first
+/// frame is not refused while a session is still waiting for it.
 /// </summary>
 internal sealed class BridgeListener : IDisposable
 {
@@ -20,7 +23,10 @@ internal sealed class BridgeListener : IDisposable
     private readonly ConcurrentDictionary<string, Waiter> _waiters = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _stopping = new();
     private readonly Lock _startLock = new();
+    private readonly Lock _waitersLock = new();
     private Task? _acceptLoop;
+    private int _pendingWaiters;
+    private TaskCompletionSource _noWaiterPending = CompletedSignal();
 
     public BridgeListener(ILogger<BridgeListener> logger)
     {
@@ -39,7 +45,7 @@ internal sealed class BridgeListener : IDisposable
     public async Task<BridgeConnection> AcceptBridgeAsync(HandshakeExpectation expected, CancellationToken cancellationToken)
     {
         Waiter waiter = new(expected);
-        if (!_waiters.TryAdd(expected.Token, waiter))
+        if (!RegisterWaiter(waiter))
         {
             throw new InvalidOperationException("A bridge is already awaited under this session token.");
         }
@@ -74,7 +80,62 @@ internal sealed class BridgeListener : IDisposable
         }
     }
 
-    private bool Withdraw(Waiter waiter) => _waiters.TryRemove(new KeyValuePair<string, Waiter>(waiter.Expected.Token, waiter));
+    /// <summary>Registers the waiter and, when it is the first one, marks a session as waiting for a bridge.</summary>
+    private bool RegisterWaiter(Waiter waiter)
+    {
+        lock (_waitersLock)
+        {
+            if (!_waiters.TryAdd(waiter.Expected.Token, waiter))
+            {
+                return false;
+            }
+
+            if (_pendingWaiters++ == 0)
+            {
+                _noWaiterPending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+
+            return true;
+        }
+    }
+
+    /// <summary>Removes the waiter and, when it was the last one, marks that no session is waiting for a bridge.</summary>
+    private bool Withdraw(Waiter waiter)
+    {
+        lock (_waitersLock)
+        {
+            if (!_waiters.TryRemove(new KeyValuePair<string, Waiter>(waiter.Expected.Token, waiter)))
+            {
+                return false;
+            }
+
+            if (--_pendingWaiters == 0)
+            {
+                _noWaiterPending.TrySetResult();
+            }
+
+            return true;
+        }
+    }
+
+    /// <summary>Completes at the moment the last waiting session ends, and is already complete while none is waiting.</summary>
+    private Task NoWaiterPending
+    {
+        get
+        {
+            lock (_waitersLock)
+            {
+                return _noWaiterPending.Task;
+            }
+        }
+    }
+
+    private static TaskCompletionSource CompletedSignal()
+    {
+        TaskCompletionSource signal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        signal.SetResult();
+        return signal;
+    }
 
     private void EnsureAcceptLoop()
     {
@@ -120,9 +181,7 @@ internal sealed class BridgeListener : IDisposable
         try
         {
             client.NoDelay = true;
-            using var helloTimeout = CancellationTokenSource.CreateLinkedTokenSource(stopping);
-            helloTimeout.CancelAfter(HelloTimeout);
-            hello = await ReadFirstFrameAsync(client.GetStream(), decoder, helloTimeout.Token);
+            hello = await ReadHelloAsync(client, decoder, stopping);
         }
         catch (Exception e)
             when (e is IOException or InvalidDataException or OperationCanceledException or ObjectDisposedException or SocketException)
@@ -146,6 +205,36 @@ internal sealed class BridgeListener : IDisposable
         }
 
         await HandOverAsync(waiter, new BridgeConnection(client, decoder, HandshakeExpectation.ReadProcessId(hello), _logger));
+    }
+
+    /// <summary>
+    /// Reads the connection's hello, or ends at the point the connection is refused: five seconds after the accept, or, if a
+    /// session is still waiting for a bridge, the moment the last waiter ends.
+    /// </summary>
+    private async Task<JsonObject> ReadHelloAsync(TcpClient client, FrameDecoder decoder, CancellationToken stopping)
+    {
+        using var hello = CancellationTokenSource.CreateLinkedTokenSource(stopping);
+        Task abandoned = HoldUntilAbandonedAsync(hello);
+        try
+        {
+            return await ReadFirstFrameAsync(client.GetStream(), decoder, hello.Token);
+        }
+        finally
+        {
+            await hello.CancelAsync().ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await abandoned.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+    }
+
+    /// <summary>
+    /// Cancels <paramref name="hello"/> once <see cref="HelloTimeout"/> has passed and no session is waiting for a bridge:
+    /// the read outlives its timeout only while a waiter is still pending, so a game paused before its first frame is kept.
+    /// </summary>
+    private async Task HoldUntilAbandonedAsync(CancellationTokenSource hello)
+    {
+        await Task.Delay(HelloTimeout, hello.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        await NoWaiterPending.WaitAsync(hello.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        await hello.CancelAsync().ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     }
 
     /// <summary>Completes the waiter with the connection, or closes the connection when the waiter was withdrawn meanwhile.</summary>

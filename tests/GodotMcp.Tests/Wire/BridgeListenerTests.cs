@@ -110,5 +110,72 @@ public sealed class BridgeListenerTests : IDisposable
         Assert.Equal(processId, connection.GameProcessId);
     }
 
+    [Fact]
+    public async Task AHelloDelayedPastFiveSecondsIsStillAcceptedWhileItsWaiterIsPending()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        timeout.CancelAfter(TimeSpan.FromSeconds(12));
+        Task<BridgeConnection> waiter = _listener.AcceptBridgeAsync(new HandshakeExpectation("AAAA", ProjectDir), timeout.Token);
+        using TcpClient silent = new();
+        await silent.ConnectAsync(IPAddress.Loopback, _listener.Port, cancellation);
+        using FakeBridge paused = new(silent);
+
+        await Task.Delay(TimeSpan.FromSeconds(6), cancellation);
+        await paused.WriteAsync(Hello("AAAA"), cancellation);
+        await using BridgeConnection connection = await waiter;
+
+        Assert.True(connection.IsOpen);
+    }
+
+    [Fact]
+    public async Task ASilentConnectionIsRefusedOnceNoWaiterIsPending()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        Task<BridgeConnection> waiter = _listener.AcceptBridgeAsync(new HandshakeExpectation("AAAA", ProjectDir), wait.Token);
+        using TcpClient silentClient = new();
+        await silentClient.ConnectAsync(IPAddress.Loopback, _listener.Port, cancellation);
+        using FakeBridge silent = new(silentClient);
+
+        await Task.Delay(TimeSpan.FromSeconds(5.5), cancellation);
+        bool openWhileWaiting = !await silent.IsClosedByServerAsync(TimeSpan.FromMilliseconds(500));
+        await wait.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiter);
+        bool closedOnceAbandoned = await silent.IsClosedByServerAsync(TimeSpan.FromSeconds(1.5));
+
+        Assert.True(openWhileWaiting);
+        Assert.True(closedOnceAbandoned);
+    }
+
+    [Fact]
+    public async Task ASilentConnectionWithNoWaiterIsRefusedAfterFiveSeconds()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using var none = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        Task<BridgeConnection> withdrawn = _listener.AcceptBridgeAsync(new HandshakeExpectation("AAAA", ProjectDir), none.Token);
+        await none.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => withdrawn);
+        using TcpClient silentClient = new();
+        await silentClient.ConnectAsync(IPAddress.Loopback, _listener.Port, cancellation);
+        using FakeBridge silent = new(silentClient);
+
+        bool openBeforeTheTimeout = !await silent.IsClosedByServerAsync(TimeSpan.FromSeconds(3));
+        bool closedAfterTheTimeout = await silent.IsClosedByServerAsync(TimeSpan.FromSeconds(4));
+
+        Assert.True(openBeforeTheTimeout);
+        Assert.True(closedAfterTheTimeout);
+    }
+
+    /// <summary>The hello <see cref="FakeBridge"/> dials with, written by a raw client that stayed silent past the timeout.</summary>
+    private static JsonObject Hello(string token) =>
+        new()
+        {
+            ["type"] = "hello",
+            ["token"] = token,
+            ["projectPath"] = ProjectDir,
+            ["pid"] = 4242,
+        };
+
     private static string? NameIn(JsonNode? reply) => reply?["name"]?.GetValue<string>();
 }
