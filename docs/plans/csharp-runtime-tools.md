@@ -1,6 +1,6 @@
 # Proposal: C#-aware runtime tools
 
-Draft for the plan line "C#-aware runtime tools beyond `call_method`" (MAIN.md, Singles). Nothing is built. Godot is cited from `4.7.2-stable`; .NET from `dotnet/runtime` `v10.0.0` (checked against `v8.0.0`); MSBuild from `dotnet/msbuild` main.
+Draft for the plan line "C#-aware runtime tools beyond `call_method`" (MAIN.md, Singles). Being built: §7 lists the steps and which have landed. Godot is cited from `4.7.2-stable`; .NET from `dotnet/runtime` `v10.0.0` (checked against `v8.0.0`); MSBuild from `dotnet/msbuild` main.
 
 ## 1. Who needs it
 
