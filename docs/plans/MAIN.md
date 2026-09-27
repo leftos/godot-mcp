@@ -10,13 +10,11 @@ The first version replaced godot-mcp-runtime at parity and went further: every p
 
 ## Next
 
-A track, then singles; the singles' order is not a ranking.
-
-### Track: C# runtime tools
-
-- [ ] C#-aware runtime tools beyond `call_method`, for members Godot's call cannot reach: signatures with types Godot cannot marshal (generics, plain C# classes), static members, and overloads that share a name and argument count (`internal` methods are reached; step 12, 2026-09-26). Decided (user, 2026-09-26): design it now, as a proposal drafted before any build. Proposal and decisions: [csharp-runtime-tools.md](./csharp-runtime-tools.md) (a helper loaded at run time through a NativeAOT GDExtension shim; `cs_members`/`cs_get`/`cs_set`/`cs_call` and `run_csharp`); its spike proved all three unproven steps (2026-09-26, the proposal's §6); the build is planned as steps S1-S9 (the proposal's §7); S1 (projects, publish, install), S2 (the marshalling core), S4 (CsProbe additions) and S8a (the snippet compiler) landed 2026-09-26; S3 (the bridge loader, the helper's ping, the helper cache and the `csharp` itest group) landed too, S5 (`cs_members`), S6 (`cs_get`, `cs_set`), S7 (`cs_call`) and S8b (`run_csharp`, 2026-09-27); next is S9 (the docs pass)
+The singles' order is not a ranking.
 
 ### Singles
+
+- [ ] A version number agents can read from the installed server and skill, and a rule that an agent filing a godot-mcp issue names the version it used, so an issue already fixed on `main` is recognised (user, 2026-09-27). Decided (user, 2026-09-27): semver in `Directory.Build.props` plus the commit sha stamped at publish (`0.1.0+dac8c70`; orchestrator default: start at 0.1.0, minor bump for a new tool or parameter and patch for a fix, at landing); read from the MCP handshake's `serverInfo.version`, a `version` field on `run_project`/`attach_project` results, and a `version:` line `install` stamps into the installed skill; the filing rule lives in the user-level CLAUDE.md friction rule (done 2026-09-27) and the skill's filing note
 
 - [ ] `list_sessions` keeps every stopped session for the server's life, and a session error lists them all (#11). Decided (user, 2026-09-27): stopped sessions are kept (crash output, restart by name, a recording's outcome), `list_sessions` hides them unless `includeStopped: true`, and the unknown-session error lists the live ones plus a count of the stopped
 - [ ] `stop_project` reports exit 0, not killed, for a game a debugger already terminated (#12). Decided (user, 2026-09-27): `alreadyExited: true` when the run had ended before the stop, and `gameExitCode` from a handle on Godot's own pid opened at the hello (null when unreadable); `exitCode` stays the wrapper's; `restart_project`'s previous-run fields get the same pair

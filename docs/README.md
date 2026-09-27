@@ -6,6 +6,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 - [`DECISIONS.md`](./DECISIONS.md): the user's decisions and the Godot 4.7.2 facts behind them: why the server exists, the wire, gamepad input, the error feed.
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md): the components, a request's path, the session lifecycle, every tool and the recipe for a new one.
 - [`DEVELOPMENT.md`](./DEVELOPMENT.md): toolchain, commands, gates, test coverage and footguns.
+- [`csharp-runtime-tools.md`](./csharp-runtime-tools.md): the design record of the C# runtime tools and their helper: the options weighed, the spike, the decisions and the build steps.
 - [`TOOLS.md`](./TOOLS.md): for an agent using the server: which tool fits a job, each tool's edges, and worked drives.
 - [`../skills/godot-mcp/SKILL.md`](../skills/godot-mcp/SKILL.md): the tutorial skill agents in the game repos load: the drive loop, every tool by job, the rules that bite; it points at TOOLS.md for each tool's edges.
 

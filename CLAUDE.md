@@ -37,4 +37,5 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 - Source and test edits go to the `implementer` agent with a brief naming the files, the change and a proving command; the main session owns docs, plans and commits.
 - Commits are pre-approved: commit a step whose gates are green, whose diff is reviewed and whose docs are updated, without asking. Anything unusual still asks: a revert, a history edit, a force-push (user, 2026-09-25).
 - The repo is public at `github.com/leftos/godot-mcp`; a landed item is committed on `main` and pushed straight to `origin/main`, no PR (user, 2026-09-26).
+- Every landing that changes the server, the bridge or the skill ends with `pwsh run.ps1 install` from the main checkout, so a new session in a game repo gets the latest build; when a running session holds the installed exe, say so and retry at the next landing (user, 2026-09-27).
 - Never commit while an implementer has work in the tree.
