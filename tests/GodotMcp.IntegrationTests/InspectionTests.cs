@@ -176,6 +176,21 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetsAStringNamePropertyDeclaredAsString()
+    {
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
+
+        JsonNode set = await SetAsync("Swatch", "theme_type_variation", "\"Big\"");
+        JsonNode isStringName = await RunAsync(
+            "return typeof(scene_tree.root.get_node(\"InspectProbe/Swatch\").theme_type_variation) == TYPE_STRING_NAME"
+        );
+
+        Assert.Equal(string.Empty, set["before"]!.GetValue<string>());
+        Assert.Equal("Big", set["after"]!.GetValue<string>());
+        Assert.True(isStringName.GetValue<bool>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task SetUnknownPropertyFails()
     {
         await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);

@@ -22,7 +22,6 @@ A track, then singles; the singles' order is not a ranking.
 
 ### Singles
 
-- [ ] The scene tools refuse a `StringName` property (`theme_type_variation`) on read-back, comparing the String sent with the StringName read (#8)
 - [ ] Six properties declare a Packed array and read back an `Array` (`CodeEdit.line_length_guidelines`, `delimiter_strings`, `delimiter_comments`, `code_completion_prefixes`, `indent_automatic_prefixes`; `SoftBody3D.pinned_points`; measured 2026-09-27 while fixing #8), so `set_property` and the scene tools refuse a correct set: compare the two element by element in the JSON module's `same`, without equating ints and floats (user, 2026-09-27: its own line)
 - [ ] Tooltips in screenshots, a hover-only pointer move, and a timed wait while paused (#9): find whether a tooltip's popup window escapes `take_screenshot` or a quiet run never shows it; decided (user, 2026-09-27): a hover gets both a new `hover` tool (`target` an element or x,y, no button held, answering `hoveredOn` and `tooltip`, waiting out the tooltip delay itself) and a `mouse_button` action `move`; `wait_for` keeps refusing a plain timed wait while paused, since the hover waits for the tooltip itself
 

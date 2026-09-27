@@ -595,14 +595,25 @@ static func is_shown(info: Dictionary) -> bool:
 
 
 ## Whether a property reads back what was set. A native float property may store 32 bits, so
-## a float compares approximately; anything else must match in type and value.
+## a float compares approximately; anything else must match in type and value. A String and a
+## StringName compare by their text, since Godot declares some properties as one and reads them
+## back as the other.
 static func same(after: Variant, value: Variant) -> bool:
 	# A cleared native Object property reads back as a null Ref, which is TYPE_OBJECT, not TYPE_NIL.
 	if typeof(value) == TYPE_NIL:
 		return typeof(after) == TYPE_NIL or (typeof(after) == TYPE_OBJECT and after == null)
 	if typeof(after) == TYPE_FLOAT and typeof(value) == TYPE_FLOAT:
 		return is_equal_approx(after, value)
+	if _both_text(after, value):
+		return after == value
 	return typeof(after) == typeof(value) and after == value
+
+
+## Whether both values are text, the one type pair a property's declared kind and its read-back
+## kind may differ by: a String and a StringName.
+static func _both_text(after: Variant, value: Variant) -> bool:
+	var kinds: Array[int] = [TYPE_STRING, TYPE_STRING_NAME]
+	return typeof(after) in kinds and typeof(value) in kinds
 
 
 ## The type a property or parameter entry declares: its class for an object, else the Variant

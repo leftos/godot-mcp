@@ -548,6 +548,13 @@ func test_same_compares_a_read_back_by_type_and_value() -> void:
 	assert_true(not _json.same(0, null), "an int is not null")
 
 
+func test_same_compares_a_string_and_a_string_name_by_text() -> void:
+	assert_true(_json.same(StringName("a"), "a"), "a StringName read back for a String set")
+	assert_true(_json.same("a", StringName("a")), "a String read back for a StringName set")
+	assert_true(not _json.same(StringName("a"), "b"), "different text")
+	assert_true(not _json.same(NodePath("a"), "a"), "a NodePath is not text")
+
+
 func test_is_shown_keeps_script_and_editor_properties() -> void:
 	assert_true(_json.is_shown({"usage": PROPERTY_USAGE_SCRIPT_VARIABLE}), "a script variable")
 	assert_true(_json.is_shown({"usage": PROPERTY_USAGE_DEFAULT}), "an editor property")

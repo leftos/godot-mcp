@@ -78,6 +78,22 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AddNodeSetsAThemeTypeVariation()
+    {
+        // Godot 4.7.2 declares Control.theme_type_variation as a String and reads it back as a StringName (control.cpp L5033, L3670).
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        AddNodeOptions options = new("Box", new() { ["theme_type_variation"] = Json("\"PopoverIconRow\"") });
+
+        string added = await _tools.AddNodeAsync(probe.Directory, "level.tscn", "HBoxContainer", "Icons", options, cancellation);
+
+        Assert.Equal("""{"path":"Box/Icons","type":"HBoxContainer"}""", added);
+        string[] body = Section(probe.Directory, "level.tscn", "Icons").Body;
+        Assert.Contains("theme_type_variation = &\"PopoverIconRow\"", body);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AddNodeInstancesAScene()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
