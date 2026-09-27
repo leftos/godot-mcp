@@ -1,5 +1,5 @@
 # Main Plan
-<!-- plan-doc-hygiene: 2026-09-26 45fcccb -->
+<!-- plan-doc-hygiene: 2026-09-27 5acd617 -->
 
 Open work only, in working order: the next item is the first line from the top; a finished line is deleted (git keeps the history). The user's decisions are in [DECISIONS.md](../DECISIONS.md).
 
@@ -10,10 +10,18 @@ The first version replaced godot-mcp-runtime at parity and went further: every p
 
 ## Next
 
-The singles' order is not a ranking.
+Waves first, then the singles; the singles' order is not a ranking.
+
+### Wave 1: headless scene tools' results
+
+Shared: `src/GodotMcp.Server/Tools/HeadlessTools.cs`, `src/GodotMcp.Server/Session/ProjectPrep.cs`. Gate: `pwsh run.ps1 test` and `pwsh run.ps1 itest -Filter "*HeadlessTests"`; human check: a headless edit on opening-hand reads clean.
+
+- [ ] Headless scene tools print `Failed to instantiate an autoload … does not inherit from 'Node'` for a C# autoload on every call (#18): keep the project's autoloads out of the headless run, or drop that known line from the result
+- [ ] A "the project's C# build failed" refusal quotes the first compiler error (file, line, code, message) from `.godot/godot-mcp/build.log` and the configuration it built (#19)
 
 ### Singles
 
+- [ ] `run_csharp` resolves node paths differently from `cs_call`, without naming the base in its error, and cannot reach the project's `internal` members (#20): one node-path convention across `run_csharp` and `cs_*`, and internals reachable from a snippet or documented with the `Call` fallback (`src/GodotMcp.Server/Tools/RuntimeTools.RunCSharp.cs`, `src/GodotMcp.Server/CSharp/SnippetReferences.cs`)
 - [ ] `take_screenshot` misses popups and tooltips in a project that sets `display/window/subwindows/embed_subwindows=false`, since each is its own OS window outside the root viewport's texture (measured 2026-09-27 for #9): composite each visible non-embedded `Window` onto the capture at its offset from the root, through one capture helper so crops, baselines and frame steps inherit it; check the offset on a visible desktop first, since a native popup's `position` read (0,0) on the hidden one (user, 2026-09-27: build later)
 - [ ] A Godot launch in the itests died once with exit 0xC06D007F (a delay-load failure) before the bridge connected (`CaptureTests.SentPadInputIsCaptured`, full `itest` 2026-09-26, beside two other trees' itests; passed on the rerun): find what fails to load if it recurs. Recurred in kind 2026-09-27: a `TimeTests` run beside another tree's `HeadlessTests` failed all 38 at the fixture's launch ("the bridge did not connect within 15 s", no stderr, no Godot process ever seen by a 10 s sampler), while the same branch passed alone and on a quiet machine; the same load also gave a `WaitForNodeExists` flake and a test host outliving the 300 s ceiling, and `pwsh run.ps1 format` passing its 180 s ceiling with an empty log as the first command in a cold worktree (it passed once the tree was built)
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see [DECISIONS.md](../DECISIONS.md#gamepad-input-from-godot-472s-source))
