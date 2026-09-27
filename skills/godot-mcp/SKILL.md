@@ -54,6 +54,25 @@ A drive is always the same five moves: **start → look → act → wait → che
 - A value that moves over time (a tween, a velocity): `monitor_property` samples it each frame in one call and returns only the changes. A game driven by InputMap actions: `simulate_action {action}` taps one.
 - An action whose effects you cannot list: `snapshot_subtree` first, act, then `diff_snapshots {beforeId}` (no `afterId` re-captures now) for every node added, removed or changed. Ids die with a stop or restart, and a `batch_drive` step cannot read an earlier step's id.
 - A click that seems to do nothing: read its `pressedOn` (the Control it actually hit; a drag's `guiDragStarted` and `dropAccepted` say whether a GUI drag and drop happened), check `errors` in its result, then `get_ui_elements` for `disabled`/`visible`, then `wait_for` its effect rather than screenshotting at once.
-- A tool that is missing, confusing, slow or wrong for the job: that is friction with a tool we own. File it (`gh issue create -R leftos/godot-mcp`, after `gh issue list -R leftos/godot-mcp --search "<words>"`), with the tool, the arguments, what happened against what you needed, and the workaround you used, then carry on.
+- A tool that is missing, confusing, slow or wrong for the job: that is friction with a tool we own. File it as "Filing friction" below says, then carry on with the task.
 
 Game-specific drive lessons (a project's scenes, launch arguments, a known flaky screen) belong in that project's own docs (its DEVELOPMENT.md), not here.
+
+## Filing friction
+
+Friction is filed with `gh` as it happens, one issue per friction, never through a godot tool: the server stays closed to the outside world. An agent sent a brief (an implementer) does not post: it puts a line starting `godot-mcp friction:` in its report, and the session that sent it files it.
+
+1. **Search first**: `gh issue list -R leftos/godot-mcp --state all --search "<tool name> <two or three words>"`. An open issue that matches gets a comment (`gh issue comment <N> -R leftos/godot-mcp --body-file <file>`) with your case, rather than a new issue; a closed one that matches is a regression, filed new and citing it.
+2. **Write the body to a file** (the Write tool, under the project's `.tmp/`; a heredoc is refused), in this shape:
+
+   ```
+   > 🤖 Posted by Claude Code on behalf of @leftos.
+
+   **Tool:** `<tool>` with `<arguments, as sent>`
+   **What happened:** <the result or error, quoted, cut to what matters>
+   **What was needed:** <the outcome you were after>
+   **Workaround:** <what you did instead, e.g. a run_script, or "none">
+   **Project:** <the game repo> (godot-mcp at <`git -C D:/godot-mcp log -1 --format=%h`>, or "installed copy")
+   ```
+
+3. **File it**: `gh issue create -R leftos/godot-mcp --title "<tool>: <the friction in a few words>" --body-file <file>`, and carry on with the task. The title says what is wrong, not what to build.
