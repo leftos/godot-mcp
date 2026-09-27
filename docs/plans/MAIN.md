@@ -14,8 +14,8 @@ The singles' order is not a ranking.
 
 ### Singles
 
-
-
+- [ ] A `click` by element path lands on a same-named sibling (`CardSlot/CardFace` among auto-named instances) instead of the node the path names: resolve the path exactly, or refuse it as ambiguous (#15)
+- [ ] `run_script` reading a C# collection property (`List<HandSlot>`) fails with "Invalid access to property" and does not point to `cs_get`; say so in the error, and check the skill steers C# reads to the `cs_*` tools (#16)
 
 - [ ] `take_screenshot` misses popups and tooltips in a project that sets `display/window/subwindows/embed_subwindows=false`, since each is its own OS window outside the root viewport's texture (measured 2026-09-27 for #9): composite each visible non-embedded `Window` onto the capture at its offset from the root, through one capture helper so crops, baselines and frame steps inherit it; check the offset on a visible desktop first, since a native popup's `position` read (0,0) on the hidden one (user, 2026-09-27: build later)
 - [ ] A Godot launch in the itests died once with exit 0xC06D007F (a delay-load failure) before the bridge connected (`CaptureTests.SentPadInputIsCaptured`, full `itest` 2026-09-26, beside two other trees' itests; passed on the rerun): find what fails to load if it recurs
