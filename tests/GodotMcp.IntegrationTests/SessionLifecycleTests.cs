@@ -120,6 +120,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.True(serverAnswered && clientAnswered);
         Assert.Equal(["client", "server"], listed.Select(session => session.Name));
         Assert.All(listed, session => Assert.True(session.Live && session.Kind == "run" && session.ProcessId is not null));
+        Assert.All(listed, session => Assert.True(session.GameProcessId is not null && session.GameProcessId != session.ProcessId));
         Assert.False(serverStopped.OverrideRemoved);
         Assert.True(overrideAfterFirstStop);
         Assert.True(clientAnsweredAlone);
@@ -194,8 +195,30 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         SessionInfo listed = Assert.Single(_harness.Sessions.List());
 
         Assert.NotEqual(first.ProcessId, second.ProcessId);
-        Assert.Equal(new SessionInfo("a", ProjectPaths.Normalise(_probe.Directory), "run", true, second.ProcessId), listed);
+        Assert.NotNull(listed.GameProcessId);
+        Assert.Equal(new SessionInfo("a", ProjectPaths.Normalise(_probe.Directory), "run", true, second.ProcessId, listed.GameProcessId), listed);
         Assert.True(answered);
+    }
+
+    // The debugger is a fake that answers yes for every pid: the game itself runs and answers, so the restart and the stop each
+    // end it gracefully and warn with the pid of the game they ended.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task StopWithADebuggerAttachedWarns()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        int firstGame = Assert.Single(_harness.Sessions.List()).GameProcessId!.Value;
+        _harness.Sessions.IsDebuggerAttached = _ => true;
+
+        RestartResult restarted = await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
+        int secondGame = Assert.Single(_harness.Sessions.List()).GameProcessId!.Value;
+        StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.NotEqual(firstGame, secondGame);
+        Assert.Equal($"A debugger was attached to the game (pid {firstGame}); its debug session ended with the game.", restarted.Warning);
+        Assert.Equal($"A debugger was attached to the game (pid {secondGame}); its debug session ended with the game.", stopped.Warning);
+        Assert.False(stopped.Killed);
+        Assert.True(stopped.OverrideRemoved);
     }
 
     [Fact(Timeout = TestTimeoutMs)]

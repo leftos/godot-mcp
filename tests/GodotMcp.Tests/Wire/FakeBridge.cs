@@ -64,16 +64,18 @@ internal sealed class FakeBridge(TcpClient client) : IDisposable
         }
     }
 
-    public Task AnswerOneAsync(string name, CancellationToken cancellationToken) => AnswerOneAfterAsync([], name, cancellationToken);
+    /// <summary>Reads one request and answers it with <paramref name="name"/>; returns the request's command.</summary>
+    public Task<string?> AnswerOneAsync(string name, CancellationToken cancellationToken) => AnswerOneAfterAsync([], name, cancellationToken);
 
     /// <summary>Writes one frame as it is, as the bridge writes its unsolicited errors frames.</summary>
     public async Task WriteAsync(JsonObject frame, CancellationToken cancellationToken) =>
         await client.GetStream().WriteAsync(FrameCodec.EncodeJson(frame), cancellationToken);
 
     /// <summary>
-    /// Reads one request, then writes <paramref name="frames"/> and the reply after them, as the bridge flushes its errors before replying.
+    /// Reads one request, then writes <paramref name="frames"/> and the reply after them, as the bridge flushes its errors before
+    /// replying; returns the request's command.
     /// </summary>
-    public async Task AnswerOneAfterAsync(JsonObject[] frames, string name, CancellationToken cancellationToken)
+    public async Task<string?> AnswerOneAfterAsync(JsonObject[] frames, string name, CancellationToken cancellationToken)
     {
         FrameDecoder decoder = new();
         byte[] chunk = new byte[4096];
@@ -102,6 +104,7 @@ internal sealed class FakeBridge(TcpClient client) : IDisposable
             ["result"] = new JsonObject { ["name"] = name },
         };
         await client.GetStream().WriteAsync(FrameCodec.EncodeJson(reply), cancellationToken);
+        return HandshakeExpectation.ReadString(request, "command");
     }
 
     /// <summary>Whether the server closes the connection within <paramref name="wait"/>.</summary>

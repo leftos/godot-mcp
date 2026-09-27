@@ -4,13 +4,20 @@ using System.Diagnostics;
 namespace GodotMcp.Server.Session;
 
 /// <summary>
-/// What <see cref="HangProbe"/> found after a request timed out: whether the game answered a ping and, when it did not, its
-/// process's state and, for a run, its last stderr lines (null for an attached game, which has no captured output).
+/// What <see cref="HangProbe"/> found after a request timed out: whether the game answered a ping and, when it did not, either
+/// the game's pid when a debugger attached to it holds it paused, or its process's state and, for a run, its last stderr
+/// lines (null for an attached game, which has no captured output).
 /// </summary>
-internal sealed record HangReport(bool Answered, string ProcessState, IReadOnlyList<string>? StderrLines)
+internal sealed record HangReport(bool Answered, string ProcessState, IReadOnlyList<string>? StderrLines, int? DebuggedProcessId)
 {
-    /// <summary>The main thread's state in one word, for the log: running or stuck.</summary>
-    public string Outcome => Answered ? "running" : "stuck";
+    /// <summary>The main thread's state, for the log: running, stuck, or paused under a debugger.</summary>
+    public string Outcome =>
+        (Answered, DebuggedProcessId) switch
+        {
+            (true, _) => "running",
+            (false, null) => "stuck",
+            _ => "paused under a debugger",
+        };
 
     /// <summary>The timed-out tool's error message.</summary>
     /// <param name="tool">The tool whose request timed out.</param>
@@ -22,6 +29,11 @@ internal sealed record HangReport(bool Answered, string ProcessState, IReadOnlyL
         if (Answered)
         {
             return $"{timedOut}, but the game answered a ping, so its main thread is running{hint}.";
+        }
+
+        if (DebuggedProcessId is int debugged)
+        {
+            return $"{timedOut}. {GodotSession.PausedUnderDebugger(debugged)}";
         }
 
         string stuck =
@@ -49,21 +61,27 @@ internal static class HangProbe
     private static readonly TimeSpan CpuSample = TimeSpan.FromSeconds(1);
 
     /// <summary>
-    /// Pings the session's game and, when the ping goes unanswered, describes the game's process: the one the hello named, else
-    /// the process the server started.
+    /// Pings the session's game and, when the ping goes unanswered, reports a game a debugger is attached to as paused under it,
+    /// and otherwise describes the game's process: the one the hello named, else the process the server started.
     /// </summary>
     public static async Task<HangReport> RunAsync(GodotSession session, CancellationToken cancellationToken)
     {
         if (await AnswersPingAsync(session, cancellationToken))
         {
-            return new HangReport(true, string.Empty, null);
+            return new HangReport(true, string.Empty, null, null);
+        }
+
+        // Only a game still connected can be paused: after it exits its pid may name another process, or none.
+        if (session.HasGame && session.DebuggedProcessId is int debugged)
+        {
+            return new HangReport(false, string.Empty, null, debugged);
         }
 
         int? processId = session.GameProcessId ?? session.ProcessId;
         string state = processId is int id
             ? await DescribeProcessAsync(id, session.RunExitCode, cancellationToken)
             : "The game's process id is unknown: its bridge's hello carried none.";
-        return new HangReport(false, state, session.LastStderrLines(StderrLineCount));
+        return new HangReport(false, state, session.LastStderrLines(StderrLineCount), null);
     }
 
     /// <summary>Whether the game replied to a ping in time; a refusal is a reply too, so only silence or a lost connection is false.</summary>
@@ -71,7 +89,7 @@ internal static class HangProbe
     {
         try
         {
-            await session.SendAsync("ping", null, PingTimeout, cancellationToken);
+            await session.PingAsync(PingTimeout, cancellationToken);
             return true;
         }
         catch (InvalidOperationException)

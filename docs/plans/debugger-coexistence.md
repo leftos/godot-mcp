@@ -30,6 +30,10 @@ The decision on each is yours and the user's; this names the problem and what wa
 3. `stop_project` and `restart_project` proceed while a debugger is attached, and their result carries a warning that the debugger's session ended with the game.
 4. Change 3 waits on the trial: launch Godot under netcoredbg through DebugMCP, then `attach_project` to it; a hold-until-attached option is built only if that falls short.
 
+## Landed
+
+Decisions 1-3 landed 2026-09-26: `gameProcessId`; the 0.5 s ping when a debugger is attached, whose failure says the game "did not answer within 0.5 s while a debugger is attached: it is most likely paused at a breakpoint" (softened after review, since a long frame fails it too), while a timed-out call's probe says it "is paused under a debugger"; the stop and restart `warning`. Open: the end-to-end trial (below, "Done means"), and decision 4 with it.
+
 ## Out of scope
 
 Wrapping or proxying DebugMCP's tools inside godot-mcp, or adding a debugger of its own: the two servers stay separate.

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
@@ -11,20 +12,24 @@ using ModelContextProtocol;
 namespace GodotMcp.Tests.Session;
 
 /// <summary>
-/// A timed-out request told apart as a busy or a stuck main thread, through an attached session whose game is a
-/// <see cref="FakeBridge"/>. The stuck game's hello names this test process, so the probe has a real process to sample.
+/// A timed-out request told apart as a busy or a stuck main thread, and a game paused under a debugger failing a call at
+/// once, through an attached session whose game is a <see cref="FakeBridge"/>. The stuck game's hello names this test process,
+/// so the probe has a real process to sample; whether a debugger is attached is a fake the test sets.
 /// </summary>
 public sealed partial class HangProbeTests : IAsyncDisposable
 {
     private const string Script = "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\treturn 1\n";
     private const int TimeoutMs = 300;
+    private const string Command = "get_ui_elements";
     private static readonly TimeSpan AttachWait = TimeSpan.FromSeconds(10);
     private readonly TempDirectory _temp = new();
     private readonly BridgeListener _listener = new(NullLogger<BridgeListener>.Instance);
     private readonly SessionRegistry _sessions;
     private FakeBridge? _game;
+    private bool _debuggerAttached;
 
-    public HangProbeTests() => _sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance);
+    public HangProbeTests() =>
+        _sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance) { IsDebuggerAttached = _ => _debuggerAttached };
 
     public ValueTask DisposeAsync()
     {
@@ -84,11 +89,113 @@ public sealed partial class HangProbeTests : IAsyncDisposable
         );
     }
 
+    [Fact]
+    public async Task ACallToAGamePausedUnderADebuggerFailsFast()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AttachAsync(Environment.ProcessId, cancellation);
+        _debuggerAttached = true;
+        var elapsed = Stopwatch.StartNew();
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => RunScriptAsync(10_000, cancellation));
+
+        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(2), $"the call failed after {elapsed.Elapsed}, not within about 1 s");
+        Assert.Equal(
+            $"The game (pid {Environment.ProcessId}) did not answer within 0.5 s while a debugger is attached: it is most likely paused at "
+                + "a breakpoint. Continue it in the debugger, or retry if it was only busy.",
+            refused.Message
+        );
+    }
+
+    // The hello's pid is this test process, which still runs after the game's connection ends, as a pid another process reuses would.
+    [Fact]
+    public async Task AnExitedGameIsNeverReportedPaused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeBridge game = await AttachAsync(Environment.ProcessId, cancellation);
+        _debuggerAttached = true;
+        GodotSession session = _sessions.Resolve(null);
+        game.Dispose();
+        DateTime deadline = DateTime.UtcNow + AttachWait;
+        while (session.HasGame)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "the session still had its game 10 s after the connection closed");
+            await Task.Delay(20, cancellation);
+        }
+
+        HangReport report = await HangProbe.RunAsync(session, cancellation);
+
+        Assert.False(report.Answered);
+        Assert.Null(report.DebuggedProcessId);
+        Assert.Equal("stuck", report.Outcome);
+    }
+
+    [Fact]
+    public async Task ACallWithADebuggerAttachedButRunningGoesThrough()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeBridge game = await AttachAsync(Environment.ProcessId, cancellation);
+        _debuggerAttached = true;
+
+        Task<JsonNode?> sent = _sessions.Resolve(null).SendAsync(Command, null, TimeSpan.FromSeconds(5), cancellation);
+        string? first = await AnswerAsync(game, "first", cancellation);
+        string? second = await AnswerAsync(game, "second", cancellation);
+        JsonNode? result = await sent;
+
+        Assert.Equal(["ping", Command], [first, second]);
+        Assert.Equal("second", result?["name"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task NoDebuggerMeansNoExtraPing()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeBridge game = await AttachAsync(Environment.ProcessId, cancellation);
+
+        Task<JsonNode?> sent = _sessions.Resolve(null).SendAsync(Command, null, TimeSpan.FromSeconds(5), cancellation);
+        string? first = await AnswerAsync(game, "only", cancellation);
+        JsonNode? result = await sent;
+
+        Assert.Equal(Command, first);
+        Assert.Equal("only", result?["name"]?.GetValue<string>());
+    }
+
+    // The debugger's ping before the call is answered, as by a game running when the call starts; then the game goes silent, as
+    // one a breakpoint pauses mid-call does, so the call times out and the probe's own ping goes unanswered.
+    [Fact]
+    public async Task TheHangProbeReportsAPausedGameUnderADebugger()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeBridge game = await AttachAsync(Environment.ProcessId, cancellation);
+        _debuggerAttached = true;
+
+        Task<string> call = RunScriptAsync(TimeoutMs, cancellation);
+        string? first = await AnswerAsync(game, "pong", cancellation);
+        McpException timedOut = await Assert.ThrowsAsync<McpException>(() => call);
+
+        Assert.Equal("ping", first);
+        Assert.Equal(
+            $"'run_script' timed out after 300 ms. The game (pid {Environment.ProcessId}) is paused under a debugger: continue it in the "
+                + "debugger before driving the game.",
+            timedOut.Message
+        );
+    }
+
     [GeneratedRegex(@"^Process \d+: \d+ ms CPU over 1 s, \d+ threads, main thread \w+(/\w+)?\.$")]
     private static partial Regex ProcessLine();
 
-    private Task<string> RunScriptAsync(CancellationToken cancellation) =>
-        new RuntimeTools(_sessions, TestCSharp.Unused()).RunScriptAsync(Script, TimeoutMs, cancellationToken: cancellation);
+    /// <summary>Answers the fake game's next request, failing the test instead of hanging when none comes within 10 s.</summary>
+    private static async Task<string?> AnswerAsync(FakeBridge game, string name, CancellationToken cancellation)
+    {
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        bounded.CancelAfter(AttachWait);
+        return await game.AnswerOneAsync(name, bounded.Token);
+    }
+
+    private Task<string> RunScriptAsync(CancellationToken cancellation) => RunScriptAsync(TimeoutMs, cancellation);
+
+    private Task<string> RunScriptAsync(int timeoutMs, CancellationToken cancellation) =>
+        new RuntimeTools(_sessions, TestCSharp.Unused()).RunScriptAsync(Script, timeoutMs, cancellationToken: cancellation);
 
     /// <summary>Attaches a session to a fake game whose hello carries <paramref name="processId"/>.</summary>
     private async Task<FakeBridge> AttachAsync(int? processId, CancellationToken cancellation)

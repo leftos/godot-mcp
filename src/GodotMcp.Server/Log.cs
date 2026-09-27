@@ -35,6 +35,12 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Information, Message = "Godot {Pid} runs {Project}; the bridge is connected.")]
     public static partial void RunStarted(ILogger logger, int pid, string project);
 
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Checking process {ProcessId} for a debugger failed in {Call} with Win32 error {Error}; treating it as not debugged."
+    )]
+    public static partial void DebuggerCheckFailed(ILogger logger, int processId, string call, int error);
+
     [LoggerMessage(Level = LogLevel.Debug, Message = "The handshake wait ended without a bridge.")]
     public static partial void HandshakeAbandoned(ILogger logger, Exception exception);
 

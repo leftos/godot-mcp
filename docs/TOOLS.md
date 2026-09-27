@@ -66,18 +66,19 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 - **Does:** asks the game to quit, kills it after 3 s (30 s for a recording run), removes the override when no other live session uses the folder: `{session, projectPath, exitCode, killed, overrideRemoved, recording?}`.
 - **Use:** at the end of every `run_project` session, and before a headless tool on the same folder.
-- **Edges:** a game that does not answer a ping in 2 s is killed at once. For a recording run, `recording` holds `{path}` (no marks: the full movie) or `{clips}` (one file a mark pair; the full movie deleted), plus `error` when a cut failed.
+- **Edges:** a game that does not answer a ping in 2 s is killed at once. A game a debugger is attached to is stopped all the same, and `warning` says its debug session ended with it. For a recording run, `recording` holds `{path}` (no marks: the full movie) or `{clips}` (one file a mark pair; the full movie deleted), plus `error` when a cut failed.
 
 ### `restart_project`
 
 - **Does:** relaunches a run session with the scene, arguments and options it was started with, keeping its name, its error `seq` and its debug output (a marker line separates the two games).
 - **Use:** after editing code or scenes, to pick up the change without losing the session; `options {prepare}`.
-- **Edges:** the prep runs while the old game still runs, so a failed C# build is an error and leaves the old game running. To change the scene or arguments, `stop_project` then `run_project`. An attached session cannot be restarted. A recording run records the new game to a new file and returns the old one's outcome as `previousRecording`.
+- **Edges:** the prep runs while the old game still runs, so a failed C# build is an error and leaves the old game running. To change the scene or arguments, `stop_project` then `run_project`. An attached session cannot be restarted. The old game is stopped as `stop_project` stops it, with its `warning` when a debugger was attached to it. A recording run records the new game to a new file and returns the old one's outcome as `previousRecording`.
 
 ### `list_sessions`
 
-- **Does:** lists every session by name: project folder, kind (`run` or `attach`), whether it is live, process id, and a recording's state.
-- **Use:** when a call is refused for want of a session name, or to find a session a previous turn started. A stopped run stays listed until its name is reused.
+- **Does:** lists every session by name: project folder, kind (`run` or `attach`), whether it is live, `processId` (the process `run_project` started, the `Godot_console` wrapper on Windows that `stop_project` ends; null for an attach), `gameProcessId` (the game's own process, the one a debugger attaches to; null until the bridge has connected), and a recording's state.
+- **Use:** when a call is refused for want of a session name, or to find a session a previous turn started; `gameProcessId` for a debugger's attach. A stopped run stays listed until its name is reused, with its last pids.
+- **Edges:** while a debugger is attached to the game, every runtime call first pings it for 500 ms and fails at once when the game does not answer: "The game (pid <pid>) did not answer within 0.5 s while a debugger is attached: it is most likely paused at a breakpoint. Continue it in the debugger, or retry if it was only busy." A call that times out on such a game says it is paused under a debugger rather than stuck.
 
 ### `get_debug_output`
 

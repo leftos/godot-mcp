@@ -32,6 +32,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     private static readonly TimeSpan ShutdownReplyTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan ExitGrace = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan KillWait = TimeSpan.FromSeconds(5);
+
+    // SilentUnderDebugger's text quotes this.
+    private static readonly TimeSpan DebuggerPingTimeout = TimeSpan.FromMilliseconds(500);
     private const int FailureStderrLines = 20;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -98,7 +101,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             await _gate.WaitAsync(cancellationToken);
             try
             {
-                return await StartRunAsync(request, previous: null, cancellationToken);
+                return (await StartRunAsync(request, previous: null, cancellationToken)).Started;
             }
             finally
             {
@@ -137,12 +140,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
             GodotRun run =
                 _run ?? throw new SessionException("No Godot session has been started, so there is nothing to stop. Start one with run_project.");
-            bool killed = await EndRunAsync(run);
+            RunEnd ended = await EndRunAsync(run);
             Snapshots.Clear();
             registry.Captures.End(Name, CaptureStore.EndedByStop);
             RecordingResult? recording = await FinishRecordingAsync();
             bool removed = registry.ReleaseFolder(this);
-            return new StopResult(Name, run.ProjectDir, run.ExitCode, killed, removed) { Recording = recording };
+            return new StopResult(Name, run.ProjectDir, run.ExitCode, ended.Killed, removed) { Recording = recording, Warning = ended.Warning };
         }
         finally
         {
@@ -150,10 +153,40 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
-    /// <summary>Sends a command to the live run's or attached game's bridge.</summary>
+    /// <summary>
+    /// Sends a command to the live run's or attached game's bridge. When a debugger is attached to the game, a ping with a
+    /// <see cref="DebuggerPingTimeout"/> goes first, so a game the debugger holds paused fails the call at once instead of at its timeout.
+    /// </summary>
+    /// <exception cref="SessionException">
+    /// The run is not live, the attached game's connection has ended, or the game is paused under a debugger.
+    /// </exception>
+    public async Task<JsonNode?> SendAsync(string command, JsonObject? parameters, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        BridgeConnection connection = FindLiveConnection();
+        if (DebuggedProcessId is int debugged)
+        {
+            await RefuseIfPausedAsync(connection, debugged, cancellationToken);
+        }
+
+        return await connection.SendAsync(command, parameters, timeout, cancellationToken);
+    }
+
+    /// <summary>Pings the game's bridge without the debugger check <see cref="SendAsync"/> makes first: the hang probe's own ping.</summary>
     /// <exception cref="SessionException">The run is not live, or the attached game's connection has ended.</exception>
-    public Task<JsonNode?> SendAsync(string command, JsonObject? parameters, TimeSpan timeout, CancellationToken cancellationToken) =>
-        FindLiveConnection().SendAsync(command, parameters, timeout, cancellationToken);
+    public Task<JsonNode?> PingAsync(TimeSpan timeout, CancellationToken cancellationToken) =>
+        FindLiveConnection().SendAsync("ping", null, timeout, cancellationToken);
+
+    /// <summary>The game's own process id when a debugger is attached to it; null when none is, or while that id is unknown.</summary>
+    internal int? DebuggedProcessId => GameProcessId is int game && registry.IsDebuggerAttached(game) ? game : null;
+
+    /// <summary>What the hang probe reports for a game that left its 2 s ping unanswered while a debugger is attached.</summary>
+    internal static string PausedUnderDebugger(int processId) =>
+        $"The game (pid {processId}) is paused under a debugger: continue it in the debugger before driving the game.";
+
+    /// <summary>What a call fails with when the game leaves the short ping unanswered while a debugger is attached.</summary>
+    internal static string SilentUnderDebugger(int processId) =>
+        $"The game (pid {processId}) did not answer within 0.5 s while a debugger is attached: it is most likely paused at a breakpoint. "
+        + "Continue it in the debugger, or retry if it was only busy.";
 
     /// <summary>The run's newest stderr lines, oldest first; null for an attached game, which has no captured output.</summary>
     public IReadOnlyList<string>? LastStderrLines(int count)
@@ -252,6 +285,31 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         InputGate.Dispose();
     }
 
+    /// <summary>Fails the call when the game leaves a ping unanswered for <see cref="DebuggerPingTimeout"/> while a debugger is attached.</summary>
+    /// <exception cref="SessionException">The ping went unanswered: the debugger holds the game paused.</exception>
+    private static async Task RefuseIfPausedAsync(BridgeConnection connection, int processId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await connection.SendAsync("ping", null, DebuggerPingTimeout, cancellationToken);
+        }
+        catch (TimeoutException e)
+        {
+            throw new SessionException(SilentUnderDebugger(processId), e);
+        }
+    }
+
+    /// <summary>
+    /// How <see cref="EndRunAsync"/> ended a run: whether the game had to be killed, and the warning when a debugger was attached to it.
+    /// </summary>
+    private readonly record struct RunEnd(bool Killed, string? Warning);
+
+    /// <summary>The warning stop_project and restart_project carry when they end a running game a debugger is attached to; null otherwise.</summary>
+    private string? WarnIfDebugged(GodotRun run) =>
+        run.IsRunning && DebuggedProcessId is int debugged
+            ? $"A debugger was attached to the game (pid {debugged}); its debug session ended with the game."
+            : null;
+
     private BridgeConnection FindLiveConnection()
     {
         if (_attached is { } attached)
@@ -303,7 +361,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <exception cref="SessionException">
     /// Godot was not found, the prep failed, the project has its own override.cfg, or Godot could not start.
     /// </exception>
-    private async Task<(GodotRun Run, PrepResult Prep, string Token)> PrepareAndStartAsync(
+    private async Task<(GodotRun Run, PrepResult Prep, string Token, string? ReplacedWarning)> PrepareAndStartAsync(
         LaunchRequest request,
         GodotRun? previous,
         CancellationToken cancellationToken
@@ -317,11 +375,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             PrepContext context = new(ProjectDir, _logger, () => registry.RunningSessionNames(ProjectDir, this));
             PrepResult prep = request.Prepare ? await ProjectPrep.RunAsync(context, cancellationToken) : PrepResult.Skipped;
             string bridgeScript = Installation.FindBridgeScript();
+            string? replacedWarning = null;
             if (previous is not null)
             {
                 // A restart cancelled by now must not stop a healthy game that the handshake wait would then kill.
                 cancellationToken.ThrowIfCancellationRequested();
-                await EndRunAsync(previous);
+                replacedWarning = (await EndRunAsync(previous)).Warning;
                 Snapshots.Clear();
                 registry.Captures.End(Name, CaptureStore.EndedByRestart);
                 StopOutputCapture(previous);
@@ -339,7 +398,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             _run = run;
             _recording = moviePath is null ? null : new Recording(moviePath);
             ProcessId = run.Process.Id;
-            return (run, prep, token);
+            return (run, prep, token, replacedWarning);
         }
         finally
         {
@@ -347,9 +406,14 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
-    private async Task<LaunchResult> StartRunAsync(LaunchRequest request, GodotRun? previous, CancellationToken cancellationToken)
+    /// <returns>The launch, and the warning when a debugger was attached to the game <paramref name="previous"/> ran.</returns>
+    private async Task<(LaunchResult Started, string? ReplacedWarning)> StartRunAsync(
+        LaunchRequest request,
+        GodotRun? previous,
+        CancellationToken cancellationToken
+    )
     {
-        (GodotRun run, PrepResult prep, string token) = await PrepareAndStartAsync(request, previous, cancellationToken);
+        (GodotRun run, PrepResult prep, string token, string? replacedWarning) = await PrepareAndStartAsync(request, previous, cancellationToken);
         int processId = run.Process.Id;
         BridgeConnection connection = await WaitForHandshakeAsync(run, new HandshakeExpectation(token, ProjectDir), cancellationToken);
         connection.OnErrors(Errors.Receive);
@@ -358,10 +422,11 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         GameProcessId = connection.GameProcessId;
         Log.RunStarted(_logger, processId, run.ProjectDir);
         LastLaunch = request;
-        return new LaunchResult(Name, run.ProjectDir, processId, request.Quiet, prep)
+        LaunchResult started = new(Name, run.ProjectDir, processId, request.Quiet, prep)
         {
             Recording = _recording is { } recording ? new RecordingResult { Path = recording.Path } : null,
         };
+        return (started, replacedWarning);
     }
 
     /// <summary>
@@ -511,9 +576,10 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// Ends a run the way stop_project does, without releasing the folder: a silent game is killed at once, one that answers
     /// is asked to quit and killed after the grace; then its connection is closed.
     /// </summary>
-    /// <returns>Whether the game had to be killed.</returns>
-    private async Task<bool> EndRunAsync(GodotRun run)
+    /// <returns>Whether the game had to be killed, and the warning when a debugger was attached to it as it was ended.</returns>
+    private async Task<RunEnd> EndRunAsync(GodotRun run)
     {
+        string? warning = WarnIfDebugged(run);
         bool killed = run.IsRunning && (await IsSilentAsync(run) || !await ShutDownGracefullyAsync(run));
         if (killed)
         {
@@ -526,7 +592,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             run.Connection = null;
         }
 
-        return killed;
+        return new RunEnd(killed, warning);
     }
 
     /// <summary>

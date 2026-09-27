@@ -37,6 +37,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// <summary>The sessions' input captures, by session name, kept past the session they came from.</summary>
     internal CaptureStore Captures { get; } = new();
 
+    /// <summary>
+    /// Whether a debugger is attached to a game's process, by its id: <see cref="DebuggerPresence.IsAttached"/> logging to the
+    /// registry's logger, or a test's fake.
+    /// </summary>
+    internal Func<int, bool> IsDebuggerAttached { get; set; } = processId => DebuggerPresence.IsAttached(processId, logger);
+
     /// <summary>Launches a run under <paramref name="session"/>, or under the project folder's name when it is null.</summary>
     /// <exception cref="SessionException">The name is invalid or live, the project is missing, or the launch failed.</exception>
     public async Task<LaunchResult> LaunchAsync(LaunchRequest request, string? session, CancellationToken cancellationToken)
@@ -555,7 +561,14 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     private static SessionInfo Describe(GodotSession session) =>
-        new(session.Name, session.ProjectDir, session.Kind == SessionKind.Run ? "run" : "attach", session.IsLive, session.ProcessId)
+        new(
+            session.Name,
+            session.ProjectDir,
+            session.Kind == SessionKind.Run ? "run" : "attach",
+            session.IsLive,
+            session.ProcessId,
+            session.GameProcessId
+        )
         {
             Recording = session.RecordingState,
         };
@@ -599,8 +612,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     private static partial Regex ValidName();
 }
 
-/// <summary>One entry of list_sessions; <see cref="Recording"/> is set for a session whose latest run records.</summary>
-internal sealed record SessionInfo(string Name, string ProjectPath, string Kind, bool Live, int? ProcessId)
+/// <summary>
+/// One entry of list_sessions: <see cref="ProcessId"/> is the process the server started (the Godot_console.exe wrapper on
+/// Windows; null for an attach), <see cref="GameProcessId"/> the game's own, from its bridge's hello (null until then);
+/// <see cref="Recording"/> is set for a session whose latest run records.
+/// </summary>
+internal sealed record SessionInfo(string Name, string ProjectPath, string Kind, bool Live, int? ProcessId, int? GameProcessId)
 {
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? Recording { get; init; }

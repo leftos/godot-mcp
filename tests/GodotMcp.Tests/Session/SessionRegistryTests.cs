@@ -236,8 +236,19 @@ public sealed class SessionRegistryTests : IAsyncDisposable
 
         SessionInfo listed = Assert.Single(_sessions.List());
 
-        Assert.Equal(new SessionInfo("server", alpha, "attach", true, null), listed);
+        Assert.Equal(new SessionInfo("server", alpha, "attach", true, null, null), listed);
         Assert.True(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
+    [Fact]
+    public async Task ListSessionsReportsTheGamesOwnPid()
+    {
+        string alpha = Project("alpha");
+        using FakeBridge game = await AttachFakeGameAsync(alpha, "server", 4242);
+
+        SessionInfo listed = Assert.Single(_sessions.List());
+
+        Assert.Equal(new SessionInfo("server", alpha, "attach", true, null, 4242), listed);
     }
 
     [Fact]
@@ -282,7 +293,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
     public async Task AReplacedRunsExitLeavesTheOverrideAndTheFolderReserved()
     {
         string alpha = Project("alpha");
-        using FakeBridge game = await AttachFakeGameAsync(alpha, "server");
+        using FakeBridge game = await AttachFakeGameAsync(alpha, "server", null);
         GodotSession session = _sessions.Resolve("server");
         using Process neverStarted = new();
 
@@ -326,7 +337,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
     public async Task RestartingAnAttachedSessionIsRefused()
     {
         string alpha = Project("alpha");
-        using FakeBridge game = await AttachFakeGameAsync(alpha, "server");
+        using FakeBridge game = await AttachFakeGameAsync(alpha, "server", null);
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
             _sessions.RestartAsync("server", prepare: true, TestContext.Current.CancellationToken)
@@ -367,14 +378,15 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         Assert.False(new RestartOptions("never").ShouldPrepare());
     }
 
-    private async Task<FakeBridge> AttachFakeGameAsync(string projectDir, string name)
+    /// <summary>Attaches a session to a fake game whose hello carries <paramref name="processId"/> when it is not null.</summary>
+    private async Task<FakeBridge> AttachFakeGameAsync(string projectDir, string name, int? processId)
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string attachFile = AttachFile.PathIn(projectDir);
         Task<AttachResult> attach = _sessions.AttachAsync(projectDir, name, LongWait, false, cancellation);
         await WaitUntilAsync(() => File.Exists(attachFile));
         string token = JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>();
-        FakeBridge game = await FakeBridge.DialAsync(_listener.Port, token, projectDir, cancellation);
+        FakeBridge game = await FakeBridge.DialAsync(_listener.Port, token, projectDir, processId, cancellation);
         await attach;
         return game;
     }
@@ -391,7 +403,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
     public async Task AHeadlessRunIsRefusedWhileASessionIsLive()
     {
         string alpha = Project("alpha");
-        using FakeBridge game = await AttachFakeGameAsync(alpha, "server");
+        using FakeBridge game = await AttachFakeGameAsync(alpha, "server", null);
         HeadlessRequest request = new(alpha, "validate", [], Prepare: false, Ceiling: TimeSpan.FromSeconds(60));
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>

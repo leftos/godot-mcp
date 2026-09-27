@@ -58,12 +58,13 @@ internal sealed partial class GodotSession
         Recording? replaced = _recording;
         try
         {
-            LaunchResult started = await StartRunAsync(launched with { Prepare = prepare }, previous, cancellationToken);
+            (LaunchResult started, string? warning) = await StartRunAsync(launched with { Prepare = prepare }, previous, cancellationToken);
             Log.RunRestarted(_logger, ProjectDir, previousProcessId, started.ProcessId);
             return new RestartResult(Name, started.ProjectPath, started.ProcessId, previousProcessId, previous.ExitCode, started.Prep)
             {
                 Recording = started.Recording,
                 PreviousRecording = replaced?.Outcome,
+                Warning = warning,
             };
         }
         finally

@@ -70,6 +70,10 @@ internal sealed record RestartResult(
     /// <summary>How the replaced game's recording ended: its full file or its clips.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? PreviousRecording { get; init; }
+
+    /// <summary>Set when a debugger was attached to the replaced game, whose debug session ended with it.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Warning { get; init; }
 }
 
 /// <summary>
@@ -80,6 +84,10 @@ internal sealed record StopResult(string Session, string ProjectPath, int? ExitC
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? Recording { get; init; }
+
+    /// <summary>Set when a debugger was attached to the game, whose debug session ended with it.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Warning { get; init; }
 }
 
 /// <summary>A game attach_project reached: its bridge said hello.</summary>

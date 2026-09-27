@@ -51,6 +51,7 @@ A drive is always the same five moves: **start → look → act → wait → che
 
 - A call refused for want of a session: `list_sessions`, then pass `session`.
 - The game crashed or "the connection ended": `get_debug_output`, then `get_errors`.
+- "Paused under a debugger": a debugger holds the game at a breakpoint; continue it there (the `debug-live` skill), never restart it. A debugger attaches to `list_sessions`' `gameProcessId`, not `processId`; `stop_project` ends its debug session too.
 - A class you do not know (an engine node, or the game's own `class_name`): `describe_class` lists its properties, typed method signatures and signals, from the running game or headless, and suggests close names for a typo.
 - A value that moves over time (a tween, a velocity): `monitor_property` samples it each frame in one call and returns only the changes. A game driven by InputMap actions: `simulate_action {action}` taps one. To hunt a crash no scripted drive finds: `stress_input {pool, count, seed}` fires random actions, keys and element clicks and reports the new errors by the iteration they appeared at; pass a failing run's `seed` back to replay it.
 - An action whose effects you cannot list: `snapshot_subtree` first, act, then `diff_snapshots {beforeId}` (no `afterId` re-captures now) for every node added, removed or changed. Ids die with a stop or restart, and a `batch_drive` step cannot read an earlier step's id.

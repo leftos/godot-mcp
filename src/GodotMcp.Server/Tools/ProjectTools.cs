@@ -125,7 +125,8 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "whose quit finalises its movie) and removes the injected override.cfg, unless another live session uses the "
             + "project folder. For a recording run the result's recording is {path} (the full movie, kept when there were no "
             + "marks), or {clips} (one file per record_mark start-stop pair, cut with ffmpeg; the full movie is then deleted), "
-            + "plus error with path when the cut could not be made. An attached session is ended with detach_project instead."
+            + "plus error with path when the cut could not be made. A game a debugger is attached to is stopped all the same, and "
+            + "the result's warning says its debug session ended with it. An attached session is ended with detach_project instead."
     )]
     public async Task<string> StopProjectAsync(
         [Description(SessionDescription)] string? session = null,
@@ -142,7 +143,8 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "session: its name, its errors (seq keeps counting) and its debug output, where a marker line separates the old "
             + "game's lines from the new one's. First, while the old game still runs, a stale C# assembly is built and missing "
             + "imports are run, as run_project does; a failed build or import is an error and leaves the old game running. Then "
-            + "the old game is stopped as stop_project stops it, and the new one started. A session whose game has quit or been "
+            + "the old game is stopped as stop_project stops it (with its warning when a debugger was attached to it), and the "
+            + "new one started. A session whose game has quit or been "
             + "stopped is started again. To change the scene or arguments, use stop_project then run_project. A recording run "
             + "records the new game to a new file (recording.path); the old game's recording is finished as stop_project "
             + "finishes it and returned as previousRecording. An attached session cannot be restarted."
@@ -195,7 +197,9 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     [McpServerTool(Name = "list_sessions", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
         "Lists the server's sessions, ordered by name: each one's name, project folder, kind (run or attach), whether it is "
-            + "live, and its process id (null for an attached game), plus for a recording run its recording: {path} while it "
+            + "live, its processId (the process run_project started, on Windows the Godot_console wrapper that stop_project ends; "
+            + "null for an attached game) and its gameProcessId (the game's own process, the one a debugger attaches to; null "
+            + "until the game's bridge has connected), plus for a recording run its recording: {path} while it "
             + "runs, and once it has ended, stopped or quit, what stop_project returns for it. A session stays listed after its "
             + "run ends, until its name is reused; detach_project removes an attached one."
     )]
