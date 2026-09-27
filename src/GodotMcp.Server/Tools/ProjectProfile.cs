@@ -103,6 +103,7 @@ internal sealed partial class ProjectProfile
         )
         {
             Record = options.Record ?? false,
+            DropIdle = options.DropIdle ?? false,
         };
         return new ProfileLaunch(request, options.Session ?? preset.Session);
     }

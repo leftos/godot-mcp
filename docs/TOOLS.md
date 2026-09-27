@@ -51,8 +51,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
 ### `run_project`
 
 - **Does:** launches the project with the bridge injected and returns once the bridge connects: `{session, projectPath, processId, quiet, version, recording?, prep}` (`version` is the server's, `0.1.0+<sha>`, to quote in an issue).
-- **Use:** `projectPath` (the folder holding `project.godot`); `scene` for a scene other than the main one; `userArgs` (after `--`, read with `OS.get_cmdline_user_args()`); `engineArgs` (before `--`, e.g. `["--resolution", "1280x720"]`); `options {quiet, shutOutRealGamepads, session, prepare, preset, record}`.
-- **Edges:** a live session name is refused; a new name starts a second session alongside. `options.preset` names a preset from `godot-mcp.json` and fails when the file or preset is missing. By default the machine's real gamepads stay live and feed the same actions as the gamepad tools; `shutOutRealGamepads: true` keeps them out, at the cost of focus-out notifications to the game (a game that pauses on focus loss will, and every `Popup` closes as it opens). `record` changes game timing: see Recording.
+- **Use:** `projectPath` (the folder holding `project.godot`); `scene` for a scene other than the main one; `userArgs` (after `--`, read with `OS.get_cmdline_user_args()`); `engineArgs` (before `--`, e.g. `["--resolution", "1280x720"]`); `options {quiet, shutOutRealGamepads, session, prepare, preset, record, dropIdle}`.
+- **Edges:** a live session name is refused; a new name starts a second session alongside. `options.preset` names a preset from `godot-mcp.json` and fails when the file or preset is missing. By default the machine's real gamepads stay live and feed the same actions as the gamepad tools; `shutOutRealGamepads: true` keeps them out, at the cost of focus-out notifications to the game (a game that pauses on focus loss will, and every `Popup` closes as it opens). `record` changes game timing: see Recording. `dropIdle: true` (only with `record`; refused without it) makes each cut clip drop every frame identical to the one before, so the wall-clock time between tool calls, when nothing moves, leaves the clip and the action plays at real speed; such clips have no audio, and a deliberate still (a held pose, a dialog to read) collapses to one frame too.
 
 ### `attach_project`
 
@@ -69,7 +69,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 - **Does:** asks the game to quit, kills it after 3 s (30 s for a recording run), removes the override when no other live session uses the folder: `{session, projectPath, exitCode, killed, overrideRemoved, alreadyExited, gameExitCode, recording?}`. `exitCode` is the process the server started (on Windows the `Godot_console` wrapper); `gameExitCode` is the game's own, null when it could not be read.
 - **Use:** at the end of every `run_project` session, and before a headless tool on the same folder.
-- **Edges:** `alreadyExited` is true when the run had ended before the stop: the game quit, crashed or was killed from outside (a debugger's stop); the exit code, not the flag, tells a kill from a quit, and a debugger picks that code. A game that does not answer a ping in 2 s is killed at once. A game a debugger is attached to is stopped all the same, and `warning` says its debug session ended with it. For a recording run, `recording` holds `{path}` (no marks: the full movie) or `{clips}` (one file a mark pair; the full movie deleted), plus `error` when a cut failed.
+- **Edges:** `alreadyExited` is true when the run had ended before the stop: the game quit, crashed or was killed from outside (a debugger's stop); the exit code, not the flag, tells a kill from a quit, and a debugger picks that code. A game that does not answer a ping in 2 s is killed at once. A game a debugger is attached to is stopped all the same, and `warning` says its debug session ended with it. For a recording run, `recording` holds `{path}` (no marks: the full movie) or `{clips}` (one H.264 `.mp4` a mark pair; the full movie deleted), plus `error` when a cut failed. A clip whose encode failed (an ffmpeg without libx264, or the encode timing out) is a stream-copied `.avi` of the same frames instead, idle kept, and `error` says which; the other clips are still `.mp4`.
 
 ### `restart_project`
 
@@ -474,11 +474,11 @@ A `godot-mcp.json` beside `project.godot` sets launch defaults for every `run_pr
 
 ### Record a clip around a bug
 
-1. `run_project {projectPath, options: {record: true}}`: `recording.path` is the movie in progress.
+1. `run_project {projectPath, options: {record: true, dropIdle: true}}`: `recording.path` is the movie in progress. `dropIdle` keeps the clip to the action: without it the clip also holds every idle frame drawn while you were between tool calls. Leave it out when a still moment or the sound matters.
 2. Drive to just before the bug. `record_mark {mark: "start"}`: note `frame`.
 3. Trigger the bug with the input tools. The run is at a fixed 60 fps, so millisecond durations no longer match game time: wait on conditions with `wait_for`, not on durations.
 4. `record_mark {mark: "stop"}`.
-5. `stop_project`: `recording.clips` lists one file for the pair, and the full movie is gone; `recording.error` means ffmpeg was missing or failed and `recording.path` is kept instead.
+5. `stop_project`: `recording.clips` lists one `.mp4` for the pair, and the full movie is gone; `recording.error` means ffmpeg was missing or failed and `recording.path` is kept instead.
 
 ### A `batch_drive` regression check against a baseline
 

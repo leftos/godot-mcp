@@ -11,7 +11,7 @@ namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// options.record against the InputProbe: Movie Maker writes an .avi from launch, record_mark notes movie frames, and the stop
-/// cuts one clip per start-stop pair with ffmpeg. The files are read back with ffprobe, found beside ffmpeg.
+/// encodes one .mp4 clip per start-stop pair with ffmpeg. The files are read back with ffprobe, found beside ffmpeg.
 /// </summary>
 public sealed class RecordingTests : IAsyncDisposable
 {
@@ -75,9 +75,56 @@ public sealed class RecordingTests : IAsyncDisposable
         Assert.Equal([RecordingCut.ClipPath(launched.Recording.Path!, 1), RecordingCut.ClipPath(launched.Recording.Path!, 2)], recording.Clips);
         for (int i = 0; i < spans.Count; i++)
         {
-            ProbedStream video = Assert.Single(await ProbeAsync(recording.Clips![i]), stream => stream.Type == "video");
+            Assert.EndsWith($"-clip{i + 1}.mp4", recording.Clips![i], StringComparison.Ordinal);
+            IReadOnlyList<ProbedStream> streams = await ProbeAsync(recording.Clips![i]);
+            ProbedStream video = Assert.Single(streams, stream => stream.Type == "video");
+            ProbedStream audio = Assert.Single(streams, stream => stream.Type == "audio");
+            Assert.Equal("h264", video.Codec);
+            Assert.Equal("aac", audio.Codec);
             Assert.Equal(spans[i], video.Packets);
         }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task DropIdleCutsTheIdleOut()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        LaunchResult launched = await LaunchAsync(record: true, dropIdle: true);
+
+        // The probe's own scene is still while paused, so every stepped frame would be idle too: a full-window rect that turns
+        // black and white on alternate processed frames makes each step a frame that differs.
+        await _tools.RunScriptAsync(
+            "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
+                + "\tvar script := GDScript.new()\n"
+                + "\tscript.source_code = \"extends ColorRect\\nvar n := 0\\nfunc _process(_delta: float) -> void:\\n"
+                + "\\tn += 1\\n\\tcolor = Color.WHITE if n % 2 == 0 else Color.BLACK\\n\"\n"
+                + "\tscript.reload()\n"
+                + "\tvar flicker := ColorRect.new()\n"
+                + "\tflicker.set_script(script)\n"
+                + "\tflicker.size = scene_tree.root.get_visible_rect().size\n"
+                + "\tscene_tree.root.add_child(flicker)\n"
+                + "\treturn true\n",
+            10_000,
+            cancellationToken: cancellation
+        );
+        await FrameAsync("pause", null);
+        long start = await MarkAsync("start");
+        await Task.Delay(1000, cancellation);
+        await FrameAsync("step", 10);
+        long stop = await MarkAsync("stop");
+
+        StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
+
+        RecordingResult recording = stopped.Recording ?? throw new InvalidOperationException("stop_project returned no recording.");
+        Assert.Null(recording.Error);
+        string clip = Assert.Single(recording.Clips!);
+        Assert.Equal(RecordingCut.ClipPath(launched.Recording!.Path!, 1), clip);
+        IReadOnlyList<ProbedStream> streams = await ProbeAsync(clip);
+        ProbedStream video = Assert.Single(streams);
+        Assert.Equal("h264", video.Codec);
+        Assert.True(stop - start > 40, $"the marks at {start} and {stop} do not span the idle second");
+        // The still frame at the start mark and the 10 stepped ones: measured 11 kept of a 253-frame span (2026-09-27).
+        Assert.InRange(video.Packets, 10, 12);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -193,9 +240,9 @@ public sealed class RecordingTests : IAsyncDisposable
         throw new TimeoutException($"the recording had no outcome after 30 s: {Assert.Single(_harness.Sessions.List(includeStopped: true))}");
     }
 
-    private Task<LaunchResult> LaunchAsync(bool record) =>
+    private Task<LaunchResult> LaunchAsync(bool record, bool dropIdle = false) =>
         _harness.Sessions.LaunchAsync(
-            new LaunchRequest(_probe.Directory, null, [], [], true, false, Prepare: true) { Record = record },
+            new LaunchRequest(_probe.Directory, null, [], [], true, false, Prepare: true) { Record = record, DropIdle = dropIdle },
             null,
             TestContext.Current.CancellationToken
         );
@@ -234,7 +281,7 @@ public sealed class RecordingTests : IAsyncDisposable
                 "error",
                 "-count_packets",
                 "-show_entries",
-                "stream=codec_type,r_frame_rate,nb_read_packets",
+                "stream=codec_type,codec_name,r_frame_rate,nb_read_packets",
                 "-of",
                 "json",
                 file,
@@ -258,11 +305,12 @@ public sealed class RecordingTests : IAsyncDisposable
                 .EnumerateArray()
                 .Select(stream => new ProbedStream(
                     stream.GetProperty("codec_type").GetString()!,
+                    stream.GetProperty("codec_name").GetString()!,
                     stream.GetProperty("r_frame_rate").GetString()!,
                     long.Parse(stream.GetProperty("nb_read_packets").GetString()!, CultureInfo.InvariantCulture)
                 )),
         ];
     }
 
-    private sealed record ProbedStream(string Type, string FrameRate, long Packets);
+    private sealed record ProbedStream(string Type, string Codec, string FrameRate, long Packets);
 }

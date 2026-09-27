@@ -24,6 +24,9 @@ internal sealed record LaunchRequest(
     /// <summary>Whether the run is recorded from launch with Godot's Movie Maker.</summary>
     public bool Record { get; init; }
 
+    /// <summary>Whether the recording's clips drop frames identical to the one before, and their audio.</summary>
+    public bool DropIdle { get; init; }
+
     /// <summary>
     /// Whether the run is preview_scene's: the bridge pauses the game before its scene's first frame and frames a 3D scene
     /// that has no current camera.
@@ -67,6 +70,11 @@ internal static class GodotCommandLine
     public const string HeadlessDisplayRecordingRefusal =
         "options.record cannot record a --display-driver headless run: the headless renderer draws nothing. Drop --display-driver "
         + "headless; a quiet run is already hidden.";
+
+    /// <summary>What refuses options.dropIdle on a run that does not record.</summary>
+    public const string DropIdleWithoutRecordRefusal =
+        "options.dropIdle drops the idle frames of a recording's clips, and this run does not record. Add options.record: true, or "
+        + "drop options.dropIdle.";
 
     /// <summary>
     /// The engine arguments a recording sets itself, each with its refusal: Godot keeps the last value it reads, so one in
@@ -123,13 +131,21 @@ internal static class GodotCommandLine
 
     /// <summary>
     /// Refuses a recording the engine cannot make: with --headless the dummy renderer has no viewport texture for the movie
-    /// writer to read.
+    /// writer to read. Refuses idle dropping on a run that does not record.
     /// </summary>
-    /// <exception cref="SessionException">The request records and its engine arguments hold --headless.</exception>
+    /// <exception cref="SessionException">
+    /// The request records and its engine arguments hold --headless or a flag the recording sets; or it drops idle frames and
+    /// does not record.
+    /// </exception>
     public static void RefuseUnrecordable(LaunchRequest request)
     {
         if (!request.Record)
         {
+            if (request.DropIdle)
+            {
+                throw new SessionException(DropIdleWithoutRecordRefusal);
+            }
+
             return;
         }
 

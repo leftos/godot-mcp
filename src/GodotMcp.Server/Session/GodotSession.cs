@@ -404,7 +404,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             GodotRun run = new(ProjectDir, CreateRunProcess(startInfo, request.Quiet), previous);
             StartProcess(run, previous is null ? null : ProcessId);
             _run = run;
-            _recording = moviePath is null ? null : new Recording(moviePath);
+            _recording = moviePath is null ? null : new Recording(moviePath) { DropIdle = request.DropIdle };
             ProcessId = run.Process.Id;
             return (run, prep, token, replacedWarning);
         }
