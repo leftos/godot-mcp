@@ -1,8 +1,8 @@
 name: Release
 
 # A pushed tag vX.Y.Z whose version is VersionPrefix in Directory.Build.props: the gates, then `run.ps1 package`, then a
-# GitHub Release vX.Y.Z carrying the zip as godot-mcp-win-x64.zip and tools/install-release.ps1 as install.ps1, with
-# that version's CHANGELOG.md section as its notes.
+# GitHub Release vX.Y.Z carrying the zip as godot-mcp-win-x64.zip and the install.ps1 the package step writes beside it
+# (tools/install-release.ps1 with tools/InstalledServers.psm1 inlined), with that version's CHANGELOG.md section as its notes.
 on:
   push:
     tags: ['v*']
@@ -56,7 +56,7 @@ jobs:
             throw "Expected .tmp/package/$expected alone; found: $($zips.Name -join ', ')."
           }
           Copy-Item -LiteralPath $zips[0].FullName -Destination .tmp/release/godot-mcp-win-x64.zip
-          Copy-Item -LiteralPath tools/install-release.ps1 -Destination .tmp/release/install.ps1
+          Copy-Item -LiteralPath .tmp/package/install.ps1 -Destination .tmp/release/install.ps1
           gh release create $env:TAG .tmp/release/godot-mcp-win-x64.zip .tmp/release/install.ps1 `
             --verify-tag --title $env:TAG --notes-file .tmp/release/notes.md
           if ($LASTEXITCODE -ne 0) {

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from fake_installed_server import PROJECT, SESSION_ID, start_fake_server, write_transcript
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "tools" / "install.ps1"
 # Any PE file with a version resource stands in for the published server dll, whose ProductVersion install.ps1 records.
@@ -50,7 +51,11 @@ def _layout(tmp_path: Path, *, with_skill: bool = True) -> Layout:
     return layout
 
 
-def _install(layout: Layout) -> subprocess.CompletedProcess[str]:
+def _install(layout: Layout, *, home: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Runs the install; with a home, USERPROFILE points there, where install looks for Claude Code's transcripts."""
+    env = dict(os.environ)
+    if home is not None:
+        env["USERPROFILE"] = str(home)
     command = [
         "pwsh",
         "-NoProfile",
@@ -63,7 +68,7 @@ def _install(layout: Layout) -> subprocess.CompletedProcess[str]:
         "-SkillsDir",
         str(layout.skills_dir),
     ]
-    return subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+    return subprocess.run(command, capture_output=True, text=True, timeout=60, check=False, env=env)
 
 
 def _output(result: subprocess.CompletedProcess[str]) -> str:
@@ -167,6 +172,37 @@ def test_install_fails_when_the_dll_carries_no_product_version(tmp_path: Path) -
     assert (layout.install_dir / "godot-mcp.exe").read_text(encoding="utf-8") == "the old exe"
     assert (layout.install_dir / "VERSION").read_text(encoding="utf-8") == "0.1.0+abcdef0\n"
     assert not layout.link.exists()
+
+
+def test_install_stops_a_running_server_and_names_its_claude_session(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    home = tmp_path / "userprofile"
+    write_transcript(home, SESSION_ID)
+    server = start_fake_server(layout.install_dir, session_id=SESSION_ID)
+    try:
+        result = _install(layout, home=home)
+        assert result.returncode == 0, _output(result)
+        assert not server.is_running()
+        expected = (
+            f"install: stopped the godot-mcp server (pid {server.pid}) of Claude session {SESSION_ID} in {PROJECT}; run /mcp there to reconnect it"
+        )
+        assert expected in result.stdout
+        assert (layout.install_dir / "godot-mcp.exe").read_text(encoding="utf-8") == "not really an exe"
+    finally:
+        server.stop()
+
+
+def test_install_stops_a_server_of_an_unknown_client(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    server = start_fake_server(layout.install_dir, session_id=None)
+    try:
+        result = _install(layout, home=tmp_path / "userprofile")
+        assert result.returncode == 0, _output(result)
+        assert not server.is_running()
+        expected = f"install: stopped the godot-mcp server (pid {server.pid}) of an unknown client; run /mcp there to reconnect it"
+        assert expected in result.stdout
+    finally:
+        server.stop()
 
 
 def test_install_fails_without_the_skill(tmp_path: Path) -> None:

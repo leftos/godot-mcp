@@ -5,10 +5,12 @@
 Installs a published godot-mcp: mirrors bin/publish into an install folder and links the agent skill.
 
 .DESCRIPTION
-Run by `pwsh run.ps1 install` after its publish. Mirrors <Root>\bin\publish into -InstallDir with robocopy /MIR (no
-retries), writes -InstallDir\VERSION holding the published godot-mcp.dll's product version (the mirror leaves that file
-alone, so a failed mirror keeps the old one beside the old exe), then links <SkillsDir>\godot-mcp to <Root>\skills\godot-mcp as a directory junction: created when missing,
-left alone when it already points there, replaced when it is a junction pointing elsewhere, and refused when it is
+Run by `pwsh run.ps1 install` after its publish. Stops every godot-mcp.exe running from -InstallDir, printing one line for
+each that names the Claude session it served (tools/InstalledServers.psm1), so the session can be reconnected with /mcp.
+Then mirrors <Root>\bin\publish into -InstallDir with robocopy /MIR (no retries), writes -InstallDir\VERSION holding
+the published godot-mcp.dll's product version (the mirror leaves that file alone, so a failed mirror keeps the old one
+beside the old exe), then links <SkillsDir>\godot-mcp to <Root>\skills\godot-mcp as a directory junction: created when
+missing, left alone when it already points there, replaced when it is a junction pointing elsewhere, and refused when it is
 anything else (a real folder is never deleted). Warns when <Root> is a linked worktree, since the junction then points
 into it. Stops at the first failure with status 1.
 
@@ -34,6 +36,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+Import-Module -Name (Join-Path $PSScriptRoot 'InstalledServers.psm1') -Force
 
 # A path made absolute, without the \??\ or \\?\ prefix a junction's target can carry and without a trailing separator.
 function Get-FullPath {
@@ -129,6 +132,7 @@ $link = Join-Path (Get-FullPath $SkillsDir) 'godot-mcp'
 
 Write-WorktreeWarning
 $version = Get-PublishVersion -Publish $publish
+$null = Stop-InstalledServer -InstallDir $destination
 Copy-Publish -Source $publish -Destination $destination
 # One line, LF, no BOM (WriteAllText's default encoding is UTF-8 without one).
 [System.IO.File]::WriteAllText((Join-Path $destination 'VERSION'), "$version`n")

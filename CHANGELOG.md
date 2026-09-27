@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Changed
 
 - Without `GODOT_PATH`, Godot is found as a console executable on `PATH`, or the refusal says how to set it; `run_project` names the Godot used.
+- The installer stops running servers itself and names each Claude session and project to reconnect with `/mcp`.
 
 ## 0.3.4 - 2026-09-27
 

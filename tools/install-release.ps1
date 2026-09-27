@@ -7,14 +7,18 @@ Published with every release as the asset install.ps1, and meant to run straight
 
   & ([scriptblock]::Create((irm https://github.com/leftos/godot-mcp/releases/latest/download/install.ps1))) -InstallDotNet
 
-It runs under Windows PowerShell 5.1 and PowerShell 7, and depends on no file beside it.
+It runs under Windows PowerShell 5.1 and PowerShell 7. The published install.ps1 depends on no file beside it: it is
+this script with tools/InstalledServers.psm1 inlined by tools/package.ps1, while this script, run from the repo, imports
+the module from beside it.
 
 1. Checks for the .NET 10 runtime (Microsoft.NETCore.App 10.*) where the framework-dependent godot-mcp.exe looks for
    it: DOTNET_ROOT_X64, else DOTNET_ROOT, else the registered install location, else %ProgramFiles%\dotnet. When it is
    missing it installs it through winget with -InstallDotNet, asks first when a person is at the console, and
    otherwise stops.
 2. Downloads the release zip (or takes -ZipPath) and checks it holds a godot-mcp release.
-3. Stops every godot-mcp.exe running from the install folder, replaces the folder's contents with the zip's, and
+3. Stops every godot-mcp.exe running from the install folder, printing one line for each that names the Claude
+   session it served and that session's project, so the session can be reconnected with /mcp. Then replaces the
+   folder's contents with the zip's, and
    replaces <SkillsDir>\godot-mcp with the zip's skill/ folder. A link there (the junction a from-source install
    makes) is removed as a link: the folder it points to is never touched.
 4. Prints where the server and the skill are, and the command that registers the server with Claude Code.
@@ -254,22 +258,11 @@ function Remove-Entry {
     Remove-Item -LiteralPath $Path -Recurse:$isFolder -Force
 }
 
-# Stops every godot-mcp.exe whose image is inside the folder, and waits up to 10 s for each to exit. Win32_Process gives
-# the path without the access checks Get-Process's Path needs under Windows PowerShell.
-function Stop-InstalledServer {
-    param([Parameter(Mandatory)] [string]$Folder)
-    $prefix = $Folder + '\'
-    $running = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'godot-mcp.exe'" |
-            Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) })
-    foreach ($process in $running) {
-        Write-Host "install: stopping godot-mcp.exe (pid $($process.ProcessId)) running from $Folder"
-        Stop-Process -Id $process.ProcessId -Force
-        $handle = Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue
-        if ($null -ne $handle) {
-            [void]$handle.WaitForExit(10000)
-        }
-    }
-}
+#region InstalledServers
+# Get-InstalledServer and Stop-InstalledServer, from tools/InstalledServers.psm1 beside this script. The published
+# install.ps1 runs with no file beside it: tools/package.ps1 replaces this region with the module's text.
+Import-Module -Name (Join-Path $PSScriptRoot 'InstalledServers.psm1') -Force
+#endregion
 
 # Replaces the install folder's contents with the unpacked release, the skill folder aside.
 function Install-Server {
@@ -287,7 +280,7 @@ function Install-Server {
         throw "install: $Folder holds files but no godot-mcp.exe or VERSION, so it is not a godot-mcp install; it is left alone. " +
             'Choose another -InstallDir.'
     }
-    Stop-InstalledServer -Folder $Folder
+    $null = Stop-InstalledServer -InstallDir $Folder
     try {
         foreach ($item in $existing) {
             Remove-Entry -Path $item.FullName

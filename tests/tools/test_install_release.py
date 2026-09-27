@@ -12,9 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from fake_installed_server import PROJECT, SESSION_ID, start_fake_server, write_transcript
 
-SCRIPT_PATH = Path(__file__).resolve().parents[2] / "tools" / "install-release.ps1"
+TOOLS = Path(__file__).resolve().parents[2] / "tools"
+SCRIPT_PATH = TOOLS / "install-release.ps1"
 VERSION = "9.8.7+abc1234"
+# Any PE file with a version resource stands in for the published server dll, whose ProductVersion package.ps1 records.
+VERSIONED_DLL = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "kernel32.dll"
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="the installer, junctions and winget are Windows-only")
 
@@ -67,12 +71,36 @@ def _layout(tmp_path: Path) -> Layout:
     )
 
 
-def _environment(dotnet_root: Path) -> dict[str, str]:
+def _environment(dotnet_root: Path, home: Path | None = None) -> dict[str, str]:
+    """The installer's environment; with a home, USERPROFILE points there, where it looks for Claude Code's transcripts."""
     env = {key: value for key, value in os.environ.items() if not key.upper().startswith("DOTNET_ROOT")}
     env.pop("GODOT_MCP_INSTALL_DIR", None)
     env.pop("GODOT_MCP_SKILLS_DIR", None)
     env["DOTNET_ROOT"] = str(dotnet_root)
+    if home is not None:
+        env["USERPROFILE"] = str(home)
     return env
+
+
+@pytest.fixture(scope="module")
+def published_installer(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The install.ps1 tools/package.ps1 writes beside the release zip, packaged from a stand-in publish."""
+    root = tmp_path_factory.mktemp("package-root")
+    publish = root / "bin" / "publish"
+    for folder in ("bridge", "headless", "dotnet"):
+        (publish / folder).mkdir(parents=True)
+    (publish / "godot-mcp.exe").write_text("not really an exe", encoding="utf-8")
+    shutil.copyfile(VERSIONED_DLL, publish / "godot-mcp.dll")
+    skill = root / "skills" / "godot-mcp"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# godot-mcp\n", encoding="utf-8")
+    output = root / "package"
+    command = ["pwsh", "-NoProfile", "-File", str(TOOLS / "package.ps1"), "-Root", str(root), "-OutputDir", str(output)]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    installer = output / "install.ps1"
+    assert f"package: {installer}" in result.stdout
+    return installer
 
 
 def _quote(value: str | Path) -> str:
@@ -95,10 +123,18 @@ def _invoke(shell: str, target: str, arguments: list[str], env: dict[str, str]) 
     )
 
 
-def _run(shell: str, layout: Layout, zip_path: Path | None = None) -> subprocess.CompletedProcess[str]:
+def _run(shell: str, layout: Layout, zip_path: Path | None = None, home: Path | None = None) -> subprocess.CompletedProcess[str]:
     arguments = ["-ZipPath", _quote(zip_path or layout.zip_path), "-InstallDir", _quote(layout.install_dir)]
     arguments += ["-SkillsDir", _quote(layout.skills_dir)]
-    return _invoke(shell, _quote(SCRIPT_PATH), arguments, _environment(layout.dotnet_root))
+    return _invoke(shell, _quote(SCRIPT_PATH), arguments, _environment(layout.dotnet_root, home))
+
+
+def _run_as_scriptblock(shell: str, layout: Layout, script: Path, home: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Runs the script the way the release's one-line install does: as a scriptblock, with no file beside it."""
+    target = f"([scriptblock]::Create((Get-Content -Raw -LiteralPath {_quote(script)})))"
+    arguments = ["-ZipPath", _quote(layout.zip_path), "-InstallDir", _quote(layout.install_dir)]
+    arguments += ["-SkillsDir", _quote(layout.skills_dir)]
+    return _invoke(shell, target, arguments, _environment(layout.dotnet_root, home))
 
 
 def _output(result: subprocess.CompletedProcess[str]) -> str:
@@ -150,18 +186,91 @@ def test_a_skill_junction_is_replaced_and_its_target_left_alone(tmp_path: Path, 
     assert not (layout.skill / "sentinel.txt").exists()
 
 
-@pytest.mark.parametrize("shell", SHELLS)
-def test_runs_as_a_scriptblock_with_no_file_beside_it(tmp_path: Path, shell: str) -> None:
-    layout = _layout(tmp_path)
-    target = f"([scriptblock]::Create((Get-Content -Raw -LiteralPath {_quote(SCRIPT_PATH)})))"
-    arguments = ["-ZipPath", _quote(layout.zip_path), "-InstallDir", _quote(layout.install_dir)]
-    arguments += ["-SkillsDir", _quote(layout.skills_dir)]
+def test_the_published_installer_carries_the_module_inline(published_installer: Path) -> None:
+    text = published_installer.read_text(encoding="utf-8")
+    module = (TOOLS / "InstalledServers.psm1").read_text(encoding="utf-8")
 
-    result = _invoke(shell, target, arguments, _environment(layout.dotnet_root))
+    assert "function Get-InstalledServer" in text
+    assert "function Stop-InstalledServer" in text
+    assert module.strip() in text
+    assert "Import-Module" not in text
+    assert text.count("#region InstalledServers") == 1
+    assert "\r\n" not in text
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_published_installer_runs_as_a_scriptblock_with_no_file_beside_it(tmp_path: Path, shell: str, published_installer: Path) -> None:
+    layout = _layout(tmp_path)
+
+    result = _run_as_scriptblock(shell, layout, published_installer)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert (layout.install_dir / "VERSION").read_text(encoding="utf-8").strip() == VERSION
     assert (layout.skill / "SKILL.md").is_file()
+
+
+def _stopped_line(pid: int) -> str:
+    return f"install: stopped the godot-mcp server (pid {pid}) of Claude session {SESSION_ID} in {PROJECT}; run /mcp there to reconnect it"
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_stops_a_running_server_and_names_its_claude_session(tmp_path: Path, shell: str) -> None:
+    layout = _layout(tmp_path)
+    home = tmp_path / "userprofile"
+    write_transcript(home, SESSION_ID)
+    server = start_fake_server(layout.install_dir, session_id=SESSION_ID)
+    try:
+        result = _run(shell, layout, home=home)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not server.is_running()
+        assert _stopped_line(server.pid) in _output(result)
+        assert (layout.install_dir / "godot-mcp.exe").read_text(encoding="utf-8") == "not really an exe"
+    finally:
+        server.stop()
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_published_installer_stops_a_running_server_and_names_its_claude_session(tmp_path: Path, shell: str, published_installer: Path) -> None:
+    layout = _layout(tmp_path)
+    home = tmp_path / "userprofile"
+    write_transcript(home, SESSION_ID)
+    server = start_fake_server(layout.install_dir, session_id=SESSION_ID)
+    try:
+        result = _run_as_scriptblock(shell, layout, published_installer, home=home)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not server.is_running()
+        assert _stopped_line(server.pid) in _output(result)
+    finally:
+        server.stop()
+
+
+def test_stops_a_server_of_an_unknown_client(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    server = start_fake_server(layout.install_dir, session_id=None)
+    try:
+        result = _run("pwsh", layout, home=tmp_path / "userprofile")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not server.is_running()
+        expected = f"install: stopped the godot-mcp server (pid {server.pid}) of an unknown client; run /mcp there to reconnect it"
+        assert expected in _output(result)
+    finally:
+        server.stop()
+
+
+def test_a_session_without_a_transcript_is_named_without_a_project(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    server = start_fake_server(layout.install_dir, session_id=SESSION_ID)
+    try:
+        result = _run("pwsh", layout, home=tmp_path / "userprofile")
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        expected = f"install: stopped the godot-mcp server (pid {server.pid}) of Claude session {SESSION_ID}; run /mcp there to reconnect it"
+        assert expected in _output(result)
+    finally:
+        server.stop()
 
 
 @pytest.mark.parametrize("shell", SHELLS)

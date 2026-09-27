@@ -36,9 +36,12 @@ exits with the command's own status, or 124 when it outlived its ceiling and was
            60 s for the copy. The copy and the link are tools/install.ps1, logged to .tmp/install.log. A junction
            that points elsewhere is replaced; anything else at the link path is refused, never deleted.
            GODOT_MCP_INSTALL_DIR overrides the install folder, GODOT_MCP_SKILLS_DIR the folder the link is made in.
+           Before the mirror it stops every godot-mcp.exe running from the install folder, printing one line each
+           that names the Claude session and project it served, to reconnect there with /mcp.
   package  the release download: bin/publish removed, publish (as above), then tools/package.ps1 zips bin/publish with
            skills/godot-mcp as skill/ and a VERSION file (the published product version) into
-           .tmp/package/godot-mcp-<X.Y.Z>-win-x64.zip and prints its path; .tmp/package.log, ceiling 300 s for the
+           .tmp/package/godot-mcp-<X.Y.Z>-win-x64.zip, writes .tmp/package/install.ps1 (tools/install-release.ps1
+           with tools/InstalledServers.psm1 inlined, the release's installer), and prints both paths; .tmp/package.log, ceiling 300 s for the
            publish, 60 s for the zip. The release workflow runs this command, so a local zip is built as CI builds it.
   gdtest   the bridge's GDScript unit tests (tests/bridge/test_*.gd) in headless Godot (GODOT_PATH, else a
            Godot*console*.exe on PATH). It first imports tests/bridge (godot --headless --path tests/bridge --import,

@@ -8,7 +8,8 @@ Zips a published godot-mcp into the download a release carries.
 Run by `pwsh run.ps1 package` after its publish. Empties -OutputDir, then zips <Root>\bin\publish (the exe, bridge/,
 headless/, dotnet/) with <Root>\skills\godot-mcp as skill/ and a VERSION file holding the published godot-mcp.dll's
 product version (the value tools/install.ps1 writes beside an installed exe) into
-<OutputDir>\godot-mcp-<X.Y.Z>-win-x64.zip, X.Y.Z being that version without its +<sha>. Prints the zip's path last.
+<OutputDir>\godot-mcp-<X.Y.Z>-win-x64.zip, X.Y.Z being that version without its +<sha>. Beside it, writes the release's
+<OutputDir>\install.ps1: tools/install-release.ps1 with tools/InstalledServers.psm1 inlined. Prints the zip's path last.
 Stops at the first failure with status 1.
 
 .PARAMETER Root
@@ -60,6 +61,23 @@ function Get-PublishVersion {
     return $version
 }
 
+# The release's install.ps1: tools/install-release.ps1 with its InstalledServers region, which imports
+# tools/InstalledServers.psm1 from beside it, replaced by the module's text, so the script runs with no file beside it.
+# Both are read from beside this script. Written with LF endings and no BOM.
+function Write-Installer {
+    param([Parameter(Mandatory)] [string]$Destination)
+    $script = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'install-release.ps1')) -replace "`r`n", "`n"
+    $module = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'InstalledServers.psm1')) -replace "`r`n", "`n"
+    $regions = [regex]::Matches($script, '(?ms)^#region InstalledServers\n.*?^#endregion\n')
+    if ($regions.Count -ne 1) {
+        Exit-Package "package: tools/install-release.ps1 has $($regions.Count) InstalledServers regions; it needs exactly one."
+    }
+    $region = $regions[0]
+    $inlined = "#region InstalledServers`n" + $module.TrimEnd("`n") + "`n#endregion`n"
+    $text = $script.Substring(0, $region.Index) + $inlined + $script.Substring($region.Index + $region.Length)
+    [System.IO.File]::WriteAllText($Destination, $text)
+}
+
 $publish = Join-Path $Root 'bin/publish'
 $skill = Join-Path $Root 'skills/godot-mcp'
 Assert-PublishLayout -Publish $publish
@@ -81,5 +99,8 @@ Copy-Item -LiteralPath $skill -Destination (Join-Path $stage 'skill') -Recurse
 $zip = Join-Path $OutputDir "godot-mcp-$(($version -split '\+')[0])-win-x64.zip"
 [System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
 Remove-Item -LiteralPath $stage -Recurse -Force
+$installer = Join-Path $OutputDir 'install.ps1'
+Write-Installer -Destination $installer
+Write-Host "package: $installer"
 Write-Host "package: $zip (version $version)"
 exit 0
