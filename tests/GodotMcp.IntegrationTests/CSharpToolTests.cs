@@ -226,6 +226,20 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
     }
 
     [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunScriptReadingAMemberGodotCannotMarshalPointsToTheCSharpTools()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+
+        McpException failed = await Assert.ThrowsAsync<McpException>(() =>
+            RunAsync(_tools, $"var targets = scene_tree.root.get_node(\"{TargetsName}\")\n\treturn targets.Numbers", cancellation)
+        );
+
+        Assert.True(failed.Message.Contains("execute returned null and Godot reported errors", StringComparison.Ordinal), failed.Message);
+        Assert.True(failed.Message.Contains("cs_get", StringComparison.Ordinal), failed.Message);
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
     public async Task GetFollowsADottedPathIntoAList()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

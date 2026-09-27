@@ -165,7 +165,8 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
             + "come back in errors, each with its file, line and stack. The call fails, with those errors, on a compile error, "
             + "or when execute returns null and an error is located in the script itself (its file, or its most recent frame, is "
             + "gdscript://…): a runtime error ends execute with null. A null value with errors located elsewhere (a game "
-            + "script execute called, another thread) still succeeds."
+            + "script execute called, another thread) still succeeds. In a C# project, read C# members with cs_get, cs_call or "
+            + "run_csharp: GDScript cannot reach a member Godot does not marshal."
     )]
     public async Task<string> RunScriptAsync(
         [Description("The GDScript source.")] string script,
@@ -195,8 +196,11 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
         {
             // GDScript has no exceptions: a runtime error ends execute with null, and the error itself arrives through the feed.
             // An error located elsewhere (a game script execute called, another thread) does not say execute failed.
+            bool isCSharpProject = PrepScan.FindCsproj(target.ProjectDir).Kind != CsprojKind.None;
+            string? hint = ErrorReport.CSharpHint(errors, isCSharpProject);
+            string suffix = hint is null ? string.Empty : $"\n{hint}";
             throw new McpException(
-                $"run_script failed: execute returned null and Godot reported errors while it ran:\n{ErrorReport.Summarise(errors)}"
+                $"run_script failed: execute returned null and Godot reported errors while it ran:\n{ErrorReport.Summarise(errors)}{suffix}"
             );
         }
 

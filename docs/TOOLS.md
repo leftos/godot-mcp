@@ -280,7 +280,7 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 - **Does:** runs GDScript inside the game; the `script` must `extends RefCounted` and define `func execute(scene_tree: SceneTree) -> Variant` (it may await). Returns `{value}` as JSON.
 - **Use:** anything `inspect_node`, `set_property` and `call_method` cannot express: loops, several nodes at once, engine singletons. `timeoutMs` default 30000.
-- **Edges:** fails on a compile error, or when `execute` returns null and an error is located in the script itself; a null with errors elsewhere still succeeds. A value over 20000 characters comes back as `{valuePreview, valueLength}`.
+- **Edges:** fails on a compile error, or when `execute` returns null and an error is located in the script itself; a null with errors elsewhere still succeeds. GDScript cannot reach a C# member Godot does not marshal (a `List<T>`, a plain C# class, a private member): in a C# project such a failure (Godot's `Invalid access to property or key`, `Invalid assignment of property or key` or `Invalid call. Nonexistent function`) ends with a line pointing to `cs_get`, `cs_call` and `run_csharp`, which reach it. A value over 20000 characters comes back as `{valuePreview, valueLength}`.
 
 ## Errors and debug output
 

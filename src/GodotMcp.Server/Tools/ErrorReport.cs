@@ -109,6 +109,30 @@ internal static class ErrorReport
         return text.ToString().TrimEnd('\n');
     }
 
+    /// <summary>
+    /// The line a failed <c>run_script</c> adds in a C# project when an error says GDScript could not reach a member: one
+    /// Godot does not marshal is reachable only through the C# tools.
+    /// </summary>
+    /// <returns>The hint, or null outside a C# project or when no error is an unreachable member.</returns>
+    public static string? CSharpHint(IReadOnlyList<ErrorEntry> errors, bool isCSharpProject)
+    {
+        bool unreachable = errors.Any(error => UnreachableMemberTexts.Any(text => error.Message.Contains(text, StringComparison.Ordinal)));
+        return isCSharpProject && unreachable ? CSharpHintText : null;
+    }
+
+    private const string CSharpHintText =
+        "In a C# project, a member Godot cannot marshal (a List<T>, a plain C# class, a private member) is not reachable from "
+        + "GDScript: cs_get, cs_call or run_csharp reach it.";
+
+    // Godot's runtime errors for a property, key or method GDScript could not find on an object: a read (L1128, L1167,
+    // L1281), a call (L163) and an assignment (L1021, L1059, L1235) in Godot 4.7.2's modules/gdscript/gdscript_vm.cpp.
+    private static readonly string[] UnreachableMemberTexts =
+    [
+        "Invalid access to property or key",
+        "Invalid call. Nonexistent function",
+        "Invalid assignment of property or key",
+    ];
+
     private static string Locate(ErrorEntry entry)
     {
         string place = entry.Line > 0 ? $"{entry.File}:{entry.Line}" : entry.File;

@@ -233,6 +233,8 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         Assert.Contains("foo", failed.Message, StringComparison.Ordinal);
         // The body's second line, `return nothing.foo`, is line 6 of the script RunAsync wraps it in.
         Assert.True(failed.Message.Contains(":6 in execute", StringComparison.Ordinal), failed.Message);
+        // InputProbe is a GDScript project: an invalid access there says nothing of the C# tools.
+        Assert.DoesNotContain("cs_get", failed.Message, StringComparison.Ordinal);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
