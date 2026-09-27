@@ -22,7 +22,6 @@ A track, then singles; the singles' order is not a ranking.
 
 ### Singles
 
-- [ ] The helper cache's move of a fresh copy into place fails now and then with "Access to the path '…\dotnet\<hash>.tmp-<guid>' is denied" (`HelperCache.CopyInto`, `Directory.Move`; 3 of 17 `CSharpToolTests` in one run, 2026-09-26; antivirus scanning the new dlls suspected, unmeasured), and the IOException surfaces as "the connection to the game ended": measure the cause, retry the move briefly, and report a failed copy as what it is
 
 - [ ] A Godot launch in the itests died once with exit 0xC06D007F (a delay-load failure) before the bridge connected (`CaptureTests.SentPadInputIsCaptured`, full `itest` 2026-09-26, beside two other trees' itests; passed on the rerun): find what fails to load if it recurs
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see [DECISIONS.md](../DECISIONS.md#gamepad-input-from-godot-472s-source))

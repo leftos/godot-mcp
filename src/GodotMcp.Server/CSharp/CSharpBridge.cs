@@ -65,7 +65,8 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
 
     /// <summary>Sends one helper request through the bridge, copying the helper into the cache first.</summary>
     /// <exception cref="InvalidOperationException">
-    /// The project cannot be asked, the bridge answered nothing, or the helper refused or answered badly.
+    /// The project cannot be asked, the helper's copy could not be prepared, the bridge answered nothing, or the helper
+    /// refused or answered badly.
     /// </exception>
     public async Task<CSharpReply> SendAsync(GodotSession session, string requestJson, int timeoutMs, CancellationToken cancellation)
     {
@@ -75,19 +76,31 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
             throw new InvalidOperationException(refusal);
         }
 
-        string copied = cache.Prepare(Path.GetDirectoryName(extension!)!);
-        JsonNode? result = await session.SendAsync(
-            "dotnet",
-            new JsonObject { ["extension"] = copied, ["request"] = requestJson },
-            TimeSpan.FromMilliseconds(timeoutMs),
-            cancellation
-        );
-        if (result is null)
-        {
-            throw new InvalidOperationException("The C# helper's reply is missing: the bridge answered no result for 'dotnet'.");
-        }
-
+        string copied = PrepareCopy(extension!);
+        JsonNode? result =
+            await session.SendAsync(
+                "dotnet",
+                new JsonObject { ["extension"] = copied, ["request"] = requestJson },
+                TimeSpan.FromMilliseconds(timeoutMs),
+                cancellation
+            ) ?? throw new InvalidOperationException("The C# helper's reply is missing: the bridge answered no result for 'dotnet'.");
         return ParseReply(result);
+    }
+
+    /// <summary>
+    /// The copy of the helper the game loads. A file-system error here becomes an <see cref="InvalidOperationException"/>, so
+    /// the caller's catch for a dropped socket never reports it as the connection to the game ending.
+    /// </summary>
+    private string PrepareCopy(string extension)
+    {
+        try
+        {
+            return cache.Prepare(Path.GetDirectoryName(extension)!);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new InvalidOperationException($"Preparing the C# helper's copy failed: {e.Message}", e);
+        }
     }
 
     private static JsonObject Parse(string reply)

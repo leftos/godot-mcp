@@ -1,7 +1,9 @@
 using System.Text.Json.Nodes;
 using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
+using GodotMcp.Server.Wire;
 using GodotMcp.TestSupport;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GodotMcp.Tests.CSharp;
 
@@ -69,6 +71,24 @@ public sealed class CSharpBridgeTests : IDisposable
         InvalidOperationException thrown = Assert.Throws<InvalidOperationException>(() => CSharpBridge.ParseReply(BridgeResult("not json", false)));
 
         Assert.StartsWith("The C# helper's reply is not JSON: ", thrown.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AFileSystemErrorPreparingTheCopyIsNotReportedAsADeadConnection()
+    {
+        string project = Built("probe");
+        string missingBuild = Path.Combine(_temp.Combine("no-helper-build"), "godot_mcp_dotnet.gdextension");
+        CSharpBridge bridge = new(new HelperCache(_temp.Combine("cache")), () => missingBuild);
+        using BridgeListener listener = new(NullLogger<BridgeListener>.Instance);
+        using SessionRegistry registry = new(listener, NullLogger<GodotSession>.Instance);
+        using GodotSession session = new(new SessionSpec("probe", project, SessionKind.Attach, false, false), registry);
+
+        InvalidOperationException thrown = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            bridge.SendAsync(session, "{}", 1000, TestContext.Current.CancellationToken)
+        );
+
+        Assert.StartsWith("Preparing the C# helper's copy failed: ", thrown.Message, StringComparison.Ordinal);
+        Assert.IsAssignableFrom<IOException>(thrown.InnerException);
     }
 
     /// <summary>A project folder with a project.godot and one csproj per name, or none when no name is given.</summary>

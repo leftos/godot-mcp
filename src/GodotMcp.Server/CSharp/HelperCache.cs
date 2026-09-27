@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -16,6 +17,8 @@ internal sealed class HelperCache(string cacheRoot)
 
     private const string CompleteMarker = ".complete";
     private const int HashCharacters = 16;
+    private const int RetryIntervalMs = 20;
+    private const int RetryBudgetMs = 2000;
 
     private bool _pruned;
 
@@ -89,7 +92,7 @@ internal sealed class HelperCache(string cacheRoot)
                 return;
             }
 
-            Delete(destination);
+            Retry(() => Delete(destination));
         }
 
         string temp = $"{destination}.tmp-{Guid.NewGuid():N}";
@@ -97,12 +100,68 @@ internal sealed class HelperCache(string cacheRoot)
         File.WriteAllBytes(Path.Combine(temp, CompleteMarker), []);
         try
         {
-            Directory.Move(temp, destination);
+            Retry(() => MoveUnlessPublished(temp, destination));
         }
-        catch (IOException) when (IsComplete(destination))
+        catch (Exception e) when (IsFileSystemRefusal(e))
+        {
+            TryDelete(temp);
+            throw new InvalidOperationException(
+                $"The C# helper's copy could not be moved into place at {destination}: {e.Message}; "
+                    + $"something (an antivirus scan?) held it for over {RetryBudgetMs / 1000} s.",
+                e
+            );
+        }
+
+        if (Directory.Exists(temp))
         {
             // Another server published the same copy while this one was being made; its copy serves as well as ours.
+            TryDelete(temp);
+        }
+    }
+
+    private static void MoveUnlessPublished(string temp, string destination)
+    {
+        if (!IsComplete(destination))
+        {
+            Directory.Move(temp, destination);
+        }
+    }
+
+    /// <summary>
+    /// Runs <paramref name="attempt"/> until it succeeds, retrying a file-system refusal every <see cref="RetryIntervalMs"/>
+    /// for up to <see cref="RetryBudgetMs"/>: an on-write scan holds a just-written file for tens of milliseconds, and NTFS
+    /// refuses to rename or delete its folder meanwhile. The refusal that outlasts the budget is thrown.
+    /// </summary>
+    private static void Retry(Action attempt)
+    {
+        var clock = Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                attempt();
+                return;
+            }
+            catch (Exception e) when (IsFileSystemRefusal(e) && clock.ElapsedMilliseconds < RetryBudgetMs)
+            {
+                Thread.Sleep(RetryIntervalMs);
+            }
+        }
+    }
+
+    private static bool IsFileSystemRefusal(Exception e) => e is IOException or UnauthorizedAccessException;
+
+    /// <summary>Deletes a temp copy, logging a refusal rather than throwing it: the next server's prune removes what is left.</summary>
+    private static void TryDelete(string temp)
+    {
+        try
+        {
             Delete(temp);
+        }
+        catch (Exception e) when (IsFileSystemRefusal(e))
+        {
+            // Logging may be gone if this runs while the server exits, so this goes straight to stderr like the prune.
+            Console.Error.WriteLine($"godot-mcp: could not remove the C# helper's temp copy {temp}: {e.Message}");
         }
     }
 

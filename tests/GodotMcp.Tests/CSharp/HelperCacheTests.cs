@@ -111,4 +111,119 @@ public sealed class HelperCacheTests : IDisposable
         Assert.True(Directory.Exists(held));
         Assert.Equal("held", reader.ReadToEnd());
     }
+
+    [Fact]
+    public async Task ACopyWhoseTempFolderIsHeldBrieflyStillLands()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        for (int i = 0; i < 200; i++)
+        {
+            File.WriteAllText(Path.Combine(_source, $"z{i:D4}.bin"), new string('x', 64));
+        }
+        Directory.CreateDirectory(_cache);
+        string destination = Path.Combine(_cache, HelperCache.Hash(_source));
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        Task<string> scanner = Task.Run(() => HoldLikeAScanner(_cache, stop.Token), cancellation);
+
+        string outcome;
+        try
+        {
+            HelperCache.CopyInto(_source, destination);
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            outcome = await scanner;
+        }
+
+        Assert.Equal("held", outcome);
+        Assert.True(File.Exists(Path.Combine(destination, ".complete")));
+        Assert.True(File.Exists(Path.Combine(destination, "helper.dll")));
+        Assert.Empty(Directory.GetDirectories(_cache, "*.tmp-*"));
+    }
+
+    [Fact]
+    public async Task ACopyHeldPastTheBudgetFailsNamingTheCause()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        for (int i = 0; i < 200; i++)
+        {
+            File.WriteAllText(Path.Combine(_source, $"z{i:D4}.bin"), new string('x', 64));
+        }
+        Directory.CreateDirectory(_cache);
+        string destination = Path.Combine(_cache, HelperCache.Hash(_source));
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        Task<string> holder = Task.Run(() => HoldUntilStopped(_cache, stop.Token), cancellation);
+
+        InvalidOperationException thrown;
+        string outcome;
+        try
+        {
+            thrown = Assert.Throws<InvalidOperationException>(() => HelperCache.CopyInto(_source, destination));
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            outcome = await holder;
+        }
+
+        Assert.Equal("held", outcome);
+        Assert.NotNull(thrown.InnerException);
+        Assert.Equal(
+            $"The C# helper's copy could not be moved into place at {destination}: {thrown.InnerException.Message}; "
+                + "something (an antivirus scan?) held it for over 2 s.",
+            thrown.Message
+        );
+        Assert.False(Directory.Exists(destination));
+        Assert.Empty(Directory.GetDirectories(_cache, "*.tmp-*"));
+    }
+
+    // Opens helper.dll inside the first *.tmp-* folder that appears, for reading with full sharing, and keeps it open until
+    // 300 ms after the folder's .complete marker appears: the shape of an on-write antivirus scan.
+    private static string HoldLikeAScanner(string cache, CancellationToken stop)
+    {
+        while (!stop.IsCancellationRequested)
+        {
+            string? temp = Directory.GetDirectories(cache, "*.tmp-*").FirstOrDefault();
+            string? dll = temp is null ? null : Path.Combine(temp, "helper.dll");
+            if (dll is null || !File.Exists(dll))
+            {
+                Thread.Sleep(1);
+                continue;
+            }
+
+            using FileStream held = new(dll, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            string marker = Path.Combine(temp!, ".complete");
+            while (!File.Exists(marker) && !stop.IsCancellationRequested)
+            {
+                Thread.Sleep(1);
+            }
+
+            Thread.Sleep(300);
+            return "held";
+        }
+
+        return "never saw the temp folder";
+    }
+
+    // The same open, kept until the test stops it: a scan that outlasts the copy's retry budget.
+    private static string HoldUntilStopped(string cache, CancellationToken stop)
+    {
+        while (!stop.IsCancellationRequested)
+        {
+            string? temp = Directory.GetDirectories(cache, "*.tmp-*").FirstOrDefault();
+            string? dll = temp is null ? null : Path.Combine(temp, "helper.dll");
+            if (dll is null || !File.Exists(dll))
+            {
+                Thread.Sleep(1);
+                continue;
+            }
+
+            using FileStream held = new(dll, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            stop.WaitHandle.WaitOne();
+            return "held";
+        }
+
+        return "never saw the temp folder";
+    }
 }
