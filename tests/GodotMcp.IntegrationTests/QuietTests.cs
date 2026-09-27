@@ -25,6 +25,7 @@ public sealed class QuietTests : IAsyncDisposable
         + "on_screen = on_screen or area.intersects(window)\n\t"
         + "return {\"focused\": DisplayServer.window_is_focused(), \"onScreen\": on_screen, \"driver\": AudioServer.get_driver_name()}";
     private const string ReadText = "return scene_tree.root.get_node(\"Main/TextInput\").text";
+    private const string ReadMaxFps = "return Engine.max_fps";
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
     private readonly ProjectTools _project;
@@ -108,6 +109,32 @@ public sealed class QuietTests : IAsyncDisposable
 
         // key and simulate_input type a letter key's lower case unless shift is held.
         Assert.Equal("abc", (await RunAsync(ReadText)).GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AQuietRunCapsItsFrameRateAt60()
+    {
+        await _project.RunProjectAsync(_probe.Directory, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(60, (await RunAsync(ReadMaxFps)).GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ANotQuietRunKeepsTheEngineFrameRate()
+    {
+        await LaunchAsync(false, TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, (await RunAsync(ReadMaxFps)).GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AQuietRunKeepsTheProjectsOwnFrameRate()
+    {
+        string settings = File.ReadAllText(_probe.ProjectFile);
+        File.WriteAllText(_probe.ProjectFile, settings.Replace("[application]", "[application]\n\nrun/max_fps=30", StringComparison.Ordinal));
+        await LaunchAsync(true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(30, (await RunAsync(ReadMaxFps)).GetValue<int>());
     }
 
     private Task<string> LaunchAsync(bool quiet, CancellationToken cancellation) =>

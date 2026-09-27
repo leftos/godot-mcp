@@ -44,7 +44,7 @@ A drive is always the same five moves: **start → look → act → wait → che
 - **Headless node paths are relative to the scene root** (`.`, `HUD/Score`); live node paths are absolute (`/root/Main/Button`), under the root (`Main/Button`) or a bare name.
 - **C# projects:** a launch, a restart and every headless tool build a stale assembly first; a failed build refuses the launch with the compiler errors in the result.
 - **Nothing lands in the project's tracked files.** The bridge rides in an `override.cfg` beside `project.godot`, hidden from git by `.git/info/exclude` and removed at stop or detach; a user's own `override.cfg` is refused, never overwritten. Screenshots, baselines and recordings go under `.godot/godot-mcp/`. After a drive, `Test-Path <project>/override.cfg` is false; if a crashed run left one, `stop_project` it or delete it (its first line is `; godot-mcp: bridge injection, removed when the run stops`; a file without that line is the project's own, never delete it).
-- **Quiet by default:** pass `options.quiet: false` only when the user wants to watch or play along.
+- **Quiet by default** (off-screen, silent, capped at 60 fps): pass `options.quiet: false` only when the user wants to watch or play along.
 
 ## When something goes wrong
 

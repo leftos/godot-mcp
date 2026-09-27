@@ -23,6 +23,9 @@ const LOGGER_SCRIPT := "godot_mcp_logger.gd"
 const JSON_SCRIPT := "godot_mcp_json.gd"
 const PREVIEW_SCRIPT := "godot_mcp_preview.gd"
 const MIN_DRAG_STEPS := 3
+## A quiet run's frame-rate cap when the project sets none: its frames are never seen, so drawing
+## at the monitor's refresh rate only burns the GPU.
+const QUIET_MAX_FPS := 60
 ## The device id every injected mouse event carries, so _input can tell it from the real mouse
 ## (DEVICE_ID_MOUSE, 32) and from the engine's own ids: 0-15 joypads, 16-31 keyboards, -1
 ## emulation, -2 internal (core/input/input_event.h L64-67 in 4.7.2).
@@ -104,6 +107,8 @@ func _ready() -> void:
 	var port: int = _endpoint["port"]
 	if OS.get_environment("GODOT_MCP_QUIET") == "1":
 		_park_window()
+		if Engine.max_fps == 0:
+			Engine.max_fps = QUIET_MAX_FPS
 	# A preview's scene enters after this autoload's _ready, so it never runs a frame unpaused.
 	if OS.get_environment("GODOT_MCP_PREVIEW") == "1":
 		get_tree().paused = true
