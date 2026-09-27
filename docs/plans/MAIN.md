@@ -16,6 +16,10 @@ A track, then singles; the singles' order is not a ranking.
 
 - [ ] C#-aware runtime tools beyond `call_method`, for members Godot's call cannot reach: signatures with types Godot cannot marshal (generics, plain C# classes), static members, and overloads that share a name and argument count (`internal` methods are reached; step 12, 2026-09-26). Decided (user, 2026-09-26): design it now, as a proposal drafted before any build. Proposal and decisions: [csharp-runtime-tools.md](./csharp-runtime-tools.md) (a helper loaded at run time through a NativeAOT GDExtension shim; `cs_members`/`cs_get`/`cs_set`/`cs_call` and `run_csharp`); its spike proved all three unproven steps (2026-09-26, the proposal's §6); the build is planned as steps S1-S9 (the proposal's §7); S1 (projects, publish, install), S2 (the marshalling core), S4 (CsProbe additions) and S8a (the snippet compiler) landed 2026-09-26; S3 (the bridge loader, the helper's ping, the helper cache and the `csharp` itest group) landed too, and S5 (`cs_members`); next is S6 (`cs_get`, `cs_set`)
 
+### Track: coexisting with a live debugger
+
+- [ ] Let an agent debug a game godot-mcp holds with DebugMCP + netcoredbg (user, 2026-09-26): the game's pid in `list_sessions`, a game paused at a breakpoint reported as paused rather than stuck, a decision on holding a launch until a debugger attaches, and a written end-to-end trial recorded in the `debug-live` skill. Handoff and open questions: [debugger-coexistence.md](./debugger-coexistence.md)
+
 ### Singles
 
 - [ ] Measure the `headless` itest group against its runner `--timeout 4m`: a full `itest` on 2026-09-26 ended it at 4m 00s with all 111 tests passed (exit 3), while two other trees built at once; if it is near the limit alone, split the group in `run.ps1`'s `$itestGroups`
