@@ -26,8 +26,11 @@ exits with the command's own status, or 124 when it outlived its ceiling and was
            that points elsewhere is replaced; anything else at the link path is refused, never deleted.
            GODOT_MCP_INSTALL_DIR overrides the install folder, GODOT_MCP_SKILLS_DIR the folder the link is made in.
   gdtest   the bridge's GDScript unit tests (tests/bridge/test_*.gd) in headless Godot (GODOT_PATH, else
-           F:\Godot\Godot_console.exe): godot --headless --path tests/bridge --script res://run_tests.gd. Each failure
-           prints as "FAIL <file>::<test>: <message>", then "gdtest: <passed> passed, <failed> failed"; ceiling 60 s
+           F:\Godot\Godot_console.exe). It first imports tests/bridge (godot --headless --path tests/bridge --import,
+           .tmp/gdtest-import.log, ceiling 120 s) when a test script is newer than the last import, so the project's
+           global class list holds every script's class_name, then runs godot --headless --path tests/bridge --script
+           res://run_tests.gd. Each failure prints as "FAIL <file>::<test>: <message>", then
+           "gdtest: <passed> passed, <failed> failed"; ceiling 60 s
 
 -Filter narrows test or itest to one test class, e.g. -Filter "*SessionLifecycleTests". A filtered itest skips the
 groups: one gate, .tmp/itest.log, ceiling 300 s, --timeout 4m.
@@ -67,6 +70,8 @@ $root = $PSScriptRoot
 $logDir = Join-Path $root '.tmp'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $solution = Join-Path $root 'GodotMcp.slnx'
+$gdtestDir = Join-Path $root 'tests/bridge'
+$gdtestStamp = Join-Path $gdtestDir '.godot/gdtest-import.stamp'
 
 $gate = Join-Path $root 'tools/gate.ps1'
 
@@ -124,6 +129,36 @@ function Get-GodotPath {
         throw "Godot was not found: GODOT_PATH is not set and $default does not exist. Set GODOT_PATH to the Godot 4.7 console executable."
     }
     return $default
+}
+
+# Whether tests/bridge needs importing: no stamp of an earlier import, or a test script newer than it. The stamp is our
+# own file, not the class cache's mtime, because an import that changes no class need not rewrite the cache.
+function Test-GdtestImportStale {
+    if (-not (Test-Path -LiteralPath $gdtestStamp -PathType Leaf)) {
+        return $true
+    }
+    $stamp = Get-Item -LiteralPath $gdtestStamp
+    $scripts = Get-ChildItem -Path $gdtestDir -Filter '*.gd' -File
+    $newer = @($scripts | Where-Object { $_.LastWriteTime -gt $stamp.LastWriteTime })
+    return $newer.Count -gt 0
+}
+
+# Imports tests/bridge when a test script is newer than the last import, so ProjectSettings' global class list (read
+# from .godot/global_script_class_cache.cfg) holds every test script's class_name and from_json can find a script class
+# by its name. One line and no import when the list is up to date; the stamp is touched after a successful one. Returns
+# 0 when the list is up to date or the import succeeded, else the import's own status.
+function Invoke-GdtestImport {
+    if (-not (Test-GdtestImportStale)) {
+        Write-Host 'gdtest: import up to date'
+        return 0
+    }
+    $arguments = @('--headless', '--path', $gdtestDir, '--import')
+    $status = Invoke-Gated -Name 'gdtest-import' -TimeoutSeconds 120 -Program (Get-GodotPath) -Arguments $arguments
+    if ($status -ne 0) {
+        return $status
+    }
+    Set-Content -LiteralPath $gdtestStamp -Value '' -NoNewline
+    return 0
 }
 
 # xUnit v3 under Microsoft Testing Platform takes several classes after one --filter-class and runs a test in any of
@@ -285,7 +320,11 @@ switch ($Command) {
         exit (Invoke-Install)
     }
     'gdtest' {
-        $arguments = @('--headless', '--path', (Join-Path $root 'tests/bridge'), '--script', 'res://run_tests.gd')
+        $import = Invoke-GdtestImport
+        if ($import -ne 0) {
+            exit $import
+        }
+        $arguments = @('--headless', '--path', $gdtestDir, '--script', 'res://run_tests.gd')
         exit (Invoke-Gated -Name 'gdtest' -TimeoutSeconds 60 -Program (Get-GodotPath) -Arguments $arguments)
     }
     default {

@@ -12,12 +12,6 @@ The first version replaced godot-mcp-runtime at parity and went further: every p
 
 Grouped into waves by shared files; within the singles, order is not a ranking.
 
-### Wave 5: JSON conversion
-
-Shared: `bridge/godot_mcp_json.gd`, `bridge/godot_mcp_inspect.gd`, `tests/bridge`, `run.ps1` (`gdtest`). Acceptance: `pwsh run.ps1 gdtest`, `pwsh run.ps1 itest`; human check: `set_node_properties` and `set_property` on an exported `Array[int]` in the fixture.
-
-- [ ] `pwsh run.ps1 gdtest` imports `tests/bridge` first, so a test can cover `from_json` finding a script class through the project's global class list (brief 5b-A, 2026-09-26). Decided (user, 2026-09-26): the import's `.uid` files beside `tests/bridge`'s scripts are committed.
-
 ### Wave 6: ideas from a peer server
 
 Shared: `bridge/` (new inspect and input handlers), `headless/operations.gd`, the server's tool classes. Acceptance: `pwsh run.ps1 test`, `pwsh run.ps1 itest`; human check: a drive of the InputProbe fixture through each new tool.

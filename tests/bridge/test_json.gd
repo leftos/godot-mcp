@@ -9,7 +9,7 @@ extends "res://gd_test.gd"
 const REFUSED: Array = [false, null]
 ## A saved resource of this project, a script, for the Resource conversions.
 const SCRIPT_PATH := "res://gd_test.gd"
-## A script-class Resource of this project, loaded by path (it is never imported).
+## A script-class Resource of this project, loaded by path.
 const TEST_RESOURCE_PATH := "res://json_test_resource.gd"
 const SCRIPT_INFO: Dictionary = {
 	"type": TYPE_OBJECT, "hint": PROPERTY_HINT_RESOURCE_TYPE, "hint_string": "Script"
@@ -471,6 +471,25 @@ func test_type_dictionary_builds_a_script_class_resource() -> void:
 	assert_eq(_json._new_script_resource("Nope", classes), null, "no such class")
 	var unknown: Dictionary = {"type": "JsonTestResourceNotInTheProject"}
 	assert_eq(_json.from_json(unknown, _resource_info("")), REFUSED, "a class nowhere")
+
+
+func test_from_json_finds_script_class_through_global_class_list() -> void:
+	var read: Dictionary = {"type": "JsonTestResource", "amount": 3.0}
+	var converted: Array = _json.from_json(read, _resource_info("JsonTestResource"))
+	assert_true(converted[0] and converted[1] is Resource, "a new resource of the class_name")
+	if converted[1] is Resource:
+		var script: Script = (converted[1] as Resource).get_script()
+		assert_eq(str(script.get_global_name()), "JsonTestResource", "the script's global name")
+		assert_eq((converted[1] as Resource).get("amount"), 3, "its amount")
+
+
+func test_from_json_finds_derived_script_class_through_its_base() -> void:
+	var read: Dictionary = {"type": "JsonTestDerivedResource", "amount": 2.0, "label": "x"}
+	var converted: Array = _json.from_json(read, _resource_info("JsonTestResource"))
+	assert_true(converted[0] and converted[1] is Resource, "a new resource of the derived class")
+	if converted[1] is Resource:
+		assert_eq((converted[1] as Resource).get("amount"), 2, "its inherited amount")
+		assert_eq((converted[1] as Resource).get("label"), "x", "its own label")
 
 
 func test_builtin_read_shape_round_trips() -> void:
