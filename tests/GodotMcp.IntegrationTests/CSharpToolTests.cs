@@ -31,6 +31,11 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
     private const string TargetsPath = "/root/" + TargetsName;
     private const string PlainNodeName = "PlainNode";
 
+    // The CsProbe scene's root has no children; the text is the same from the C# helper and the GDScript bridge.
+    private const string MissingUnderProbe =
+        "No node 'CsProbe/Missing' in the running game: a path is read from /root, and /root/CsProbe has no child 'Missing' "
+        + "(children: none); get_scene_tree lists the nodes' paths.";
+
     private readonly SharedCsProbeSession _shared = shared;
     private readonly RuntimeTools _tools = new(shared.Sessions, shared.Bridge);
 
@@ -786,6 +791,65 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
         Assert.StartsWith("run_csharp failed: ", refused.Message, StringComparison.Ordinal);
         Assert.Contains("the call did not complete within 200 ms; its Task is still running in the game", refused.Message, StringComparison.Ordinal);
         Assert.Equal(2, next["value"]?.GetValue<int>());
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpCallsAnInternalMethodDirectly()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+
+        JsonObject result = await RunCSharpAsync("Node<CsTargets>(\"" + TargetsName + "\").Hit(2)", null, cancellation);
+
+        Assert.Equal("int 2", result["value"]?.GetValue<string>());
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpNodeNotFoundNamesTheBase()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => RunCSharpAsync("Node(\"CsProbe/Missing\")", null, cancellation));
+
+        Assert.Contains("the snippet threw InvalidOperationException: " + MissingUnderProbe, refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task CsGetOfAMissingNodeNamesTheBaseAsInspectNodeDoes()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            GetAsync(new CSharpTarget(Node: "CsProbe/Missing"), "Numbers", null, cancellation)
+        );
+        McpException inspected = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.InspectNodeAsync("CsProbe/Missing", null, cancellationToken: cancellation)
+        );
+
+        Assert.Contains(MissingUnderProbe, refused.Message, StringComparison.Ordinal);
+        Assert.Contains(MissingUnderProbe, inspected.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task APathAndABareNameFindTheSameNodeInCSharpAndGDScript()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+        const string code =
+            "var byName = Node(\""
+            + TargetsName
+            + "\"); var byPath = Node(\""
+            + TargetsPath
+            + "\"); "
+            + "return byName.GetPath() + \"|\" + ReferenceEquals(byName, byPath);";
+
+        JsonObject csharp = await RunCSharpAsync(code, null, cancellation);
+        JsonNode byName = JsonNode.Parse(await _tools.InspectNodeAsync(TargetsName, ["name"], cancellationToken: cancellation))!;
+        JsonNode byPath = JsonNode.Parse(await _tools.InspectNodeAsync(TargetsPath, ["name"], cancellationToken: cancellation))!;
+
+        Assert.Equal(TargetsPath + "|True", csharp["value"]?.GetValue<string>());
+        Assert.Equal(TargetsPath, byName["path"]?.GetValue<string>());
+        Assert.Equal(TargetsPath, byPath["path"]?.GetValue<string>());
     }
 
     private async Task<JsonObject> RunCSharpAsync(string code, RunCSharpOptions? options, CancellationToken cancellation)

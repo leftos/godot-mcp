@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json.Nodes;
@@ -29,6 +30,9 @@ internal static class Targets
 {
     /// <summary>The bridge's autoload (the server's <c>OverrideFile.AutoloadName</c>), whose nodes are out of reach.</summary>
     private const string AutoloadName = "GodotMcpBridge";
+
+    /// <summary>How many of a node's children a not-found refusal names.</summary>
+    private const int MaxListedChildren = 10;
 
     /// <summary>The kept objects, with a fresh epoch each game process, so a handle from before a restart is refused as one.</summary>
     public static HandleTable Handles { get; } = new(Random.Shared.Next(1, int.MaxValue));
@@ -71,16 +75,88 @@ internal static class Targets
         return null;
     }
 
+    /// <summary>
+    /// The node <see cref="Find"/> finds for <paramref name="value"/>, or the refusal saying why there is none to reach: it is
+    /// missing, or it is the bridge's own.
+    /// </summary>
+    public static bool TryReach(string value, [NotNullWhen(true)] out Node? node, [NotNullWhen(false)] out string? refusal)
+    {
+        node = Find(value);
+        refusal =
+            node is null ? NotFound(value)
+            : InBridge(node) ? $"'{node.GetPath()}' is part of the godot-mcp bridge, which the C# tools do not reach."
+            : null;
+        return refusal is null;
+    }
+
+    /// <summary>
+    /// The refusal for a path or bare name that names no node: a bare name was searched for everywhere under /root; a path
+    /// names the base it is read from, the deepest node on it that exists, the name that node lacks and up to
+    /// <see cref="MaxListedChildren"/> of its children. The bridge's <c>_not_found</c> (godot_mcp_inspect.gd) spells the same text.
+    /// </summary>
+    public static string NotFound(string value)
+    {
+        const string Tail = "; get_scene_tree lists the nodes' paths.";
+        if (!value.Contains('/', StringComparison.Ordinal))
+        {
+            return $"No node named '{value}' anywhere under /root in the running game{Tail}";
+        }
+        (Node? parent, string segment) = DeepestAncestor(value);
+        string from = value.StartsWith('/') ? "" : "a path is read from /root, and ";
+        string where = parent is null ? "/" : parent.GetPath().ToString();
+        string children = parent is null ? "root" : ChildList(parent);
+        return $"No node '{value}' in the running game: {from}{where} has no child '{segment}' (children: {children}){Tail}";
+    }
+
+    /// <summary>The deepest node on the path <paramref name="value"/> that exists, null for <c>/</c>, and the name it lacks.</summary>
+    private static (Node? Parent, string Segment) DeepestAncestor(string value)
+    {
+        Window root = ((SceneTree)Engine.GetMainLoop()).Root;
+        string[] segments = value.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        int first = 0;
+        if (value.StartsWith('/'))
+        {
+            if (segments.Length == 0 || segments[0] != root.Name.ToString())
+            {
+                return (null, segments.Length == 0 ? "" : segments[0]);
+            }
+            first = 1;
+        }
+        Node parent = root;
+        for (int i = first; i < segments.Length - 1; i++)
+        {
+            Node? next = parent.GetNodeOrNull(segments[i]);
+            if (next is null)
+            {
+                return (parent, segments[i]);
+            }
+            parent = next;
+        }
+        return (parent, segments[^1]);
+    }
+
+    /// <summary>The names of up to <see cref="MaxListedChildren"/> children, the bridge left out, and a count of the rest.</summary>
+    private static string ChildList(Node parent)
+    {
+        Node? bridge = ((SceneTree)Engine.GetMainLoop()).Root.GetNodeOrNull(AutoloadName);
+        List<string> names = [.. parent.GetChildren().Where(child => child != bridge).Select(child => child.Name.ToString())];
+        if (names.Count == 0)
+        {
+            return "none";
+        }
+        string shown = string.Join(", ", names.Take(MaxListedChildren));
+        return names.Count > MaxListedChildren ? $"{shown} (+{names.Count - MaxListedChildren})" : shown;
+    }
+
     /// <summary>Where a walk stops: Godot's own API is <c>describe_class</c>'s to list, not the helper's.</summary>
     public static bool StopAtGodot(Type type) => type.Assembly == typeof(GodotObject).Assembly;
 
     /// <summary>The node and its script's own type, or the refusal for a path or name the game's tree does not hold.</summary>
     private static Resolution ByNode(string value, TargetHints hints)
     {
-        Node? node = Find(value);
-        if (node is null || InBridge(node))
+        if (!TryReach(value, out Node? node, out string? refusal))
         {
-            return Refused($"No node '{value}' in the running game; get_scene_tree lists the nodes' paths.");
+            return Refused(refusal);
         }
         if (StopAtGodot(node.GetType()))
         {

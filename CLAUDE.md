@@ -10,6 +10,7 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 
 - `docs/README.md`: the map and the glossary.
 - `docs/plans/MAIN.md`: open work, in order.
+- `CHANGELOG.md`: what each version changed, newest first.
 - `docs/DECISIONS.md`: the user's decisions and the engine facts behind them; read it before reversing one.
 - `docs/TOOLS.md`: the agent-facing guide to every tool; a change to a tool's arguments, defaults or edges updates it in the same commit.
 - `skills/godot-mcp/SKILL.md`: the tutorial agents in the game repos load (linked into `~/.claude/skills` by `pwsh run.ps1 install`); a new tool, or a change to the drive loop or the rules that bite, updates it in the same commit as `docs/TOOLS.md`.
@@ -37,6 +38,6 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 - Source and test edits go to the `implementer` agent with a brief naming the files, the change and a proving command; the main session owns docs, plans and commits.
 - Commits are pre-approved: commit a step whose gates are green, whose diff is reviewed and whose docs are updated, without asking. Anything unusual still asks: a revert, a history edit, a force-push (user, 2026-09-25).
 - The repo is public at `github.com/leftos/godot-mcp`; a landed item is committed on `main` and pushed straight to `origin/main`, no PR (user, 2026-09-26).
-- A landing that adds a tool or a parameter bumps the minor of `VersionPrefix` in `Directory.Build.props`, one that fixes behaviour bumps the patch; the sha is stamped by the build (orchestrator default, 2026-09-27).
+- A landing that adds a tool or a parameter bumps the minor of `VersionPrefix` in `Directory.Build.props`, one that fixes behaviour bumps the patch; the sha is stamped by the build (orchestrator default, 2026-09-27). The same commit adds the version's section to `CHANGELOG.md`, `## <version> - <date>` with `### Added` / `### Changed` / `### Fixed`, each bullet one sentence of at most 25 words in the agent's words (tool and option names, no class or file names), per the `changelog-and-commit` skill's "Write the bullets"; a landing with no behaviour change bumps nothing and takes no bullet (user, 2026-09-27).
 - Every landing that changes the server, the bridge or the skill ends with `pwsh run.ps1 install` from the main checkout, so a new session in a game repo gets the latest build; when a running session holds the installed exe, stop the servers running from the install folder (only those: `Get-Process godot-mcp` whose `Path` is the installed exe) and install again (user, 2026-09-27: force-updating running MCP servers is fine).
 - Never commit while an implementer has work in the tree.

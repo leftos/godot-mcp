@@ -28,13 +28,8 @@ public abstract class SnippetGlobals
 
     /// <summary>The node a path or a bare name names, by the bridge's rule: a path, or the first node of that name.</summary>
     /// <exception cref="InvalidOperationException">No such node, or it is the bridge's own.</exception>
-    protected Node Node(string path)
-    {
-        Node? node = Targets.Find(path);
-        return node is null || Targets.InBridge(node)
-            ? throw new InvalidOperationException($"No node '{path}' in the running game; get_scene_tree lists the nodes' paths.")
-            : node;
-    }
+    protected Node Node(string path) =>
+        Targets.TryReach(path, out Node? node, out string? refusal) ? node : throw new InvalidOperationException(refusal);
 
     /// <summary>The node <see cref="Node(string)"/> finds, as a <typeparamref name="T"/>.</summary>
     /// <exception cref="InvalidCastException">The node is not a <typeparamref name="T"/>.</exception>

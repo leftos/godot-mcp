@@ -6,7 +6,11 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>What a C# tool reads: a node with a C# script, a type by its full name, or a handle from an earlier C# call.</summary>
 internal sealed record CSharpTarget(
-    [property: Description("A node path or name; the node must have a C# script.")] string? Node = null,
+    [property: Description(
+        "A node path, read from /root unless it starts with /, or a bare name: the first node of that name under /root, breadth "
+            + "first. The node must have a C# script."
+    )]
+        string? Node = null,
     [property: Description("A full type name with its namespace, as cs_members reports it: statics and constructors.")] string? Type = null,
     [property: Description("A handle from cs_get or cs_call with keep.")] string? Handle = null
 )

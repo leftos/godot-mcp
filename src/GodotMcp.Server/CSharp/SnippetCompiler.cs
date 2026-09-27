@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Globalization;
+using System.Reflection;
 using System.Reflection.PortableExecutable;
 using System.Text;
 using Microsoft.CodeAnalysis;
@@ -34,7 +35,8 @@ internal sealed record SnippetDiagnostic(int Line, int Column, string Id, string
 /// which derives from the globals type and runs the snippet as <c>public async Task&lt;object?&gt; RunAsync()</c>. An expression's
 /// value is returned; a statement body that runs off its end returns null. The BCL comes from the request's framework folder
 /// (the runtime the snippet will run on, so an overload the runtime lacks is never bound); every other reference is a dll path
-/// in the request. Only errors are reported, warnings are dropped.
+/// in the request. Only errors are reported, warnings are dropped. The snippet reaches the internal members of every reference
+/// that is not the framework's, as if it were inside those assemblies; private members stay out of its reach.
 /// </summary>
 internal static class SnippetCompiler
 {
@@ -46,14 +48,24 @@ internal static class SnippetCompiler
 
     private static readonly string[] DefaultUsings = ["System", "System.Linq", "System.Collections.Generic", "System.Threading.Tasks"];
     private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.Latest);
-    private static readonly CSharpCompilationOptions Options = new(
+
+    /// <summary>The hint a CS0122 error carries: the globals' members reach what C#'s access checks refuse.</summary>
+    private const string AccessHint = "; reach it through Get, Set or Call instead, which take private and internal members by name";
+
+    // Internal members are imported so a snippet can name them; private ones never are, so they stay out of reach.
+    private static readonly CSharpCompilationOptions CheckedOptions = new CSharpCompilationOptions(
         OutputKind.DynamicallyLinkedLibrary,
         optimizationLevel: OptimizationLevel.Release,
         nullableContextOptions: NullableContextOptions.Enable,
         allowUnsafe: false
-    );
+    ).WithMetadataImportOptions(MetadataImportOptions.Internal);
+
+    private static readonly CSharpCompilationOptions? UncheckedOptions = WithoutAccessChecks(CheckedOptions);
     private static readonly ConcurrentDictionary<string, ImmutableArray<MetadataReference>> Frameworks = new(StringComparer.OrdinalIgnoreCase);
     private static int _compiled;
+
+    /// <summary>What the wrapper names besides the snippet: the globals class it derives from and the assemblies whose checks it skips.</summary>
+    private sealed record Wrapper(string BaseType, string[] Trusted);
 
     private enum Shape
     {
@@ -70,14 +82,24 @@ internal static class SnippetCompiler
     /// <summary>Compiles <paramref name="request"/>; a using that is not a dotted name is refused before compiling.</summary>
     /// <exception cref="McpException">A using is not a namespace name, or a reference cannot be read.</exception>
     /// <exception cref="IOException">The framework folder cannot be read.</exception>
-    public static SnippetCompilation Compile(SnippetRequest request)
+    public static SnippetCompilation Compile(SnippetRequest request) => Compile(request, ignoreAccessChecks: true);
+
+    /// <summary>
+    /// Compiles <paramref name="request"/>, without C#'s access checks when <paramref name="ignoreAccessChecks"/> is set and
+    /// Roslyn lets them be turned off; the compiled assembly is marked to skip the runtime's checks on every reference that is
+    /// not the framework's.
+    /// </summary>
+    /// <exception cref="McpException">A using is not a namespace name, or a reference cannot be read.</exception>
+    /// <exception cref="IOException">The framework folder cannot be read.</exception>
+    internal static SnippetCompilation Compile(SnippetRequest request, bool ignoreAccessChecks)
     {
         ValidateUsings(request.Usings);
         string assemblyName = $"{ClassName}_{Interlocked.Increment(ref _compiled).ToString(CultureInfo.InvariantCulture)}";
+        MetadataReference[] own = [.. request.References.Select(ReadReference)];
         var references = CSharpCompilation.Create(
             assemblyName,
-            references: [.. FrameworkIn(request.FrameworkDirectory), .. request.References.Select(ReadReference)],
-            options: Options
+            references: [.. FrameworkIn(request.FrameworkDirectory), .. own],
+            options: ignoreAccessChecks && UncheckedOptions is { } withoutChecks ? withoutChecks : CheckedOptions
         );
         INamedTypeSymbol? globals = references.GetTypeByMetadataName(request.GlobalsType);
         if (globals is null)
@@ -89,16 +111,49 @@ internal static class SnippetCompiler
             );
         }
 
-        string baseType = globals.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        Wrapper wrapper = new(globals.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), AssemblyNames(references, own));
         Shape shape = IsExpression(request.Code) ? Shape.Expression : Shape.Statements;
-        CSharpCompilation compilation = WithSource(references, request, baseType, shape);
+        CSharpCompilation compilation = WithSource(references, request, wrapper, shape);
         if (shape == Shape.Expression && IsVoid(compilation))
         {
-            compilation = WithSource(references, request, baseType, Shape.VoidExpression);
+            compilation = WithSource(references, request, wrapper, Shape.VoidExpression);
         }
 
         return Emit(compilation);
     }
+
+    /// <summary>
+    /// <paramref name="options"/> with Roslyn's internal <c>BinderFlags.IgnoreAccessibility</c> set through its internal
+    /// <c>WithTopLevelBinderFlags</c>, as Roslyn's own expression evaluator compiles (<c>CompilationExtensions.cs</c> in
+    /// dotnet/roslyn's <c>src/ExpressionEvaluator/CSharp/Source/ExpressionCompiler</c>); null, logged once to stderr, when this
+    /// Roslyn has neither, so snippets keep C#'s access checks.
+    /// </summary>
+    private static CSharpCompilationOptions? WithoutAccessChecks(CSharpCompilationOptions options)
+    {
+        Type? flags = typeof(CSharpCompilationOptions).Assembly.GetType("Microsoft.CodeAnalysis.CSharp.BinderFlags");
+        MethodInfo? with = flags is null
+            ? null
+            : typeof(CSharpCompilationOptions).GetMethod("WithTopLevelBinderFlags", BindingFlags.NonPublic | BindingFlags.Instance, [flags]);
+        if (with is null || !Enum.TryParse(flags!, "IgnoreAccessibility", out object? ignore))
+        {
+            Console.Error.WriteLine(
+                "godot-mcp: this Roslyn has no BinderFlags.IgnoreAccessibility to set, so run_csharp snippets keep C#'s access checks."
+            );
+            return null;
+        }
+
+        return (CSharpCompilationOptions)with.Invoke(options, [ignore])!;
+    }
+
+    /// <summary>The simple name of every assembly <paramref name="own"/> references, which the snippet's runtime access checks skip.</summary>
+    private static string[] AssemblyNames(CSharpCompilation compilation, MetadataReference[] own) =>
+        [
+            .. own.Select(compilation.GetAssemblyOrModuleSymbol)
+                .OfType<IAssemblySymbol>()
+                .Select(assembly => assembly.Identity.Name)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal),
+        ];
 
     private static void ValidateUsings(IReadOnlyList<string> usings)
     {
@@ -141,7 +196,7 @@ internal static class SnippetCompiler
             && compilation.GetSemanticModel(tree).GetTypeInfo(snippet.Expression).Type?.SpecialType == SpecialType.System_Void;
     }
 
-    private static CSharpCompilation WithSource(CSharpCompilation references, SnippetRequest request, string baseType, Shape shape)
+    private static CSharpCompilation WithSource(CSharpCompilation references, SnippetRequest request, Wrapper wrapper, Shape shape)
     {
         StringBuilder source = new();
         foreach (string name in DefaultUsings.Concat(request.Usings))
@@ -149,7 +204,14 @@ internal static class SnippetCompiler
             source.Append("using ").Append(name).Append(";\n");
         }
 
-        source.Append("public sealed class ").Append(ClassName).Append(" : ").Append(baseType).Append("\n{\n");
+        // The runtime (CoreCLR's Assembly::IgnoresAccessChecksTo) then lets the snippet's IL reach these assemblies' internals.
+        foreach (string name in wrapper.Trusted)
+        {
+            source.Append("[assembly: global::System.Runtime.CompilerServices.IgnoresAccessChecksTo(");
+            source.Append(SymbolDisplay.FormatLiteral(name, quote: true)).Append(")]\n");
+        }
+
+        source.Append("public sealed class ").Append(ClassName).Append(" : ").Append(wrapper.BaseType).Append("\n{\n");
         source.Append("public async global::System.Threading.Tasks.Task<object?> ").Append(MethodName).Append("()\n{\n");
         source.Append(shape == Shape.Expression ? "return (object?)(\n" : "");
         source.Append("#line 1 \"").Append(SnippetPath).Append("\"\n").Append(request.Code).Append("\n#line default\n");
@@ -163,6 +225,13 @@ internal static class SnippetCompiler
             }
         );
         source.Append("}\n}\n");
+        // The BCL does not declare the attribute; the runtime recognises it by name wherever it is declared.
+        source.Append(
+            "namespace System.Runtime.CompilerServices\n{\n"
+                + "[global::System.AttributeUsage(global::System.AttributeTargets.Assembly, AllowMultiple = true)]\n"
+                + "internal sealed class IgnoresAccessChecksToAttribute(string assemblyName) : global::System.Attribute\n{\n"
+                + "public string AssemblyName { get; } = assemblyName;\n}\n}\n"
+        );
         // The PDB records a checksum of the source, which needs the text's encoding.
         return references.AddSyntaxTrees(CSharpSyntaxTree.ParseText(source.ToString(), ParseOptions, WrapperPath, Encoding.UTF8));
     }
@@ -185,7 +254,7 @@ internal static class SnippetCompiler
     // A diagnostic under the snippet's #line mapping is placed in the snippet's text; one in the wrapper has line 0.
     private static SnippetDiagnostic ToSnippetDiagnostic(Diagnostic diagnostic)
     {
-        string message = diagnostic.GetMessage(CultureInfo.InvariantCulture);
+        string message = diagnostic.GetMessage(CultureInfo.InvariantCulture) + (diagnostic.Id == "CS0122" ? AccessHint : "");
         FileLinePositionSpan span = diagnostic.Location.GetMappedLineSpan();
         return span.IsValid && span.Path == SnippetPath
             ? new SnippetDiagnostic(span.StartLinePosition.Line + 1, span.StartLinePosition.Character + 1, diagnostic.Id, message)

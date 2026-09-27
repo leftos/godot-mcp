@@ -23,6 +23,15 @@ public sealed class SnippetCompilerTests : IDisposable
 
             protected void Touch() { }
         }
+
+        internal static class Secrets
+        {
+            internal static int Hidden => 9;
+
+            private static int Private => 10;
+
+            public static int Peek => Private;
+        }
         """;
 
     private readonly TempDirectory _temp = new();
@@ -50,6 +59,29 @@ public sealed class SnippetCompilerTests : IDisposable
 
     [Fact]
     public async Task AVoidExpressionRunsAsAStatement() => Assert.Null(await RunAsync(CompileOk("Touch()")));
+
+    [Fact]
+    public async Task AnInternalMemberOfAReferenceCompilesAndRunsAndAPrivateOneStaysOutOfReach()
+    {
+        Assert.Equal(9, await RunAsync(CompileOk("Fixture.Secrets.Hidden")));
+        Assert.Equal("CS0117", Assert.Single(Compile("Fixture.Secrets.Private").Errors).Id);
+    }
+
+    [Fact]
+    public void WithAccessChecksAnInaccessibleMemberPointsToGetSetAndCall()
+    {
+        SnippetRequest request = new("Fixture.Secrets.Hidden", GlobalsType, ServerFramework, [_fixturePath], []);
+
+        SnippetDiagnostic error = Assert.Single(SnippetCompiler.Compile(request, ignoreAccessChecks: false).Errors);
+
+        Assert.Equal("CS0122", error.Id);
+        Assert.EndsWith(
+            "is inaccessible due to its protection level; reach it through Get, Set or Call instead, which take private and internal "
+                + "members by name",
+            error.Message,
+            StringComparison.Ordinal
+        );
+    }
 
     [Fact]
     public void ASuccessfulCompileCarriesAPortablePdb()

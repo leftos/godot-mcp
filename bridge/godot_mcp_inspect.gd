@@ -363,15 +363,62 @@ static func _count_error(node: Node, method: String, info: Dictionary, count: in
 func _resolve(node_name: String) -> Variant:
 	var node: Node = _bridge._find_node(node_name)
 	if node == null:
-		return (
-			"No node '%s' in the running game; get_scene_tree lists the nodes' paths." % node_name
-		)
+		return _not_found(node_name)
 	if node == _bridge or _bridge.is_ancestor_of(node):
 		return (
 			"'%s' is part of the godot-mcp bridge, which the inspection tools do not reach."
 			% node.get_path()
 		)
 	return node
+
+
+## The refusal for a path or bare name that names no node: a bare name was searched for
+## everywhere under /root; a path names the base it is read from, the deepest node on it that
+## exists, the name that node lacks and up to 10 of its children. The C# helper's
+## Targets.NotFound spells the same text.
+func _not_found(node_name: String) -> String:
+	var tail: String = "; get_scene_tree lists the nodes' paths."
+	if not node_name.contains("/"):
+		return "No node named '%s' anywhere under /root in the running game%s" % [node_name, tail]
+	var stop: Array = _deepest_ancestor(node_name)
+	var parent: Node = stop[0]
+	var from: String = "" if node_name.begins_with("/") else "a path is read from /root, and "
+	var where: String = "/" if parent == null else str(parent.get_path())
+	var children: String = "root" if parent == null else _child_list(parent)
+	return (
+		"No node '%s' in the running game: %s%s has no child '%s' (children: %s)%s"
+		% [node_name, from, where, stop[1], children, tail]
+	)
+
+
+## [the deepest node on the path that exists, null for /; the name it lacks]
+func _deepest_ancestor(node_name: String) -> Array:
+	var root: Window = _bridge.get_tree().root
+	var segments: PackedStringArray = node_name.split("/", false)
+	var first: int = 0
+	if node_name.begins_with("/"):
+		if segments.is_empty() or segments[0] != str(root.name):
+			return [null, "" if segments.is_empty() else segments[0]]
+		first = 1
+	var parent: Node = root
+	for i: int in range(first, segments.size() - 1):
+		var next: Node = parent.get_node_or_null(NodePath(segments[i]))
+		if next == null:
+			return [parent, segments[i]]
+		parent = next
+	return [parent, segments[segments.size() - 1]]
+
+
+## The names of up to 10 of the node's children, the bridge left out, and a count of the rest.
+func _child_list(parent: Node) -> String:
+	var names: PackedStringArray = []
+	for child: Node in parent.get_children():
+		if child != _bridge:
+			names.append(str(child.name))
+	if names.is_empty():
+		return "none"
+	var shown: String = ", ".join(names.slice(0, 10))
+	return shown if names.size() <= 10 else "%s (+%d)" % [shown, names.size() - 10]
 
 
 func _json_text(value: Variant) -> String:

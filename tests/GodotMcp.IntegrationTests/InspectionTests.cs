@@ -401,6 +401,39 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task ANodeNotFoundNamesTheBaseTheDeepestNodeAndItsChildren()
+    {
+        await RunAsync(
+            _tools,
+            "var box := Node.new()\n\tbox.name = \"Box\"\n\tfor i in 12:\n\t\tvar child := Node.new()\n\t\tchild.name = \"C%d\" % i\n"
+                + "\t\tbox.add_child(child)\n\tscene_tree.root.add_child(box)\n\treturn true",
+            TestContext.Current.CancellationToken
+        );
+
+        McpException relative = await Assert.ThrowsAsync<McpException>(() => InspectAsync("Box/Missing", null));
+        McpException absolute = await Assert.ThrowsAsync<McpException>(() => InspectAsync("/root/Box/C3/Missing", null));
+        McpException bare = await Assert.ThrowsAsync<McpException>(() => InspectAsync("Nowhere", null));
+
+        Assert.Contains(
+            "No node 'Box/Missing' in the running game: a path is read from /root, and /root/Box has no child 'Missing' "
+                + "(children: C0, C1, C2, C3, C4, C5, C6, C7, C8, C9 (+2)); get_scene_tree lists the nodes' paths.",
+            relative.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "No node '/root/Box/C3/Missing' in the running game: /root/Box/C3 has no child 'Missing' (children: none); "
+                + "get_scene_tree lists the nodes' paths.",
+            absolute.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "No node named 'Nowhere' anywhere under /root in the running game; get_scene_tree lists the nodes' paths.",
+            bare.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task TheBridgeIsOutOfReach()
     {
         await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
