@@ -279,7 +279,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
     }
 
     /// <summary>Sends one request and collects the errors the game raised from just before it until its reply.</summary>
-    private static async Task<BridgeResult> CallWithErrorsAsync(GodotSession target, BridgeCall call, CancellationToken cancellationToken)
+    internal static async Task<BridgeResult> CallWithErrorsAsync(GodotSession target, BridgeCall call, CancellationToken cancellationToken)
     {
         long mark = target.Errors.Mark();
         JsonNode? reply = await CallBridgeAsync(target, call, cancellationToken);
@@ -422,5 +422,5 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
     internal sealed record BridgeCall(string Tool, string Command, JsonObject Parameters, TimeSpan Timeout);
 
     /// <summary>A bridge reply's result and the errors the game raised while it was on its way.</summary>
-    private sealed record BridgeResult(JsonNode? Reply, IReadOnlyList<ErrorEntry> Errors);
+    internal sealed record BridgeResult(JsonNode? Reply, IReadOnlyList<ErrorEntry> Errors);
 }

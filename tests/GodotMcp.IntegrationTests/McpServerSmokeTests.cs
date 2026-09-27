@@ -49,6 +49,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "connect_signal",
                 "create_scene",
                 "delete_nodes",
+                "describe_class",
                 "detach_project",
                 "diff_snapshots",
                 "disconnect_signal",
@@ -133,6 +134,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["connect_signal"] = changesTheGame,
             ["create_scene"] = changesTheGame,
             ["delete_nodes"] = destructive,
+            ["describe_class"] = readsTheGame,
             ["detach_project"] = changesTheGame,
             ["diff_snapshots"] = readsTheGame,
             ["disconnect_signal"] = destructive,
@@ -182,7 +184,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(49, actual.Count);
+        Assert.Equal(50, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

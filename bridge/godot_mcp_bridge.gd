@@ -24,6 +24,7 @@ const LOGGER_SCRIPT := "godot_mcp_logger.gd"
 const JSON_SCRIPT := "godot_mcp_json.gd"
 const PREVIEW_SCRIPT := "godot_mcp_preview.gd"
 const UI_SNAPSHOT_SCRIPT := "godot_mcp_ui_snapshot.gd"
+const CLASS_INFO_SCRIPT := "godot_mcp_class_info.gd"
 ## A quiet run's frame-rate cap when the project sets none: its frames are never seen, so drawing
 ## at the monitor's refresh rate only burns the GPU.
 const QUIET_MAX_FPS := 60
@@ -63,6 +64,9 @@ var _json: GDScript
 ## The UI snapshot (godot_mcp_ui_snapshot.gd beside this script), static functions called on the
 ## script itself by the input module, which owns wait_for {uiChanged}'s baseline.
 var _ui_snapshot: GDScript
+## The class reader (godot_mcp_class_info.gd beside this script), static functions called on the
+## script itself: describe_class.
+var _class_info: GDScript
 ## Every command's handler, func(id, params), by command name (_command_handlers).
 var _handlers: Dictionary = {}
 ## The server to dial, found in _init; empty when the bridge is off.
@@ -107,6 +111,7 @@ func _ready() -> void:
 	var script_dir: String = (get_script() as Script).resource_path.get_base_dir()
 	_json = load(script_dir.path_join(JSON_SCRIPT)) as GDScript
 	_ui_snapshot = load(script_dir.path_join(UI_SNAPSHOT_SCRIPT)) as GDScript
+	_class_info = load(script_dir.path_join(CLASS_INFO_SCRIPT)) as GDScript
 	_pads = (load(script_dir.path_join(GAMEPAD_SCRIPT)) as GDScript).new()
 	_pads.name = "Gamepad"
 	add_child(_pads)
@@ -303,6 +308,7 @@ func _command_handlers() -> Dictionary:
 		"compare_screenshot": _handle_compare,
 		"preview": _handle_preview,
 		"movie_frame": _handle_movie_frame,
+		"describe_class": _handle_describe_class,
 		"shutdown": _handle_shutdown,
 	}
 
@@ -340,6 +346,16 @@ func _handle_inspect(id: int, params: Dictionary, command: String) -> void:
 		_reply_error(id, result)
 	else:
 		_reply_ok(id, result)
+
+
+## Describes an engine class or a script class of the game (godot_mcp_class_info.gd), or refuses
+## a name no class has with the closest class names.
+func _handle_describe_class(id: int, params: Dictionary) -> void:
+	var described: Dictionary = _class_info.describe(params)
+	if described.has("error"):
+		_reply_error(id, described["error"])
+	else:
+		_reply_ok(id, described["result"])
 
 
 ## Replies, then quits once the reply has had a frame to go out.

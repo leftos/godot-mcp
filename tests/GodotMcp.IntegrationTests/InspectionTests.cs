@@ -23,6 +23,11 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
     private const int CSharpTestTimeoutMs = 150_000;
     private const int ScriptTimeoutMs = 10_000;
     private const string Probe = "/root/InspectProbe";
+
+    // A script class for describe_class, written into a probe copy of its own.
+    private const string ProbeClassScript =
+        "class_name ProbeClass\nextends Node\n\nsignal hit(amount: int)\n\n@export var speed: float = 2.5\n\n\n"
+        + "func jump(height: float) -> bool:\n\treturn height > 0.0\n";
     private static readonly string[] Rgba = ["r", "g", "b", "a"];
 
     // inspect_probe.tscn's Swatch: a ColorRect of Color(0, 0, 1) at (580, 300), 50 x 50, clear of main.tscn's controls.
@@ -544,6 +549,55 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
 
     private async Task<JsonNode> DiffAsync(string beforeId, string? afterId) =>
         JsonNode.Parse(await _tools.DiffSnapshotsAsync(beforeId, afterId, cancellationToken: TestContext.Current.CancellationToken))!;
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task DescribeClassAsksTheRunningGame()
+    {
+        // A headless run is refused while the shared session is live on the probe, so the answer is the bridge's.
+        HeadlessTools tools = new(_shared.Sessions);
+
+        JsonNode described = JsonNode.Parse(
+            await tools.DescribeClassAsync(_shared.ProbeDirectory, "Button", null, null, TestContext.Current.CancellationToken)
+        )!;
+
+        Assert.Equal("Button", described["className"]!.GetValue<string>());
+        Assert.Equal("BaseButton", described["inherits"]!.GetValue<string>());
+        JsonNode flat = described["properties"]!.AsArray().Single(property => property!["name"]!.GetValue<string>() == "flat")!;
+        // The bridge's replies carry their keys sorted, so entries are compared by field.
+        Assert.Equal("bool", flat["type"]!.GetValue<string>());
+        Assert.False(flat["default"]!.GetValue<bool>());
+        Assert.True(described["methodCount"]!.GetValue<int>() > 0);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task DescribeClassFindsAScriptClassOfTheRunningGame()
+    {
+        // A class_name script in the tracked fixture would make every InputProbe launch import first, so this copy gets its own.
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using ProbeProject project = new();
+        File.WriteAllText(Path.Combine(project.Directory, "probe_class.gd"), ProbeClassScript);
+        await using SessionHarness harness = new();
+        await LaunchAsync(harness, project.Directory, cancellation);
+        HeadlessTools tools = new(harness.Sessions);
+
+        JsonNode described = JsonNode.Parse(await tools.DescribeClassAsync(project.Directory, "ProbeClass", null, null, cancellation))!;
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            tools.DescribeClassAsync(project.Directory, "ProbeClas", null, null, cancellation)
+        );
+
+        Assert.True(described["isScript"]!.GetValue<bool>());
+        Assert.Equal("res://probe_class.gd", described["scriptPath"]!.GetValue<string>());
+        Assert.Equal("GDScript", described["language"]!.GetValue<string>());
+        Assert.Equal("Node", described["inherits"]!.GetValue<string>());
+        JsonNode speed = described["properties"]!.AsArray().Single(property => property!["name"]!.GetValue<string>() == "speed")!;
+        Assert.Equal("float", speed["type"]!.GetValue<string>());
+        Assert.Equal(2.5, speed["default"]!.GetValue<double>());
+        JsonNode hit = described["signals"]!.AsArray().Single(signal => signal!["name"]!.GetValue<string>() == "hit")!;
+        Assert.Equal("""[{"name":"amount","type":"int"}]""", hit["args"]!.ToJsonString());
+        JsonNode jump = described["methods"]!.AsArray().Single(method => method!["name"]!.GetValue<string>() == "jump")!;
+        Assert.Equal("bool", jump["returnType"]!.GetValue<string>());
+        Assert.Contains("Did you mean: ProbeClass", refused.Message, StringComparison.Ordinal);
+    }
 
     private static Task<LaunchResult> LaunchAsync(SessionHarness harness, string directory, CancellationToken cancellation) =>
         harness.Sessions.LaunchAsync(new LaunchRequest(directory, null, [], [], true, false, Prepare: true), null, cancellation);

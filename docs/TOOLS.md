@@ -16,6 +16,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | Wait for something to happen | `wait_for` | polling `inspect_node` or `run_script` |
 | Read or change a live node | `inspect_node`, `set_property`, `call_method` | `run_script`, which is for anything those three cannot say |
 | See everything an action changed in a subtree | `snapshot_subtree`, act, `diff_snapshots` | `inspect_node` on each node before and after |
+| Learn a class's members | `describe_class` | guessing names, then reading `call_method` errors |
 | Find a live node | `get_scene_tree` | `get_scene_file_tree`, which reads a scene file |
 | Know what went wrong | the `errors` in each result, then `get_errors`, then `get_debug_output` | reading stdout first |
 | Replay a known sequence with checks | `batch_drive` | one tool call a step |
@@ -251,6 +252,12 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 ## Headless scene editing
 
 These run a headless Godot on the project's files with no game started. All are refused while a session is live on the folder. The write tools always run the prep, open the scene as the editor does and save it with its uids kept; each edit is all or nothing. The scene edit tools write `.tscn` only; a binary `.scn` can be read but not edited. A node inside an instanced scene is refused (edit that scene's own file), except where a tool below says an editable instance or an instance's root is allowed.
+
+### `describe_class`
+
+- **Does:** lists a class's properties, methods with typed arguments, signals, constants and enums: `{className, inherits, inheritsChain, canInstantiate, isScript, scriptPath?, language?, properties: [{name, type, default?}], methods: [{name, args: [{name, type, default?}], returnType, isVirtual, isStatic}], signals: [{name, args: [{name, type}]}], constants, enums, methodCount, offset, limit, warning?}`.
+- **Use:** before `call_method`, `set_property` or a headless edit on a class you do not know, engine (`Button`) or the project's own `class_name`. `projectPath`, `className`, `options {inherited, offset, limit}`: an engine class lists its own members unless `inherited`; methods are sorted by name and paged (`limit` 1 to 500, default 100, `methodCount` the total). When a game runs on the project (or `session` names one) that game answers; otherwise it is read headless.
+- **Edges:** an unknown name is refused with up to 5 close names (`Did you mean: …`). Properties the editor neither shows nor stores (`Node.name`, `Node2D.global_position`) are listed without `default`, since Godot keeps none for them. A script class's lists include its base scripts' members; `inherited` adds the native base's. A C# script class whose lists come back empty carries a `warning` that the build may be red or stale. Engine enum members appear under `enums`, not `constants`. The editor binary's class list includes editor-only classes, so a suggestion may name one.
 
 ### `validate`
 

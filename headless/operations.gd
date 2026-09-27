@@ -14,9 +14,11 @@ extends SceneTree
 ## checks each C# script the target's whole dependency closure reaches (however deep, each script
 ## once a run) with can_instantiate; an error is grouped under the res:// file it names, else under
 ## the file being checked. get_scene_file_tree reads a scene's SceneState, expanding instanced
-## scenes and an inherited scene's base in place, without instantiating anything. Every other op
-## is a scene edit, run by scene_ops.gd.
+## scenes and an inherited scene's base in place, without instantiating anything. describe_class
+## reads a class through the bridge's class reader, as a running game's bridge does. Every other
+## op is a scene edit, run by scene_ops.gd.
 
+const ClassInfo := preload("../bridge/godot_mcp_class_info.gd")
 const SceneOps := preload("scene_ops.gd")
 const SceneEdit := preload("scene_edit.gd")
 const SceneFiles := preload("scene_files.gd")
@@ -150,7 +152,18 @@ func _dispatch(op: String, params: Dictionary) -> Dictionary:
 			return {"ok": true, "result": _validate(params.get("targets", []))}
 		"get_scene_file_tree":
 			return _scene_file_tree(params)
+		"describe_class":
+			return describe_class(params)
 	return SceneOps.run(op, params)
+
+
+## describe_class's reply: {ok, result} with the class, or {ok: false, error} naming the closest
+## class names for a name no class has.
+static func describe_class(params: Dictionary) -> Dictionary:
+	var described: Dictionary = ClassInfo.describe(params)
+	if described.has("error"):
+		return {"ok": false, "error": described["error"]}
+	return {"ok": true, "result": described["result"]}
 
 
 func _write_reply(path: String, reply: Dictionary) -> void:

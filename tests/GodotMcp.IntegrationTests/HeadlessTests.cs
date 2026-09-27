@@ -387,6 +387,33 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Null(last["next"]);
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task DescribeClassReadsAnEngineClassHeadless()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+
+        JsonNode own = JsonNode.Parse(await _tools.DescribeClassAsync(probe.Directory, "Button", null, null, cancellation))!;
+        JsonNode all = JsonNode.Parse(
+            await _tools.DescribeClassAsync(probe.Directory, "Button", new DescribeOptions(Inherited: true), null, cancellation)
+        )!;
+
+        Assert.Equal("Button", own["className"]!.GetValue<string>());
+        Assert.Equal("BaseButton", own["inherits"]!.GetValue<string>());
+        Assert.False(own["isScript"]!.GetValue<bool>());
+        Assert.Equal("""{"name":"flat","type":"bool","default":false}""", Named(own, "properties", "flat").ToJsonString());
+        Assert.Equal("""{"name":"text","type":"String","default":""}""", Named(own, "properties", "text").ToJsonString());
+        // pressed and toggled are BaseButton's, so only the inherited list has them.
+        Assert.DoesNotContain(own["signals"]!.AsArray(), signal => signal!["name"]!.GetValue<string>() == "pressed");
+        Assert.Equal("""{"name":"pressed","args":[]}""", Named(all, "signals", "pressed").ToJsonString());
+        Assert.Equal("""{"name":"toggled","args":[{"name":"toggled_on","type":"bool"}]}""", Named(all, "signals", "toggled").ToJsonString());
+        Assert.Equal(string.Empty, Git.Status(probe.Directory));
+    }
+
+    /// <summary>The entry of describe_class's list under <paramref name="list"/> whose name is <paramref name="name"/>.</summary>
+    private static JsonNode Named(JsonNode described, string list, string name) =>
+        described[list]!.AsArray().Single(entry => entry!["name"]!.GetValue<string>() == name)!;
+
     /// <summary>The page's nodes, each equal as JSON to its expected text, in order and keys in order.</summary>
     private static void AssertNodes(string[] expected, JsonNode page)
     {
