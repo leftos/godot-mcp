@@ -18,10 +18,10 @@ A track, then singles; the singles' order is not a ranking.
 
 ### Singles
 
-- [ ] `list_sessions` keeps every stopped session for the server's life, and a session error lists them all (#11)
-- [ ] `stop_project` reports exit 0, not killed, for a game a debugger already terminated (#12)
+- [ ] `list_sessions` keeps every stopped session for the server's life, and a session error lists them all (#11). Decided (user, 2026-09-27): stopped sessions are kept (crash output, restart by name, a recording's outcome), `list_sessions` hides them unless `includeStopped: true`, and the unknown-session error lists the live ones plus a count of the stopped
+- [ ] `stop_project` reports exit 0, not killed, for a game a debugger already terminated (#12). Decided (user, 2026-09-27): `alreadyExited: true` when the run had ended before the stop, and `gameExitCode` from a handle on Godot's own pid opened at the hello (null when unreadable); `exitCode` stays the wrapper's; `restart_project`'s previous-run fields get the same pair
 - [ ] A documented way to drive a worktree's server build against a game without installing it (#13). Decided (user, 2026-09-27): `pwsh run.ps1 drive -Calls <file.json>` starts the tree's own build over stdio, runs the file's tool calls in order and prints each result, under the gate
-- [ ] A game launched by a debugger for `attach_project` is not quiet (#14)
+- [ ] A game launched by a debugger for `attach_project` is not quiet (#14). Decided (user, 2026-09-27): `attach_project` gains `quiet` (default false): the override gets the quiet `[display]` section and attach.json carries `quiet`, so the bridge parks the window and caps fps; the docs give `--audio-driver Dummy` for the launch args. Only a launcher picks the hidden desktop, so the window still shows ~300 ms. Shares `SessionRegistry.cs` with #11: after it
 - [ ] Six properties declare a Packed array and read back an `Array` (`CodeEdit.line_length_guidelines`, `delimiter_strings`, `delimiter_comments`, `code_completion_prefixes`, `indent_automatic_prefixes`; `SoftBody3D.pinned_points`; measured 2026-09-27 while fixing #8), so `set_property` and the scene tools refuse a correct set: compare the two element by element in the JSON module's `same`, without equating ints and floats (user, 2026-09-27: its own line)
 
 
