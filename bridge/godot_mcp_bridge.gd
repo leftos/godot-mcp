@@ -27,8 +27,8 @@ const UI_SNAPSHOT_SCRIPT := "godot_mcp_ui_snapshot.gd"
 const CLASS_INFO_SCRIPT := "godot_mcp_class_info.gd"
 const CAPTURE_SCRIPT := "godot_mcp_capture.gd"
 const DOTNET_SCRIPT := "godot_mcp_dotnet.gd"
-## A quiet run's frame-rate cap when the project sets none: its frames are never seen, so drawing
-## at the monitor's refresh rate only burns the GPU.
+## A quiet session's frame-rate cap when the project sets none: its frames are never seen, so
+## drawing at the monitor's refresh rate only burns the GPU.
 const QUIET_MAX_FPS := 60
 ## The device id every injected mouse event carries, so _input can tell it from the real mouse
 ## (DEVICE_ID_MOUSE, 32) and from the engine's own ids: 0-15 joypads, 16-31 keyboards, -1
@@ -268,7 +268,7 @@ func _is_real_pointer_event(event: InputEvent) -> bool:
 	return false
 
 
-## A quiet run's window: its override.cfg created it unfocused, and asked for an off-screen
+## A quiet session's window: its override.cfg created it unfocused, and asked for an off-screen
 ## position that Windows clamps onto the primary screen at creation
 ## (platform/windows/display_server_windows.cpp L7180-7183, L7206-7211 in 4.7.2), so it is moved
 ## off-screen here, where window_set_position does not clamp, and made click-through.

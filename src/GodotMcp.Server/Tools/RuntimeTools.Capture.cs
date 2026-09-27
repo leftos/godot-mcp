@@ -39,7 +39,7 @@ internal sealed partial class RuntimeTools
     )]
     public Task<string> CaptureInputAsync(
         [Description(
-            "start begins a capture, returning {capturing, sources, motion} and a warning when a quiet run cannot capture real "
+            "start begins a capture, returning {capturing, sources, motion} and a warning when a quiet session cannot capture real "
                 + "input; stop ends it, returning {events, count, truncated} and ended (stop, restart or exit) when the game went "
                 + "away first."
         )]

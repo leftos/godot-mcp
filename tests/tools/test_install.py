@@ -142,6 +142,33 @@ def test_install_refuses_a_real_folder_at_the_link(tmp_path: Path) -> None:
     assert (layout.link / "notes.md").read_text(encoding="utf-8") == "mine\n"
 
 
+def test_install_fails_without_the_published_dll(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    layout.publish_dll.unlink()
+    result = _install(layout)
+    assert result.returncode == 1
+    assert "install: bin/publish/godot-mcp.dll is missing; run publish first." in _output(result)
+    assert not layout.install_dir.exists()
+    assert not layout.link.exists()
+
+
+def test_install_fails_when_the_dll_carries_no_product_version(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    # A file that is not a PE has no version resource, so its ProductVersion is empty.
+    layout.publish_dll.write_text("not really a dll", encoding="utf-8")
+    assert not _product_version(layout.publish_dll)
+    layout.install_dir.mkdir()
+    (layout.install_dir / "godot-mcp.exe").write_text("the old exe", encoding="utf-8")
+    (layout.install_dir / "VERSION").write_text("0.1.0+abcdef0\n", encoding="utf-8")
+    result = _install(layout)
+    assert result.returncode == 1
+    assert "install: bin/publish/godot-mcp.dll carries no product version; run publish again." in _output(result)
+    assert sorted(path.name for path in layout.install_dir.iterdir()) == ["VERSION", "godot-mcp.exe"]
+    assert (layout.install_dir / "godot-mcp.exe").read_text(encoding="utf-8") == "the old exe"
+    assert (layout.install_dir / "VERSION").read_text(encoding="utf-8") == "0.1.0+abcdef0\n"
+    assert not layout.link.exists()
+
+
 def test_install_fails_without_the_skill(tmp_path: Path) -> None:
     layout = _layout(tmp_path, with_skill=False)
     result = _install(layout)
