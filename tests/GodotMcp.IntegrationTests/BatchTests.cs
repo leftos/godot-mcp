@@ -72,6 +72,34 @@ public sealed class BatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task SnapshotAndDiffRunAsSteps()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        // Ids count up per session, so the batch's own snapshot takes the one after this one.
+        string taken = JsonNode.Parse(await _tools.SnapshotSubtreeAsync(SmallButton, cancellationToken: cancellation))![
+            "snapshotId"
+        ]!.GetValue<string>();
+        string next = $"s{int.Parse(taken[1..], System.Globalization.CultureInfo.InvariantCulture) + 1}";
+
+        JsonObject batch = await BatchAsync(
+            cancellation,
+            new BatchStep(Tool: "snapshot_subtree", Args: new JsonObject { ["node"] = SmallButton }),
+            new BatchStep(Tool: "click", Args: new JsonObject { ["target"] = new JsonObject { ["element"] = "SmallButton" } }),
+            new BatchStep(Tool: "diff_snapshots", Args: new JsonObject { ["beforeId"] = next })
+        );
+
+        Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        JsonArray steps = batch["steps"]!.AsArray();
+        Assert.Equal(next, steps[0]!["result"]!["snapshotId"]!.GetValue<string>());
+        JsonNode pressed = Assert.Single(
+            steps[2]!["result"]!["changed"]!.AsArray(),
+            change => change!["property"]!.GetValue<string>() == "press_count"
+        )!;
+        Assert.Equal(0, pressed["before"]!.GetValue<int>());
+        Assert.Equal(1, pressed["after"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task ABatchStopsAtTheFirstFailedAssertion()
     {
         JsonObject batch = await BatchAsync(

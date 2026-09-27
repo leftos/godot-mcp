@@ -466,6 +466,85 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
         Assert.Null((await InspectAsync("Sprite", ["material"]))["properties"]!["material"]);
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ASnapshotDiffedWithTheLiveGameShowsASetProperty()
+    {
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
+
+        JsonNode snapshot = await SnapshotAsync("InspectProbe");
+        await SetAsync("InspectProbe", "count", "7");
+        JsonNode diff = await DiffAsync(snapshot["snapshotId"]!.GetValue<string>(), null);
+
+        Assert.Equal(Probe, snapshot["node"]!.GetValue<string>());
+        Assert.Equal(5, snapshot["nodeCount"]!.GetValue<int>());
+        JsonNode change = Assert.Single(diff["changed"]!.AsArray())!;
+        Assert.Equal(".", change["node"]!.GetValue<string>());
+        Assert.Equal("count", change["property"]!.GetValue<string>());
+        Assert.Equal(0, change["before"]!.GetValue<int>());
+        Assert.Equal(7, change["after"]!.GetValue<int>());
+        Assert.Empty(diff["added"]!.AsArray());
+        Assert.Empty(diff["removed"]!.AsArray());
+        Assert.Equal(1, diff["changedCount"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task TwoSnapshotsShowAnAddedChild()
+    {
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
+
+        JsonNode before = await SnapshotAsync("InspectProbe");
+        await RunAsync(
+            "var extra := Node.new()\n\textra.name = \"Extra\"\n\tscene_tree.root.get_node(\"InspectProbe/Inner\").add_child(extra)\n\treturn true"
+        );
+        JsonNode after = await SnapshotAsync("InspectProbe");
+        JsonNode diff = await DiffAsync(before["snapshotId"]!.GetValue<string>(), after["snapshotId"]!.GetValue<string>());
+
+        Assert.Equal(6, after["nodeCount"]!.GetValue<int>());
+        Assert.Equal(["Inner/Extra"], diff["added"]!.AsArray().Select(path => path!.GetValue<string>()));
+        Assert.Equal(1, diff["addedCount"]!.GetValue<int>());
+        Assert.Empty(diff["removed"]!.AsArray());
+        Assert.Empty(diff["changed"]!.AsArray());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ASnapshotTakesTheSceneRootByDefaultAndItsGroups()
+    {
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
+
+        JsonNode scene = await SnapshotAsync(null);
+        JsonNode grouped = await SnapshotAsync("InspectProbe", new SnapshotOptions(Properties: ["groups"]));
+        JsonNode diff = await DiffAsync(grouped["snapshotId"]!.GetValue<string>(), null);
+        await RunAsync("scene_tree.root.get_node(\"InspectProbe\").add_to_group(\"probe_extra\")\n\treturn true");
+        JsonNode regrouped = await DiffAsync(grouped["snapshotId"]!.GetValue<string>(), null);
+
+        Assert.Equal("/root/Main", scene["node"]!.GetValue<string>());
+        Assert.Empty(diff["changed"]!.AsArray());
+        JsonNode change = Assert.Single(regrouped["changed"]!.AsArray())!;
+        Assert.Equal("groups", change["property"]!.GetValue<string>());
+        Assert.Equal(["probe_extra", "probe_group"], change["after"]!.AsArray().Select(group => group!.GetValue<string>()));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnUnknownSnapshotAndATooLargeSubtreeAreRefused()
+    {
+        await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);
+
+        McpException unknown = await Assert.ThrowsAsync<McpException>(() => DiffAsync("s99999", null));
+        McpException tooLarge = await Assert.ThrowsAsync<McpException>(() => SnapshotAsync("InspectProbe", new SnapshotOptions(MaxNodes: 1)));
+
+        Assert.Equal(
+            "snapshot s99999 is not held (evicted, or from a stopped or restarted run); take a new one with snapshot_subtree",
+            unknown.Message
+        );
+        Assert.Contains($"'{Probe}' has 5 nodes in its subtree, more than maxNodes (1)", tooLarge.Message, StringComparison.Ordinal);
+    }
+
+    private async Task<JsonNode> SnapshotAsync(string? node, SnapshotOptions? options = null) =>
+        JsonNode.Parse(await _tools.SnapshotSubtreeAsync(node, options, cancellationToken: TestContext.Current.CancellationToken))!;
+
+    private async Task<JsonNode> DiffAsync(string beforeId, string? afterId) =>
+        JsonNode.Parse(await _tools.DiffSnapshotsAsync(beforeId, afterId, cancellationToken: TestContext.Current.CancellationToken))!;
+
     private static Task<LaunchResult> LaunchAsync(SessionHarness harness, string directory, CancellationToken cancellation) =>
         harness.Sessions.LaunchAsync(new LaunchRequest(directory, null, [], [], true, false, Prepare: true), null, cancellation);
 

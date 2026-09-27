@@ -1,11 +1,11 @@
 extends Node
 ## The godot-mcp bridge's inspector, a child of the bridge: lists the scene tree, reads a node's
-## properties, sets one and calls a method, for get_scene_tree, inspect_node, set_property and
-## call_method. Each handler returns its result as a Dictionary, or a String saying why it
-## failed; the bridge replies with either. It finds nodes with the bridge's own _find_node,
-## converts values to and from JSON, finds a property, picks the shown ones and compares a
-## read-back with the JSON module the bridge loads (godot_mcp_json.gd), and never lists or reaches
-## the bridge's own nodes.
+## properties, sets one, calls a method and captures a subtree's properties, for get_scene_tree,
+## inspect_node, set_property, call_method and snapshot_subtree. Each handler returns its result
+## as a Dictionary, or a String saying why it failed; the bridge replies with either. It finds
+## nodes with the bridge's own _find_node, converts values to and from JSON, finds a property,
+## picks the shown ones and compares a read-back with the JSON module the bridge loads
+## (godot_mcp_json.gd), and never lists or reaches the bridge's own nodes.
 ##
 ## JSON goes in by the declared type, and a set is read back, because Godot does not refuse a
 ## wrong type: Object.set gives script no validity flag, a native setter given the wrong type
@@ -34,6 +34,8 @@ func handle(command: String, params: Dictionary) -> Variant:
 			result = set_property(params)
 		"call_method":
 			result = await call_method(params)
+		"snapshot":
+			result = snapshot(params)
 	return result
 
 
@@ -88,13 +90,103 @@ func _describe(node: Node) -> Dictionary:
 	var script_path: String = _script_path(node)
 	if not script_path.is_empty():
 		entry["script"] = script_path
+	var groups: Array = _public_groups(node)
+	if not groups.is_empty():
+		entry["groups"] = groups
+	return entry
+
+
+## The node's groups, without Godot's internal ones, which start with _.
+static func _public_groups(node: Node) -> Array:
 	var groups: Array = []
 	for group: StringName in node.get_groups():
 		if not str(group).begins_with("_"):
 			groups.append(str(group))
-	if not groups.is_empty():
-		entry["groups"] = groups
-	return entry
+	return groups
+
+
+## {node, nodeCount, nodes}: every node of params.node's subtree (the current scene's root when
+## params.node is empty), keyed by its path from that node ("." for itself), each with the
+## properties the inspector shows (only those of params.properties it has, when given), less
+## params.ignore, and its groups as "groups". The bridge's own nodes are left out; a subtree of
+## more than params.maxNodes nodes is refused with its count.
+func snapshot(params: Dictionary) -> Variant:
+	var found: Variant = _snapshot_root(str(params.get("node", "")))
+	if found is String:
+		return found
+	var root: Node = found
+	var members: Array[Node] = []
+	_subtree(root, members)
+	var max_nodes: int = int(params.get("maxNodes", 2000))
+	if members.size() > max_nodes:
+		return (
+			(
+				"'%s' has %d nodes in its subtree, more than maxNodes (%d); snapshot a smaller "
+				+ "subtree, one of its children, or raise maxNodes."
+			)
+			% [root.get_path(), members.size(), max_nodes]
+		)
+	var filter: Dictionary = {
+		"only": _names(params.get("properties")), "ignore": _names(params.get("ignore"))
+	}
+	var nodes: Dictionary = {}
+	for member: Node in members:
+		nodes[str(root.get_path_to(member))] = _snapshot_node(member, filter)
+	return {"node": str(root.get_path()), "nodeCount": members.size(), "nodes": nodes}
+
+
+## The node a snapshot starts from: node_name resolved as the other tools resolve it, or the
+## current scene's root when it is empty; a String saying why there is none.
+func _snapshot_root(node_name: String) -> Variant:
+	if not node_name.is_empty():
+		return _resolve(node_name)
+	var scene: Node = get_tree().current_scene
+	if scene == null:
+		return "The game has no current scene; pass node, a path get_scene_tree lists."
+	return scene
+
+
+## node and every descendant, depth first, into; the bridge's own subtree is skipped.
+func _subtree(node: Node, into: Array[Node]) -> void:
+	if node == _bridge:
+		return
+	into.append(node)
+	for child: Node in node.get_children():
+		_subtree(child, into)
+
+
+## One node's entry in a snapshot: its shown properties or filter.only's, less filter.ignore,
+## with its groups, sorted, as "groups" unless filter.only leaves them out.
+func _snapshot_node(node: Node, filter: Dictionary) -> Dictionary:
+	var only: Array = filter["only"]
+	var properties: Dictionary = (
+		_shown_properties(node) if only.is_empty() else _present_properties(node, only)
+	)
+	if only.is_empty() or only.has("groups"):
+		var groups: Array = _public_groups(node)
+		groups.sort()
+		properties["groups"] = groups
+	for property_name: String in filter["ignore"]:
+		properties.erase(property_name)
+	return properties
+
+
+## {name: value} for each of names the node has; the others are skipped.
+func _present_properties(node: Node, names: Array) -> Dictionary:
+	var properties: Dictionary = {}
+	for property_name: String in names:
+		if not _bridge._json.property_info(node, property_name).is_empty():
+			properties[property_name] = _bridge._json.to_json(node.get(property_name))
+	return properties
+
+
+## value's elements as Strings when it is an Array, else none.
+static func _names(value: Variant) -> Array:
+	var names: Array = []
+	if value is Array:
+		for element: Variant in value:
+			names.append(str(element))
+	return names
 
 
 ## {path, class, script?, properties}: params.properties by name, or else the node's script

@@ -45,6 +45,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Check-once wait | `wait_for` with `timeoutMs: 0`: the condition is checked once, now, even while the game is paused |
 | Hang watchdog | The server's report, when a request times out, of whether the game's main thread is still running (it answers a ping) or stuck (it does not), with the stuck process's CPU, threads and last stderr lines, in place of a bare timeout |
 | Baseline | A stored screenshot (and its crop) a new capture is compared against, giving the changed pixels, their bounding box and a diff image (`save_screenshot_baseline`, `compare_screenshot`) |
+| Snapshot | A capture of a live subtree's nodes with their shown properties and groups, held by the session under an id (`snapshot_subtree`) for `diff_snapshots` to compare; not a screenshot baseline |
 | uiChanged baseline | Not a screenshot baseline: the snapshot of the UI (visible Controls, focus owner, top popup) the bridge takes when the first input gesture since launch, or since the last met `wait_for {uiChanged}`, starts, which that wait compares with |
 | gdtest | The headless GDScript unit-test run (`pwsh run.ps1 gdtest`, `tests/bridge`): many bridge-logic tests in one Godot process, as against an integration test's launch per test |
 | Complexity baseline | `tools/gdcomplexity-baseline.txt`: the GDScript functions still allowed over the complexity or length limit, a list that can only shrink |

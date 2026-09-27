@@ -74,6 +74,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <summary>The errors and warnings the game's bridge has reported, from the run or the attached game.</summary>
     public ErrorFeed Errors { get; } = new();
 
+    /// <summary>The snapshots snapshot_subtree took of the current game; emptied when the run stops, exits or restarts.</summary>
+    public SnapshotStore Snapshots { get; } = new();
+
     /// <summary>Whether the session is starting, its run is running, or its attached game is still connected.</summary>
     public bool IsLive => _pending || HasGame;
 
@@ -135,6 +138,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             GodotRun run =
                 _run ?? throw new SessionException("No Godot session has been started, so there is nothing to stop. Start one with run_project.");
             bool killed = await EndRunAsync(run);
+            Snapshots.Clear();
             RecordingResult? recording = await FinishRecordingAsync();
             bool removed = registry.ReleaseFolder(this);
             return new StopResult(Name, run.ProjectDir, run.ExitCode, killed, removed) { Recording = recording };
@@ -314,6 +318,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 // A restart cancelled by now must not stop a healthy game that the handshake wait would then kill.
                 cancellationToken.ThrowIfCancellationRequested();
                 await EndRunAsync(previous);
+                Snapshots.Clear();
                 StopOutputCapture(previous);
                 await FinishRecordingAsync();
             }
@@ -590,6 +595,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 return;
             }
 
+            Snapshots.Clear();
             await FinishRecordingAsync();
             if (registry.ReleaseFolder(this))
             {

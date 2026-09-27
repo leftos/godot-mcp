@@ -297,6 +297,7 @@ func _command_handlers() -> Dictionary:
 		"inspect_node": _handle_inspect.bind("inspect_node"),
 		"set_property": _handle_inspect.bind("set_property"),
 		"call_method": _handle_inspect.bind("call_method"),
+		"snapshot": _handle_inspect.bind("snapshot"),
 		"frame": _handle_time.bind("frame"),
 		"wait_for": _handle_time.bind("wait_for"),
 		"compare_screenshot": _handle_compare,

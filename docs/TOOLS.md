@@ -15,6 +15,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | Land a check on an exact frame | `frame_control` (`pause`, `step`), then `wait_for` with `timeoutMs: 0` | `wait_for` with a timeout on a running game |
 | Wait for something to happen | `wait_for` | polling `inspect_node` or `run_script` |
 | Read or change a live node | `inspect_node`, `set_property`, `call_method` | `run_script`, which is for anything those three cannot say |
+| See everything an action changed in a subtree | `snapshot_subtree`, act, `diff_snapshots` | `inspect_node` on each node before and after |
 | Find a live node | `get_scene_tree` | `get_scene_file_tree`, which reads a scene file |
 | Know what went wrong | the `errors` in each result, then `get_errors`, then `get_debug_output` | reading stdout first |
 | Replay a known sequence with checks | `batch_drive` | one tool call a step |
@@ -190,6 +191,18 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 - **Does:** calls `method` on a live `node` with `args` converted by the parameters' declared types, awaiting a coroutine: `{path, method, value}`.
 - **Use:** triggering game logic directly (spawn, damage, load a level); C# methods, `internal` ones included, are reached. `options {timeoutMs}` (1 to 120000, default 10000).
 - **Edges:** fails when the method is missing, the argument count does not fit, an argument does not convert (an array of Objects says why), or Godot refuses the call. A GDScript error inside it ends it with a null `value` and comes back in `errors`; the call itself succeeds, so read `errors`.
+
+### `snapshot_subtree`
+
+- **Does:** captures a live subtree for a later `diff_snapshots`: every node under `node` (default the current scene's root), keyed by its path from that node (`.` for itself), with the properties the inspector shows and its groups (sorted, internal `_` ones left out). Returns `{snapshotId, node, nodeCount}`, not the data.
+- **Use:** before an action whose effects you cannot list in advance. `options {properties, ignore, maxNodes}`: `properties` narrows each node to those names (read even when the inspector hides them; `groups` only when named), `ignore` drops names, `maxNodes` (default 2000) refuses a bigger subtree with its count.
+- **Edges:** snapshots are of the running game only, held per session, the 16 most recently used; ids (`s1`, `s2`, …) never repeat in a session, and every snapshot is dropped when the run stops, exits or restarts. Inside one `batch_drive`, a later step cannot read an earlier step's `snapshotId`, since arguments are fixed before the batch runs.
+
+### `diff_snapshots`
+
+- **Does:** compares two snapshots: `{added, removed, changed: [{node, property, before, after}], addedCount, removedCount, changedCount}`, node paths relative to the snapshot's root, each list at most 200 entries with full counts.
+- **Use:** `beforeId` from `snapshot_subtree`; without `afterId` the subtree is captured again now, with the before snapshot's root and options. Numbers compare within 1e-6, so a float that only round-trips differently is not a change.
+- **Edges:** a property only one side has is a change whose missing side's key (`before` or `after`) is left out, not null. An id that is not held (evicted, or from a stopped or restarted run) is refused with a hint to take a new one. Two ids are not checked to share a root: nodes match by relative path.
 
 ### `run_script`
 

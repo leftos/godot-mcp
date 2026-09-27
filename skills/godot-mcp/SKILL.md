@@ -50,6 +50,7 @@ A drive is always the same five moves: **start → look → act → wait → che
 
 - A call refused for want of a session: `list_sessions`, then pass `session`.
 - The game crashed or "the connection ended": `get_debug_output`, then `get_errors`.
+- An action whose effects you cannot list: `snapshot_subtree` first, act, then `diff_snapshots {beforeId}` (no `afterId` re-captures now) for every node added, removed or changed. Ids die with a stop or restart, and a `batch_drive` step cannot read an earlier step's id.
 - A click that seems to do nothing: read its `pressedOn` (the Control it actually hit; a drag's `guiDragStarted` and `dropAccepted` say whether a GUI drag and drop happened), check `errors` in its result, then `get_ui_elements` for `disabled`/`visible`, then `wait_for` its effect rather than screenshotting at once.
 - A tool that is missing, confusing, slow or wrong for the job: that is friction with a tool we own. File it (`gh issue create -R leftos/godot-mcp`, after `gh issue list -R leftos/godot-mcp --search "<words>"`), with the tool, the arguments, what happened against what you needed, and the workaround you used, then carry on.
 

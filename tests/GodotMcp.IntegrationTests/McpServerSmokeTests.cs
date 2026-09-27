@@ -50,6 +50,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "create_scene",
                 "delete_nodes",
                 "detach_project",
+                "diff_snapshots",
                 "disconnect_signal",
                 "drag",
                 "duplicate_node",
@@ -80,6 +81,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "set_node_properties",
                 "set_property",
                 "simulate_input",
+                "snapshot_subtree",
                 "stop_project",
                 "take_screenshot",
                 "type_text",
@@ -132,6 +134,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["create_scene"] = changesTheGame,
             ["delete_nodes"] = destructive,
             ["detach_project"] = changesTheGame,
+            ["diff_snapshots"] = readsTheGame,
             ["disconnect_signal"] = destructive,
             ["drag"] = changesTheGame,
             ["duplicate_node"] = changesTheGame,
@@ -162,6 +165,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["set_node_properties"] = changesTheGame,
             ["set_property"] = changesTheGame,
             ["simulate_input"] = changesTheGame,
+            ["snapshot_subtree"] = readsTheGame,
             ["stop_project"] = destructive,
             ["take_screenshot"] = readsTheGame,
             ["type_text"] = changesTheGame,
@@ -178,7 +182,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(47, actual.Count);
+        Assert.Equal(49, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 
