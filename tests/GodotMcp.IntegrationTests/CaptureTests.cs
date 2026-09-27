@@ -15,8 +15,8 @@ public sealed class CaptureTests(SharedProbeSession shared) : IAsyncLifetime, IC
     private const int TestTimeoutMs = 60_000;
     private const int ScriptTimeoutMs = 10_000;
     private const string QuietWarning =
-        "this run is quiet: its window gets no real input, so only the server's gestures are captured. Run with quiet:false or "
-        + "attach_project to capture a person's input.";
+        "this session is quiet: its window gets no real input, so only the server's gestures are captured. Run with quiet:false, "
+        + "or attach_project without quiet, to capture a person's input.";
 
     // SmallButton's presses and DropTarget's drops so far.
     private const string ReadCounts =

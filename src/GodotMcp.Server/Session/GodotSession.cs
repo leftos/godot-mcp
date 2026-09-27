@@ -50,7 +50,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     public bool ShutOutRealGamepads { get; } = spec.ShutOutRealGamepads;
 
-    /// <summary>Whether the run was started quiet; an attached game never is.</summary>
+    /// <summary>Whether the session is quiet: a run started quiet, or an attach whose game parks its window.</summary>
     public bool Quiet { get; } = spec.Quiet;
 
     /// <summary>

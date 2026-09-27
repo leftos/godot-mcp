@@ -24,8 +24,8 @@ internal sealed record CaptureOptions(
 internal sealed partial class RuntimeTools
 {
     internal const string QuietCaptureWarning =
-        "this run is quiet: its window gets no real input, so only the server's gestures are captured. Run with quiet:false or "
-        + "attach_project to capture a person's input.";
+        "this session is quiet: its window gets no real input, so only the server's gestures are captured. Run with quiet:false, "
+        + "or attach_project without quiet, to capture a person's input.";
     private const string RealSource = "real";
     private const string SentSource = "sent";
     private static readonly TimeSpan CaptureTimeout = TimeSpan.FromSeconds(10);

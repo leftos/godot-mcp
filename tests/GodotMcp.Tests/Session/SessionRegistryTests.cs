@@ -204,7 +204,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         await StartWaitingAttachAsync(alpha, "server");
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
-            _sessions.AttachAsync(Project("beta"), "SERVER", LongWait, false, TestContext.Current.CancellationToken)
+            _sessions.AttachAsync(Project("beta"), "SERVER", LongWait, false, false, TestContext.Current.CancellationToken)
         );
 
         Assert.Equal(
@@ -220,7 +220,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         await StartWaitingAttachAsync(alpha, "server");
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
-            _sessions.AttachAsync(alpha, "client", LongWait, false, TestContext.Current.CancellationToken)
+            _sessions.AttachAsync(alpha, "client", LongWait, false, false, TestContext.Current.CancellationToken)
         );
 
         Assert.Equal($"Another attach on {alpha} is still waiting for its game; wait for it or let it time out first.", refused.Message);
@@ -244,7 +244,24 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         );
     }
 
-    // An attach counts as not quiet, so a waiting one stands in for a live session with quiet=false.
+    [Fact]
+    public async Task AQuietWaitingAttachRefusesANotQuietLaunchBesideIt()
+    {
+        string alpha = Project("alpha");
+        CancellationTokenSource cancel = new();
+        _waiting.Add((_sessions.AttachAsync(alpha, "server", LongWait, false, true, cancel.Token), cancel));
+        await WaitUntilAsync(() => _sessions.List(includeStopped: true).Any(session => session.Name == "server"));
+        LaunchRequest request = new(alpha, null, [], [], Quiet: false, ShutOutRealGamepads: false, Prepare: true);
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _sessions.LaunchAsync(request, "client", TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal($"Sessions on {alpha} run with quiet=true; start this one with the same value, or stop them first.", refused.Message);
+        Assert.Equal(["server"], _sessions.List(includeStopped: true).Select(session => session.Name));
+    }
+
+    // An attach is not quiet unless asked, so a waiting one stands in for a live session with quiet=false.
     [Fact]
     public async Task ADifferentQuietOnALiveFolderIsRefused()
     {
@@ -289,7 +306,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         string alpha = Project("alpha");
 
         await Assert.ThrowsAsync<SessionException>(() =>
-            _sessions.AttachAsync(alpha, null, TimeSpan.FromSeconds(1), false, TestContext.Current.CancellationToken)
+            _sessions.AttachAsync(alpha, null, TimeSpan.FromSeconds(1), false, false, TestContext.Current.CancellationToken)
         );
 
         Assert.Empty(_sessions.List(includeStopped: true));
@@ -302,7 +319,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string alpha = Project("alpha");
         string attachFile = AttachFile.PathIn(alpha);
-        Task<AttachResult> first = _sessions.AttachAsync(alpha, "first", LongWait, false, cancellation);
+        Task<AttachResult> first = _sessions.AttachAsync(alpha, "first", LongWait, false, false, cancellation);
         await WaitUntilAsync(() => File.Exists(attachFile));
         string token = JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>();
         using FakeBridge game = await FakeBridge.DialAsync(_listener.Port, token, alpha, cancellation);
@@ -415,7 +432,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string attachFile = AttachFile.PathIn(projectDir);
-        Task<AttachResult> attach = _sessions.AttachAsync(projectDir, name, LongWait, false, cancellation);
+        Task<AttachResult> attach = _sessions.AttachAsync(projectDir, name, LongWait, false, false, cancellation);
         await WaitUntilAsync(() => File.Exists(attachFile));
         string token = JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>();
         FakeBridge game = await FakeBridge.DialAsync(_listener.Port, token, projectDir, processId, cancellation);
@@ -468,7 +485,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
         Task<AttachResult> attach;
         try
         {
-            attach = _sessions.AttachAsync(alpha, "server", TimeSpan.FromSeconds(2), false, TestContext.Current.CancellationToken);
+            attach = _sessions.AttachAsync(alpha, "server", TimeSpan.FromSeconds(2), false, false, TestContext.Current.CancellationToken);
             await Task.Delay(200, TestContext.Current.CancellationToken);
             Assert.False(File.Exists(overrideFile));
         }
@@ -493,7 +510,7 @@ public sealed class SessionRegistryTests : IAsyncDisposable
     private async Task StartWaitingAttachAsync(string projectDir, string name)
     {
         CancellationTokenSource cancel = new();
-        Task attach = _sessions.AttachAsync(projectDir, name, LongWait, false, cancel.Token);
+        Task attach = _sessions.AttachAsync(projectDir, name, LongWait, false, false, cancel.Token);
         _waiting.Add((attach, cancel));
         await WaitUntilAsync(() => _sessions.List(includeStopped: true).Any(session => session.Name == name));
     }

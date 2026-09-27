@@ -140,7 +140,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         await _harness.Sessions.LaunchAsync(Request(quiet: true), "server", cancellation);
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
-            _harness.Sessions.AttachAsync(_probe.Directory, "client", TimeSpan.FromSeconds(5), false, cancellation)
+            _harness.Sessions.AttachAsync(_probe.Directory, "client", TimeSpan.FromSeconds(5), false, false, cancellation)
         );
         bool serverAnswered = await PingAsync("server");
 

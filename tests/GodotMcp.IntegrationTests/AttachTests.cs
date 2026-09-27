@@ -63,6 +63,7 @@ public sealed class AttachTests : IAsyncDisposable
         await Task.Delay(TimeSpan.FromSeconds(1), cancellation);
 
         Assert.Equal(ProjectPaths.Normalise(_probe.Directory), attached["projectPath"]!.GetValue<string>());
+        Assert.False(attached["quiet"]!.GetValue<bool>());
         Assert.False(attachFileLeft);
         Assert.True(overrideWhileAttached);
         Assert.True(pong?["pong"]?.GetValue<bool>());
@@ -75,6 +76,27 @@ public sealed class AttachTests : IAsyncDisposable
         Assert.False(File.Exists(_probe.OverrideFile));
         Assert.False(File.Exists(AttachFilePath));
         Assert.Equal(string.Empty, Git.Status(_probe.Directory));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AQuietAttachParksTheWindow()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        Task<string> attach = _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, false, quiet: true, cancellationToken: cancellation);
+        Assert.True(await Poll.UntilAsync(() => File.Exists(AttachFilePath), TimeSpan.FromSeconds(10), cancellation));
+        StartGame();
+        JsonNode attached = JsonNode.Parse(await attach)!;
+        JsonNode state = await RunAsync(
+            "return {\"pid\": OS.get_process_id(), \"x\": DisplayServer.window_get_position().x, "
+                + "\"focused\": DisplayServer.window_is_focused(), \"maxFps\": Engine.max_fps}"
+        );
+        _games.Add(Process.GetProcessById(state["pid"]!.GetValue<int>()));
+
+        Assert.True(attached["quiet"]!.GetValue<bool>(), attached.ToJsonString());
+        Assert.True(state["x"]!.GetValue<int>() <= -9000, state.ToJsonString());
+        Assert.False(state["focused"]!.GetValue<bool>(), state.ToJsonString());
+        Assert.Equal(60, state["maxFps"]!.GetValue<int>());
     }
 
     [Fact(Timeout = TestTimeoutMs)]

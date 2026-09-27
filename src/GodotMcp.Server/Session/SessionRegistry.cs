@@ -53,19 +53,23 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         return await created.LaunchAsync(request with { ProjectPath = projectDir }, cancellationToken);
     }
 
-    /// <summary>Attaches under <paramref name="session"/>, or under the project folder's name when it is null.</summary>
+    /// <summary>
+    /// Attaches under <paramref name="session"/>, or under the project folder's name when it is null. A <paramref name="quiet"/>
+    /// attach writes the quiet override and tells the bridge to park its window, and shares the folder rules of a quiet run.
+    /// </summary>
     /// <exception cref="SessionException">The name is invalid or live, the project is missing, or no game connected in time.</exception>
     public async Task<AttachResult> AttachAsync(
         string projectPath,
         string? session,
         TimeSpan wait,
         bool shutOutRealGamepads,
+        bool quiet,
         CancellationToken cancellationToken
     )
     {
         string projectDir = NormaliseProjectDir(projectPath);
         string bridgeScript = Installation.FindBridgeScript();
-        SessionSpec spec = new(NameFor(session, projectDir), projectDir, SessionKind.Attach, shutOutRealGamepads, Quiet: false);
+        SessionSpec spec = new(NameFor(session, projectDir), projectDir, SessionKind.Attach, shutOutRealGamepads, quiet);
         GodotSession created = await ReserveAsync(spec);
         return await created.AttachAsync(bridgeScript, wait, cancellationToken);
     }

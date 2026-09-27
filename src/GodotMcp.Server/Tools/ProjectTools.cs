@@ -26,6 +26,12 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         + "will), held injected keys are released on each real focus change, and held injected pad buttons and axes are sent "
         + "again after it, so their actions fire again. Default false.";
 
+    /// <summary>attach_project's quiet parameter.</summary>
+    internal const string AttachQuietDescription =
+        "Park the game's window off-screen and unfocused and cap it at 60 fps, as run_project's quiet does. Only a launcher can "
+        + "hide a window fully, so it still shows for a moment as the game starts; to silence it, launch the game with "
+        + "--audio-driver Dummy. Default false.";
+
     /// <summary>The session parameter of every tool that addresses an existing session.</summary>
     internal const string SessionDescription = "The session's name; may be omitted while only one session is live, or only one exists.";
 
@@ -91,6 +97,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         [Description("The folder that holds the project's project.godot.")] string projectPath,
         [Description("How long to wait for the game's bridge to connect, 1 to 600 seconds.")] int waitSeconds = 60,
         [Description(ShutOutDescription)] bool shutOutRealGamepads = false,
+        [Description(AttachQuietDescription)] bool quiet = false,
         [Description(NewSessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
@@ -101,7 +108,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         }
 
         var wait = TimeSpan.FromSeconds(waitSeconds);
-        AttachResult result = await RunAsync(() => sessions.AttachAsync(projectPath, session, wait, shutOutRealGamepads, cancellationToken));
+        AttachResult result = await RunAsync(() => sessions.AttachAsync(projectPath, session, wait, shutOutRealGamepads, quiet, cancellationToken));
         return JsonSerializer.Serialize(result, Json);
     }
 

@@ -52,7 +52,7 @@ internal sealed partial class GodotSession
         }
 
         Log.Attached(_logger, ProjectDir);
-        return new AttachResult(Name, ProjectDir);
+        return new AttachResult(Name, ProjectDir, Quiet);
     }
 
     /// <summary>Closes the attached game's connection, drops the session and releases the override file; the game keeps running.</summary>
@@ -117,7 +117,7 @@ internal sealed partial class GodotSession
         string token = CreateToken();
 
         // The attach file goes first: a game that starts between the two writes then finds it once override.cfg loads the bridge.
-        AttachFile.Write(ProjectDir, new BridgeEndpoint(registry.Listener.Port, token), ShutOutRealGamepads);
+        AttachFile.Write(ProjectDir, new BridgeEndpoint(registry.Listener.Port, token), ShutOutRealGamepads, Quiet);
         BridgeConnection connection;
         try
         {

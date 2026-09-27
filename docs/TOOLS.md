@@ -56,9 +56,9 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `attach_project`
 
-- **Does:** injects the bridge plus a one-use attach file and blocks until a game started on the project after that connects: `{session, projectPath}`.
-- **Use:** for a game `run_project` does not start: a second client, a `--server` run, a smoke script, the editor's Play button. Start the launch in the background delayed a second or two (`Start-Sleep 2; godot --path <project>`) just before this call, or launch within `waitSeconds` (1 to 600, default 60) after it. Also takes `shutOutRealGamepads` and `session`.
-- **Edges:** a game already running when the files are written never attaches. An attached session has no captured output (`get_debug_output` refuses it), cannot be restarted, is never quiet, and ends with `detach_project`, not `stop_project`.
+- **Does:** injects the bridge plus a one-use attach file and blocks until a game started on the project after that connects: `{session, projectPath, quiet}`.
+- **Use:** for a game `run_project` does not start: a second client, a `--server` run, a smoke script, the editor's Play button. Start the launch in the background delayed a second or two (`Start-Sleep 2; godot --path <project>`) just before this call, or launch within `waitSeconds` (1 to 600, default 60) after it. Also takes `shutOutRealGamepads`, `quiet` and `session`. For a game a debugger launches, pass `quiet: true` and put `--audio-driver Dummy` in the launch's `args` for silence.
+- **Edges:** `quiet: true` creates the window unfocused, then parks it off-screen and caps it at 60 fps, but only a launcher can put a game on the hidden desktop, so it shows on the primary screen for a moment at start (longer when a breakpoint holds it before the bridge's `_ready`); a quiet attach shares a folder only with quiet sessions. A game already running when the files are written never attaches. An attached session has no captured output (`get_debug_output` refuses it), cannot be restarted, and ends with `detach_project`, not `stop_project`.
 
 ### `detach_project`
 

@@ -103,8 +103,8 @@ internal sealed record StopResult(string Session, string ProjectPath, int? ExitC
     public string? Warning { get; init; }
 }
 
-/// <summary>A game attach_project reached: its bridge said hello.</summary>
-internal sealed record AttachResult(string Session, string ProjectPath);
+/// <summary>A game attach_project reached: its bridge said hello, and whether it was told to park its window.</summary>
+internal sealed record AttachResult(string Session, string ProjectPath, bool Quiet);
 
 /// <summary>How detach_project left the project: the game still runs; whether the server's override.cfg was deleted.</summary>
 internal sealed record DetachResult(string Session, string ProjectPath, bool OverrideRemoved);

@@ -109,7 +109,7 @@ func _ready() -> void:
 		return
 	_token = _endpoint["token"]
 	var port: int = _endpoint["port"]
-	if OS.get_environment("GODOT_MCP_QUIET") == "1":
+	if _endpoint["quiet"]:
 		_park_window()
 		if Engine.max_fps == 0:
 			Engine.max_fps = QUIET_MAX_FPS
@@ -163,13 +163,16 @@ func _ready() -> void:
 		_stream = null
 
 
-## The server to dial and whether to shut the real pads out, {port, token,
-## shutOutRealGamepads}: GODOT_MCP_PORT, GODOT_MCP_TOKEN and GODOT_MCP_SHUT_OUT_REAL_GAMEPADS
-## from run_project, else the attach file attach_project writes; empty when there is neither.
-## override.cfg's joypad setting is written to match, but the bridge reads only these.
+## The server to dial, whether to shut the real pads out and whether to park the window, {port,
+## token, shutOutRealGamepads, quiet}: GODOT_MCP_PORT, GODOT_MCP_TOKEN,
+## GODOT_MCP_SHUT_OUT_REAL_GAMEPADS and GODOT_MCP_QUIET from run_project, else the attach file
+## attach_project writes (GODOT_MCP_QUIET still makes an attached game quiet); empty when there
+## is neither. override.cfg's joypad and window settings are written to match, but the bridge
+## reads only these.
 func _find_endpoint() -> Dictionary:
 	var port_text: String = OS.get_environment("GODOT_MCP_PORT")
 	var token: String = OS.get_environment("GODOT_MCP_TOKEN")
+	var quiet_variable: bool = OS.get_environment("GODOT_MCP_QUIET") == "1"
 	if port_text.is_valid_int() and not token.is_empty():
 		var shut_out_real_gamepads: bool = (
 			OS.get_environment("GODOT_MCP_SHUT_OUT_REAL_GAMEPADS") == "1"
@@ -177,7 +180,8 @@ func _find_endpoint() -> Dictionary:
 		return {
 			"port": port_text.to_int(),
 			"token": token,
-			"shutOutRealGamepads": shut_out_real_gamepads
+			"shutOutRealGamepads": shut_out_real_gamepads,
+			"quiet": quiet_variable,
 		}
 	var path: String = ProjectSettings.globalize_path(ATTACH_FILE)
 	if not FileAccess.file_exists(path):
@@ -194,6 +198,7 @@ func _find_endpoint() -> Dictionary:
 		"port": int(attach["port"]),
 		"token": str(attach["token"]),
 		"shutOutRealGamepads": bool(attach.get("shutOutRealGamepads", false)),
+		"quiet": quiet_variable or bool(attach.get("quiet", false)),
 	}
 
 
