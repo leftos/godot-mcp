@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
+using GodotMcp.TestSupport;
 
 namespace GodotMcp.IntegrationTests;
 
@@ -100,6 +101,7 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         await tools.DragAsync(DragSource, DropTarget, 300, "left", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(("dropped:DragSource", 1), await ReadDropAsync(tools));
+        await StopAndCheckCleanAsync(harness, probe);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -119,6 +121,7 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         int afterPoint = (await RunAsync(tools, ReadSmallButtonPresses)).GetValue<int>();
 
         Assert.Equal((1, 2), (afterElement, afterPoint));
+        await StopAndCheckCleanAsync(harness, probe);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -206,6 +209,13 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         // small_button.gd line 17: missing.call("free") on a null Object.
         Assert.Equal(17, error["line"]!.GetValue<int>());
         Assert.NotEmpty(error["stack"]!.AsArray());
+    }
+
+    // A test that launches its own game stops it and checks the probe folder is clean, as the shared-session tests do.
+    private static async Task StopAndCheckCleanAsync(SessionHarness harness, ProbeProject probe)
+    {
+        await harness.Sessions.StopAsync(null, TestContext.Current.CancellationToken);
+        Assert.Equal(string.Empty, Git.Status(probe.Directory));
     }
 
     // A run of its own in a 1000 x 900 window, checked letterboxed: without the bars the letterboxed tests would prove

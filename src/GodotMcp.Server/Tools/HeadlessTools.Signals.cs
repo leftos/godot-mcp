@@ -80,7 +80,7 @@ internal sealed partial class HeadlessTools
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
             string scene = CheckEditableScenePath(projectDir, scenePath);
-            JsonObject parameters = ConnectSignalParameters(projectDir, nodePath, signal, target);
+            JsonObject parameters = ConnectSignalParameters(nodePath, signal, target);
             parameters["scene"] = scene;
             return RunWriteAsync(projectDir, "connect_signal", parameters, cancellationToken);
         });
@@ -91,7 +91,7 @@ internal sealed partial class HeadlessTools
     /// <exception cref="McpException">
     /// As <see cref="CheckNodePath"/>, then <see cref="CheckSignalName"/>, then <see cref="CheckConnectTarget"/>.
     /// </exception>
-    internal static JsonObject ConnectSignalParameters(string projectDir, string nodePath, string signal, ConnectTarget target) =>
+    internal static JsonObject ConnectSignalParameters(string nodePath, string signal, ConnectTarget target) =>
         new()
         {
             ["nodePath"] = CheckNodePath(nodePath),
@@ -126,7 +126,7 @@ internal sealed partial class HeadlessTools
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
             string scene = CheckEditableScenePath(projectDir, scenePath);
-            JsonObject parameters = DisconnectSignalParameters(projectDir, nodePath, signal, target);
+            JsonObject parameters = DisconnectSignalParameters(nodePath, signal, target);
             parameters["scene"] = scene;
             return RunWriteAsync(projectDir, "disconnect_signal", parameters, cancellationToken);
         });
@@ -137,7 +137,7 @@ internal sealed partial class HeadlessTools
     /// <exception cref="McpException">
     /// As <see cref="CheckNodePath"/>, then <see cref="CheckSignalName"/>, then <see cref="CheckTargetMethod"/>.
     /// </exception>
-    internal static JsonObject DisconnectSignalParameters(string projectDir, string nodePath, string signal, DisconnectTarget? target) =>
+    internal static JsonObject DisconnectSignalParameters(string nodePath, string signal, DisconnectTarget? target) =>
         new()
         {
             ["nodePath"] = CheckNodePath(nodePath),

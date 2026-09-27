@@ -121,7 +121,7 @@ public sealed class HeadlessBatchValidationTests : IDisposable
     [Fact]
     public async Task AStepsOwnRefusalCarriesTheSingleToolsMessage()
     {
-        string noPaths = Assert.Throws<McpException>(() => HeadlessTools.DeleteNodesParameters(_project, [])).Message;
+        string noPaths = Assert.Throws<McpException>(() => HeadlessTools.DeleteNodesParameters([])).Message;
         string badScript = Assert.Throws<McpException>(() => HeadlessTools.AttachScriptParameters(_project, "Box", "player.txt")).Message;
         JsonObject attach = new() { ["nodePath"] = "Box", ["scriptPath"] = "player.txt" };
 

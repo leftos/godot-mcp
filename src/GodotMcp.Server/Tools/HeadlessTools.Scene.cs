@@ -116,7 +116,7 @@ internal sealed partial class HeadlessTools
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
             string scene = CheckEditableScenePath(projectDir, scenePath);
-            JsonObject parameters = DeleteNodesParameters(projectDir, nodePaths);
+            JsonObject parameters = DeleteNodesParameters(nodePaths);
             parameters["scene"] = scene;
             return RunWriteAsync(projectDir, "delete_nodes", parameters, cancellationToken);
         });
@@ -125,7 +125,7 @@ internal sealed partial class HeadlessTools
 
     /// <summary>delete_nodes' request parameters but the scene: <c>{nodePaths}</c>.</summary>
     /// <exception cref="McpException">As <see cref="CheckNodePaths"/>.</exception>
-    internal static JsonObject DeleteNodesParameters(string projectDir, string[] nodePaths) =>
+    internal static JsonObject DeleteNodesParameters(string[] nodePaths) =>
         new() { ["nodePaths"] = new JsonArray([.. CheckNodePaths(nodePaths).Select(path => (JsonNode)path)]) };
 
     [McpServerTool(Name = "attach_script", ReadOnly = false, Destructive = false, OpenWorld = false)]
@@ -196,7 +196,7 @@ internal sealed partial class HeadlessTools
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
             string scene = CheckEditableScenePath(projectDir, scenePath);
-            JsonObject parameters = DuplicateNodeParameters(projectDir, nodePath, newName, options);
+            JsonObject parameters = DuplicateNodeParameters(nodePath, newName, options);
             parameters["scene"] = scene;
             return RunWriteAsync(projectDir, "duplicate_node", parameters, cancellationToken);
         });
@@ -205,7 +205,7 @@ internal sealed partial class HeadlessTools
 
     /// <summary>duplicate_node's request parameters but the scene: <c>{nodePath, newName, parent}</c>.</summary>
     /// <exception cref="McpException">As <see cref="CheckDuplicatedNodePath"/>, then as <see cref="CheckNodePath"/> for the parent.</exception>
-    internal static JsonObject DuplicateNodeParameters(string projectDir, string nodePath, string? newName, DuplicateNodeOptions? options) =>
+    internal static JsonObject DuplicateNodeParameters(string nodePath, string? newName, DuplicateNodeOptions? options) =>
         new()
         {
             ["nodePath"] = CheckDuplicatedNodePath(nodePath),

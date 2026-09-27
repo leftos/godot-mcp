@@ -25,13 +25,11 @@ internal sealed partial class HeadlessTools
 
     private static readonly FrozenDictionary<string, SceneStepKind> SceneStepKinds = new Dictionary<string, SceneStepKind>
     {
-        ["delete_nodes"] = SceneStepKind.Of<DeleteNodesArgs>((target, args) => DeleteNodesParameters(target.ProjectDir, args.NodePaths)),
+        ["delete_nodes"] = SceneStepKind.Of<DeleteNodesArgs>((_, args) => DeleteNodesParameters(args.NodePaths)),
         ["attach_script"] = SceneStepKind.Of<AttachScriptArgs>(
             (target, args) => AttachScriptParameters(target.ProjectDir, args.NodePath, args.ScriptPath)
         ),
-        ["duplicate_node"] = SceneStepKind.Of<DuplicateNodeArgs>(
-            (target, args) => DuplicateNodeParameters(target.ProjectDir, args.NodePath, args.NewName, args.Options)
-        ),
+        ["duplicate_node"] = SceneStepKind.Of<DuplicateNodeArgs>((_, args) => DuplicateNodeParameters(args.NodePath, args.NewName, args.Options)),
         ["load_sprite"] = SceneStepKind.Of<LoadSpriteArgs>(
             (target, args) => LoadSpriteParameters(target.ProjectDir, args.NodePath, args.TexturePath),
             (target, args) => LoadSpriteImportAssets(target.ProjectDir, args.TexturePath)
@@ -39,14 +37,10 @@ internal sealed partial class HeadlessTools
         ["add_node"] = SceneStepKind.Of<AddNodeArgs>(
             (target, args) => AddNodeParameters(target.ProjectDir, target.Scene, args.NodeType, args.NodeName, args.Options)
         ),
-        ["set_node_properties"] = SceneStepKind.Of<SetNodePropertiesArgs>(
-            (target, args) => SetNodePropertiesParameters(target.ProjectDir, args.Updates)
-        ),
-        ["connect_signal"] = SceneStepKind.Of<ConnectSignalArgs>(
-            (target, args) => ConnectSignalParameters(target.ProjectDir, args.NodePath, args.Signal, args.Target)
-        ),
+        ["set_node_properties"] = SceneStepKind.Of<SetNodePropertiesArgs>((_, args) => SetNodePropertiesParameters(args.Updates)),
+        ["connect_signal"] = SceneStepKind.Of<ConnectSignalArgs>((_, args) => ConnectSignalParameters(args.NodePath, args.Signal, args.Target)),
         ["disconnect_signal"] = SceneStepKind.Of<DisconnectSignalArgs>(
-            (target, args) => DisconnectSignalParameters(target.ProjectDir, args.NodePath, args.Signal, args.Target)
+            (_, args) => DisconnectSignalParameters(args.NodePath, args.Signal, args.Target)
         ),
         ["export_mesh_library"] = SceneStepKind.Of<ExportMeshLibraryArgs>(
             (target, args) => ExportMeshLibraryParameters(target.ProjectDir, args.OutputPath, args.MeshItemNames, args.Options)

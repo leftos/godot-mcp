@@ -102,7 +102,7 @@ internal sealed partial class HeadlessTools
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
             string scene = CheckEditableScenePath(projectDir, scenePath);
-            JsonObject parameters = SetNodePropertiesParameters(projectDir, updates);
+            JsonObject parameters = SetNodePropertiesParameters(updates);
             parameters["scene"] = scene;
             return RunWriteAsync(projectDir, "set_node_properties", parameters, cancellationToken);
         });
@@ -119,8 +119,7 @@ internal sealed partial class HeadlessTools
 
     /// <summary>set_node_properties' request parameters but the scene: <c>{updates}</c>.</summary>
     /// <exception cref="McpException">As <see cref="CheckPropertyUpdates"/>.</exception>
-    internal static JsonObject SetNodePropertiesParameters(string projectDir, PropertyUpdate[] updates) =>
-        new() { ["updates"] = CheckPropertyUpdates(updates) };
+    internal static JsonObject SetNodePropertiesParameters(PropertyUpdate[] updates) => new() { ["updates"] = CheckPropertyUpdates(updates) };
 
     [McpServerTool(Name = "get_node_properties", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
