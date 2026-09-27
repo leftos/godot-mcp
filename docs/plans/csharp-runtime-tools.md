@@ -68,7 +68,19 @@ It leaves the game's build untouched, works for attached sessions and any Debug 
 
 Decided (user, 2026-09-26): route (c2), the run-time helper, with the spike first and (c1) as the fallback; the shim in C# NativeAOT; four tools, `cs_members`/`cs_get`/`cs_set`/`cs_call`; non-public members reached by default; `run_csharp` built now, with the four tools.
 
-Next: the spike, proving the three unproven steps of §3 "Loading" with a NativeAOT shim, before any tool is built.
+## 6. Spike result (2026-09-26): all three steps proved
+
+Headless runs of a CsProbe copy on Godot 4.7.2 .NET (runtime 10.0.12), each one short session; no windowed game, no GC load on the two runtimes. The spike's sources are kept untracked in `.tmp/cs-spike/` of the main checkout (shim, loader, helper, the `.gdextension`, the probe autoload).
+
+1. **A `.gdextension` outside `res://` loads at run time.** `GDExtensionManager.load_extension(<absolute path>)` returned `LOAD_STATUS_OK`, and the shim saw every level initialise and de-initialise; a second load returns `LOAD_STATUS_ALREADY_LOADED`. Sources: `gdextension_manager.cpp` L44-56 (a late extension is initialised up to the current level), `gdextension_library_loader.cpp` L365-375 (a relative library path resolves beside the `.gdextension`).
+2. **The running .NET runtime accepts a second assembly.** The shim found the loaded `hostfxr.dll`; `hostfxr_initialize_for_runtime_config` returned `0x2` (`Success_DifferentRuntimeProperties`, `host-error-codes.md` L11: a secondary context whose extra properties are ignored, `native-hosting.md` L278-282), and `load_assembly_and_get_function_pointer` loaded the loader into its own isolated context. The NativeAOT runtime in the shim and CoreCLR ran side by side in all four runs, with clean exits.
+3. **The helper sees the game's own objects.** The loader found GodotPlugins' `IsolatedComponentLoadContext` (holding `GodotSharp`; the game's assembly sits in a `PluginLoadContext`) and loaded the helper into it, so the helper's `GodotSharp` is the game's; on the main thread `GodotObject.InstanceFromId` returned the game's own node, and reflection read a `List<int>` property and a private record field that Godot's `get` returns null for.
+
+Measured: the shim is 1.1 MB (its pdb need not ship); the first load after a build took 2.2 s (unexplained, likely a cold disk or antivirus scan of new binaries), warm loads 13-15 ms, a helper call 5-12 ms. Toolchain: .NET SDK 10.0.401 with ILCompiler 10.0.12, and the MSVC linker from VS Build Tools 2022 17.14 (VS 2026 here has no VC tools); ILCompiler's `findvcvarsall.bat` looks for `vswhere` under `%ProgramFiles(x86)%`, which Git Bash does not pass on, so the publish runs from pwsh or with vswhere's folder on `PATH`.
+
+What changes in §3: the editor binary initialises extensions up to level 3 (EDITOR) even for a game, so the shim acts at the first level at or above SCENE, not at a fixed one; the loader's `runtimeconfig.json` rolls forward to the latest major (`rollForward: LatestMajor`, as `GodotPlugins.runtimeconfig.json` does), since games run on .NET 10 while the helper targets net8.0; and a `Callable.From(Func<...>)` stored as SceneTree meta was enough for GDScript to call the helper repeatedly, a possible stand-in for the planned `GodotMcpDotnet` node.
+
+Next: plan the build (the shim, loader and helper projects in the repo and their publish into `bin/publish`, the bridge's `godot_mcp_dotnet.gd`, the four `cs_*` tools and `run_csharp`, the CsProbe additions and `CSharpToolTests`) as steps with proving commands, then build it.
 
 1. **Route?** (c2) run-time helper, spike first, (c1) as fallback *(recommended)*; (c1) only; reads only (d3).
 2. **Shim language?** C against `gdextension_interface.h`, about 150 lines, built with clang *(recommended: smallest binary, no second runtime)*; C# NativeAOT (keeps the repo in C#, puts a second runtime in the game, needs the MSVC linker anyway); Rust.
