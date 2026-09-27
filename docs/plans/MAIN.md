@@ -18,7 +18,7 @@ A track, then singles; the singles' order is not a ranking.
 
 ### Track: coexisting with a live debugger
 
-- [ ] Let an agent debug a game godot-mcp holds with DebugMCP + netcoredbg (user, 2026-09-26): the game's pid in `list_sessions`, a game paused at a breakpoint reported as paused rather than stuck, a decision on holding a launch until a debugger attaches, and a written end-to-end trial recorded in the `debug-live` skill. Handoff and open questions: [debugger-coexistence.md](./debugger-coexistence.md)
+- [ ] Let an agent debug a game godot-mcp holds with DebugMCP + netcoredbg (user, 2026-09-26): the game's pid in `list_sessions`, a game paused at a breakpoint reported as paused rather than stuck, a decision on holding a launch until a debugger attaches, and a written end-to-end trial recorded in the `debug-live` skill. Decided (user, 2026-09-26): `gameProcessId` added; a fast ping when a debugger is attached; stop and restart warn; the early-breakpoint option waits on the trial. Handoff and decisions: [debugger-coexistence.md](./debugger-coexistence.md)
 
 ### Singles
 

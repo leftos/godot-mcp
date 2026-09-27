@@ -23,6 +23,13 @@ The decision on each is yours and the user's; this names the problem and what wa
 2. **A game paused at a breakpoint is reported as paused, not stuck.** At a breakpoint netcoredbg freezes every thread, the bridge's included. A timed-out request then runs `HangProbe` (2 s ping, `src/GodotMcp.Server/Session/HangProbe.cs:47`), which reports the game as not answering, and the stop path treats an unanswered ping as a stuck main thread (`GodotSession.cs:454-472`). An agent reading that restarts a game that is only paused. The idea on the table: before calling a game hung, check whether a debugger is attached to its process (`CheckRemoteDebuggerPresent`, or the PEB flag), and when one is, fail the tool fast with "paused under a debugger; continue it before driving the game" instead of waiting out the timeout. Also decide whether `stop_project` / `restart_project` should refuse or warn while a debugger is attached.
 3. **A launched game can wait for the debugger (only if an early breakpoint is needed).** A breakpoint in `_Ready` or an autoload runs before any attach lands. `DesktopProcess` already creates Godot suspended (`src/GodotMcp.Server/Session/DesktopProcess.cs:41`, `:70`, `:261`); an option could hold it there until a debugger attaches, with a timeout. The alternative that needs no godot-mcp change is to launch Godot under netcoredbg (a DebugMCP registration whose `program` is the Godot .NET executable, `args` carrying `--path <project>`) and then `attach_project` to it; try that first and build this only if it falls short.
 
+## Decided (user, 2026-09-26, each the recommended option)
+
+1. `list_sessions` keeps `processId` (the wrapper, which `stop_project` kills) and adds `gameProcessId`, the hello's pid, for runs and attaches alike.
+2. Before each runtime call, when a debugger is attached to the game's pid (`CheckRemoteDebuggerPresent`), a short ping (about 500 ms) goes first; no answer fails the call at once with "paused under a debugger; continue it before driving the game". A game with no debugger attached is untouched.
+3. `stop_project` and `restart_project` proceed while a debugger is attached, and their result carries a warning that the debugger's session ended with the game.
+4. Change 3 waits on the trial: launch Godot under netcoredbg through DebugMCP, then `attach_project` to it; a hold-until-attached option is built only if that falls short.
+
 ## Out of scope
 
 Wrapping or proxying DebugMCP's tools inside godot-mcp, or adding a debugger of its own: the two servers stay separate.
