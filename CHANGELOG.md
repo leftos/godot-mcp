@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## 0.3.5 - 2026-09-27
+
+### Changed
+
+- Without `GODOT_PATH`, Godot is found as a console executable on `PATH`, or the refusal says how to set it; `run_project` names the Godot used.
+
 ## 0.3.4 - 2026-09-27
 
 ### Added

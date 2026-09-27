@@ -62,7 +62,7 @@ internal sealed partial class GodotSession
             (LaunchResult started, string? warning) = await StartRunAsync(launched with { Prepare = prepare }, previous, cancellationToken);
             int? previousGameExitCode = await previous.ReleaseGameAsync();
             Log.RunRestarted(_logger, ProjectDir, previousProcessId, started.ProcessId);
-            return new RestartResult(Name, started.ProjectPath, started.ProcessId, previousProcessId, previous.ExitCode, started.Prep)
+            return new RestartResult(Name, started.ProjectPath, started.ProcessId, previousProcessId, previous.ExitCode, started.Prep, started.Godot)
             {
                 PreviousAlreadyExited = previousAlreadyExited,
                 PreviousGameExitCode = previousGameExitCode,

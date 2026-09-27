@@ -5,7 +5,7 @@
 | Tool | Version | Notes |
 |---|---|---|
 | .NET SDK | 10.0.401 (`global.json`, `latestFeature`) | test runner: Microsoft.Testing.Platform |
-| Godot | 4.7.2 stable | `$env:GODOT_PATH`, else `F:\Godot\Godot_console.exe`; the server and the tests look it up the same way (`Session/Installation.cs`) |
+| Godot | 4.7.2 stable | `$env:GODOT_PATH`, else the last-sorting `Godot*console*.exe` in the first `PATH` folder holding one, else a refusal; the server, `run.ps1` (`Get-GodotPath`) and the tests look it up the same way (`Session/Installation.cs`). This machine sets `GODOT_PATH` as a user variable to `F:\Godot\Godot_console.exe` (a shell started before 2026-09-27 lacks it: set it in that shell) |
 | CSharpier | 1.3.0 (local tool) | `dotnet tool restore` |
 | gdlint, gdformat | gdtoolkit 4.5.0 | `uv tool install "gdtoolkit>=4,<5"`; `gdformat bridge/ tests/fixtures/` formats (it writes CRLF on Windows, which `.gitattributes` turns back into LF for `*.gd`) |
 | ffmpeg, ffprobe | 9.0.2 here | `winget install Gyan.FFmpeg`; `$env:FFMPEG_PATH`, else `PATH`. Encodes recording clips at run time (never bundled; needs libx264 and aac, which the Gyan build has, else clips fall back to `.avi` copies); `RecordingTests` also need `ffprobe` |

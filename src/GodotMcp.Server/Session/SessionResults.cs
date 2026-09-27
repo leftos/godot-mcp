@@ -2,8 +2,11 @@ using System.Text.Json.Serialization;
 
 namespace GodotMcp.Server.Session;
 
-/// <summary>A run that launched and whose bridge said hello, what the prep did before it, and the file it records to.</summary>
-internal sealed record LaunchResult(string Session, string ProjectPath, int ProcessId, bool Quiet, PrepResult Prep)
+/// <summary>
+/// A run that launched and whose bridge said hello, the Godot it launched, what the prep did before it, and the file it
+/// records to.
+/// </summary>
+internal sealed record LaunchResult(string Session, string ProjectPath, int ProcessId, bool Quiet, PrepResult Prep, string Godot)
 {
     /// <summary>The server's version, to quote when filing an issue.</summary>
     public string Version { get; init; } = ServerVersion.Value;
@@ -54,8 +57,8 @@ internal sealed record PrepResult
 }
 
 /// <summary>
-/// A restarted run: the new process, the one it replaced and that one's exit code (the wrapper's on Windows; left out while
-/// unknown), and what the prep did before the relaunch.
+/// A restarted run: the new process, the Godot it launched, the one it replaced and that one's exit code (the wrapper's on
+/// Windows; left out while unknown), and what the prep did before the relaunch.
 /// </summary>
 internal sealed record RestartResult(
     string Session,
@@ -63,7 +66,8 @@ internal sealed record RestartResult(
     int ProcessId,
     int PreviousProcessId,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PreviousExitCode,
-    PrepResult Prep
+    PrepResult Prep,
+    string Godot
 )
 {
     /// <summary>The server's version, to quote when filing an issue.</summary>

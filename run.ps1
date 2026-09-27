@@ -10,7 +10,7 @@ exits with the command's own status, or 124 when it outlived its ceiling and was
 
   build    dotnet build GodotMcp.slnx, warnings as errors; ceiling 300 s
   test     the unit tests (tests/GodotMcp.Tests); ceiling 180 s, and the runner's own --timeout 3m
-  itest    the integration tests against the real Godot (GODOT_PATH, else F:\Godot\Godot_console.exe), in the class
+  itest    the integration tests against the real Godot (GODOT_PATH, else a Godot*console*.exe on PATH), in the class
            groups of the table at the top of this script (lifecycle, input, reads). It first checks that every
            `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly one group and every listed
            class exists, and stops with status 1 before running anything when not. It then runs the dotnet command (as
@@ -40,8 +40,8 @@ exits with the command's own status, or 124 when it outlived its ceiling and was
            skills/godot-mcp as skill/ and a VERSION file (the published product version) into
            .tmp/package/godot-mcp-<X.Y.Z>-win-x64.zip and prints its path; .tmp/package.log, ceiling 300 s for the
            publish, 60 s for the zip. The release workflow runs this command, so a local zip is built as CI builds it.
-  gdtest   the bridge's GDScript unit tests (tests/bridge/test_*.gd) in headless Godot (GODOT_PATH, else
-           F:\Godot\Godot_console.exe). It first imports tests/bridge (godot --headless --path tests/bridge --import,
+  gdtest   the bridge's GDScript unit tests (tests/bridge/test_*.gd) in headless Godot (GODOT_PATH, else a
+           Godot*console*.exe on PATH). It first imports tests/bridge (godot --headless --path tests/bridge --import,
            .tmp/gdtest-import.log, ceiling 120 s) when a test script is newer than the last import, so the project's
            global class list holds every script's class_name, then runs godot --headless --path tests/bridge --script
            res://run_tests.gd. Each failure prints as "FAIL <file>::<test>: <message>", then
@@ -156,8 +156,9 @@ function Invoke-ItestGated {
     return Invoke-Gated -Name $Name -TimeoutSeconds 300 -Program 'pwsh' -Arguments $hidden
 }
 
-# The Godot executable as the server finds it (Installation.FindGodot): GODOT_PATH when set, else the default path;
-# stops the script when the one it names does not exist.
+# The Godot executable as the server finds it (Installation.FindGodot): GODOT_PATH when set and a file, else the first folder
+# of PATH holding a Godot*console*.exe, the last of that folder's names under OrdinalIgnoreCase; stops the script when
+# neither has one.
 function Get-GodotPath {
     $configured = $env:GODOT_PATH
     if (-not [string]::IsNullOrWhiteSpace($configured)) {
@@ -166,11 +167,22 @@ function Get-GodotPath {
         }
         return $configured
     }
-    $default = 'F:\Godot\Godot_console.exe'
-    if (-not (Test-Path -LiteralPath $default -PathType Leaf)) {
-        throw "Godot was not found: GODOT_PATH is not set and $default does not exist. Set GODOT_PATH to the Godot 4.7 console executable."
+    foreach ($folder in ($env:PATH -split [IO.Path]::PathSeparator)) {
+        if ([string]::IsNullOrWhiteSpace($folder)) {
+            continue
+        }
+        $matches = @(
+            Get-ChildItem -LiteralPath $folder.Trim('"') -Filter 'Godot*console*.exe' -File -ErrorAction SilentlyContinue
+        )
+        if ($matches.Count -eq 0) {
+            continue
+        }
+        $names = [string[]]@($matches | ForEach-Object { $_.Name })
+        [array]::Sort($names, [System.StringComparer]::OrdinalIgnoreCase)
+        return ($matches | Where-Object { $_.Name -ceq $names[-1] } | Select-Object -First 1).FullName
     }
-    return $default
+    $exe = "$env:LOCALAPPDATA\godot-mcp\godot-mcp.exe"
+    throw "Godot was not found: GODOT_PATH is not set and no Godot*console*.exe is on PATH. Set GODOT_PATH to the Godot 4.7 console executable; with Claude Code, register this server with: claude mcp add godot -s local -e GODOT_PATH=<path to the Godot console exe> -- `"$exe`""
 }
 
 # Whether tests/bridge needs importing: no stamp of an earlier import, or a test script newer than it. The stamp is our

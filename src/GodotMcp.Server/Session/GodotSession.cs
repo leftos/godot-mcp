@@ -369,7 +369,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <exception cref="SessionException">
     /// Godot was not found, the prep failed, the project has its own override.cfg, or Godot could not start.
     /// </exception>
-    private async Task<(GodotRun Run, PrepResult Prep, string Token, string? ReplacedWarning)> PrepareAndStartAsync(
+    private async Task<(GodotRun Run, PrepResult Prep, string Token, string? ReplacedWarning, string Godot)> PrepareAndStartAsync(
         LaunchRequest request,
         GodotRun? previous,
         CancellationToken cancellationToken
@@ -406,7 +406,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             _run = run;
             _recording = moviePath is null ? null : new Recording(moviePath) { DropIdle = request.DropIdle };
             ProcessId = run.Process.Id;
-            return (run, prep, token, replacedWarning);
+            return (run, prep, token, replacedWarning, godotPath);
         }
         finally
         {
@@ -421,7 +421,11 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         CancellationToken cancellationToken
     )
     {
-        (GodotRun run, PrepResult prep, string token, string? replacedWarning) = await PrepareAndStartAsync(request, previous, cancellationToken);
+        (GodotRun run, PrepResult prep, string token, string? replacedWarning, string godot) = await PrepareAndStartAsync(
+            request,
+            previous,
+            cancellationToken
+        );
         int processId = run.Process.Id;
         BridgeConnection connection = await WaitForHandshakeAsync(run, new HandshakeExpectation(token, ProjectDir), cancellationToken);
         connection.OnErrors(Errors.Receive);
@@ -435,7 +439,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
         Log.RunStarted(_logger, processId, run.ProjectDir);
         LastLaunch = request;
-        LaunchResult started = new(Name, run.ProjectDir, processId, request.Quiet, prep)
+        LaunchResult started = new(Name, run.ProjectDir, processId, request.Quiet, prep, godot)
         {
             Recording = _recording is { } recording ? new RecordingResult { Path = recording.Path } : null,
         };

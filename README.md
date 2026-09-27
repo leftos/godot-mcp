@@ -72,7 +72,7 @@ To build it yourself, you need the [.NET 10 SDK](https://dotnet.microsoft.com/do
 
 ## Configuration
 
-- `GODOT_PATH`: the Godot executable the server launches (default `F:\Godot\Godot_console.exe`).
+- `GODOT_PATH`: the Godot executable the server launches. When it is not set, the server takes a `Godot*console*.exe` from the first `PATH` folder that has one; with neither, it refuses and says how to set it. `run_project`'s result names the Godot it used.
 - `FFMPEG_PATH`: ffmpeg for recordings, when it is not on `PATH`.
 - A `godot-mcp.json` beside `project.godot` sets the project's launch defaults (scene, arguments, window size, quiet) and named presets; see [docs/TOOLS.md](docs/TOOLS.md#project-profiles-godot-mcpjson).
 

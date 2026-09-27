@@ -5,16 +5,40 @@ internal static class Installation
 {
     public const string GodotPathVariable = "GODOT_PATH";
     public const string FfmpegPathVariable = "FFMPEG_PATH";
-    public const string DefaultGodotPath = @"F:\Godot\Godot_console.exe";
     public const string SolutionFileName = "GodotMcp.slnx";
+
+    /// <summary>A Godot console build's file name, matched without regard to case.</summary>
+    private const string GodotConsolePattern = "Godot*console*.exe";
+
+    /// <summary>What a refusal names as the server's executable when the process path cannot be read.</summary>
+    private const string FallbackServerExecutable = "godot-mcp.exe";
+
+    private static readonly EnumerationOptions ConsoleBuildMatch = new() { MatchCasing = MatchCasing.CaseInsensitive };
 
     public static readonly string BridgeRelativePath = Path.Combine("bridge", "godot_mcp_bridge.gd");
 
-    /// <summary><c>GODOT_PATH</c> when set, else <see cref="DefaultGodotPath"/>.</summary>
+    /// <summary>
+    /// <c>GODOT_PATH</c> when set and not blank, else the first folder of <c>PATH</c> that holds a console build.
+    /// </summary>
     /// <exception cref="SessionException">Neither names an existing file.</exception>
-    public static string FindGodot()
+    public static string FindGodot() =>
+        FindGodot(
+            Environment.GetEnvironmentVariable(GodotPathVariable),
+            Environment.GetEnvironmentVariable("PATH"),
+            Environment.ProcessPath ?? FallbackServerExecutable
+        );
+
+    /// <summary>
+    /// The rule with its inputs passed in: <paramref name="configured"/> when it is set and not blank, and refused when it
+    /// names no file; else the first folder of <paramref name="path"/> holding a <c>Godot*console*.exe</c>, and in that folder
+    /// the one whose file name sorts last under <see cref="StringComparer.OrdinalIgnoreCase"/>.
+    /// </summary>
+    /// <param name="configured">The <c>GODOT_PATH</c> the server was started with.</param>
+    /// <param name="path">The <c>PATH</c> the server was started with.</param>
+    /// <param name="serverExe">The server's own executable, named in the refusal's <c>claude mcp add</c> line.</param>
+    /// <exception cref="SessionException">Neither names an existing file.</exception>
+    internal static string FindGodot(string? configured, string? path, string serverExe)
     {
-        string? configured = Environment.GetEnvironmentVariable(GodotPathVariable);
         if (!string.IsNullOrWhiteSpace(configured))
         {
             return File.Exists(configured)
@@ -24,13 +48,36 @@ internal static class Installation
                 );
         }
 
-        return File.Exists(DefaultGodotPath)
-            ? DefaultGodotPath
-            : throw new SessionException(
-                $"Godot was not found: {GodotPathVariable} is not set and {DefaultGodotPath} does not exist. "
-                    + $"Set {GodotPathVariable} to the Godot 4.7 console executable."
-            );
+        foreach (string folder in PathFolders(path))
+        {
+            if (!Directory.Exists(folder))
+            {
+                continue;
+            }
+
+            string? found = FindConsoleBuild(folder);
+            if (found is not null)
+            {
+                return found;
+            }
+        }
+
+        throw new SessionException(
+            $"Godot was not found: {GodotPathVariable} is not set and no {GodotConsolePattern} is on PATH. "
+                + $"Set {GodotPathVariable} to the Godot 4.7 console executable; with Claude Code, register this server with: "
+                + $"claude mcp add godot -s local -e {GodotPathVariable}=<path to the Godot console exe> -- \"{serverExe}\""
+        );
     }
+
+    /// <summary>
+    /// The folder's <c>Godot*console*.exe</c> whose file name sorts last under
+    /// <see cref="StringComparer.OrdinalIgnoreCase"/>, or null when it holds none.
+    /// </summary>
+    private static string? FindConsoleBuild(string folder) =>
+        Directory
+            .EnumerateFiles(folder, GodotConsolePattern, ConsoleBuildMatch)
+            .OrderBy(file => Path.GetFileName(file), StringComparer.OrdinalIgnoreCase)
+            .LastOrDefault();
 
     /// <summary>The <c>dotnet</c> executable in the first folder of <c>PATH</c> that has one.</summary>
     /// <exception cref="SessionException">No folder on <c>PATH</c> has it.</exception>
@@ -68,12 +115,12 @@ internal static class Installation
     private static string? FindOnPath(string name)
     {
         string executable = OperatingSystem.IsWindows() ? name + ".exe" : name;
-        string[] folders = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(
-            Path.PathSeparator,
-            StringSplitOptions.RemoveEmptyEntries
-        );
-        return folders.Select(folder => Path.Combine(folder.Trim('"'), executable)).FirstOrDefault(File.Exists);
+        return PathFolders(Environment.GetEnvironmentVariable("PATH")).Select(folder => Path.Combine(folder, executable)).FirstOrDefault(File.Exists);
     }
+
+    /// <summary>The folders of a <c>PATH</c>-style list, in order, without its empty entries or an entry's quotes.</summary>
+    private static IEnumerable<string> PathFolders(string? path) =>
+        (path ?? string.Empty).Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).Select(folder => folder.Trim('"'));
 
     public static readonly string HeadlessRelativePath = Path.Combine("headless", "operations.gd");
 

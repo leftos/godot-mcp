@@ -41,6 +41,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
 
         Assert.Equal("InputProbe", launched.Session);
+        Assert.Equal(Installation.FindGodot(), launched.Godot);
         Assert.Equal("InputProbe", stopped.Session);
         Assert.False(stopped.Killed);
         Assert.False(stopped.AlreadyExited);
