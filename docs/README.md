@@ -7,6 +7,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md): the components, a request's path, the session lifecycle, every tool and the recipe for a new one.
 - [`DEVELOPMENT.md`](./DEVELOPMENT.md): toolchain, commands, gates, test coverage and footguns.
 - [`TOOLS.md`](./TOOLS.md): for an agent using the server: which tool fits a job, each tool's edges, and worked drives.
+- [`../skills/godot-mcp/SKILL.md`](../skills/godot-mcp/SKILL.md): the tutorial skill agents in the game repos load: the drive loop, every tool by job, the rules that bite; it points at TOOLS.md for each tool's edges.
 
 ## Glossary
 
