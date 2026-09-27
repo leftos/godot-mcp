@@ -32,7 +32,9 @@ The decision on each is yours and the user's; this names the problem and what wa
 
 ## Landed
 
-Decisions 1-3 landed 2026-09-26: `gameProcessId`; the 0.5 s ping when a debugger is attached, whose failure says the game "did not answer within 0.5 s while a debugger is attached: it is most likely paused at a breakpoint" (softened after review, since a long frame fails it too), while a timed-out call's probe says it "is paused under a debugger"; the stop and restart `warning`. Open: the end-to-end trial (below, "Done means"), and decision 4 with it.
+Decisions 1-3 landed 2026-09-26: `gameProcessId`; the 0.5 s ping when a debugger is attached, whose failure says the game "did not answer within 0.5 s while a debugger is attached: it is most likely paused at a breakpoint" (softened after review, since a long frame fails it too), while a timed-out call's probe says it "is paused under a debugger"; the stop and restart `warning`.
+
+The trial ran 2026-09-27 and is recorded in the `debug-live` skill's "A Godot game": attach by `gameProcessId`, a breakpoint hit, every call while paused failing in about 0.5 s, a call in flight failing at its timeout plus 2 s, the game driven again after `continue_execution`, the stop warning. Decision 4, measured: launching Godot under netcoredbg while `attach_project` waits does hit a `_Ready` breakpoint, but a pause over 5 s loses the bridge, because the listener refuses a connection whose hello has not arrived in 5 s (`BridgeListener.HelloTimeout`) and the bridge, which dials in `_ready` and sends its hello in its first `_process`, never redials. A hold-until-attached option would not help: a run stops Godot at its 15 s `HandshakeTimeout`, and netcoredbg cannot attach before the runtime starts. Decided (user, 2026-09-27, the recommended option): no hold option; the listener keeps reading a hello for as long as any session waits for a bridge, keeping the 5 s refusal only when none does, so startup code is debugged through the attach route within `waitSeconds`. Open: that listener change.
 
 ## Out of scope
 
