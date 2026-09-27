@@ -376,8 +376,9 @@ func wait_for(params: Dictionary) -> Dictionary:
 	return await _poll(probe, timeout_ms)
 
 
-## Why a non-signal wait cannot run now, or empty: a paused tree runs no frames to check it on,
-## so only a check-once wait (timeout_ms 0), which needs none, runs while paused.
+## Why a non-signal wait cannot run now, or empty: a pausable node's state cannot change while
+## the tree is paused, so a non-signal wait could only time out; only a check-once wait
+## (timeout_ms 0) runs while paused.
 func _paused_refusal(paused: bool, timeout_ms: int) -> String:
 	return PAUSED_REFUSAL if paused and timeout_ms > 0 else ""
 

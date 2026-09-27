@@ -22,8 +22,12 @@ A track, then singles; the singles' order is not a ranking.
 
 ### Singles
 
+- [ ] `wait_for` then `take_screenshot` misses a fast-changing frame (#10): decided (user, 2026-09-27): `wait_for` takes `options.screenshot`, capturing inside the frame the condition is met on and answering the path as `take_screenshot` does, saying so when that frame is never drawn
+- [ ] `list_sessions` keeps every stopped session for the server's life, and a session error lists them all (#11)
+- [ ] `stop_project` reports exit 0, not killed, for a game a debugger already terminated (#12)
+- [ ] A documented way to drive a worktree's server build against a game without installing it (#13)
+- [ ] A game launched by a debugger for `attach_project` is not quiet (#14)
 - [ ] Six properties declare a Packed array and read back an `Array` (`CodeEdit.line_length_guidelines`, `delimiter_strings`, `delimiter_comments`, `code_completion_prefixes`, `indent_automatic_prefixes`; `SoftBody3D.pinned_points`; measured 2026-09-27 while fixing #8), so `set_property` and the scene tools refuse a correct set: compare the two element by element in the JSON module's `same`, without equating ints and floats (user, 2026-09-27: its own line)
-- [ ] Tooltips in screenshots, a hover-only pointer move, and a timed wait while paused (#9): find whether a tooltip's popup window escapes `take_screenshot` or a quiet run never shows it; decided (user, 2026-09-27): a hover gets both a new `hover` tool (`target` an element or x,y, no button held, answering `hoveredOn` and `tooltip`, waiting out the tooltip delay itself) and a `mouse_button` action `move`; `wait_for` keeps refusing a plain timed wait while paused, since the hover waits for the tooltip itself
 
 
 - [ ] `take_screenshot` misses popups and tooltips in a project that sets `display/window/subwindows/embed_subwindows=false`, since each is its own OS window outside the root viewport's texture (measured 2026-09-27 for #9): composite each visible non-embedded `Window` onto the capture at its offset from the root, through one capture helper so crops, baselines and frame steps inherit it; check the offset on a visible desktop first, since a native popup's `position` read (0,0) on the hidden one (user, 2026-09-27: build later)

@@ -1,13 +1,19 @@
 extends Node
 ## The godot-mcp bridge's input player, a child of the bridge: plays the input tools' gestures
-## (click, drag, type_text, key, mouse_button, the gamepad gestures) and simulate_input's raw
+## (click, drag, type_text, key, mouse_button, hover, the gamepad gestures) and simulate_input's raw
 ## events over frames, with new event objects sent through Input. The injected pointer and the
 ## held buttons live on the bridge, whose _input keeps the real mouse out while they are in play.
 
 const MIN_DRAG_STEPS := 3
 const SETTLE_FRAMES := 2
 ## The gestures whose result says which Controls they hit, from _hits.
-const HIT_GESTURES := ["click", "drag", "mouse_button"]
+const HIT_GESTURES := ["click", "drag", "mouse_button", "hover"]
+## The longest a hover waits for a tooltip, the server's own limit on timeoutMs.
+const HOVER_TIMEOUT_CAP_MS := 10000
+const PAUSED_TOOLTIP_WARNING := (
+	"the game is paused and %s cannot process, so its tooltip timer never starts; "
+	+ "resume, hover, then pause"
+)
 const MOUSE_BUTTONS := {
 	"left": MOUSE_BUTTON_LEFT,
 	"right": MOUSE_BUTTON_RIGHT,
@@ -40,8 +46,9 @@ func _ready() -> void:
 
 ## Plays one gesture over frames, then waits two more frames, so the game's handlers have run
 ## and their errors are flushed ahead of the reply. Every point arrives in viewport coordinates.
-## Answers {result: {pointer, heldButtonMask}}, to which a click, drag or mouse_button adds the
-## Controls it hit and a pad gesture the gamepad's report (device, warning), or {error}. Takes
+## Answers {result: {pointer, heldButtonMask}}, to which a click, drag, mouse_button or hover adds
+## the Controls it hit (a hover its tooltip too) and a pad gesture the gamepad's report (device,
+## warning), or {error}. Takes
 ## the uiChanged baseline when none is pending.
 func play(params: Dictionary) -> Dictionary:
 	bridge._gesture_playing = true
@@ -112,24 +119,35 @@ func _note_drag_preview(node: Node) -> void:
 
 func _play_gesture(params: Dictionary) -> String:
 	var gesture: String = str(params.get("gesture", ""))
+	if HIT_GESTURES.has(gesture):
+		return await _play_pointer_gesture(gesture, params)
 	var error: String = "unknown gesture '%s'" % gesture
 	match gesture:
-		"click":
-			error = await _play_click(params)
-		"drag":
-			error = await _play_drag(params)
 		"type_text":
 			error = await _play_text(str(params.get("text", "")))
 		"key":
 			error = await _play_key(params)
-		"mouse_button":
-			error = await _play_mouse_button(params)
 		"gamepad_button":
 			error = await bridge._pads.play_button(params)
 		"gamepad_axes":
 			error = await bridge._pads.play_axes(params)
 		"events":
 			error = await _play_events(params.get("events"))
+	return error
+
+
+## Plays one of HIT_GESTURES, whose result says which Controls it hit.
+func _play_pointer_gesture(gesture: String, params: Dictionary) -> String:
+	var error: String = ""
+	match gesture:
+		"click":
+			error = await _play_click(params)
+		"drag":
+			error = await _play_drag(params)
+		"mouse_button":
+			error = await _play_mouse_button(params)
+		"hover":
+			error = await _play_hover(params)
 	return error
 
 
@@ -184,8 +202,9 @@ func _send_and_record(
 ## Control null. It is freed with queue_free, as the engine's own _gui_cancel_tooltip does
 ## (L1561-1563): the popup's NOTIFICATION_PREDELETE clears the viewport's pointer to it
 ## (L771-774), and its removal clears the root's subwindow_over (L502-504), so the next motion
-## (the gesture's move) hovers the Control beneath. A press does not cancel a tooltip itself;
-## the release does (L2011).
+## (the gesture's move) hovers the Control beneath. The engine cancels a tooltip on the press
+## itself (L2011), not on the release; the bridge dismisses it first anyway, since that cancel's
+## queue_free lands only after pressedOn has been read.
 func _dismiss_tooltips() -> void:
 	var dismissed: bool = false
 	for window: Window in get_tree().root.get_embedded_subwindows():
@@ -197,9 +216,22 @@ func _dismiss_tooltips() -> void:
 
 
 ## The Control under a viewport point as {path, class}, or null over none, read right after a
-## mouse event there: the topmost visible embedded window holding the point (a popup) answers
-## for it, else the root, each with the Control its GUI picked for its last mouse event.
+## mouse event there.
 func _control_under(point: Vector2) -> Variant:
+	return _describe(_hovered_control(point))
+
+
+## A Control as {path, class}, or null for none.
+func _describe(control: Control) -> Variant:
+	if control == null:
+		return null
+	return {"path": str(control.get_path()), "class": control.get_class()}
+
+
+## The Control under a viewport point, or null over none, read right after a mouse event there:
+## the topmost visible embedded window holding the point (a popup) answers for it, else the
+## root, each with the Control its GUI picked for its last mouse event.
+func _hovered_control(point: Vector2) -> Control:
 	var viewport: Viewport = get_tree().root
 	var windows: Array[Window] = get_tree().root.get_embedded_subwindows()
 	for index in range(windows.size() - 1, -1, -1):
@@ -210,10 +242,7 @@ func _control_under(point: Vector2) -> Variant:
 		):
 			viewport = window
 			break
-	var control: Control = viewport.gui_get_hovered_control()
-	if control == null:
-		return null
-	return {"path": str(control.get_path()), "class": control.get_class()}
+	return viewport.gui_get_hovered_control()
 
 
 func _play_drag(params: Dictionary) -> String:
@@ -320,15 +349,132 @@ func _play_mouse_button(params: Dictionary) -> String:
 	if button == 0:
 		return _unknown_button(params.get("button"))
 	var action: String = str(params.get("action", "press"))
-	if not action in ["press", "release"]:
-		return "unknown mouse_button action '%s'; use press or release" % action
+	if not action in ["press", "release", "move"]:
+		return "unknown mouse_button action '%s'; use press, release or move" % action
 	var window_point: Vector2 = _to_window(point)
+	if action == "move":
+		await _hover_at(point)
+		return ""
 	if action == "press":
 		await _dismiss_tooltips()
 	_move_to(window_point)
 	_send_and_record(window_point, button, action == "press", false)
 	await get_tree().process_frame
 	return ""
+
+
+## Moves the pointer to a viewport point, carrying the held buttons in the motion's button_mask
+## and pressing nothing, waits a frame, and records the Control under it as hoveredOn. Returns
+## that Control, or null over none.
+func _hover_at(point: Vector2) -> Control:
+	_move_to(_to_window(point))
+	await get_tree().process_frame
+	var control: Control = _hovered_control(point)
+	_hits["hoveredOn"] = _describe(control)
+	return control
+
+
+## Moves to the target as mouse_button's move does; then, when params.tooltip is not false and
+## the hovered Control has a tooltip, waits for it to show. Records tooltip ({text, x, y, width,
+## height}, or null) and a warning when a tooltip was due and none showed.
+func _play_hover(params: Dictionary) -> String:
+	var point: Variant = _resolve_target(params.get("target"))
+	if point is String:
+		return point
+	var control: Control = await _hover_at(point)
+	_hits["tooltip"] = null
+	if control == null or not bool(params.get("tooltip", true)) or not _has_tooltip(control, point):
+		return ""
+	# The tooltip timer starts only from a motion over a Control that can process
+	# (scene/main/viewport.cpp L2117, L2136 in 4.7.2), so a pausable one in a paused tree
+	# never shows its tooltip, while gui_get_hovered_control still names it.
+	if not control.can_process():
+		_hits["warning"] = PAUSED_TOOLTIP_WARNING % str(control.get_path())
+		return ""
+	var timeout_ms: int = _tooltip_timeout_ms(params)
+	var popup: Window = await _await_tooltip(control, timeout_ms)
+	if popup == null:
+		_hits["warning"] = "no tooltip showed within %d ms" % timeout_ms
+	else:
+		_hits["tooltip"] = _describe_tooltip(popup)
+	return ""
+
+
+## Whether the Control shows a tooltip at a viewport point: its tooltip_text, or what its
+## get_tooltip answers there (a script's _get_tooltip).
+func _has_tooltip(control: Control, point: Vector2) -> bool:
+	if not control.tooltip_text.is_empty():
+		return true
+	var local: Vector2 = control.get_global_transform_with_canvas().affine_inverse() * point
+	return not control.get_tooltip(local).is_empty()
+
+
+## params.timeoutMs, else gui/timers/tooltip_delay_sec plus a second, at most
+## HOVER_TIMEOUT_CAP_MS.
+func _tooltip_timeout_ms(params: Dictionary) -> int:
+	if params.has("timeoutMs"):
+		return int(params["timeoutMs"])
+	var delay: float = float(ProjectSettings.get_setting("gui/timers/tooltip_delay_sec", 0.5))
+	return mini(int(delay * 1000.0) + 1000, HOVER_TIMEOUT_CAP_MS)
+
+
+## The tooltip popup showing for control, checked now and then on each process_frame, which
+## fires paused or not (scene/main/scene_tree.cpp L649, L713 in 4.7.2), until one shows or
+## timeout_ms of real time passes: the tooltip timer, once started, ignores pause and the time
+## scale (viewport.cpp L2144-2146). Null when none showed.
+func _await_tooltip(control: Control, timeout_ms: int) -> Window:
+	var until: int = Time.get_ticks_msec() + timeout_ms
+	var popup: Window = _showing_tooltip(control)
+	while popup == null and Time.get_ticks_msec() < until:
+		await get_tree().process_frame
+		if not is_instance_valid(control):
+			return null
+		popup = _showing_tooltip(control)
+	return popup
+
+
+## A visible tooltip popup: an embedded subwindow of the root, or a Window under control when
+## subwindows are not embedded; null when none shows.
+func _showing_tooltip(control: Control) -> Window:
+	var candidates: Array = []
+	candidates.append_array(get_tree().root.get_embedded_subwindows())
+	candidates.append_array(control.get_children(true))
+	for node: Node in candidates:
+		if node is Window and (node as Window).visible and bridge._ui_snapshot.is_tooltip(node):
+			return node as Window
+	return null
+
+
+## A tooltip popup as {text, x, y, width, height} in viewport coordinates; text is its Label's,
+## null for a custom tooltip without one. A popup that is not embedded has a screen position.
+func _describe_tooltip(popup: Window) -> Dictionary:
+	var rect := Rect2(Vector2(popup.position), Vector2(popup.size))
+	if not popup.is_embedded():
+		var origin := Vector2(popup.position - get_tree().root.position)
+		var top_left: Vector2 = _to_viewport(origin)
+		rect = Rect2(top_left, _to_viewport(origin + Vector2(popup.size)) - top_left)
+	var label: Label = _find_label(popup)
+	var text: Variant = null
+	if label != null:
+		text = label.text
+	return {
+		"text": text,
+		"x": rect.position.x,
+		"y": rect.position.y,
+		"width": rect.size.x,
+		"height": rect.size.y,
+	}
+
+
+## The first Label under node, depth first, internal children included.
+func _find_label(node: Node) -> Label:
+	for child: Node in node.get_children(true):
+		if child is Label:
+			return child as Label
+		var found: Label = _find_label(child)
+		if found != null:
+			return found
+	return null
 
 
 ## Plays a raw event list, one frame apart, stopping at the first event that fails.

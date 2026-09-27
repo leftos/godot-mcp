@@ -18,6 +18,7 @@ internal sealed partial class RuntimeTools
     private const string ErrorNote =
         " Errors the game's handlers raise while the input plays come back in the result's errors, with file, line and stack; "
         + "the call still succeeds.";
+    private const int MaxHoverTimeoutMs = 10_000;
     private static readonly TimeSpan InputTimeout = TimeSpan.FromSeconds(10);
 
     // A generous allowance per character or event on top of InputTimeout: each takes a frame or two.
@@ -153,21 +154,22 @@ internal sealed partial class RuntimeTools
         "Holds or releases a mouse button at a target: moves the pointer there (carrying any buttons already held), then "
             + "presses or releases. The held buttons stay in later motions' button_mask, so press, simulate_input motions "
             + "and release make a drag by hand. While a button is held, the real mouse's buttons and motions are kept from the "
-            + "game's GUI. Returns {pointer, heldButtonMask} and pressedOn (a press) or releasedOn (a release): the Control "
-            + "({path, class}) under the point, null over none."
+            + "game's GUI. move only moves the pointer, pressing and releasing nothing (button is ignored). Returns {pointer, "
+            + "heldButtonMask} and pressedOn (a press), releasedOn (a release) or hoveredOn (a move): the Control ({path, "
+            + "class}) under the point, null over none."
             + ErrorNote
     )]
     public Task<string> MouseButtonAsync(
-        [Description("Where to press or release.")] InputTarget target,
+        [Description("Where to press, release or move to.")] InputTarget target,
         [Description("left, right or middle.")] string button = "left",
-        [Description("press or release.")] string action = "press",
+        [Description("press, release or move.")] string action = "press",
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
-        if (action is not ("press" or "release"))
+        if (action is not ("press" or "release" or "move"))
         {
-            throw new McpException($"action '{action}' is not one of press, release.");
+            throw new McpException($"action '{action}' is not one of press, release, move.");
         }
 
         JsonObject parameters = new()
@@ -179,6 +181,47 @@ internal sealed partial class RuntimeTools
         };
         return SendInputAsync(session, "mouse_button", parameters, TimeSpan.Zero, cancellationToken);
     }
+
+    [McpServerTool(Name = "hover", ReadOnly = false, Destructive = false, OpenWorld = false)]
+    [Description(
+        "The hover gesture: moves the pointer to the target without pressing (carrying any buttons already held), then, when "
+            + "the Control under it has a tooltip, waits for the tooltip to show, up to options.timeoutMs "
+            + "(gui/timers/tooltip_delay_sec plus 1 s when left out). Points are viewport coordinates, as get_ui_elements "
+            + "reports them. Returns {pointer, heldButtonMask, hoveredOn, tooltip, warning?}: hoveredOn the Control ({path, "
+            + "class}) under the pointer, null over none; tooltip {text, x, y, width, height} in viewport coordinates (text "
+            + "null for a custom tooltip without a Label), null when none showed, with a warning when one was due. Godot "
+            + "starts a tooltip's timer only while the hovered Control can process, so over a pausable Control in a paused "
+            + "game hover answers at once with a warning: resume, hover, then pause."
+            + ErrorNote
+    )]
+    public Task<string> HoverAsync(
+        [Description("Where to hover.")] InputTarget target,
+        [Description("{tooltip, timeoutMs}: tooltip false answers right after the move; timeoutMs 0 to 10000.")] HoverOptions? options = null,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        HoverOptions checkedOptions = options ?? new HoverOptions();
+        int? timeoutMs = CheckHoverTimeout(checkedOptions.TimeoutMs);
+        JsonObject parameters = new()
+        {
+            ["gesture"] = "hover",
+            ["target"] = InputTarget.ToBridge(target, "target"),
+            ["tooltip"] = checkedOptions.Tooltip,
+        };
+        if (timeoutMs is not null)
+        {
+            parameters["timeoutMs"] = timeoutMs;
+        }
+
+        return SendInputAsync(session, "hover", parameters, TimeSpan.FromMilliseconds(timeoutMs ?? MaxHoverTimeoutMs), cancellationToken);
+    }
+
+    /// <exception cref="McpException">timeoutMs is outside 0 to <see cref="MaxHoverTimeoutMs"/>.</exception>
+    internal static int? CheckHoverTimeout(int? timeoutMs) =>
+        timeoutMs is null or (>= 0 and <= MaxHoverTimeoutMs)
+            ? timeoutMs
+            : throw new McpException($"timeoutMs must be 0 to {MaxHoverTimeoutMs}; got {timeoutMs}.");
 
     [McpServerTool(Name = "simulate_input", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(

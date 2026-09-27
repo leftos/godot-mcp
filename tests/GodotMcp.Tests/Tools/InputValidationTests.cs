@@ -167,8 +167,8 @@ public sealed class InputValidationTests : IDisposable
     public void AnOmittedDeviceIsNotSent()
     {
         Assert.False(RuntimeTools.WithDevice(new JsonObject { ["gesture"] = "gamepad_button" }, null).ContainsKey("device"));
-        Assert.Equal(3, RuntimeTools.WithDevice(new JsonObject(), 3)["device"]!.GetValue<int>());
-        Assert.Throws<McpException>(() => RuntimeTools.WithDevice(new JsonObject(), 16));
+        Assert.Equal(3, RuntimeTools.WithDevice([], 3)["device"]!.GetValue<int>());
+        Assert.Throws<McpException>(() => RuntimeTools.WithDevice([], 16));
     }
 
     [Fact]
@@ -304,7 +304,29 @@ public sealed class InputValidationTests : IDisposable
             _tools.MouseButtonAsync(Point, "left", "tap", cancellationToken: TestContext.Current.CancellationToken)
         );
 
-        Assert.Equal("action 'tap' is not one of press, release.", refused.Message);
+        Assert.Equal("action 'tap' is not one of press, release, move.", refused.Message);
+    }
+
+    [Fact]
+    public async Task MouseButtonAcceptsMove()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.MouseButtonAsync(Point, "left", "move", cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(10001)]
+    public async Task HoverRefusesATimeoutOutsideZeroToTenSeconds(int timeoutMs)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.HoverAsync(Point, new HoverOptions(TimeoutMs: timeoutMs), cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal($"timeoutMs must be 0 to 10000; got {timeoutMs}.", refused.Message);
     }
 
     [Fact]

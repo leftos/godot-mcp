@@ -72,6 +72,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "get_scene_file_tree",
                 "get_scene_tree",
                 "get_ui_elements",
+                "hover",
                 "inspect_node",
                 "key",
                 "list_sessions",
@@ -165,6 +166,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["get_scene_file_tree"] = readsTheGame,
             ["get_scene_tree"] = readsTheGame,
             ["get_ui_elements"] = readsTheGame,
+            ["hover"] = changesTheGame,
             ["inspect_node"] = readsTheGame,
             ["key"] = changesTheGame,
             ["list_sessions"] = readsTheGame,
@@ -200,7 +202,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(58, actual.Count);
+        Assert.Equal(59, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

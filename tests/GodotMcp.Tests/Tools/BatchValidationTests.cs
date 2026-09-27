@@ -132,6 +132,7 @@ public sealed class BatchValidationTests : IDisposable
     public void TheBatchableToolsAreTheRuntimeTools()
     {
         Assert.Contains("click", RuntimeTools.BatchableTools);
+        Assert.Contains("hover", RuntimeTools.BatchableTools);
         Assert.Contains("wait_for", RuntimeTools.BatchableTools);
         Assert.Contains("take_screenshot", RuntimeTools.BatchableTools);
         Assert.Contains("compare_screenshot", RuntimeTools.BatchableTools);
@@ -143,7 +144,7 @@ public sealed class BatchValidationTests : IDisposable
         Assert.DoesNotContain("run_project", RuntimeTools.BatchableTools);
         Assert.DoesNotContain("list_sessions", RuntimeTools.BatchableTools);
         Assert.DoesNotContain("batch_drive", RuntimeTools.BatchableTools);
-        Assert.Equal(31, RuntimeTools.BatchableTools.Count);
+        Assert.Equal(32, RuntimeTools.BatchableTools.Count);
     }
 
     [Fact]

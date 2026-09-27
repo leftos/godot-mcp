@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
@@ -339,6 +340,85 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         Assert.False(pressed.AsObject().ContainsKey("releasedOn"), pressed.ToJsonString());
         AssertHit(released, "releasedOn", "SmallButton", "Button");
         Assert.False(released.AsObject().ContainsKey("pressedOn"), released.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task MouseButtonMoveHoversWithoutPressing()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        int before = await PressCountAsync();
+
+        JsonNode moved = JsonNode.Parse(
+            await _tools.MouseButtonAsync(new InputTarget("SmallButton"), "left", "move", cancellationToken: cancellation)
+        )!;
+
+        AssertHit(moved, "hoveredOn", "SmallButton", "Button");
+        Assert.Equal(0, moved["heldButtonMask"]!.GetValue<int>());
+        Assert.False(moved.AsObject().ContainsKey("pressedOn"), moved.ToJsonString());
+        Assert.False(moved.AsObject().ContainsKey("releasedOn"), moved.ToJsonString());
+        Assert.Equal(before, await PressCountAsync());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverShowsTheTooltip()
+    {
+        // ProbeButton spans (20, 70) to (140, 110) and has tooltip_text "Does nothing yet".
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget(null, 80, 90), cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+        bool shownAfter = (await RunAsync(TooltipShownNow)).GetValue<bool>();
+
+        AssertHit(hovered, "hoveredOn", "ProbeButton", "Button");
+        Assert.False(hovered.AsObject().ContainsKey("warning"), hovered.ToJsonString());
+        Assert.True(hovered["tooltip"] is JsonObject, hovered.ToJsonString());
+        JsonNode tooltip = hovered["tooltip"]!;
+        Assert.Equal("Does nothing yet", tooltip["text"]!.GetValue<string>());
+        (double x, double y) = (tooltip["x"]!.GetValue<double>(), tooltip["y"]!.GetValue<double>());
+        (double width, double height) = (tooltip["width"]!.GetValue<double>(), tooltip["height"]!.GetValue<double>());
+        JsonNode pointer = hovered["pointer"]!;
+        Assert.True(x >= pointer["x"]!.GetValue<double>() && y >= pointer["y"]!.GetValue<double>(), hovered.ToJsonString());
+        // The probe's viewport is 640 x 360.
+        Assert.True(width > 0 && height > 0 && x + width <= 640 && y + height <= 360, hovered.ToJsonString());
+        Assert.True(shownAfter, "the TooltipPanel popup is not visible after the hover");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverWhilePausedWarnsTheTooltipNeverStarts()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await _tools.FrameControlAsync("pause", cancellationToken: cancellation);
+        JsonNode hovered;
+        try
+        {
+            hovered = JsonNode.Parse(await _tools.HoverAsync(new InputTarget("ProbeButton"), cancellationToken: cancellation))!;
+        }
+        finally
+        {
+            await _tools.FrameControlAsync("resume", cancellationToken: cancellation);
+        }
+
+        AssertHit(hovered, "hoveredOn", "ProbeButton", "Button");
+        AssertNoHit(hovered, "tooltip");
+        Assert.Equal(
+            "the game is paused and /root/Main/ProbeButton cannot process, so its tooltip timer never starts; resume, hover, then pause",
+            hovered["warning"]!.GetValue<string>()
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverOverAControlWithoutATooltipAnswersAtOnce()
+    {
+        var clock = Stopwatch.StartNew();
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("SmallButton"), cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+        clock.Stop();
+
+        AssertHit(hovered, "hoveredOn", "SmallButton", "Button");
+        AssertNoHit(hovered, "tooltip");
+        Assert.False(hovered.AsObject().ContainsKey("warning"), hovered.ToJsonString());
+        // Under the probe's 0.5 s tooltip delay: a wait would last until a tooltip showed or 1.5 s ran out.
+        Assert.True(clock.ElapsedMilliseconds < 450, $"the hover took {clock.ElapsedMilliseconds} ms");
     }
 
     [Fact(Timeout = TestTimeoutMs)]

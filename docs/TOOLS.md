@@ -11,6 +11,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | See one scene without playing | `preview_scene` | `run_project` with `scene` plus `take_screenshot` plus `stop_project` |
 | Pick a thing to click | `get_ui_elements` (Controls, with viewport rects) | guessing coordinates from a screenshot |
 | Click, drag, type | `click`, `drag`, `type_text`, `key` | `simulate_input`, which is for event sequences the gestures cannot make |
+| Hover a Control, see its tooltip | `hover` (waits for the tooltip, returns its text and rect) | a `mouse_button` release as a hover, a `wait_for` as a sleep |
 | Drive with a pad | `gamepad_button`, `gamepad_stick`, `gamepad_axis` | `simulate_input` joypad events |
 | Land a check on an exact frame | `frame_control` (`pause`, `step`), then `wait_for` with `timeoutMs: 0` | `wait_for` with a timeout on a running game |
 | Watch a value change over frames | `monitor_property` | a loop of `inspect_node` calls |
@@ -93,7 +94,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 - **Does:** captures the game's next drawn frame to a PNG under `.godot/godot-mcp/screenshots/` and returns its path and size, plus an image.
 - **Use:** `responseMode` `path_only`, `preview` (default, at most `previewMaxWidth` wide, 480 by default) or `full`; `crop {x, y, width, height}` in the screenshot's pixels.
-- **Edges:** the crop is in screenshot pixels, not viewport coordinates (see Rules). `path_only` saves context when only the file matters.
+- **Edges:** the crop is in screenshot pixels, not viewport coordinates (see Rules). `path_only` saves context when only the file matters. The capture is the root viewport's texture: embedded popups and tooltips (Godot's default) are in it, but in a project that sets `display/window/subwindows/embed_subwindows=false` each popup is its own OS window and is missing.
 
 ### `get_ui_elements`
 
@@ -115,7 +116,7 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 - **Does:** moves the pointer to `target`, presses, releases a frame later: `pressedOn` and `releasedOn` name the Control under the press and the release (with `doubleClick`, the second click's).
 - **Use:** `target`, `button` (`left`, `right`, `middle`; default `left`), `doubleClick`.
-- **Edges:** a showing tooltip is closed before the press (as `drag` and a `mouse_button` press do), one frame earlier than a real click, which closes it on release; otherwise the tooltip, not the Control beneath, would be reported as hit. A raw `simulate_input` press leaves tooltips alone.
+- **Edges:** a showing tooltip is closed before the press (as `drag` and a `mouse_button` press do). The engine closes it on the press too (4.7.2 `viewport.cpp` L2011), but its removal lands a frame late, and the tooltip, not the Control beneath, would be reported as hit. A raw `simulate_input` press leaves the closing to the engine.
 
 ### `drag`
 
@@ -136,8 +137,14 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 ### `mouse_button`
 
-- **Does:** moves to `target`, then presses or releases `button` (`action` `press` default, or `release`); held buttons stay in later motions' `button_mask`. A press answers `pressedOn`, a release `releasedOn`.
-- **Use:** a drag by hand: `mouse_button` press, `simulate_input` `mouse_motion` events, `mouse_button` release; for paths `drag` cannot draw.
+- **Does:** moves to `target`, then presses or releases `button` (`action` `press` default, or `release`), or with `action` `move` only moves, pressing nothing and closing no tooltip (`button` ignored); held buttons stay in later motions' `button_mask`. A press answers `pressedOn`, a release `releasedOn`, a move `hoveredOn`.
+- **Use:** a drag by hand: `mouse_button` press, `simulate_input` `mouse_motion` events, `mouse_button` release; for paths `drag` cannot draw. `move` to hover without waiting for a tooltip; `hover` waits for it.
+
+### `hover`
+
+- **Does:** moves the pointer to `target` (an element or a point) pressing nothing, held buttons kept in the motion, then, when the Control under it has a tooltip, waits for the tooltip to show. Returns `{pointer, heldButtonMask, hoveredOn, tooltip, warning?}`: `hoveredOn` the Control under the pointer (`{path, class}`, null over none), `tooltip` `{text, x, y, width, height}` in viewport coordinates (`text` null for a custom tooltip with no Label), or null.
+- **Use:** checking a tooltip's text or look: hover, then `take_screenshot` with `crop` around the returned rect. `options {tooltip, timeoutMs}`: `tooltip: false` answers right after the move; `timeoutMs` 0 to 10000, by default `gui/timers/tooltip_delay_sec` plus 1 s.
+- **Edges:** Godot starts a tooltip's timer only from a motion over a Control that can process (4.7.2 `viewport.cpp` L2117, L2136), so over a pausable Control in a paused game `hover` answers at once with `tooltip: null` and the warning "the game is paused and <path> cannot process, so its tooltip timer never starts; resume, hover, then pause". A timer once started fires even if the game pauses after, so hover, then `frame_control pause`, keeps the tooltip up. A tooltip due but not shown in time answers the warning "no tooltip showed within <n> ms". Over a Control with no tooltip it answers at once, no warning.
 
 ### `simulate_action`
 
