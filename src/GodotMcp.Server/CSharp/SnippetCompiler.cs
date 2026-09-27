@@ -36,7 +36,9 @@ internal sealed record SnippetDiagnostic(int Line, int Column, string Id, string
 /// value is returned; a statement body that runs off its end returns null. The BCL comes from the request's framework folder
 /// (the runtime the snippet will run on, so an overload the runtime lacks is never bound); every other reference is a dll path
 /// in the request. Only errors are reported, warnings are dropped. The snippet reaches the internal members of every reference
-/// that is not the framework's, as if it were inside those assemblies; private members stay out of its reach.
+/// that is not the framework's, as if it were inside those assemblies; private members stay out of its reach. A framework
+/// member or type that is below public is out of its reach too, and refusing it as CS0122 is this compiler's own work: the
+/// runtime, which the snippet's assembly asks to skip the checks of every other reference, would refuse the call instead.
 /// </summary>
 internal static class SnippetCompiler
 {
@@ -87,7 +89,7 @@ internal static class SnippetCompiler
     /// <summary>
     /// Compiles <paramref name="request"/>, without C#'s access checks when <paramref name="ignoreAccessChecks"/> is set and
     /// Roslyn lets them be turned off; the compiled assembly is marked to skip the runtime's checks on every reference that is
-    /// not the framework's.
+    /// not the framework's, and a snippet that names a framework member below public is refused before it is emitted.
     /// </summary>
     /// <exception cref="McpException">A using is not a namespace name, or a reference cannot be read.</exception>
     /// <exception cref="IOException">The framework folder cannot be read.</exception>
@@ -96,11 +98,9 @@ internal static class SnippetCompiler
         ValidateUsings(request.Usings);
         string assemblyName = $"{ClassName}_{Interlocked.Increment(ref _compiled).ToString(CultureInfo.InvariantCulture)}";
         MetadataReference[] own = [.. request.References.Select(ReadReference)];
-        var references = CSharpCompilation.Create(
-            assemblyName,
-            references: [.. FrameworkIn(request.FrameworkDirectory), .. own],
-            options: ignoreAccessChecks && UncheckedOptions is { } withoutChecks ? withoutChecks : CheckedOptions
-        );
+        ImmutableArray<MetadataReference> framework = FrameworkIn(request.FrameworkDirectory);
+        CSharpCompilationOptions? withoutChecks = ignoreAccessChecks ? UncheckedOptions : null;
+        var references = CSharpCompilation.Create(assemblyName, references: [.. framework, .. own], options: withoutChecks ?? CheckedOptions);
         INamedTypeSymbol? globals = references.GetTypeByMetadataName(request.GlobalsType);
         if (globals is null)
         {
@@ -119,7 +119,7 @@ internal static class SnippetCompiler
             compilation = WithSource(references, request, wrapper, Shape.VoidExpression);
         }
 
-        return Emit(compilation);
+        return withoutChecks is null ? Emit(compilation) : RefuseOrEmit(compilation, framework);
     }
 
     /// <summary>
@@ -256,10 +256,116 @@ internal static class SnippetCompiler
     {
         string message = diagnostic.GetMessage(CultureInfo.InvariantCulture) + (diagnostic.Id == "CS0122" ? AccessHint : "");
         FileLinePositionSpan span = diagnostic.Location.GetMappedLineSpan();
-        return span.IsValid && span.Path == SnippetPath
+        return InSnippet(span)
             ? new SnippetDiagnostic(span.StartLinePosition.Line + 1, span.StartLinePosition.Character + 1, diagnostic.Id, message)
             : new SnippetDiagnostic(0, 0, diagnostic.Id, message);
     }
+
+    /// <summary>Whether a span is text the snippet wrote itself: it maps through the <c>#line</c> directive to the snippet's file.</summary>
+    private static bool InSnippet(FileLinePositionSpan span) => span.IsValid && span.Path == SnippetPath;
+
+    /// <summary>
+    /// Emits <paramref name="compilation"/>, or refuses it when the snippet names a member or type of a framework assembly
+    /// that is below public. The wrapper asks the runtime to skip the access checks of every reference that is not the
+    /// framework's, so the framework's own checks are the ones a snippet still hits, at run time in the game.
+    /// </summary>
+    private static SnippetCompilation RefuseOrEmit(CSharpCompilation compilation, ImmutableArray<MetadataReference> framework)
+    {
+        // A snippet that does not compile at all has nothing to say about access; Emit reports it as it always did.
+        if (compilation.GetDiagnostics().Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
+        {
+            return Emit(compilation);
+        }
+
+        List<SnippetDiagnostic> refusals = Refusals(compilation, framework);
+        return refusals.Count == 0 ? Emit(compilation) : new SnippetCompilation(null, null, refusals);
+    }
+
+    /// <summary>One refusal for each symbol the snippet itself names that is below public in one of the framework's assemblies.</summary>
+    private static List<SnippetDiagnostic> Refusals(CSharpCompilation compilation, ImmutableArray<MetadataReference> framework)
+    {
+        HashSet<AssemblyIdentity> assemblies = FrameworkIdentities(compilation, framework);
+        if (assemblies.Count == 0)
+        {
+            return [];
+        }
+
+        SemanticModel model = compilation.GetSemanticModel(compilation.SyntaxTrees.Single());
+        HashSet<ISymbol> named = new(SymbolEqualityComparer.Default);
+        List<SnippetDiagnostic> refusals = [];
+        foreach (SyntaxNode node in model.SyntaxTree.GetRoot().DescendantNodes())
+        {
+            if (Refusal(node, model, assemblies, named) is { } refusal)
+            {
+                refusals.Add(refusal);
+            }
+        }
+
+        return refusals;
+    }
+
+    /// <summary>
+    /// The refusal <paramref name="node"/> earns, or null when it lies in the wrapper, names nothing out of the snippet's
+    /// reach, or names a symbol <paramref name="named"/> has already refused: one refusal per symbol is one thing to fix.
+    /// </summary>
+    private static SnippetDiagnostic? Refusal(SyntaxNode node, SemanticModel model, HashSet<AssemblyIdentity> assemblies, HashSet<ISymbol> named)
+    {
+        FileLinePositionSpan span = node.GetLocation().GetMappedLineSpan();
+        if (!InSnippet(span))
+        {
+            return null;
+        }
+
+        ISymbol? symbol = BelowPublic(model.GetSymbolInfo(node).Symbol, assemblies);
+        if (symbol is null || !named.Add(symbol))
+        {
+            return null;
+        }
+
+        return new SnippetDiagnostic(
+            span.StartLinePosition.Line + 1,
+            span.StartLinePosition.Character + 1,
+            "CS0122",
+            $"'{symbol.ToDisplayString()}' is inaccessible due to its protection level" + AccessHint
+        );
+    }
+
+    /// <summary>The symbol <paramref name="symbol"/> names, when it is below public in one of <paramref name="assemblies"/>.</summary>
+    private static ISymbol? BelowPublic(ISymbol? symbol, HashSet<AssemblyIdentity> assemblies) =>
+        Referenced(symbol) is { ContainingAssembly: { } assembly } referenced
+        && assemblies.Contains(assembly.Identity)
+        && !IsPublicThrough(referenced)
+            ? referenced
+            : null;
+
+    // What a node names: a reduced extension method and a constructed generic are the declarations behind them, whose own
+    // accessibility is the one that decides.
+    private static ISymbol? Referenced(ISymbol? symbol) =>
+        symbol switch
+        {
+            IMethodSymbol method => (method.ReducedFrom ?? method).OriginalDefinition,
+            INamedTypeSymbol type => type.OriginalDefinition,
+            _ => symbol,
+        };
+
+    // C#'s own reach: public, with every containing type public too. A snippet declares no type, so a protected member is no
+    // more reachable to it than a private one, whatever the derived type the wrapper gives it.
+    private static bool IsPublicThrough(ISymbol symbol)
+    {
+        for (INamedTypeSymbol? type = symbol.ContainingType; type is not null; type = type.ContainingType)
+        {
+            if (type.DeclaredAccessibility != Accessibility.Public)
+            {
+                return false;
+            }
+        }
+
+        return symbol.DeclaredAccessibility == Accessibility.Public;
+    }
+
+    /// <summary>The identity of every assembly the framework's <paramref name="framework"/> references, to compare a symbol's own with.</summary>
+    private static HashSet<AssemblyIdentity> FrameworkIdentities(CSharpCompilation compilation, ImmutableArray<MetadataReference> framework) =>
+        [.. framework.Select(compilation.GetAssemblyOrModuleSymbol).OfType<IAssemblySymbol>().Select(assembly => assembly.Identity)];
 
     private static ImmutableArray<MetadataReference> LoadFramework(string directory) =>
         [

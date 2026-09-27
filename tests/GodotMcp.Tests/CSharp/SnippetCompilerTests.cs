@@ -68,6 +68,41 @@ public sealed class SnippetCompilerTests : IDisposable
     }
 
     [Fact]
+    public void AnInternalMemberOfTheFrameworkIsRefused()
+    {
+        // The shared framework these tests run on is the one they compile against; String.CreateFromChar(char) is internal in
+        // its System.Private.CoreLib, checked by reflection rather than assumed, since the compiler must see it to bind it.
+        MethodInfo member = Assert.IsAssignableFrom<MethodInfo>(
+            typeof(string).GetMethod("CreateFromChar", BindingFlags.NonPublic | BindingFlags.Static, null, [typeof(char)], null)
+        );
+
+        SnippetCompilation compilation = Compile("string.CreateFromChar('a')");
+
+        Assert.False(member.IsPublic);
+        Assert.Null(compilation.Assembly);
+        SnippetDiagnostic error = Assert.Single(compilation.Errors);
+        Assert.Equal("CS0122", error.Id);
+        Assert.Equal(1, error.Line);
+        Assert.Equal(1, error.Column);
+        Assert.Contains("is inaccessible due to its protection level", error.Message, StringComparison.Ordinal);
+        Assert.EndsWith(
+            "; reach it through Get, Set or Call instead, which take private and internal members by name",
+            error.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
+    public async Task PublicFrameworkMembersStayInReach()
+    {
+        const string code =
+            "var numbers = new List<int> { 1, 2 }.Select(n => n.ToString()).ToList();\n"
+            + "return Path.Combine(string.Join(\",\", numbers), \"tail\");";
+
+        Assert.Equal(Path.Combine("1,2", "tail"), await RunAsync(CompileOk(code, "System.IO")));
+    }
+
+    [Fact]
     public void WithAccessChecksAnInaccessibleMemberPointsToGetSetAndCall()
     {
         SnippetRequest request = new("Fixture.Secrets.Hidden", GlobalsType, ServerFramework, [_fixturePath], []);

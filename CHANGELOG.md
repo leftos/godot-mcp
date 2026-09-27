@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## 0.3.3 - 2026-09-27
+
+### Fixed
+
+- A `run_csharp` snippet that names a non-public .NET member is refused at compile time instead of failing inside the game.
+
 ## 0.3.2 - 2026-09-27
 
 ### Fixed
