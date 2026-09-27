@@ -18,7 +18,6 @@ A track, then singles; the singles' order is not a ranking.
 
 ### Singles
 
-- [ ] `wait_for` then `take_screenshot` misses a fast-changing frame (#10): decided (user, 2026-09-27): `wait_for` takes `options.screenshot`, capturing inside the frame the condition is met on and answering the path as `take_screenshot` does, saying so when that frame is never drawn
 - [ ] `list_sessions` keeps every stopped session for the server's life, and a session error lists them all (#11)
 - [ ] `stop_project` reports exit 0, not killed, for a game a debugger already terminated (#12)
 - [ ] A documented way to drive a worktree's server build against a game without installing it (#13)

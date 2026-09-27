@@ -231,4 +231,53 @@ public sealed class TimeValidationTests : IDisposable
 
         Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void AScreenshotWaitAsksTheBridgeForTheCaptureAndItsPreview()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, new WaitOptions(Screenshot: true));
+
+        Assert.True(parameters["screenshot"]!.GetValue<bool>());
+        Assert.Equal(480, parameters["previewMaxWidth"]!.GetValue<int>());
+        Assert.Equal("expression", parameters["kind"]!.GetValue<string>());
+        Assert.Equal(1000, parameters["timeoutMs"]!.GetValue<int>());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(false)]
+    public void AWaitWithoutScreenshotAsksForNoCapture(bool? screenshot)
+    {
+        WaitOptions? options = screenshot is null ? null : new WaitOptions(screenshot);
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, options);
+
+        Assert.False(parameters.ContainsKey("screenshot"), parameters.ToJsonString());
+        Assert.False(parameters.ContainsKey("previewMaxWidth"), parameters.ToJsonString());
+    }
+
+    [Fact]
+    public async Task AScreenshotWaitChecksItsConditionBeforeTheSession()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(null!, 1000, new WaitOptions(Screenshot: true), cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(ConditionMessage, refused.Message);
+    }
+
+    [Fact]
+    public async Task AValidScreenshotWaitWithoutASessionSaysNoneIsRunning()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(
+                new WaitCondition(Expression: "true"),
+                0,
+                new WaitOptions(Screenshot: true),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
 }

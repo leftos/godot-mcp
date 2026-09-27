@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using GodotMcp.Server.Session;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -18,7 +19,7 @@ internal sealed partial class RuntimeTools
     internal const double MaxTimeScale = 100;
     internal const int MaxWaitMs = 120_000;
     internal const int MaxMonitorSamples = 600;
-    private const int StepPreviewMaxWidth = 480;
+    private const int CapturePreviewMaxWidth = 480;
     private const string ConditionMessage =
         "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}.";
     private static readonly string[] FrameActions = ["pause", "resume", "step", "time_scale"];
@@ -70,9 +71,12 @@ internal sealed partial class RuntimeTools
             + "once the node is found. An expression that does not parse fails the call; one that fails while it runs counts "
             + "as not met, and its error is in errors. uiChanged compares the UI with the snapshot the bridge takes when the "
             + "first input gesture since launch, or since the last met uiChanged wait, starts (later gestures keep it; a met "
-            + "wait uses it up, a timeout keeps it), and is refused when no gesture has taken one."
+            + "wait uses it up, a timeout keeps it), and is refused when no gesture has taken one. options.screenshot: true "
+            + "captures the frame the condition was met on as take_screenshot does, for a scene that changes faster than a "
+            + "following take_screenshot can catch, adding screenshot to the result (a timed-out wait captures nothing, and a "
+            + "frame that was not drawn gives a warning instead)."
     )]
-    public async Task<string> WaitForAsync(
+    public async Task<IEnumerable<ContentBlock>> WaitForAsync(
         [Description(
             "Exactly one of {node, exists}, {node, property, equals}, {node, signal}, {expression} (with node optional), {uiChanged: true}."
         )]
@@ -82,17 +86,24 @@ internal sealed partial class RuntimeTools
                 + "it is refused for a signal wait."
         )]
             int timeoutMs = 10_000,
+        [Description("{screenshot}: screenshot false when left out.")] WaitOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
+        JsonObject parameters = BuildWaitParameters(condition, timeoutMs, options);
+        BridgeResult result = await CallWaitAsync(parameters, timeoutMs, session, cancellationToken);
+        JsonObject reply = WaitReply(result);
+        return await WithCaptureAsync(reply, reply, result.Errors, cancellationToken);
+    }
+
+    /// <summary>wait_for without a capture, answered as its JSON text: the form a batch step runs.</summary>
+    /// <exception cref="McpException">The condition or timeoutMs is refused, or the call failed.</exception>
+    internal async Task<string> WaitForAsync(WaitCondition condition, int timeoutMs, string? session, CancellationToken cancellationToken)
+    {
         JsonObject parameters = BuildWaitParameters(condition, timeoutMs);
-        BridgeCall call = new("wait_for", "wait_for", parameters, TimeSpan.FromMilliseconds(timeoutMs) + WaitReplyAllowance);
-        BridgeResult result = await CallWithErrorsAsync(Find(session), call, cancellationToken);
-        JsonObject reply =
-            result.Reply?.DeepClone() as JsonObject
-            ?? throw new McpException($"The bridge's wait_for reply is not an object: {result.Reply?.ToJsonString() ?? "null"}.");
-        return ErrorReport.AddTo(reply, result.Errors).ToJsonString();
+        BridgeResult result = await CallWaitAsync(parameters, timeoutMs, session, cancellationToken);
+        return ErrorReport.AddTo(WaitReply(result), result.Errors).ToJsonString();
     }
 
     [McpServerTool(Name = "monitor_property", ReadOnly = true, Destructive = false, OpenWorld = false)]
@@ -198,6 +209,26 @@ internal sealed partial class RuntimeTools
         return parameters;
     }
 
+    /// <summary>The bridge's wait parameters as <see cref="BuildWaitParameters(WaitCondition?, int)"/> builds them, plus
+    /// {screenshot, previewMaxWidth} when <paramref name="options"/> asks for the capture.</summary>
+    /// <exception cref="McpException">The condition is not exactly one kind, timeoutMs is out of range, or 0 for a signal wait.</exception>
+    internal static JsonObject BuildWaitParameters(WaitCondition? condition, int timeoutMs, WaitOptions? options)
+    {
+        JsonObject parameters = BuildWaitParameters(condition, timeoutMs);
+        AddScreenshot(parameters, options?.Screenshot);
+        return parameters;
+    }
+
+    private async Task<BridgeResult> CallWaitAsync(JsonObject parameters, int timeoutMs, string? session, CancellationToken cancellationToken)
+    {
+        BridgeCall call = new("wait_for", "wait_for", parameters, TimeSpan.FromMilliseconds(timeoutMs) + WaitReplyAllowance);
+        return await CallWithErrorsAsync(Find(session), call, cancellationToken);
+    }
+
+    private static JsonObject WaitReply(BridgeResult result) =>
+        result.Reply?.DeepClone() as JsonObject
+        ?? throw new McpException($"The bridge's wait_for reply is not an object: {result.Reply?.ToJsonString() ?? "null"}.");
+
     /// <summary>How long a step of <paramref name="frames"/> may take; the bridge stops the step itself at this deadline.</summary>
     private static TimeSpan StepAllowance(int frames) => FrameTimeout + (PerFrameAllowance * frames);
 
@@ -218,10 +249,15 @@ internal sealed partial class RuntimeTools
         parameters["count"] = frames;
         parameters["deadlineMs"] = (long)StepAllowance(frames).TotalMilliseconds;
         parameters["unit"] = unit;
-        if (options.Screenshot is true)
+        AddScreenshot(parameters, options.Screenshot);
+    }
+
+    private static void AddScreenshot(JsonObject parameters, bool? screenshot)
+    {
+        if (screenshot is true)
         {
             parameters["screenshot"] = true;
-            parameters["previewMaxWidth"] = StepPreviewMaxWidth;
+            parameters["previewMaxWidth"] = CapturePreviewMaxWidth;
         }
     }
 
@@ -298,20 +334,29 @@ internal sealed partial class RuntimeTools
         JsonObject reply =
             result.Reply as JsonObject
             ?? throw new McpException($"The bridge's frame reply is not an object: {result.Reply?.ToJsonString() ?? "null"}.");
-        JsonObject text = FrameState(reply);
+        return await WithCaptureAsync(FrameState(reply), reply, result.Errors, cancellationToken);
+    }
+
+    /// <summary>
+    /// <paramref name="text"/> with the errors as one text block; when <paramref name="reply"/> carries a screenshot, text's
+    /// screenshot is its saved files as take_screenshot names them, and the preview image follows.
+    /// </summary>
+    private static async Task<IEnumerable<ContentBlock>> WithCaptureAsync(
+        JsonObject text,
+        JsonObject reply,
+        IReadOnlyList<ErrorEntry> errors,
+        CancellationToken cancellationToken
+    )
+    {
         if (reply["screenshot"] is not JsonObject screenshot)
         {
-            return [new TextContentBlock { Text = ErrorReport.AddTo(text, result.Errors).ToJsonString() }];
+            return [new TextContentBlock { Text = ErrorReport.AddTo(text, errors).ToJsonString() }];
         }
 
         ScreenshotFiles files = ReadScreenshotFiles(screenshot);
         text["screenshot"] = JsonSerializer.SerializeToNode(files, Json);
         byte[] image = await ReadImageAsync(files.PreviewPath ?? files.Path, cancellationToken);
-        return
-        [
-            new TextContentBlock { Text = ErrorReport.AddTo(text, result.Errors).ToJsonString() },
-            ImageContentBlock.FromBytes(image, "image/png"),
-        ];
+        return [new TextContentBlock { Text = ErrorReport.AddTo(text, errors).ToJsonString() }, ImageContentBlock.FromBytes(image, "image/png")];
     }
 
     private static JsonObject FrameState(JsonObject reply) =>

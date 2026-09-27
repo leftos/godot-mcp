@@ -61,6 +61,10 @@ const STEP_STALLED := (
 ## An expression's inputs besides node. Expression resolves only its inputs and its base
 ## instance's members, not singletons (core/math/expression.cpp L707-734 in 4.7.2).
 const EXPRESSION_INPUTS: PackedStringArray = ["root", "tree", "Input", "Engine"]
+const NOT_DRAWN_WARNING := (
+	"The frame the condition was met on was not drawn (is the window minimized, or the game in "
+	+ "low-processor mode?), so there is no screenshot."
+)
 const NO_UI_BASELINE := (
 	"uiChanged has no baseline: no input gesture has started since launch or since the last "
 	+ "uiChanged wait was met; send the input first"
@@ -359,21 +363,22 @@ func _repeats(kept: Array, value: Variant) -> bool:
 
 
 ## Waits for params.kind (exists, property, signal, expression or uiChanged) with params {node,
-## exists, property, equals, signal, expression, timeoutMs}. Returns {result: {met, elapsedMs,
-## frames, value | args}}, with last instead of value on a timeout, or {error}. A timeoutMs of 0
-## checks the condition once, now, paused or not.
+## exists, property, equals, signal, expression, timeoutMs, screenshot, previewMaxWidth}. Returns
+## {result: {met, elapsedMs, frames, value | args[, screenshot | warning]}}, with last instead of
+## value on a timeout, or {error}. A timeoutMs of 0 checks the condition once, now, paused or not.
+## With screenshot, a met wait captures the frame it was met on (see _poll_capturing).
 func wait_for(params: Dictionary) -> Dictionary:
 	var kind: String = str(params.get("kind", ""))
 	var timeout_ms: int = int(params.get("timeoutMs", 10000))
 	if kind == "signal":
-		return await _wait_for_signal(_text(params, "node"), _text(params, "signal"), timeout_ms)
+		return await _wait_for_signal(params, timeout_ms)
 	var refusal: String = _paused_refusal(get_tree().paused, timeout_ms)
 	if not refusal.is_empty():
 		return {"error": refusal}
 	var probe: Variant = _make_probe(kind, params)
 	if probe is String:
 		return {"error": probe}
-	return await _poll(probe, timeout_ms)
+	return await _poll_capturing(probe, timeout_ms, params)
 
 
 ## Why a non-signal wait cannot run now, or empty: a pausable node's state cannot change while
@@ -411,6 +416,23 @@ func _check_ui_changed() -> Array:
 	return [true, change]
 
 
+## Polls probe as _poll does; with params.screenshot a met wait also captures the frame it was
+## met on: a waiting one checks probe at each frame's draw instead (_check_at_draws), a
+## check-once one captures the draw of the frame it runs in. Returns _poll's outcome, its result
+## with screenshot or warning when met and captured.
+func _poll_capturing(probe: Callable, timeout_ms: int, params: Dictionary) -> Dictionary:
+	if not bool(params.get("screenshot", false)):
+		return await _poll(probe, timeout_ms)
+	var drawn: Dictionary = {}
+	if timeout_ms > 0:
+		probe = _check_at_draws(probe, drawn)
+	var outcome: Dictionary = await _poll(probe, timeout_ms)
+	_stop_draw_checks(drawn)
+	if outcome.has("error") or not outcome["result"]["met"]:
+		return outcome
+	return await _with_capture(drawn.get("image"), params, outcome["result"])
+
+
 ## Checks probe now and then once a frame until it is met, cannot be met, or timeout_ms has
 ## passed. Returns {result: {met, elapsedMs, frames, value | last}} or {error}.
 func _poll(probe: Callable, timeout_ms: int) -> Dictionary:
@@ -428,6 +450,87 @@ func _poll(probe: Callable, timeout_ms: int) -> Dictionary:
 	}
 	result["value" if seen[0] else "last"] = seen[1]
 	return {"result": result}
+
+
+## For a waiting screenshot wait: checks probe at each frame_post_draw, where the state it sees
+## is the one that frame shows, and captures the frame of the first met check into drawn.image.
+## Returns the probe _poll then calls once a frame (_checked_since_draw).
+func _check_at_draws(probe: Callable, drawn: Dictionary) -> Callable:
+	drawn["probe"] = probe
+	var on_draw: Callable = _check_drawn_frame.bind(drawn)
+	drawn["on_draw"] = on_draw
+	RenderingServer.frame_post_draw.connect(on_draw)
+	return _checked_since_draw.bind(drawn)
+
+
+func _stop_draw_checks(drawn: Dictionary) -> void:
+	if drawn.has("on_draw"):
+		RenderingServer.frame_post_draw.disconnect(drawn["on_draw"])
+
+
+## Checks drawn.probe inside a frame_post_draw, until a check is met or fails; the met one
+## captures the frame just drawn.
+func _check_drawn_frame(drawn: Dictionary) -> void:
+	if drawn.has("kept"):
+		return
+	var probe: Callable = drawn["probe"]
+	var seen: Array = _keep(probe.call(), drawn)
+	drawn["seen"] = seen
+	if seen[0]:
+		drawn["image"] = bridge.get_viewport().get_texture().get_image()
+
+
+## The check of the frame drawn since the last call, or the met or failed one kept; nothing on the
+## first call, whose frame's draw is still to come; and probe's own answer when no frame was drawn
+## since the last call (a minimized window, low-processor mode), so the wait still ends.
+func _checked_since_draw(drawn: Dictionary) -> Array:
+	if drawn.has("kept"):
+		return drawn["kept"]
+	if drawn.has("seen"):
+		var seen: Array = drawn["seen"]
+		drawn.erase("seen")
+		return seen
+	if not drawn.has("started"):
+		drawn["started"] = true
+		return [false, null]
+	var probe: Callable = drawn["probe"]
+	return _keep(probe.call(), drawn)
+
+
+## Keeps a met or failed answer in drawn.kept, so neither the draw nor the frame check runs the
+## probe again; returns seen.
+func _keep(seen: Array, drawn: Dictionary) -> Array:
+	if seen.size() > 2 or seen[0]:
+		drawn["kept"] = seen
+	return seen
+
+
+## Adds the capture of the frame the wait was met on to result as result.screenshot: image when a
+## draw check took it, else the draw of the frame running now; result.warning instead when that
+## frame is not drawn.
+func _with_capture(image: Image, params: Dictionary, result: Dictionary) -> Dictionary:
+	if image == null:
+		image = await _capture_this_frame()
+	if image == null:
+		result["warning"] = NOT_DRAWN_WARNING
+		return {"result": result}
+	var saved: Variant = bridge._save_screenshot(image, params)
+	if saved is String:
+		return {"error": saved}
+	result["screenshot"] = saved
+	return {"result": result}
+
+
+## The image of the frame drawn before the next process_frame, which from a request's handler or
+## a process_frame is the frame running now, or null when that frame is not drawn.
+func _capture_this_frame() -> Image:
+	var shot: Array[Image] = []
+	var grab := func() -> void: shot.append(bridge.get_viewport().get_texture().get_image())
+	RenderingServer.frame_post_draw.connect(grab, CONNECT_ONE_SHOT)
+	await get_tree().process_frame
+	if RenderingServer.frame_post_draw.is_connected(grab):
+		RenderingServer.frame_post_draw.disconnect(grab)
+	return null if shot.is_empty() else shot[0]
 
 
 func _check_exists(node_name: String, wanted: bool) -> Array:
@@ -490,9 +593,11 @@ func _run_expression(expression: Expression, node_name: String, reported: Dictio
 	return [value is bool and value == true, bridge._json.to_json(value)]
 
 
-## Resolves on the node's next emission of signal_name, with its arguments. await has no
+## Resolves on params.node's next emission of params.signal, with its arguments. await has no
 ## timeout, so a variadic lambda catches the emission and the wait polls it once a frame.
-func _wait_for_signal(node_name: String, signal_name: String, timeout_ms: int) -> Dictionary:
+func _wait_for_signal(params: Dictionary, timeout_ms: int) -> Dictionary:
+	var node_name: String = _text(params, "node")
+	var signal_name: String = _text(params, "signal")
 	var node: Node = bridge._find_node(node_name)
 	if node == null:
 		return {"error": "no node '%s' in the running game" % node_name}
@@ -505,10 +610,17 @@ func _wait_for_signal(node_name: String, signal_name: String, timeout_ms: int) -
 	node.connect(signal_name, on_signal)
 	var caught := func() -> Array:
 		return [not fired.is_empty(), null if fired.is_empty() else bridge._json.to_json(fired[0])]
-	var outcome: Dictionary = await _poll(caught, timeout_ms)
-	var result: Dictionary = outcome["result"]
+	var outcome: Dictionary = await _poll_capturing(caught, timeout_ms, params)
 	if is_instance_valid(node) and node.is_connected(signal_name, on_signal):
 		node.disconnect(signal_name, on_signal)
+	return _as_signal_outcome(outcome)
+
+
+## A signal wait's outcome: the arguments as args instead of value, and no last.
+func _as_signal_outcome(outcome: Dictionary) -> Dictionary:
+	if outcome.has("error"):
+		return outcome
+	var result: Dictionary = outcome["result"]
 	if result.has("value"):
 		result["args"] = result["value"]
 		result.erase("value")

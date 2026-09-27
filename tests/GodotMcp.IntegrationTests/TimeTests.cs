@@ -400,6 +400,105 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task WaitForScreenshotShowsTheFrameTheConditionMetOn()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        WaitCondition condition = new(Node: "TimeProbe", Expression: "node.process_frames % 16 == 5");
+
+        List<ContentBlock> blocks =
+        [
+            .. await _tools.WaitForAsync(condition, 5000, new WaitOptions(Screenshot: true), cancellationToken: cancellation),
+        ];
+        JsonNode reply = JsonNode.Parse(Text(blocks))!;
+        string path = reply["screenshot"]!["path"]!.GetValue<string>();
+        JsonNode pixel = await RunAsync(
+            $"var c := Image.load_from_file(\"{path.Replace('\\', '/')}\").get_pixel(600, 310)\n\treturn [c.r8, c.g8, c.b8]"
+        );
+
+        // ticker.gd paints the Swatch (580, 290)-(620, 330) Color8((process_frames % 16) * 16, 0, 0) each frame, so the frame
+        // the condition was met on is red 80, and the one after it 96.
+        Assert.True(reply["met"]!.GetValue<bool>(), reply.ToJsonString());
+        Assert.Null(reply["warning"]);
+        Assert.Equal("image/png", Assert.Single(blocks.OfType<ImageContentBlock>()).MimeType);
+        Assert.InRange(pixel[0]!.GetValue<int>(), 80 - 3, 80 + 3);
+        Assert.InRange(pixel[1]!.GetValue<int>(), 0, 3);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACheckOnceWaitCapturesTheCurrentFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await FrameAsync("pause");
+        long frames = await ReadIntAsync("process_frames");
+        WaitCondition condition = new(Node: "TimeProbe", Expression: $"node.process_frames == {frames}");
+
+        List<ContentBlock> blocks = [.. await _tools.WaitForAsync(condition, 0, new WaitOptions(Screenshot: true), cancellationToken: cancellation)];
+        JsonNode reply = JsonNode.Parse(Text(blocks))!;
+        string path = reply["screenshot"]!["path"]!.GetValue<string>();
+        JsonNode pixel = await RunAsync(
+            $"var c := Image.load_from_file(\"{path.Replace('\\', '/')}\").get_pixel(600, 310)\n\treturn [c.r8, c.g8, c.b8]"
+        );
+
+        // The paused TimeProbe keeps the state the check saw through the frame's draw; ticker.gd paints the Swatch
+        // Color8((process_frames % 16) * 16, 0, 0).
+        long expectedRed = frames % 16 * 16;
+        Assert.True(reply["met"]!.GetValue<bool>(), reply.ToJsonString());
+        Assert.Equal(0, reply["frames"]!.GetValue<int>());
+        Assert.Null(reply["warning"]);
+        Assert.Equal("image/png", Assert.Single(blocks.OfType<ImageContentBlock>()).MimeType);
+        Assert.InRange(pixel[0]!.GetValue<int>(), expectedRed - 3, expectedRed + 3);
+        Assert.InRange(pixel[1]!.GetValue<int>(), 0, 3);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitMetOnAnUndrawnFrameWarnsWithNoImage()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await RunAsync($"{Probe}.stop_drawing_after(1)\n\treturn true");
+        await Task.Delay(300, cancellation);
+        WaitCondition condition = new(Node: "TimeProbe", Expression: "node.process_frames > 0");
+
+        // The reset turns drawing back on for the next test.
+        List<ContentBlock> blocks =
+        [
+            .. await _tools.WaitForAsync(condition, 2000, new WaitOptions(Screenshot: true), cancellationToken: cancellation),
+        ];
+        JsonNode reply = JsonNode.Parse(Text(blocks))!;
+
+        Assert.True(reply["met"]!.GetValue<bool>(), reply.ToJsonString());
+        Assert.Equal(
+            "The frame the condition was met on was not drawn (is the window minimized, or the game in low-processor mode?), so there "
+                + "is no screenshot.",
+            reply["warning"]?.GetValue<string>()
+        );
+        Assert.Null(reply["screenshot"]);
+        Assert.Empty(blocks.OfType<ImageContentBlock>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitThatTimesOutCapturesNothing()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        WaitCondition condition = new(Node: "TimeProbe", Property: "state", EqualsValue: Json("\"done\""));
+
+        List<ContentBlock> blocks =
+        [
+            .. await _tools.WaitForAsync(condition, 300, new WaitOptions(Screenshot: true), cancellationToken: cancellation),
+        ];
+        JsonNode reply = JsonNode.Parse(Text(blocks))!;
+
+        Assert.False(reply["met"]!.GetValue<bool>(), reply.ToJsonString());
+        Assert.Equal("idle", reply["last"]!.GetValue<string>());
+        Assert.Null(reply["screenshot"]);
+        Assert.Null(reply["warning"]);
+        Assert.Empty(blocks.OfType<ImageContentBlock>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task UiChangedWithoutGestureIsRefused()
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
@@ -616,7 +715,7 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
             .AsObject();
 
     private async Task<JsonObject> WaitAsync(WaitCondition condition, int timeoutMs = 10_000) =>
-        JsonNode.Parse(await _tools.WaitForAsync(condition, timeoutMs, cancellationToken: TestContext.Current.CancellationToken))!.AsObject();
+        JsonNode.Parse(Text(await _tools.WaitForAsync(condition, timeoutMs, cancellationToken: TestContext.Current.CancellationToken)))!.AsObject();
 
     private async Task<JsonNode> RunAsync(string body)
     {
