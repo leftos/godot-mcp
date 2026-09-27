@@ -538,7 +538,8 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
         McpException tooLarge = await Assert.ThrowsAsync<McpException>(() => SnapshotAsync("InspectProbe", new SnapshotOptions(MaxNodes: 1)));
 
         Assert.Equal(
-            "snapshot s99999 is not held (evicted, or from a stopped or restarted run); take a new one with snapshot_subtree",
+            "snapshot s99999 is not held (evicted, or from a run that stopped or restarted, or an attached game that has gone); "
+                + "take a new one with snapshot_subtree",
             unknown.Message
         );
         Assert.Contains($"'{Probe}' has 5 nodes in its subtree, more than maxNodes (1)", tooLarge.Message, StringComparison.Ordinal);
@@ -562,6 +563,9 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
 
         Assert.Equal("Button", described["className"]!.GetValue<string>());
         Assert.Equal("BaseButton", described["inherits"]!.GetValue<string>());
+        // The same key order as the headless answer for Button (HeadlessTests.DescribeClassReadsAnEngineClassHeadless): sorted.
+        string[] keys = [.. described.AsObject().Select(entry => entry.Key)];
+        Assert.Equal(keys.Order(StringComparer.Ordinal), keys);
         JsonNode flat = described["properties"]!.AsArray().Single(property => property!["name"]!.GetValue<string>() == "flat")!;
         // The bridge's replies carry their keys sorted, so entries are compared by field.
         Assert.Equal("bool", flat["type"]!.GetValue<string>());

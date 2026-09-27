@@ -30,6 +30,7 @@ internal sealed partial class GodotSession
             {
                 _attached = await InjectAndAwaitBridgeAsync(bridgeScript, wait, cancellationToken);
                 GameProcessId = _attached.GameProcessId;
+                _ = ClearSnapshotsWhenClosedAsync(_attached);
             }
             finally
             {
@@ -73,6 +74,16 @@ internal sealed partial class GodotSession
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Drops the session's snapshots once the attached game's connection ends (the game quit, or a detach closed it), as a
+    /// run's exit does: their ids name a game that is gone.
+    /// </summary>
+    private async Task ClearSnapshotsWhenClosedAsync(BridgeConnection connection)
+    {
+        await connection.Closed.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        Snapshots.Clear();
     }
 
     /// <summary>

@@ -533,6 +533,22 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AGamePausingItselfMidMonitorEndsItWithTheSamplesSoFar()
+    {
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
+        await RunAsync($"{Probe}.pause_after(200)\n\treturn true");
+
+        JsonObject monitored = await MonitorAsync("process_frames", new MonitorOptions(RuntimeTools.MaxMonitorSamples));
+
+        int pausedAt = monitored["pausedAtFrame"]!.GetValue<int>();
+        JsonArray samples = monitored["samples"]!.AsArray();
+        Assert.InRange(pausedAt, 1, RuntimeTools.MaxMonitorSamples - 1);
+        Assert.Equal(RuntimeTools.MaxMonitorSamples, monitored["requested"]!.GetValue<int>());
+        Assert.InRange(samples.Count, 1, pausedAt);
+        Assert.All(samples, sample => Assert.True(sample!["frame"]!.GetValue<int>() < pausedAt, monitored.ToJsonString()));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task MonitorWhilePausedIsRefused()
     {
         await AddTimeProbeAsync(TestContext.Current.CancellationToken);

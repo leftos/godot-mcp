@@ -172,9 +172,9 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 ### `monitor_property`
 
-- **Does:** samples a live node's property once per frame for `samples` frames and returns the changes: `{samples: [{frame, value}], requested, droppedDuplicates, elapsedMs}`, `frame` counting from 0 at the first sample.
+- **Does:** samples a live node's property once per frame for `samples` frames and returns the changes: `{samples: [{frame, value}], requested, droppedDuplicates, elapsedMs, pausedAtFrame?}`, `frame` counting from 0 at the first sample.
 - **Use:** seeing how a value moves over time (a tween, a velocity, a counter) in one call. `node`, `property` (subproperty paths like `position:x`), `options {samples, unit, changesOnly}`: `samples` 1 to 600 (default 60), `unit` `process` (default) or `physics`, `changesOnly` (default true) drops a sample equal to the last kept one (numbers within 1e-6) and counts it in `droppedDuplicates`; the first is always kept.
-- **Edges:** each sample, the first included, is taken when the next frame starts, before the nodes process it. Refused while the game is paused, and while a step or another monitor runs; while it runs, `frame_control`'s `pause`, `resume` and `step` are refused. A missing node or property is refused up front; a node freed partway samples as null. A game that pauses itself partway keeps being sampled, frozen. It ends at 10 s plus 100 ms a sample, saying how many frames it got.
+- **Edges:** each sample, the first included, is taken when the next frame starts, before the nodes process it. Refused while the game is paused, and while a step or another monitor runs; while it runs, `frame_control`'s `pause`, `resume` and `step` are refused. A missing node or property is refused up front; a node freed partway samples as null. A game that pauses itself partway ends the monitor there: it returns the samples so far with `pausedAtFrame` (numbered like `frame`; that frame is not sampled), still a success, `requested` unchanged. It ends at 10 s plus 100 ms a sample, saying how many frames it got.
 
 ### `wait_for`
 
@@ -212,13 +212,13 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 - **Does:** captures a live subtree for a later `diff_snapshots`: every node under `node` (default the current scene's root), keyed by its path from that node (`.` for itself), with the properties the inspector shows and its groups (sorted, internal `_` ones left out). Returns `{snapshotId, node, nodeCount}`, not the data.
 - **Use:** before an action whose effects you cannot list in advance. `options {properties, ignore, maxNodes}`: `properties` narrows each node to those names (read even when the inspector hides them; `groups` only when named), `ignore` drops names, `maxNodes` (default 2000) refuses a bigger subtree with its count.
-- **Edges:** snapshots are of the running game only, held per session, the 16 most recently used; ids (`s1`, `s2`, …) never repeat in a session, and every snapshot is dropped when the run stops, exits or restarts. Inside one `batch_drive`, a later step cannot read an earlier step's `snapshotId`, since arguments are fixed before the batch runs.
+- **Edges:** snapshots are of the running game only, held per session, the 16 most recently used; ids (`s1`, `s2`, …) never repeat in a session, and every snapshot is dropped when the run stops, exits or restarts, or when an attached game's connection ends. Inside one `batch_drive`, a later step cannot read an earlier step's `snapshotId`, since arguments are fixed before the batch runs.
 
 ### `diff_snapshots`
 
 - **Does:** compares two snapshots: `{added, removed, changed: [{node, property, before, after}], addedCount, removedCount, changedCount}`, node paths relative to the snapshot's root, each list at most 200 entries with full counts.
 - **Use:** `beforeId` from `snapshot_subtree`; without `afterId` the subtree is captured again now, with the before snapshot's root and options. Numbers compare within 1e-6, so a float that only round-trips differently is not a change.
-- **Edges:** a property only one side has is a change whose missing side's key (`before` or `after`) is left out, not null. An id that is not held (evicted, or from a stopped or restarted run) is refused with a hint to take a new one. Two ids are not checked to share a root: nodes match by relative path.
+- **Edges:** a property only one side has is a change whose missing side's key (`before` or `after`) is left out, not null. An id that is not held (evicted, or from a run that stopped or restarted, or an attached game that has gone) is refused with a hint to take a new one. Two ids are not checked to share a root: nodes match by relative path.
 
 ### `run_script`
 

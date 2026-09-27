@@ -43,6 +43,9 @@ internal sealed class BridgeConnection : IAsyncDisposable
 
     public bool IsOpen => !_readLoop.IsCompleted;
 
+    /// <summary>Completes once the connection has ended, whichever side closed it.</summary>
+    public Task Closed => _readLoop;
+
     /// <summary>The game's own process id, as its hello reported it; null when the bridge predates the field.</summary>
     public int? GameProcessId { get; }
 

@@ -106,6 +106,32 @@ public sealed class AttachTests : IAsyncDisposable
         Assert.Equal(5, error["line"]!.GetValue<int>());
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnAttachedGameThatQuitsTakesItsSnapshotsWithIt()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        Task<string> attach = _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, false, cancellationToken: cancellation);
+        Assert.True(await Poll.UntilAsync(() => File.Exists(AttachFilePath), TimeSpan.FromSeconds(10), cancellation));
+        StartGame();
+        await attach;
+        var game = Process.GetProcessById((await RunAsync("return OS.get_process_id()")).GetValue<int>());
+        _games.Add(game);
+        string before = await SnapshotIdAsync(cancellation);
+        string after = await SnapshotIdAsync(cancellation);
+        GodotSession session = _harness.Sessions.Resolve(null);
+        game.Kill();
+        await game.WaitForExitAsync(cancellation);
+        // The store is cleared just after the session sees the connection end, so the wait is for both.
+        _ = await Poll.UntilAsync(() => !session.HasGame && session.Snapshots.Find(before) is null, TimeSpan.FromSeconds(10), cancellation);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _runtime.DiffSnapshotsAsync(before, after, cancellationToken: cancellation)
+        );
+
+        Assert.Contains($"snapshot {before} is not held", refused.Message, StringComparison.Ordinal);
+    }
+
     // Godot as a user's script would start it: no GODOT_MCP_* variables, so the bridge can only find the attach file.
     private void StartGame()
     {
@@ -148,6 +174,9 @@ public sealed class AttachTests : IAsyncDisposable
     }
 
     private async Task<JsonNode> RunAsync(string body) => (await RunForResultAsync(body))["value"]!;
+
+    private async Task<string> SnapshotIdAsync(CancellationToken cancellationToken) =>
+        JsonNode.Parse(await _runtime.SnapshotSubtreeAsync(cancellationToken: cancellationToken))!["snapshotId"]!.GetValue<string>();
 
     private async Task<JsonNode> RunForResultAsync(string body)
     {

@@ -131,6 +131,27 @@ func test_methods_are_sorted_by_name_and_paged() -> void:
 	assert_eq(past.get("methods"), [], "a page past the end")
 
 
+func test_every_dictionary_in_the_result_has_its_keys_sorted() -> void:
+	var params: Dictionary = {"className": "Button", "inherited": true, "limit": 1000}
+	var result: Dictionary = _info.describe(params).get("result", {})
+
+	# add_child's second argument, force_readable_name, has a default: {name, type, default}.
+	var method: Dictionary = _named(result.get("methods", []), "add_child")
+	_assert_keys_sorted(result, "the result")
+	_assert_keys_sorted(method, "a method")
+	_assert_keys_sorted(method.get("args", [{}, {}])[1], "an argument with a default")
+	_assert_keys_sorted(_named(result.get("properties", []), "flat"), "a property")
+	_assert_keys_sorted(result.get("enums", {}), "the enums")
+
+
+func _assert_keys_sorted(entry: Dictionary, what: String) -> void:
+	var keys: Array = entry.keys()
+	var sorted: Array = keys.duplicate()
+	sorted.sort()
+	assert_true(keys.size() > 1, "%s has keys to order" % what)
+	assert_eq(keys, sorted, "%s's keys, sorted" % what)
+
+
 ## The entry of listed named title, or {}.
 static func _named(listed: Array, title: String) -> Dictionary:
 	for entry: Dictionary in listed:

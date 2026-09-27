@@ -286,9 +286,10 @@ func _run_ticks(count: int) -> int:
 ## Samples params.property (a path such as position:x) of params.node at each of params.samples
 ## frames, or physics ticks with params.unit physics, the first at the next one, each at the
 ## frame's (tick's) start, before the nodes process it. Returns {result: {samples: [{frame,
-## value}], requested, droppedDuplicates, elapsedMs}} or {error}; with params.changesOnly (the
-## default) a sample equal to the last one kept is dropped and counted, the first always kept.
-## It ends at params.deadlineMs, the server's allowance, with the frames it got.
+## value}], requested, droppedDuplicates, elapsedMs[, pausedAtFrame]}} or {error}; with
+## params.changesOnly (the default) a sample equal to the last one kept is dropped and counted,
+## the first always kept. It stops early, with pausedAtFrame, at a frame that finds the game has
+## paused itself, and ends at params.deadlineMs, the server's allowance, with the frames it got.
 func monitor(params: Dictionary) -> Dictionary:
 	var refusal: String = _monitor_refusal(_text(params, "node"), _text(params, "property"))
 	if not refusal.is_empty():
@@ -318,7 +319,10 @@ func _monitor_refusal(node_name: String, property: String) -> String:
 
 
 ## Takes count samples, one at each process_frame (physics_frame with unit physics), until the
-## deadline passes. A node freed mid-way samples as null.
+## deadline passes. A node freed mid-way samples as null. A frame (tick) that finds the tree
+## paused means the game paused itself: the monitor stops there, unsampled, and its number is
+## returned as pausedAtFrame with the samples so far. process_frame and physics_frame are emitted
+## paused or not (scene/main/scene_tree.cpp L649, L713).
 func _sample(params: Dictionary, count: int) -> Dictionary:
 	var physics: bool = str(params.get("unit", "process")) == "physics"
 	var source: Signal = get_tree().physics_frame if physics else get_tree().process_frame
@@ -326,9 +330,13 @@ func _sample(params: Dictionary, count: int) -> Dictionary:
 	var began: int = Time.get_ticks_msec()
 	var kept: Array = []
 	var dropped: int = 0
+	var paused_at: int = -1
 	for frame in count:
 		if not await _next(source):
 			return {"error": MONITOR_STALLED % [frame, count]}
+		if get_tree().paused:
+			paused_at = frame
+			break
 		var value: Variant = _check_property(_text(params, "node"), _text(params, "property"), null)[1]
 		if changes_only and _repeats(kept, value):
 			dropped += 1
@@ -340,6 +348,8 @@ func _sample(params: Dictionary, count: int) -> Dictionary:
 		"droppedDuplicates": dropped,
 		"elapsedMs": Time.get_ticks_msec() - began,
 	}
+	if paused_at >= 0:
+		result["pausedAtFrame"] = paused_at
 	return {"result": result}
 
 

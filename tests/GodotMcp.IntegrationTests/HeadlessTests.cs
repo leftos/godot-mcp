@@ -401,12 +401,15 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Equal("Button", own["className"]!.GetValue<string>());
         Assert.Equal("BaseButton", own["inherits"]!.GetValue<string>());
         Assert.False(own["isScript"]!.GetValue<bool>());
-        Assert.Equal("""{"name":"flat","type":"bool","default":false}""", Named(own, "properties", "flat").ToJsonString());
-        Assert.Equal("""{"name":"text","type":"String","default":""}""", Named(own, "properties", "text").ToJsonString());
+        // Every object's keys come sorted, as the bridge's reply for the same class has them.
+        string[] keys = [.. own.AsObject().Select(entry => entry.Key)];
+        Assert.Equal(keys.Order(StringComparer.Ordinal), keys);
+        Assert.Equal("""{"default":false,"name":"flat","type":"bool"}""", Named(own, "properties", "flat").ToJsonString());
+        Assert.Equal("""{"default":"","name":"text","type":"String"}""", Named(own, "properties", "text").ToJsonString());
         // pressed and toggled are BaseButton's, so only the inherited list has them.
         Assert.DoesNotContain(own["signals"]!.AsArray(), signal => signal!["name"]!.GetValue<string>() == "pressed");
-        Assert.Equal("""{"name":"pressed","args":[]}""", Named(all, "signals", "pressed").ToJsonString());
-        Assert.Equal("""{"name":"toggled","args":[{"name":"toggled_on","type":"bool"}]}""", Named(all, "signals", "toggled").ToJsonString());
+        Assert.Equal("""{"args":[],"name":"pressed"}""", Named(all, "signals", "pressed").ToJsonString());
+        Assert.Equal("""{"args":[{"name":"toggled_on","type":"bool"}],"name":"toggled"}""", Named(all, "signals", "toggled").ToJsonString());
         Assert.Equal(string.Empty, Git.Status(probe.Directory));
     }
 

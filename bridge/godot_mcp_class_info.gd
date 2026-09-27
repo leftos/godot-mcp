@@ -31,8 +31,9 @@ const CSHARP_WARNING := (
 
 
 ## describe_class for params {className, inherited, offset, limit}: {result} with the class's
-## header and members, its methods sorted by name and paged, or {error, suggestions} for a name
-## that is neither an engine class nor a script class of the project.
+## header and members, its methods sorted by name and paged, every Dictionary's keys sorted, or
+## {error, suggestions} for a name that is neither an engine class nor a script class of the
+## project.
 static func describe(params: Dictionary) -> Dictionary:
 	var title: String = str(params.get("className", "")).strip_edges()
 	var inherited: bool = bool(params.get("inherited", false))
@@ -47,7 +48,9 @@ static func describe(params: Dictionary) -> Dictionary:
 		if described.has("error"):
 			return described
 	var offset: int = int(params.get("offset", 0))
-	return {"result": _paged(described, offset, int(params.get("limit", DEFAULT_LIMIT)))}
+	return {
+		"result": _sorted_keys(_paged(described, offset, int(params.get("limit", DEFAULT_LIMIT))))
+	}
 
 
 ## The refusal of a name no class has: {error, suggestions}, the error naming the suggestions.
@@ -341,6 +344,27 @@ static func _paged(described: Dictionary, offset: int, limit: int) -> Dictionary
 	described["offset"] = offset
 	described["limit"] = limit
 	return described
+
+
+## value with every Dictionary's keys in the order JSON.stringify's sort_keys writes them (4.7.2
+## core/io/json.cpp L169-170, core/variant/variant.cpp L3413-3427: String-like keys compared as
+## strings), recursively, so the bridge's sorted reply and the headless op's insertion-ordered one
+## read alike; Arrays keep their order. New Dictionaries are built: a script's enum Dictionary is
+## its own constant, never sorted in place.
+static func _sorted_keys(value: Variant) -> Variant:
+	if value is Array:
+		var items: Array = []
+		for item: Variant in value:
+			items.append(_sorted_keys(item))
+		return items
+	if not value is Dictionary:
+		return value
+	var keys: Array = (value as Dictionary).keys()
+	keys.sort_custom(func(a: Variant, b: Variant) -> bool: return str(a) < str(b))
+	var sorted: Dictionary = {}
+	for key: Variant in keys:
+		sorted[key] = _sorted_keys(value[key])
+	return sorted
 
 
 ## start and the ClassDB classes above it, nearest first; empty for an empty start.

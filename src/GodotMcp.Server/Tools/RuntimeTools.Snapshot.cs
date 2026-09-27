@@ -106,7 +106,10 @@ internal sealed partial class RuntimeTools
     /// <exception cref="McpException">The session does not hold the snapshot.</exception>
     private static Snapshot HeldSnapshot(GodotSession target, string id) =>
         target.Snapshots.Find(id)
-        ?? throw new McpException($"snapshot {id} is not held (evicted, or from a stopped or restarted run); take a new one with snapshot_subtree");
+        ?? throw new McpException(
+            $"snapshot {id} is not held (evicted, or from a run that stopped or restarted, or an attached game that has gone); "
+                + "take a new one with snapshot_subtree"
+        );
 
     private static async Task<(Snapshot Snapshot, IReadOnlyList<ErrorEntry> Errors)> CaptureSnapshotAsync(
         GodotSession target,
