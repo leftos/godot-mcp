@@ -43,6 +43,8 @@ const JOY_AXIS_NAMES: PackedStringArray = [
 	"LEFT_X", "LEFT_Y", "RIGHT_X", "RIGHT_Y", "TRIGGER_LEFT", "TRIGGER_RIGHT"
 ]
 
+## The bridge (godot_mcp_bridge.gd), set by it before this node enters the tree.
+var bridge: Node
 ## Whether the machine's real pads are kept out of the game.
 var real_pads_shut_out: bool = false
 ## The buttons the injected pads hold, as Vector2i(device, button) keys.
@@ -230,10 +232,11 @@ func _send_motion_event(device: int, axis: int, value: float) -> void:
 	_dispatch(event)
 
 
-## A new event object through Input, flushed at once, as the bridge sends all its input.
+## A new event object through the input player's _dispatch, the one path all the bridge's input
+## takes: Input, flushed at once, with the bridge's _dispatching set and a running capture
+## recording it as sent.
 func _dispatch(event: InputEvent) -> void:
-	Input.parse_input_event(event)
-	Input.flush_buffered_events()
+	bridge._gestures._dispatch(event)
 
 
 ## The JoyButton a name like A or DPAD_DOWN stands for, in any case; -1 for an unknown name.

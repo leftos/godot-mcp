@@ -74,6 +74,30 @@ public sealed class BridgeConnectionTests : IDisposable
         Assert.Equal("pong", reply?["name"]?.GetValue<string>());
     }
 
+    [Fact]
+    public async Task ACapturedFrameReachesItsHandlerAndAnUnknownIdlessFrameIsDropped()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        await using BridgeConnection connection = await accept;
+        List<string> captured = [];
+        List<string> errors = [];
+        connection.OnCaptured(frame => captured.Add(frame["events"]![0]!["key"]!.GetValue<string>()));
+        connection.OnErrors(frame => errors.Add(MessageIn(frame)));
+
+        JsonObject unknown = new() { ["type"] = "mystery", ["events"] = new JsonArray(new JsonObject { ["key"] = "X" }) };
+        JsonObject frame = new() { ["type"] = "captured", ["events"] = new JsonArray(new JsonObject { ["type"] = "key", ["key"] = "A" }) };
+        Task answer = bridge.AnswerOneAfterAsync([unknown, frame], "pong", cancellation);
+        JsonNode? reply = await connection.SendAsync("ping", null, Wait, cancellation);
+        string[] atReply = [.. captured];
+        await answer;
+
+        Assert.Equal("pong", reply?["name"]?.GetValue<string>());
+        Assert.Equal(["A"], atReply);
+        Assert.Empty(errors);
+    }
+
     private async Task<BridgeConnection> AcceptAsync(CancellationToken cancellation)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);

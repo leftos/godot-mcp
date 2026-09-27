@@ -139,6 +139,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 _run ?? throw new SessionException("No Godot session has been started, so there is nothing to stop. Start one with run_project.");
             bool killed = await EndRunAsync(run);
             Snapshots.Clear();
+            registry.Captures.End(Name, CaptureStore.EndedByStop);
             RecordingResult? recording = await FinishRecordingAsync();
             bool removed = registry.ReleaseFolder(this);
             return new StopResult(Name, run.ProjectDir, run.ExitCode, killed, removed) { Recording = recording };
@@ -287,6 +288,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     private static string CreateToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
 
+    /// <summary>Adds a captured frame from this session's bridge to its capture in the registry's store.</summary>
+    private void ReceiveCaptured(JsonObject frame) => registry.Captures.Receive(Name, frame);
+
     /// <summary>
     /// Under the folder's prep lock, which every launch takes, so no game starts on the folder while a prep builds or
     /// imports there: looks Godot up, builds a stale C# assembly and runs a due import (unless the request says never),
@@ -319,6 +323,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 cancellationToken.ThrowIfCancellationRequested();
                 await EndRunAsync(previous);
                 Snapshots.Clear();
+                registry.Captures.End(Name, CaptureStore.EndedByRestart);
                 StopOutputCapture(previous);
                 await FinishRecordingAsync();
             }
@@ -348,6 +353,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         int processId = run.Process.Id;
         BridgeConnection connection = await WaitForHandshakeAsync(run, new HandshakeExpectation(token, ProjectDir), cancellationToken);
         connection.OnErrors(Errors.Receive);
+        connection.OnCaptured(ReceiveCaptured);
         run.Connection = connection;
         GameProcessId = connection.GameProcessId;
         Log.RunStarted(_logger, processId, run.ProjectDir);
@@ -596,6 +602,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             }
 
             Snapshots.Clear();
+            registry.Captures.End(Name, CaptureStore.EndedByExit);
             await FinishRecordingAsync();
             if (registry.ReleaseFolder(this))
             {

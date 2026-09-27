@@ -54,6 +54,7 @@ A drive is always the same five moves: **start → look → act → wait → che
 - A value that moves over time (a tween, a velocity): `monitor_property` samples it each frame in one call and returns only the changes. A game driven by InputMap actions: `simulate_action {action}` taps one.
 - An action whose effects you cannot list: `snapshot_subtree` first, act, then `diff_snapshots {beforeId}` (no `afterId` re-captures now) for every node added, removed or changed. Ids die with a stop or restart, and a `batch_drive` step cannot read an earlier step's id.
 - A click that seems to do nothing: read its `pressedOn` (the Control it actually hit; a drag's `guiDragStarted` and `dropAccepted` say whether a GUI drag and drop happened), check `errors` in its result, then `get_ui_elements` for `disabled`/`visible`, then `wait_for` its effect rather than screenshotting at once.
+- A bug a person can reproduce by hand but you cannot script: run with `options.quiet: false` (or attach), `capture_input {mode: "start"}`, let them play, `capture_input {mode: "stop"}`, then replay its `events` with `simulate_input`; the capture survives a crash, so stop it after the game dies too.
 - A tool that is missing, confusing, slow or wrong for the job: that is friction with a tool we own. File it as "Filing friction" below says, then carry on with the task.
 
 Game-specific drive lessons (a project's scenes, launch arguments, a known flaky screen) belong in that project's own docs (its DEVELOPMENT.md), not here.

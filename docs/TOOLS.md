@@ -22,6 +22,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | Find a live node | `get_scene_tree` | `get_scene_file_tree`, which reads a scene file |
 | Know what went wrong | the `errors` in each result, then `get_errors`, then `get_debug_output` | reading stdout first |
 | Replay a known sequence with checks | `batch_drive` | one tool call a step |
+| Turn what a person (or a drive) did into a replayable sequence | `capture_input` start, play, stop, then `simulate_input` with its `events` | writing the events by hand from a description |
 | Catch a visual regression | `save_screenshot_baseline` once, `compare_screenshot` or a `screenshot` assertion after | comparing screenshots by eye |
 | Keep a video of a bug | `run_project` with `options.record`, `record_mark`, `stop_project` | an OS screen recorder |
 | Check scripts and scenes load | `validate` | launching the game to see if it errors |
@@ -138,6 +139,12 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 - **Does:** injects an InputMap action: `{pointer, heldButtonMask}` as `simulate_input` returns.
 - **Use:** driving a game by its actions (`jump`, `ui_accept`) instead of the keys bound to them. `action`, `options {mode, strength}`: `mode` `tap` (default: press, a frame, release, as `key` taps), `press` or `release`; `strength` 0 to 1 (default 1), carried by the press.
 - **Edges:** an action missing from the project's InputMap is refused. A pressed action stays held until released. It goes through `simulate_input`'s `action` event, so a raw sequence can still mix actions with other events there.
+
+### `capture_input`
+
+- **Does:** `mode: "start"` begins capturing the session's input; `mode: "stop"` ends it and returns `{events, count, truncated, ended?}`, the events in `simulate_input`'s format (`key`, `mouse_button`, `mouse_motion`, `joypad_button`, `joypad_motion`, `action`), with a `wait {ms}` before any event 20 ms or more after the one before, timed on the game's own clock. Feed `events` to `simulate_input` to replay them.
+- **Use:** `options {sources, motion}` with start only: `sources` any of `real` (a person's input to the game's window) and `sent` (every event the server's input tools play, pads included), both by default; `motion` keeps mouse motions with no button held (false by default; a drag's motions are always kept, so it replays as a drag). To record a person playing, run with `options.quiet: false` or attach, start, let them play, stop.
+- **Edges:** a quiet run gets no real input, so it captures `sent` only and start's result says so in `warning`. A gesture comes back as its raw events (a `drag` as a press, motions and a release; `type_text` as keys). Capture stops at 2000 events, waits included, with `truncated: true`. A capture survives its game: after a stop, restart or crash, `capture_input stop` naming the session returns what was captured before, with `ended` (`stop`, `restart`, `exit`). Only one capture runs per session; a second start is refused. Mouse wheel and extra buttons are not captured, since `simulate_input` cannot play them.
 
 ### `simulate_input`
 

@@ -9,11 +9,13 @@ namespace GodotMcp.Server.Wire;
 /// One accepted, handshaken bridge. Requests <c>{id, command, params}</c> go out; replies <c>{id, ok, result|error}</c>
 /// come back in any order and are matched by id, so several requests may be in flight at once. Frames without an id whose
 /// type is "errors" carry the game's logged errors and go to the handler <see cref="OnErrors"/> sets, in arrival order,
-/// before any reply read after them.
+/// before any reply read after them; those whose type is "captured" carry a running input capture's events and go to the
+/// handler <see cref="OnCaptured"/> sets. Any other frame without an id is dropped.
 /// </summary>
 internal sealed class BridgeConnection : IAsyncDisposable
 {
     private const string ErrorsFrameType = "errors";
+    private const string CapturedFrameType = "captured";
     private readonly TcpClient _client;
     private readonly NetworkStream _stream;
     private readonly FrameDecoder _decoder;
@@ -25,6 +27,7 @@ internal sealed class BridgeConnection : IAsyncDisposable
     private readonly List<JsonObject> _unhandledErrors = [];
     private readonly Task _readLoop;
     private Action<JsonObject>? _errorsHandler;
+    private volatile Action<JsonObject>? _capturedHandler;
     private long _nextId;
 
     /// <param name="client">The accepted connection, its hello already read.</param>
@@ -100,6 +103,12 @@ internal sealed class BridgeConnection : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Sets the handler for the bridge's captured frames. A capture starts only through a command sent after the session took the
+    /// connection, so none arrives before it is set; one that does is logged and dropped.
+    /// </summary>
+    public void OnCaptured(Action<JsonObject> handler) => _capturedHandler = handler;
+
     public async ValueTask DisposeAsync()
     {
         await _closing.CancelAsync();
@@ -168,13 +177,7 @@ internal sealed class BridgeConnection : IAsyncDisposable
     {
         if (!TryReadId(reply, out long id))
         {
-            if (HandshakeExpectation.ReadString(reply, "type") == ErrorsFrameType)
-            {
-                DeliverErrors(reply);
-                return;
-            }
-
-            Log.DroppedFrameWithoutId(_logger, length);
+            HandleFrameWithoutId(reply, length);
             return;
         }
 
@@ -191,6 +194,41 @@ internal sealed class BridgeConnection : IAsyncDisposable
         }
 
         pending.Reply.TrySetException(new InvalidOperationException($"The bridge refused '{pending.Command}': {ReadError(reply)}"));
+    }
+
+    private void HandleFrameWithoutId(JsonObject frame, int length)
+    {
+        switch (HandshakeExpectation.ReadString(frame, "type"))
+        {
+            case ErrorsFrameType:
+                DeliverErrors(frame);
+                break;
+            case CapturedFrameType:
+                DeliverCaptured(frame, length);
+                break;
+            default:
+                Log.DroppedFrameWithoutId(_logger, length);
+                break;
+        }
+    }
+
+    /// <summary>Hands one captured frame to its handler; with none set, or one that throws, the frame is logged and dropped.</summary>
+    private void DeliverCaptured(JsonObject frame, int length)
+    {
+        if (_capturedHandler is not { } handler)
+        {
+            Log.DroppedFrameWithoutId(_logger, length);
+            return;
+        }
+
+        try
+        {
+            handler(frame);
+        }
+        catch (Exception e)
+        {
+            Log.CapturedFrameDropped(_logger, e);
+        }
     }
 
     private void DeliverErrors(JsonObject frame)

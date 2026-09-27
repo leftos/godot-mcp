@@ -25,6 +25,7 @@ const JSON_SCRIPT := "godot_mcp_json.gd"
 const PREVIEW_SCRIPT := "godot_mcp_preview.gd"
 const UI_SNAPSHOT_SCRIPT := "godot_mcp_ui_snapshot.gd"
 const CLASS_INFO_SCRIPT := "godot_mcp_class_info.gd"
+const CAPTURE_SCRIPT := "godot_mcp_capture.gd"
 ## A quiet run's frame-rate cap when the project sets none: its frames are never seen, so drawing
 ## at the monitor's refresh rate only burns the GPU.
 const QUIET_MAX_FPS := 60
@@ -50,6 +51,9 @@ var _dispatching: bool = false
 var _pads: Node
 ## The input player (godot_mcp_input.gd beside this script): gestures and raw events.
 var _gestures: Node
+## The input capture (godot_mcp_capture.gd beside this script): capture_input's recording, which
+## the input player feeds every event it dispatches.
+var _capture: Node
 ## The inspector (godot_mcp_inspect.gd beside this script), a child once the bridge is on.
 var _inspect: Node
 ## The clock (godot_mcp_time.gd beside this script): pause, step, time scale and waits.
@@ -114,11 +118,17 @@ func _ready() -> void:
 	_class_info = load(script_dir.path_join(CLASS_INFO_SCRIPT)) as GDScript
 	_pads = (load(script_dir.path_join(GAMEPAD_SCRIPT)) as GDScript).new()
 	_pads.name = "Gamepad"
+	_pads.bridge = self
 	add_child(_pads)
 	_gestures = (load(script_dir.path_join(INPUT_SCRIPT)) as GDScript).new()
 	_gestures.name = "Gestures"
 	_gestures.bridge = self
 	add_child(_gestures)
+	_capture = (load(script_dir.path_join(CAPTURE_SCRIPT)) as GDScript).new()
+	_capture.name = "Capture"
+	_capture.bridge = self
+	_capture.send_frame = _send_captured
+	add_child(_capture)
 	_inspect = (load(script_dir.path_join(INSPECT_SCRIPT)) as GDScript).new()
 	_inspect.name = "Inspect"
 	add_child(_inspect)
@@ -310,6 +320,7 @@ func _command_handlers() -> Dictionary:
 		"preview": _handle_preview,
 		"movie_frame": _handle_movie_frame,
 		"describe_class": _handle_describe_class,
+		"capture": _handle_capture,
 		"shutdown": _handle_shutdown,
 	}
 
@@ -359,8 +370,28 @@ func _handle_describe_class(id: int, params: Dictionary) -> void:
 		_reply_ok(id, described["result"])
 
 
-## Replies, then quits once the reply has had a frame to go out.
+## Starts or stops capture_input's capture on the Capture child; a stop's last captured frame goes
+## out before the reply.
+func _handle_capture(id: int, params: Dictionary) -> void:
+	var outcome: Dictionary = _capture.handle(params)
+	if outcome.has("error"):
+		_reply_error(id, str(outcome["error"]))
+		return
+	_reply_ok(id, outcome["result"])
+
+
+## Sends a {type: "captured", events, truncated?} frame from the Capture child, once the hello is
+## out and while the connection holds.
+func _send_captured(frame: Dictionary) -> void:
+	if _stream == null or not _hello_sent or _connection_lost:
+		return
+	_send(frame)
+
+
+## Replies, then quits once the reply has had a frame to go out. The captured input not yet sent
+## goes out first, so a capture keeps what the game recorded before it quit.
 func _handle_shutdown(id: int, _params: Dictionary) -> void:
+	_capture.flush()
 	_reply_ok(id, {})
 	await get_tree().process_frame
 	get_tree().quit()

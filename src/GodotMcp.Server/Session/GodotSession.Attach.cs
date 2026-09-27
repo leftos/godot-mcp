@@ -64,6 +64,7 @@ internal sealed partial class GodotSession
         {
             BridgeConnection attached = _attached ?? throw new SessionException(DescribeNothingToDetach());
             _attached = null;
+            registry.Captures.End(Name, CaptureStore.EndedByStop);
             await attached.DisposeAsync();
             registry.Forget(this);
             bool removed = registry.ReleaseFolder(this);
@@ -78,12 +79,14 @@ internal sealed partial class GodotSession
 
     /// <summary>
     /// Drops the session's snapshots once the attached game's connection ends (the game quit, or a detach closed it), as a
-    /// run's exit does: their ids name a game that is gone.
+    /// run's exit does: their ids name a game that is gone. A capture still running ends as an exit (a detach has already ended
+    /// it as a stop).
     /// </summary>
     private async Task ClearSnapshotsWhenClosedAsync(BridgeConnection connection)
     {
         await connection.Closed.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         Snapshots.Clear();
+        registry.Captures.End(Name, CaptureStore.EndedByExit);
     }
 
     /// <summary>
@@ -138,6 +141,7 @@ internal sealed partial class GodotSession
         }
 
         connection.OnErrors(Errors.Receive);
+        connection.OnCaptured(ReceiveCaptured);
         return connection;
     }
 

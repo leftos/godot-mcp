@@ -34,6 +34,9 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
     internal ILogger Logger => logger;
 
+    /// <summary>The sessions' input captures, by session name, kept past the session they came from.</summary>
+    internal CaptureStore Captures { get; } = new();
+
     /// <summary>Launches a run under <paramref name="session"/>, or under the project folder's name when it is null.</summary>
     /// <exception cref="SessionException">The name is invalid or live, the project is missing, or the launch failed.</exception>
     public async Task<LaunchResult> LaunchAsync(LaunchRequest request, string? session, CancellationToken cancellationToken)

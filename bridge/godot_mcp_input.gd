@@ -540,8 +540,10 @@ func _send_key(keycode: int, pressed: bool, unicode: int, modifiers: PackedStrin
 
 
 ## Sends a new event object through Input, as the display server's own events go, and
-## flushes it at once so accumulated input neither merges nor delays it.
+## flushes it at once so accumulated input neither merges nor delays it. A running capture
+## records it as sent first.
 func _dispatch(event: InputEvent) -> void:
+	bridge._capture.sent(event)
 	bridge._dispatching = true
 	Input.parse_input_event(event)
 	Input.flush_buffered_events()
