@@ -52,7 +52,7 @@ static func apply_attach_script(root: Node, params: Dictionary, context: Diction
 	var node: Node = found["node"]
 	var script_path: String = params.get("script", "")
 	var refusal: String = SceneEdit.csharp_refusal(
-		context["scene"], script_path.ends_with(".cs"), context["build"]
+		context["scene"], script_path.ends_with(".cs"), context
 	)
 	var loaded: Dictionary = (
 		{"error": refusal} if not refusal.is_empty() else _load_script(script_path)

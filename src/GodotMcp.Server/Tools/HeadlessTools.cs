@@ -127,14 +127,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             HeadlessRequest request = new(projectDir, "get_scene_file_tree", parameters, prepare, RunCeiling) { ImportSkipHint = SkipPrepHint };
             return HeadlessRunner.RunAsync(sessions, request, cancellationToken);
         });
-        JsonObject page = RuntimeTools.PageList(run.Result, "nodes", offset, limit);
-        JsonArray errors = OnlyErrors(run.EngineErrors);
-        if (errors.Count > 0)
-        {
-            page["errors"] = errors;
-        }
-
-        return page.ToJsonString();
+        return AddBuildAndErrors(RuntimeTools.PageList(run.Result, "nodes", offset, limit), run).ToJsonString();
     }
 
     /// <summary>The targets as res:// paths, each checked to be an existing file of a kind validate loads, inside the project.</summary>

@@ -37,8 +37,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         + "[node name=\"Level\" type=\"Node2D\"]\nscript = ExtResource(\"1\")\n\n[node name=\"Btn\" type=\"Button\" parent=\".\"]\n\n"
         + "[connection signal=\"pressed\" from=\"Btn\" to=\".\" method=\"on_bound\" binds= [7, \"gold\"]]\n";
 
-    private const string CSharpBuildFailed =
-        "res://main.tscn uses C# scripts and the project's C# build failed; fix it first (validate lists the errors).";
+    private const string CSharpBuildFailed = "res://main.tscn uses C# scripts and the project's Debug C# build failed; fix it first:\n";
 
     private const string LevelScene =
         "[gd_scene load_steps=4 format=3 uid=\"uid://bslevel00000a\"]\n\n"
@@ -221,7 +220,8 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         );
 
         // The C# script's missing class is what Godot logs while the scene loads.
-        Assert.StartsWith("connect_signal failed: " + CSharpBuildFailed + "\nGodot logged:\n", refused.Message, StringComparison.Ordinal);
+        Assert.StartsWith("connect_signal failed: " + CSharpBuildFailed, refused.Message, StringComparison.Ordinal);
+        Assert.Contains("CsProbeNode.cs:10: CS1002 ; expected\nGodot logged:\n", refused.Message, StringComparison.Ordinal);
         Assert.Equal(before, Read(csProbe.Directory, "main.tscn"));
     }
 

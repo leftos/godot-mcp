@@ -79,9 +79,11 @@ internal static partial class PrepScan
         };
     }
 
-    /// <summary>Where Godot loads a Debug run's assembly from (GodotSharpDirs' <c>.godot/mono/temp/bin/Debug</c>).</summary>
+    /// <summary>
+    /// Where Godot loads the prep's build from (GodotSharpDirs' <c>.godot/mono/temp/bin/Debug</c>, <see cref="ProjectPrep.Configuration"/>).
+    /// </summary>
     public static string AssemblyPath(string projectDir, string assemblyName) =>
-        Path.Combine(projectDir, ".godot", "mono", "temp", "bin", "Debug", assemblyName + ".dll");
+        Path.Combine(projectDir, ".godot", "mono", "temp", "bin", ProjectPrep.Configuration, assemblyName + ".dll");
 
     /// <summary>The file the prep touches after each green build.</summary>
     public static string StampPath(string projectDir) => Path.Combine(ProjectPrep.LogFolder(projectDir), "build.stamp");

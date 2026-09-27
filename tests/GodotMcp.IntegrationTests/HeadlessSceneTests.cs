@@ -361,14 +361,86 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
             _tools.SaveSceneAsync(csProbe.Directory, "main.tscn", cancellationToken: cancellation)
         );
 
-        // The C# script's missing class is what Godot logs while the scene loads.
+        // The refusal quotes the build's configuration and its compiler errors; the missing class is what Godot logs while the scene loads.
         Assert.StartsWith(
-            "save_scene failed: res://main.tscn uses C# scripts and the project's C# build failed; fix it first (validate lists the errors)."
-                + "\nGodot logged:\n",
+            "save_scene failed: res://main.tscn uses C# scripts and the project's Debug C# build failed; fix it first:\n",
             refused.Message,
             StringComparison.Ordinal
         );
+        Assert.Contains("CsProbeNode.cs:10: CS1002 ; expected\nGodot logged:\n", refused.Message, StringComparison.Ordinal);
         Assert.Equal(before, File.ReadAllText(scene));
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task BatchAttachScriptRefusalQuotesTheCompilerErrors()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        string source = File.ReadAllText(csProbe.SourcePath("CsProbeNode.cs"));
+        csProbe.WriteSource("CsProbeNode.cs", source.Replace("\"hidden\";", "\"hidden\"", StringComparison.Ordinal));
+        const string plainScene = "[gd_scene format=3]\n\n[node name=\"Plain\" type=\"Node\"]\n";
+        string scene = Path.Combine(csProbe.Directory, "plain.tscn");
+        File.WriteAllText(scene, plainScene);
+        SceneBatchStep attach = new("attach_script", new JsonObject { ["nodePath"] = ".", ["scriptPath"] = "CsProbeNode.cs" });
+
+        JsonObject batch = JsonNode
+            .Parse(await _tools.BatchSceneOperationsAsync(csProbe.Directory, "plain.tscn", [attach], cancellation))!
+            .AsObject();
+
+        Assert.False(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        string error = batch["steps"]![0]!["error"]!.GetValue<string>();
+        Assert.StartsWith(
+            "res://plain.tscn uses C# scripts and the project's Debug C# build failed; fix it first:\n",
+            error,
+            StringComparison.Ordinal
+        );
+        Assert.Contains("CsProbeNode.cs:10: CS1002 ; expected", error, StringComparison.Ordinal);
+        Assert.Equal(plainScene, File.ReadAllText(scene));
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task CreateSceneUnderARedBuildReportsTheBuildNotTheAutoload()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = RedBuildWithAutoloads("Probe=\"*res://CsProbeNode.cs\"");
+
+        JsonObject created = JsonNode
+            .Parse(await _tools.CreateSceneAsync(csProbe.Directory, "fresh.tscn", cancellationToken: cancellation))!
+            .AsObject();
+
+        Assert.Equal("failed", created["csharp"]?["build"]?.GetValue<string>());
+        Assert.Contains("CsProbeNode.cs:10: CS1002 ; expected", created["csharp"]!["errors"]!.ToJsonString(), StringComparison.Ordinal);
+        Assert.Null(created["errors"]);
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task SceneFileTreeUnderARedBuildReportsTheBuildNotItsSymptoms()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = RedBuildWithAutoloads("Probe=\"*res://CsProbeNode.cs\"");
+
+        JsonNode tree = await TreeAsync(csProbe.Directory, "main.tscn", cancellation);
+
+        Assert.Equal("failed", tree["csharp"]?["build"]?.GetValue<string>());
+        Assert.Contains("CsProbeNode.cs:10: CS1002 ; expected", tree["csharp"]!["errors"]!.ToJsonString(), StringComparison.Ordinal);
+        Assert.Null(tree["errors"]);
+        Assert.Contains(".", Paths(tree));
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task AGDScriptAutoloadThatIsNotANodeStillReportsUnderARedBuild()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = RedBuildWithAutoloads("Probe=\"*res://CsProbeNode.cs\"\nPlain=\"*res://not_node.gd\"");
+        File.WriteAllText(Path.Combine(csProbe.Directory, "not_node.gd"), "extends RefCounted\n");
+
+        JsonObject created = JsonNode
+            .Parse(await _tools.CreateSceneAsync(csProbe.Directory, "fresh.tscn", cancellationToken: cancellation))!
+            .AsObject();
+
+        Assert.Equal("failed", created["csharp"]?["build"]?.GetValue<string>());
+        JsonNode error = Assert.Single(created["errors"]!.AsArray())!;
+        Assert.Contains("res://not_node.gd", error["message"]!.GetValue<string>(), StringComparison.Ordinal);
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
@@ -392,11 +464,11 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
 
         // The C# script's missing class is what Godot logs while the instanced scene loads.
         Assert.StartsWith(
-            "save_scene failed: res://holder.tscn uses C# scripts and the project's C# build failed; fix it first (validate lists the errors)."
-                + "\nGodot logged:\n",
+            "save_scene failed: res://holder.tscn uses C# scripts and the project's Debug C# build failed; fix it first:\n",
             refused.Message,
             StringComparison.Ordinal
         );
+        Assert.Contains("CsProbeNode.cs:10: CS1002 ; expected\nGodot logged:\n", refused.Message, StringComparison.Ordinal);
         Assert.Equal(before, File.ReadAllText(scene));
     }
 
@@ -498,10 +570,12 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
             _tools.AttachScriptAsync(csProbe.Directory, "plain.tscn", ".", "CsProbeNode.cs", cancellation)
         );
 
-        Assert.Equal(
-            "attach_script failed: res://plain.tscn uses C# scripts and the project's C# build failed; fix it first (validate lists the errors).",
-            refused.Message
+        Assert.StartsWith(
+            "attach_script failed: res://plain.tscn uses C# scripts and the project's Debug C# build failed; fix it first:\n",
+            refused.Message,
+            StringComparison.Ordinal
         );
+        Assert.EndsWith("CsProbeNode.cs:10: CS1002 ; expected", refused.Message, StringComparison.Ordinal);
         Assert.Equal(plainScene, File.ReadAllText(scene));
     }
 
@@ -946,6 +1020,16 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
 
         Assert.Equal("load_sprite failed: Box is a Node2D, which has no Texture2D texture property.", refused.Message);
         Assert.Equal(LevelScene, File.ReadAllText(Path.Combine(probe.Directory, "level.tscn")));
+    }
+
+    /// <summary>An unbuilt CsProbe copy whose CsProbeNode.cs does not compile, with the given [autoload] entries in its project.godot.</summary>
+    private CsProbeProject RedBuildWithAutoloads(string autoloads)
+    {
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        string source = File.ReadAllText(csProbe.SourcePath("CsProbeNode.cs"));
+        csProbe.WriteSource("CsProbeNode.cs", source.Replace("\"hidden\";", "\"hidden\"", StringComparison.Ordinal));
+        File.AppendAllText(Path.Combine(csProbe.Directory, "project.godot"), $"\n[autoload]\n\n{autoloads}\n");
+        return csProbe;
     }
 
     private static IEnumerable<string> Paths(JsonNode page) => page["nodes"]!.AsArray().Select(node => node!["path"]!.GetValue<string>());

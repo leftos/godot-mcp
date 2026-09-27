@@ -256,7 +256,7 @@ internal sealed partial class HeadlessTools
     private static JsonNode? ToNode(JsonElement value) => JsonSerializer.SerializeToNode(value);
 
     /// <summary>
-    /// The run's result with <c>shape</c> applied to each entry of its <c>results</c>, and <c>errors</c> added when Godot logged any.
+    /// The run's result with <c>shape</c> applied to each entry of its <c>results</c>, then <see cref="AddBuildAndErrors"/>.
     /// </summary>
     private static JsonObject ShapeResults(HeadlessResult run, Action<JsonObject> shape)
     {
@@ -266,13 +266,7 @@ internal sealed partial class HeadlessTools
             shape(entry);
         }
 
-        JsonArray errors = OnlyErrors(run.EngineErrors);
-        if (errors.Count > 0)
-        {
-            result["errors"] = errors;
-        }
-
-        return result;
+        return AddBuildAndErrors(result, run);
     }
 
     private static void CutValues(JsonObject? properties)

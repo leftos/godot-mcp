@@ -250,7 +250,7 @@ static func _unsaved_end_refusal(root: Node, ends: Dictionary) -> String:
 
 static func _missing_method(root: Node, ends: Dictionary, context: Dictionary) -> String:
 	var csharp: bool = not _csharp_script(root, ends["target"], context["scene"]).is_empty()
-	var refusal: String = SceneEdit.csharp_refusal(context["scene"], csharp, context["build"])
+	var refusal: String = SceneEdit.csharp_refusal(context["scene"], csharp, context)
 	return (
 		refusal if not refusal.is_empty() else "%s has no method %s." % [ends["to"], ends["method"]]
 	)

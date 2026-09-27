@@ -81,6 +81,7 @@ public sealed partial class PrepTests : IAsyncDisposable
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() => LaunchAsync(csProbe.Directory, prepare: true, cancellation));
 
+        Assert.StartsWith("The Debug C# build of ", refused.Message, StringComparison.Ordinal);
         Assert.Contains("CsProbeNode.cs:10: CS1002", refused.Message, StringComparison.Ordinal);
         Assert.Contains(Path.Combine(csProbe.Directory, ".godot", "godot-mcp", "build.log"), refused.Message, StringComparison.Ordinal);
         Assert.Empty(_harness.Sessions.List(includeStopped: true));

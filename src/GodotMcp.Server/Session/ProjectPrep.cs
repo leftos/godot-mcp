@@ -32,6 +32,9 @@ internal sealed record PrepContext(string ProjectDir, ILogger Logger, Func<IRead
 /// </summary>
 internal static class ProjectPrep
 {
+    /// <summary>The configuration the prep builds and lists Compile items in, which the build's refusals name.</summary>
+    public const string Configuration = "Debug";
+
     public static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(300);
 
     // Set by a dotnet test or build run above the server; they would point the nested build at another MSBuild.
@@ -163,7 +166,7 @@ internal static class ProjectPrep
                 "build",
                 csproj,
                 "-c",
-                "Debug",
+                Configuration,
                 "-p:GodotTargetPlatform=windows",
                 "-p:UseSharedCompilation=false",
                 .. rebuild ? ["--no-incremental"] : Array.Empty<string>(),
@@ -196,7 +199,15 @@ internal static class ProjectPrep
     )
     {
         string log = CompileItemsLog(projectDir);
-        string[] arguments = ["msbuild", csproj, "-getItem:Compile", "-p:Configuration=Debug", "-p:GodotTargetPlatform=windows", "-nologo"];
+        string[] arguments =
+        [
+            "msbuild",
+            csproj,
+            "-getItem:Compile",
+            $"-p:Configuration={Configuration}",
+            "-p:GodotTargetPlatform=windows",
+            "-nologo",
+        ];
         ToolProcessResult listed = await RunToolAsync(
             DotnetRequest(Installation.FindDotnet(), arguments, csproj, log),
             "dotnet",
@@ -270,12 +281,10 @@ internal static class ProjectPrep
             return;
         }
 
-        CompilerErrorList errors = CompilerErrors.Errors(diagnostics);
-        string listed = errors.Total == 0 ? "No compiler errors were found in its output." : string.Join('\n', errors.Errors);
-        string omitted = errors.Total > errors.Errors.Count ? $"\n(and {errors.Total - errors.Errors.Count} more)" : string.Empty;
+        string quoted = CompilerErrors.Errors(diagnostics).Quote();
         throw new SessionException(
-            $"The C# build of {csproj} failed (dotnet exited {built.ExitCode}), so the game was not started. "
-                + $"Fix the errors, or pass options.prepare: \"never\" to launch without building:\n{listed}{omitted}\nFull log: {log}"
+            $"The {Configuration} C# build of {csproj} failed (dotnet exited {built.ExitCode}), so the game was not started. "
+                + $"Fix the errors, or pass options.prepare: \"never\" to launch without building:\n{quoted}\nFull log: {log}"
         );
     }
 

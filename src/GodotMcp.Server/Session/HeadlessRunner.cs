@@ -44,7 +44,8 @@ internal sealed record HeadlessResult(JsonNode? Result, JsonArray EngineErrors, 
 /// through the prep and the run. The request and the result cross as JSON files under <c>.godot/godot-mcp/headless/</c>.
 /// A <c>--script</c> run reads <c>override.cfg</c> (4.7.2 <c>main.cpp</c> L2107), so it is refused while a session is live
 /// on the folder, and a marked file a crashed session left is removed first. The operation's parameters reach the script
-/// with the prep's C# build state added as <c>build</c>.
+/// with the prep's C# build state added as <c>build</c>, the configuration it builds as <c>buildConfiguration</c>, and a
+/// failed build's quoted compiler errors (<see cref="CompilerErrorList.Quote"/>) as <c>buildErrors</c>.
 /// </summary>
 internal static class HeadlessRunner
 {
@@ -74,7 +75,10 @@ internal static class HeadlessRunner
             PrepOutcome prep = request.Prepare
                 ? await ProjectPrep.RunReportingBuildAsync(context, cancellationToken)
                 : new PrepOutcome(PrepResult.Skipped, null);
-            JsonObject reply = await RunGodotAsync(new GodotCall(godot, script, request, registry, prep.Result.Build), cancellationToken);
+            JsonObject reply = await RunGodotAsync(
+                new GodotCall(godot, script, request, registry, prep.Result.Build, prep.BuildErrors),
+                cancellationToken
+            );
             JsonArray engineErrors = reply["engineErrors"]?.DeepClone() as JsonArray ?? [];
             return new HeadlessResult(reply["result"]?.DeepClone(), engineErrors, prep.Result, prep.BuildErrors)
             {
@@ -115,6 +119,12 @@ internal static class HeadlessRunner
         {
             JsonObject parameters = call.Request.Parameters.DeepClone().AsObject();
             parameters["build"] = call.Build;
+            parameters["buildConfiguration"] = ProjectPrep.Configuration;
+            if (call.BuildErrors is not null)
+            {
+                parameters["buildErrors"] = call.BuildErrors.Quote();
+            }
+
             JsonObject body = new()
             {
                 ["op"] = call.Request.Operation,
@@ -250,8 +260,15 @@ internal static class HeadlessRunner
     private static string ForGodot(string path) => Path.GetFullPath(path).Replace('\\', '/');
 
     /// <summary>
-    /// The Godot executable, the operations script, the request, the registry whose logger the run uses, and the prep's C# build
-    /// state (<see cref="PrepResult.Build"/>).
+    /// The Godot executable, the operations script, the request, the registry whose logger the run uses, the prep's C# build
+    /// state (<see cref="PrepResult.Build"/>), and a failed build's compiler errors.
     /// </summary>
-    private sealed record GodotCall(string Godot, string Script, HeadlessRequest Request, SessionRegistry Registry, string Build);
+    private sealed record GodotCall(
+        string Godot,
+        string Script,
+        HeadlessRequest Request,
+        SessionRegistry Registry,
+        string Build,
+        CompilerErrorList? BuildErrors
+    );
 }

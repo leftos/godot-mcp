@@ -204,15 +204,21 @@ static func _save_checked(
 		uses_csharp = uses_csharp or SceneEdit.file_uses_csharp(source)
 		known = SceneFiles.ext_uids_in(FileAccess.get_file_as_string(source))
 	var named: String = target if source.is_empty() else source
-	var refusal: String = SceneEdit.csharp_refusal(named, uses_csharp, str(params.get("build", "")))
+	var refusal: String = SceneEdit.csharp_refusal(named, uses_csharp, params)
 	if not refusal.is_empty():
 		return {"error": refusal}
 	return SceneEdit.save(root, target, SceneFiles.uid_for(target), known)
 
 
-## The context an edit of the scene params.scene is applied in: {scene, build}.
+## The context an edit of the scene params.scene is applied in: {scene, build, buildConfiguration,
+## buildErrors}, the last two as the prep passed them (SceneEdit.csharp_refusal quotes them).
 static func _context_of(params: Dictionary) -> Dictionary:
-	return {"scene": str(params.get("scene", "")), "build": str(params.get("build", ""))}
+	return {
+		"scene": str(params.get("scene", "")),
+		"build": str(params.get("build", "")),
+		"buildConfiguration": str(params.get("buildConfiguration", "")),
+		"buildErrors": str(params.get("buildErrors", "")),
+	}
 
 
 static func _fail(message: String) -> Dictionary:

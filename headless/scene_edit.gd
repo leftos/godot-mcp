@@ -99,14 +99,21 @@ static func inherited_from(scene_path: String, node_path: String) -> String:
 	return found
 
 
-## Why a save of the scene at scene_path is refused when it uses C# scripts, or "".
-static func csharp_refusal(scene_path: String, uses_csharp: bool, build: String) -> String:
-	if build != "failed" or not uses_csharp:
+## Why a save of the scene at scene_path is refused when it uses C# scripts, or "": prep holds the
+## run's build state (build), the configuration built (buildConfiguration) and a failed build's
+## quoted compiler errors (buildErrors), which the refusal quotes.
+static func csharp_refusal(scene_path: String, uses_csharp: bool, prep: Dictionary) -> String:
+	if str(prep.get("build", "")) != "failed" or not uses_csharp:
 		return ""
-	return (
-		"%s uses C# scripts and the project's C# build failed; fix it first (validate lists the errors)."
-		% scene_path
+	var configuration: String = str(prep.get("buildConfiguration", ""))
+	var built: String = "C# build" if configuration.is_empty() else "%s C# build" % configuration
+	var errors: String = str(prep.get("buildErrors", ""))
+	var refusal: String = (
+		"%s uses C# scripts and the project's %s failed; fix it first" % [scene_path, built]
 	)
+	if errors.is_empty():
+		return refusal + " (validate lists the errors)."
+	return "%s:\n%s" % [refusal, errors]
 
 
 ## Whether the scene file at path uses a C# script, directly or through a scene it instances or

@@ -2,6 +2,13 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## 0.3.2 - 2026-09-27
+
+### Fixed
+
+- A headless scene edit refused over a failed C# build quotes the compiler errors and names the configuration built, as a failed launch does.
+- Headless scene tools under a failed C# build report the build, not misleading C# autoload errors, in a `csharp` block.
+
 ## 0.3.1 - 2026-09-27
 
 ### Changed

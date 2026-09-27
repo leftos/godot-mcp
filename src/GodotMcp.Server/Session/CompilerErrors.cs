@@ -8,7 +8,23 @@ namespace GodotMcp.Server.Session;
 /// <summary>
 /// A failed build's errors, each as <c>file:line: CODE message</c>, at most <see cref="CompilerErrors.Limit"/>, and how many there were.
 /// </summary>
-internal sealed record CompilerErrorList(IReadOnlyList<string> Errors, int Total);
+internal sealed record CompilerErrorList(IReadOnlyList<string> Errors, int Total)
+{
+    /// <summary>
+    /// The errors one to a line, then <c>(and N more)</c> on a line of its own when some were left out; a sentence saying none
+    /// were found when there are none. run_project's refusal and a headless C# refusal quote it.
+    /// </summary>
+    public string Quote()
+    {
+        if (Total == 0)
+        {
+            return "No compiler errors were found in its output.";
+        }
+
+        string omitted = Total > Errors.Count ? $"\n(and {Total - Errors.Count} more)" : string.Empty;
+        return string.Join('\n', Errors) + omitted;
+    }
+}
 
 /// <summary>
 /// One error or warning of a build log: the file and position it names (none for an error such as <c>MSB1009</c>), its code,

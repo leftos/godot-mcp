@@ -254,6 +254,28 @@ public sealed class ProjectPrepTests : IDisposable
     }
 
     [Fact]
+    public void AQuoteListsTheErrorsThenHowManyWereLeftOut()
+    {
+        string log = string.Join('\n', Enumerable.Range(1, 25).Select(line => $@"C:\p\A.cs({line},1): error CS1002: ; expected [C:\p\A.csproj]"));
+
+        string[] quoted = CompilerErrors.Parse(log).Quote().Split('\n');
+
+        Assert.Equal(21, quoted.Length);
+        Assert.Equal(@"C:\p\A.cs:1: CS1002 ; expected", quoted[0]);
+        Assert.Equal(@"C:\p\A.cs:20: CS1002 ; expected", quoted[19]);
+        Assert.Equal("(and 5 more)", quoted[20]);
+    }
+
+    [Fact]
+    public void AQuoteOfAllTheErrorsOrOfNoneHasNoOmittedLine()
+    {
+        const string log = @"C:\p\A.cs(3,1): error CS1002: ; expected [C:\p\A.csproj]";
+
+        Assert.Equal(@"C:\p\A.cs:3: CS1002 ; expected", CompilerErrors.Parse(log).Quote());
+        Assert.Equal("No compiler errors were found in its output.", CompilerErrors.Parse("Build FAILED.").Quote());
+    }
+
+    [Fact]
     public void BuildDiagnosticsAreErrorsAndWarningsWithTheirPositionsDeduplicated()
     {
         const string file = @"D:\t\CsProbe\CsProbeNode.cs";
