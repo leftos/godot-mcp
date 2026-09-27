@@ -14,6 +14,9 @@ namespace GodotMcp.Server.Tools;
 internal sealed partial class RuntimeTools
 {
     private const int MaxDevice = 15;
+    private const string DeviceDescription =
+        "The pad's device id, 0 to 15. Omitted: the lowest id no connected real pad holds, kept while it stays free; "
+        + "the result reports it as device.";
     private const string SweepDescription =
         "{durationMs, release}: sweep over durationMs instead of at once, then let go; 0 and false when left out.";
     private const string PadNote =
@@ -62,7 +65,7 @@ internal sealed partial class RuntimeTools
         )]
             string button,
         [Description("tap, press or release.")] string action = "tap",
-        [Description("The pad's device id, 0 (the first pad) to 15.")] int device = 0,
+        [Description(DeviceDescription)] int? device = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
@@ -77,9 +80,8 @@ internal sealed partial class RuntimeTools
             ["gesture"] = "gamepad_button",
             ["button"] = CheckJoyButton(button),
             ["action"] = action,
-            ["device"] = CheckDevice(device),
         };
-        return SendInputAsync(session, "gamepad_button", parameters, TimeSpan.Zero, cancellationToken);
+        return SendInputAsync(session, "gamepad_button", WithDevice(parameters, device), TimeSpan.Zero, cancellationToken);
     }
 
     [McpServerTool(Name = "gamepad_axis", ReadOnly = false, Destructive = false, OpenWorld = false)]
@@ -93,7 +95,7 @@ internal sealed partial class RuntimeTools
     public Task<string> GamepadAxisAsync(
         [Description("A Godot JoyAxis without JOY_AXIS_, any case: LEFT_X, LEFT_Y, RIGHT_X, RIGHT_Y, TRIGGER_LEFT, TRIGGER_RIGHT.")] string axis,
         [Description("-1 to 1 for a stick axis (Y is down-positive), 0 to 1 for a trigger.")] double value,
-        [Description("The pad's device id, 0 (the first pad) to 15.")] int device = 0,
+        [Description(DeviceDescription)] int? device = null,
         [Description(SweepDescription)] SweepOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
@@ -121,7 +123,7 @@ internal sealed partial class RuntimeTools
     public Task<string> GamepadStickAsync(
         [Description("left or right.")] string stick,
         [Description("The stick's position, {x, y}, each -1 to 1; y is down-positive.")] StickPosition position,
-        [Description("The pad's device id, 0 (the first pad) to 15.")] int device = 0,
+        [Description(DeviceDescription)] int? device = null,
         [Description(SweepDescription)] SweepOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
@@ -152,15 +154,31 @@ internal sealed partial class RuntimeTools
         return sweep.DurationMs >= 0 ? sweep : throw new McpException($"durationMs must be 0 or more; got {sweep.DurationMs}.");
     }
 
-    private static JsonObject AxesParameters(JsonArray axes, int device, SweepOptions sweep) =>
-        new()
+    private static JsonObject AxesParameters(JsonArray axes, int? device, SweepOptions sweep) =>
+        WithDevice(
+            new JsonObject
+            {
+                ["gesture"] = "gamepad_axes",
+                ["axes"] = axes,
+                ["durationMs"] = sweep.DurationMs,
+                ["release"] = sweep.Release,
+            },
+            device
+        );
+
+    /// <summary>
+    /// Adds device to a pad gesture's parameters when it is given; without it the bridge injects on the id it chooses.
+    /// </summary>
+    /// <exception cref="McpException">The device is not a joypad id.</exception>
+    internal static JsonObject WithDevice(JsonObject parameters, int? device)
+    {
+        if (device is int id)
         {
-            ["gesture"] = "gamepad_axes",
-            ["axes"] = axes,
-            ["durationMs"] = sweep.DurationMs,
-            ["release"] = sweep.Release,
-            ["device"] = CheckDevice(device),
-        };
+            parameters["device"] = CheckDevice(id);
+        }
+
+        return parameters;
+    }
 
     private static JsonObject AxisTarget(string axis, double value) => new() { ["axis"] = axis, ["value"] = value };
 

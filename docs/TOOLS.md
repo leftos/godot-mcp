@@ -47,7 +47,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 - **Does:** launches the project with the bridge injected and returns once the bridge connects: `{session, projectPath, processId, quiet, recording?, prep}`.
 - **Use:** `projectPath` (the folder holding `project.godot`); `scene` for a scene other than the main one; `userArgs` (after `--`, read with `OS.get_cmdline_user_args()`); `engineArgs` (before `--`, e.g. `["--resolution", "1280x720"]`); `options {quiet, shutOutRealGamepads, session, prepare, preset, record}`.
-- **Edges:** a live session name is refused; a new name starts a second session alongside. `options.preset` names a preset from `godot-mcp.json` and fails when the file or preset is missing. By default the machine's real gamepads stay live and feed the same actions as the gamepad tools; `shutOutRealGamepads: true` keeps them out, at the cost of focus-out notifications to the game (a game that pauses on focus loss will). `record` changes game timing: see Recording.
+- **Edges:** a live session name is refused; a new name starts a second session alongside. `options.preset` names a preset from `godot-mcp.json` and fails when the file or preset is missing. By default the machine's real gamepads stay live and feed the same actions as the gamepad tools; `shutOutRealGamepads: true` keeps them out, at the cost of focus-out notifications to the game (a game that pauses on focus loss will, and every `Popup` closes as it opens). `record` changes game timing: see Recording.
 
 ### `attach_project`
 
@@ -161,9 +161,9 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 ### `gamepad_button`
 
-- **Does:** taps, presses or releases one pad button as a pad's driver would: `button` a JoyButton without `JOY_BUTTON_` (`A`, `B`, `START`, `DPAD_DOWN`, `LEFT_SHOULDER`...), `action` `tap` (default), `press` or `release`, `device` 0 to 15.
+- **Does:** taps, presses or releases one pad button as a pad's driver would: `button` a JoyButton without `JOY_BUTTON_` (`A`, `B`, `START`, `DPAD_DOWN`, `LEFT_SHOULDER`...), `action` `tap` (default), `press` or `release`, `device` 0 to 15. Without `device`, all three pad tools (and `simulate_input`'s `joypad_*` events without one) inject on the lowest id no connected real pad holds, keep that id for the game's life while it stays free, and report it as `device`; claim that pad in a game's pad-selection step as a player would.
 - **Use:** actions bound to pad buttons; the d-pad moves GUI focus through the default `ui_*` bindings.
-- **Edges (all three pad tools):** the injected pad never shows as connected (`Input.get_connected_joypads` stays empty), so a game that waits for a connected pad needs an OS-level virtual pad. Real pads also feed the game unless the session was started with `shutOutRealGamepads`.
+- **Edges (all three pad tools):** the injected pad never shows in `Input.get_connected_joypads` (only the real pads do), so a game that waits for a connected pad needs an OS-level virtual pad. An explicit `device` a real pad holds is injected as asked, with a `warning` naming the pad; with real pads on all 16 ids and no `device`, the call is refused. Real pads also feed the game unless the session was started with `shutOutRealGamepads`, which closes every `Popup` (menus, `OptionButton` lists) as it opens: the bridge's re-sent focus-out is what a popup closes on.
 
 ### `gamepad_axis`
 
@@ -423,7 +423,7 @@ A `godot-mcp.json` beside `project.godot` sets launch defaults for every `run_pr
 
 ### Drive a gamepad menu
 
-1. `run_project {projectPath, options: {shutOutRealGamepads: true}}`: so a pad on the desk cannot move the focus under you.
+1. `run_project {projectPath, options: {shutOutRealGamepads: true}}`: so a pad on the desk cannot move the focus under you (a menu that opens a `Popup` needs real pads live instead: shut-out closes popups).
 2. `get_ui_elements {filter: "Button"}`: learn the menu's buttons.
 3. `gamepad_button {button: "DPAD_DOWN"}`, or `gamepad_stick {stick: "left", position: {x: 0, y: 1}, options: {release: true}}`: without `release` a second push does not move focus again.
 4. `wait_for {condition: {expression: "root.gui_get_focus_owner().name == \"Options\""}, timeoutMs: 1000}`: `met: true` confirms where focus went.

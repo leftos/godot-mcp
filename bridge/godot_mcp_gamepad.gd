@@ -42,17 +42,39 @@ const JOY_BUTTON_NAMES: PackedStringArray = [
 const JOY_AXIS_NAMES: PackedStringArray = [
 	"LEFT_X", "LEFT_Y", "RIGHT_X", "RIGHT_Y", "TRIGGER_LEFT", "TRIGGER_RIGHT"
 ]
+const NO_FREE_DEVICE := (
+	"Every gamepad id 0-15 is held by a connected real pad; "
+	+ "pass 'device' to inject on one of them."
+)
 
 ## The bridge (godot_mcp_bridge.gd), set by it before this node enters the tree.
 var bridge: Node
 ## Whether the machine's real pads are kept out of the game.
 var real_pads_shut_out: bool = false
+## What the playing gesture adds to its result: device, the id it injected on, and warning. The
+## input player empties it as a gesture starts and merges it into the result.
+var report: Dictionary = {}
 ## The buttons the injected pads hold, as Vector2i(device, button) keys.
 var _held_buttons: Dictionary = {}
 ## The value each injected axis holds, keyed by Vector2i(device, axis).
 var _axes: Dictionary = {}
 var _reassert_queued: bool = false
 var _sending_focus_out: bool = false
+## The id pad events without a device play on, chosen by the first of them; -1 until then.
+var _chosen: int = -1
+
+
+## The id a pad event without a device injects on: previous while it is 0-15 and no real pad in
+## connected holds it, else the lowest id no real pad holds; -1 when real pads hold them all.
+## Input.get_connected_joypads lists only the pads the platform driver connected, never the
+## injected ids (core/input/input.cpp L2291-2301 in 4.7.2).
+static func choose_device(connected: Array, previous: int) -> int:
+	if previous >= 0 and previous <= MAX_JOY_DEVICE and not previous in connected:
+		return previous
+	for device in MAX_JOY_DEVICE + 1:
+		if not device in connected:
+			return device
+	return -1
 
 
 ## Marks the application unfocused now, and again after every focus change from here on.
@@ -98,9 +120,10 @@ func play_button(params: Dictionary) -> String:
 	var button: int = _parse_button(params.get("button"))
 	if button < 0:
 		return _unknown_button(params.get("button"))
-	var device: int = _parse_device(params.get("device", 0))
-	if device < 0:
-		return _bad_device(params.get("device"))
+	var device: Variant = _device_for(params)
+	if device is String:
+		return device
+	report["device"] = device
 	var action: String = str(params.get("action", "tap"))
 	if not action in ["tap", "press", "release"]:
 		return "unknown gamepad_button action '%s'; use tap, press or release" % action
@@ -116,9 +139,10 @@ func play_button(params: Dictionary) -> String:
 ## Moves every axis in params.axes ({axis, value}) from the value it holds to its value, over
 ## params.durationMs; with params.release, sends 0.0 on each a frame after they arrive.
 func play_axes(params: Dictionary) -> String:
-	var device: int = _parse_device(params.get("device", 0))
-	if device < 0:
-		return _bad_device(params.get("device"))
+	var device: Variant = _device_for(params)
+	if device is String:
+		return device
+	report["device"] = device
 	if not params.get("axes") is Array:
 		return "axes must be an array of {axis, value}"
 	var targets: Dictionary = {}
@@ -139,9 +163,9 @@ func play_raw_button(spec: Dictionary) -> String:
 	var button: int = _parse_button(spec.get("button"))
 	if button < 0:
 		return _unknown_button(spec.get("button"))
-	var device: int = _parse_device(spec.get("device", 0))
-	if device < 0:
-		return _bad_device(spec.get("device"))
+	var device: Variant = _device_for(spec)
+	if device is String:
+		return device
 	if spec.has("pressed"):
 		_set_button(device, button, bool(spec["pressed"]))
 		return ""
@@ -156,12 +180,42 @@ func play_raw_motion(spec: Dictionary) -> String:
 	var error: String = _read_axis_target(spec, targets)
 	if not error.is_empty():
 		return error
-	var device: int = _parse_device(spec.get("device", 0))
-	if device < 0:
-		return _bad_device(spec.get("device"))
+	var device: Variant = _device_for(spec)
+	if device is String:
+		return device
 	for axis: int in targets:
 		_set_axis(device, axis, targets[axis])
 	return ""
+
+
+## The id a pad event plays on, or a String saying why it has none. With no device, the chosen
+## id, kept from call to call and put in report as device; with one that a real pad holds, a
+## warning in report.
+func _device_for(params: Dictionary) -> Variant:
+	if not params.has("device"):
+		_chosen = choose_device(Input.get_connected_joypads(), _chosen)
+		if _chosen < 0:
+			return NO_FREE_DEVICE
+		report["device"] = _chosen
+		return _chosen
+	var device: int = _parse_device(params["device"])
+	if device < 0:
+		return _bad_device(params["device"])
+	if device in Input.get_connected_joypads():
+		_warn_real_pad(device)
+	return device
+
+
+## Adds to report's warning, once per id, that device is a connected real pad.
+func _warn_real_pad(device: int) -> void:
+	var sentence: String = (
+		"Device %d is a connected real pad (%s); its own input mixes with what is injected there."
+		% [device, Input.get_joy_name(device)]
+	)
+	var warning: String = str(report.get("warning", ""))
+	if warning.contains(sentence):
+		return
+	report["warning"] = sentence if warning.is_empty() else "%s %s" % [warning, sentence]
 
 
 ## Adds {axis, value} to targets as JoyAxis -> value; a String says why it cannot.

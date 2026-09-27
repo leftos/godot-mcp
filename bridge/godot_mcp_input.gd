@@ -41,10 +41,12 @@ func _ready() -> void:
 ## Plays one gesture over frames, then waits two more frames, so the game's handlers have run
 ## and their errors are flushed ahead of the reply. Every point arrives in viewport coordinates.
 ## Answers {result: {pointer, heldButtonMask}}, to which a click, drag or mouse_button adds the
-## Controls it hit, or {error}. Takes the uiChanged baseline when none is pending.
+## Controls it hit and a pad gesture the gamepad's report (device, warning), or {error}. Takes
+## the uiChanged baseline when none is pending.
 func play(params: Dictionary) -> Dictionary:
 	bridge._gesture_playing = true
 	_hits = {}
+	bridge._pads.report = {}
 	if _ui_baseline.is_empty():
 		_ui_baseline = _snapshot_ui()
 	var error: String = await _play_gesture(params)
@@ -59,7 +61,18 @@ func play(params: Dictionary) -> Dictionary:
 	}
 	if HIT_GESTURES.has(str(params.get("gesture", ""))):
 		result.merge(_hits)
+	_add_pad_report(result)
 	return {"result": result}
+
+
+## Adds the gamepad's report to result; a warning follows one result already has, after a space.
+func _add_pad_report(result: Dictionary) -> void:
+	var report: Dictionary = bridge._pads.report
+	for key: String in report:
+		if key == "warning" and result.has("warning"):
+			result["warning"] = "%s %s" % [result["warning"], report["warning"]]
+		else:
+			result[key] = report[key]
 
 
 ## Whether a uiChanged baseline is pending.

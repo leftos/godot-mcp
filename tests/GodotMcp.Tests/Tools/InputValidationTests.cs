@@ -164,6 +164,14 @@ public sealed class InputValidationTests : IDisposable
     }
 
     [Fact]
+    public void AnOmittedDeviceIsNotSent()
+    {
+        Assert.False(RuntimeTools.WithDevice(new JsonObject { ["gesture"] = "gamepad_button" }, null).ContainsKey("device"));
+        Assert.Equal(3, RuntimeTools.WithDevice(new JsonObject(), 3)["device"]!.GetValue<int>());
+        Assert.Throws<McpException>(() => RuntimeTools.WithDevice(new JsonObject(), 16));
+    }
+
+    [Fact]
     public async Task GamepadButtonRefusesAnUnknownAction()
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>

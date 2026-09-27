@@ -11,14 +11,14 @@ namespace GodotMcp.IntegrationTests;
 /// (probe_jump on A, probe_right on LEFT_X+ with deadzone 0.2), and focus moving down its Menu column from MenuA. One shared
 /// run with the real pads shut out, reset before each test, except for the test of a default run, which launches its own.
 /// </summary>
-public sealed class GamepadTests(SharedShutOutProbeSession shared) : IAsyncLifetime, IClassFixture<SharedShutOutProbeSession>
+public sealed class GamepadTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
     private const int TestTimeoutMs = 45_000;
     private const int ScriptTimeoutMs = 10_000;
     private const string ReadButtonAAndJump = "return [Input.is_joy_button_pressed(0, JOY_BUTTON_A), Input.is_action_pressed(\"probe_jump\")]";
     private const string ReadFocusOwner = "return str(scene_tree.root.gui_get_focus_owner().name)";
     private static readonly StickPosition Down = new(0, 1);
-    private readonly SharedShutOutProbeSession _shared = shared;
+    private readonly SharedProbeSession _shared = shared;
     private readonly RuntimeTools _tools = new(shared.Sessions);
 
     public async ValueTask InitializeAsync() => await _shared.ResetAsync(TestContext.Current.CancellationToken);
@@ -200,11 +200,83 @@ public sealed class GamepadTests(SharedShutOutProbeSession shared) : IAsyncLifet
         Assert.False(state[2]!.GetValue<bool>(), $"the application was focused again after the focus-in: {state.ToJsonString()}");
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ADefaultedPadCallInjectsOnTheLowestIdNoRealPadHolds()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        int[] connected = await ConnectedPadsAsync();
+        int expected = Enumerable.Range(0, 16).First(id => !connected.Contains(id));
+
+        JsonNode pressed = JsonNode.Parse(await _tools.GamepadButtonAsync("A", "press", cancellationToken: cancellation))!;
+        bool held = (await RunAsync($"return Input.is_joy_button_pressed({expected}, JOY_BUTTON_A)")).GetValue<bool>();
+        await _tools.GamepadButtonAsync("A", "release", cancellationToken: cancellation);
+
+        Assert.Equal(expected, Device(pressed));
+        Assert.True(held, $"A is not held on device {expected}; the real pads hold [{string.Join(", ", connected)}]");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task TheDefaultedIdIsKeptAcrossCalls()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonNode first = JsonNode.Parse(await _tools.GamepadButtonAsync("B", "tap", cancellationToken: cancellation))!;
+        JsonNode second = JsonNode.Parse(await _tools.GamepadAxisAsync("LEFT_Y", 0.5, cancellationToken: cancellation))!;
+
+        Assert.Equal(Device(first), Device(second));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ARawJoypadEventWithoutDeviceUsesTheChosenId()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonObject motion = new()
+        {
+            ["type"] = "joypad_motion",
+            ["axis"] = "right_x",
+            ["value"] = 0.75,
+        };
+
+        JsonNode axis = JsonNode.Parse(await _tools.GamepadAxisAsync("LEFT_X", 0.0, cancellationToken: cancellation))!;
+        JsonNode raw = JsonNode.Parse(await _tools.SimulateInputAsync([motion], cancellationToken: cancellation))!;
+        int device = Device(raw);
+        double moved = (await RunAsync($"return Input.get_joy_axis({device}, JOY_AXIS_RIGHT_X)")).GetValue<double>();
+
+        Assert.Equal(Device(axis), device);
+        Assert.Equal(0.75, moved, 5);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnExplicitRealPadIdWarns()
+    {
+        int[] connected = await ConnectedPadsAsync();
+        Assert.SkipWhen(connected.Length == 0, "no real pad is connected");
+        int id = connected[0];
+
+        JsonNode tapped = JsonNode.Parse(await _tools.GamepadButtonAsync("A", "tap", id, cancellationToken: TestContext.Current.CancellationToken))!;
+
+        string warning = tapped["warning"]?.GetValue<string>() ?? string.Empty;
+        Assert.StartsWith($"Device {id} is a connected real pad (", warning, StringComparison.Ordinal);
+        Assert.EndsWith("its own input mixes with what is injected there.", warning, StringComparison.Ordinal);
+    }
+
     private const string ReadShutOut =
         "var shut_out: bool = scene_tree.root.get_node(\"GodotMcpBridge/Gamepad\").real_pads_shut_out\n\t"
         + "var ignoring := Input.is_ignoring_joypad_on_unfocused_application()";
 
     private Task<JsonNode> RunAsync(string body) => RunAsync(_tools, body);
+
+    /// <summary>The ids of the real pads the platform's driver connected, as the game sees them.</summary>
+    private async Task<int[]> ConnectedPadsAsync() =>
+        [.. (await RunAsync("return Input.get_connected_joypads()")).AsArray().Select(id => (int)id!.GetValue<double>())];
+
+    /// <summary>The device id a pad gesture's result reports.</summary>
+    private static int Device(JsonNode result)
+    {
+        JsonNode? device = result["device"];
+        Assert.True(device is JsonValue, $"no device in {result.ToJsonString()}");
+        return (int)device!.GetValue<double>();
+    }
 
     private static async Task<JsonNode> RunAsync(RuntimeTools tools, string body)
     {

@@ -161,21 +161,22 @@ public sealed class CaptureTests(SharedProbeSession shared) : IAsyncLifetime, IC
         using ProbeProject probe = new();
         await using SessionHarness harness = new();
 
-        // Real pads are shut out, as in GamepadTests: this machine's pads share device 0 with the injected one.
+        // Real pads are shut out, as in GamepadTests: a real pad's A would jump the probe too.
         await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, true, Prepare: true), null, cancellation);
         RuntimeTools tools = new(harness.Sessions);
-        (int Jumps, double LeftX) before = await ReadPadAsync(tools, cancellation);
+        int jumpsBefore = (await RunAsync(tools, "return scene_tree.root.get_node(\"Main/PadProbe\").jump_count", cancellation)).GetValue<int>();
 
         await StartAsync(tools, new CaptureOptions(Sources: ["sent"]), cancellation);
-        await tools.GamepadButtonAsync("A", cancellationToken: cancellation);
+        JsonNode sent = JsonNode.Parse(await tools.GamepadButtonAsync("A", cancellationToken: cancellation))!;
+        int device = (int)sent["device"]!.GetValue<double>();
         await tools.GamepadAxisAsync("LEFT_X", 0.5, cancellationToken: cancellation);
         JsonNode stopped = await StopAsync(tools, cancellation);
-        (int Jumps, double LeftX) captured = await ReadPadAsync(tools, cancellation);
+        (int Jumps, double LeftX) captured = await ReadPadAsync(tools, device, cancellation);
         await tools.GamepadAxisAsync("LEFT_X", 0.0, cancellationToken: cancellation);
 
         JsonObject[] events = [.. stopped["events"]!.AsArray().Select(item => item!.DeepClone().AsObject())];
         await tools.SimulateInputAsync(events, cancellationToken: cancellation);
-        (int Jumps, double LeftX) replayed = await ReadPadAsync(tools, cancellation);
+        (int Jumps, double LeftX) replayed = await ReadPadAsync(tools, device, cancellation);
 
         string[] pad =
         [
@@ -188,17 +189,17 @@ public sealed class CaptureTests(SharedProbeSession shared) : IAsyncLifetime, IC
                 ),
         ];
         Assert.Equal(["A:True", "A:False", "LEFT_X:0.5"], pad);
-        Assert.Equal((1, 0.5), (captured.Jumps - before.Jumps, captured.LeftX));
+        Assert.Equal((1, 0.5), (captured.Jumps - jumpsBefore, captured.LeftX));
         Assert.Equal((1, 0.5), (replayed.Jumps - captured.Jumps, replayed.LeftX));
         await harness.Sessions.StopAsync(null, cancellation);
         Assert.Equal(string.Empty, Git.Status(probe.Directory));
     }
 
-    private static async Task<(int Jumps, double LeftX)> ReadPadAsync(RuntimeTools tools, CancellationToken cancellation)
+    private static async Task<(int Jumps, double LeftX)> ReadPadAsync(RuntimeTools tools, int device, CancellationToken cancellation)
     {
         JsonNode pad = await RunAsync(
             tools,
-            "return [scene_tree.root.get_node(\"Main/PadProbe\").jump_count, Input.get_joy_axis(0, JOY_AXIS_LEFT_X)]",
+            $"return [scene_tree.root.get_node(\"Main/PadProbe\").jump_count, Input.get_joy_axis({device}, JOY_AXIS_LEFT_X)]",
             cancellation
         );
         return (pad[0]!.GetValue<int>(), pad[1]!.GetValue<double>());

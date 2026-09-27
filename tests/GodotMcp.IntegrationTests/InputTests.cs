@@ -301,14 +301,20 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         Assert.False(dragged["dropAccepted"]!.GetValue<bool>(), dragged.ToJsonString());
     }
 
+    // A run of its own with the real pads live: the shared run is shut out of them, and shut-out mode's re-sent application
+    // focus-out closes a Popup as it opens (popup.cpp L114-120 in 4.7.2).
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ClickReportsAControlInsideAPopup()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        JsonNode centre = await RunAsync(PopupScript);
+        using ProbeProject probe = new();
+        await using SessionHarness harness = new();
+        await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
+        RuntimeTools tools = new(harness.Sessions);
+        JsonNode centre = await RunAsync(tools, PopupScript);
 
         JsonNode clicked = JsonNode.Parse(
-            await _tools.ClickAsync(
+            await tools.ClickAsync(
                 new InputTarget(null, centre["x"]!.GetValue<double>(), centre["y"]!.GetValue<double>()),
                 "left",
                 false,
@@ -317,6 +323,7 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         )!;
 
         AssertHit(clicked, "pressedOn", "PopupButton", "Button");
+        await StopAndCheckCleanAsync(harness, probe);
     }
 
     [Fact(Timeout = TestTimeoutMs)]

@@ -6,10 +6,11 @@ using GodotMcp.TestSupport;
 namespace GodotMcp.IntegrationTests.Fixtures;
 
 /// <summary>
-/// One quiet InputProbe run shared by a test class: launched once, put back to a fresh launch's state by
-/// <see cref="ResetAsync"/> before each test, stopped after the last with the probe's tree checked clean.
+/// One quiet InputProbe run shared by a test class, with the machine's real pads shut out (shutOutRealGamepads): launched
+/// once, put back to a fresh launch's state by <see cref="ResetAsync"/> before each test, stopped after the last with the
+/// probe's tree checked clean.
 /// </summary>
-public class SharedProbeSession : IAsyncLifetime
+public sealed class SharedProbeSession : IAsyncLifetime
 {
     private const int ScriptTimeoutMs = 10_000;
 
@@ -87,18 +88,9 @@ public class SharedProbeSession : IAsyncLifetime
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
     private readonly RuntimeTools _tools;
-    private readonly bool _shutOutRealGamepads;
     private bool _emulateTouch;
 
-    public SharedProbeSession()
-        : this(false) { }
-
-    /// <summary>A shared run launched with <c>shutOutRealGamepads</c> as given.</summary>
-    protected SharedProbeSession(bool shutOutRealGamepads)
-    {
-        _shutOutRealGamepads = shutOutRealGamepads;
-        _tools = new RuntimeTools(_harness.Sessions);
-    }
+    public SharedProbeSession() => _tools = new RuntimeTools(_harness.Sessions);
 
     /// <summary>The probe project the shared run plays.</summary>
     public string ProbeDirectory => _probe.Directory;
@@ -152,7 +144,7 @@ public class SharedProbeSession : IAsyncLifetime
 
     private async Task LaunchAsync(CancellationToken cancellation)
     {
-        await Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], true, _shutOutRealGamepads, Prepare: true), null, cancellation);
+        await Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], true, true, Prepare: true), null, cancellation);
         string emulate = await _tools.RunScriptAsync(
             "extends RefCounted\n\n\nfunc execute(_scene_tree: SceneTree) -> Variant:\n\treturn Input.emulate_touch_from_mouse\n",
             ScriptTimeoutMs,

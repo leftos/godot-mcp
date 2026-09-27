@@ -189,7 +189,8 @@ internal sealed partial class RuntimeTools
             + "click_element {element, button?, doubleClick?}; wait {ms}. An omitted pressed on key, mouse_button or "
             + "joypad_button is a press and a release a frame apart; a motion's relative defaults to the step from the last "
             + "pointer position and its button_mask to the buttons held now. Joypad names and ranges are gamepad_button's and "
-            + "gamepad_axis's; device defaults to 0."
+            + "gamepad_axis's; device omitted: the id the gamepad tools choose (the lowest no connected real pad holds), "
+            + "reported as device."
             + PadNote
             + ErrorNote
     )]

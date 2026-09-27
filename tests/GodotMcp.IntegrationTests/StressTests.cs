@@ -12,12 +12,12 @@ namespace GodotMcp.IntegrationTests;
 /// click's press and its release, and BaseButton's FOCUS_EXIT then clears press_attempt, so the release emits no pressed:
 /// that reads as a click this tool lost, though it played it. InputTests pins the engine behaviour on its own.
 /// </summary>
-public sealed class StressTests(SharedShutOutProbeSession shared) : IAsyncLifetime, IClassFixture<SharedShutOutProbeSession>
+public sealed class StressTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
     private const int TestTimeoutMs = 45_000;
     private const int ScriptTimeoutMs = 10_000;
     private static readonly StressPool JumpAndButton = new(Actions: ["probe_jump"], Elements: ["SmallButton"]);
-    private readonly SharedShutOutProbeSession _shared = shared;
+    private readonly SharedProbeSession _shared = shared;
     private readonly RuntimeTools _tools = new(shared.Sessions);
     private readonly StressTools _stress = new(shared.Sessions);
 

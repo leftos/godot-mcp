@@ -1,6 +1,7 @@
 extends "res://gd_test.gd"
-## The gamepad's parsing (bridge/godot_mcp_gamepad.gd): button, axis and device names and values.
-## The node is never added to the tree; only functions that do not need it are called.
+## The gamepad's parsing (bridge/godot_mcp_gamepad.gd): button, axis and device names and values,
+## and the choice of the id a pad call without a device injects on. The node is never added to
+## the tree; only functions that do not need it are called.
 # gdlint: disable=private-method-call
 
 var _pads_script: GDScript = load_bridge_script("godot_mcp_gamepad.gd")
@@ -92,3 +93,24 @@ func test_unknown_button_lists_every_button() -> void:
 	assert_true(message.begins_with("unknown gamepad button 'Z'; the buttons are A, B, "), message)
 	assert_true(message.ends_with("PADDLE4, TOUCHPAD"), message)
 	pads.free()
+
+
+func test_the_lowest_free_id_is_chosen() -> void:
+	assert_eq(_pads_script.choose_device([0, 1], -1), 2, "0 and 1 are real pads")
+
+
+func test_a_previous_choice_is_kept_while_free() -> void:
+	assert_eq(_pads_script.choose_device([0], 5), 5, "5 is still free")
+
+
+func test_a_previous_choice_a_real_pad_took_is_repicked() -> void:
+	assert_eq(_pads_script.choose_device([0, 2], 2), 1, "a real pad took 2")
+
+
+func test_no_free_id_gives_minus_one() -> void:
+	var every_id: Array = range(16)
+	assert_eq(_pads_script.choose_device(every_id, 3), -1, "every id is a real pad")
+
+
+func test_no_real_pads_gives_zero() -> void:
+	assert_eq(_pads_script.choose_device([], -1), 0, "no real pads")
