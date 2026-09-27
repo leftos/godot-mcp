@@ -52,6 +52,15 @@ public sealed class SnippetCompilerTests : IDisposable
     public async Task AVoidExpressionRunsAsAStatement() => Assert.Null(await RunAsync(CompileOk("Touch()")));
 
     [Fact]
+    public void ASuccessfulCompileCarriesAPortablePdb()
+    {
+        SnippetCompilation compilation = Compile("Answer + 1");
+
+        Assert.NotNull(compilation.Assembly);
+        Assert.NotEmpty(Assert.IsType<byte[]>(compilation.Pdb));
+    }
+
+    [Fact]
     public void AGarbageDllIsNotManaged()
     {
         string garbage = _temp.Combine("garbage.dll");
@@ -76,7 +85,7 @@ public sealed class SnippetCompilerTests : IDisposable
     [Fact]
     public void AMissingGlobalsTypeIsNamed()
     {
-        SnippetCompilation compilation = SnippetCompiler.Compile(new SnippetRequest("1", "Fixture.Nope", [_fixturePath], []));
+        SnippetCompilation compilation = SnippetCompiler.Compile(new SnippetRequest("1", "Fixture.Nope", ServerFramework, [_fixturePath], []));
 
         Assert.Null(compilation.Assembly);
         SnippetDiagnostic error = Assert.Single(compilation.Errors);
@@ -118,12 +127,42 @@ public sealed class SnippetCompilerTests : IDisposable
         }
     }
 
-    private static void BuildFixture(string path)
+    [Fact]
+    public void TheFrameworkComesFromTheGivenFolder()
+    {
+        string framework = _temp.Combine("framework");
+        Directory.CreateDirectory(framework);
+        foreach (string name in (string[])["System.Private.CoreLib", "System.Runtime", "System.Linq", "System.Collections"])
+        {
+            File.Copy(Path.Combine(ServerFramework, name + ".dll"), Path.Combine(framework, name + ".dll"));
+        }
+
+        BuildLibrary(
+            Path.Combine(framework, "Marker.dll"),
+            "Marker",
+            "namespace Marker; public static class Stamp { public static int Value => 7; }"
+        );
+        const string code = "Marker.Stamp.Value";
+
+        SnippetCompilation fromFolder = SnippetCompiler.Compile(new SnippetRequest(code, GlobalsType, framework, [_fixturePath], []));
+        SnippetCompilation fromServer = Compile(code);
+
+        Assert.Empty(fromFolder.Errors);
+        Assert.Equal("CS0103", Assert.Single(fromServer.Errors).Id);
+    }
+
+    /// <summary>The folder of the runtime these tests run on, which stands in for a game's.</summary>
+    internal static string ServerFramework => Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+
+    private static void BuildFixture(string path) => BuildLibrary(path, "Fixture", FixtureSource);
+
+    /// <summary>Compiles <paramref name="source"/> into the assembly <paramref name="name"/> at <paramref name="path"/>.</summary>
+    internal static void BuildLibrary(string path, string name, string source)
     {
         var compilation = CSharpCompilation.Create(
-            "Fixture",
-            [CSharpSyntaxTree.ParseText(FixtureSource)],
-            SnippetCompiler.FrameworkReferences,
+            name,
+            [CSharpSyntaxTree.ParseText(source)],
+            SnippetCompiler.FrameworkIn(ServerFramework),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable)
         );
         EmitResult result = compilation.Emit(path);
@@ -131,7 +170,7 @@ public sealed class SnippetCompilerTests : IDisposable
     }
 
     private SnippetCompilation Compile(string code, params string[] usings) =>
-        SnippetCompiler.Compile(new SnippetRequest(code, GlobalsType, [_fixturePath], usings));
+        SnippetCompiler.Compile(new SnippetRequest(code, GlobalsType, ServerFramework, [_fixturePath], usings));
 
     private byte[] CompileOk(string code, params string[] usings)
     {

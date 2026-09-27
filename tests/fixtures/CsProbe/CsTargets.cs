@@ -69,4 +69,8 @@ public partial class CsTargets : Node
     internal Godot.Collections.Dictionary<string, int> Scores { get; } = new() { ["alice"] = 1 };
 
     internal void Fail() => throw new System.InvalidOperationException("probe failure");
+
+    public string Bind(Update update) => $"{update.Label}@{update.At.X},{update.At.Y}";
+
+    internal int Rebind(Update update) => update.Values.Length;
 }

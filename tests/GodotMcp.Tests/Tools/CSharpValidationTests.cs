@@ -1,4 +1,5 @@
 using System.Text.Json;
+using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Server.Wire;
@@ -7,7 +8,10 @@ using ModelContextProtocol;
 
 namespace GodotMcp.Tests.Tools;
 
-/// <summary>cs_members', cs_get's, cs_set's and cs_call's argument checks, which refuse before anything reaches a game; no Godot runs here.</summary>
+/// <summary>
+/// cs_members', cs_get's, cs_set's, cs_call's and run_csharp's argument checks, which refuse before anything reaches a game; no
+/// Godot runs here.
+/// </summary>
 public sealed class CSharpValidationTests : IDisposable
 {
     private readonly BridgeListener _listener = new(NullLogger<BridgeListener>.Instance);
@@ -194,6 +198,70 @@ public sealed class CSharpValidationTests : IDisposable
                 cancellationToken: Token
             )
         );
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" \n\t")]
+    public async Task RunCSharpRefusesEmptyCode(string code)
+    {
+        // An out-of-range option too: the empty code is refused first.
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.RunCSharpAsync(code, new RunCSharpOptions(MaxDepth: 0), cancellationToken: Token)
+        );
+
+        Assert.Equal("code is empty. Pass a method body: statements, or one expression whose value is returned.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(33)]
+    public async Task RunCSharpRefusesAMaxDepthOutOfRange(int maxDepth)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.RunCSharpAsync("1 + 1", new RunCSharpOptions(MaxDepth: maxDepth), cancellationToken: Token)
+        );
+
+        Assert.Equal($"maxDepth must be 1 to 32; got {maxDepth}.", refused.Message);
+    }
+
+    [Fact]
+    public async Task RunCSharpRefusesATimeoutAbove120000()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.RunCSharpAsync("1 + 1", new RunCSharpOptions(TimeoutMs: 120_001), cancellationToken: Token)
+        );
+
+        Assert.Equal("timeoutMs must be 1 to 120000; got 120001.", refused.Message);
+    }
+
+    [Fact]
+    public async Task RunCSharpRefusesANullUsing()
+    {
+        // The JSON array ["System.Text", null] arrives as a string array holding a null.
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.RunCSharpAsync("1 + 1", new RunCSharpOptions(Usings: ["System.Text", null!]), cancellationToken: Token)
+        );
+
+        Assert.Equal("usings[1] is empty", refused.Message);
+    }
+
+    [Fact]
+    public void ACompileFailureListsTwentyErrorsThenCountsTheRest()
+    {
+        SnippetDiagnostic[] errors =
+        [
+            new(0, 0, "CS1000", "outside"),
+            .. Enumerable.Range(1, 22).Select(line => new SnippetDiagnostic(line, 5, "CS0103", $"missing {line}")),
+        ];
+
+        string[] lines = RuntimeTools.CompileFailure(errors).Split('\n');
+
+        Assert.Equal(22, lines.Length);
+        Assert.Equal("run_csharp failed: the snippet does not compile:", lines[0]);
+        Assert.Equal("(wrapper): error CS1000: outside", lines[1]);
+        Assert.Equal("snippet(19,5): error CS0103: missing 19", lines[20]);
+        Assert.Equal("… and 3 more", lines[21]);
+    }
 
     private const string EmptyMember =
         "member is empty. Pass a property or field name, or a dotted path (Pending.Options[0]); cs_members lists them.";

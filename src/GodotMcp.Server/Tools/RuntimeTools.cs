@@ -365,8 +365,9 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
         {
             "run_script" => "; a script that needs longer can raise timeoutMs",
             "call_method" => "; a method that needs longer can raise options.timeoutMs",
-            CsCallToolName => "; a Task that needs longer can raise options.timeoutMs, the first C# call loads the helper into the game, "
-                + "and restart_project clears a stuck one",
+            CsCallToolName or RunCSharpToolName =>
+                "; a Task that needs longer can raise options.timeoutMs, the first C# call loads the helper into the game, "
+                    + "and restart_project clears a stuck one",
             CsMembersToolName or CsGetToolName or CsSetToolName =>
                 "; the first C# call loads the helper into the game, and restart_project clears a stuck one",
             "frame_control" => "; a step waits for drawn frames, so a minimized window stalls it",

@@ -1,5 +1,4 @@
 using System.Diagnostics.CodeAnalysis;
-using System.Globalization;
 using System.Reflection;
 using System.Text.Json.Nodes;
 using Godot;
@@ -8,10 +7,10 @@ using GodotMcp.Dotnet.Core;
 namespace GodotMcp.Dotnet;
 
 /// <summary>
-/// The helper's <c>call</c>, <c>poll</c> and <c>forget</c> ops: a method or constructor of the request's <c>{node}</c>,
-/// <c>{type}</c> or <c>{handle}</c> target, chosen among its overloads and run on the main thread. A method whose declared
-/// return is a <c>Task</c> or <c>ValueTask</c> that has not finished answers <c>{"ok":true,"pending":"c&lt;n&gt;"}</c>, and
-/// the bridge polls that id each frame until the reply is final or it forgets the call.
+/// The helper's <c>call</c> op: a method or constructor of the request's <c>{node}</c>, <c>{type}</c> or <c>{handle}</c>
+/// target, chosen among its overloads and run on the main thread. A method whose declared return is a <c>Task</c> or
+/// <c>ValueTask</c> that has not finished answers <c>{"ok":true,"pending":"c&lt;n&gt;"}</c> from <see cref="PendingTasks"/>,
+/// and the bridge polls that id each frame until the reply is final or it forgets the call.
 /// </summary>
 internal static class Calls
 {
@@ -24,11 +23,6 @@ internal static class Calls
     private static readonly TargetHints Hints = new("cs_call", "call_method calls its methods");
 
     private static readonly GodotResolver Resolver = new();
-
-    /// <summary>The calls whose task had not finished when they returned, by id.</summary>
-    private static readonly Dictionary<string, Waiting> Pending = new(StringComparer.Ordinal);
-
-    private static long _issued;
 
     /// <summary>
     /// <c>{"op":"call","target":{..},"member":"Name"|".ctor","args":[..],"signature"?:[..],"typeArgs"?:[..],"keep"?:bool,
@@ -56,42 +50,6 @@ internal static class Calls
         {
             return Helper.Failure(e.Message);
         }
-    }
-
-    /// <summary><c>{"op":"poll","id":"c&lt;n&gt;"}</c> → the call's final reply once its task has finished, else the pending reply again.</summary>
-    public static JsonObject Poll(JsonObject request)
-    {
-        string id = request["id"]!.GetValue<string>();
-        if (!Pending.TryGetValue(id, out Waiting? waiting))
-        {
-            return Unknown(id);
-        }
-        if (!waiting.Task.IsCompleted)
-        {
-            return PendingReply(id);
-        }
-        Pending.Remove(id);
-        return Settled(waiting);
-    }
-
-    /// <summary>
-    /// <c>{"op":"forget","id":"c&lt;n&gt;"}</c> → <c>{"forgotten":"c&lt;n&gt;"}</c>: the call is dropped and its task left
-    /// running, a later fault observed so it is never reported as unobserved.
-    /// </summary>
-    public static JsonObject Forget(JsonObject request)
-    {
-        string id = request["id"]!.GetValue<string>();
-        if (!Pending.Remove(id, out Waiting? waiting))
-        {
-            return Unknown(id);
-        }
-        _ = waiting.Task.ContinueWith(
-            static task => _ = task.Exception,
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted,
-            TaskScheduler.Default
-        );
-        return Success(new JsonObject { ["forgotten"] = id });
     }
 
     private static JsonObject Run(Target target, Shape shape, JsonObject request)
@@ -171,7 +129,7 @@ internal static class Calls
         return definition == typeof(Task<>) || definition == typeof(ValueTask<>) ? declared.GetGenericArguments()[0] : null;
     }
 
-    /// <summary>Answers a finished task's outcome at once; stores an unfinished one under a fresh id and answers that it is pending.</summary>
+    /// <summary>Answers a finished task's outcome at once; an unfinished one goes to <see cref="PendingTasks"/>, which answers pending.</summary>
     private static JsonObject Await(object? value, Type declared, Waiting shell)
     {
         if (value is null)
@@ -180,13 +138,7 @@ internal static class Calls
         }
         Task task = value as Task ?? (Task)declared.GetMethod(nameof(ValueTask.AsTask), Type.EmptyTypes)!.Invoke(value, null)!;
         Waiting waiting = shell with { Task = task };
-        if (task.IsCompleted)
-        {
-            return Settled(waiting);
-        }
-        string id = "c" + (++_issued).ToString(CultureInfo.InvariantCulture);
-        Pending[id] = waiting;
-        return PendingReply(id);
+        return task.IsCompleted ? Settled(waiting) : PendingTasks.Add(task, () => Settled(waiting), null);
     }
 
     [SuppressMessage(
@@ -270,10 +222,6 @@ internal static class Calls
         Exception thrown = Thrown.Unwrap(e);
         return Helper.Failure($"{member} threw {Thrown.Describe(thrown)}{Thrown.Stack(thrown)}");
     }
-
-    private static JsonObject Unknown(string id) => Helper.Failure($"No pending call '{id}': its reply was given, or it was forgotten.");
-
-    private static JsonObject PendingReply(string id) => new() { ["ok"] = true, ["pending"] = id };
 
     private static JsonObject Success(JsonObject result) => new() { ["ok"] = true, ["result"] = result };
 

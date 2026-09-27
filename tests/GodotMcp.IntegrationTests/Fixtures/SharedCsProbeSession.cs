@@ -21,6 +21,9 @@ public sealed class SharedCsProbeSession : IAsyncLifetime
 
     internal CSharpBridge Bridge { get; }
 
+    /// <summary>The copy of the CsProbe project the shared game runs from.</summary>
+    internal string ProbeDirectory => _probe?.Directory ?? throw new InvalidOperationException("The shared CsProbe session is not started.");
+
     public async ValueTask InitializeAsync()
     {
         _probe = new CsProbeProject();

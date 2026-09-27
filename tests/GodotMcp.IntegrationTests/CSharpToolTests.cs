@@ -1,3 +1,7 @@
+using System.Collections.Immutable;
+using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
+using System.Reflection.PortableExecutable;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
@@ -11,7 +15,7 @@ namespace GodotMcp.IntegrationTests;
 /// <summary>
 /// The C# helper against a running game: loaded once into the CsProbe's own GodotSharp and answering its ping, a GDScript
 /// project refused before the bridge is asked, cs_members listing the CsProbe's own types, cs_get and cs_set reading
-/// and writing their members, and cs_call calling their methods and constructors.
+/// and writing their members, cs_call calling their methods and constructors, and run_csharp compiling and running snippets.
 /// </summary>
 public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture<SharedCsProbeSession>
 {
@@ -617,6 +621,179 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
         string refusal = "The C# helper refused the request: No pending call 'c999999': its reply was given, or it was forgotten.";
         Assert.Equal(refusal, poll.Message);
         Assert.Equal(refusal, forget.Message);
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpCallsBindWithAPlainRecord()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+        const string code =
+            "var t = Node<CsTargets>(\"CsTargets\"); "
+            + "var u = new Update(\"hand\", new Point2(1, 2), ImmutableArray.Create(3, 4), Mood.Calm); "
+            + "return t.Bind(u) + \"/\" + Call(t, \"Rebind\", u);";
+
+        JsonObject result = await RunCSharpAsync(code, new RunCSharpOptions(Usings: ["System.Collections.Immutable"]), cancellation);
+
+        Assert.Equal("hand@1,2/2", result["value"]?.GetValue<string>());
+        Assert.Equal("System.String", result["type"]?.GetValue<string>());
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpAwaits()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+        // The frame count moving while the snippet ran proves the helper answered pending: the game's main thread drew frames
+        // between the call and the result.
+        const string code =
+            "var t = Node<CsTargets>(\"CsTargets\"); ulong before = Engine.GetProcessFrames(); await Task.Delay(50); "
+            + "int n = await (Task<int>)Call(t, \"CountLaterAsync\", 21)!; return n + \"@\" + (Engine.GetProcessFrames() > before);";
+
+        JsonObject result = await RunCSharpAsync(code, null, cancellation);
+
+        Assert.Equal("42@True", result["value"]?.GetValue<string>());
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpCompileErrorNamesTheLine()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => RunCSharpAsync("var a = 1;\nreturn b;", null, cancellation));
+
+        Assert.StartsWith("run_csharp failed: the snippet does not compile:", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("snippet(2,", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("error CS0103", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpRefusesAStaleBuild()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string built = Path.Combine(_shared.ProbeDirectory, ".godot", "mono", "temp", "bin", "Debug", "CsProbe.dll");
+        string aside = built + ".aside";
+
+        // The game maps the built dll, which Windows lets be renamed but not overwritten, so the original moves aside.
+        File.Move(built, aside);
+        try
+        {
+            byte[] image = await File.ReadAllBytesAsync(aside, cancellation);
+            Guid original = ReadMvid(image);
+            image[MvidOffset(image)] ^= 0xFF;
+            Assert.NotEqual(original, ReadMvid(image));
+            await File.WriteAllBytesAsync(built, image, cancellation);
+
+            McpException refused = await Assert.ThrowsAsync<McpException>(() => RunCSharpAsync("1 + 1", null, cancellation));
+
+            Assert.Contains("older build of CsProbe.dll", refused.Message, StringComparison.Ordinal);
+            Assert.Contains("restart_project", refused.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(built);
+            File.Move(aside, built);
+        }
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpReportsTheThrownException()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            RunCSharpAsync("throw new InvalidOperationException(\"boom\");", null, cancellation)
+        );
+
+        string[] lines = refused.Message.Split('\n');
+        Assert.StartsWith("run_csharp failed: ", lines[0], StringComparison.Ordinal);
+        Assert.EndsWith("the snippet threw InvalidOperationException: boom", lines[0], StringComparison.Ordinal);
+        Assert.Contains("in snippet:line 1", lines[1], StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpBindsToTheGamesRuntime()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        // Proves the snippet binds to the game's own runtime: compiled against another framework, five paths and a params join
+        // can bind to params-span overloads the game's runtime lacks, which fail in the game with MissingMethodException.
+        const string code = "return System.IO.Path.Combine(\"a\", \"b\", \"c\", \"d\", \"e\") + \"|\" + string.Join(\"-\", \"x\", \"y\");";
+
+        JsonObject result = await RunCSharpAsync(code, null, cancellation);
+
+        Assert.Equal(Path.Combine("a", "b", "c", "d", "e") + "|x-y", result["value"]?.GetValue<string>());
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpGetsAndSetsPrivateAndStaticMembers()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+        const string code =
+            "var t = Node<CsTargets>(\"CsTargets\"); int clamped = Get<int>(t, \"_clamped\"); Set(t, \"_clamped\", 70); "
+            + "int seen = Get<int>(t, \"_clamped\"); Set(t, \"_clamped\", clamped); "
+            + "int count = Get<int>(typeof(Tally), \"Count\"); Set(typeof(Tally), \"Count\", count + 5); "
+            + "int after = (int)Get(typeof(Tally), \"Count\")!; Set(typeof(Tally), \"Count\", count); "
+            + "return seen + \"/\" + (after - count);";
+
+        JsonObject result = await RunCSharpAsync(code, null, cancellation);
+
+        // 70 is past the Clamped setter's range: the private field was written directly.
+        Assert.Equal("70/5", result["value"]?.GetValue<string>());
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpSharesHandlesWithTheOtherCSharpTools()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+        JsonObject kept = await GetAsync(new CSharpTarget(Node: TargetsPath), "Friendly", new GetOptions(Keep: true), cancellation);
+        string greeter = kept["handle"]!.GetValue<string>();
+
+        JsonObject typed = await RunCSharpAsync($"return Handle<Greeter>(\"{greeter}\").GetType().FullName;", null, cancellation);
+        JsonObject made = await RunCSharpAsync("return Keep(new Point2(3, 4));", null, cancellation);
+        JsonObject read = await GetAsync(new CSharpTarget(Handle: made["value"]!.GetValue<string>()), "X", null, cancellation);
+
+        Assert.Equal("CsProbe.Greeter", typed["value"]?.GetValue<string>());
+        Assert.Equal(3, read["value"]?.GetValue<int>());
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpPastItsTimeoutFailsAndTheNextRunSucceeds()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            RunCSharpAsync("await Task.Delay(2000); return 1;", new RunCSharpOptions(TimeoutMs: 200), cancellation)
+        );
+        JsonObject next = await RunCSharpAsync("1 + 1", null, cancellation);
+
+        Assert.StartsWith("run_csharp failed: ", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("the call did not complete within 200 ms; its Task is still running in the game", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(2, next["value"]?.GetValue<int>());
+    }
+
+    private async Task<JsonObject> RunCSharpAsync(string code, RunCSharpOptions? options, CancellationToken cancellation)
+    {
+        string json = await _tools.RunCSharpAsync(code, options, cancellationToken: cancellation);
+        return JsonNode.Parse(json)!.AsObject();
+    }
+
+    private static Guid ReadMvid(byte[] image)
+    {
+        using PEReader reader = new(ImmutableArray.Create(image));
+        MetadataReader metadata = reader.GetMetadataReader();
+        return metadata.GetGuid(metadata.GetModuleDefinition().Mvid);
+    }
+
+    /// <summary>Where the module's MVID sits in the file: the #GUID heap's start plus 16 bytes per guid before it (the index is 1-based).</summary>
+    private static int MvidOffset(byte[] image)
+    {
+        using PEReader reader = new(ImmutableArray.Create(image));
+        MetadataReader metadata = reader.GetMetadataReader();
+        int index = MetadataTokens.GetHeapOffset(metadata.GetModuleDefinition().Mvid);
+        return reader.PEHeaders.MetadataStartOffset + metadata.GetHeapMetadataOffset(HeapIndex.Guid) + ((index - 1) * 16);
     }
 
     private async Task<JsonObject> CallAsync(

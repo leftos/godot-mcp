@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Runtime.Loader;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -13,9 +14,10 @@ namespace GodotMcp.Dotnet;
 /// The helper's entry, run by the loader on the main thread: it stores the callable GDScript reaches the helper through
 /// as the SceneTree meta <see cref="MetaName"/>. The callable takes a JSON request — <c>{"op":"ping"}</c>, optionally
 /// with <c>"id":"&lt;instance id&gt;"</c>, <c>{"op":"members","target":{...}}</c>, which <see cref="Members"/>
-/// answers, <c>{"op":"get"|"set",...}</c>, which <see cref="MemberAccess"/> answers, or
-/// <c>{"op":"call"|"poll"|"forget",...}</c>, which <see cref="Calls"/> answers — and returns a JSON reply,
-/// <c>{"ok":true,"result":{...}}</c>, <c>{"ok":true,"pending":"c&lt;n&gt;"}</c> for a call still awaiting its task, or
+/// answers, <c>{"op":"get"|"set",...}</c>, which <see cref="MemberAccess"/> answers, <c>{"op":"call",...}</c>, which
+/// <see cref="Calls"/> answers, <c>{"op":"run",...}</c>, which <see cref="Snippets"/> answers, or
+/// <c>{"op":"poll"|"forget",...}</c>, which <see cref="PendingTasks"/> answers — and returns a JSON reply,
+/// <c>{"ok":true,"result":{...}}</c>, <c>{"ok":true,"pending":"c&lt;n&gt;"}</c> for a call or snippet still awaiting its task, or
 /// <c>{"ok":false,"error":"..."}</c>.
 /// </summary>
 public static class Helper
@@ -79,8 +81,9 @@ public static class Helper
             "get" => MemberAccess.Get(request),
             "set" => MemberAccess.Set(request),
             "call" => Calls.Call(request),
-            "poll" => Calls.Poll(request),
-            "forget" => Calls.Forget(request),
+            "run" => Snippets.Run(request),
+            "poll" => PendingTasks.Poll(request),
+            "forget" => PendingTasks.Forget(request),
             _ => Failure($"Unknown op '{op}'."),
         };
 
@@ -95,6 +98,8 @@ public static class Helper
             ["helperContext"] = AssemblyLoadContext.GetLoadContext(typeof(Helper).Assembly)?.Name,
             ["godotSharpContext"] = AssemblyLoadContext.GetLoadContext(typeof(GodotObject).Assembly)?.Name,
             ["core"] = TypeNames.Format(typeof(List<int>)),
+            // The folder of the runtime the game runs on: a snippet compiles against its assemblies, not the server's.
+            ["runtimeDirectory"] = RuntimeEnvironment.GetRuntimeDirectory(),
         };
         if (request["id"] is { } id)
         {

@@ -13,6 +13,9 @@ internal sealed record CSharpReply(JsonNode? Result, bool LoadedNow);
 /// </summary>
 internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtension)
 {
+    /// <summary>The folder beside the extension that holds the helper's managed dlls (run.ps1's <c>dotnet</c> lays it out).</summary>
+    private const string HelperFolderName = "helper";
+
     /// <summary>
     /// Why the project cannot answer a C# tool, or null when it can: no C# assembly, a C# build the prep skipped, an
     /// assembly that was never built, or a server that ships no helper.
@@ -97,6 +100,22 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
             await session.SendAsync("dotnet", parameters, TimeSpan.FromMilliseconds(timeoutMs), cancellation)
             ?? throw new InvalidOperationException("The C# helper's reply is missing: the bridge answered no result for 'dotnet'.");
         return ParseReply(result);
+    }
+
+    /// <summary>
+    /// The folder of the helper's managed dlls inside the copy the game loads, making the copy when it is not there yet; a
+    /// snippet compiles against those dlls.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The project cannot be asked, or the helper's copy could not be prepared.</exception>
+    public string PrepareHelperFolder(string projectDir)
+    {
+        string? extension = findExtension();
+        if (Refusal(projectDir, extension) is { } refusal)
+        {
+            throw new InvalidOperationException(refusal);
+        }
+
+        return Path.Combine(Path.GetDirectoryName(PrepareCopy(extension!))!, HelperFolderName);
     }
 
     /// <summary>

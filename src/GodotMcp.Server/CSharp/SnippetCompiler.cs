@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Reflection.PortableExecutable;
@@ -10,11 +11,20 @@ using ModelContextProtocol;
 
 namespace GodotMcp.Server.CSharp;
 
-/// <summary>A snippet to compile: a method body, the class its wrapper derives from, the dlls it may use and extra namespaces.</summary>
-internal sealed record SnippetRequest(string Code, string GlobalsType, IReadOnlyList<string> References, IReadOnlyList<string> Usings);
+/// <summary>
+/// A snippet to compile: a method body, the class its wrapper derives from, the folder of the runtime it will run on (whose
+/// managed dlls are its framework), the other dlls it may use and extra namespaces.
+/// </summary>
+internal sealed record SnippetRequest(
+    string Code,
+    string GlobalsType,
+    string FrameworkDirectory,
+    IReadOnlyList<string> References,
+    IReadOnlyList<string> Usings
+);
 
-/// <summary>The compiled snippet's assembly, or null with the errors that stopped it.</summary>
-internal sealed record SnippetCompilation(byte[]? Assembly, IReadOnlyList<SnippetDiagnostic> Errors);
+/// <summary>The compiled snippet's assembly and its portable PDB, or both null with the errors that stopped it.</summary>
+internal sealed record SnippetCompilation(byte[]? Assembly, byte[]? Pdb, IReadOnlyList<SnippetDiagnostic> Errors);
 
 /// <summary>A compile error; line and column are 1-based in the snippet's own text, or 0 when it lies outside the snippet.</summary>
 internal sealed record SnippetDiagnostic(int Line, int Column, string Id, string Message);
@@ -22,8 +32,9 @@ internal sealed record SnippetDiagnostic(int Line, int Column, string Id, string
 /// <summary>
 /// Compiles a snippet (statements, or one expression) into an assembly holding <c>public sealed class GodotMcpSnippet</c>,
 /// which derives from the globals type and runs the snippet as <c>public async Task&lt;object?&gt; RunAsync()</c>. An expression's
-/// value is returned; a statement body that runs off its end returns null. The BCL comes from the running server's shared
-/// framework; every other reference is a dll path in the request. Only errors are reported, warnings are dropped.
+/// value is returned; a statement body that runs off its end returns null. The BCL comes from the request's framework folder
+/// (the runtime the snippet will run on, so an overload the runtime lacks is never bound); every other reference is a dll path
+/// in the request. Only errors are reported, warnings are dropped.
 /// </summary>
 internal static class SnippetCompiler
 {
@@ -41,7 +52,7 @@ internal static class SnippetCompiler
         nullableContextOptions: NullableContextOptions.Enable,
         allowUnsafe: false
     );
-    private static readonly Lazy<ImmutableArray<MetadataReference>> Framework = new(LoadFramework);
+    private static readonly ConcurrentDictionary<string, ImmutableArray<MetadataReference>> Frameworks = new(StringComparer.OrdinalIgnoreCase);
     private static int _compiled;
 
     private enum Shape
@@ -51,24 +62,28 @@ internal static class SnippetCompiler
         VoidExpression,
     }
 
-    /// <summary>Every managed dll of the shared framework the server runs on, read once.</summary>
-    internal static ImmutableArray<MetadataReference> FrameworkReferences => Framework.Value;
+    /// <summary>Every managed dll of the runtime folder <paramref name="directory"/>, in ordinal order, read once per folder.</summary>
+    /// <exception cref="IOException">The folder or one of its dlls cannot be read.</exception>
+    internal static ImmutableArray<MetadataReference> FrameworkIn(string directory) =>
+        Frameworks.GetOrAdd(Path.GetFullPath(directory), LoadFramework);
 
     /// <summary>Compiles <paramref name="request"/>; a using that is not a dotted name is refused before compiling.</summary>
     /// <exception cref="McpException">A using is not a namespace name, or a reference cannot be read.</exception>
+    /// <exception cref="IOException">The framework folder cannot be read.</exception>
     public static SnippetCompilation Compile(SnippetRequest request)
     {
         ValidateUsings(request.Usings);
         string assemblyName = $"{ClassName}_{Interlocked.Increment(ref _compiled).ToString(CultureInfo.InvariantCulture)}";
         var references = CSharpCompilation.Create(
             assemblyName,
-            references: [.. FrameworkReferences, .. request.References.Select(ReadReference)],
+            references: [.. FrameworkIn(request.FrameworkDirectory), .. request.References.Select(ReadReference)],
             options: Options
         );
         INamedTypeSymbol? globals = references.GetTypeByMetadataName(request.GlobalsType);
         if (globals is null)
         {
             return new SnippetCompilation(
+                null,
                 null,
                 [new SnippetDiagnostic(0, 0, "", $"the globals type '{request.GlobalsType}' is not in the references")]
             );
@@ -96,7 +111,8 @@ internal static class SnippetCompiler
         }
     }
 
-    private static bool IsNamespaceName(string text) =>
+    /// <summary>Whether <paramref name="text"/> is a dotted name a using directive takes: identifiers, none of them a keyword.</summary>
+    internal static bool IsNamespaceName(string text) =>
         text.Split('.').All(part => SyntaxFacts.IsValidIdentifier(part) && SyntaxFacts.GetKeywordKind(part) == SyntaxKind.None);
 
     private static MetadataReference ReadReference(string path)
@@ -147,16 +163,23 @@ internal static class SnippetCompiler
             }
         );
         source.Append("}\n}\n");
-        return references.AddSyntaxTrees(CSharpSyntaxTree.ParseText(source.ToString(), ParseOptions, WrapperPath));
+        // The PDB records a checksum of the source, which needs the text's encoding.
+        return references.AddSyntaxTrees(CSharpSyntaxTree.ParseText(source.ToString(), ParseOptions, WrapperPath, Encoding.UTF8));
     }
 
+    // The portable PDB travels with the bytes, so a stack the snippet throws names the snippet's own lines.
     private static SnippetCompilation Emit(CSharpCompilation compilation)
     {
         using MemoryStream stream = new();
-        EmitResult result = compilation.Emit(stream);
+        using MemoryStream pdb = new();
+        EmitResult result = compilation.Emit(stream, pdb, options: new EmitOptions(debugInformationFormat: DebugInformationFormat.PortablePdb));
         return result.Success
-            ? new SnippetCompilation(stream.ToArray(), [])
-            : new SnippetCompilation(null, [.. result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Select(ToSnippetDiagnostic)]);
+            ? new SnippetCompilation(stream.ToArray(), pdb.ToArray(), [])
+            : new SnippetCompilation(
+                null,
+                null,
+                [.. result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Select(ToSnippetDiagnostic)]
+            );
     }
 
     // A diagnostic under the snippet's #line mapping is placed in the snippet's text; one in the wrapper has line 0.
@@ -169,17 +192,7 @@ internal static class SnippetCompiler
             : new SnippetDiagnostic(0, 0, diagnostic.Id, message);
     }
 
-    private static ImmutableArray<MetadataReference> LoadFramework()
-    {
-        string? directory = Path.GetDirectoryName(typeof(object).Assembly.Location);
-        if (string.IsNullOrEmpty(directory))
-        {
-            throw new InvalidOperationException(
-                "The shared framework's folder is unknown: typeof(object).Assembly.Location is empty (is the server published as a single file?)."
-            );
-        }
-
-        return
+    private static ImmutableArray<MetadataReference> LoadFramework(string directory) =>
         [
             .. Directory
                 .EnumerateFiles(directory, "*.dll")
@@ -187,7 +200,6 @@ internal static class SnippetCompiler
                 .Order(StringComparer.Ordinal)
                 .Select(path => (MetadataReference)MetadataReference.CreateFromFile(path)),
         ];
-    }
 
     // The framework folder also holds native dlls (coreclr, clrjit, hostpolicy); only those with metadata are references.
     // A file that is not a PE image at all is not a reference either, so it is skipped rather than failing every compile.
