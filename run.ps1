@@ -24,7 +24,9 @@ exits with the command's own status, or 124 when it outlived its ceiling and was
            runtimeconfig.json) and helper/ (GodotMcp.Dotnet.dll). Each project publishes into .tmp/dotnet-publish/<name>
            under its own gate (.tmp/dotnet-<name>.log, ceiling 300 s); bin/dotnet is then rebuilt from those files.
            The shim's link needs the MSVC linker (VS Build Tools' VC tools), which ILCompiler finds through vswhere under
-           ProgramFiles(x86); when that variable is empty (as it can be from Git Bash) it is set to C:\Program Files (x86).
+           ProgramFiles(x86); when that variable is empty (as it can be from Git Bash) it is set to C:\Program Files
+           (x86), and vswhere's own folder is put on PATH, because a batch file the link runs afterwards calls vswhere.exe
+           by bare name.
   publish  a framework-dependent win-x64 server at bin/publish/godot-mcp.exe, with bridge/ beside it, then the dotnet
            command (as above), whose bin/dotnet is copied to bin/publish/dotnet; ceiling 300 s
   install  publish (as above), then mirror bin/publish into $env:LOCALAPPDATA\godot-mcp (robocopy /MIR, no retries), and
@@ -283,10 +285,17 @@ function Get-ConfiguredDirectory {
     return $Configured
 }
 
-# ILCompiler's findvcvarsall.bat runs "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" to find the
-# MSVC linker and never searches PATH, so that variable is set to its default when empty (as it can be under Git Bash).
-function Set-ProgramFilesX86 {
+# The shim's link needs both halves of this. ILCompiler's findvcvarsall.bat runs
+# "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" to find the MSVC linker and never searches PATH, so
+# that variable is set to its default when empty (as it can be under Git Bash); a batch file the link runs afterwards
+# calls vswhere.exe by bare name, so vswhere's folder is put on PATH too.
+function Set-VswhereEnvironment {
     ${env:ProgramFiles(x86)} = Get-ConfiguredDirectory -Configured ${env:ProgramFiles(x86)} -Default 'C:\Program Files (x86)'
+    $installerFolder = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
+    $entries = @([string]$env:PATH -split [IO.Path]::PathSeparator)
+    if ($entries -notcontains $installerFolder) {
+        $env:PATH = (@($installerFolder) + $entries) -join [IO.Path]::PathSeparator
+    }
 }
 
 # The C# helper's projects, each published into .tmp/dotnet-publish/<name>, and the files bin/dotnet takes from it:
@@ -338,7 +347,7 @@ function Copy-DotnetLayout {
 # Publishes the shim, the loader and the helper, each under its own gate, then lays out bin/dotnet. Returns the first
 # failing publish's status, else 0.
 function Invoke-DotnetPublish {
-    Set-ProgramFilesX86
+    Set-VswhereEnvironment
     foreach ($name in $dotnetProjects.Keys) {
         $project = $dotnetProjects[$name]
         $arguments = @('publish', (Join-Path $root $project.Project), '-c', 'Release', '-o', (Join-Path $dotnetStaging $name)) + $project.Extra
