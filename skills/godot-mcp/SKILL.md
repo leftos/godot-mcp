@@ -75,7 +75,10 @@ Friction is filed with `gh` as it happens, one issue per friction, never through
    **What happened:** <the result or error, quoted, cut to what matters>
    **What was needed:** <the outcome you were after>
    **Workaround:** <what you did instead, e.g. a run_script, or "none">
-   **Project:** <the game repo> (godot-mcp at <`git -C D:/godot-mcp log -1 --format=%h`>, or "installed copy")
+   **Project:** <the game repo>
+   **Version:** <the `version` of a `run_project`/`attach_project` result, else `%LOCALAPPDATA%\godot-mcp\VERSION`, else "unversioned build">
    ```
+
+   The version (`0.1.0+<sha>`) names the build that ran, so an issue already fixed on `main` is recognised; the result's `version` is the one to trust, since the file describes the last install.
 
 3. **File it**: `gh issue create -R leftos/godot-mcp --title "<tool>: <the friction in a few words>" --body-file <file>`, and carry on with the task. The title says what is wrong, not what to build.

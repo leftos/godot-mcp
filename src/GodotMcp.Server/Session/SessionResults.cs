@@ -5,6 +5,9 @@ namespace GodotMcp.Server.Session;
 /// <summary>A run that launched and whose bridge said hello, what the prep did before it, and the file it records to.</summary>
 internal sealed record LaunchResult(string Session, string ProjectPath, int ProcessId, bool Quiet, PrepResult Prep)
 {
+    /// <summary>The server's version, to quote when filing an issue.</summary>
+    public string Version { get; init; } = ServerVersion.Value;
+
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? Recording { get; init; }
 }
@@ -63,6 +66,9 @@ internal sealed record RestartResult(
     PrepResult Prep
 )
 {
+    /// <summary>The server's version, to quote when filing an issue.</summary>
+    public string Version { get; init; } = ServerVersion.Value;
+
     /// <summary>Whether the replaced run had already ended when the restart began.</summary>
     public required bool PreviousAlreadyExited { get; init; }
 
@@ -104,7 +110,11 @@ internal sealed record StopResult(string Session, string ProjectPath, int? ExitC
 }
 
 /// <summary>A game attach_project reached: its bridge said hello, and whether it was told to park its window.</summary>
-internal sealed record AttachResult(string Session, string ProjectPath, bool Quiet);
+internal sealed record AttachResult(string Session, string ProjectPath, bool Quiet)
+{
+    /// <summary>The server's version, to quote when filing an issue.</summary>
+    public string Version { get; init; } = ServerVersion.Value;
+}
 
 /// <summary>How detach_project left the project: the game still runs; whether the server's override.cfg was deleted.</summary>
 internal sealed record DetachResult(string Session, string ProjectPath, bool OverrideRemoved);

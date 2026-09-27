@@ -14,7 +14,6 @@ The singles' order is not a ranking.
 
 ### Singles
 
-- [ ] A version number agents can read from the installed server and skill, and a rule that an agent filing a godot-mcp issue names the version it used, so an issue already fixed on `main` is recognised (user, 2026-09-27). Decided (user, 2026-09-27): semver in `Directory.Build.props` plus the commit sha stamped at publish (`0.1.0+dac8c70`; orchestrator default: start at 0.1.0, minor bump for a new tool or parameter and patch for a fix, at landing); read from the MCP handshake's `serverInfo.version`, a `version` field on `run_project`/`attach_project` results, and a `VERSION` file `install` writes beside the installed exe (user, 2026-09-27: the installed skill is a junction to the tracked one, so nothing is stamped into it); orchestrator defaults: a 7-character sha cut by an MSBuild target so every build carries it, no dirty mark, the handshake name stays `godot-mcp`; the filing rule lives in the user-level CLAUDE.md friction rule (done 2026-09-27) and the skill's filing note
 
 
 

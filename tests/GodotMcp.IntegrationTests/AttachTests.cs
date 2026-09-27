@@ -64,6 +64,7 @@ public sealed class AttachTests : IAsyncDisposable
 
         Assert.Equal(ProjectPaths.Normalise(_probe.Directory), attached["projectPath"]!.GetValue<string>());
         Assert.False(attached["quiet"]!.GetValue<bool>());
+        Assert.Matches(@"^\d+\.\d+\.\d+(\+[0-9a-f]{7})?$", attached["version"]?.GetValue<string>());
         Assert.False(attachFileLeft);
         Assert.True(overrideWhileAttached);
         Assert.True(pong?["pong"]?.GetValue<bool>());

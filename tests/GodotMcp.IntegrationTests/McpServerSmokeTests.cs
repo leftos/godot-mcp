@@ -13,6 +13,7 @@ public sealed class McpServerSmokeTests : IDisposable
     private const string PressCountScript =
         "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
         + "\treturn scene_tree.root.get_node(\"Main/SmallButton\").press_count\n";
+    private const string VersionPattern = @"^\d+\.\d+\.\d+(\+[0-9a-f]{7})?$";
     private static readonly string[] SmokeArgs = ["--smoke"];
     private readonly ProbeProject _probe = new();
 
@@ -102,7 +103,10 @@ public sealed class McpServerSmokeTests : IDisposable
             ],
             tools.Select(tool => tool.Name).Order()
         );
+        Assert.Equal("godot-mcp", client.ServerInfo.Name);
+        Assert.Matches(VersionPattern, client.ServerInfo.Version);
         Assert.True(run.IsError is not true, Text(run));
+        Assert.Equal(client.ServerInfo.Version, JsonDocument.Parse(Text(run)).RootElement.GetProperty("version").GetString());
         Assert.True(sawProbe);
         JsonElement session = Assert.Single(JsonDocument.Parse(Text(listed)).RootElement.GetProperty("sessions").EnumerateArray());
         Assert.Equal("InputProbe", session.GetProperty("name").GetString());

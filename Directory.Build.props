@@ -9,6 +9,27 @@
     <Deterministic>true</Deterministic>
   </PropertyGroup>
 
+  <!-- The version agents quote: 0.1.0+<7-char commit sha>, or 0.1.0 alone outside a git checkout. -->
+  <PropertyGroup>
+    <VersionPrefix>0.1.0</VersionPrefix>
+  </PropertyGroup>
+
+  <!--
+    The SDK's SourceLink sets SourceRevisionId to the full commit sha in _InitializeSourceControlInformationFromSourceControlManager
+    (BeforeTargets InitializeSourceControlInformation), and AddSourceRevisionToInformationalVersion, which depends on
+    InitializeSourceControlInformation, appends it to InformationalVersion; this cuts it to 7 characters in between.
+  -->
+  <Target
+    Name="ShortenSourceRevisionId"
+    DependsOnTargets="InitializeSourceControlInformation"
+    BeforeTargets="AddSourceRevisionToInformationalVersion"
+    Condition="'$(SourceControlInformationFeatureSupported)' == 'true'"
+  >
+    <PropertyGroup Condition="$(SourceRevisionId.Length) &gt; 7">
+      <SourceRevisionId>$(SourceRevisionId.Substring(0, 7))</SourceRevisionId>
+    </PropertyGroup>
+  </Target>
+
   <!-- Code-quality (CA) analyzers, taken from the first commit. -->
   <PropertyGroup>
     <CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>

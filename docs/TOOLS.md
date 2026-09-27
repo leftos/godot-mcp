@@ -50,13 +50,13 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `run_project`
 
-- **Does:** launches the project with the bridge injected and returns once the bridge connects: `{session, projectPath, processId, quiet, recording?, prep}`.
+- **Does:** launches the project with the bridge injected and returns once the bridge connects: `{session, projectPath, processId, quiet, version, recording?, prep}` (`version` is the server's, `0.1.0+<sha>`, to quote in an issue).
 - **Use:** `projectPath` (the folder holding `project.godot`); `scene` for a scene other than the main one; `userArgs` (after `--`, read with `OS.get_cmdline_user_args()`); `engineArgs` (before `--`, e.g. `["--resolution", "1280x720"]`); `options {quiet, shutOutRealGamepads, session, prepare, preset, record}`.
 - **Edges:** a live session name is refused; a new name starts a second session alongside. `options.preset` names a preset from `godot-mcp.json` and fails when the file or preset is missing. By default the machine's real gamepads stay live and feed the same actions as the gamepad tools; `shutOutRealGamepads: true` keeps them out, at the cost of focus-out notifications to the game (a game that pauses on focus loss will, and every `Popup` closes as it opens). `record` changes game timing: see Recording.
 
 ### `attach_project`
 
-- **Does:** injects the bridge plus a one-use attach file and blocks until a game started on the project after that connects: `{session, projectPath, quiet}`.
+- **Does:** injects the bridge plus a one-use attach file and blocks until a game started on the project after that connects: `{session, projectPath, quiet, version}`.
 - **Use:** for a game `run_project` does not start: a second client, a `--server` run, a smoke script, the editor's Play button. Start the launch in the background delayed a second or two (`Start-Sleep 2; godot --path <project>`) just before this call, or launch within `waitSeconds` (1 to 600, default 60) after it. Also takes `shutOutRealGamepads`, `quiet` and `session`. For a game a debugger launches, pass `quiet: true` and put `--audio-driver Dummy` in the launch's `args` for silence.
 - **Edges:** `quiet: true` creates the window unfocused, then parks it off-screen and caps it at 60 fps, but only a launcher can put a game on the hidden desktop, so it shows on the primary screen for a moment at start (longer when a breakpoint holds it before the bridge's `_ready`); a quiet attach shares a folder only with quiet sessions. A game already running when the files are written never attaches. An attached session has no captured output (`get_debug_output` refuses it), cannot be restarted, and ends with `detach_project`, not `stop_project`.
 

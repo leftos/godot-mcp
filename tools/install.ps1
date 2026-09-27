@@ -6,7 +6,8 @@ Installs a published godot-mcp: mirrors bin/publish into an install folder and l
 
 .DESCRIPTION
 Run by `pwsh run.ps1 install` after its publish. Mirrors <Root>\bin\publish into -InstallDir with robocopy /MIR (no
-retries), then links <SkillsDir>\godot-mcp to <Root>\skills\godot-mcp as a directory junction: created when missing,
+retries), writes -InstallDir\VERSION holding the published godot-mcp.dll's product version (the mirror leaves that file
+alone, so a failed mirror keeps the old one beside the old exe), then links <SkillsDir>\godot-mcp to <Root>\skills\godot-mcp as a directory junction: created when missing,
 left alone when it already points there, replaced when it is a junction pointing elsewhere, and refused when it is
 anything else (a real folder is never deleted). Warns when <Root> is a linked worktree, since the junction then points
 into it. Stops at the first failure with status 1.
@@ -15,7 +16,7 @@ into it. Stops at the first failure with status 1.
 The checkout to install from.
 
 .PARAMETER InstallDir
-The folder bin/publish is mirrored into; files in it that bin/publish lacks are removed.
+The folder bin/publish is mirrored into; files in it that bin/publish lacks are removed, VERSION aside.
 
 .PARAMETER SkillsDir
 The folder the skill junction godot-mcp is created in.
@@ -66,12 +67,26 @@ function Copy-Publish {
         [Parameter(Mandatory)] [string]$Source,
         [Parameter(Mandatory)] [string]$Destination
     )
-    & robocopy $Source $Destination /MIR /R:0 /W:0 /NP /NFL /NDL | Out-Host
+    & robocopy $Source $Destination /MIR /XF VERSION /R:0 /W:0 /NP /NFL /NDL | Out-Host
     $status = $LASTEXITCODE
     if ($status -ge 8) {
         Exit-Install ("install: copying bin/publish to $Destination failed (robocopy status $status, log .tmp/install.log). " +
             'A running godot-mcp.exe holds the old copy: stop the Claude sessions that use the godot server, then run install again.')
     }
+}
+
+# The published dll's ProductVersion is the assembly's InformationalVersion, <semver>+<7-char sha>.
+function Get-PublishVersion {
+    param([Parameter(Mandatory)] [string]$Publish)
+    $dll = Join-Path $Publish 'godot-mcp.dll'
+    if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) {
+        Exit-Install 'install: bin/publish/godot-mcp.dll is missing; run publish first.'
+    }
+    $version = (Get-Item -LiteralPath $dll).VersionInfo.ProductVersion
+    if ([string]::IsNullOrWhiteSpace($version)) {
+        Exit-Install 'install: bin/publish/godot-mcp.dll carries no product version; run publish again.'
+    }
+    return $version
 }
 
 function New-SkillJunction {
@@ -113,7 +128,10 @@ $skill = Get-FullPath (Join-Path $Root 'skills/godot-mcp')
 $link = Join-Path (Get-FullPath $SkillsDir) 'godot-mcp'
 
 Write-WorktreeWarning
+$version = Get-PublishVersion -Publish $publish
 Copy-Publish -Source $publish -Destination $destination
+# One line, LF, no BOM (WriteAllText's default encoding is UTF-8 without one).
+[System.IO.File]::WriteAllText((Join-Path $destination 'VERSION'), "$version`n")
 Set-SkillJunction -Source $skill -Link $link
-Write-Host "install: server at $(Join-Path $destination 'godot-mcp.exe'), skill linked at $link"
+Write-Host "install: server at $(Join-Path $destination 'godot-mcp.exe') (version $version), skill linked at $link"
 exit 0
