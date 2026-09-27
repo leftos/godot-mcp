@@ -194,8 +194,11 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
     }
 
-    /// <summary>The name a session gets: <paramref name="session"/> when given, else the project folder's name.</summary>
-    /// <exception cref="SessionException">The given name breaks <see cref="NameRule"/>.</exception>
+    /// <summary>
+    /// The name a session gets: <paramref name="session"/> when given, else the project folder's name with every
+    /// character outside <see cref="NameRule"/>'s set replaced by '_' and the result cut to 64 characters.
+    /// </summary>
+    /// <exception cref="SessionException">The given name breaks <see cref="NameRule"/>; a given name is never changed.</exception>
     internal static string NameFor(string? session, string projectPath)
     {
         CheckName(session);
@@ -206,12 +209,36 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
         string projectDir = ProjectPaths.Normalise(projectPath);
         string folder = Path.GetFileName(projectDir);
-        return folder.Length > 0 ? folder : projectDir;
+        return SanitiseFolderName(folder.Length > 0 ? folder : projectDir);
     }
 
-    /// <summary>The name of a folder's <paramref name="number"/>th preview session: <c>&lt;folder name&gt;.preview-&lt;n&gt;</c>.</summary>
-    internal static string PreviewName(string folderName, int number) =>
-        string.Create(CultureInfo.InvariantCulture, $"{folderName}.preview-{number}");
+    /// <summary>
+    /// The name of a folder's <paramref name="number"/>th preview session: <c>&lt;folder name&gt;.preview-&lt;n&gt;</c>, with
+    /// the folder part cut so the whole name fits <see cref="NameRule"/> and the suffix stays whole.
+    /// </summary>
+    internal static string PreviewName(string folderName, int number)
+    {
+        string suffix = string.Create(CultureInfo.InvariantCulture, $".preview-{number}");
+        int keep = Math.Max(0, 64 - suffix.Length);
+        return folderName.Length > keep ? folderName[..keep] + suffix : folderName + suffix;
+    }
+
+    /// <summary>
+    /// Makes a folder-derived name fit <see cref="NameRule"/>: every character it excludes becomes '_', and the first 64
+    /// characters are kept.
+    /// </summary>
+    private static string SanitiseFolderName(string folderName)
+    {
+        int length = Math.Min(folderName.Length, 64);
+        Span<char> sanitised = stackalloc char[64];
+        for (int index = 0; index < length; index++)
+        {
+            char character = folderName[index];
+            sanitised[index] = char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or '-' ? character : '_';
+        }
+
+        return new string(sanitised[..length]);
+    }
 
     /// <summary>
     /// Registers a pending preview session on the folder under the next preview name no session holds. It takes the pad and

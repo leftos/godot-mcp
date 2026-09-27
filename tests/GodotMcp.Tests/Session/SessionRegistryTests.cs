@@ -69,6 +69,58 @@ public sealed class SessionRegistryTests : IAsyncDisposable
     }
 
     [Fact]
+    public void AFolderNameOutsideTheRuleIsSanitised()
+    {
+        string projectPath = _temp.Combine("My Game!") + Path.DirectorySeparatorChar;
+
+        string name = SessionRegistry.NameFor(null, projectPath);
+
+        Assert.Equal("My_Game_", name);
+        Assert.Matches("^[A-Za-z0-9._-]{1,64}$", name);
+    }
+
+    [Fact]
+    public void ANonAsciiFolderNameIsSanitised()
+    {
+        string projectPath = _temp.Combine("Café");
+
+        string name = SessionRegistry.NameFor(null, projectPath);
+
+        Assert.Equal("Caf_", name);
+        Assert.Matches("^[A-Za-z0-9._-]{1,64}$", name);
+    }
+
+    [Fact]
+    public void ALongFolderNameIsCutTo64()
+    {
+        string projectPath = _temp.Combine(new string('a', 66) + "STOP");
+
+        string name = SessionRegistry.NameFor(null, projectPath);
+
+        Assert.Equal(new string('a', 64), name);
+        Assert.Matches("^[A-Za-z0-9._-]{1,64}$", name);
+    }
+
+    [Fact]
+    public void AGivenSessionIsStillRefusedNotSanitised()
+    {
+        SessionException refused = Assert.Throws<SessionException>(() => SessionRegistry.NameFor("my game", _temp.Path));
+
+        Assert.Equal($"session 'my game' is not a valid name: {NameRuleMessage}.", refused.Message);
+    }
+
+    [Fact]
+    public void APreviewNameFitsTheRule()
+    {
+        string name = SessionRegistry.PreviewName(new string('a', 64), 12);
+
+        Assert.Equal(new string('a', 53) + ".preview-12", name);
+        Assert.True(name.Length <= 64, $"'{name}' is {name.Length} characters");
+        Assert.EndsWith(".preview-12", name, StringComparison.Ordinal);
+        Assert.Matches("^[A-Za-z0-9._-]{1,64}$", name);
+    }
+
+    [Fact]
     public async Task ResolvingWithNoSessionSaysNoneIsRunning()
     {
         SessionException resolved = Assert.Throws<SessionException>(() => _sessions.Resolve(null));
