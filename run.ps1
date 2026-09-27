@@ -13,7 +13,8 @@ exits with the command's own status, or 124 when it outlived its ceiling and was
   itest    the integration tests against the real Godot (GODOT_PATH, else F:\Godot\Godot_console.exe), in the class
            groups of the table at the top of this script (lifecycle, input, reads). It first checks that every
            `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly one group and every listed
-           class exists, and stops with status 1 before running anything when not. It then builds the project once
+           class exists, and stops with status 1 before running anything when not. It then runs the dotnet command (as
+           below; a -Filter run does so only when the filter matches a class of the csharp group), builds the project once
            (.tmp/itest-build.log, ceiling 300 s) and runs each group as its own gate (.tmp/itest-<group>.log, ceiling
            300 s, the runner's own --timeout 4m). Every group runs even when an earlier one fails; a summary line per
            group follows, and the exit status is the first non-zero group's. On Windows every test run (a group's or
@@ -72,6 +73,7 @@ $itestGroups = [ordered]@{
     prep      = @('PrepTests', 'RestartTests')
     recording = @('RecordingTests')
     headless  = @('HeadlessTests', 'HeadlessSceneTests', 'HeadlessPropertyTests', 'HeadlessSignalTests', 'HeadlessMeshTests', 'HeadlessBatchTests')
+    csharp    = @('CSharpToolTests')
 }
 $itestNamespace = 'GodotMcp.IntegrationTests'
 $itestProject = 'tests/GodotMcp.IntegrationTests/GodotMcp.IntegrationTests.csproj'
@@ -228,6 +230,19 @@ function Get-ItestGroupDrift {
     return "itest groups are out of date: $($parts -join '; '). Edit the groups table in run.ps1."
 }
 
+# Whether a -Filter selects a class of the csharp group, whose tests need bin/dotnet: each filter is matched against the
+# class's full name, as the runner's --filter-class matches it.
+function Test-ItestFilterNeedsDotnet {
+    param([Parameter(Mandatory)] [string[]]$Filters)
+    $classes = @($itestGroups['csharp'] | ForEach-Object { "$itestNamespace.$_" })
+    foreach ($filter in $Filters) {
+        if (@($classes | Where-Object { $_ -like $filter }).Count -gt 0) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Write-ItestSummary {
     param([Parameter(Mandatory)] [System.Collections.Specialized.OrderedDictionary]$Results)
     foreach ($group in $Results.Keys) {
@@ -247,6 +262,10 @@ function Invoke-ItestByGroup {
     if ($drift) {
         [Console]::Error.WriteLine($drift)
         return 1
+    }
+    $dotnet = Invoke-DotnetPublish
+    if ($dotnet -ne 0) {
+        return $dotnet
     }
     $build = Invoke-Logged -Name 'itest-build' -TimeoutSeconds 300 -Arguments @('build', (Join-Path $root $itestProject), '-warnaserror')
     if ($build -ne 0) {
@@ -404,6 +423,12 @@ switch ($Command) {
     'itest' {
         if ($filterClasses.Count -eq 0) {
             exit (Invoke-ItestByGroup)
+        }
+        if (Test-ItestFilterNeedsDotnet -Filters $filterClasses) {
+            $dotnet = Invoke-DotnetPublish
+            if ($dotnet -ne 0) {
+                exit $dotnet
+            }
         }
         $arguments = Get-TestArgumentList -Project $itestProject -Timeout '4m' -Classes $filterClasses
         exit (Invoke-ItestGated -Name 'itest' -Arguments $arguments)
