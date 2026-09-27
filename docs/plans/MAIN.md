@@ -17,7 +17,7 @@ Waves first, then the singles; the singles' order is not a ranking.
 Shared: `src/GodotMcp.Server/Tools/HeadlessTools.cs`, `src/GodotMcp.Server/Session/ProjectPrep.cs`. Gate: `pwsh run.ps1 test` and `pwsh run.ps1 itest -Filter "*HeadlessTests"`; human check: a headless edit on opening-hand reads clean.
 
 - [ ] Headless scene tools print `Failed to instantiate an autoload … does not inherit from 'Node'` for a C# autoload on every call (#18): keep the project's autoloads out of the headless run, or drop that known line from the result
-- [ ] A "the project's C# build failed" refusal quotes the first compiler error (file, line, code, message) from `.godot/godot-mcp/build.log` and the configuration it built (#19)
+- [ ] A "the project's C# build failed" refusal quotes the first compiler error (file, line, code, message) from `.godot/godot-mcp/build.log` and the configuration it built (#19). Decided (user, 2026-09-27): quote every compiler error capped at 20, as `run_project`'s refusal does; the configuration is one `ProjectPrep` constant that the build command, the headless refusal and `run_project`'s refusal all name
 
 ### Singles
 
