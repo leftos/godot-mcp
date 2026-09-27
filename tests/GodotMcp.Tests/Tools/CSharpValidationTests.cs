@@ -1,3 +1,4 @@
+using System.Text.Json;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Server.Wire;
@@ -6,7 +7,7 @@ using ModelContextProtocol;
 
 namespace GodotMcp.Tests.Tools;
 
-/// <summary>cs_members' argument checks, which refuse before anything reaches a game; no Godot runs here.</summary>
+/// <summary>cs_members', cs_get's and cs_set's argument checks, which refuse before anything reaches a game; no Godot runs here.</summary>
 public sealed class CSharpValidationTests : IDisposable
 {
     private readonly BridgeListener _listener = new(NullLogger<BridgeListener>.Instance);
@@ -71,6 +72,71 @@ public sealed class CSharpValidationTests : IDisposable
     [Fact]
     public Task AValidCallWithNoSessionAsksForASession() =>
         AssertNoSessionAsync(() => _tools.CsMembersAsync(new CSharpTarget(Type: "CsProbe.CsTargets"), cancellationToken: Token));
+
+    [Fact]
+    public async Task GetAndSetRefuseATargetWithNothingOrTwoKinds()
+    {
+        CSharpTarget[] targets = [new CSharpTarget(), new CSharpTarget(Node: "Probe", Handle: "h1")];
+        string[] messages =
+        [
+            "target takes exactly one of node, type or handle; got none.",
+            "target takes exactly one of node, type or handle; got node, handle.",
+        ];
+
+        for (int i = 0; i < targets.Length; i++)
+        {
+            CSharpTarget target = targets[i];
+            McpException get = await Assert.ThrowsAsync<McpException>(() => _tools.CsGetAsync(target, "Mood", cancellationToken: Token));
+            McpException set = await Assert.ThrowsAsync<McpException>(() => _tools.CsSetAsync(target, "Mood", Value, cancellationToken: Token));
+
+            Assert.Equal(messages[i], get.Message);
+            Assert.Equal(messages[i], set.Message);
+        }
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("  ")]
+    public async Task GetAndSetRefuseAnEmptyMember(string member)
+    {
+        CSharpTarget target = new(Node: "Probe");
+
+        McpException get = await Assert.ThrowsAsync<McpException>(() => _tools.CsGetAsync(target, member, cancellationToken: Token));
+        McpException set = await Assert.ThrowsAsync<McpException>(() => _tools.CsSetAsync(target, member, Value, cancellationToken: Token));
+
+        Assert.Equal(EmptyMember, get.Message);
+        Assert.Equal(EmptyMember, set.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(33)]
+    public async Task GetRefusesAMaxDepthOutOfRange(int maxDepth)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.CsGetAsync(new CSharpTarget(Node: "Probe"), "Mood", new GetOptions(MaxDepth: maxDepth), cancellationToken: Token)
+        );
+
+        Assert.Equal($"maxDepth must be 1 to 32; got {maxDepth}.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    [InlineData(32)]
+    public Task AValidGetWithNoSessionAsksForASession(int? maxDepth) =>
+        AssertNoSessionAsync(() =>
+            _tools.CsGetAsync(new CSharpTarget(Type: "CsProbe.Tally"), "Count", new GetOptions(maxDepth, Keep: true), cancellationToken: Token)
+        );
+
+    [Fact]
+    public Task AValidSetWithNoSessionAsksForASession() =>
+        AssertNoSessionAsync(() => _tools.CsSetAsync(new CSharpTarget(Type: "CsProbe.Tally"), "Count", Value, cancellationToken: Token));
+
+    private const string EmptyMember =
+        "member is empty. Pass a property or field name, or a dotted path (Pending.Options[0]); cs_members lists them.";
+
+    private static JsonElement Value => JsonSerializer.SerializeToElement(3);
 
     private static CancellationToken Token => TestContext.Current.CancellationToken;
 

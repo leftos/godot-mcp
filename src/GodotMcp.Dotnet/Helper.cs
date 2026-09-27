@@ -12,8 +12,9 @@ namespace GodotMcp.Dotnet;
 /// <summary>
 /// The helper's entry, run by the loader on the main thread: it stores the callable GDScript reaches the helper through
 /// as the SceneTree meta <see cref="MetaName"/>. The callable takes a JSON request — <c>{"op":"ping"}</c>, optionally
-/// with <c>"id":"&lt;instance id&gt;"</c>, or <c>{"op":"members","target":{...}}</c>, which <see cref="Members"/>
-/// answers — and returns a JSON reply, <c>{"ok":true,"result":{...}}</c> or <c>{"ok":false,"error":"..."}</c>.
+/// with <c>"id":"&lt;instance id&gt;"</c>, <c>{"op":"members","target":{...}}</c>, which <see cref="Members"/>
+/// answers, or <c>{"op":"get"|"set",...}</c>, which <see cref="MemberAccess"/> answers — and returns a JSON reply,
+/// <c>{"ok":true,"result":{...}}</c> or <c>{"ok":false,"error":"..."}</c>.
 /// </summary>
 public static class Helper
 {
@@ -65,14 +66,18 @@ public static class Helper
             return NotAnObject($"found {(parsed is null ? "null" : parsed.GetValueKind().ToString())}");
         }
 
-        string? op = json["op"]?.GetValue<string>();
-        return op switch
+        return Dispatch(json["op"]?.GetValue<string>(), json);
+    }
+
+    private static JsonObject Dispatch(string? op, JsonObject request) =>
+        op switch
         {
-            "ping" => Ping(json),
-            "members" => Members.Answer(json),
+            "ping" => Ping(request),
+            "members" => Members.Answer(request),
+            "get" => MemberAccess.Get(request),
+            "set" => MemberAccess.Set(request),
             _ => Failure($"Unknown op '{op}'."),
         };
-    }
 
     /// <summary>
     /// The load contexts the helper and <c>GodotSharp</c> are in, a type name from Core (so Core loads through the

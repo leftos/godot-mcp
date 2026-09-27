@@ -24,10 +24,30 @@ public sealed class MemberPath
     /// Follows <paramref name="path"/> from <paramref name="root"/> through properties, fields and indexers (lists by
     /// integer, dictionaries by key), finding members with <paramref name="flags"/> on the type and its bases.
     /// </summary>
-    public static object? Walk(object? root, MemberPath path, BindingFlags flags)
+    public static object? Walk(object? root, MemberPath path, BindingFlags flags) => Read(MemberRoot.Of(root), path, flags).Value;
+
+    /// <summary>
+    /// Follows <paramref name="path"/> from <paramref name="root"/> as <see cref="Walk"/> does, a type root resolving the
+    /// first segment among its statics alone, and returns the value with the type its last segment declares. A member
+    /// that is a method, and an instance member named from a type root, are refused as such; a getter that throws is
+    /// refused with the thrown exception's type, message and stack.
+    /// </summary>
+    public static MemberValue Read(MemberRoot root, MemberPath path, BindingFlags flags)
     {
+        ArgumentNullException.ThrowIfNull(root);
         ArgumentNullException.ThrowIfNull(path);
-        return MemberPathWalker.Walk(root, path, flags);
+        return MemberPathWalker.Read(root, path, flags);
+    }
+
+    /// <summary>
+    /// The place <paramref name="path"/>'s last segment names, for a set: every segment before it is walked, and a
+    /// struct met on the way is refused naming it, since a set through it would change a copy.
+    /// </summary>
+    public static MemberSlot Slot(MemberRoot root, MemberPath path, BindingFlags flags)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        ArgumentNullException.ThrowIfNull(path);
+        return MemberSlotFinder.Find(root, path, flags);
     }
 
     public override string ToString() => Text;

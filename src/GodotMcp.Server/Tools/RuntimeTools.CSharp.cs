@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
@@ -9,12 +10,18 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// The game's own C# types through the helper the bridge loads (its <c>dotnet</c> command), which answers from the game's
-/// own assemblies: cs_members lists what a type carries. Reads only, like describe_class: no getter or constructor runs.
+/// own assemblies: cs_members lists what a type carries without running any of it, cs_get reads a property or field and
+/// cs_set writes one, private and internal ones included.
 /// </summary>
 internal sealed partial class RuntimeTools
 {
     internal const string CsMembersToolName = "cs_members";
+    internal const string CsGetToolName = "cs_get";
+    internal const string CsSetToolName = "cs_set";
     private const int DefaultMembersLimit = 100;
+    private const int DefaultGetDepth = 8;
+    private const int MaxGetDepth = 32;
+    private const string CsTargetDescription = "Exactly one of {node}, {type} or {handle}.";
 
     // A type's first C# call loads the helper into the game, which takes longer than a bridge command.
     private const int CsTimeoutMs = 30_000;
@@ -28,7 +35,7 @@ internal sealed partial class RuntimeTools
             + "no getter or constructor runs."
     )]
     public async Task<string> CsMembersAsync(
-        [Description("Exactly one of {node}, {type} or {handle}.")] CSharpTarget target,
+        [Description(CsTargetDescription)] CSharpTarget target,
         [Description(
             "{name, nonPublic, offset, limit}: a part of the member name to keep (case-insensitive; every member when left "
                 + "out), whether private, protected and internal members are listed (they are by default), and the page, 0 and "
@@ -41,11 +48,79 @@ internal sealed partial class RuntimeTools
     {
         JsonObject request = BuildMembersRequest(target, options);
         (int offset, int limit) = CheckMembersPage(options);
-        GodotSession game = Find(session);
-        long mark = game.Errors.Mark();
-        CSharpReply reply = await SendMembersAsync(game, request, cancellationToken);
-        IReadOnlyList<ErrorEntry> errors = game.Errors.ErrorsSince(mark);
+        (CSharpReply reply, IReadOnlyList<ErrorEntry> errors) = await SendCSharpAsync(CsMembersToolName, request, session, cancellationToken);
         return ErrorReport.AddTo(MembersResult(reply, offset, limit), errors).ToJsonString();
+    }
+
+    [McpServerTool(Name = CsGetToolName, ReadOnly = false, Destructive = true, OpenWorld = false)]
+    [Description(
+        "Reads a C# property or field of a game object or type, private and internal ones included, and returns {value, "
+            + "type}: type is the value's runtime full name, or the member's declared type when it is null. member is a name "
+            + "or a dotted path through properties, fields, list indexes and dictionary keys (Pending.Options[0], "
+            + "Scores[\"key\"]); a {type} target starts at a static member. A Godot object comes back as {\"$node\": path}, "
+            + "or {\"$object\": class, id} off the tree, and a value whose JSON is longer than 20000 characters as "
+            + "{valuePreview, valueLength}. options.keep also returns a handle usable as {handle} in a later C# call; a null "
+            + "value gets no handle and a warning, and a value type a handle to a copy, with a warning that a set through it "
+            + "does not reach the source. A getter runs game code. Fails when the member is a method and when a getter "
+            + "throws, with the exception's type, message and stack."
+    )]
+    public async Task<string> CsGetAsync(
+        [Description(CsTargetDescription)] CSharpTarget target,
+        [Description("A property or field name, or a dotted path: Pending.Options[0], Scores[\"key\"].")] string member,
+        [Description(
+            "{maxDepth, keep}: how many levels of nested objects are written, 1 to 32 (8 by default), and whether a handle "
+                + "to the value comes back too (false by default)."
+        )]
+            GetOptions? options = null,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        JsonObject request = new()
+        {
+            ["op"] = "get",
+            ["target"] = CSharpTarget.ToHelper(target),
+            ["member"] = CheckMember(member),
+            ["maxDepth"] = CheckGetDepth(options),
+            ["keep"] = options?.Keep ?? false,
+        };
+        (CSharpReply reply, IReadOnlyList<ErrorEntry> errors) = await SendCSharpAsync(CsGetToolName, request, session, cancellationToken);
+        return ErrorReport.AddTo(GetResult(reply), errors).ToJsonString();
+    }
+
+    [McpServerTool(Name = CsSetToolName, ReadOnly = false, Destructive = true, OpenWorld = false)]
+    [Description(
+        "Sets a C# property or field of a game object or type, private and internal ones included, and reads it back: "
+            + "{member, before, after}. member is a name or a dotted path whose last segment is a property, field, list "
+            + "index or dictionary key (Pending.Count, Items[2], Scores[\"key\"]). The JSON value is converted by the member's "
+            + "type: a record or class from an object, an enum by name or number, a list from an array, and an interface or "
+            + "abstract member from {\"$handle\": h} or {\"$node\": path}. Writes what reflection allows, non-public and init "
+            + "setters and readonly instance fields included; refuses a property with no setter, a const, a static readonly "
+            + "field, and a path through a struct, whose set would change a copy. When the member reads something else after "
+            + "the set (a setter that clamps), the old value is put back and the call fails with both. before and after "
+            + "longer than 20000 characters come back as {valuePreview, valueLength}. A setter that throws fails with the "
+            + "exception's type, message and stack."
+    )]
+    public async Task<string> CsSetAsync(
+        [Description(CsTargetDescription)] CSharpTarget target,
+        [Description("The property, field, list index or dictionary key to set, by name or dotted path: Pending.Count, Items[2].")] string member,
+        [Description("The new value, as JSON.")] JsonElement value,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        JsonObject request = new()
+        {
+            ["op"] = "set",
+            ["target"] = CSharpTarget.ToHelper(target),
+            ["member"] = CheckMember(member),
+            ["value"] = JsonSerializer.SerializeToNode(value),
+        };
+        (CSharpReply reply, IReadOnlyList<ErrorEntry> errors) = await SendCSharpAsync(CsSetToolName, request, session, cancellationToken);
+        JsonObject shaped = reply.Result?.DeepClone() as JsonObject ?? [];
+        shaped["before"] = CutCSharpValue(shaped["before"]);
+        shaped["after"] = CutCSharpValue(shaped["after"]);
+        return ErrorReport.AddTo(shaped, errors).ToJsonString();
     }
 
     /// <summary>The helper's <c>members</c> request: the target, whether non-public members are listed, and a name filter.</summary>
@@ -75,15 +150,39 @@ internal sealed partial class RuntimeTools
         return (offset, limit);
     }
 
-    /// <summary>Sends one helper request, failing as a bridge call fails: refusals and helper errors as <c>cs_members failed: …</c>.</summary>
-    private Task<CSharpReply> SendMembersAsync(GodotSession game, JsonObject request, CancellationToken cancellationToken) =>
-        SendMappedAsync(
+    /// <exception cref="McpException">The member is empty.</exception>
+    private static string CheckMember(string member) =>
+        CheckName(member, "member", "Pass a property or field name, or a dotted path (Pending.Options[0]); cs_members lists them.");
+
+    /// <exception cref="McpException">maxDepth is outside 1 to <see cref="MaxGetDepth"/>.</exception>
+    private static int CheckGetDepth(GetOptions? options)
+    {
+        int maxDepth = options?.MaxDepth ?? DefaultGetDepth;
+        return maxDepth is >= 1 and <= MaxGetDepth ? maxDepth : throw new McpException($"maxDepth must be 1 to {MaxGetDepth}; got {maxDepth}.");
+    }
+
+    /// <summary>
+    /// Sends one helper request to the session's game, failing as a bridge call fails (refusals and helper errors as
+    /// <c>&lt;tool&gt; failed: …</c>), and returns the reply with the errors the game logged meanwhile.
+    /// </summary>
+    private async Task<(CSharpReply Reply, IReadOnlyList<ErrorEntry> Errors)> SendCSharpAsync(
+        string tool,
+        JsonObject request,
+        string? session,
+        CancellationToken cancellationToken
+    )
+    {
+        GodotSession game = Find(session);
+        long mark = game.Errors.Mark();
+        CSharpReply reply = await SendMappedAsync(
             game,
-            CsMembersToolName,
+            tool,
             CsTimeout,
             () => csharp.SendAsync(game, request.ToJsonString(), CsTimeoutMs, cancellationToken),
             cancellationToken
         );
+        return (reply, game.Errors.ErrorsSince(mark));
+    }
 
     /// <summary>The helper's answer as the tool returns it: the target type, and one page of its members.</summary>
     private static JsonObject MembersResult(CSharpReply reply, int offset, int limit)
@@ -97,4 +196,22 @@ internal sealed partial class RuntimeTools
 
         return result;
     }
+
+    /// <summary>cs_get's answer: the value, cut as run_script's is, with its type and, when kept, its handle and any warning.</summary>
+    private static JsonObject GetResult(CSharpReply reply)
+    {
+        JsonObject result = ShapeScriptValue(reply.Result?["value"]);
+        foreach (string key in (string[])["type", "handle", "warning"])
+        {
+            if (reply.Result?[key] is JsonNode node)
+            {
+                result[key] = node.DeepClone();
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>A value cs_set read, or <c>{valuePreview, valueLength}</c> when its JSON is longer than <see cref="MaxValueLength"/>.</summary>
+    private static JsonNode? CutCSharpValue(JsonNode? value) => ValuePreview(value, MaxValueLength) ?? value?.DeepClone();
 }

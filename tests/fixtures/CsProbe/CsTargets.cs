@@ -32,5 +32,19 @@ public partial class CsTargets : Node
 
     internal Mood Mood { get; set; } = Mood.Calm;
 
+    private int _clamped = 5;
+
+    internal int Clamped
+    {
+        get => _clamped;
+        set => _clamped = System.Math.Clamp(value, 0, 10);
+    }
+
+    internal IGreeter Greeter { get; set; }
+
+    internal Greeter Friendly { get; } = new();
+
+    internal Godot.Collections.Dictionary<string, int> Scores { get; } = new() { ["alice"] = 1 };
+
     internal void Fail() => throw new System.InvalidOperationException("probe failure");
 }

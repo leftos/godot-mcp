@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.CSharp;
@@ -9,7 +10,8 @@ namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// The C# helper against a running game: loaded once into the CsProbe's own GodotSharp and answering its ping, a GDScript
-/// project refused before the bridge is asked, and cs_members listing the CsProbe's own types.
+/// project refused before the bridge is asked, cs_members listing the CsProbe's own types, and cs_get and cs_set reading
+/// and writing their members.
 /// </summary>
 public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture<SharedCsProbeSession>
 {
@@ -197,6 +199,201 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
         Assert.True(first["total"]?.GetValue<int>() > 2, $"total is {first["total"]}, not more than 2.");
         Assert.Equal(2, first["next"]?.GetValue<int>());
         Assert.Equal(all[2], Signatures(second)[0]);
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task GetReadsAPrivateRecordFieldGodotReturnsNullFor()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+
+        JsonNode? godot = await RunAsync(_tools, $"return scene_tree.root.get_node(\"{TargetsName}\").get(\"_last\")", cancellation);
+        JsonObject result = await GetAsync(new CSharpTarget(Node: TargetsPath), "_last", null, cancellation);
+
+        Assert.Null(godot);
+        JsonObject value = result["value"]!.AsObject();
+        Assert.Equal("CsProbe.Update", result["type"]?.GetValue<string>());
+        Assert.Equal("start", value["Label"]?.GetValue<string>());
+        Assert.Equal(1, value["At"]?["X"]?.GetValue<int>());
+        Assert.Equal(2, value["At"]?["Y"]?.GetValue<int>());
+        Assert.Equal([1, 2, 3], value["Values"]!.AsArray().Select(item => item!.GetValue<int>()));
+        Assert.Equal("Calm", value["Mood"]?.GetValue<string>());
+        Assert.Null(result["handle"]);
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task GetFollowsADottedPathIntoAList()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+        CSharpTarget target = new(Node: TargetsPath);
+
+        JsonObject number = await GetAsync(target, "Numbers[1]", null, cancellation);
+        JsonObject value = await GetAsync(target, "_last.Values[2]", null, cancellation);
+
+        Assert.Equal(5, number["value"]?.GetValue<int>());
+        Assert.Equal("System.Int32", number["type"]?.GetValue<string>());
+        Assert.Equal(3, value["value"]?.GetValue<int>());
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task SetConvertsAnEnumByNameAndReadsBack()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+        CSharpTarget target = new(Node: TargetsPath);
+
+        try
+        {
+            JsonObject set = await SetAsync(target, "Mood", "Angry", cancellation);
+            JsonObject read = await GetAsync(target, "Mood", null, cancellation);
+
+            Assert.Equal("Mood", set["member"]?.GetValue<string>());
+            Assert.Equal("Calm", set["before"]?.GetValue<string>());
+            Assert.Equal("Angry", set["after"]?.GetValue<string>());
+            Assert.Equal("Angry", read["value"]?.GetValue<string>());
+            Assert.Equal("CsProbe.Mood", read["type"]?.GetValue<string>());
+        }
+        finally
+        {
+            await SetAsync(target, "Mood", "Calm", cancellation);
+        }
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task KeepReturnsAHandleUsableAsATarget()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+
+        JsonObject kept = await GetAsync(new CSharpTarget(Node: TargetsPath), "_last", new GetOptions(Keep: true), cancellation);
+        string handle = kept["handle"]!.GetValue<string>();
+        JsonObject label = await GetAsync(new CSharpTarget(Handle: handle), "Label", null, cancellation);
+
+        Assert.Null(kept["warning"]);
+        Assert.Equal("start", label["value"]?.GetValue<string>());
+        Assert.Equal("System.String", label["type"]?.GetValue<string>());
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task GetReadsAStaticByTypeName()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CSharpTarget tally = new(Type: "CsProbe.Tally");
+        JsonObject first = await GetAsync(tally, "Count", null, cancellation);
+        int before = first["value"]!.GetValue<int>();
+
+        try
+        {
+            JsonObject set = await SetAsync(tally, "Count", before + 3, cancellation);
+            JsonObject read = await GetAsync(tally, "Count", null, cancellation);
+
+            Assert.Equal("System.Int32", first["type"]?.GetValue<string>());
+            Assert.Equal(before + 3, set["after"]?.GetValue<int>());
+            Assert.Equal(before + 3, read["value"]?.GetValue<int>());
+        }
+        finally
+        {
+            await SetAsync(tally, "Count", before, cancellation);
+        }
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task GetOfAMethodNameSaysCsCall()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => GetAsync(new CSharpTarget(Node: TargetsPath), "Hit", null, cancellation));
+
+        Assert.StartsWith("cs_get failed: ", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("'Hit' is a method of CsTargets; cs_call calls it", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task SetThatDoesNotTakeIsPutBack()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+        CSharpTarget target = new(Node: TargetsPath);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => SetAsync(target, "Clamped", 50, cancellation));
+        JsonObject read = await GetAsync(target, "Clamped", null, cancellation);
+
+        Assert.StartsWith("cs_set failed: ", refused.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            "'Clamped' did not take the value: it read 10 after the set, so it was put back to 5.",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(5, read["value"]?.GetValue<int>());
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task KeepWarnsOnANullAndOnAValueType()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+        CSharpTarget target = new(Node: TargetsPath);
+
+        JsonObject nothing = await GetAsync(target, "Greeter", new GetOptions(Keep: true), cancellation);
+        JsonObject mood = await GetAsync(target, "Mood", new GetOptions(Keep: true), cancellation);
+
+        Assert.Null(nothing["value"]);
+        Assert.Null(nothing["handle"]);
+        Assert.Equal("CsProbe.IGreeter", nothing["type"]?.GetValue<string>());
+        Assert.Equal("the value is null; nothing to keep", nothing["warning"]?.GetValue<string>());
+        Assert.False(string.IsNullOrEmpty(mood["handle"]?.GetValue<string>()), "A value type's keep returned no handle.");
+        Assert.StartsWith("Mood is a value type: the handle holds a copy", mood["warning"]?.GetValue<string>(), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task SetTakesAHandleIntoAnInterfaceMember()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+        CSharpTarget target = new(Node: TargetsPath);
+        JsonObject friendly = await GetAsync(target, "Friendly", new GetOptions(Keep: true), cancellation);
+        JsonObject handle = new() { ["$handle"] = friendly["handle"]!.GetValue<string>() };
+
+        try
+        {
+            JsonObject set = await SetAsync(target, "Greeter", handle, cancellation);
+            JsonObject read = await GetAsync(target, "Greeter", null, cancellation);
+
+            Assert.Null(set["before"]);
+            Assert.Equal("CsProbe.Greeter", read["type"]?.GetValue<string>());
+        }
+        finally
+        {
+            await SetAsync<JsonNode?>(target, "Greeter", null, cancellation);
+        }
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task SetRefusesAKeyAGodotDictionaryLacks()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+        CSharpTarget target = new(Node: TargetsPath);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => SetAsync(target, "Scores[\"bob\"]", 2, cancellation));
+        JsonObject alice = await GetAsync(target, "Scores[\"alice\"]", null, cancellation);
+
+        Assert.Contains("key \"bob\" is not in the dictionary at Scores[\"bob\"]", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(1, alice["value"]?.GetValue<int>());
+    }
+
+    private async Task<JsonObject> GetAsync(CSharpTarget target, string member, GetOptions? options, CancellationToken cancellation)
+    {
+        string json = await _tools.CsGetAsync(target, member, options, cancellationToken: cancellation);
+        return JsonNode.Parse(json)!.AsObject();
+    }
+
+    private async Task<JsonObject> SetAsync<T>(CSharpTarget target, string member, T value, CancellationToken cancellation)
+    {
+        string json = await _tools.CsSetAsync(target, member, JsonSerializer.SerializeToElement(value), cancellationToken: cancellation);
+        return JsonNode.Parse(json)!.AsObject();
     }
 
     private async Task<JsonObject> MembersAsync(CSharpTarget target, MembersOptions? options, CancellationToken cancellation)

@@ -35,10 +35,10 @@ public static class ValueReader
     internal static ValueConversionException Mismatch(Type type, JsonNode? json) => new($"expected {TypeNames.WithArticle(type)}, got {Show(json)}");
 
     /// <summary>The JSON as the agent would write it, cut to a readable length.</summary>
-    internal static string Show(JsonNode? json)
+    internal static string Show(JsonNode? json, int shownLength = ShownLength)
     {
         string text = json?.ToJsonString(ShowOptions) ?? "null";
-        return text.Length <= ShownLength ? text : text[..(ShownLength - 3)] + "...";
+        return text.Length <= shownLength ? text : text[..(shownLength - 3)] + "...";
     }
 
     /// <summary>Reads <paramref name="json"/> as the element <paramref name="segment"/> of a larger value, naming it on failure.</summary>
