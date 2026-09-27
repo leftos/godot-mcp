@@ -66,6 +66,20 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         + "Input.flush_buffered_events()\n\t\t"
         + "await scene_tree.process_frame\n\t"
         + "return [button.get_meta(\"touches\"), button.press_count]";
+
+    // Opens a PopupPanel, an embedded Window, over the Menu, holding a Button named PopupButton; returns the button's centre
+    // in viewport coordinates.
+    private const string PopupScript =
+        "var popup := PopupPanel.new()\n\t"
+        + "var button := Button.new()\n\t"
+        + "button.name = \"PopupButton\"\n\t"
+        + "button.text = \"In the popup\"\n\t"
+        + "popup.add_child(button)\n\t"
+        + "scene_tree.root.add_child(popup)\n\t"
+        + "popup.popup(Rect2i(200, 100, 160, 80))\n\t"
+        + "for frame in 3:\n\t\t"
+        + "await scene_tree.process_frame\n\t"
+        + "return Vector2(popup.position) + button.get_global_rect().get_center()";
     private const string ReadSmallButtonPresses = "return scene_tree.root.get_node(\"Main/SmallButton\").press_count";
     private readonly SharedProbeSession _shared = shared;
     private readonly RuntimeTools _tools = new(shared.Sessions);
@@ -209,6 +223,108 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         // small_button.gd line 17: missing.call("free") on a null Object.
         Assert.Equal(17, error["line"]!.GetValue<int>());
         Assert.NotEmpty(error["stack"]!.AsArray());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ClickReportsTheControlItPressedAndReleasedOn()
+    {
+        JsonNode clicked = JsonNode.Parse(
+            await _tools.ClickAsync(new InputTarget("SmallButton"), "left", false, cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+
+        AssertHit(clicked, "pressedOn", "SmallButton", "Button");
+        AssertHit(clicked, "releasedOn", "SmallButton", "Button");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ClickOnNothingReportsNull()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        // (600, 20) is over no Control but Main, which fills the viewport and stops the mouse; with Main ignoring the mouse
+        // nothing is under the point.
+        InputTarget nowhere = new(null, 600, 20);
+
+        JsonNode overMain = JsonNode.Parse(await _tools.ClickAsync(nowhere, "left", false, cancellationToken: cancellation))!;
+        await RunAsync("scene_tree.root.get_node(\"Main\").mouse_filter = Control.MOUSE_FILTER_IGNORE\n\treturn true");
+        JsonNode overNothing = JsonNode.Parse(await _tools.ClickAsync(nowhere, "left", false, cancellationToken: cancellation))!;
+
+        AssertHit(overMain, "pressedOn", "Main", "Control");
+        AssertHit(overMain, "releasedOn", "Main", "Control");
+        AssertNoHit(overNothing, "pressedOn");
+        AssertNoHit(overNothing, "releasedOn");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task DragReportsTheGuiDragAndTheDrop()
+    {
+        JsonNode dragged = JsonNode.Parse(
+            await _tools.DragAsync(DragSource, DropTarget, 300, "left", cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+
+        AssertHit(dragged, "pressedOn", "DragSource", "ColorRect");
+        AssertHit(dragged, "releasedOn", "DropTarget", "ColorRect");
+        Assert.True(dragged["guiDragStarted"]!.GetValue<bool>(), dragged.ToJsonString());
+        Assert.True(dragged["dropAccepted"]!.GetValue<bool>(), dragged.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AShortDragStartsNoGuiDrag()
+    {
+        // DragSource's centre is (90, 190); 5 px is under the default 10 px drag threshold.
+        JsonNode dragged = JsonNode.Parse(
+            await _tools.DragAsync(new(null, 90, 190), new(null, 95, 190), 300, "left", cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+
+        Assert.False(dragged["guiDragStarted"]!.GetValue<bool>(), dragged.ToJsonString());
+        Assert.False(dragged["dropAccepted"]!.GetValue<bool>(), dragged.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ClickReportsAControlInsideAPopup()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonNode centre = await RunAsync(PopupScript);
+
+        JsonNode clicked = JsonNode.Parse(
+            await _tools.ClickAsync(
+                new InputTarget(null, centre["x"]!.GetValue<double>(), centre["y"]!.GetValue<double>()),
+                "left",
+                false,
+                cancellationToken: cancellation
+            )
+        )!;
+
+        AssertHit(clicked, "pressedOn", "PopupButton", "Button");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task MouseButtonReportsWhatItPressed()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        InputTarget smallButton = new("SmallButton");
+
+        JsonNode pressed = JsonNode.Parse(await _tools.MouseButtonAsync(smallButton, "left", "press", cancellationToken: cancellation))!;
+        JsonNode released = JsonNode.Parse(await _tools.MouseButtonAsync(smallButton, "left", "release", cancellationToken: cancellation))!;
+
+        AssertHit(pressed, "pressedOn", "SmallButton", "Button");
+        Assert.False(pressed.AsObject().ContainsKey("releasedOn"), pressed.ToJsonString());
+        AssertHit(released, "releasedOn", "SmallButton", "Button");
+        Assert.False(released.AsObject().ContainsKey("pressedOn"), released.ToJsonString());
+    }
+
+    // A hit is {path, class}: the Control's path, which ends with its name, and its engine class.
+    private static void AssertHit(JsonNode result, string field, string name, string className)
+    {
+        JsonNode? hit = result[field];
+        Assert.True(hit is JsonObject, $"{field} is not a Control in {result.ToJsonString()}");
+        Assert.EndsWith($"/{name}", hit!["path"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Equal(className, hit["class"]!.GetValue<string>());
+    }
+
+    private static void AssertNoHit(JsonNode result, string field)
+    {
+        Assert.True(result.AsObject().ContainsKey(field), $"{field} is missing from {result.ToJsonString()}");
+        Assert.Null(result[field]);
     }
 
     // A test that launches its own game stops it and checks the probe folder is clean, as the shared-session tests do.

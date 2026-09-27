@@ -16,13 +16,13 @@ const MAX_FRAME_BYTES := 16 * 1024 * 1024
 const SCREENSHOT_DIR := "res://.godot/godot-mcp/screenshots"
 const ATTACH_FILE := "res://.godot/godot-mcp/attach.json"
 const GAMEPAD_SCRIPT := "godot_mcp_gamepad.gd"
+const INPUT_SCRIPT := "godot_mcp_input.gd"
 const INSPECT_SCRIPT := "godot_mcp_inspect.gd"
 const TIME_SCRIPT := "godot_mcp_time.gd"
 const BASELINE_SCRIPT := "godot_mcp_baseline.gd"
 const LOGGER_SCRIPT := "godot_mcp_logger.gd"
 const JSON_SCRIPT := "godot_mcp_json.gd"
 const PREVIEW_SCRIPT := "godot_mcp_preview.gd"
-const MIN_DRAG_STEPS := 3
 ## A quiet run's frame-rate cap when the project sets none: its frames are never seen, so drawing
 ## at the monitor's refresh rate only burns the GPU.
 const QUIET_MAX_FPS := 60
@@ -30,20 +30,6 @@ const QUIET_MAX_FPS := 60
 ## (DEVICE_ID_MOUSE, 32) and from the engine's own ids: 0-15 joypads, 16-31 keyboards, -1
 ## emulation, -2 internal (core/input/input_event.h L64-67 in 4.7.2).
 const INJECTED_DEVICE := 0x6D6370
-const SETTLE_FRAMES := 2
-const MOUSE_BUTTONS := {
-	"left": MOUSE_BUTTON_LEFT,
-	"right": MOUSE_BUTTON_RIGHT,
-	"middle": MOUSE_BUTTON_MIDDLE,
-}
-const MODIFIER_KEYS := {KEY_SHIFT: "shift", KEY_CTRL: "ctrl", KEY_ALT: "alt", KEY_META: "meta"}
-## A US keyboard's shifted symbols, and at the same index the key that types each unshifted.
-const SHIFTED_SYMBOLS := '~!@#$%^&*()_+{}|:"<>?'
-const UNSHIFTED_KEYS := "`1234567890-=[]\\;',./"
-const UNKNOWN_KEY_HINT := (
-	"Key names are Godot's Key constants without KEY_: Enter, Escape, Space, A, 1, F1, Up, "
-	+ "Shift, Ctrl, Alt, Meta. run_script can print one with OS.get_keycode_string(KEY_X)."
-)
 
 var _stream: StreamPeerTCP
 var _token: String = ""
@@ -60,6 +46,8 @@ var _gesture_playing: bool = false
 var _dispatching: bool = false
 ## The gamepad (godot_mcp_gamepad.gd beside this script), a child once the bridge is on.
 var _pads: Node
+## The input player (godot_mcp_input.gd beside this script): gestures and raw events.
+var _gestures: Node
 ## The inspector (godot_mcp_inspect.gd beside this script), a child once the bridge is on.
 var _inspect: Node
 ## The clock (godot_mcp_time.gd beside this script): pause, step, time scale and waits.
@@ -117,6 +105,10 @@ func _ready() -> void:
 	_pads = (load(script_dir.path_join(GAMEPAD_SCRIPT)) as GDScript).new()
 	_pads.name = "Gamepad"
 	add_child(_pads)
+	_gestures = (load(script_dir.path_join(INPUT_SCRIPT)) as GDScript).new()
+	_gestures.name = "Gestures"
+	_gestures.bridge = self
+	add_child(_gestures)
 	_inspect = (load(script_dir.path_join(INSPECT_SCRIPT)) as GDScript).new()
 	_inspect.name = "Inspect"
 	add_child(_inspect)
@@ -524,335 +516,14 @@ func _handle_compare(id: int, params: Dictionary) -> void:
 	_reply_ok(id, outcome)
 
 
-## Plays one gesture over frames, then waits two more frames before replying, so the game's
-## handlers have run and their errors are flushed ahead of the reply. Every point arrives in
-## viewport coordinates.
+## Runs an input request on the Gestures child (godot_mcp_input.gd), which plays it and
+## answers {result} or {error}.
 func _handle_input(id: int, params: Dictionary) -> void:
-	_gesture_playing = true
-	var error: String = await _play_gesture(params)
-	for _frame in SETTLE_FRAMES:
-		await get_tree().process_frame
-	_gesture_playing = false
-	if not error.is_empty():
-		_reply_error(id, error)
+	var outcome: Dictionary = await _gestures.play(params)
+	if outcome.has("error"):
+		_reply_error(id, str(outcome["error"]))
 		return
-	_reply_ok(id, {"pointer": _json.to_json(_to_viewport(_pointer)), "heldButtonMask": _held_mask})
-
-
-func _play_gesture(params: Dictionary) -> String:
-	var gesture: String = str(params.get("gesture", ""))
-	var error: String = "unknown gesture '%s'" % gesture
-	match gesture:
-		"click":
-			error = await _play_click(params)
-		"drag":
-			error = await _play_drag(params)
-		"type_text":
-			error = await _play_text(str(params.get("text", "")))
-		"key":
-			error = await _play_key(params)
-		"mouse_button":
-			error = await _play_mouse_button(params)
-		"gamepad_button":
-			error = await _pads.play_button(params)
-		"gamepad_axes":
-			error = await _pads.play_axes(params)
-		"events":
-			error = await _play_events(params.get("events"))
-	return error
-
-
-func _play_click(params: Dictionary) -> String:
-	var point: Variant = _resolve_target(params.get("target"))
-	if point is String:
-		return point
-	var button: int = _parse_button(params.get("button", "left"))
-	if button == 0:
-		return _unknown_button(params.get("button"))
-	await _click_at(_to_window(point), button, bool(params.get("doubleClick", false)))
-	return ""
-
-
-## Moves to the point, then presses and releases one frame apart; a double click follows
-## with a second press marked double_click.
-func _click_at(window_point: Vector2, button: int, double_click: bool) -> void:
-	_move_to(window_point)
-	_send_button(window_point, button, true, false)
-	await get_tree().process_frame
-	_send_button(window_point, button, false, false)
-	if double_click:
-		await get_tree().process_frame
-		_send_button(window_point, button, true, true)
-		await get_tree().process_frame
-		_send_button(window_point, button, false, false)
-
-
-func _play_drag(params: Dictionary) -> String:
-	var from: Variant = _resolve_target(params.get("from"))
-	if from is String:
-		return "from: %s" % from
-	var to: Variant = _resolve_target(params.get("to"))
-	if to is String:
-		return "to: %s" % to
-	var button: int = _parse_button(params.get("button", "left"))
-	if button == 0:
-		return _unknown_button(params.get("button"))
-	var duration_ms: int = maxi(0, int(params.get("durationMs", 300)))
-	await _drag(_to_window(from), _to_window(to), duration_ms, button)
-	return ""
-
-
-## Presses at start, then sends one motion a frame along the straight line to end for
-## duration_ms (and at least MIN_DRAG_STEPS frames), each carrying the held button in its
-## button_mask and its step as relative: Godot's viewport starts a drag only from motions
-## with LEFT in the mask whose relatives add up past gui/common/drag_threshold.
-func _drag(start: Vector2, end: Vector2, duration_ms: int, button: int) -> void:
-	_move_to(start)
-	_send_button(start, button, true, false)
-	var began: int = Time.get_ticks_msec()
-	var step: int = 0
-	var progress: float = 0.0
-	while progress < 1.0:
-		await get_tree().process_frame
-		step += 1
-		var elapsed: float = float(Time.get_ticks_msec() - began)
-		progress = clampf(elapsed / maxf(float(duration_ms), 1.0), 0.0, 1.0)
-		if step < MIN_DRAG_STEPS:
-			progress = minf(progress, float(step) / MIN_DRAG_STEPS)
-		_move_to(start.lerp(end, progress))
-	await get_tree().process_frame
-	_send_button(end, button, false, false)
-
-
-func _play_text(text: String) -> String:
-	for index in text.length():
-		if index > 0:
-			await get_tree().process_frame
-		_type_character(text.unicode_at(index))
-	return ""
-
-
-## Presses and releases the key that types code on a US layout, with shift where the
-## character needs it and the character itself as the event's unicode.
-func _type_character(code: int) -> void:
-	var character: String = String.chr(code)
-	var keycode: int = KEY_NONE
-	var unicode: int = code
-	var modifiers := PackedStringArray()
-	var symbol_index: int = SHIFTED_SYMBOLS.find(character)
-	if code == 10:
-		keycode = KEY_ENTER
-		unicode = 0
-	elif code == 9:
-		keycode = KEY_TAB
-		unicode = 0
-	elif symbol_index >= 0:
-		keycode = UNSHIFTED_KEYS.unicode_at(symbol_index)
-		modifiers.append("shift")
-	elif code >= 32 and code < 127:
-		keycode = character.to_upper().unicode_at(0)
-		if character != character.to_lower():
-			modifiers.append("shift")
-	_send_key(keycode, true, unicode, modifiers)
-	_send_key(keycode, false, unicode, modifiers)
-
-
-func _play_key(params: Dictionary) -> String:
-	var key_name: String = str(params.get("key", ""))
-	var keycode: int = _parse_key(key_name)
-	if keycode == KEY_NONE:
-		return "unknown key '%s'. %s" % [key_name, UNKNOWN_KEY_HINT]
-	var action: String = str(params.get("action", "tap"))
-	if not action in ["tap", "press", "release"]:
-		return "unknown key action '%s'; use tap, press or release" % action
-	var modifiers := PackedStringArray(params.get("modifiers", []))
-	var unicode: int = _key_unicode(keycode, modifiers)
-	if action != "release":
-		_send_key(keycode, true, unicode, modifiers)
-	if action == "tap":
-		await get_tree().process_frame
-	if action != "press":
-		_send_key(keycode, false, unicode, modifiers)
-	return ""
-
-
-func _play_mouse_button(params: Dictionary) -> String:
-	var point: Variant = _resolve_target(params.get("target"))
-	if point is String:
-		return point
-	var button: int = _parse_button(params.get("button", "left"))
-	if button == 0:
-		return _unknown_button(params.get("button"))
-	var action: String = str(params.get("action", "press"))
-	if not action in ["press", "release"]:
-		return "unknown mouse_button action '%s'; use press or release" % action
-	var window_point: Vector2 = _to_window(point)
-	_move_to(window_point)
-	_send_button(window_point, button, action == "press", false)
-	await get_tree().process_frame
-	return ""
-
-
-## Plays a raw event list, one frame apart, stopping at the first event that fails.
-func _play_events(events: Variant) -> String:
-	if not events is Array:
-		return "events must be an array of event objects"
-	var list: Array = events
-	for index in list.size():
-		if index > 0:
-			await get_tree().process_frame
-		var error: String = await _play_event(list[index])
-		if not error.is_empty():
-			return "event %d: %s" % [index, error]
-	return ""
-
-
-func _play_event(event: Variant) -> String:
-	if not event is Dictionary:
-		return "not an object"
-	var spec: Dictionary = event
-	return await _play_event_of_kind(spec)
-
-
-## Plays one raw event by its type, or says why it could not.
-func _play_event_of_kind(spec: Dictionary) -> String:
-	var kind: String = str(spec.get("type", ""))
-	var error: String = (
-		(
-			"unknown type '%s'; the types are key, mouse_button, mouse_motion, joypad_button, "
-			+ "joypad_motion, action, click_element and wait"
-		)
-		% kind
-	)
-	match kind:
-		"key":
-			error = await _play_raw_key(spec)
-		"mouse_button":
-			error = await _play_raw_button(spec)
-		"mouse_motion":
-			error = _play_raw_motion(spec)
-		"joypad_button":
-			error = await _pads.play_raw_button(spec)
-		"joypad_motion":
-			error = _pads.play_raw_motion(spec)
-		"action":
-			error = _play_action(spec)
-		"click_element":
-			error = await _play_click_element(spec)
-		"wait":
-			error = await _play_wait(spec)
-	return error
-
-
-## A click on the element spec names, with its button and doubleClick, as click plays it.
-func _play_click_element(spec: Dictionary) -> String:
-	var click: Dictionary = {
-		"target": {"element": spec.get("element", "")},
-		"button": spec.get("button", "left"),
-		"doubleClick": spec.get("doubleClick", false),
-	}
-	return await _play_click(click)
-
-
-## Waits spec.ms milliseconds (none when negative) of real time: the timer runs while the tree
-## is paused and ignores the time scale.
-func _play_wait(spec: Dictionary) -> String:
-	var seconds: float = maxf(float(spec.get("ms", 0)), 0.0) / 1000.0
-	await get_tree().create_timer(seconds, true, false, true).timeout
-	return ""
-
-
-## A key event; with pressed omitted, a press and a release one frame apart.
-func _play_raw_key(spec: Dictionary) -> String:
-	var key_name: String = str(spec.get("key", ""))
-	var keycode: int = _parse_key(key_name)
-	if keycode == KEY_NONE:
-		return "unknown key '%s'. %s" % [key_name, UNKNOWN_KEY_HINT]
-	var modifiers := PackedStringArray(spec.get("modifiers", []))
-	var unicode: int = _key_unicode(keycode, modifiers)
-	if spec.get("unicode") is String and not str(spec["unicode"]).is_empty():
-		unicode = str(spec["unicode"]).unicode_at(0)
-	elif spec.get("unicode") is float or spec.get("unicode") is int:
-		unicode = int(spec["unicode"])
-	if spec.has("pressed"):
-		_send_key(keycode, bool(spec["pressed"]), unicode, modifiers)
-		return ""
-	_send_key(keycode, true, unicode, modifiers)
-	await get_tree().process_frame
-	_send_key(keycode, false, unicode, modifiers)
-	return ""
-
-
-## A mouse button event at a point; with pressed omitted, a press and a release one frame
-## apart.
-func _play_raw_button(spec: Dictionary) -> String:
-	if not (spec.has("x") and spec.has("y")):
-		return "mouse_button needs x and y"
-	var button: int = _parse_button(spec.get("button", "left"))
-	if button == 0:
-		return _unknown_button(spec.get("button"))
-	var window_point: Vector2 = _to_window(Vector2(float(spec["x"]), float(spec["y"])))
-	var double_click: bool = bool(spec.get("doubleClick", false))
-	if spec.has("pressed"):
-		_send_button(window_point, button, bool(spec["pressed"]), double_click)
-		return ""
-	_send_button(window_point, button, true, double_click)
-	await get_tree().process_frame
-	_send_button(window_point, button, false, false)
-	return ""
-
-
-## A motion to a point. relative defaults to the step from the last pointer position and
-## button_mask to the buttons held now; an explicit relative is in viewport units.
-func _play_raw_motion(spec: Dictionary) -> String:
-	if not (spec.has("x") and spec.has("y")):
-		return "mouse_motion needs x and y"
-	var window_point: Vector2 = _to_window(Vector2(float(spec["x"]), float(spec["y"])))
-	var relative: Vector2 = window_point - _pointer
-	if spec.has("relative_x") or spec.has("relative_y"):
-		var given := Vector2(float(spec.get("relative_x", 0)), float(spec.get("relative_y", 0)))
-		relative = get_viewport().get_screen_transform().basis_xform(given)
-	_send_motion(window_point, relative, int(spec.get("button_mask", _held_mask)))
-	return ""
-
-
-func _play_action(spec: Dictionary) -> String:
-	var action := StringName(str(spec.get("action", "")))
-	if not InputMap.has_action(action):
-		return "no input action '%s' in the project's InputMap" % action
-	var event := InputEventAction.new()
-	event.action = action
-	event.pressed = bool(spec.get("pressed", true))
-	event.strength = float(spec.get("strength", 1.0))
-	_dispatch(event)
-	return ""
-
-
-## The viewport point a target {element} or {x, y} names; an element's point is the centre of
-## its global rect. A String instead says why the target cannot be resolved.
-func _resolve_target(target: Variant) -> Variant:
-	if not target is Dictionary:
-		return "a target must be an object {element} or {x, y}"
-	var spec: Dictionary = target
-	if spec.has("element"):
-		return _resolve_element(str(spec["element"]))
-	if spec.has("x") and spec.has("y"):
-		return Vector2(float(spec["x"]), float(spec["y"]))
-	return "a target needs element, or both x and y; got %s" % JSON.stringify(spec)
-
-
-func _resolve_element(element: String) -> Variant:
-	var node: Node = _find_node(element)
-	if node == null:
-		return (
-			"no node '%s' in the running game; get_ui_elements lists the Controls' paths and names"
-			% element
-		)
-	if not node is Control:
-		return (
-			"'%s' is a %s, not a Control, so it has no rect to aim at" % [element, node.get_class()]
-		)
-	return (node as Control).get_global_rect().get_center()
+	_reply_ok(id, outcome["result"])
 
 
 ## An absolute path (/root/Main/Button), a path under the root (Main/Button), or else the
@@ -868,110 +539,6 @@ func _find_node(element: String) -> Node:
 			return node
 		queue.append_array(node.get_children())
 	return null
-
-
-## The one place a viewport (canvas) point becomes the window point the display server's own
-## events carry: the root window's screen transform holds the stretch scale and the letterbox
-## offset.
-func _to_window(point: Vector2) -> Vector2:
-	return get_viewport().get_screen_transform() * point
-
-
-func _to_viewport(point: Vector2) -> Vector2:
-	return get_viewport().get_screen_transform().affine_inverse() * point
-
-
-func _move_to(window_point: Vector2) -> void:
-	_send_motion(window_point, window_point - _pointer, _held_mask)
-
-
-func _send_motion(window_point: Vector2, relative: Vector2, button_mask: int) -> void:
-	var motion := InputEventMouseMotion.new()
-	motion.device = INJECTED_DEVICE
-	motion.position = window_point
-	motion.global_position = window_point
-	motion.relative = relative
-	motion.screen_relative = relative
-	motion.button_mask = button_mask
-	_pointer = window_point
-	_dispatch(motion)
-
-
-func _send_button(window_point: Vector2, button: int, pressed: bool, double_click: bool) -> void:
-	var bit: int = 1 << (button - 1)
-	_held_mask = (_held_mask | bit) if pressed else (_held_mask & ~bit)
-	var event := InputEventMouseButton.new()
-	event.device = INJECTED_DEVICE
-	event.button_index = button as MouseButton
-	event.pressed = pressed
-	event.double_click = double_click
-	event.button_mask = _held_mask
-	event.position = window_point
-	event.global_position = window_point
-	_pointer = window_point
-	_dispatch(event)
-
-
-func _send_key(keycode: int, pressed: bool, unicode: int, modifiers: PackedStringArray) -> void:
-	var event := InputEventKey.new()
-	event.keycode = keycode as Key
-	event.physical_keycode = keycode as Key
-	event.key_label = keycode as Key
-	event.unicode = unicode
-	event.pressed = pressed
-	var held: PackedStringArray = modifiers.duplicate()
-	if pressed and MODIFIER_KEYS.has(keycode):
-		held.append(MODIFIER_KEYS[keycode])
-	event.shift_pressed = held.has("shift")
-	event.ctrl_pressed = held.has("ctrl")
-	event.alt_pressed = held.has("alt")
-	event.meta_pressed = held.has("meta")
-	_dispatch(event)
-
-
-## Sends a new event object through Input, as the display server's own events go, and
-## flushes it at once so accumulated input neither merges nor delays it.
-func _dispatch(event: InputEvent) -> void:
-	_dispatching = true
-	Input.parse_input_event(event)
-	Input.flush_buffered_events()
-	_dispatching = false
-
-
-func _parse_button(value: Variant) -> int:
-	if value is String and MOUSE_BUTTONS.has((value as String).to_lower()):
-		return MOUSE_BUTTONS[(value as String).to_lower()]
-	if (value is int or value is float) and int(value) >= 1 and int(value) <= 3:
-		return int(value)
-	return 0
-
-
-func _unknown_button(value: Variant) -> String:
-	return "unknown mouse button '%s'; use left, right or middle" % str(value)
-
-
-## The Key a name like Enter, A or F1 stands for; KEY_NONE for an unknown name or a combination
-## such as Ctrl+A, whose modifiers go in modifiers instead.
-func _parse_key(key_name: String) -> int:
-	if key_name.is_empty() or key_name.contains("+"):
-		return KEY_NONE
-	return OS.find_keycode_from_string(key_name)
-
-
-## The character a printable key types with these modifiers; 0 for a key that types none, or
-## when ctrl, alt or meta is held.
-func _key_unicode(keycode: int, modifiers: PackedStringArray) -> int:
-	if keycode < 32 or keycode >= 127:
-		return 0
-	if modifiers.has("ctrl") or modifiers.has("alt") or modifiers.has("meta"):
-		return 0
-	var character: String = String.chr(keycode)
-	if not modifiers.has("shift"):
-		return character.to_lower().unicode_at(0)
-	var symbol_index: int = UNSHIFTED_KEYS.find(character)
-	if symbol_index >= 0:
-		return SHIFTED_SYMBOLS.unicode_at(symbol_index)
-	return character.to_upper().unicode_at(0)
 
 
 func _free_unless_counted(instance: Variant) -> void:

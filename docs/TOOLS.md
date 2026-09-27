@@ -99,16 +99,16 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ## Drive input
 
-All input tools answer `{pointer, heldButtonMask}` once the gesture has ended and two more frames have run. One input call plays at a time per session. A target is `{element}` (a Control's path or name; its rect's centre) or `{x, y}` in viewport coordinates, never both.
+All input tools answer `{pointer, heldButtonMask}` once the gesture has ended and two more frames have run; `click`, `drag` and `mouse_button` also say what they hit, each Control as `{path, class}` or null over none, a popup's included. One input call plays at a time per session. A target is `{element}` (a Control's path or name; its rect's centre) or `{x, y}` in viewport coordinates, never both.
 
 ### `click`
 
-- **Does:** moves the pointer to `target`, presses, releases a frame later.
+- **Does:** moves the pointer to `target`, presses, releases a frame later: `pressedOn` and `releasedOn` name the Control under the press and the release (with `doubleClick`, the second click's).
 - **Use:** `target`, `button` (`left`, `right`, `middle`; default `left`), `doubleClick`.
 
 ### `drag`
 
-- **Does:** presses at `from`, moves in a straight line to `to` over `durationMs` (default 300, at least 3 frames), each motion carrying the held button, releases at `to`.
+- **Does:** presses at `from`, moves in a straight line to `to` over `durationMs` (default 300, at least 3 frames), each motion carrying the held button, releases at `to`. `pressedOn` and `releasedOn` name the Control under the press and under the release point (not the one Godot sends the release to, which is always the pressed one), `guiDragStarted` whether Godot's GUI began a drag, `dropAccepted` whether a Control took the drop.
 - **Use:** drag and drop, sliders, panning; `button` as `click`.
 - **Edges:** Godot starts a GUI drag only once the path passes `gui/common/drag_threshold` (10 px by default); a shorter drag is a click.
 
@@ -125,7 +125,7 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 ### `mouse_button`
 
-- **Does:** moves to `target`, then presses or releases `button` (`action` `press` default, or `release`); held buttons stay in later motions' `button_mask`.
+- **Does:** moves to `target`, then presses or releases `button` (`action` `press` default, or `release`); held buttons stay in later motions' `button_mask`. A press answers `pressedOn`, a release `releasedOn`.
 - **Use:** a drag by hand: `mouse_button` press, `simulate_input` `mouse_motion` events, `mouse_button` release; for paths `drag` cannot draw.
 
 ### `simulate_input`

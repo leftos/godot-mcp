@@ -38,7 +38,9 @@ internal sealed partial class RuntimeTools
     [McpServerTool(Name = "click", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Clicks in the running game: moves the pointer to the target, presses, and releases a frame later. Points are "
-            + "viewport coordinates, as get_ui_elements reports them; the bridge maps them to the window, stretched or letterboxed."
+            + "viewport coordinates, as get_ui_elements reports them; the bridge maps them to the window, stretched or letterboxed. "
+            + "Returns {pointer, heldButtonMask, pressedOn, releasedOn}: the Controls ({path, class}) under the press and the "
+            + "release, a popup's included, null over none; with doubleClick, the second click's."
             + ErrorNote
     )]
     public Task<string> ClickAsync(
@@ -64,7 +66,10 @@ internal sealed partial class RuntimeTools
         "Drags in the running game: presses at from, moves one step a frame in a straight line to to over durationMs (at "
             + "least 3 frames), each motion carrying the held button and its step, and releases at to. Godot starts a drag "
             + "once the path passes gui/common/drag_threshold (10 px by default); a shorter one is a click. While a gesture "
-            + "plays, or injected input holds a button, the real mouse's buttons and motions are kept from the game's GUI."
+            + "plays, or injected input holds a button, the real mouse's buttons and motions are kept from the game's GUI. "
+            + "Returns {pointer, heldButtonMask, pressedOn, releasedOn, guiDragStarted, dropAccepted}: the Controls ({path, "
+            + "class}) under the press and under the release point, null over none; whether Godot's GUI started a drag; and "
+            + "whether a Control accepted its drop."
             + ErrorNote
     )]
     public Task<string> DragAsync(
@@ -147,7 +152,8 @@ internal sealed partial class RuntimeTools
         "Holds or releases a mouse button at a target: moves the pointer there (carrying any buttons already held), then "
             + "presses or releases. The held buttons stay in later motions' button_mask, so press, simulate_input motions "
             + "and release make a drag by hand. While a button is held, the real mouse's buttons and motions are kept from the "
-            + "game's GUI."
+            + "game's GUI. Returns {pointer, heldButtonMask} and pressedOn (a press) or releasedOn (a release): the Control "
+            + "({path, class}) under the point, null over none."
             + ErrorNote
     )]
     public Task<string> MouseButtonAsync(

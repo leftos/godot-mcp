@@ -8,17 +8,6 @@ extends "res://gd_test.gd"
 var _bridge_script: GDScript = load_bridge_script("godot_mcp_bridge.gd")
 
 
-func test_parse_button_takes_names_and_numbers() -> void:
-	var bridge: Node = _bridge_script.new()
-	assert_eq(bridge._parse_button("Left"), MOUSE_BUTTON_LEFT, "Left, in any case")
-	assert_eq(bridge._parse_button("middle"), MOUSE_BUTTON_MIDDLE, "middle")
-	assert_eq(bridge._parse_button(2.0), 2, "a JSON float 2")
-	assert_eq(bridge._parse_button(4), 0, "4 is not a button the tools take")
-	assert_eq(bridge._parse_button("back"), 0, "an unknown name")
-	assert_eq(bridge._parse_button(null), 0, "null")
-	bridge.free()
-
-
 func test_save_preview_leaves_a_narrow_image_alone() -> void:
 	var bridge: Node = _bridge_script.new()
 	var path: String = OS.get_temp_dir().path_join("godot_mcp_narrow_preview.png")
