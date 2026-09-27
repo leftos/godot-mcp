@@ -11,6 +11,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\GodotMcp.Dotnet.Core\GodotMcp.Dotnet.Core.csproj" />
     <ProjectReference Include="..\..\src\GodotMcp.Server\GodotMcp.Server.csproj" />
     <ProjectReference Include="..\GodotMcp.TestSupport\GodotMcp.TestSupport.csproj" />
   </ItemGroup>

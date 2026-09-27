@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The helper's Godot-free marshalling: JSON to CLR values and back, member paths, signatures, overload choice and
+       the handle table. Unit-tested without Godot; it uses nothing beyond the shared framework. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>
