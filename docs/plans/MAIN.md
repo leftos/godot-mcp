@@ -23,7 +23,7 @@ A track, then singles; the singles' order is not a ranking.
 ### Singles
 
 - [ ] The scene tools refuse a `StringName` property (`theme_type_variation`) on read-back, comparing the String sent with the StringName read (#8)
-- [ ] Tooltips in screenshots, a hover-only pointer move, and a timed wait while paused (#9): find whether a tooltip's popup window escapes `take_screenshot` or a quiet run never shows it; decide a hover gesture's tool shape and whether `wait_for` takes a plain duration while paused
+- [ ] Tooltips in screenshots, a hover-only pointer move, and a timed wait while paused (#9): find whether a tooltip's popup window escapes `take_screenshot` or a quiet run never shows it; decided (user, 2026-09-27): a hover gets both a new `hover` tool (`target` an element or x,y, no button held, answering `hoveredOn` and `tooltip`, waiting out the tooltip delay itself) and a `mouse_button` action `move`; `wait_for` keeps refusing a plain timed wait while paused, since the hover waits for the tooltip itself
 
 
 - [ ] A Godot launch in the itests died once with exit 0xC06D007F (a delay-load failure) before the bridge connected (`CaptureTests.SentPadInputIsCaptured`, full `itest` 2026-09-26, beside two other trees' itests; passed on the rerun): find what fails to load if it recurs
