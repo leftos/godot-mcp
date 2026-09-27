@@ -555,6 +555,14 @@ func test_same_compares_a_string_and_a_string_name_by_text() -> void:
 	assert_true(not _json.same(NodePath("a"), "a"), "a NodePath is not text")
 
 
+func test_same_compares_a_packed_array_and_an_array_by_element() -> void:
+	assert_true(_json.same([80, 100], PackedInt32Array([80, 100])), "an Array read back for ints")
+	assert_true(_json.same([1.5000001], PackedFloat32Array([1.5])), "floats approximately")
+	assert_true(not _json.same([1], PackedFloat32Array([1.0])), "an int is not a float")
+	assert_true(not _json.same([80], PackedInt32Array([80, 100])), "a different size")
+	assert_true(_json.same([&"a"], PackedStringArray(["a"])), "text by the text rule")
+
+
 func test_is_shown_keeps_script_and_editor_properties() -> void:
 	assert_true(_json.is_shown({"usage": PROPERTY_USAGE_SCRIPT_VARIABLE}), "a script variable")
 	assert_true(_json.is_shown({"usage": PROPERTY_USAGE_DEFAULT}), "an editor property")

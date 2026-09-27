@@ -191,6 +191,22 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetsAPackedArrayPropertyThatReadsBackAsAnArray()
+    {
+        // CodeEdit declares line_length_guidelines a PackedInt32Array and reads it back as an Array.
+        await RunAsync(
+            _tools,
+            "var edit := CodeEdit.new()\n\tedit.name = \"Guides\"\n\tscene_tree.root.add_child(edit)\n\treturn true",
+            TestContext.Current.CancellationToken
+        );
+
+        JsonNode set = await SetAsync("Guides", "line_length_guidelines", "[80, 100]");
+
+        Assert.Equal("[]", set["before"]!.ToJsonString());
+        Assert.Equal("[80,100]", set["after"]!.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task SetUnknownPropertyFails()
     {
         await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);

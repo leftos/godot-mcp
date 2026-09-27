@@ -597,23 +597,53 @@ static func is_shown(info: Dictionary) -> bool:
 ## Whether a property reads back what was set. A native float property may store 32 bits, so
 ## a float compares approximately; anything else must match in type and value. A String and a
 ## StringName compare by their text, since Godot declares some properties as one and reads them
-## back as the other.
+## back as the other. A Packed array and an Array, or two kinds of Packed array, compare element
+## by element by this same rule, since Godot declares some properties as a Packed array and reads
+## them back as an Array.
 static func same(after: Variant, value: Variant) -> bool:
-	# A cleared native Object property reads back as a null Ref, which is TYPE_OBJECT, not TYPE_NIL.
 	if typeof(value) == TYPE_NIL:
-		return typeof(after) == TYPE_NIL or (typeof(after) == TYPE_OBJECT and after == null)
+		return _is_null(after)
 	if typeof(after) == TYPE_FLOAT and typeof(value) == TYPE_FLOAT:
 		return is_equal_approx(after, value)
 	if _both_text(after, value):
 		return after == value
+	if _both_arrays(after, value):
+		return _same_elements(after, value)
 	return typeof(after) == typeof(value) and after == value
 
 
-## Whether both values are text, the one type pair a property's declared kind and its read-back
-## kind may differ by: a String and a StringName.
+## Whether a read-back value is null. A cleared native Object property reads back as a null Ref,
+## which is TYPE_OBJECT, not TYPE_NIL.
+static func _is_null(after: Variant) -> bool:
+	return typeof(after) == TYPE_NIL or (typeof(after) == TYPE_OBJECT and after == null)
+
+
+## Whether both values are text, a type pair a property's declared kind and its read-back kind
+## may differ by: a String and a StringName.
 static func _both_text(after: Variant, value: Variant) -> bool:
 	var kinds: Array[int] = [TYPE_STRING, TYPE_STRING_NAME]
 	return typeof(after) in kinds and typeof(value) in kinds
+
+
+## Whether both values are arrays of differing kinds, the other type pair a property's declared
+## kind and its read-back kind may differ by: a Packed array and an Array, or two Packed arrays.
+static func _both_arrays(after: Variant, value: Variant) -> bool:
+	return typeof(after) != typeof(value) and _is_array(after) and _is_array(value)
+
+
+## Whether the value is an Array or a Packed array.
+static func _is_array(value: Variant) -> bool:
+	return typeof(value) == TYPE_ARRAY or PACKED_ELEMENTS.has(typeof(value))
+
+
+## Whether two array-likes have the same size and every pair of elements is the same.
+static func _same_elements(after: Variant, value: Variant) -> bool:
+	if after.size() != value.size():
+		return false
+	for index in after.size():
+		if not same(after[index], value[index]):
+			return false
+	return true
 
 
 ## The type a property or parameter entry declares: its class for an object, else the Variant

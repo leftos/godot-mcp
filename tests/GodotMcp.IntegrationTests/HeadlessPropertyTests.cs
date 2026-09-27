@@ -274,6 +274,28 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetNodePropertiesSetsAPackedArrayThatReadsBackAsAnArray()
+    {
+        // CodeEdit declares line_length_guidelines a PackedInt32Array and reads it back as an Array.
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "editor.tscn"), "[gd_scene format=3]\n\n[node name=\"Editor\" type=\"CodeEdit\"]\n");
+
+        JsonNode set = JsonNode.Parse(
+            await _tools.SetNodePropertiesAsync(
+                probe.Directory,
+                "editor.tscn",
+                [new PropertyUpdate(".", "line_length_guidelines", Json("[80, 100]"))],
+                cancellation
+            )
+        )!;
+        JsonNode read = await PropertiesAsync(probe.Directory, "editor.tscn", [new NodePropertyQuery(".", ["line_length_guidelines"])], cancellation);
+
+        Assert.Equal("[80,100]", set["results"]![0]!["after"]!.ToJsonString());
+        Assert.Equal("[80,100]", read["results"]![0]!["properties"]!["line_length_guidelines"]!.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task SetNodePropertiesIsAllOrNothing()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
