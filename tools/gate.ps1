@@ -6,7 +6,7 @@ Runs one gate command under a ceiling: the whole output to a log, the last lines
 status, and 124 when the ceiling killed it.
 
 .DESCRIPTION
-Usage: pwsh tools/gate.ps1 -Log <path> -TimeoutSeconds <n> [-Tail <n>] -- <command> [args...]
+Usage: pwsh tools/gate.ps1 -Log <path> -TimeoutSeconds <n> [-Tail <n>] [-NoMarkers] -- <command> [args...]
 
 Why this exists (ported from opening-hand's tools/gate.ps1):
  - Every line a command prints lands in an agent's context and is re-read on every later turn, so a build or a test run
@@ -23,7 +23,7 @@ The command's standard output goes to -Log and its standard error to <log>.err, 
 redirect both to one file; once the process has ended the .err file is appended to the log and removed, so one file
 holds everything, the output first and the errors after it. The command runs in the caller's working directory.
 
-The three options below are read by hand out of $args rather than declared in a param block: a declared block sends
+The options below are read by hand out of $args rather than declared in a param block: a declared block sends
 this script's own arguments through PowerShell's parameter binder, which reads the bare -- of
 `pwsh tools/gate.ps1 -Log x -TimeoutSeconds 5 -- dotnet test -c Release` as a parameter name and stops with "the
 parameter name '' is ambiguous" (PowerShell 7.5, 2026-09-14). A script that declares no parameters is handed every word
@@ -44,11 +44,15 @@ reaches one has hung, not slowed, so read the log rather than raise it.
 .PARAMETER Tail
 How many of the log's last lines are printed. Defaults to 20.
 
+.PARAMETER NoMarkers
+A switch: the log is not scanned for failure markers, so the command's own exit status is the verdict. For a command
+whose output can quote a failure that is not its own, such as a drive's tool results holding a game's error lines.
+
 .OUTPUTS
-On a failure, the log's failure marker lines with their line numbers; then the log's last -Tail lines, then one verdict
-line: `gate: passed. Full output: <log>` on standard output, or `gate: FAILED (status <n>). Full output: <log>` on
-standard error. The exit status is the command's own, 1 for a zero exit whose log reports a failure, 124 for the
-ceiling, and 2 for a usage this script could not read.
+On a failure, the log's failure marker lines with their line numbers (none with -NoMarkers); then the log's last -Tail
+lines, then one verdict line: `gate: passed. Full output: <log>` on standard output, or `gate: FAILED (status <n>). Full
+output: <log>` on standard error. The exit status is the command's own, 1 for a zero exit whose log reports a failure
+(never with -NoMarkers), 124 for the ceiling, and 2 for a usage this script could not read.
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
     'PSAvoidUsingWriteHost', '', Justification = 'Its lines are for the person or agent reading the screen; the wrapped command''s output goes to the log.')]
@@ -60,7 +64,7 @@ $ErrorActionPreference = 'Stop'
 # One regex for every line that means a gate failed even when the runner exited 0, plus this wrapper's own timeout line
 # so that a gate wrapping a gate reports the inner one's ceiling.
 $markers = '^Build FAILED\.|error CS\d+|: error |Test run summary: Failed!|^\s*failed: [1-9]|gate: TIMED OUT'
-$usage = 'usage: pwsh tools/gate.ps1 -Log <path> -TimeoutSeconds <n> [-Tail <n>] -- <command> [args...]'
+$usage = 'usage: pwsh tools/gate.ps1 -Log <path> -TimeoutSeconds <n> [-Tail <n>] [-NoMarkers] -- <command> [args...]'
 
 # The wrapper's own commentary goes to standard error, as gate.sh writes it, so a caller reading the command's output
 # from the screen is not handed the gate's lines in the middle of it.
@@ -118,12 +122,18 @@ function Resolve-Runnable {
 $options = @{ Log = ''; TimeoutSeconds = ''; Tail = '20' }
 $words = @($args)
 $command = @()
+$noMarkers = $false
 $read = 0
 while ($read -lt $words.Count) {
     $word = [string]$words[$read]
     if ($word -eq '--') {
         $command = @($words | Select-Object -Skip ($read + 1))
         break
+    }
+    if ($word -eq '-NoMarkers') {
+        $noMarkers = $true
+        $read += 1
+        continue
     }
     $name = $word -replace '^-', ''
     if ($word.StartsWith('-') -and $options.ContainsKey($name) -and $read + 1 -lt $words.Count) {
@@ -194,11 +204,11 @@ if ($timedOut) {
 }
 else {
     $status = $process.ExitCode
-    if ($status -eq 0 -and (Select-String -Path $Log -Pattern $markers -Quiet)) {
+    if (-not $noMarkers -and $status -eq 0 -and (Select-String -Path $Log -Pattern $markers -Quiet)) {
         Write-Gate "gate: command exited 0 but its log reports a failure -> $Log"
         $status = 1
     }
-    if ($status -ne 0) {
+    if (-not $noMarkers -and $status -ne 0) {
         Select-String -Path $Log -Pattern $markers |
             Select-Object -First 40 |
             ForEach-Object { Write-Host "$($_.LineNumber):$($_.Line)" }

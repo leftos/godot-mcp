@@ -14,7 +14,7 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 - `docs/TOOLS.md`: the agent-facing guide to every tool; a change to a tool's arguments, defaults or edges updates it in the same commit.
 - `skills/godot-mcp/SKILL.md`: the tutorial agents in the game repos load (linked into `~/.claude/skills` by `pwsh run.ps1 install`); a new tool, or a change to the drive loop or the rules that bite, updates it in the same commit as `docs/TOOLS.md`.
 - `docs/DEVELOPMENT.md`: toolchain, commands, gates, what each test class covers, and the footguns: read the footguns before touching process launching, a tool's signature, logging, or the bridge's input handling.
-- Everyday commands: `pwsh run.ps1 build`, `pwsh run.ps1 test` (unit), `pwsh run.ps1 itest` (real Godot); `-Filter "*ClassName"` runs one test class. Each writes `.tmp/<command>.log` (a full `itest` writes `.tmp/itest-<group>.log` per class group) and prints its tail.
+- Everyday commands: `pwsh run.ps1 build`, `pwsh run.ps1 test` (unit), `pwsh run.ps1 itest` (real Godot); `-Filter "*ClassName"` runs one test class; `pwsh run.ps1 drive -Calls <file.json>` drives this tree's own server build against a game without installing it. Each writes `.tmp/<command>.log` (a full `itest` writes `.tmp/itest-<group>.log` per class group) and prints its tail.
 
 ## Architecture
 

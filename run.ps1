@@ -42,22 +42,39 @@ exits with the command's own status, or 124 when it outlived its ceiling and was
            global class list holds every script's class_name, then runs godot --headless --path tests/bridge --script
            res://run_tests.gd. Each failure prints as "FAIL <file>::<test>: <message>", then
            "gdtest: <passed> passed, <failed> failed"; ceiling 60 s
+  drive    drives this tree's own server with the tool calls of -Calls <file.json>, a JSON array of
+           {"tool": "<name>", "arguments": {...}} objects (arguments optional). It first builds the server project
+           (.tmp/drive-build.log, ceiling 300 s), then runs tools/drive.py (.tmp/drive.log, ceiling 300 s), which checks
+           the file, starts src/GodotMcp.Server/bin/Debug/net10.0/godot-mcp.exe over stdio, runs the calls in order and
+           prints each result under a "== <n> <tool>" header: text as it is, an image saved to .tmp/drive/<n>-<i>.png and
+           printed as [image <path>]. The server's own log (its stderr) goes to .tmp/drive-server.log. The first call
+           that fails is printed and stops the run with status 1, and a failed call or a server that stops answering
+           ends the output with "server log: <path>"; a malformed file stops it with status 2 before the server
+           starts, as does a missing -Calls. The gate runs with -NoMarkers: drive's exit status alone is the verdict,
+           since a tool result can quote a game's error lines. The server is stopped at the end, killed if it has not exited 5 s
+           after its input closed. It runs on the user's desktop, not the hidden one: a run is quiet unless a call asks
+           for quiet: false, and then its window is meant to show.
 
 -Filter narrows test or itest to one test class, e.g. -Filter "*SessionLifecycleTests". A filtered itest skips the
 groups: one gate, .tmp/itest.log, ceiling 300 s, --timeout 4m.
 
 .EXAMPLE
 pwsh run.ps1 itest -Filter "*McpServerSmokeTests"
+
+.EXAMPLE
+pwsh run.ps1 drive -Calls .tmp/calls.json
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
     'PSAvoidUsingWriteHost', '', Justification = 'A console build script: its lines are for the person running it.')]
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('build', 'test', 'itest', 'format', 'dotnet', 'publish', 'install', 'gdtest', 'help')]
+    [ValidateSet('build', 'test', 'itest', 'format', 'dotnet', 'publish', 'install', 'gdtest', 'drive', 'help')]
     [string]$Command = 'help',
 
-    [string]$Filter = ''
+    [string]$Filter = '',
+
+    [string]$Calls = ''
 )
 
 Set-StrictMode -Version Latest
@@ -98,11 +115,16 @@ function Invoke-Gated {
         [Parameter(Mandatory)] [string]$Name,
         [Parameter(Mandatory)] [int]$TimeoutSeconds,
         [Parameter(Mandatory)] [string]$Program,
-        [Parameter(Mandatory)] [string[]]$Arguments
+        [Parameter(Mandatory)] [string[]]$Arguments,
+        [switch]$NoMarkers
     )
     $log = Join-Path $logDir "$Name.log"
     Write-Host "$Program $($Arguments -join ' ')  (log: $log, ceiling: $TimeoutSeconds s)"
-    & $gate -Log $log -TimeoutSeconds $TimeoutSeconds -Tail 15 -- $Program @Arguments | Out-Host
+    $gateOptions = @('-Log', $log, '-TimeoutSeconds', $TimeoutSeconds, '-Tail', 15)
+    if ($NoMarkers) {
+        $gateOptions += '-NoMarkers'
+    }
+    & $gate @gateOptions -- $Program @Arguments | Out-Host
     return $LASTEXITCODE
 }
 
@@ -412,6 +434,29 @@ function Invoke-Install {
     return Invoke-Gated -Name 'install' -TimeoutSeconds 60 -Program 'pwsh' -Arguments $arguments
 }
 
+# Builds the server project, then runs tools/drive.py under its own gate: the calls of a file sent in order to the
+# server it built, over stdio. Returns 2 without building when no calls file is given.
+function Invoke-Drive {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string]$CallsFile)
+    if ([string]::IsNullOrWhiteSpace($CallsFile)) {
+        [Console]::Error.WriteLine('drive needs -Calls <file.json>: a JSON array of {"tool": "<name>", "arguments": {...}} objects.')
+        return 2
+    }
+    $project = Join-Path $root 'src/GodotMcp.Server/GodotMcp.Server.csproj'
+    $build = Invoke-Logged -Name 'drive-build' -TimeoutSeconds 300 -Arguments @('build', $project, '-warnaserror')
+    if ($build -ne 0) {
+        return $build
+    }
+    $exe = if ($IsWindows) { 'godot-mcp.exe' } else { 'godot-mcp' }
+    $server = Join-Path $root "src/GodotMcp.Server/bin/Debug/net10.0/$exe"
+    $arguments = @(
+        'run', '--quiet', 'python', (Join-Path $root 'tools/drive.py'),
+        '--calls', $CallsFile, '--images', (Join-Path $logDir 'drive'), '--server-log', (Join-Path $logDir 'drive-server.log'), $server
+    )
+    # A tool result can quote a game's error lines, which the gate's failure markers would read as drive's own failure.
+    return Invoke-Gated -Name 'drive' -TimeoutSeconds 300 -Program 'uv' -Arguments $arguments -NoMarkers
+}
+
 [string[]]$filterClasses = @($Filter | Where-Object { $_ })
 
 switch ($Command) {
@@ -458,6 +503,9 @@ switch ($Command) {
         }
         $arguments = @('--headless', '--path', $gdtestDir, '--script', 'res://run_tests.gd')
         exit (Invoke-Gated -Name 'gdtest' -TimeoutSeconds 60 -Program (Get-GodotPath) -Arguments $arguments)
+    }
+    'drive' {
+        exit (Invoke-Drive -CallsFile $Calls)
     }
     default {
         Get-Help $PSCommandPath -Detailed
