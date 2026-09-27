@@ -30,9 +30,9 @@ Shared: `bridge/` (new inspect and input handlers), `headless/operations.gd`, th
 
 ### Singles
 
-- [ ] Quiet runs draw uncapped (about 240 fps off-screen): cap them, or say why not (#6)
-- [ ] `wait_for` a UI change nobody can name in advance: met when the visible Controls, focus owner or top popup differ from the call's start, returning what appeared (#7)
-- [ ] `drag` and `click` results say what they hit: the Control under the press and the release, and whether a GUI drag started (#4)
+- [ ] Quiet runs draw at the monitor's refresh (VSync, 239 Hz here, not uncapped): cap them at 60 (#6). Decided (user, 2026-09-26): the bridge sets `Engine.max_fps = 60` in a quiet run when the project's own is 0; recording runs are unaffected (a fixed fps skips the cap)
+- [ ] `wait_for` a UI change nobody can name in advance: met when the visible Controls, focus owner or top popup differ from the call's start, returning what appeared (#7). Decided (user, 2026-09-26): `wait_for {uiChanged: true}` compares against a snapshot the bridge takes when each pointer or key gesture starts (visible Controls, focus owner, top popup); met on the first differing frame, returning `{appeared, disappeared}` (paths, at most 20 each plus counts) and `focus`/`popup` `{before, after}` when those changed; tooltips, drag previews and the bridge's own nodes do not count. After #4, which it builds on
+- [ ] `drag` and `click` results say what they hit: the Control under the press and the release, and whether a GUI drag started (#4). Decided (user, 2026-09-26): `pressedOn` and `releasedOn` as `{path, class}` (null over nothing) of the Control under the press and under the release, popups included through the embedded windows; `drag` adds `guiDragStarted` and `dropAccepted`; `mouse_button` carries them too
 - [ ] C#-aware runtime tools beyond `call_method`, for members Godot's call cannot reach: signatures with types Godot cannot marshal (generics, plain C# classes), static members, and overloads that share a name and argument count (`internal` methods are reached; step 12, 2026-09-26)
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see step 4b)
 - [ ] A `git commit` in a worktree (`../godot-mcp.wt/mesh-library`, 2026-09-26) hung after every prek hook passed: `prek` stayed alive with no children, and after `dotnet build-server shutdown` it exited but the hook's `sh` did not; the cause is unknown (not the MSBuild nodes alone). Reproduce and fix, or record the footgun
