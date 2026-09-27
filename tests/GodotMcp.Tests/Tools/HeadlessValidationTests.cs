@@ -67,15 +67,91 @@ public sealed class HeadlessValidationTests : IDisposable
     [Fact]
     public void AnUnsupportedExtensionIsRefused()
     {
-        foreach (string target in new[] { "notes.txt", "res://Main.cs", "project.godot" })
+        foreach (string target in new[] { "notes.txt", "res://icon.svg", "project.godot" })
         {
             McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckTargets(_project, [target]));
 
             Assert.Equal(
-                $"targets '{target}' is not a script, scene or resource: validate checks .gd, .tscn, .scn, .tres and .res files.",
+                $"targets '{target}' is not a script, scene or resource: validate checks .gd, .cs, .tscn, .scn, .tres and .res files.",
                 refused.Message
             );
         }
+    }
+
+    [Fact]
+    public void ACSharpTargetIsAccepted() => Assert.Equal(["res://Main.cs"], HeadlessTools.CheckTargets(_project, ["Main.cs"]));
+
+    [Fact]
+    public void ACSharpTargetNeedsTheProjectToHaveOneCsproj()
+    {
+        string several = _temp.Combine("several");
+        Directory.CreateDirectory(several);
+        foreach (string file in new[] { "project.godot", "A.csproj", "B.csproj" })
+        {
+            File.WriteAllText(Path.Combine(several, file), string.Empty);
+        }
+
+        McpException none = Assert.Throws<McpException>(() => HeadlessTools.CsprojFor(_project, "res://Main.cs"));
+        McpException many = Assert.Throws<McpException>(() => HeadlessTools.CsprojFor(several, "res://Main.cs"));
+
+        Assert.Equal($"res://Main.cs is a C# script, but {_project} has no .csproj, so nothing compiles it.", none.Message);
+        Assert.Equal(
+            $"res://Main.cs is a C# script, but {several} has several .csproj files; validate builds only a project with one.",
+            many.Message
+        );
+    }
+
+    [Fact]
+    public void ACSharpTargetsListsAreCappedAtTwentyAndOnlyErrorsMakeItInvalid()
+    {
+        string main = Path.Combine(_project, "Main.cs");
+        string other = Path.Combine(_project, "Other.cs");
+        BuildDiagnostic[] diagnostics =
+        [
+            .. Enumerable.Range(1, 25).Select(line => new BuildDiagnostic(main.ToUpperInvariant(), line, 1, "CS1002", "; expected", "error")),
+            .. Enumerable.Range(1, 25).Select(line => new BuildDiagnostic(main, line, 2, "CS0219", "unused", "warning")),
+            .. Enumerable.Range(1, 25).Select(line => new BuildDiagnostic(other, line, 1, "CS0103", "no oops", "error")),
+            new BuildDiagnostic(other, 1, 1, "CS0168", "declared, never used", "warning"),
+        ];
+        DateTime builtAt = new(2026, 9, 27, 10, 11, 12, DateTimeKind.Utc);
+        PrepResult upToDate = new() { Build = "up-to-date", Import = "not-needed" };
+        CsTarget target = new("res://Main.cs", main, ["res://main.tscn"], 3);
+        JsonNode reply = JsonNode.Parse("""{"checked": 1, "results": [], "engineErrors": []}""")!;
+
+        JsonObject red = HeadlessTools.ShapeValidation(
+            new HeadlessResult(reply, [], upToDate, null) { LastBuild = new SavedBuild(builtAt, "failed", diagnostics) },
+            [target]
+        );
+        JsonObject warned = HeadlessTools.ShapeValidation(
+            new HeadlessResult(reply, [], upToDate, null)
+            {
+                LastBuild = new SavedBuild(builtAt, "built", [.. diagnostics.Where(d => d.Severity == "warning")]),
+            },
+            [target]
+        );
+
+        Assert.False(red["valid"]!.GetValue<bool>());
+        Assert.Equal(2, red["checked"]!.GetValue<int>());
+        JsonNode file = Assert.Single(red["csharp"]!["files"]!.AsArray())!;
+        Assert.Equal("res://Main.cs", file["path"]!.GetValue<string>());
+        Assert.Equal(20, file["errors"]!.AsArray().Count);
+        Assert.Equal(5, file["errorsOmitted"]!.GetValue<int>());
+        Assert.Equal(20, file["warnings"]!.AsArray().Count);
+        Assert.Equal(5, file["warningsOmitted"]!.GetValue<int>());
+        Assert.Equal("last build at 2026-09-27T10:11:12Z", file["from"]!.GetValue<string>());
+        Assert.Equal(["res://main.tscn"], file["scenes"]!.AsArray().Select(scene => scene!.GetValue<string>()));
+        Assert.Equal(3, file["scenesOmitted"]!.GetValue<int>());
+        Assert.Equal(20, red["csharp"]!["otherErrors"]!.AsArray().Count);
+        Assert.Equal(5, red["csharp"]!["otherErrorsOmitted"]!.GetValue<int>());
+        Assert.Equal("CS0103", red["csharp"]!["otherErrors"]![0]!["code"]!.GetValue<string>());
+        JsonNode warning = file["warnings"]![0]!;
+        Assert.Equal(main, warning["file"]!.GetValue<string>());
+        Assert.Equal(1, warning["line"]!.GetValue<int>());
+        Assert.Equal(2, warning["column"]!.GetValue<int>());
+        Assert.Equal("warning", warning["severity"]!.GetValue<string>());
+        Assert.True(warned["valid"]!.GetValue<bool>(), warned.ToJsonString());
+        Assert.Empty(warned["csharp"]!["otherErrors"]!.AsArray());
+        Assert.Null(warned["csharp"]!["files"]![0]!["errorsOmitted"]);
     }
 
     [Fact]
@@ -166,7 +242,7 @@ public sealed class HeadlessValidationTests : IDisposable
             """{"checked": 1, "results": [], "engineErrors": [{"message": "bad setting", "file": "core/config/project_settings.cpp", "line": 9}]}"""
         )!;
 
-        JsonObject shaped = HeadlessTools.ShapeValidation(new HeadlessResult(reply, [], PrepResult.Skipped, null));
+        JsonObject shaped = HeadlessTools.ShapeValidation(new HeadlessResult(reply, [], PrepResult.Skipped, null), []);
 
         Assert.False(shaped["valid"]!.GetValue<bool>());
         Assert.Equal("bad setting", shaped["engineErrors"]![0]!["message"]!.GetValue<string>());

@@ -184,6 +184,92 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Single(ghost["errors"]!.AsArray());
     }
 
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task ACSharpTargetReportsItsWarningsAndTheScenesThatAttachIt()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        string source = File.ReadAllText(csProbe.SourcePath("CsProbeNode.cs"));
+        string warned = "internal string Secret()\n    {\n        int unused = 0;\n        return \"hidden\";\n    }";
+        csProbe.WriteSource("CsProbeNode.cs", source.Replace("internal string Secret() => \"hidden\";", warned, StringComparison.Ordinal));
+
+        JsonNode result = await ValidateAsync(csProbe.Directory, ["res://CsProbeNode.cs"], cancellation);
+        JsonNode again = await ValidateAsync(csProbe.Directory, ["CsProbeNode.cs"], cancellation);
+
+        Assert.True(result["valid"]!.GetValue<bool>(), result.ToJsonString());
+        Assert.Equal(2, result["checked"]!.GetValue<int>());
+        Assert.Equal("built", result["csharp"]!["build"]!.GetValue<string>());
+        Assert.Empty(result["csharp"]!["otherErrors"]!.AsArray());
+        JsonNode file = Assert.Single(result["csharp"]!["files"]!.AsArray())!;
+        Assert.Equal("res://CsProbeNode.cs", file["path"]!.GetValue<string>());
+        Assert.Empty(file["errors"]!.AsArray());
+        JsonNode warning = Assert.Single(file["warnings"]!.AsArray(), entry => entry!["code"]!.GetValue<string>() == "CS0219")!;
+        Assert.Equal("warning", warning["severity"]!.GetValue<string>());
+        Assert.Equal(12, warning["line"]!.GetValue<int>());
+        Assert.Equal(13, warning["column"]!.GetValue<int>());
+        Assert.Equal("this build", file["from"]!.GetValue<string>());
+        Assert.Equal(["res://main.tscn"], file["scenes"]!.AsArray().Select(scene => scene!.GetValue<string>()));
+
+        Assert.True(again["valid"]!.GetValue<bool>(), again.ToJsonString());
+        Assert.Equal("up-to-date", again["prep"]!["build"]!.GetValue<string>());
+        JsonNode saved = Assert.Single(again["csharp"]!["files"]!.AsArray())!;
+        Assert.StartsWith("last build at ", saved["from"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Single(saved["warnings"]!.AsArray(), entry => entry!["code"]!.GetValue<string>() == "CS0219");
+        // Each evaluation's log of the Compile items is deleted once read.
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(csProbe.Directory, ".godot", "godot-mcp"), "compile-items*.log"));
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task ABrokenCSharpTargetReportsItsErrorUnderItsFile()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        string source = File.ReadAllText(csProbe.SourcePath("CsProbeNode.cs"));
+        csProbe.WriteSource("CsProbeNode.cs", source.Replace("\"hidden\";", "\"hidden\"", StringComparison.Ordinal));
+
+        JsonNode result = await ValidateAsync(csProbe.Directory, ["CsProbeNode.cs"], cancellation);
+
+        Assert.False(result["valid"]!.GetValue<bool>());
+        Assert.Equal("failed", result["csharp"]!["build"]!.GetValue<string>());
+        JsonNode file = Assert.Single(result["csharp"]!["files"]!.AsArray())!;
+        JsonNode error = Assert.Single(file["errors"]!.AsArray(), entry => entry!["code"]!.GetValue<string>() == "CS1002")!;
+        Assert.Equal(10, error["line"]!.GetValue<int>());
+        Assert.Equal("error", error["severity"]!.GetValue<string>());
+        Assert.Equal("this build", file["from"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACSharpTargetInAProjectWithoutACsprojIsRefused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteFile(probe.Directory, "Stray.cs", "internal static class Stray { }\n");
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => ValidateAsync(probe.Directory, ["Stray.cs"], cancellation));
+
+        Assert.StartsWith("res://Stray.cs is a C# script, but ", refused.Message, StringComparison.Ordinal);
+        Assert.EndsWith(" has no .csproj, so nothing compiles it.", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task ACSharpFileOutsideTheCompileItemsIsRefused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        string csproj = File.ReadAllText(csProbe.SourcePath("CsProbe.csproj"));
+        string excluding = csproj.Replace(
+            "</Project>",
+            "  <ItemGroup>\n    <Compile Remove=\"Excluded.cs\" />\n  </ItemGroup>\n</Project>",
+            StringComparison.Ordinal
+        );
+        csProbe.WriteSource("CsProbe.csproj", excluding);
+        csProbe.WriteSource("Excluded.cs", "namespace CsProbe;\n\ninternal static class Excluded { }\n");
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => ValidateAsync(csProbe.Directory, ["Excluded.cs"], cancellation));
+
+        Assert.Equal("res://Excluded.cs is not compiled by CsProbe.csproj: it is outside its Compile items.", refused.Message);
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ANewClassNameIsKnownAfterTheImport()
     {

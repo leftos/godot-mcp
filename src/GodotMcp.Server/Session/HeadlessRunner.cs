@@ -21,13 +21,23 @@ internal sealed record HeadlessRequest(string ProjectDir, string Operation, Json
 
     /// <summary>What a refused import suggests besides stopping the sessions (<see cref="PrepContext.ImportSkipHint"/>); none by default.</summary>
     public string ImportSkipHint { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Whether the result carries the last saved C# build (<see cref="HeadlessResult.LastBuild"/>), which the prep then makes
+    /// when none is saved yet (<see cref="PrepContext.BuildWhenUnsaved"/>): validate's .cs targets.
+    /// </summary>
+    public bool ReportsBuild { get; init; }
 }
 
 /// <summary>
 /// What a headless operation returned, every error and warning Godot logged while it ran (<c>{type, message, file, line}</c>),
 /// the prep, and the compiler errors of a C# build that failed.
 /// </summary>
-internal sealed record HeadlessResult(JsonNode? Result, JsonArray EngineErrors, PrepResult Prep, CompilerErrorList? BuildErrors);
+internal sealed record HeadlessResult(JsonNode? Result, JsonArray EngineErrors, PrepResult Prep, CompilerErrorList? BuildErrors)
+{
+    /// <summary>The last saved C# build, read after the prep when the request asked for it (<see cref="HeadlessRequest.ReportsBuild"/>).</summary>
+    public SavedBuild? LastBuild { get; init; }
+}
 
 /// <summary>
 /// Runs <c>headless/operations.gd</c> in <c>godot --headless --script</c> on a project folder, under the folder's prep lock
@@ -59,13 +69,17 @@ internal static class HeadlessRunner
             {
                 ImportAssets = request.ImportAssets,
                 ImportSkipHint = request.ImportSkipHint,
+                BuildWhenUnsaved = request.ReportsBuild,
             };
             PrepOutcome prep = request.Prepare
                 ? await ProjectPrep.RunReportingBuildAsync(context, cancellationToken)
                 : new PrepOutcome(PrepResult.Skipped, null);
             JsonObject reply = await RunGodotAsync(new GodotCall(godot, script, request, registry, prep.Result.Build), cancellationToken);
             JsonArray engineErrors = reply["engineErrors"]?.DeepClone() as JsonArray ?? [];
-            return new HeadlessResult(reply["result"]?.DeepClone(), engineErrors, prep.Result, prep.BuildErrors);
+            return new HeadlessResult(reply["result"]?.DeepClone(), engineErrors, prep.Result, prep.BuildErrors)
+            {
+                LastBuild = request.ReportsBuild ? SavedBuild.Load(projectDir) : null,
+            };
         }
         finally
         {

@@ -33,7 +33,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
         " Refused while a session is live on the project (a headless run would load the bridge from its override.cfg); "
         + "stop_project or detach_project it first.";
 
-    private static readonly string[] ValidateExtensions = [".gd", ".tscn", ".scn", ".tres", ".res"];
+    private static readonly string[] ValidateExtensions = [".gd", ".cs", ".tscn", ".scn", ".tres", ".res"];
     private static readonly string[] SweepExtensions = [".gd", ".tscn", ".tres"];
     private static readonly string[] SceneExtensions = [".tscn", ".scn"];
     private static readonly string[] BuildStatesChecked = ["built", "up-to-date", "failed"];
@@ -47,7 +47,11 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             + "Returns {valid, checked, results: [{path, errors: [{message, file, line}]}], csharp?, prep}: results lists only the "
             + "files with errors, each error under the file it names. Godot's GDScript parser reports only the first parse error "
             + "in a file, so fix it and validate again to see the next. A C# build that fails does not stop the check: it comes "
-            + "back as csharp {build: \"failed\", errors} and makes valid false. Errors Godot logs before the first file is "
+            + "back as csharp {build: \"failed\", errors} and makes valid false. A .cs target is checked through the C# build and "
+            + "through the versioned scenes and resources that attach it (at most 20 each, checked as targets): csharp.files lists, "
+            + "per .cs target, {path, errors, warnings, from, scenes}, each diagnostic {file, line, column, code, message, severity}, "
+            + "and csharp.otherErrors the errors in the assembly's other files; from says whether they came from this call's build "
+            + "or the last saved one. Errors make valid false, warnings never do. Errors Godot logs before the first file is "
             + "checked (an autoload's _init, the project's settings) are listed under the res:// file they name, else in "
             + "engineErrors [{message, file, line}]; either makes valid false."
             + RefusedNote
@@ -55,8 +59,10 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
     public async Task<string> ValidateAsync(
         [Description(ProjectPathDescription)] string projectPath,
         [Description(
-            "1 to 50 files to check: res:// paths or paths relative to the project folder, each a .gd, .tscn, .scn, .tres or .res "
-                + "inside it. Left out: every git-versioned .gd, .tscn and .tres of the project folder, at most 500."
+            "1 to 50 files to check: res:// paths or paths relative to the project folder, each a .gd, .cs, .tscn, .scn, .tres or "
+                + ".res inside it. A .cs is checked through the C# build and the scenes that attach it, and must be one of the "
+                + "Compile items of the project's .csproj. Left out: every git-versioned .gd, .tscn and .tres of the project folder, "
+                + "at most 500."
         )]
             string[]? targets = null,
         [Description("{prepare}: " + PrepareDescription)] HeadlessOptions? options = null,
@@ -64,15 +70,21 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
     )
     {
         bool prepare = RunOptions.ParsePrepare(options?.Prepare);
-        HeadlessResult run = await RunAsync(() =>
+        (HeadlessResult run, IReadOnlyList<CsTarget> csTargets) = await RunAsync(async () =>
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
             IReadOnlyList<string> checkedFiles = targets is null ? VersionedTargets(projectDir, sessions.Logger) : CheckTargets(projectDir, targets);
-            JsonObject parameters = new() { ["targets"] = new JsonArray([.. checkedFiles.Select(path => (JsonNode)path)]) };
-            HeadlessRequest request = new(projectDir, "validate", parameters, prepare, RunCeiling) { ImportSkipHint = SkipPrepHint };
-            return HeadlessRunner.RunAsync(sessions, request, cancellationToken);
+            IReadOnlyList<CsTarget> csTargets = await CSharpTargetsAsync(projectDir, checkedFiles, sessions.Logger, cancellationToken);
+            IReadOnlyList<string> loaded = GodotTargets(checkedFiles, csTargets);
+            JsonObject parameters = new() { ["targets"] = new JsonArray([.. loaded.Select(path => (JsonNode)path)]) };
+            HeadlessRequest request = new(projectDir, "validate", parameters, prepare, RunCeiling)
+            {
+                ImportSkipHint = SkipPrepHint,
+                ReportsBuild = csTargets.Count > 0,
+            };
+            return (await HeadlessRunner.RunAsync(sessions, request, cancellationToken), csTargets);
         });
-        return ShapeValidation(run).ToJsonString();
+        return ShapeValidation(run, csTargets).ToJsonString();
     }
 
     [McpServerTool(Name = "get_scene_file_tree", ReadOnly = true, Destructive = false, OpenWorld = false)]
@@ -137,7 +149,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             );
         }
 
-        const string refusal = "is not a script, scene or resource: validate checks .gd, .tscn, .scn, .tres and .res files.";
+        const string refusal = "is not a script, scene or resource: validate checks .gd, .cs, .tscn, .scn, .tres and .res files.";
         return [.. targets.Select(target => ToResPath(projectDir, target, new PathRule("targets", ValidateExtensions, refusal)))];
     }
 
@@ -170,17 +182,21 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             );
     }
 
-    /// <summary>validate's result: <c>{valid, checked, results, engineErrors?, csharp?, prep}</c>.</summary>
-    internal static JsonObject ShapeValidation(HeadlessResult run)
+    /// <summary>
+    /// validate's result: <c>{valid, checked, results, engineErrors?, csharp?, prep}</c>; <c>checked</c> counts the files Godot
+    /// checked and the .cs targets.
+    /// </summary>
+    internal static JsonObject ShapeValidation(HeadlessResult run, IReadOnlyList<CsTarget> csTargets)
     {
         JsonObject reply = run.Result as JsonObject ?? [];
         JsonArray results = ArrayOf(reply, "results");
         // The errors Godot logged before the first file was checked whose file is not a res:// file.
         JsonArray unattributed = ArrayOf(reply, "engineErrors");
+        CsReport? report = csTargets.Count == 0 ? null : ReportCSharp(run, csTargets);
         JsonObject shaped = new()
         {
-            ["valid"] = results.Count == 0 && unattributed.Count == 0 && run.Prep.Build != "failed",
-            ["checked"] = reply["checked"]?.DeepClone() ?? 0,
+            ["valid"] = results.Count == 0 && unattributed.Count == 0 && !IsBuildRed(run, report),
+            ["checked"] = CountOf(reply["checked"]) + csTargets.Count,
             ["results"] = results,
         };
         if (unattributed.Count > 0)
@@ -188,30 +204,42 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             shaped["engineErrors"] = unattributed;
         }
 
-        if (BuildStatesChecked.Contains(run.Prep.Build))
+        if (report is not null || BuildStatesChecked.Contains(run.Prep.Build))
         {
-            shaped["csharp"] = ShapeCsharp(run.Prep.Build, run.BuildErrors);
+            shaped["csharp"] = ShapeCsharp(run.Prep.Build, run.BuildErrors, report);
         }
 
         shaped["prep"] = JsonSerializer.SerializeToNode(run.Prep, Json);
         return shaped;
     }
 
+    /// <summary>Whether this call's build failed, or the build the .cs targets are reported from had an error.</summary>
+    private static bool IsBuildRed(HeadlessResult run, CsReport? report) => run.Prep.Build == "failed" || report is { HasErrors: true };
+
     private static JsonArray ArrayOf(JsonObject reply, string key) => reply[key]?.DeepClone() as JsonArray ?? [];
 
-    /// <summary>validate's <c>csharp</c>:the build's state, and a failed build's compiler errors with how many were left out.</summary>
-    private static JsonObject ShapeCsharp(string build, CompilerErrorList? errors)
+    /// <summary>A count GDScript wrote, which may be a float.</summary>
+    private static int CountOf(JsonNode? count) => count?.GetValueKind() == JsonValueKind.Number ? (int)count.GetValue<double>() : 0;
+
+    /// <summary>
+    /// validate's <c>csharp</c>: the build's state, a failed build's compiler errors with how many were left out, and the .cs
+    /// targets' report.
+    /// </summary>
+    private static JsonObject ShapeCsharp(string build, CompilerErrorList? errors, CsReport? report)
     {
         JsonObject csharp = new() { ["build"] = build };
-        if (errors is null)
+        if (errors is not null)
         {
-            return csharp;
+            csharp["errors"] = new JsonArray([.. errors.Errors.Select(error => (JsonNode)error)]);
+            if (errors.Total > errors.Errors.Count)
+            {
+                csharp["errorsOmitted"] = errors.Total - errors.Errors.Count;
+            }
         }
 
-        csharp["errors"] = new JsonArray([.. errors.Errors.Select(error => (JsonNode)error)]);
-        if (errors.Total > errors.Errors.Count)
+        foreach ((string key, JsonNode? value) in report?.Shaped ?? [])
         {
-            csharp["errorsOmitted"] = errors.Total - errors.Errors.Count;
+            csharp[key] = value?.DeepClone();
         }
 
         return csharp;

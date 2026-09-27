@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Session;
@@ -16,6 +18,12 @@ internal sealed record PrepContext(string ProjectDir, ILogger Logger, Func<IRead
     /// What a refused import suggests besides stopping the sessions, starting ", or": run_project's options.prepare by default.
     /// </summary>
     public string ImportSkipHint { get; init; } = ", or pass options.prepare: \"never\" to launch without importing";
+
+    /// <summary>
+    /// Whether the prep builds when no build's diagnostics are saved yet (<see cref="SavedBuild"/>), however fresh the assembly:
+    /// as a rebuild, since an up-to-date build compiles nothing and so logs no warnings. validate's .cs targets ask for it.
+    /// </summary>
+    public bool BuildWhenUnsaved { get; init; }
 }
 
 /// <summary>
@@ -85,8 +93,8 @@ internal static class ProjectPrep
             return new PrepStep(lookup.Kind == CsprojKind.None ? "no-csproj" : "skipped", null, lookup.Note);
         }
 
-        string stamp = PrepScan.StampPath(projectDir);
-        if (!PrepScan.IsStale(PrepScan.AssemblyPath(projectDir, lookup.AssemblyName!), stamp, files.BuildInputs))
+        BuildNeed need = BuildNeeded(context, files, lookup.AssemblyName!);
+        if (need == BuildNeed.None)
         {
             return new PrepStep("up-to-date", null, null);
         }
@@ -94,39 +102,160 @@ internal static class ProjectPrep
         string csproj = lookup.ProjectFile!;
         string log = Path.Combine(LogFolder(projectDir), "build.log");
         ToolProcessResult built = await RunToolAsync(
-            BuildRequest(Installation.FindDotnet(), csproj, log),
+            BuildRequest(Installation.FindDotnet(), csproj, log, need == BuildNeed.Rebuild),
             "dotnet",
             context.Logger,
             cancellationToken
         );
+        IReadOnlyList<BuildDiagnostic> diagnostics = SaveDiagnostics(projectDir, built, log);
         long milliseconds = (long)built.Elapsed.TotalMilliseconds;
-        if (reportRedBuild && !built.KilledByCeiling && built.ExitCode != 0)
+        if (reportRedBuild && StateOf(built) == "failed")
         {
             string note = $"The C# build of {csproj} failed (dotnet exited {built.ExitCode}); its log: {log}";
-            return new PrepStep("failed", milliseconds, note) { Errors = CompilerErrors.Parse(File.ReadAllText(log)) };
+            return new PrepStep("failed", milliseconds, note) { Errors = CompilerErrors.Errors(diagnostics) };
         }
 
-        CheckBuild(built, csproj, log);
-        File.WriteAllText(stamp, string.Empty);
+        CheckBuild(built, csproj, log, diagnostics);
+        File.WriteAllText(PrepScan.StampPath(projectDir), string.Empty);
         return new PrepStep("built", milliseconds, null);
     }
 
-    private static ToolProcessRequest BuildRequest(string dotnet, string csproj, string log) =>
-        new(
+    /// <summary>
+    /// A rebuild when the context asks for saved diagnostics and none are saved, else a build when the assembly is stale
+    /// (<see cref="PrepScan.IsStale"/>), else none.
+    /// </summary>
+    private static BuildNeed BuildNeeded(PrepContext context, ProjectFiles files, string assemblyName)
+    {
+        string projectDir = context.ProjectDir;
+        if (context.BuildWhenUnsaved && !File.Exists(SavedBuild.PathIn(projectDir)))
+        {
+            return BuildNeed.Rebuild;
+        }
+
+        return PrepScan.IsStale(PrepScan.AssemblyPath(projectDir, assemblyName), PrepScan.StampPath(projectDir), files.BuildInputs)
+            ? BuildNeed.Build
+            : BuildNeed.None;
+    }
+
+    /// <summary>Saves the build's errors and warnings as the project's <see cref="SavedBuild"/>, and returns them.</summary>
+    private static IReadOnlyList<BuildDiagnostic> SaveDiagnostics(string projectDir, ToolProcessResult built, string log)
+    {
+        IReadOnlyList<BuildDiagnostic> diagnostics = CompilerErrors.ParseDiagnostics(File.ReadAllText(log));
+        SavedBuild.Save(projectDir, new SavedBuild(DateTime.UtcNow, StateOf(built), diagnostics));
+        return diagnostics;
+    }
+
+    private static string StateOf(ToolProcessResult built)
+    {
+        if (built.KilledByCeiling)
+        {
+            return "stopped";
+        }
+
+        return built.ExitCode == 0 ? "built" : "failed";
+    }
+
+    // --no-incremental rebuilds every file, so each one's warnings reach the log (learn.microsoft.com/dotnet/core/tools/dotnet-build).
+    private static ToolProcessRequest BuildRequest(string dotnet, string csproj, string log, bool rebuild) =>
+        DotnetRequest(
             dotnet,
-            ["build", csproj, "-c", "Debug", "-p:GodotTargetPlatform=windows", "-p:UseSharedCompilation=false"],
-            Path.GetDirectoryName(csproj)!,
-            log,
-            Ceiling
-        )
+            [
+                "build",
+                csproj,
+                "-c",
+                "Debug",
+                "-p:GodotTargetPlatform=windows",
+                "-p:UseSharedCompilation=false",
+                .. rebuild ? ["--no-incremental"] : Array.Empty<string>(),
+            ],
+            csproj,
+            log
+        );
+
+    /// <summary>A dotnet command on the csproj, in its folder, without the server's MSBuild environment.</summary>
+    private static ToolProcessRequest DotnetRequest(string dotnet, string[] arguments, string csproj, string log) =>
+        new(dotnet, arguments, Path.GetDirectoryName(csproj)!, log, Ceiling)
         {
             // No reused MSBuild nodes and no shared compiler server, so nothing the build starts outlives it.
             SetVariables = new Dictionary<string, string> { ["MSBUILDDISABLENODEREUSE"] = "1" },
             RemovedVariables = InheritedMsBuildVariables,
         };
 
+    /// <summary>
+    /// The full paths of the csproj's <c>Compile</c> items, from MSBuild's evaluation (<c>dotnet msbuild -getItem:Compile</c>,
+    /// MSBuild 17.8 and later: learn.microsoft.com/visualstudio/msbuild/evaluate-items-and-properties), with the build's
+    /// configuration and environment. Its output goes to a log of its own (<see cref="CompileItemsLog"/>), so evaluations on
+    /// one folder at once never share a file; the log is deleted once read, and kept when the evaluation failed.
+    /// </summary>
+    /// <exception cref="SessionException">dotnet could not be started, hit its ceiling, failed, or wrote no item list.</exception>
+    public static async Task<IReadOnlyList<string>> CompileItemsAsync(
+        string projectDir,
+        string csproj,
+        ILogger logger,
+        CancellationToken cancellationToken
+    )
+    {
+        string log = CompileItemsLog(projectDir);
+        string[] arguments = ["msbuild", csproj, "-getItem:Compile", "-p:Configuration=Debug", "-p:GodotTargetPlatform=windows", "-nologo"];
+        ToolProcessResult listed = await RunToolAsync(
+            DotnetRequest(Installation.FindDotnet(), arguments, csproj, log),
+            "dotnet",
+            logger,
+            cancellationToken
+        );
+        string failure = $"dotnet msbuild -getItem:Compile on {csproj}";
+        if (listed.KilledByCeiling || listed.ExitCode != 0)
+        {
+            throw new SessionException($"{failure} failed (exited {listed.ExitCode}), so the Compile items are unknown. Its log: {log}");
+        }
+
+        IReadOnlyList<string> items;
+        try
+        {
+            items = ReadCompileItems(File.ReadAllText(log)) ?? throw new SessionException($"{failure} wrote no item list. Its log: {log}");
+        }
+        catch (JsonException e)
+        {
+            throw new SessionException($"{failure} wrote an item list that is not JSON ({e.Message}). Its log: {log}", e);
+        }
+
+        DeleteLogged(log, logger);
+        return items;
+    }
+
+    /// <summary>A log path of its own for one Compile-items evaluation: <c>.godot/godot-mcp/compile-items-&lt;guid&gt;.log</c>.</summary>
+    internal static string CompileItemsLog(string projectDir) => Path.Combine(LogFolder(projectDir), $"compile-items-{Guid.NewGuid():N}.log");
+
+    /// <summary>Deletes a read log; a failure is logged, so it never replaces the call's own outcome.</summary>
+    private static void DeleteLogged(string path, ILogger logger)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.HeadlessFileDeleteFailed(logger, e, path);
+        }
+    }
+
+    /// <summary>The <c>Items.Compile[].FullPath</c> values of <c>-getItem</c>'s JSON, or null when the output holds none.</summary>
+    /// <exception cref="JsonException">The text from the first <c>{</c> to the last <c>}</c> is not JSON.</exception>
+    internal static IReadOnlyList<string>? ReadCompileItems(string output)
+    {
+        int start = output.IndexOf('{', StringComparison.Ordinal);
+        int end = output.LastIndexOf('}');
+        if (start < 0 || end < start)
+        {
+            return null;
+        }
+
+        var items = JsonNode.Parse(output[start..(end + 1)])?["Items"]?["Compile"] as JsonArray;
+        return items?.OfType<JsonObject>().Select(item => item["FullPath"]?.GetValue<string>()).OfType<string>().ToList();
+    }
+
     /// <exception cref="SessionException">The build hit its ceiling or failed.</exception>
-    private static void CheckBuild(ToolProcessResult built, string csproj, string log)
+    private static void CheckBuild(ToolProcessResult built, string csproj, string log, IReadOnlyList<BuildDiagnostic> diagnostics)
     {
         if (built.KilledByCeiling)
         {
@@ -141,7 +270,7 @@ internal static class ProjectPrep
             return;
         }
 
-        CompilerErrorList errors = CompilerErrors.Parse(File.ReadAllText(log));
+        CompilerErrorList errors = CompilerErrors.Errors(diagnostics);
         string listed = errors.Total == 0 ? "No compiler errors were found in its output." : string.Join('\n', errors.Errors);
         string omitted = errors.Total > errors.Errors.Count ? $"\n(and {errors.Total - errors.Errors.Count} more)" : string.Empty;
         throw new SessionException(
@@ -227,6 +356,14 @@ internal static class ProjectPrep
         {
             throw new SessionException($"{tool} could not be started from {request.FileName}: {e.Message}.", e);
         }
+    }
+
+    /// <summary>Whether the prep builds: not at all, incrementally, or as a rebuild of every file.</summary>
+    private enum BuildNeed
+    {
+        None,
+        Build,
+        Rebuild,
     }
 
     /// <summary>One prep step's outcome: its state for the result, how long it ran when it ran, a note, and a failed build's errors.</summary>

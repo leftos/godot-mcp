@@ -254,6 +254,55 @@ public sealed class ProjectPrepTests : IDisposable
     }
 
     [Fact]
+    public void BuildDiagnosticsAreErrorsAndWarningsWithTheirPositionsDeduplicated()
+    {
+        const string file = @"D:\t\CsProbe\CsProbeNode.cs";
+        const string project = @" [D:\t\CsProbe\CsProbe.csproj]";
+        string log = string.Join(
+            '\n',
+            $"{file}(9,31): error CS1002: ; expected{project}",
+            $"{file}(12,13): warning CS0219: The variable 'unused' is assigned but its value is never used{project}",
+            $"CSC : warning CS2008: No source files specified.{project}",
+            "error MSB1009: Project file does not exist.",
+            "Build FAILED.",
+            $"{file}(12,13): warning CS0219: The variable 'unused' is assigned but its value is never used{project}",
+            $"{file}(9,31): error CS1002: ; expected{project}",
+            $"{file}(9,40): error CS1002: ; expected{project}"
+        );
+
+        IReadOnlyList<BuildDiagnostic> diagnostics = CompilerErrors.ParseDiagnostics(log);
+
+        Assert.Equal(
+            [
+                new BuildDiagnostic(file, 9, 31, "CS1002", "; expected", "error"),
+                new BuildDiagnostic(file, 12, 13, "CS0219", "The variable 'unused' is assigned but its value is never used", "warning"),
+                new BuildDiagnostic("CSC", null, null, "CS2008", "No source files specified.", "warning"),
+                new BuildDiagnostic(null, null, null, "MSB1009", "Project file does not exist.", "error"),
+                new BuildDiagnostic(file, 9, 40, "CS1002", "; expected", "error"),
+            ],
+            diagnostics
+        );
+        // The flat error list names no column, so the two CS1002s on line 9 read as one.
+        Assert.Equal([$"{file}:9: CS1002 ; expected", "MSB1009 Project file does not exist."], CompilerErrors.Errors(diagnostics).Errors);
+    }
+
+    [Fact]
+    public void EachCompileItemsEvaluationLogsToAFileOfItsOwn()
+    {
+        string game = CreateGame(null, "Solo.csproj");
+
+        string first = ProjectPrep.CompileItemsLog(game);
+        string second = ProjectPrep.CompileItemsLog(game);
+
+        Assert.NotEqual(first, second);
+        foreach (string log in new[] { first, second })
+        {
+            Assert.Equal(ProjectPrep.LogFolder(game), Path.GetDirectoryName(log));
+            Assert.Matches("^compile-items-[0-9a-f]{32}\\.log$", Path.GetFileName(log));
+        }
+    }
+
+    [Fact]
     public void ATrackedSidecarDeletedFromTheWorkingTreeIsSkipped()
     {
         string game = CreateRepositoryWithImportedIcon();
