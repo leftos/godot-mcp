@@ -317,7 +317,7 @@ func _monitor_refusal(node_name: String, property: String) -> String:
 	if not refusal.is_empty():
 		return refusal
 	if bridge._find_node(node_name) == null:
-		return "no node '%s' in the running game" % node_name
+		return bridge._inspect.not_found(node_name, "get_scene_tree lists the nodes' paths")
 	var checked: Array = _check_property(node_name, property, null)
 	return checked[2] if checked.size() > 2 else ""
 
@@ -600,7 +600,9 @@ func _wait_for_signal(params: Dictionary, timeout_ms: int) -> Dictionary:
 	var signal_name: String = _text(params, "signal")
 	var node: Node = bridge._find_node(node_name)
 	if node == null:
-		return {"error": "no node '%s' in the running game" % node_name}
+		return {
+			"error": bridge._inspect.not_found(node_name, "get_scene_tree lists the nodes' paths")
+		}
 	if not node.has_signal(signal_name):
 		return {"error": "%s has no signal '%s'" % [node.get_path(), signal_name]}
 	var fired: Array = []

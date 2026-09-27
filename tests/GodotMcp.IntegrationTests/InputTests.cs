@@ -575,6 +575,22 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         Assert.Equal("[]", (await HandPressesAsync()).ToJsonString());
     }
 
+    // Main is the probe's scene root; Missing is not one of its children.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnElementNamingNoNodeIsRefusedNamingTheBaseAndItsChildren()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.ClickAsync(new InputTarget("Main/Missing"), "left", false, cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.Contains(
+            "No node 'Main/Missing' in the running game: a path is read from /root, and /root/Main has no child 'Missing' ",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Contains("get_ui_elements lists the Controls' paths and names.", refused.Message, StringComparison.Ordinal);
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task AFullPathClickOnAVisibleCardPressesThatCard()
     {

@@ -198,6 +198,22 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.True(stillPaused);
     }
 
+    // A signal wait's node is resolved once, up front; TimeProbe/Missing is not there to resolve.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task WaitForSignalOnAMissingNodeIsRefusedNamingTheBaseAndItsChildren()
+    {
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => WaitAsync(new WaitCondition(Node: "TimeProbe/Missing", Signal: "fired")));
+
+        Assert.Contains(
+            "No node 'TimeProbe/Missing' in the running game: a path is read from /root, and /root/TimeProbe has no child 'Missing' ",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Contains("get_scene_tree lists the nodes' paths.", refused.Message, StringComparison.Ordinal);
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForExpression()
     {

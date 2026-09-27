@@ -363,7 +363,7 @@ static func _count_error(node: Node, method: String, info: Dictionary, count: in
 func _resolve(node_name: String) -> Variant:
 	var node: Node = _bridge._find_node(node_name)
 	if node == null:
-		return _not_found(node_name)
+		return not_found(node_name, "get_scene_tree lists the nodes' paths")
 	if node == _bridge or _bridge.is_ancestor_of(node):
 		return (
 			"'%s' is part of the godot-mcp bridge, which the inspection tools do not reach."
@@ -374,10 +374,11 @@ func _resolve(node_name: String) -> Variant:
 
 ## The refusal for a path or bare name that names no node: a bare name was searched for
 ## everywhere under /root; a path names the base it is read from, the deepest node on it that
-## exists, the name that node lacks and up to 10 of its children. The C# helper's
+## exists, the name that node lacks and up to 10 of its children. hint, the text of the clause
+## after the last '; ' and without its period, says where to look instead. The C# helper's
 ## Targets.NotFound spells the same text.
-func _not_found(node_name: String) -> String:
-	var tail: String = "; get_scene_tree lists the nodes' paths."
+func not_found(node_name: String, hint: String) -> String:
+	var tail: String = "; %s." % hint
 	if not node_name.contains("/"):
 		return "No node named '%s' anywhere under /root in the running game%s" % [node_name, tail]
 	var stop: Array = _deepest_ancestor(node_name)

@@ -92,7 +92,7 @@ internal static class Targets
     /// <summary>
     /// The refusal for a path or bare name that names no node: a bare name was searched for everywhere under /root; a path
     /// names the base it is read from, the deepest node on it that exists, the name that node lacks and up to
-    /// <see cref="MaxListedChildren"/> of its children. The bridge's <c>_not_found</c> (godot_mcp_inspect.gd) spells the same text.
+    /// <see cref="MaxListedChildren"/> of its children. The bridge's <c>not_found</c> (godot_mcp_inspect.gd) spells the same text.
     /// </summary>
     public static string NotFound(string value)
     {

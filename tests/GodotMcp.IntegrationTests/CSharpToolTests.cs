@@ -491,6 +491,12 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
 
         Assert.Equal("CsProbe.Greeter", greeter["type"]?.GetValue<string>());
         Assert.Equal("hello bob", result["value"]?.GetValue<string>());
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            CallAsync(new CSharpTarget(Node: TargetsPath), "GreetWith", [new JsonObject { ["$node"] = "CsProbe/Missing" }, "bob"], null, cancellation)
+        );
+
+        Assert.Contains(MissingUnderProbe, refused.Message, StringComparison.Ordinal);
     }
 
     [Fact(Timeout = CSharpTestTimeoutMs)]

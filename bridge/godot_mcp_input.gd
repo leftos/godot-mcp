@@ -719,9 +719,8 @@ func _find_input_node(element: String) -> Variant:
 	else:
 		named = _nodes_named(element)
 	if named.is_empty():
-		return (
-			"no node '%s' in the running game; get_ui_elements lists the Controls' paths and names"
-			% element
+		return bridge._inspect.not_found(
+			element, "get_ui_elements lists the Controls' paths and names"
 		)
 	if named.size() > 1:
 		return _ambiguous(element, named)

@@ -17,8 +17,12 @@ internal sealed class GodotResolver : IValueResolver
             : value;
     }
 
-    public object? ResolveNode(string path) =>
-        Targets.Find(path) is { } node && !Targets.InBridge(node)
-            ? node
-            : throw new ValueConversionException($"no node '{path}' in the running game; get_scene_tree lists the nodes' paths");
+    public object? ResolveNode(string path)
+    {
+        if (Targets.TryReach(path, out Node? node, out string? refusal))
+        {
+            return node;
+        }
+        throw new ValueConversionException(refusal);
+    }
 }
