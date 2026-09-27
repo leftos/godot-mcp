@@ -9,13 +9,14 @@ namespace GodotMcp.IntegrationTests.Fixtures;
 /// One quiet InputProbe run shared by a test class: launched once, put back to a fresh launch's state by
 /// <see cref="ResetAsync"/> before each test, stopped after the last with the probe's tree checked clean.
 /// </summary>
-public sealed class SharedProbeSession : IAsyncLifetime
+public class SharedProbeSession : IAsyncLifetime
 {
     private const int ScriptTimeoutMs = 10_000;
 
     // Frees every root child but the autoloads, loads the main scene again and waits for it, then undoes what a test may
     // have set on the engine. Keys and actions carry no bridge-side state, so they are released here; the mouse buttons
-    // and pad buttons and axes the bridge holds are returned, for ResetAsync to release through simulate_input.
+    // and pad buttons and axes the bridge holds are returned, for ResetAsync to release through simulate_input. The
+    // bridge's pointer goes back to the origin, since a raw mouse_motion with no relative takes its step from it.
     private const string ResetScript = """
         extends RefCounted
 
@@ -27,6 +28,7 @@ public sealed class SharedProbeSession : IAsyncLifetime
         	Input.emulate_touch_from_mouse = {EMULATE_TOUCH}
         	_release_keys_and_actions()
         	var root: Window = scene_tree.root
+        	root.get_node("GodotMcpBridge").set("_pointer", Vector2.ZERO)
         	for child: Node in root.get_children():
         		if not ProjectSettings.has_setting("autoload/" + child.name):
         			root.remove_child(child)
@@ -80,9 +82,18 @@ public sealed class SharedProbeSession : IAsyncLifetime
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
     private readonly RuntimeTools _tools;
+    private readonly bool _shutOutRealGamepads;
     private bool _emulateTouch;
 
-    public SharedProbeSession() => _tools = new RuntimeTools(_harness.Sessions);
+    public SharedProbeSession()
+        : this(false) { }
+
+    /// <summary>A shared run launched with <c>shutOutRealGamepads</c> as given.</summary>
+    protected SharedProbeSession(bool shutOutRealGamepads)
+    {
+        _shutOutRealGamepads = shutOutRealGamepads;
+        _tools = new RuntimeTools(_harness.Sessions);
+    }
 
     /// <summary>The probe project the shared run plays.</summary>
     public string ProbeDirectory => _probe.Directory;
@@ -104,6 +115,7 @@ public sealed class SharedProbeSession : IAsyncLifetime
         finally
         {
             _probe.Dispose();
+            GC.SuppressFinalize(this);
         }
     }
 
@@ -133,7 +145,7 @@ public sealed class SharedProbeSession : IAsyncLifetime
 
     private async Task LaunchAsync(CancellationToken cancellation)
     {
-        await Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
+        await Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], true, _shutOutRealGamepads, Prepare: true), null, cancellation);
         string emulate = await _tools.RunScriptAsync(
             "extends RefCounted\n\n\nfunc execute(_scene_tree: SceneTree) -> Variant:\n\treturn Input.emulate_touch_from_mouse\n",
             ScriptTimeoutMs,

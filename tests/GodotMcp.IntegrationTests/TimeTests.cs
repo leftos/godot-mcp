@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
-using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
@@ -11,9 +10,10 @@ namespace GodotMcp.IntegrationTests;
 /// <summary>
 /// frame_control and wait_for against the InputProbe with time_probe.tscn added under the root: TimeProbe, a pausable node
 /// counting its process frames and physics ticks and summing their delta, a Swatch repainted from the frame count each frame,
-/// and arm(ms), which after ms adds a child Armed, sets state to "done" and emits fired(ms).
+/// and arm(ms), which after ms adds a child Armed, sets state to "done" and emits fired(ms). One shared run, reset before each
+/// test; the reset frees TimeProbe and restores pause, time scale and drawing.
 /// </summary>
-public sealed class TimeTests : IAsyncDisposable
+public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
     private const int TestTimeoutMs = 45_000;
     private const int ScriptTimeoutMs = 10_000;
@@ -21,22 +21,17 @@ public sealed class TimeTests : IAsyncDisposable
     private const string PausedRefusal =
         "The game is paused, so only a signal wait or a check-once wait (timeoutMs 0) can be met; resume or step it first.";
     private const string SteppingRefusal = "A step is still running on this game; wait for its reply before pause, resume or another step.";
-    private readonly ProbeProject _probe = new();
-    private readonly SessionHarness _harness = new();
-    private readonly RuntimeTools _tools;
+    private readonly SharedProbeSession _shared = shared;
+    private readonly RuntimeTools _tools = new(shared.Sessions);
 
-    public TimeTests() => _tools = new RuntimeTools(_harness.Sessions);
+    public async ValueTask InitializeAsync() => await _shared.ResetAsync(TestContext.Current.CancellationToken);
 
-    public async ValueTask DisposeAsync()
-    {
-        await _harness.DisposeAsync();
-        _probe.Dispose();
-    }
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     [Fact(Timeout = TestTimeoutMs)]
     public async Task PauseStopsPausableNodesButBridgeStillAnswers()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
 
         JsonObject paused = await FrameAsync("pause");
         long before = await ReadIntAsync("process_frames");
@@ -55,7 +50,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task StepAdvancesExactlyNProcessFrames()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await FrameAsync("pause");
         long before = await ReadIntAsync("process_frames");
 
@@ -70,7 +65,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task StepPhysicsCountsPhysicsTicks()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await FrameAsync("pause");
         long before = await ReadIntAsync("physics_ticks");
 
@@ -85,7 +80,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task StepFromRunningPausesFirst()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
 
         JsonObject stepped = await FrameAsync("step", count: 2);
         long before = await ReadIntAsync("process_frames");
@@ -100,7 +95,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task TimeScaleScalesDelta()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await FrameAsync("pause");
 
         JsonObject scaled = await FrameAsync("time_scale", scale: 0.5);
@@ -120,7 +115,7 @@ public sealed class TimeTests : IAsyncDisposable
     public async Task StepWithScreenshotShowsFrameN()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await FrameAsync("pause");
         long before = await ReadIntAsync("process_frames");
 
@@ -146,7 +141,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForNodeExists()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await ArmAsync(300);
 
         JsonObject waited = await WaitAsync(new WaitCondition(Node: "Armed", Exists: true));
@@ -159,7 +154,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForPropertyEquals()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await ArmAsync(300);
 
         JsonObject waited = await WaitAsync(new WaitCondition(Node: "TimeProbe", Property: "state", EqualsValue: Json("\"done\"")));
@@ -171,7 +166,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForSignalReturnsArgs()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await ArmAsync(500);
 
         JsonObject waited = await WaitAsync(new WaitCondition(Node: "TimeProbe", Signal: "fired"));
@@ -183,7 +178,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForSignalWhilePaused()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await FrameAsync("pause");
         await ArmAsync(300);
 
@@ -197,7 +192,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForExpression()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await ArmAsync(300);
 
         const string Expression =
@@ -212,7 +207,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForExpressionParseErrorFails()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() => WaitAsync(new WaitCondition(Expression: "1 +")));
 
@@ -223,7 +218,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForTimesOutWithLastValue()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
 
         JsonObject waited = await WaitAsync(new WaitCondition(Node: "TimeProbe", Property: "state", EqualsValue: Json("\"done\"")), 300);
 
@@ -236,7 +231,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForPropertyWhilePausedIsRefused()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await FrameAsync("pause");
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
@@ -249,7 +244,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ACheckOnceWaitWorksWhilePaused()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await FrameAsync("pause");
 
         JsonObject holds = await WaitAsync(new WaitCondition(Node: "TimeProbe", Property: "state", EqualsValue: Json("\"idle\"")), 0);
@@ -267,7 +262,7 @@ public sealed class TimeTests : IAsyncDisposable
     public async Task AStepWhileAnotherRunsIsRefusedAndTheFirstCountsTrue()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await StartAsync(cancellation);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await FrameAsync("pause");
         long before = await ReadIntAsync("process_frames");
 
@@ -290,7 +285,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = 60_000)]
     public async Task AStepWhoseFramesStopDrawingEndsAtItsDeadlineAndFreesTheNextStep()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await FrameAsync("pause");
         await RunAsync($"{Probe}.stop_drawing_after(100)\n\treturn true");
 
@@ -309,7 +304,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task AGamePausingItselfMidStepFailsTheStep()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await FrameAsync("pause");
         await RunAsync($"{Probe}.pause_after(300)\n\treturn true");
 
@@ -322,7 +317,7 @@ public sealed class TimeTests : IAsyncDisposable
     public async Task StepPhysicsWithScreenshotShowsTheFrameAfterTheLastTick()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await StartAsync(cancellation);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await FrameAsync("pause");
         long ticksBefore = await ReadIntAsync("physics_ticks");
 
@@ -347,7 +342,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForSignalTimesOutWithoutLast()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
 
         JsonObject waited = await WaitAsync(new WaitCondition(Node: "TimeProbe", Signal: "fired"), 300);
 
@@ -360,7 +355,7 @@ public sealed class TimeTests : IAsyncDisposable
     public async Task WaitForSignalOnANodeFreedMidWaitTimesOutCleanly()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await StartAsync(cancellation);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
 
         Task<JsonObject> waiting = WaitAsync(new WaitCondition(Node: "TimeProbe", Signal: "fired"), 1000);
         await Task.Delay(200, cancellation);
@@ -374,7 +369,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForIntPropertyMatchesAJsonNumber()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
 
         JsonObject waited = await WaitAsync(new WaitCondition(Node: "TimeProbe", Property: "n", EqualsValue: Json("3")));
 
@@ -386,7 +381,7 @@ public sealed class TimeTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForAPropertyTheNodeLacksFails()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
             WaitAsync(new WaitCondition(Node: "TimeProbe", Property: "nope:x", EqualsValue: Json("1")))
@@ -395,12 +390,14 @@ public sealed class TimeTests : IAsyncDisposable
         Assert.Contains("'/root/TimeProbe' has no property 'nope'.", refused.Message, StringComparison.Ordinal);
     }
 
-    /// <summary>Launches the probe and adds time_probe.tscn under the root as TimeProbe.</summary>
-    private async Task StartAsync(CancellationToken cancellationToken)
-    {
-        await _harness.Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], true, false, Prepare: true), null, cancellationToken);
-        await RunAsync("var probe: Node = load(\"res://time_probe.tscn\").instantiate()\n\tscene_tree.root.add_child(probe)\n\treturn probe");
-    }
+    /// <summary>Adds time_probe.tscn under the shared run's root as TimeProbe; InitializeAsync has already reset the run.</summary>
+    private Task<string> AddTimeProbeAsync(CancellationToken cancellationToken) =>
+        _tools.RunScriptAsync(
+            "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t"
+                + "var probe: Node = load(\"res://time_probe.tscn\").instantiate()\n\tscene_tree.root.add_child(probe)\n\treturn probe\n",
+            ScriptTimeoutMs,
+            cancellationToken: cancellationToken
+        );
 
     private Task<JsonNode> ArmAsync(int ms) => RunAsync($"{Probe}.arm({ms})\n\treturn true");
 

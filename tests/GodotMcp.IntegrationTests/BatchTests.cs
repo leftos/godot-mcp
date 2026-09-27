@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
-using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -12,44 +11,45 @@ namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// batch_drive against the InputProbe, its tool steps dispatched through a real MCP server's tool collection over the test's
-/// sessions. The probe's SmallButton counts its presses in press_count.
+/// sessions. The probe's SmallButton counts its presses in press_count. One shared run, reset before each test; each test
+/// builds its own server over the shared registry, which the service provider does not dispose, since it was handed an
+/// instance.
 /// </summary>
-public sealed class BatchTests : IAsyncDisposable
+public sealed class BatchTests : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
     private const int TestTimeoutMs = 45_000;
     private const string SmallButton = "Main/SmallButton";
-    private readonly ProbeProject _probe = new();
-    private readonly SessionHarness _harness = new();
+    private readonly SharedProbeSession _shared;
     private readonly ServiceProvider _services;
     private readonly McpServer _server;
     private readonly RuntimeTools _tools;
 
-    public BatchTests()
+    public BatchTests(SharedProbeSession shared)
     {
+        _shared = shared;
         ServiceCollection services = new();
         services.AddLogging();
-        services.AddSingleton(_harness.Sessions);
+        services.AddSingleton(shared.Sessions);
         services.AddMcpServer().WithToolsFromAssembly(typeof(RuntimeTools).Assembly);
         _services = services.BuildServiceProvider();
         McpServerOptions options = _services.GetRequiredService<IOptions<McpServerOptions>>().Value;
         _server = McpServer.Create(new StreamServerTransport(Stream.Null, Stream.Null), options, null, _services);
-        _tools = new RuntimeTools(_harness.Sessions);
+        _tools = new RuntimeTools(shared.Sessions);
     }
+
+    public async ValueTask InitializeAsync() => await _shared.ResetAsync(TestContext.Current.CancellationToken);
 
     public async ValueTask DisposeAsync()
     {
         await _server.DisposeAsync();
         await _services.DisposeAsync();
-        await _harness.DisposeAsync();
-        _probe.Dispose();
     }
 
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ABatchRunsStepsInOrderAndPasses()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
-
         JsonObject batch = await BatchAsync(
+            TestContext.Current.CancellationToken,
             new BatchStep(Tool: "click", Args: new JsonObject { ["target"] = new JsonObject { ["element"] = "SmallButton" } }),
             PressCount(1),
             new BatchStep(Assert: "no_errors"),
@@ -74,9 +74,8 @@ public sealed class BatchTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ABatchStopsAtTheFirstFailedAssertion()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
-
         JsonObject batch = await BatchAsync(
+            TestContext.Current.CancellationToken,
             PressCount(5),
             new BatchStep(Tool: "click", Args: new JsonObject { ["target"] = new JsonObject { ["element"] = "SmallButton" } })
         );
@@ -93,9 +92,8 @@ public sealed class BatchTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task AToolErrorStopsTheBatch()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
-
         JsonObject batch = await BatchAsync(
+            TestContext.Current.CancellationToken,
             new BatchStep(Tool: "call_method", Args: new JsonObject { ["node"] = "NoSuchNode", ["method"] = "queue_free" }),
             new BatchStep(Assert: "no_errors")
         );
@@ -111,9 +109,11 @@ public sealed class BatchTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task AnAssertionChecksOnceWhilePaused()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
-
-        JsonObject batch = await BatchAsync(new BatchStep(Tool: "frame_control", Args: new JsonObject { ["action"] = "pause" }), PressCount(0));
+        JsonObject batch = await BatchAsync(
+            TestContext.Current.CancellationToken,
+            new BatchStep(Tool: "frame_control", Args: new JsonObject { ["action"] = "pause" }),
+            PressCount(0)
+        );
 
         Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
         Assert.True(batch["steps"]![0]!["result"]!["paused"]!.GetValue<bool>(), batch.ToJsonString());
@@ -124,8 +124,7 @@ public sealed class BatchTests : IAsyncDisposable
     public async Task TheDeadlineStopsTheBatchWithItsSteps()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await StartAsync(cancellation);
-        RuntimeTools hurried = new(_harness.Sessions) { BatchDeadline = TimeSpan.FromMilliseconds(500) };
+        RuntimeTools hurried = new(_shared.Sessions) { BatchDeadline = TimeSpan.FromMilliseconds(500) };
         BatchStep never = new(Assert: "wait", Expression: "false", TimeoutMs: 5000);
 
         JsonObject batch = JsonNode
@@ -144,11 +143,11 @@ public sealed class BatchTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task NoErrorsFailsOnARaisedError()
     {
-        await StartAsync(TestContext.Current.CancellationToken);
         const string Script =
             "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\tpush_error(\"batch boom\")\n\treturn true\n";
 
         JsonObject batch = await BatchAsync(
+            TestContext.Current.CancellationToken,
             new BatchStep(Assert: "no_errors"),
             new BatchStep(Tool: "run_script", Args: new JsonObject { ["script"] = Script }),
             new BatchStep(Assert: "no_errors")
@@ -166,10 +165,10 @@ public sealed class BatchTests : IAsyncDisposable
     public async Task ExpressionWaitAndScreenshotAssertionsPass()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await StartAsync(cancellation);
         await _tools.SaveScreenshotBaselineAsync("batch_square", new ScreenshotCrop(400, 40, 120, 80), null, null, cancellation);
 
         JsonObject batch = await BatchAsync(
+            TestContext.Current.CancellationToken,
             new BatchStep(Assert: "expression", Expression: "root.has_node(\"Main/SmallButton\")"),
             new BatchStep(Assert: "wait", Node: SmallButton, Exists: true),
             new BatchStep(Assert: "screenshot", Name: "batch_square")
@@ -186,11 +185,8 @@ public sealed class BatchTests : IAsyncDisposable
     private static BatchStep PressCount(int count) =>
         new(Assert: "property", Node: SmallButton, Property: "press_count", EqualsValue: JsonSerializer.SerializeToElement(count));
 
-    private async Task StartAsync(CancellationToken cancellationToken) =>
-        await _harness.Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], true, false, Prepare: true), null, cancellationToken);
-
-    private async Task<JsonObject> BatchAsync(params BatchStep[] steps) =>
-        JsonNode.Parse(await _tools.BatchDriveAsync(steps, _server, cancellationToken: TestContext.Current.CancellationToken))!.AsObject();
+    private async Task<JsonObject> BatchAsync(CancellationToken cancellationToken, params BatchStep[] steps) =>
+        JsonNode.Parse(await _tools.BatchDriveAsync(steps, _server, cancellationToken: cancellationToken))!.AsObject();
 
     private async Task<int> ReadPressCountAsync()
     {

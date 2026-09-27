@@ -21,6 +21,20 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
     // The machine's real pads take devices 0-3 (see DEVELOPMENT's footguns), so the injected pad keeps clear of them.
     private const int PadDevice = 7;
 
+    // Adds MotionRecorder under the root: its _input keeps [position.x, position.y, relative.x, relative.y] of every mouse
+    // motion carrying the bridge's injected mark (0x6D6370), in seen. The reset frees it with the other root children.
+    private const string MotionRecorderScript =
+        "var script := GDScript.new()\n\t"
+        + "script.source_code = \"extends Node\\n\\nvar seen: Array = []\\n\\n\\nfunc _input(event: InputEvent) -> void:\\n\\t"
+        + "if event is InputEventMouseMotion and event.device == 0x6D6370:\\n\\t\\t"
+        + "seen.append([event.position.x, event.position.y, event.relative.x, event.relative.y])\\n\"\n\t"
+        + "script.reload()\n\t"
+        + "var recorder := Node.new()\n\t"
+        + "recorder.name = \"MotionRecorder\"\n\t"
+        + "recorder.set_script(script)\n\t"
+        + "scene_tree.root.add_child(recorder)\n\t"
+        + "return true";
+
     // main.tscn's RedSquare: a ColorRect of Color(1, 0, 0) at (400, 40), 120 x 80.
     private static readonly ScreenshotCrop RedSquare = new(400, 40, 120, 80);
     private readonly SharedProbeSession _shared = shared;
@@ -90,6 +104,40 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         Assert.Equal(0.0, after["axis"]!.GetValue<double>());
         Assert.Equal((2, "Probe ready"), (after["children"]!.GetValue<int>(), after["label"]!.GetValue<string>()));
         Assert.Empty(errors["errors"]!.AsArray());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AResetRelaunchesAStoppedGame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync("push_error(\"raised before the stop\")\n\treturn true", cancellation);
+        await _shared.Sessions.StopAsync(null, cancellation);
+        bool liveAfterStop = _shared.Sessions.List().Any(session => session.Live);
+
+        await _shared.ResetAsync(cancellation);
+        JsonNode scene = await RunAsync("return scene_tree.current_scene.scene_file_path", cancellation);
+        JsonNode errors = JsonNode.Parse(_tools.GetErrors(_shared.ErrorCursor))!;
+
+        Assert.False(liveAfterStop);
+        Assert.Contains(_shared.Sessions.List(), session => session.Live);
+        Assert.Equal("res://main.tscn", scene.GetValue<string>());
+        Assert.Empty(errors["errors"]!.AsArray());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ARawMouseMotionAfterAResetStartsFromTheOrigin()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await _tools.SimulateInputAsync([RawMotion(300, 200)], cancellationToken: cancellation);
+
+        await _shared.ResetAsync(cancellation);
+        await RunAsync(MotionRecorderScript, cancellation);
+        await _tools.SimulateInputAsync([RawMotion(200, 120)], cancellationToken: cancellation);
+        JsonNode seen = await RunAsync("return scene_tree.root.get_node(\"MotionRecorder\").seen", cancellation);
+
+        double[] motion = [.. Assert.Single(seen.AsArray())!.AsArray().Select(value => value!.GetValue<double>())];
+        Assert.Equal((200.0, 120.0), (motion[0], motion[1]));
+        Assert.Equal((motion[0], motion[1]), (motion[2], motion[3]));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -298,6 +346,14 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
             state["mouse"]!.GetValue<int>(),
             state["pad"]!.GetValue<bool>()
         );
+
+    private static JsonObject RawMotion(double x, double y) =>
+        new()
+        {
+            ["type"] = "mouse_motion",
+            ["x"] = x,
+            ["y"] = y,
+        };
 
     private static string Text(IEnumerable<ContentBlock> blocks) => string.Concat(blocks.OfType<TextContentBlock>().Select(block => block.Text));
 
