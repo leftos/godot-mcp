@@ -5,11 +5,14 @@
     <AssemblyName>godot-mcp</AssemblyName>
     <RootNamespace>GodotMcp.Server</RootNamespace>
     <IsPackable>false</IsPackable>
+    <!-- Roslyn ships a resources dll per culture; the server's messages are English only. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <!-- LibraryImport's generated P/Invoke stubs are unsafe code (Session/HiddenDesktop.cs, Session/DesktopProcess.cs). -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="ModelContextProtocol" />
   </ItemGroup>
