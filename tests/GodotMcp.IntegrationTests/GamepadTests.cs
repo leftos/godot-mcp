@@ -8,32 +8,27 @@ namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// The gamepad tools against the InputProbe in the real Godot: the pad state Input reports, the probe's pad-bound actions
-/// (probe_jump on A, probe_right on LEFT_X+ with deadzone 0.2), and focus moving down its Menu column from MenuA.
+/// (probe_jump on A, probe_right on LEFT_X+ with deadzone 0.2), and focus moving down its Menu column from MenuA. One shared
+/// run with the real pads shut out, reset before each test, except for the test of a default run, which launches its own.
 /// </summary>
-public sealed class GamepadTests : IAsyncDisposable
+public sealed class GamepadTests(SharedShutOutProbeSession shared) : IAsyncLifetime, IClassFixture<SharedShutOutProbeSession>
 {
     private const int TestTimeoutMs = 45_000;
     private const int ScriptTimeoutMs = 10_000;
     private const string ReadButtonAAndJump = "return [Input.is_joy_button_pressed(0, JOY_BUTTON_A), Input.is_action_pressed(\"probe_jump\")]";
     private const string ReadFocusOwner = "return str(scene_tree.root.gui_get_focus_owner().name)";
     private static readonly StickPosition Down = new(0, 1);
-    private readonly ProbeProject _probe = new();
-    private readonly SessionHarness _harness = new();
-    private readonly RuntimeTools _tools;
+    private readonly SharedShutOutProbeSession _shared = shared;
+    private readonly RuntimeTools _tools = new(shared.Sessions);
 
-    public GamepadTests() => _tools = new RuntimeTools(_harness.Sessions);
+    public async ValueTask InitializeAsync() => await _shared.ResetAsync(TestContext.Current.CancellationToken);
 
-    public async ValueTask DisposeAsync()
-    {
-        await _harness.DisposeAsync();
-        _probe.Dispose();
-    }
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ButtonPressHoldsTheButtonAndItsActionUntilRelease()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await LaunchAsync(shutOutRealGamepads: true);
 
         await _tools.GamepadButtonAsync("A", "press", 0, cancellationToken: cancellation);
         JsonNode held = await RunAsync(ReadButtonAAndJump);
@@ -47,8 +42,6 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ButtonTapPressesTheActionOnce()
     {
-        await LaunchAsync(shutOutRealGamepads: true);
-
         await _tools.GamepadButtonAsync("A", "tap", 0, cancellationToken: TestContext.Current.CancellationToken);
 
         JsonNode after = await RunAsync(
@@ -62,7 +55,6 @@ public sealed class GamepadTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         const string ReadLeftX = "return [Input.get_joy_axis(0, JOY_AXIS_LEFT_X), Input.get_action_strength(\"probe_right\")]";
-        await LaunchAsync(shutOutRealGamepads: true);
 
         await _tools.GamepadAxisAsync("LEFT_X", 0.6, 0, null, null, cancellation);
         JsonNode pushed = await RunAsync(ReadLeftX);
@@ -78,8 +70,6 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task TriggerSweepTakesItsDurationAndEndsAtTheValue()
     {
-        await LaunchAsync(shutOutRealGamepads: true);
-
         var sweep = Stopwatch.StartNew();
         await _tools.GamepadAxisAsync("TRIGGER_RIGHT", 1, 0, new SweepOptions(DurationMs: 300), null, TestContext.Current.CancellationToken);
         sweep.Stop();
@@ -92,7 +82,6 @@ public sealed class GamepadTests : IAsyncDisposable
     public async Task DpadDownTwiceMovesFocusTwoButtonsDown()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await LaunchAsync(shutOutRealGamepads: true);
         string before = (await RunAsync(ReadFocusOwner)).GetValue<string>();
 
         await _tools.GamepadButtonAsync("DPAD_DOWN", "tap", 0, cancellationToken: cancellation);
@@ -105,7 +94,6 @@ public sealed class GamepadTests : IAsyncDisposable
     public async Task StickPushedDownAndReleasedTwiceMovesFocusTwoButtonsDown()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await LaunchAsync(shutOutRealGamepads: true);
         string before = (await RunAsync(ReadFocusOwner)).GetValue<string>();
 
         await _tools.GamepadStickAsync("left", Down, 0, new SweepOptions(Release: true), null, cancellation);
@@ -117,8 +105,6 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task APressOnDeviceOneIsNotOnDeviceZero()
     {
-        await LaunchAsync(shutOutRealGamepads: true);
-
         await _tools.GamepadButtonAsync("A", "press", 1, cancellationToken: TestContext.Current.CancellationToken);
 
         JsonNode pads = await RunAsync("return [Input.is_joy_button_pressed(0, JOY_BUTTON_A), Input.is_joy_button_pressed(1, JOY_BUTTON_A)]");
@@ -128,7 +114,6 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task SimulateInputPlaysRawJoypadEvents()
     {
-        await LaunchAsync(shutOutRealGamepads: true);
         JsonObject press = new()
         {
             ["type"] = "joypad_button",
@@ -157,7 +142,6 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ShuttingOutRealGamepadsMarksTheGameUnfocused()
     {
-        await LaunchAsync(shutOutRealGamepads: true);
         await _tools.GamepadButtonAsync("A", "press", 0, cancellationToken: TestContext.Current.CancellationToken);
 
         JsonNode state = await RunAsync(
@@ -174,11 +158,19 @@ public sealed class GamepadTests : IAsyncDisposable
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ADefaultRunSendsNoFocusOutAndTakesTheInjectedPad()
     {
-        await LaunchAsync(shutOutRealGamepads: false);
+        // The shared run shuts the real pads out, so the default run is a run of its own.
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using ProbeProject probe = new();
+        await using SessionHarness harness = new();
+        RuntimeTools tools = new(harness.Sessions);
+        await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
 
-        await _tools.GamepadButtonAsync("A", "tap", 0, cancellationToken: TestContext.Current.CancellationToken);
+        await tools.GamepadButtonAsync("A", "tap", 0, cancellationToken: cancellation);
 
-        JsonNode state = await RunAsync(ReadShutOut + "\n\treturn [shut_out, ignoring, scene_tree.root.get_node(\"Main/PadProbe\").jump_count]");
+        JsonNode state = await RunAsync(
+            tools,
+            ReadShutOut + "\n\treturn [shut_out, ignoring, scene_tree.root.get_node(\"Main/PadProbe\").jump_count]"
+        );
         Assert.Equal("[false,false,1]", state.ToJsonString());
     }
 
@@ -190,7 +182,6 @@ public sealed class GamepadTests : IAsyncDisposable
     public async Task InjectedPadStateSurvivesFocusChanges()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await LaunchAsync(shutOutRealGamepads: true);
 
         await _tools.GamepadButtonAsync("A", "press", 0, cancellationToken: cancellation);
         await _tools.GamepadAxisAsync("LEFT_X", 0.6, 0, null, null, cancellation);
@@ -213,17 +204,12 @@ public sealed class GamepadTests : IAsyncDisposable
         "var shut_out: bool = scene_tree.root.get_node(\"GodotMcpBridge/Gamepad\").real_pads_shut_out\n\t"
         + "var ignoring := Input.is_ignoring_joypad_on_unfocused_application()";
 
-    private Task<LaunchResult> LaunchAsync(bool shutOutRealGamepads) =>
-        _harness.Sessions.LaunchAsync(
-            new LaunchRequest(_probe.Directory, null, [], [], true, shutOutRealGamepads, Prepare: true),
-            null,
-            TestContext.Current.CancellationToken
-        );
+    private Task<JsonNode> RunAsync(string body) => RunAsync(_tools, body);
 
-    private async Task<JsonNode> RunAsync(string body)
+    private static async Task<JsonNode> RunAsync(RuntimeTools tools, string body)
     {
         string script = $"extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t{body}\n";
-        string json = await _tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: TestContext.Current.CancellationToken);
+        string json = await tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: TestContext.Current.CancellationToken);
         return JsonNode.Parse(json)!["value"]!;
     }
 }
