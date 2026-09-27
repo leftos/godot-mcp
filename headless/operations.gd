@@ -13,9 +13,9 @@ extends SceneTree
 ## validate loads each target with the cache ignored, never instantiating a scene or resource, and
 ## checks each C# script the target's whole dependency closure reaches (however deep, each script
 ## once a run) with can_instantiate; an error is grouped under the res:// file it names, else under
-## the file being checked. get_scene_file_tree reads a
-## scene's SceneState, expanding instanced scenes and an inherited scene's base in place, without
-## instantiating anything. Every other op is a scene edit, run by scene_ops.gd.
+## the file being checked. get_scene_file_tree reads a scene's SceneState, expanding instanced
+## scenes and an inherited scene's base in place, without instantiating anything. Every other op
+## is a scene edit, run by scene_ops.gd.
 
 const SceneOps := preload("scene_ops.gd")
 const SceneEdit := preload("scene_edit.gd")
