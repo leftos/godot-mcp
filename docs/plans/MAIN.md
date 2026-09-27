@@ -22,6 +22,9 @@ A track, then singles; the singles' order is not a ranking.
 
 ### Singles
 
+- [ ] The scene tools refuse a `StringName` property (`theme_type_variation`) on read-back, comparing the String sent with the StringName read (#8)
+- [ ] Tooltips in screenshots, a hover-only pointer move, and a timed wait while paused (#9): find whether a tooltip's popup window escapes `take_screenshot` or a quiet run never shows it; decide a hover gesture's tool shape and whether `wait_for` takes a plain duration while paused
+
 
 - [ ] A Godot launch in the itests died once with exit 0xC06D007F (a delay-load failure) before the bridge connected (`CaptureTests.SentPadInputIsCaptured`, full `itest` 2026-09-26, beside two other trees' itests; passed on the rerun): find what fails to load if it recurs
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see [DECISIONS.md](../DECISIONS.md#gamepad-input-from-godot-472s-source))
