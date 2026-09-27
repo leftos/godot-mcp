@@ -63,12 +63,22 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
     private static string ErrorMessage(JsonObject envelope) =>
         envelope["error"] is JsonValue message && message.TryGetValue(out string? text) ? text : "no message";
 
-    /// <summary>Sends one helper request through the bridge, copying the helper into the cache first.</summary>
+    /// <summary>
+    /// Sends one helper request through the bridge, copying the helper into the cache first. <paramref name="timeoutMs"/> is how
+    /// long the server waits for the reply; <paramref name="pendingTimeoutMs"/>, when given, is how long the bridge polls a call
+    /// the helper answers as pending (the bridge's own default otherwise).
+    /// </summary>
     /// <exception cref="InvalidOperationException">
     /// The project cannot be asked, the helper's copy could not be prepared, the bridge answered nothing, or the helper
     /// refused or answered badly.
     /// </exception>
-    public async Task<CSharpReply> SendAsync(GodotSession session, string requestJson, int timeoutMs, CancellationToken cancellation)
+    public async Task<CSharpReply> SendAsync(
+        GodotSession session,
+        string requestJson,
+        int timeoutMs,
+        int? pendingTimeoutMs,
+        CancellationToken cancellation
+    )
     {
         string? extension = findExtension();
         if (Refusal(session.ProjectDir, extension) is { } refusal)
@@ -77,13 +87,15 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
         }
 
         string copied = PrepareCopy(extension!);
+        JsonObject parameters = new() { ["extension"] = copied, ["request"] = requestJson };
+        if (pendingTimeoutMs is { } pending)
+        {
+            parameters["timeoutMs"] = pending;
+        }
+
         JsonNode? result =
-            await session.SendAsync(
-                "dotnet",
-                new JsonObject { ["extension"] = copied, ["request"] = requestJson },
-                TimeSpan.FromMilliseconds(timeoutMs),
-                cancellation
-            ) ?? throw new InvalidOperationException("The C# helper's reply is missing: the bridge answered no result for 'dotnet'.");
+            await session.SendAsync("dotnet", parameters, TimeSpan.FromMilliseconds(timeoutMs), cancellation)
+            ?? throw new InvalidOperationException("The C# helper's reply is missing: the bridge answered no result for 'dotnet'.");
         return ParseReply(result);
     }
 

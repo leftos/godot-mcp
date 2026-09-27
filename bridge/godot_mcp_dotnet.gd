@@ -8,6 +8,10 @@ extends Node
 ## A failed load is remembered for the life of the process and its error answered on every later
 ## call without loading again, since a second load returns LOAD_STATUS_ALREADY_LOADED with the
 ## callable still absent. The first path that loads is the one used for the life of the process.
+##
+## A reply saying the helper's call is pending (its Task has not finished) is polled once a frame,
+## never waited on in place: the Task's continuation runs on a later frame of this same thread.
+## Past the request's timeoutMs the call is forgotten, its Task left running in the game.
 
 ## The SceneTree meta the helper stores its callable under (Helper.MetaName in the helper).
 const META_NAME := "godot_mcp_dotnet"
@@ -18,6 +22,11 @@ const NO_REQUEST := "dotnet needs 'request', the helper request as a JSON string
 const NOT_LOADED := "Godot could not load the C# helper extension at %s (load status %d)."
 const HELPER_FAILED := "The C# helper failed to load: %s"
 const NO_CALLABLE := "The C# helper extension loaded but installed no 'godot_mcp_dotnet' callable."
+const TIMED_OUT := "the call did not complete within %d ms; its Task is still running in the game"
+## How long a pending call is polled when the params carry no timeoutMs.
+const DEFAULT_TIMEOUT_MS := 10000
+## How every helper reply for a call whose Task has not finished begins, its id following.
+const PENDING_PREFIX := '{"ok":true,"pending":"'
 
 ## The bridge (godot_mcp_bridge.gd), set by it before this node enters the tree.
 var bridge: Node
@@ -26,13 +35,18 @@ var bridge: Node
 var load_extension: Callable = GDExtensionManager.load_extension
 ## The object holding the helper's callable as meta; the SceneTree when null. Tests replace it.
 var meta_host: Object
+## Waits for the next frame between polls of a pending call, func() -> void; tests replace it.
+var wait_frame: Callable = func() -> void: await (Engine.get_main_loop() as SceneTree).process_frame
+## The clock a pending call's deadline is kept by, in milliseconds, func() -> int; tests replace it.
+var clock: Callable = Time.get_ticks_msec
 ## The extension path that loaded; empty until one has.
 var _loaded_path: String = ""
 ## Why the load failed, answered on every later call; empty unless it failed.
 var _failure: String = ""
 
 
-## Runs a dotnet request, {extension, request}; answers {result: {reply, loadedNow}} or {error}.
+## Runs a dotnet request, {extension, request, timeoutMs?}; answers {result: {reply, loadedNow}} or
+## {error}. A coroutine: a pending reply is polled across frames.
 func handle(params: Dictionary) -> Dictionary:
 	var refusal: String = _refusal(params)
 	if refusal.is_empty():
@@ -48,7 +62,23 @@ func handle(params: Dictionary) -> Dictionary:
 	var helper: Variant = _helper()
 	if not helper is Callable:
 		return {"error": NO_CALLABLE}
-	var reply: String = str((helper as Callable).call(params["request"]))
+	return await _call(helper as Callable, params, loaded_now)
+
+
+## Calls the helper with the request and, while it answers that the call is pending, polls it once
+## a frame until it answers otherwise or timeoutMs has passed since the call, when it forgets the
+## call and answers why.
+func _call(helper: Callable, params: Dictionary, loaded_now: bool) -> Dictionary:
+	var timeout_ms: int = int(params.get("timeoutMs", DEFAULT_TIMEOUT_MS))
+	var deadline: int = clock.call() + timeout_ms
+	var reply: String = str(helper.call(params["request"]))
+	while reply.begins_with(PENDING_PREFIX):
+		var id: String = str((JSON.parse_string(reply) as Dictionary)["pending"])
+		if clock.call() >= deadline:
+			helper.call(JSON.stringify({"op": "forget", "id": id}))
+			return {"error": TIMED_OUT % timeout_ms}
+		await wait_frame.call()
+		reply = str(helper.call(JSON.stringify({"op": "poll", "id": id})))
 	return {"result": {"reply": reply, "loadedNow": loaded_now}}
 
 

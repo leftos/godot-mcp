@@ -190,6 +190,62 @@ public sealed class Duel
     public int Peek() => Secret();
 }
 
+/// <summary>Parameters passed by reference, one that cannot be passed at all, and overloads that one argument list fits twice.</summary>
+public sealed class Vault
+{
+    private readonly int _code = 7;
+
+    public bool TryOpen(int code, out string secret)
+    {
+        secret = code == _code ? "gold" : "";
+        return code == _code;
+    }
+
+    public int Grow(ref int value)
+    {
+        value *= _code - 5;
+        return value;
+    }
+
+    public int Sum(Span<int> values)
+    {
+        int total = _code;
+        foreach (int value in values)
+        {
+            total += value;
+        }
+        return total;
+    }
+
+    public string Take(IShield shield) => shield.GetType().Name + _code;
+
+    public string Take(out int count)
+    {
+        count = _code;
+        return "count";
+    }
+
+    public string Mark(int a, string b) => b + a + _code;
+
+    public string Mark(long a, string? b) => b + a + _code;
+}
+
+/// <summary>A base standing in for Godot's own: a virtual method to override and a method the derived type does not declare.</summary>
+public class Mentor
+{
+    private int _rested;
+
+    public virtual int Teach(int hours) => hours + _rested;
+
+    public void Rest() => _rested++;
+}
+
+/// <summary>Overrides <see cref="Mentor.Teach"/>.</summary>
+public sealed class Tutor : Mentor
+{
+    public override int Teach(int hours) => hours * 2;
+}
+
 /// <summary>Resolves <c>h1.1</c> and the node <c>/root/Shield</c> to <see cref="Shield"/>, and <c>h1.2</c> to <see cref="Plain"/>.</summary>
 public sealed class FakeResolver : IValueResolver
 {

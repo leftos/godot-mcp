@@ -27,7 +27,12 @@ internal static class TypeNames
         [typeof(nuint)] = "nuint",
     };
 
+    private static readonly Dictionary<string, Type> ByKeyword = Keywords.ToDictionary(pair => pair.Value, pair => pair.Key, StringComparer.Ordinal);
+
     public static string Format(Type type) => Format(type, null);
+
+    /// <summary>The type a C# keyword such as <c>int</c> names, or null when <paramref name="keyword"/> is not one.</summary>
+    public static Type? FromKeyword(string keyword) => ByKeyword.GetValueOrDefault(keyword);
 
     /// <summary>
     /// Spells <paramref name="type"/>; <paramref name="nullability"/>, when known, adds <c>?</c> to the reference types it

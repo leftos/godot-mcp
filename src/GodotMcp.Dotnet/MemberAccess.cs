@@ -91,7 +91,11 @@ internal static class MemberAccess
         return result;
     }
 
-    private static void Keep(object? value, JsonObject result)
+    /// <summary>
+    /// Adds a handle to <paramref name="value"/> to <paramref name="result"/>, or a warning for a null, and one for a value
+    /// type, whose handle holds a copy; shared with <see cref="Calls"/>.
+    /// </summary>
+    internal static void Keep(object? value, JsonObject result)
     {
         if (value is null)
         {

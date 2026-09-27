@@ -17,9 +17,75 @@ public sealed class OverloadResolverTests
     [Fact]
     public void AnIntFitsBothHitOverloadsSoTheCallIsAmbiguous() =>
         Assert.Equal(
-            "2 overloads of 'Hit' take these arguments; pass options.signature:\n  string Hit(int amount)\n  string Hit(float amount)",
+            "2 overloads of 'Hit' take these arguments; pass options.signature:\n  string Hit(int amount) — options.signature [\"int\"]\n"
+                + "  string Hit(float amount) — options.signature [\"float\"]",
             Refusal(HitOverloads, "[3]")
         );
+
+    [Fact]
+    public void TheAmbiguityErrorPrintsEachSignatureArray()
+    {
+        MethodBase[] marks = VaultMethods(nameof(Vault.Mark));
+
+        Assert.Equal(
+            "2 overloads of 'Mark' take these arguments; pass options.signature:\n"
+                + "  string Mark(int a, string b) — options.signature [\"int\", \"string\"]\n"
+                + "  string Mark(long a, string? b) — options.signature [\"long\", \"string?\"]",
+            Refusal(marks, "[1, \"x\"]")
+        );
+        Assert.Equal(typeof(long), Choose(marks, "[1, \"x\"]", signature: ["long", "string?"]).Method.GetParameters()[0].ParameterType);
+    }
+
+    [Fact]
+    public void ABadHandleFailsOnlyThatCandidate()
+    {
+        OverloadChoice choice = Choose(VaultMethods(nameof(Vault.Take)), "[{\"$handle\": \"h9.9\"}]");
+
+        Assert.Equal("string Take(out int count)", Signatures.Format(choice.Method));
+    }
+
+    [Fact]
+    public void AnOutParameterTakesANullPlaceholder()
+    {
+        OverloadChoice choice = Choose(VaultMethods(nameof(Vault.TryOpen)), "[7, null]");
+
+        object?[] arguments = [.. choice.Arguments];
+        Assert.Equal([7, null], arguments);
+        Assert.Equal(["secret"], choice.WrittenBack.Select(parameter => parameter.Name));
+        Assert.Equal(true, choice.Method.Invoke(new Vault(), arguments));
+        Assert.Equal("gold", arguments[1]);
+    }
+
+    [Fact]
+    public void ARefParameterConverts()
+    {
+        OverloadChoice choice = Choose(VaultMethods(nameof(Vault.Grow)), "[4]");
+
+        object?[] arguments = [.. choice.Arguments];
+        Assert.Equal([4], arguments);
+        Assert.Equal(["value"], choice.WrittenBack.Select(parameter => parameter.Name));
+        choice.Method.Invoke(new Vault(), arguments);
+        Assert.Equal(8, arguments[0]);
+    }
+
+    [Fact]
+    public void APointerOrSpanParameterIsRefused() =>
+        Assert.Equal(
+            "no overload of 'Sum' takes these arguments:\n"
+                + "  int Sum(Span<int> values): parameter 'values' is a Span<int>, a by-ref-like type cs_call cannot pass",
+            Refusal(VaultMethods(nameof(Vault.Sum)), "[[1, 2]]")
+        );
+
+    [Fact]
+    public void KeywordAndFullNameTypeArgsParse()
+    {
+        IReadOnlyList<Type> parsed = TypeArguments.Parse(
+            ["int", " string ", "GodotMcp.Tests.Dotnet.Choice"],
+            name => name == "GodotMcp.Tests.Dotnet.Choice" ? [typeof(Choice)] : []
+        );
+
+        Assert.Equal([typeof(int), typeof(string), typeof(Choice)], parsed);
+    }
 
     [Fact]
     public void AFractionFitsOnlyHitFloat()
@@ -105,6 +171,8 @@ public sealed class OverloadResolverTests
     }
 
     private static MethodBase[] Methods(string name) => [.. typeof(Fighter).GetMethods().Where(method => method.Name == name)];
+
+    private static MethodBase[] VaultMethods(string name) => [.. typeof(Vault).GetMethods().Where(method => method.Name == name)];
 
     private OverloadChoice Choose(MethodBase[] candidates, string args, string[]? signature = null, Type[]? typeArgs = null) =>
         OverloadResolver.Choose(candidates, JsonNode.Parse(args)!.AsArray(), signature, typeArgs, _resolver);

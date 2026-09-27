@@ -2,10 +2,14 @@ extends "res://gd_test.gd"
 ## The C# helper module (bridge/godot_mcp_dotnet.gd) on instances never added to the tree, with a
 ## fake load_extension and a stand-in meta host, so no built extension is needed: the argument
 ## checks, a failed load named and remembered, the shim's error variable, an absent callable, one
-## load per process, and the helper's reply passed through as it came.
+## load per process, the helper's reply passed through as it came, and a pending reply polled a
+## frame at a time until it is final or its deadline passes (a fake frame wait and clock).
 
 const EXTENSION := "C:/cache/dotnet/0123abcd/godot_mcp_dotnet.gdextension"
 const PING := '{"op":"ping"}'
+const CALL := '{"op":"call","target":{"type":"Probe"},"member":"WaitAsync"}'
+const PENDING := '{"ok":true,"pending":"c1"}'
+const POLL := '{"id":"c1","op":"poll"}'
 const META_NAME := "godot_mcp_dotnet"
 const ERROR_VARIABLE := "GODOT_MCP_DOTNET_ERROR"
 
@@ -146,6 +150,84 @@ func test_the_reply_string_is_passed_through_untouched() -> void:
 	)
 	assert_eq(requests, [request], "the request reaches the helper untouched")
 	dotnet.free()
+
+
+func test_a_pending_reply_is_polled_until_done() -> void:
+	var done := '{"ok":true,"result":{"value":5,"type":"System.Int32"}}'
+	var replies: Array = [PENDING, PENDING, done]
+	var requests: Array = []
+	var frames: Array = [0]
+	var dotnet: Node = _module(
+		GDExtensionManager.LOAD_STATUS_OK, [0], _host_replying(replies, requests)
+	)
+	dotnet.wait_frame = func() -> void: frames[0] += 1
+	assert_eq(
+		dotnet.handle({"extension": EXTENSION, "request": CALL, "timeoutMs": 1000}),
+		{"result": {"reply": done, "loadedNow": true}},
+		"the final reply, passed through"
+	)
+	assert_eq(requests, [CALL, POLL, POLL], "the call, then a poll a frame")
+	assert_eq(frames, [2], "a frame waited before each poll")
+	dotnet.free()
+
+
+func test_a_pending_reply_past_its_deadline_is_forgotten() -> void:
+	var replies: Array = [PENDING, PENDING, PENDING, PENDING, "{}"]
+	var requests: Array = []
+	var now: Array = [1000]
+	var dotnet: Node = _module(
+		GDExtensionManager.LOAD_STATUS_OK, [0], _host_replying(replies, requests)
+	)
+	dotnet.clock = func() -> int: return now[0]
+	dotnet.wait_frame = func() -> void: now[0] += 100
+	assert_eq(
+		dotnet.handle({"extension": EXTENSION, "request": CALL, "timeoutMs": 250.0}),
+		{"error": "the call did not complete within 250 ms; its Task is still running in the game"},
+		"the deadline's error"
+	)
+	assert_eq(
+		requests,
+		[CALL, POLL, POLL, POLL, '{"id":"c1","op":"forget"}'],
+		"polled until 1300 ms passed the 1250 ms deadline, then forgotten"
+	)
+	dotnet.free()
+
+
+func test_a_non_pending_reply_is_not_polled() -> void:
+	var failed := '{"ok":false,"error":"Hit threw InvalidOperationException: no"}'
+	var nested := '{"ok":true,"result":{"value":{"pending":"c1"},"type":"Probe"}}'
+	var requests: Array = []
+	var frames: Array = [0]
+	var dotnet: Node = _module(
+		GDExtensionManager.LOAD_STATUS_OK, [0], _host_replying([failed, nested], requests)
+	)
+	dotnet.wait_frame = func() -> void: frames[0] += 1
+	assert_eq(
+		dotnet.handle({"extension": EXTENSION, "request": CALL}),
+		{"result": {"reply": failed, "loadedNow": true}},
+		"a failure passes through"
+	)
+	assert_eq(
+		dotnet.handle({"extension": EXTENSION, "request": CALL}),
+		{"result": {"reply": nested, "loadedNow": false}},
+		"a value holding a pending key passes through"
+	)
+	assert_eq(requests, [CALL, CALL], "no poll is sent")
+	assert_eq(frames, [0], "no frame is waited")
+	dotnet.free()
+
+
+## A meta host whose helper callable records each request in requests and answers the next of
+## replies.
+func _host_replying(replies: Array, requests: Array) -> RefCounted:
+	var host := RefCounted.new()
+	host.set_meta(
+		META_NAME,
+		func(request: String) -> String:
+			requests.append(request)
+			return replies.pop_front()
+	)
+	return host
 
 
 ## A module whose load_extension answers status and counts its calls in loads[0], reading the

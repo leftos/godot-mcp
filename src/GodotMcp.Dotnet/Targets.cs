@@ -125,7 +125,7 @@ internal static class Targets
     private static Resolution Refused(string message) => new(null, Helper.Failure(message));
 
     /// <summary>Every loaded assembly's type of this name, in one load context each.</summary>
-    private static List<Type> Found(string name)
+    internal static List<Type> Found(string name)
     {
         HashSet<Type> found = [];
         foreach (AssemblyLoadContext context in AssemblyLoadContext.All)

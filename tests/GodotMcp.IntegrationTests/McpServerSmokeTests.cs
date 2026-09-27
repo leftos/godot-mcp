@@ -49,6 +49,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "compare_screenshot",
                 "connect_signal",
                 "create_scene",
+                "cs_call",
                 "cs_get",
                 "cs_members",
                 "cs_set",
@@ -141,6 +142,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["compare_screenshot"] = readsTheGame,
             ["connect_signal"] = changesTheGame,
             ["create_scene"] = changesTheGame,
+            ["cs_call"] = destructive,
             ["cs_get"] = destructive,
             ["cs_members"] = readsTheGame,
             ["cs_set"] = destructive,
@@ -198,7 +200,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(57, actual.Count);
+        Assert.Equal(58, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

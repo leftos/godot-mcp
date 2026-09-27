@@ -161,7 +161,7 @@ internal sealed partial class RuntimeTools
             ["method"] = CheckName(method, "method", "Pass the name of a method the node has."),
             ["args"] = new JsonArray([.. (args ?? []).Select(arg => JsonSerializer.SerializeToNode(arg))]),
         };
-        BridgeCall call = new("call_method", "call_method", parameters, TimeSpan.FromMilliseconds(CheckCallTimeout(options)));
+        BridgeCall call = new("call_method", "call_method", parameters, TimeSpan.FromMilliseconds(CheckCallTimeout(options?.TimeoutMs)));
         BridgeResult result = await CallWithErrorsAsync(Find(session), call, cancellationToken);
         ErrorEntry? refused = result.Errors.FirstOrDefault(IsRefusedCall);
         if (refused is not null)
@@ -212,9 +212,9 @@ internal sealed partial class RuntimeTools
     }
 
     /// <exception cref="McpException">timeoutMs is outside 1 to <see cref="MaxCallTimeoutMs"/>.</exception>
-    internal static int CheckCallTimeout(CallOptions? options)
+    internal static int CheckCallTimeout(int? requested)
     {
-        int timeoutMs = options?.TimeoutMs ?? DefaultCallTimeoutMs;
+        int timeoutMs = requested ?? DefaultCallTimeoutMs;
         return timeoutMs is >= 1 and <= MaxCallTimeoutMs
             ? timeoutMs
             : throw new McpException($"timeoutMs must be 1 to {MaxCallTimeoutMs}; got {timeoutMs}.");

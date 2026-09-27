@@ -392,7 +392,7 @@ func _handle_capture(id: int, params: Dictionary) -> void:
 ## Passes a helper request to the C# helper on the Dotnet child, loading it on the first call;
 ## replies {reply, loadedNow} or the reason the helper could not be reached.
 func _handle_dotnet(id: int, params: Dictionary) -> void:
-	var outcome: Dictionary = _dotnet.handle(params)
+	var outcome: Dictionary = await _dotnet.handle(params)
 	if outcome.has("error"):
 		_reply_error(id, str(outcome["error"]))
 		return

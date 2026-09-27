@@ -7,7 +7,7 @@ using ModelContextProtocol;
 
 namespace GodotMcp.Tests.Tools;
 
-/// <summary>cs_members', cs_get's and cs_set's argument checks, which refuse before anything reaches a game; no Godot runs here.</summary>
+/// <summary>cs_members', cs_get's, cs_set's and cs_call's argument checks, which refuse before anything reaches a game; no Godot runs here.</summary>
 public sealed class CSharpValidationTests : IDisposable
 {
     private readonly BridgeListener _listener = new(NullLogger<BridgeListener>.Instance);
@@ -132,6 +132,68 @@ public sealed class CSharpValidationTests : IDisposable
     [Fact]
     public Task AValidSetWithNoSessionAsksForASession() =>
         AssertNoSessionAsync(() => _tools.CsSetAsync(new CSharpTarget(Type: "CsProbe.Tally"), "Count", Value, cancellationToken: Token));
+
+    [Fact]
+    public async Task CallRefusesATargetWithNothingOrTwoKinds()
+    {
+        McpException none = await Assert.ThrowsAsync<McpException>(() => _tools.CsCallAsync(new CSharpTarget(), "Hit", cancellationToken: Token));
+        McpException two = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.CsCallAsync(new CSharpTarget(Type: "CsProbe.Tally", Handle: "h1"), "Bump", cancellationToken: Token)
+        );
+
+        Assert.Equal("target takes exactly one of node, type or handle; got none.", none.Message);
+        Assert.Equal("target takes exactly one of node, type or handle; got type, handle.", two.Message);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("  ")]
+    public async Task CallRefusesAnEmptyMember(string member)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.CsCallAsync(new CSharpTarget(Node: "Probe"), member, cancellationToken: Token)
+        );
+
+        Assert.Equal("member is empty. Pass a method name, or .ctor with a {type} target; cs_members lists them.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(120_001)]
+    public async Task CallRefusesATimeoutOutOfRange(int timeoutMs)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.CsCallAsync(new CSharpTarget(Node: "Probe"), "Hit", options: new CsCallOptions(TimeoutMs: timeoutMs), cancellationToken: Token)
+        );
+
+        Assert.Equal($"timeoutMs must be 1 to 120000; got {timeoutMs}.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(33)]
+    public async Task CallRefusesAMaxDepthOutOfRange(int maxDepth)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.CsCallAsync(new CSharpTarget(Node: "Probe"), "Hit", options: new CsCallOptions(MaxDepth: maxDepth), cancellationToken: Token)
+        );
+
+        Assert.Equal($"maxDepth must be 1 to 32; got {maxDepth}.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(120_000, 32)]
+    public Task AValidCsCallWithNoSessionAsksForASession(int timeoutMs, int maxDepth) =>
+        AssertNoSessionAsync(() =>
+            _tools.CsCallAsync(
+                new CSharpTarget(Type: "CsProbe.Greeter"),
+                ".ctor",
+                [Value],
+                new CsCallOptions(Signature: ["int"], TypeArgs: ["int"], Keep: true, TimeoutMs: timeoutMs, MaxDepth: maxDepth),
+                cancellationToken: Token
+            )
+        );
 
     private const string EmptyMember =
         "member is empty. Pass a property or field name, or a dotted path (Pending.Options[0]); cs_members lists them.";

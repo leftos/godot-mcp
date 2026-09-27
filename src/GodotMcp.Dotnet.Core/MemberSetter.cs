@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json.Nodes;
 
 namespace GodotMcp.Dotnet.Core;
@@ -138,18 +137,13 @@ public static class MemberSetter
     }
 
     /// <summary><c>Type: message</c> of what a getter or setter threw.</summary>
-    private static string Describe(MemberPathException failure)
-    {
-        Exception thrown = Thrown(failure);
-        return $"{thrown.GetType().Name}: {thrown.Message}";
-    }
+    private static string Describe(MemberPathException failure) => Thrown.Describe(Cause(failure));
 
     /// <summary>The stack of what a getter or setter threw, on lines of its own, or nothing when it has none.</summary>
-    private static string Stack(MemberPathException failure) => Thrown(failure).StackTrace is { Length: > 0 } trace ? "\n" + trace : "";
+    private static string Stack(MemberPathException failure) => Thrown.Stack(Cause(failure));
 
     /// <summary>The exception the game code threw: the guard wraps it, and reflection wraps it once more.</summary>
-    private static Exception Thrown(MemberPathException failure) =>
-        failure.InnerException is TargetInvocationException { InnerException: { } inner } ? inner : failure.InnerException ?? failure;
+    private static Exception Cause(MemberPathException failure) => Thrown.Unwrap(failure.InnerException ?? failure);
 
     private static string Show(JsonNode? json) => ValueReader.Show(json, ShownLength);
 }

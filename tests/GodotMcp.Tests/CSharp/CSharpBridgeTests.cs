@@ -84,7 +84,7 @@ public sealed class CSharpBridgeTests : IDisposable
         using GodotSession session = new(new SessionSpec("probe", project, SessionKind.Attach, false, false), registry);
 
         InvalidOperationException thrown = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            bridge.SendAsync(session, "{}", 1000, TestContext.Current.CancellationToken)
+            bridge.SendAsync(session, "{}", 1000, null, TestContext.Current.CancellationToken)
         );
 
         Assert.StartsWith("Preparing the C# helper's copy failed: ", thrown.Message, StringComparison.Ordinal);

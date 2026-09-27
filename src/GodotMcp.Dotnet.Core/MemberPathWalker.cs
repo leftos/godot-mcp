@@ -125,24 +125,14 @@ internal static class MemberPathWalker
         {
             return run();
         }
-        catch (TargetInvocationException e) when (e.InnerException is Exception inner)
-        {
-            throw Threw(inner, path, i, action, e);
-        }
         catch (Exception e)
         {
-            throw Threw(e, path, i, action, e);
+            throw Threw(Thrown.Unwrap(e), path, i, action, e);
         }
     }
 
-    private static MemberPathException Threw(Exception thrown, MemberPath path, int i, string action, Exception cause)
-    {
-        string stack = thrown.StackTrace is { Length: > 0 } trace ? "\n" + trace : "";
-        return new MemberPathException(
-            $"{action}'{path.Segments[i]}' threw {thrown.GetType().Name}: {thrown.Message} at {path.Prefix(i + 1)}{stack}",
-            cause
-        );
-    }
+    private static MemberPathException Threw(Exception thrown, MemberPath path, int i, string action, Exception cause) =>
+        new($"{action}'{path.Segments[i]}' threw {Thrown.Describe(thrown)} at {path.Prefix(i + 1)}{Thrown.Stack(thrown)}", cause);
 
     private static MemberValue Step(object current, MemberPath path, int i, BindingFlags flags) =>
         path.Segments[i] switch

@@ -13,8 +13,10 @@ namespace GodotMcp.Dotnet;
 /// The helper's entry, run by the loader on the main thread: it stores the callable GDScript reaches the helper through
 /// as the SceneTree meta <see cref="MetaName"/>. The callable takes a JSON request — <c>{"op":"ping"}</c>, optionally
 /// with <c>"id":"&lt;instance id&gt;"</c>, <c>{"op":"members","target":{...}}</c>, which <see cref="Members"/>
-/// answers, or <c>{"op":"get"|"set",...}</c>, which <see cref="MemberAccess"/> answers — and returns a JSON reply,
-/// <c>{"ok":true,"result":{...}}</c> or <c>{"ok":false,"error":"..."}</c>.
+/// answers, <c>{"op":"get"|"set",...}</c>, which <see cref="MemberAccess"/> answers, or
+/// <c>{"op":"call"|"poll"|"forget",...}</c>, which <see cref="Calls"/> answers — and returns a JSON reply,
+/// <c>{"ok":true,"result":{...}}</c>, <c>{"ok":true,"pending":"c&lt;n&gt;"}</c> for a call still awaiting its task, or
+/// <c>{"ok":false,"error":"..."}</c>.
 /// </summary>
 public static class Helper
 {
@@ -76,6 +78,9 @@ public static class Helper
             "members" => Members.Answer(request),
             "get" => MemberAccess.Get(request),
             "set" => MemberAccess.Set(request),
+            "call" => Calls.Call(request),
+            "poll" => Calls.Poll(request),
+            "forget" => Calls.Forget(request),
             _ => Failure($"Unknown op '{op}'."),
         };
 

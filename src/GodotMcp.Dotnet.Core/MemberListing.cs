@@ -81,7 +81,7 @@ public static class MemberListing
     }
 
     /// <summary>Whether the listing spells this member: not a way in to another member, and not hidden from a reader.</summary>
-    private static bool Kept(MemberInfo member) =>
+    internal static bool Kept(MemberInfo member) =>
         member is not MethodInfo { IsSpecialName: true }
         && !member.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false)
         && !member.Name.StartsWith('<')

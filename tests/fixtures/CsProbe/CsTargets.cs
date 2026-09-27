@@ -28,6 +28,28 @@ public partial class CsTargets : Node
         return n * 2;
     }
 
+    internal async System.Threading.Tasks.Task<int> SlowAsync(int ms)
+    {
+        await System.Threading.Tasks.Task.Delay(ms);
+        return ms;
+    }
+
+    internal async System.Threading.Tasks.Task<int> FailLaterAsync()
+    {
+        await System.Threading.Tasks.Task.Delay(10);
+        throw new System.InvalidOperationException("late failure");
+    }
+
+    internal System.Threading.Tasks.ValueTask<int> SoonAsync(int n) => new(n + 1);
+
+    internal bool TryOpen(int code, out string label)
+    {
+        label = "door " + code;
+        return code > 0;
+    }
+
+    internal void Nothing() { }
+
     internal string GreetWith(IGreeter greeter, string name) => greeter.Greet(name);
 
     internal Mood Mood { get; set; } = Mood.Calm;
