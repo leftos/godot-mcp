@@ -3,18 +3,15 @@
 
 Open work only, in working order: the next item is the first line from the top; a finished line is deleted (git keeps the history). The design, the user's decisions and each step's proving test are in [2026-09-25-first-version.md](./2026-09-25-first-version.md).
 
-## Now: the first version, replacing godot-mcp-runtime at parity
+## Now: the first version has shipped
 
-Steps 0 to 4b, Wave 1 (steps 7-9: named sessions, the error feed and compact outputs, tool annotations and quiet runs) and most of Wave 2 (step 10 frame control and `wait_for`, step 12 inspection, step 14's hang watchdog), step 14's screenshot baselines, step 11's prep and `restart_project`, Wave 3 (step 13: project profiles and `batch_drive`) step 15's recording (Movie Maker from launch, `record_mark` clips) and step 5 (the 16 headless scene tools, `validate` and `batch_scene_operations`) have shipped. Sixteen features the user added 2026-09-25 ("world's our oyster") come before the cutover (user's call). Every wave's command acceptance is `pwsh run.ps1 test` and `pwsh run.ps1 itest`; its human check is a drive of the InputProbe fixture through the new tools.
+The first version replaced godot-mcp-runtime at parity and went further: every step of [2026-09-25-first-version.md](./2026-09-25-first-version.md) and the sixteen features the user added have landed, and opening-hand and delve-the-dungeon drive their clients through it (cutover 2026-09-26).
 
-### Wave 4: singles
+- [ ] Promote what outlasts the first-version plan (the user's decisions and the design rationale) into `docs/ARCHITECTURE.md` or a decisions page, delete the plan file, and point `CLAUDE.md`'s "Start here" line at the new home
 
-- [ ] A godot MCP tutorial for agents in opening-hand and delve-the-dungeon, explaining every available tool, written with the cutover (step 6) (user, 2026-09-26). Form (user, 2026-09-26): a skill shipped in this repo, updated in the same commit as `docs/TOOLS.md`, installed into `~/.claude/skills` and named by both repos' CLAUDE.md
-- [ ] Step 6: cutover in opening-hand and delve-the-dungeon (registration, their docs and conventions, the debugger agent's allow-list; one scratch drive each; git status clean). Decided (user, 2026-09-26): registered per project with `claude mcp add --scope local godot`, pointing at an installed copy of `bin/publish` that a new `pwsh run.ps1 install` refreshes, so a publish never fights a running server; the `no-mcp-bridge-at-commit` rule becomes a leftover check (no marked `override.cfg` in the client folder after a drive, checked with `Test-Path`), synced through `godot-conventions-sync`; the user-level `debugger` and opening-hand's `playtester` get every runtime tool and `validate`, no headless scene editor; the tutorial skill reaches `~/.claude/skills/godot-mcp` as a directory junction to this repo's copy. Settled from defaults: re-publish before registering (`bin/publish` predates `headless/`); remove the old server's `.mcp/` ignores and folders; delve's launch-then-attach and input workarounds give way to `userArgs`, `click` and `type_text`; per-game drive lessons stay in each repo's DEVELOPMENT.md, the skill stays generic
+## Next
 
-## Later (not in the first version)
-
-Grouped into waves by shared files after the cutover; within the singles, order is not a ranking.
+Grouped into waves by shared files; within the singles, order is not a ranking.
 
 ### Wave 5: JSON conversion
 
@@ -35,6 +32,8 @@ Shared: `bridge/` (new inspect and input handlers), `headless/operations.gd`, th
 
 ### Singles
 
+- [ ] Quiet runs draw uncapped (about 240 fps off-screen): cap them, or say why not (#6)
+- [ ] `wait_for` a UI change nobody can name in advance: met when the visible Controls, focus owner or top popup differ from the call's start, returning what appeared (#7)
 - [ ] `drag` and `click` results say what they hit: the Control under the press and the release, and whether a GUI drag started (#4)
 - [ ] C#-aware runtime tools beyond `call_method`, for members Godot's call cannot reach: signatures with types Godot cannot marshal (generics, plain C# classes), static members, and overloads that share a name and argument count (`internal` methods are reached; step 12, 2026-09-26)
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see step 4b)
