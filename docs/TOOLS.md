@@ -321,7 +321,7 @@ These run a headless Godot on the project's files with no game started. All are 
 
 - **Does:** builds a GridMap MeshLibrary from a 3D scene by the editor's Import from Scene rule and writes it to `outputPath` (`.tres` or `.res`); the scene is only read: `{outputPath, items: [{id, name, shapes, navigation}], replaced?}`.
 - **Use:** `meshItemNames` to keep only some items; `options {overwrite}`.
-- **Edges:** every MeshInstance3D with a mesh below the root is an item named after its node; two nodes of one name make one item (`replaced`). No previews are made. A file the scene uses is refused as `outputPath`. A replaced `.res` gets a new uid (a `.tres` keeps its own).
+- **Edges:** every MeshInstance3D with a mesh below the root is an item named after its node; two nodes of one name make one item (`replaced`). No previews are made. A file the scene uses is refused as `outputPath`, whether directly, through an instanced scene or a resource file, or by a node an earlier `batch_scene_operations` step changed; the refusal names the file or node (`through res://cell.tscn`, `through node Grid`). A replaced `.res` gets a new uid (a `.tres` keeps its own).
 
 ### `batch_scene_operations`
 

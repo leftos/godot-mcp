@@ -129,7 +129,8 @@ static func tree_uses_csharp(root: Node) -> bool:
 
 
 ## The res:// paths of the C# scripts among ResourceLoader.get_dependencies entries, which read
-## "<path>[::<type>]" or, for a dependency saved with its UID, "<uid>::<type>::<path>".
+## "<path>" or, for a dependency saved with its UID, "<uid>::::<fallback path>", the second
+## section always empty (4.7.2 doc/classes/ResourceLoader.xml).
 static func csharp_dependencies(dependencies: PackedStringArray) -> PackedStringArray:
 	return _dependency_paths(dependencies, [".cs"])
 

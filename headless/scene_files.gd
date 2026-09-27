@@ -8,6 +8,7 @@ extends RefCounted
 const EXT_TAG := "[ext_resource "
 const PATH_ATTRIBUTE := ' path="'
 const UID_ATTRIBUTE := ' uid="'
+const UID_PREFIX := "uid://"
 ## The extensions of the text formats whose ext_resource tags are written back; a binary .res or
 ## .scn is never rewritten as text.
 const TEXT_EXTENSIONS: Array[String] = ["tscn", "tres"]
@@ -94,6 +95,38 @@ static func with_ext_uids(text: String, uids: Dictionary) -> String:
 			PATH_ATTRIBUTE, '%s%s"%s' % [UID_ATTRIBUTE, uids[path], PATH_ATTRIBUTE]
 		)
 	return "\n".join(lines)
+
+
+## The files reached from the file at path through ResourceLoader.get_dependencies, path first,
+## each once, in the order they are found, however deep; every dependency is followed, whatever
+## its extension. A file that does not exist is left out and not followed. A path in visited is
+## left out too, and each path listed is added to it, so a cycle ends and a later call sharing
+## visited lists only files no earlier call did.
+static func dependency_closure(path: String, visited: Dictionary) -> PackedStringArray:
+	var reached: PackedStringArray = []
+	var queue: PackedStringArray = [path]
+	while not queue.is_empty():
+		var current: String = queue[0]
+		queue.remove_at(0)
+		if visited.has(current) or not FileAccess.file_exists(current):
+			continue
+		visited[current] = true
+		reached.append(current)
+		queue.append_array(dependency_paths(current))
+	return reached
+
+
+## The paths of the file at path's ResourceLoader.get_dependencies entries. An entry is a path,
+## or, for a dependency saved with its uid, "<uid>::::<fallback path>", the second section always
+## empty (4.7.2 doc/classes/ResourceLoader.xml): its fallback path is taken, and the uid is not
+## resolved, since outside the editor that reads only the uid cache (see uid_of).
+static func dependency_paths(path: String) -> PackedStringArray:
+	var paths: PackedStringArray = []
+	for dependency in ResourceLoader.get_dependencies(path):
+		var last: String = dependency.get_slice("::", dependency.get_slice_count("::") - 1)
+		if not last.is_empty() and not last.begins_with(UID_PREFIX):
+			paths.append(last)
+	return paths
 
 
 ## The path="..." of an ext_resource tag line, or "" for any other line.

@@ -22,6 +22,8 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
         "[gd_scene format=3]\n\n[sub_resource type=\"BoxMesh\" id=\"BoxMesh_crate\"]\n\n[node name=\"Tiles\" type=\"Node3D\"]\n\n"
         + "[node name=\"Crate\" type=\"MeshInstance3D\" parent=\".\"]\nmesh = SubResource(\"BoxMesh_crate\")\n";
 
+    private const string TilesLibrary = "[gd_resource type=\"MeshLibrary\" format=3 uid=\"uid://bqtileslib00a\"]\n\n[resource]\n";
+
     private const string SpriteScene =
         "[gd_scene format=3]\n\n[node name=\"Stage\" type=\"Node2D\"]\n\n[node name=\"Icon\" type=\"Sprite2D\" parent=\".\"]\n";
 
@@ -161,6 +163,50 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
         Assert.Contains("[gd_resource type=\"MeshLibrary\"", Read(probe.Directory, "yard.tres"), StringComparison.Ordinal);
         Assert.Equal("uid://bqyard000000a", batch["uid"]!.GetValue<string>());
         Assert.Contains("[node name=\"Crate\" type=\"MeshInstance3D\" parent=\".\"", Read(probe.Directory, "yard.tscn"), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ABatchThatAttachesALibraryThenExportsOverItIsRefused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "tiles.tscn"), TilesScene);
+        File.WriteAllText(Path.Combine(probe.Directory, "tiles.tres"), TilesLibrary);
+        JsonObject gridOptions = new() { ["properties"] = new JsonObject { ["mesh_library"] = "res://tiles.tres" } };
+        JsonObject export = new()
+        {
+            ["outputPath"] = "tiles.tres",
+            ["options"] = new JsonObject { ["overwrite"] = true },
+        };
+
+        JsonObject batch = await BatchAsync(
+            probe.Directory,
+            "tiles.tscn",
+            [
+                new(
+                    "add_node",
+                    new JsonObject
+                    {
+                        ["nodeType"] = "GridMap",
+                        ["nodeName"] = "Grid",
+                        ["options"] = gridOptions,
+                    }
+                ),
+                new("export_mesh_library", export),
+            ],
+            cancellation
+        );
+
+        Assert.False(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        Assert.Equal(1, batch["failedAt"]!["index"]!.GetValue<int>());
+        Assert.Equal("export_mesh_library", batch["failedAt"]!["tool"]!.GetValue<string>());
+        Assert.Equal(
+            "res://tiles.tres is used by res://tiles.tscn through node Grid; export the library to another file.",
+            batch["failedAt"]!["error"]!.GetValue<string>()
+        );
+        Assert.Null(batch["uid"]);
+        Assert.Equal(TilesLibrary, Read(probe.Directory, "tiles.tres"));
+        Assert.Equal(TilesScene, Read(probe.Directory, "tiles.tscn"));
     }
 
     [Fact(Timeout = TestTimeoutMs)]

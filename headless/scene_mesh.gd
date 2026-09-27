@@ -34,7 +34,7 @@ static func apply_export_mesh_library(
 	var found: Dictionary = {}
 	for child in root.get_children(true):
 		_collect(child, found)
-	var refusal: String = _refusal(scene_path, output, found, wanted)
+	var refusal: String = _refusal(root, scene_path, output, found, wanted)
 	if not refusal.is_empty():
 		return {"error": refusal}
 	var library := MeshLibrary.new()
@@ -92,15 +92,81 @@ static func _fill(library: MeshLibrary, found: Dictionary, wanted: Array) -> Dic
 	return filled
 
 
-## Why output cannot be written because the scene uses it, or "": dependencies are the scene's
-## ResourceLoader.get_dependencies entries, "<path>[::<type>]" or "<uid>::<type>::<path>".
-static func dependency_refusal(
-	scene_path: String, output: String, dependencies: PackedStringArray
-) -> String:
-	for dependency in dependencies:
-		if output in dependency.split("::"):
-			return "%s is used by %s; export the library to another file." % [output, scene_path]
+## Why output cannot be written because the scene uses it, or "": a file the scene file's
+## dependencies reach names it among its own (SceneFiles.dependency_closure), or root's tree, which
+## an earlier batch step may have changed in memory, holds it (see _tree_user). The refusal names
+## the file or node that uses output when that is not the scene file itself.
+static func _use_refusal(root: Node, scene_path: String, output: String) -> String:
+	var visited: Dictionary = {}
+	var user: String = _file_user(scene_path, output, visited)
+	if user.is_empty():
+		user = _tree_user(root, output, visited)
+	if user.is_empty():
+		return ""
+	var through: String = "" if user == scene_path else " through %s" % user
+	return "%s is used by %s%s; export the library to another file." % [output, scene_path, through]
+
+
+## The first file reached from path (SceneFiles.dependency_closure, sharing visited) whose
+## dependencies name output, or "".
+static func _file_user(path: String, output: String, visited: Dictionary) -> String:
+	for file in SceneFiles.dependency_closure(path, visited):
+		if output in SceneFiles.dependency_paths(file):
+			return file
 	return ""
+
+
+## What in root's tree uses output, or "": for each node, root first, the file its instanced scene
+## reaches (as _file_user), else "node <path from root>" when a stored property holds output
+## (see _object_user).
+static func _tree_user(root: Node, output: String, visited: Dictionary) -> String:
+	var nodes: Array[Node] = [root]
+	nodes.append_array(root.find_children("*", "", true, false))
+	for node in nodes:
+		var user: String = ""
+		if not node.scene_file_path.is_empty():
+			user = _file_user(node.scene_file_path, output, visited)
+		if user.is_empty():
+			user = _object_user(node, "node %s" % root.get_path_to(node), output, visited)
+		if not user.is_empty():
+			return user
+	return ""
+
+
+## label, or the file that uses output, when a stored property of object holds a Resource that
+## uses it (see _resource_user), an Array property's elements each checked; else "".
+static func _object_user(
+	object: Object, label: String, output: String, visited: Dictionary
+) -> String:
+	for property in object.get_property_list():
+		if (int(property["usage"]) & PROPERTY_USAGE_STORAGE) == 0:
+			continue
+		var value: Variant = object.get(property["name"])
+		var values: Array = value if value is Array else [value]
+		for item: Variant in values:
+			var user: String = ""
+			if item is Resource:
+				user = _resource_user(item, label, output, visited)
+			if not user.is_empty():
+				return user
+	return ""
+
+
+## label when resource is output itself; the file that uses output among those its own file
+## reaches (as _file_user); for an embedded resource (no path, or a sub-resource's "::" path),
+## what its stored properties hold (as _object_user), each embedded resource checked once; else "".
+static func _resource_user(
+	resource: Resource, label: String, output: String, visited: Dictionary
+) -> String:
+	var path: String = resource.resource_path
+	if path == output:
+		return label
+	if not path.is_empty() and not path.contains("::"):
+		return _file_user(path, output, visited)
+	if visited.has(resource):
+		return ""
+	visited[resource] = true
+	return _object_user(resource, label, output, visited)
 
 
 ## Why wanted names an item the scene does not have, or "": each missing name, and the names the
@@ -119,13 +185,12 @@ static func unknown_names_refusal(scene_path: String, names: Array, wanted: Arra
 	)
 
 
-## Why the library is not exported, or "": the scene uses output, has no item, or has none of a
-## wanted name.
+## Why the library is not exported, or "": the scene uses output (see _use_refusal), has no item,
+## or has none of a wanted name.
 static func _refusal(
-	scene_path: String, output: String, found: Dictionary, wanted: Array
+	root: Node, scene_path: String, output: String, found: Dictionary, wanted: Array
 ) -> String:
-	var dependencies: PackedStringArray = ResourceLoader.get_dependencies(scene_path)
-	var used: String = dependency_refusal(scene_path, output, dependencies)
+	var used: String = _use_refusal(root, scene_path, output)
 	if not used.is_empty():
 		return used
 	if found.is_empty():

@@ -121,6 +121,50 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"MeshLibrary\" path=\"res://tiles.res\" id=\"1\"]\n\n"
         + "[node name=\"Grid\" type=\"GridMap\"]\nmesh_library = ExtResource(\"1\")\n";
 
+    // A GridMap painting with tiles.tres, which is saved with its uid.
+    private const string CellScene =
+        "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"MeshLibrary\" uid=\""
+        + LibraryUid
+        + "\" path=\"res://tiles.tres\" id=\"1\"]\n\n"
+        + "[node name=\"Cell\" type=\"GridMap\"]\nmesh_library = ExtResource(\"1\")\n";
+
+    // cell.tscn instanced beside a crate.
+    private const string YardScene =
+        "[gd_scene load_steps=3 format=3]\n\n[ext_resource type=\"PackedScene\" path=\"res://cell.tscn\" id=\"1\"]\n\n"
+        + "[sub_resource type=\"BoxMesh\" id=\"BoxMesh_crate\"]\n\n"
+        + "[node name=\"Yard\" type=\"Node3D\"]\n\n"
+        + "[node name=\"Cell\" parent=\".\" instance=ExtResource(\"1\")]\n\n"
+        + "[node name=\"Crate\" type=\"MeshInstance3D\" parent=\".\"]\nmesh = SubResource(\"BoxMesh_crate\")\n";
+
+    // A plain resource whose metadata holds tiles.tres.
+    private const string HolderResource =
+        "[gd_resource type=\"Resource\" load_steps=2 format=3]\n\n"
+        + "[ext_resource type=\"MeshLibrary\" path=\"res://tiles.tres\" id=\"1\"]\n\n"
+        + "[resource]\nmetadata/library = ExtResource(\"1\")\n";
+
+    // A crate whose root's metadata holds holder.tres.
+    private const string StoreScene =
+        "[gd_scene load_steps=3 format=3]\n\n[ext_resource type=\"Resource\" path=\"res://holder.tres\" id=\"1\"]\n\n"
+        + "[sub_resource type=\"BoxMesh\" id=\"BoxMesh_crate\"]\n\n"
+        + "[node name=\"Store\" type=\"Node3D\"]\nmetadata/holder = ExtResource(\"1\")\n\n"
+        + "[node name=\"Crate\" type=\"MeshInstance3D\" parent=\".\"]\nmesh = SubResource(\"BoxMesh_crate\")\n";
+
+    // loop_a.tres and loop_b.tres each declare the other; ring.tscn declares loop_a.tres and a missing file, and uses neither.
+    private const string LoopA =
+        "[gd_resource type=\"Resource\" load_steps=2 format=3]\n\n"
+        + "[ext_resource type=\"Resource\" path=\"res://loop_b.tres\" id=\"1\"]\n\n[resource]\n";
+
+    private const string LoopB =
+        "[gd_resource type=\"Resource\" load_steps=2 format=3]\n\n"
+        + "[ext_resource type=\"Resource\" path=\"res://loop_a.tres\" id=\"1\"]\n\n[resource]\n";
+
+    private const string RingScene =
+        "[gd_scene load_steps=4 format=3]\n\n[ext_resource type=\"Resource\" path=\"res://loop_a.tres\" id=\"1\"]\n"
+        + "[ext_resource type=\"Resource\" path=\"res://missing.tres\" id=\"2\"]\n\n"
+        + "[sub_resource type=\"BoxMesh\" id=\"BoxMesh_crate\"]\n\n"
+        + "[node name=\"Ring\" type=\"Node3D\"]\n\n"
+        + "[node name=\"Crate\" type=\"MeshInstance3D\" parent=\".\"]\nmesh = SubResource(\"BoxMesh_crate\")\n";
+
     private readonly SessionHarness _harness = new();
     private readonly HeadlessTools _tools;
     private readonly List<IDisposable> _projects = [];
@@ -435,6 +479,80 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
             refused.Message
         );
         Assert.Equal(CrateMesh, File.ReadAllText(Path.Combine(probe.Directory, "crate_mesh.tres")));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ExportMeshLibraryRefusesALibraryAnInstancedSceneUses()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "tiles.tres"), OldLibrary);
+        File.WriteAllText(Path.Combine(probe.Directory, "cell.tscn"), CellScene);
+        File.WriteAllText(Path.Combine(probe.Directory, "yard.tscn"), YardScene);
+        byte[] before = File.ReadAllBytes(Path.Combine(probe.Directory, "tiles.tres"));
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.ExportMeshLibraryAsync(
+                probe.Directory,
+                "yard.tscn",
+                "tiles.tres",
+                options: new SceneWriteOptions(Overwrite: true),
+                cancellationToken: cancellation
+            )
+        );
+
+        Assert.Equal(
+            "export_mesh_library failed: res://tiles.tres is used by res://yard.tscn through res://cell.tscn; "
+                + "export the library to another file.",
+            refused.Message
+        );
+        Assert.Equal(before, File.ReadAllBytes(Path.Combine(probe.Directory, "tiles.tres")));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ExportMeshLibraryRefusesALibraryReachedThroughAResource()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "tiles.tres"), OldLibrary);
+        File.WriteAllText(Path.Combine(probe.Directory, "holder.tres"), HolderResource);
+        File.WriteAllText(Path.Combine(probe.Directory, "store.tscn"), StoreScene);
+        byte[] before = File.ReadAllBytes(Path.Combine(probe.Directory, "tiles.tres"));
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.ExportMeshLibraryAsync(
+                probe.Directory,
+                "store.tscn",
+                "tiles.tres",
+                options: new SceneWriteOptions(Overwrite: true),
+                cancellationToken: cancellation
+            )
+        );
+
+        Assert.Equal(
+            "export_mesh_library failed: res://tiles.tres is used by res://store.tscn through res://holder.tres; "
+                + "export the library to another file.",
+            refused.Message
+        );
+        Assert.Equal(before, File.ReadAllBytes(Path.Combine(probe.Directory, "tiles.tres")));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ExportMeshLibraryAllowsAnUnrelatedLibraryInACyclicProject()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "loop_a.tres"), LoopA);
+        File.WriteAllText(Path.Combine(probe.Directory, "loop_b.tres"), LoopB);
+        File.WriteAllText(Path.Combine(probe.Directory, "ring.tscn"), RingScene);
+
+        JsonNode result = JsonNode.Parse(
+            await _tools.ExportMeshLibraryAsync(probe.Directory, "ring.tscn", "ring.tres", cancellationToken: cancellation)
+        )!;
+
+        JsonNode item = Assert.Single(result["items"]!.AsArray())!;
+        Assert.Equal("Crate", item["name"]!.GetValue<string>());
+        Assert.Contains("[gd_resource type=\"MeshLibrary\"", File.ReadAllText(Path.Combine(probe.Directory, "ring.tres")), StringComparison.Ordinal);
     }
 
     // A binary resource's header (4.7.2 core/io/resource_format_binary.cpp L2136-2178, little-endian): RSRC, four int32s,
