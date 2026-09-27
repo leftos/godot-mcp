@@ -37,7 +37,7 @@ public sealed class CaptureTests(SharedProbeSession shared) : IAsyncLifetime, IC
     private static readonly InputTarget DragSource = new("DragSource");
     private static readonly InputTarget DropTarget = new("DropTarget");
     private readonly SharedProbeSession _shared = shared;
-    private readonly RuntimeTools _tools = new(shared.Sessions);
+    private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());
 
     public async ValueTask InitializeAsync()
     {
@@ -77,7 +77,7 @@ public sealed class CaptureTests(SharedProbeSession shared) : IAsyncLifetime, IC
         using ProbeProject probe = new();
         await using SessionHarness harness = new();
         await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], false, false, Prepare: true), null, cancellation);
-        RuntimeTools tools = new(harness.Sessions);
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
 
         JsonNode started = await StartAsync(tools, null, cancellation);
         await RunAsync(tools, RealKeyScript, cancellation);
@@ -117,7 +117,7 @@ public sealed class CaptureTests(SharedProbeSession shared) : IAsyncLifetime, IC
         using ProbeProject probe = new();
         await using SessionHarness harness = new();
         await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
-        RuntimeTools tools = new(harness.Sessions);
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
 
         await StartAsync(tools, new CaptureOptions(Sources: ["sent"]), cancellation);
         await tools.ClickAsync(SmallButton, cancellationToken: cancellation);
@@ -163,7 +163,7 @@ public sealed class CaptureTests(SharedProbeSession shared) : IAsyncLifetime, IC
 
         // Real pads are shut out, as in GamepadTests: a real pad's A would jump the probe too.
         await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, true, Prepare: true), null, cancellation);
-        RuntimeTools tools = new(harness.Sessions);
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
         int jumpsBefore = (await RunAsync(tools, "return scene_tree.root.get_node(\"Main/PadProbe\").jump_count", cancellation)).GetValue<int>();
 
         await StartAsync(tools, new CaptureOptions(Sources: ["sent"]), cancellation);

@@ -23,7 +23,7 @@ public sealed class BaselineValidationTests : IDisposable
     public BaselineValidationTests()
     {
         _sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance);
-        _tools = new RuntimeTools(_sessions);
+        _tools = new RuntimeTools(_sessions, TestCSharp.Unused());
     }
 
     public static TheoryData<string> MalformedNames => ["", new string('a', 65), "a/b", "..\\x", "a b", ".hidden"];

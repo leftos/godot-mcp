@@ -20,7 +20,7 @@ public sealed class RecordingTests : IAsyncDisposable
     private readonly SessionHarness _harness = new();
     private readonly RuntimeTools _tools;
 
-    public RecordingTests() => _tools = new RuntimeTools(_harness.Sessions);
+    public RecordingTests() => _tools = new RuntimeTools(_harness.Sessions, TestCSharp.Unused());
 
     public async ValueTask DisposeAsync()
     {

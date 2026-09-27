@@ -30,7 +30,7 @@ public sealed class AttachTests : IAsyncDisposable
     public AttachTests()
     {
         _project = new ProjectTools(_harness.Sessions);
-        _runtime = new RuntimeTools(_harness.Sessions);
+        _runtime = new RuntimeTools(_harness.Sessions, TestCSharp.Unused());
     }
 
     private string AttachFilePath => AttachFile.PathIn(_probe.Directory);

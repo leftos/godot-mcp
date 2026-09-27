@@ -90,7 +90,7 @@ public sealed class SharedProbeSession : IAsyncLifetime
     private readonly RuntimeTools _tools;
     private bool _emulateTouch;
 
-    public SharedProbeSession() => _tools = new RuntimeTools(_harness.Sessions);
+    public SharedProbeSession() => _tools = new RuntimeTools(_harness.Sessions, TestCSharp.Unused());
 
     /// <summary>The probe project the shared run plays.</summary>
     public string ProbeDirectory => _probe.Directory;

@@ -19,7 +19,7 @@ public sealed class GamepadTests(SharedProbeSession shared) : IAsyncLifetime, IC
     private const string ReadFocusOwner = "return str(scene_tree.root.gui_get_focus_owner().name)";
     private static readonly StickPosition Down = new(0, 1);
     private readonly SharedProbeSession _shared = shared;
-    private readonly RuntimeTools _tools = new(shared.Sessions);
+    private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());
 
     public async ValueTask InitializeAsync() => await _shared.ResetAsync(TestContext.Current.CancellationToken);
 
@@ -162,7 +162,7 @@ public sealed class GamepadTests(SharedProbeSession shared) : IAsyncLifetime, IC
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         using ProbeProject probe = new();
         await using SessionHarness harness = new();
-        RuntimeTools tools = new(harness.Sessions);
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
         await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
 
         await tools.GamepadButtonAsync("A", "tap", 0, cancellationToken: cancellation);

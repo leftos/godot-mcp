@@ -16,7 +16,7 @@ public sealed class SnapshotValidationTests : IDisposable
     public SnapshotValidationTests()
     {
         _sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance);
-        _tools = new RuntimeTools(_sessions);
+        _tools = new RuntimeTools(_sessions, TestCSharp.Unused());
     }
 
     private static CancellationToken Token => TestContext.Current.CancellationToken;

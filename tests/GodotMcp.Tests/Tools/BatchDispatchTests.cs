@@ -25,10 +25,11 @@ public sealed class BatchDispatchTests : IAsyncDisposable
     public BatchDispatchTests()
     {
         _sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance);
-        _tools = new RuntimeTools(_sessions);
+        _tools = new RuntimeTools(_sessions, TestCSharp.Unused());
         ServiceCollection services = new();
         services.AddLogging();
         services.AddSingleton(_sessions);
+        services.AddSingleton(TestCSharp.Unused());
         services.AddMcpServer().WithToolsFromAssembly(typeof(RuntimeTools).Assembly);
         _services = services.BuildServiceProvider();
     }

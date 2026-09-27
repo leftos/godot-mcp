@@ -34,7 +34,7 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
     private static readonly ScreenshotCrop Swatch = new(580, 300, 50, 50);
     private readonly SharedProbeSession _shared = shared;
     private readonly CsProbeBuild _csProbe = csProbe;
-    private readonly RuntimeTools _tools = new(shared.Sessions);
+    private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());
 
     public async ValueTask InitializeAsync() => await _shared.ResetAsync(TestContext.Current.CancellationToken);
 
@@ -47,7 +47,7 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         using ProbeProject project = new();
         await using SessionHarness harness = new();
-        RuntimeTools tools = new(harness.Sessions);
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
         await LaunchAsync(harness, project.Directory, cancellation);
         await AddInspectProbeAsync(tools, cancellation);
 
@@ -433,7 +433,7 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
     public async Task CallCSharpPublicMethod()
     {
         await using SessionHarness harness = new();
-        RuntimeTools tools = new(harness.Sessions);
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
         await LaunchAsync(harness, _csProbe.Directory, TestContext.Current.CancellationToken);
 
         JsonNode called = await CallAsync(tools, "CsProbe", "PlayStep", "4");
@@ -449,7 +449,7 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
     public async Task CallCSharpInternalMethod()
     {
         await using SessionHarness harness = new();
-        RuntimeTools tools = new(harness.Sessions);
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
         await LaunchAsync(harness, _csProbe.Directory, TestContext.Current.CancellationToken);
 
         // Godot's C# source generator exposes every method with a Godot-compatible signature, whatever its accessibility.

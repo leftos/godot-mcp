@@ -104,7 +104,7 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         + "return false";
     private const string ReadSmallButtonPresses = "return scene_tree.root.get_node(\"Main/SmallButton\").press_count";
     private readonly SharedProbeSession _shared = shared;
-    private readonly RuntimeTools _tools = new(shared.Sessions);
+    private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());
 
     public async ValueTask InitializeAsync() => await _shared.ResetAsync(TestContext.Current.CancellationToken);
 
@@ -310,7 +310,7 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         using ProbeProject probe = new();
         await using SessionHarness harness = new();
         await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
-        RuntimeTools tools = new(harness.Sessions);
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
         JsonNode centre = await RunAsync(tools, PopupScript);
 
         JsonNode clicked = JsonNode.Parse(
@@ -467,7 +467,7 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
             null,
             TestContext.Current.CancellationToken
         );
-        RuntimeTools tools = new(harness.Sessions);
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
         JsonNode window = await RunAsync(
             tools,
             "var t := scene_tree.root.get_screen_transform()\n\tvar s := DisplayServer.window_get_size()\n\t"

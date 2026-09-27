@@ -20,6 +20,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | Read or change a live node | `inspect_node`, `set_property`, `call_method` | `run_script`, which is for anything those three cannot say |
 | See everything an action changed in a subtree | `snapshot_subtree`, act, `diff_snapshots` | `inspect_node` on each node before and after |
 | Learn a class's members | `describe_class` | guessing names, then reading `call_method` errors |
+| Learn a C# object's or type's members, private ones and overloads included | `cs_members` | `describe_class`, which shows only what Godot's call can reach |
 | Find a live node | `get_scene_tree` | `get_scene_file_tree`, which reads a scene file |
 | Know what went wrong | the `errors` in each result, then `get_errors`, then `get_debug_output` | reading stdout first |
 | Replay a known sequence with checks | `batch_drive` | one tool call a step |
@@ -221,6 +222,12 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 - **Does:** calls `method` on a live `node` with `args` converted by the parameters' declared types, awaiting a coroutine: `{path, method, value}`.
 - **Use:** triggering game logic directly (spawn, damage, load a level); C# methods, `internal` ones included, are reached. `options {timeoutMs}` (1 to 120000, default 10000).
 - **Edges:** fails when the method is missing, the argument count does not fit, an argument does not convert (an array of Objects says why), or Godot refuses the call. A GDScript error inside it ends it with a null `value` and comes back in `errors`; the call itself succeeds, so read `errors`.
+
+### `cs_members`
+
+- **Does:** lists the C# members of a `target`, exactly one of `{node}` (a path or bare name; the node must have a C# script), `{type}` (a full name with its namespace, e.g. `CsProbe.Tally`: statics and constructors) or `{handle}`: `{type, members: [{kind, name, signature, static}], total, offset, next?}`. Kinds are `constructor`, `method`, `property`, `field`, `event`; every overload is its own entry, spelled as C# declares it (`internal string Hit(int amount)`). `options {name, nonPublic, offset, limit}`: `name` a case-insensitive part of the member name, `nonPublic` true by default, paged 100 at a time (at most 500), sorted by name then signature.
+- **Use:** before calling into a C# game object whose members Godot's own call cannot reach or show: private fields, overloads, generics, static classes. Reads only: no getter or constructor runs.
+- **Edges:** lists the game's own types down to, not including, the first Godot class (`describe_class` lists Godot's API); accessors, backing fields, record plumbing and the members Godot's source generator adds are left out. A node without a C# script is refused, naming its Godot class; so are the bridge's own nodes, a type no loaded assembly has, and a handle from an earlier run. The first C# call of a game loads the helper into it (about 2 s cold); a project with no C# assembly, or an unbuilt one, is refused before the game is asked.
 
 ### `snapshot_subtree`
 

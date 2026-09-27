@@ -101,7 +101,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
     public async Task TwoSessionsOnOneProjectRunTogether()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        RuntimeTools tools = new(_harness.Sessions);
+        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
         await _harness.Sessions.LaunchAsync(Request(), "server", cancellation);
         await _harness.Sessions.LaunchAsync(Request(), "client", cancellation);
 
@@ -173,7 +173,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
     public async Task ARuntimeToolWithoutANameRefusesWhileSeveralSessionsAreLive()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        RuntimeTools tools = new(_harness.Sessions);
+        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
         await _harness.Sessions.LaunchAsync(Request(), "server", cancellation);
         await _harness.Sessions.LaunchAsync(Request(), "client", cancellation);
 
@@ -202,7 +202,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
     public async Task AGameThatQuitsLeavesTheOverrideForTheOtherSession()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        RuntimeTools tools = new(_harness.Sessions);
+        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
         await _harness.Sessions.LaunchAsync(Request(), "server", cancellation);
         await _harness.Sessions.LaunchAsync(Request(), "client", cancellation);
 

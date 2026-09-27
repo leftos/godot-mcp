@@ -27,7 +27,7 @@ public sealed class BaselineTests(SharedProbeSession shared) : IAsyncLifetime, I
     private static readonly ScreenshotCrop Square = new(400, 40, 120, 80);
     private static readonly string[] Letterboxed = ["--resolution", "1000x900"];
     private readonly SharedProbeSession _shared = shared;
-    private readonly RuntimeTools _tools = new(shared.Sessions);
+    private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());
 
     // Three tests save probe_full without overwrite, so each test starts with no baselines on the shared probe.
     public async ValueTask InitializeAsync()
@@ -146,7 +146,7 @@ public sealed class BaselineTests(SharedProbeSession shared) : IAsyncLifetime, I
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         using ProbeProject probe = new();
         await using SessionHarness harness = new();
-        RuntimeTools tools = new(harness.Sessions);
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
         await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
         JsonNode saved = JsonNode.Parse(await tools.SaveScreenshotBaselineAsync(Full, null, null, cancellationToken: cancellation))!;
         await StopAndCheckCleanAsync(harness, probe);

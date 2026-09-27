@@ -30,11 +30,12 @@ public sealed class BatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
         ServiceCollection services = new();
         services.AddLogging();
         services.AddSingleton(shared.Sessions);
+        services.AddSingleton(TestCSharp.Unused());
         services.AddMcpServer().WithToolsFromAssembly(typeof(RuntimeTools).Assembly);
         _services = services.BuildServiceProvider();
         McpServerOptions options = _services.GetRequiredService<IOptions<McpServerOptions>>().Value;
         _server = McpServer.Create(new StreamServerTransport(Stream.Null, Stream.Null), options, null, _services);
-        _tools = new RuntimeTools(shared.Sessions);
+        _tools = new RuntimeTools(shared.Sessions, TestCSharp.Unused());
     }
 
     public async ValueTask InitializeAsync() => await _shared.ResetAsync(TestContext.Current.CancellationToken);
@@ -152,7 +153,7 @@ public sealed class BatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
     public async Task TheDeadlineStopsTheBatchWithItsSteps()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        RuntimeTools hurried = new(_shared.Sessions) { BatchDeadline = TimeSpan.FromMilliseconds(500) };
+        RuntimeTools hurried = new(_shared.Sessions, TestCSharp.Unused()) { BatchDeadline = TimeSpan.FromMilliseconds(500) };
         BatchStep never = new(Assert: "wait", Expression: "false", TimeoutMs: 5000);
 
         JsonObject batch = JsonNode

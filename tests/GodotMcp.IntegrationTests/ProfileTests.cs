@@ -25,7 +25,7 @@ public sealed class ProfileTests : IAsyncDisposable
     public ProfileTests()
     {
         _project = new ProjectTools(_harness.Sessions);
-        _runtime = new RuntimeTools(_harness.Sessions);
+        _runtime = new RuntimeTools(_harness.Sessions, TestCSharp.Unused());
     }
 
     public async ValueTask DisposeAsync()

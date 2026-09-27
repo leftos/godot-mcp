@@ -53,7 +53,7 @@ public sealed class PreviewTests : IAsyncDisposable
     public PreviewTests()
     {
         _preview = new PreviewTools(_harness.Sessions);
-        _tools = new RuntimeTools(_harness.Sessions);
+        _tools = new RuntimeTools(_harness.Sessions, TestCSharp.Unused());
     }
 
     public async ValueTask DisposeAsync()

@@ -34,7 +34,7 @@ public sealed class QuietTests : IAsyncDisposable
     public QuietTests()
     {
         _project = new ProjectTools(_harness.Sessions);
-        _runtime = new RuntimeTools(_harness.Sessions);
+        _runtime = new RuntimeTools(_harness.Sessions, TestCSharp.Unused());
     }
 
     public async ValueTask DisposeAsync()

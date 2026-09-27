@@ -25,7 +25,7 @@ public sealed partial class PrepTests : IAsyncDisposable
     private readonly RuntimeTools _tools;
     private readonly List<IDisposable> _projects = [];
 
-    public PrepTests() => _tools = new RuntimeTools(_harness.Sessions);
+    public PrepTests() => _tools = new RuntimeTools(_harness.Sessions, TestCSharp.Unused());
 
     public async ValueTask DisposeAsync()
     {

@@ -88,7 +88,7 @@ public sealed partial class HangProbeTests : IAsyncDisposable
     private static partial Regex ProcessLine();
 
     private Task<string> RunScriptAsync(CancellationToken cancellation) =>
-        new RuntimeTools(_sessions).RunScriptAsync(Script, TimeoutMs, cancellationToken: cancellation);
+        new RuntimeTools(_sessions, TestCSharp.Unused()).RunScriptAsync(Script, TimeoutMs, cancellationToken: cancellation);
 
     /// <summary>Attaches a session to a fake game whose hello carries <paramref name="processId"/>.</summary>
     private async Task<FakeBridge> AttachAsync(int? processId, CancellationToken cancellation)

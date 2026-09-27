@@ -18,7 +18,7 @@ public sealed class StressTests(SharedProbeSession shared) : IAsyncLifetime, ICl
     private const int ScriptTimeoutMs = 10_000;
     private static readonly StressPool JumpAndButton = new(Actions: ["probe_jump"], Elements: ["SmallButton"]);
     private readonly SharedProbeSession _shared = shared;
-    private readonly RuntimeTools _tools = new(shared.Sessions);
+    private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());
     private readonly StressTools _stress = new(shared.Sessions);
 
     public async ValueTask InitializeAsync() => await _shared.ResetAsync(TestContext.Current.CancellationToken);

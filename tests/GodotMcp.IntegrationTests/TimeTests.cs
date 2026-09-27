@@ -31,7 +31,7 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     private static readonly WaitCondition UiChangedCondition = new(UiChanged: true);
     private static readonly InputTarget OpenButton = new("OpenButton");
     private readonly SharedProbeSession _shared = shared;
-    private readonly RuntimeTools _tools = new(shared.Sessions);
+    private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());
 
     public async ValueTask InitializeAsync() => await _shared.ResetAsync(TestContext.Current.CancellationToken);
 

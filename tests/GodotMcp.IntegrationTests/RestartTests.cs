@@ -41,7 +41,7 @@ public sealed class RestartTests : IAsyncDisposable
     public RestartTests()
     {
         _project = new ProjectTools(_harness.Sessions);
-        _runtime = new RuntimeTools(_harness.Sessions);
+        _runtime = new RuntimeTools(_harness.Sessions, TestCSharp.Unused());
     }
 
     public async ValueTask DisposeAsync()

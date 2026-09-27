@@ -20,7 +20,7 @@ public sealed partial class WatchdogTests : IAsyncDisposable
     private readonly SessionHarness _harness = new();
     private readonly RuntimeTools _tools;
 
-    public WatchdogTests() => _tools = new RuntimeTools(_harness.Sessions);
+    public WatchdogTests() => _tools = new RuntimeTools(_harness.Sessions, TestCSharp.Unused());
 
     public async ValueTask DisposeAsync()
     {

@@ -38,7 +38,7 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
     // main.tscn's RedSquare: a ColorRect of Color(1, 0, 0) at (400, 40), 120 x 80.
     private static readonly ScreenshotCrop RedSquare = new(400, 40, 120, 80);
     private readonly SharedProbeSession _shared = shared;
-    private readonly RuntimeTools _tools = new(shared.Sessions);
+    private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());
 
     public async ValueTask InitializeAsync() => await _shared.ResetAsync(TestContext.Current.CancellationToken);
 
@@ -51,7 +51,7 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         using ProbeProject probe = new();
         await using SessionHarness harness = new();
-        RuntimeTools tools = new(harness.Sessions);
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
         await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
 
         List<ContentBlock> blocks = [.. await tools.TakeScreenshotAsync("full", null, 960, cancellationToken: cancellation)];

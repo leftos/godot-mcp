@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Wire;
 using ModelContextProtocol;
@@ -16,7 +17,7 @@ namespace GodotMcp.Server.Tools;
 /// sends them ahead of its reply, so they are in the session's feed once the reply is.
 /// </summary>
 [McpServerToolType]
-internal sealed partial class RuntimeTools(SessionRegistry sessions)
+internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridge csharp)
 {
     internal const int MaxErrorsLimit = ErrorFeed.Capacity;
     internal const int MaxPageSize = 500;
@@ -302,9 +303,31 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
     private static async Task<JsonNode?> CallBridgeAsync(GodotSession target, BridgeCall call, CancellationToken cancellationToken)
     {
         (string tool, string command, JsonObject parameters, TimeSpan timeout) = call;
+        return await SendMappedAsync(
+            target,
+            tool,
+            timeout,
+            () => target.SendAsync(command, parameters, timeout, cancellationToken),
+            cancellationToken
+        );
+    }
+
+    /// <summary>
+    /// Awaits one send and maps what it throws the way every runtime tool reports it: a session error as itself, a timeout as
+    /// the hang probe's report with the tool's hint, a refusal or a helper error as <c>&lt;tool&gt; failed: …</c>, and a broken
+    /// connection as a crash notice. The helper's own sends go through here too, so a C# tool fails like a bridge tool.
+    /// </summary>
+    private static async Task<T> SendMappedAsync<T>(
+        GodotSession target,
+        string tool,
+        TimeSpan timeout,
+        Func<Task<T>> send,
+        CancellationToken cancellationToken
+    )
+    {
         try
         {
-            return await target.SendAsync(command, parameters, timeout, cancellationToken);
+            return await send();
         }
         catch (SessionException e)
         {
@@ -312,7 +335,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
         }
         catch (TimeoutException e)
         {
-            throw await DescribeTimeoutAsync(target, call, e, cancellationToken);
+            throw await DescribeTimeoutAsync(target, tool, timeout, e, cancellationToken);
         }
         catch (InvalidOperationException e)
         {
@@ -330,21 +353,23 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions)
     /// <summary>Probes a game whose reply timed out, logs what the probe found, and says whether its main thread is running or stuck.</summary>
     private static async Task<McpException> DescribeTimeoutAsync(
         GodotSession target,
-        BridgeCall call,
+        string tool,
+        TimeSpan timeout,
         TimeoutException timedOut,
         CancellationToken cancellationToken
     )
     {
         HangReport report = await HangProbe.RunAsync(target, cancellationToken);
-        Log.RequestTimedOut(target.Logger, call.Tool, target.Name, report.Outcome, report.ProcessState);
-        string hint = call.Tool switch
+        Log.RequestTimedOut(target.Logger, tool, target.Name, report.Outcome, report.ProcessState);
+        string hint = tool switch
         {
             "run_script" => "; a script that needs longer can raise timeoutMs",
             "call_method" => "; a method that needs longer can raise options.timeoutMs",
+            "cs_members" => "; the first C# call loads the helper into the game, and restart_project clears a stuck one",
             "frame_control" => "; a step waits for drawn frames, so a minimized window stalls it",
             _ => string.Empty,
         };
-        return new McpException(report.Describe(call.Tool, call.Timeout, hint), timedOut);
+        return new McpException(report.Describe(tool, timeout, hint), timedOut);
     }
 
     /// <exception cref="McpException">The mode is not path_only, preview or full.</exception>

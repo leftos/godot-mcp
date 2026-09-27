@@ -33,7 +33,7 @@ public sealed class InputValidationTests : IDisposable
     public InputValidationTests()
     {
         _sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance);
-        _tools = new RuntimeTools(_sessions);
+        _tools = new RuntimeTools(_sessions, TestCSharp.Unused());
     }
 
     public void Dispose()

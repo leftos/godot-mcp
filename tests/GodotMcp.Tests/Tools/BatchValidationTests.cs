@@ -17,7 +17,7 @@ public sealed class BatchValidationTests : IDisposable
     public BatchValidationTests()
     {
         _sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance);
-        _tools = new RuntimeTools(_sessions);
+        _tools = new RuntimeTools(_sessions, TestCSharp.Unused());
     }
 
     public void Dispose()
@@ -136,10 +136,11 @@ public sealed class BatchValidationTests : IDisposable
         Assert.Contains("take_screenshot", RuntimeTools.BatchableTools);
         Assert.Contains("compare_screenshot", RuntimeTools.BatchableTools);
         Assert.Contains("call_method", RuntimeTools.BatchableTools);
+        Assert.Contains("cs_members", RuntimeTools.BatchableTools);
         Assert.DoesNotContain("run_project", RuntimeTools.BatchableTools);
         Assert.DoesNotContain("list_sessions", RuntimeTools.BatchableTools);
         Assert.DoesNotContain("batch_drive", RuntimeTools.BatchableTools);
-        Assert.Equal(27, RuntimeTools.BatchableTools.Count);
+        Assert.Equal(28, RuntimeTools.BatchableTools.Count);
     }
 
     [Fact]

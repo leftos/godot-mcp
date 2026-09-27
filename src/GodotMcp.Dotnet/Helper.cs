@@ -11,9 +11,9 @@ namespace GodotMcp.Dotnet;
 
 /// <summary>
 /// The helper's entry, run by the loader on the main thread: it stores the callable GDScript reaches the helper through
-/// as the SceneTree meta <see cref="MetaName"/>. The callable takes a JSON request, <c>{"op":"ping"}</c> or
-/// <c>{"op":"ping","id":"&lt;instance id&gt;"}</c>, and returns a JSON reply, <c>{"ok":true,"result":{...}}</c> or
-/// <c>{"ok":false,"error":"..."}</c>.
+/// as the SceneTree meta <see cref="MetaName"/>. The callable takes a JSON request — <c>{"op":"ping"}</c>, optionally
+/// with <c>"id":"&lt;instance id&gt;"</c>, or <c>{"op":"members","target":{...}}</c>, which <see cref="Members"/>
+/// answers — and returns a JSON reply, <c>{"ok":true,"result":{...}}</c> or <c>{"ok":false,"error":"..."}</c>.
 /// </summary>
 public static class Helper
 {
@@ -66,7 +66,12 @@ public static class Helper
         }
 
         string? op = json["op"]?.GetValue<string>();
-        return op == "ping" ? Ping(json) : Failure($"Unknown op '{op}'.");
+        return op switch
+        {
+            "ping" => Ping(json),
+            "members" => Members.Answer(json),
+            _ => Failure($"Unknown op '{op}'."),
+        };
     }
 
     /// <summary>
@@ -92,5 +97,6 @@ public static class Helper
 
     private static JsonObject NotAnObject(string reason) => Failure($"The request is not a JSON object: {reason}");
 
-    private static JsonObject Failure(string message) => new() { ["ok"] = false, ["error"] = message };
+    /// <summary>The refusal a tool's own checks spell, shared with the ops beside <see cref="Ping"/>.</summary>
+    internal static JsonObject Failure(string message) => new() { ["ok"] = false, ["error"] = message };
 }

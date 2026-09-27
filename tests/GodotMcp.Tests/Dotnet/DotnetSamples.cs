@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.ComponentModel;
 using System.Text.Json.Nodes;
 using GodotMcp.Dotnet.Core;
 
@@ -225,4 +226,68 @@ public sealed class NoFormatter : IValueFormatter
         json = null;
         return false;
     }
+}
+
+/// <summary>The base a listing walks into: private state, a virtual property and a hider's target.</summary>
+public class Guild
+{
+    private readonly int _ledger = 1;
+
+    public static int Founded { get; set; }
+
+    public int Standing => _ledger;
+
+    public virtual string Name => "guild";
+
+    public string Motto() => Name;
+}
+
+/// <summary>Overrides <see cref="Guild.Name"/>, hides <see cref="Guild.Motto"/> and <see cref="Guild.Founded"/>.</summary>
+public sealed class Chapter : Guild
+{
+    private readonly string _banner = "red";
+
+    public static new int Founded { get; set; }
+
+    public override string Name => "chapter";
+
+    public new string Motto() => Name;
+
+    public int Banner => _banner.Length;
+}
+
+/// <summary>The members Godot's own source generator adds to a partial class, which it marks with <c>Never</c>.</summary>
+public sealed class Arcanum
+{
+    private readonly int _depth = 1;
+
+    public int Open => _depth;
+
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public int Hidden => _depth;
+
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public int Vanish() => _depth;
+}
+
+/// <summary>A static class: its statics alone, and no constructor, not even the one its field initialiser makes.</summary>
+public static class Ledger
+{
+    private static int _total = 1;
+
+    public static int Total => _total;
+
+    public static int Add(int amount) => _total += amount;
+}
+
+/// <summary>A base whose constructor is its own: a derived class never inherits one.</summary>
+public class Banner(int width)
+{
+    public int Width { get; } = width;
+}
+
+/// <summary>Its constructor alone, and not <see cref="Banner"/>'s.</summary>
+public sealed class Pennant(string label) : Banner(label.Length)
+{
+    public string Label { get; } = label;
 }

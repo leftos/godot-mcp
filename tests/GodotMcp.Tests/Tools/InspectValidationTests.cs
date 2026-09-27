@@ -18,7 +18,7 @@ public sealed class InspectValidationTests : IDisposable
     public InspectValidationTests()
     {
         _sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance);
-        _tools = new RuntimeTools(_sessions);
+        _tools = new RuntimeTools(_sessions, TestCSharp.Unused());
     }
 
     public void Dispose()

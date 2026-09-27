@@ -1,3 +1,4 @@
+using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Wire;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,6 +12,9 @@ builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogL
 
 builder.Services.AddSingleton<BridgeListener>();
 builder.Services.AddSingleton<SessionRegistry>();
+
+// The C# tools' half of the bridge: the copies of the helper the game loads, and where a published server finds its build.
+builder.Services.AddSingleton(new CSharpBridge(new HelperCache(HelperCache.DefaultRoot), Installation.FindDotnetExtension));
 builder.Services.AddMcpServer().WithStdioServerTransport().WithToolsFromAssembly();
 
 using IHost host = builder.Build();
