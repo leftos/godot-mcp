@@ -122,8 +122,9 @@ public sealed class HelperCacheTests : IDisposable
         }
         Directory.CreateDirectory(_cache);
         string destination = Path.Combine(_cache, HelperCache.Hash(_source));
+        BlockTheMove(destination);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        Task<string> scanner = Task.Run(() => HoldLikeAScanner(_cache, stop.Token), cancellation);
+        Task<string> scanner = StartHolder(() => HoldLikeAScanner(_cache, destination, stop.Token), cancellation);
 
         string outcome;
         try
@@ -152,8 +153,9 @@ public sealed class HelperCacheTests : IDisposable
         }
         Directory.CreateDirectory(_cache);
         string destination = Path.Combine(_cache, HelperCache.Hash(_source));
+        BlockTheMove(destination);
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        Task<string> holder = Task.Run(() => HoldUntilStopped(_cache, stop.Token), cancellation);
+        Task<string> holder = StartHolder(() => HoldUntilStopped(_cache, destination, stop.Token), cancellation);
 
         InvalidOperationException thrown;
         string outcome;
@@ -178,9 +180,20 @@ public sealed class HelperCacheTests : IDisposable
         Assert.Empty(Directory.GetDirectories(_cache, "*.tmp-*"));
     }
 
-    // Opens helper.dll inside the first *.tmp-* folder that appears, for reading with full sharing, and keeps it open until
-    // 300 ms after the folder's .complete marker appears: the shape of an on-write antivirus scan.
-    private static string HoldLikeAScanner(string cache, CancellationToken stop)
+    // A file where the copy's folder is to land refuses its move (Directory.Move will not overwrite), and CopyInto leaves a
+    // file there alone (it only clears a folder). The holders delete it once their hold is open, so the copy cannot land
+    // before the hold starts however the threads are scheduled: without it, a loaded machine could finish the copy before
+    // the holder's poll saw the temp folder.
+    private static void BlockTheMove(string destination) => File.WriteAllBytes(destination, []);
+
+    // Runs the holder on a thread of its own, so a busy thread pool cannot delay its start.
+    private static Task<string> StartHolder(Func<string> holder, CancellationToken cancellation) =>
+        Task.Factory.StartNew(holder, cancellation, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+    // Opens helper.dll inside the first *.tmp-* folder that appears, for reading with full sharing, lets the move go ahead,
+    // and keeps the file open until 300 ms after the folder's .complete marker appears: the shape of an on-write antivirus
+    // scan.
+    private static string HoldLikeAScanner(string cache, string destination, CancellationToken stop)
     {
         using FileStream? held = OpenHeldDll(cache, stop, out string temp);
         if (held is null)
@@ -188,6 +201,7 @@ public sealed class HelperCacheTests : IDisposable
             return "never saw the temp folder";
         }
 
+        File.Delete(destination);
         string marker = Path.Combine(temp, ".complete");
         while (!File.Exists(marker) && !stop.IsCancellationRequested)
         {
@@ -199,7 +213,7 @@ public sealed class HelperCacheTests : IDisposable
     }
 
     // The same open, kept until the test stops it: a scan that outlasts the copy's retry budget.
-    private static string HoldUntilStopped(string cache, CancellationToken stop)
+    private static string HoldUntilStopped(string cache, string destination, CancellationToken stop)
     {
         using FileStream? held = OpenHeldDll(cache, stop, out _);
         if (held is null)
@@ -207,6 +221,7 @@ public sealed class HelperCacheTests : IDisposable
             return "never saw the temp folder";
         }
 
+        File.Delete(destination);
         stop.WaitHandle.WaitOne();
         return "held";
     }
