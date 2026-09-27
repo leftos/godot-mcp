@@ -8,4 +8,9 @@
   <ItemGroup>
     <PackageReference Include="GodotSharp" PrivateAssets="all" ExcludeAssets="runtime" />
   </ItemGroup>
+
+  <!-- Core publishes beside the helper; the loader resolves it from the helper's folder. -->
+  <ItemGroup>
+    <ProjectReference Include="..\GodotMcp.Dotnet.Core\GodotMcp.Dotnet.Core.csproj" />
+  </ItemGroup>
 </Project>

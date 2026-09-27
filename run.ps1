@@ -21,7 +21,8 @@ exits with the command's own status, or 124 when it outlived its ceiling and was
   format   dotnet format style (info severity), then CSharpier, on the whole solution; ceiling 180 s each
   dotnet   the C# helper into bin/dotnet: the NativeAOT shim godot_mcp_dotnet.dll (win-x64, no pdb) and
            dotnet/godot_mcp_dotnet.gdextension at the top, loader/ (GodotMcp.Dotnet.Loader.dll and its
-           runtimeconfig.json) and helper/ (GodotMcp.Dotnet.dll). Each project publishes into .tmp/dotnet-publish/<name>
+           runtimeconfig.json) and helper/ (GodotMcp.Dotnet.dll and GodotMcp.Dotnet.Core.dll, which the loader
+           resolves from the helper's folder). Each project publishes into .tmp/dotnet-publish/<name>
            under its own gate (.tmp/dotnet-<name>.log, ceiling 300 s); bin/dotnet is then rebuilt from those files.
            The shim's link needs the MSVC linker (VS Build Tools' VC tools), which ILCompiler finds through vswhere under
            ProgramFiles(x86); when that variable is empty (as it can be from Git Bash) it is set to C:\Program Files
@@ -311,7 +312,7 @@ $dotnetProjects = [ordered]@{
     }
     helper = @{
         Project = 'src/GodotMcp.Dotnet/GodotMcp.Dotnet.csproj'; Extra = @()
-        Files = @('GodotMcp.Dotnet.dll'); Folder = 'helper'
+        Files = @('GodotMcp.Dotnet.dll', 'GodotMcp.Dotnet.Core.dll'); Folder = 'helper'
     }
 }
 

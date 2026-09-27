@@ -26,6 +26,7 @@ const PREVIEW_SCRIPT := "godot_mcp_preview.gd"
 const UI_SNAPSHOT_SCRIPT := "godot_mcp_ui_snapshot.gd"
 const CLASS_INFO_SCRIPT := "godot_mcp_class_info.gd"
 const CAPTURE_SCRIPT := "godot_mcp_capture.gd"
+const DOTNET_SCRIPT := "godot_mcp_dotnet.gd"
 ## A quiet run's frame-rate cap when the project sets none: its frames are never seen, so drawing
 ## at the monitor's refresh rate only burns the GPU.
 const QUIET_MAX_FPS := 60
@@ -54,6 +55,9 @@ var _gestures: Node
 ## The input capture (godot_mcp_capture.gd beside this script): capture_input's recording, which
 ## the input player feeds every event it dispatches.
 var _capture: Node
+## The C# helper module (godot_mcp_dotnet.gd beside this script): the dotnet command, which loads
+## the helper extension once per process and passes it requests.
+var _dotnet: Node
 ## The inspector (godot_mcp_inspect.gd beside this script), a child once the bridge is on.
 var _inspect: Node
 ## The clock (godot_mcp_time.gd beside this script): pause, step, time scale and waits.
@@ -129,6 +133,10 @@ func _ready() -> void:
 	_capture.bridge = self
 	_capture.send_frame = _send_captured
 	add_child(_capture)
+	_dotnet = (load(script_dir.path_join(DOTNET_SCRIPT)) as GDScript).new()
+	_dotnet.name = "Dotnet"
+	_dotnet.bridge = self
+	add_child(_dotnet)
 	_inspect = (load(script_dir.path_join(INSPECT_SCRIPT)) as GDScript).new()
 	_inspect.name = "Inspect"
 	add_child(_inspect)
@@ -321,6 +329,7 @@ func _command_handlers() -> Dictionary:
 		"movie_frame": _handle_movie_frame,
 		"describe_class": _handle_describe_class,
 		"capture": _handle_capture,
+		"dotnet": _handle_dotnet,
 		"shutdown": _handle_shutdown,
 	}
 
@@ -374,6 +383,16 @@ func _handle_describe_class(id: int, params: Dictionary) -> void:
 ## out before the reply.
 func _handle_capture(id: int, params: Dictionary) -> void:
 	var outcome: Dictionary = _capture.handle(params)
+	if outcome.has("error"):
+		_reply_error(id, str(outcome["error"]))
+		return
+	_reply_ok(id, outcome["result"])
+
+
+## Passes a helper request to the C# helper on the Dotnet child, loading it on the first call;
+## replies {reply, loadedNow} or the reason the helper could not be reached.
+func _handle_dotnet(id: int, params: Dictionary) -> void:
+	var outcome: Dictionary = _dotnet.handle(params)
 	if outcome.has("error"):
 		_reply_error(id, str(outcome["error"]))
 		return

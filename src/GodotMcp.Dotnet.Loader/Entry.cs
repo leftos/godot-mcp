@@ -63,12 +63,29 @@ public static class Entry
             return $"GodotSharp {version} is loaded; this helper is built for {SupportedMajor}.{SupportedMinor}";
         }
 
+        string helperFolder = Path.GetDirectoryName(helperPath) ?? "";
+        godot.context.Resolving += (context, name) => ResolveBesideHelper(context, name, helperFolder);
         Assembly helper = godot.context.LoadFromAssemblyPath(helperPath);
         MethodInfo install =
             helper.GetType(HelperType, throwOnError: true)!.GetMethod(HelperInstall, BindingFlags.Public | BindingFlags.Static)
             ?? throw new MissingMethodException(HelperType, HelperInstall);
         _ = install.Invoke(null, null);
         return null;
+    }
+
+    /// <summary>
+    /// Loads an assembly the helper references from the helper's own folder, since the GodotSharp context's resolver looks
+    /// only in GodotPlugins' folder; null for any name that folder has no dll for.
+    /// </summary>
+    private static Assembly? ResolveBesideHelper(AssemblyLoadContext context, AssemblyName name, string helperFolder)
+    {
+        if (name.Name is null)
+        {
+            return null;
+        }
+
+        string candidate = Path.Combine(helperFolder, name.Name + ".dll");
+        return File.Exists(candidate) ? context.LoadFromAssemblyPath(candidate) : null;
     }
 
     private static (AssemblyLoadContext, Assembly)? FindGodotSharp()
