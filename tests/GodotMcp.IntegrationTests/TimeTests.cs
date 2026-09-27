@@ -477,6 +477,72 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.Equal(0, waited["value"]!["appearedCount"]!.GetValue<int>());
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task MonitorKeepsACounterThatChangesEveryFrame()
+    {
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
+
+        JsonObject monitored = await MonitorAsync("process_frames", new MonitorOptions(10));
+
+        JsonArray samples = monitored["samples"]!.AsArray();
+        Assert.Equal(10, samples.Count);
+        Assert.Equal(0, monitored["droppedDuplicates"]!.GetValue<int>());
+        Assert.Equal(10, monitored["requested"]!.GetValue<int>());
+        Assert.True(monitored["elapsedMs"]!.GetValue<long>() >= 0, monitored.ToJsonString());
+        Assert.Equal(Enumerable.Range(0, 10), samples.Select(sample => sample!["frame"]!.GetValue<int>()));
+        long first = samples[0]!["value"]!.GetValue<long>();
+        Assert.Equal(Enumerable.Range(0, 10).Select(step => first + step), samples.Select(sample => sample!["value"]!.GetValue<long>()));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task MonitorDropsAConstantPropertysRepeats()
+    {
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
+
+        JsonObject monitored = await MonitorAsync("n", new MonitorOptions(10));
+
+        JsonNode sample = Assert.Single(monitored["samples"]!.AsArray())!;
+        Assert.Equal(0, sample["frame"]!.GetValue<int>());
+        Assert.Equal(3, sample["value"]!.GetValue<int>());
+        Assert.Equal(9, monitored["droppedDuplicates"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task MonitorWithoutChangesOnlyKeepsEverySample()
+    {
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
+
+        JsonObject monitored = await MonitorAsync("n", new MonitorOptions(10, ChangesOnly: false));
+
+        Assert.Equal(10, monitored["samples"]!.AsArray().Count);
+        Assert.All(monitored["samples"]!.AsArray(), sample => Assert.Equal(3, sample!["value"]!.GetValue<int>()));
+        Assert.Equal(0, monitored["droppedDuplicates"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task MonitorWithUnitPhysicsSamplesEachTick()
+    {
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
+
+        JsonObject monitored = await MonitorAsync("physics_ticks", new MonitorOptions(10, "physics"));
+
+        JsonArray samples = monitored["samples"]!.AsArray();
+        Assert.Equal(10, samples.Count);
+        long first = samples[0]!["value"]!.GetValue<long>();
+        Assert.Equal(Enumerable.Range(0, 10).Select(step => first + step), samples.Select(sample => sample!["value"]!.GetValue<long>()));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task MonitorWhilePausedIsRefused()
+    {
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
+        await FrameAsync("pause");
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => MonitorAsync("process_frames", new MonitorOptions(10)));
+
+        Assert.Contains(PausedRefusal, refused.Message, StringComparison.Ordinal);
+    }
+
     // Adds OpenButton, a Button under the root, and OpenedPanel, a Panel hidden until the button is pressed; the button acts on
     // the press (ACTION_MODE_BUTTON_PRESS), not the release, and takes no focus. Returns the panel's path.
     private async Task<string> AddOpenerAsync() =>
@@ -527,6 +593,11 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         );
         return JsonNode.Parse(Text(blocks))!.AsObject();
     }
+
+    private async Task<JsonObject> MonitorAsync(string property, MonitorOptions options) =>
+        JsonNode
+            .Parse(await _tools.MonitorPropertyAsync("TimeProbe", property, options, cancellationToken: TestContext.Current.CancellationToken))!
+            .AsObject();
 
     private async Task<JsonObject> WaitAsync(WaitCondition condition, int timeoutMs = 10_000) =>
         JsonNode.Parse(await _tools.WaitForAsync(condition, timeoutMs, cancellationToken: TestContext.Current.CancellationToken))!.AsObject();

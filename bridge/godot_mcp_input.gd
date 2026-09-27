@@ -134,6 +134,7 @@ func _play_click(params: Dictionary) -> String:
 ## Moves to the point, then presses and releases one frame apart; a double click follows
 ## with a second press marked double_click. The hits are the last press's and release's.
 func _click_at(window_point: Vector2, button: int, double_click: bool) -> void:
+	await _dismiss_tooltips()
 	_move_to(window_point)
 	_send_and_record(window_point, button, true, false)
 	await get_tree().process_frame
@@ -161,6 +162,25 @@ func _send_and_record(
 	_hits["pressedOn" if pressed else "releasedOn"] = (
 		before_drop if drops else _control_under(point)
 	)
+
+
+## Frees every tooltip the root shows before a press whose pressedOn is read, and waits a frame
+## for the free when there was one. A tooltip is mouse-passthrough, so the press reaches the
+## Control beneath (input forwarding skips it, scene/main/viewport.cpp L3184 in 4.7.2), but the
+## root still routes hover into it (_update_mouse_over, L3281-3320), leaving the root's hovered
+## Control null. It is freed with queue_free, as the engine's own _gui_cancel_tooltip does
+## (L1561-1563): the popup's NOTIFICATION_PREDELETE clears the viewport's pointer to it
+## (L771-774), and its removal clears the root's subwindow_over (L502-504), so the next motion
+## (the gesture's move) hovers the Control beneath. A press does not cancel a tooltip itself;
+## the release does (L2011).
+func _dismiss_tooltips() -> void:
+	var dismissed: bool = false
+	for window: Window in get_tree().root.get_embedded_subwindows():
+		if window.visible and bridge._ui_snapshot.is_tooltip(window):
+			window.queue_free()
+			dismissed = true
+	if dismissed:
+		await get_tree().process_frame
 
 
 ## The Control under a viewport point as {path, class}, or null over none, read right after a
@@ -206,6 +226,7 @@ func _play_drag(params: Dictionary) -> String:
 func _drag(start: Vector2, end: Vector2, duration_ms: int, button: int) -> void:
 	var root: Window = get_tree().root
 	var gui_drag_started: bool = false
+	await _dismiss_tooltips()
 	_move_to(start)
 	_send_and_record(start, button, true, false)
 	var began: int = Time.get_ticks_msec()
@@ -289,6 +310,8 @@ func _play_mouse_button(params: Dictionary) -> String:
 	if not action in ["press", "release"]:
 		return "unknown mouse_button action '%s'; use press or release" % action
 	var window_point: Vector2 = _to_window(point)
+	if action == "press":
+		await _dismiss_tooltips()
 	_move_to(window_point)
 	_send_and_record(window_point, button, action == "press", false)
 	await get_tree().process_frame

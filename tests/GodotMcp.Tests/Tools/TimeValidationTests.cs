@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Server.Wire;
@@ -56,6 +57,63 @@ public sealed class TimeValidationTests : IDisposable
         );
 
         Assert.Equal(message, refused.Message);
+    }
+
+    [Theory]
+    [InlineData(0, "process", "samples must be between 1 and 600.")]
+    [InlineData(601, "process", "samples must be between 1 and 600.")]
+    [InlineData(-1, "process", "samples must be between 1 and 600.")]
+    [InlineData(60, "idle", "unit must be process or physics.")]
+    [InlineData(60, "Physics", "unit must be process or physics.")]
+    public async Task MonitorPropertyRefusesBadOptions(int samples, string unit, string message)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.MonitorPropertyAsync("TimeProbe", "process_frames", new MonitorOptions(samples, unit), null, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(message, refused.Message);
+    }
+
+    [Theory]
+    [InlineData("", "process_frames", "node is empty.")]
+    [InlineData(" ", "process_frames", "node is empty.")]
+    [InlineData("TimeProbe", "", "property is empty.")]
+    public async Task MonitorPropertyRefusesAnEmptyNodeOrProperty(string node, string property, string start)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.MonitorPropertyAsync(node, property, null, null, TestContext.Current.CancellationToken)
+        );
+
+        Assert.StartsWith(start, refused.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(1, "process")]
+    [InlineData(600, "physics")]
+    public async Task AMonitorWithinRangeIsAccepted(int samples, string unit)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.MonitorPropertyAsync(
+                "TimeProbe",
+                "position:x",
+                new MonitorOptions(samples, unit, false),
+                null,
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MonitorParametersCarryTheDefaultsAndTheDeadline()
+    {
+        JsonObject parameters = RuntimeTools.BuildMonitorParameters("TimeProbe", "position:x", null);
+
+        Assert.Equal(
+            """{"node":"TimeProbe","property":"position:x","samples":60,"unit":"process","changesOnly":true,"deadlineMs":16000}""",
+            parameters.ToJsonString()
+        );
     }
 
     [Theory]

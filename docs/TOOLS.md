@@ -13,6 +13,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | Click, drag, type | `click`, `drag`, `type_text`, `key` | `simulate_input`, which is for event sequences the gestures cannot make |
 | Drive with a pad | `gamepad_button`, `gamepad_stick`, `gamepad_axis` | `simulate_input` joypad events |
 | Land a check on an exact frame | `frame_control` (`pause`, `step`), then `wait_for` with `timeoutMs: 0` | `wait_for` with a timeout on a running game |
+| Watch a value change over frames | `monitor_property` | a loop of `inspect_node` calls |
+| Press an InputMap action | `simulate_action` | `key` on a key bound to it |
 | Wait for something to happen | `wait_for` | polling `inspect_node` or `run_script` |
 | Read or change a live node | `inspect_node`, `set_property`, `call_method` | `run_script`, which is for anything those three cannot say |
 | See everything an action changed in a subtree | `snapshot_subtree`, act, `diff_snapshots` | `inspect_node` on each node before and after |
@@ -107,6 +109,7 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 - **Does:** moves the pointer to `target`, presses, releases a frame later: `pressedOn` and `releasedOn` name the Control under the press and the release (with `doubleClick`, the second click's).
 - **Use:** `target`, `button` (`left`, `right`, `middle`; default `left`), `doubleClick`.
+- **Edges:** a showing tooltip is closed before the press (as `drag` and a `mouse_button` press do), one frame earlier than a real click, which closes it on release; otherwise the tooltip, not the Control beneath, would be reported as hit. A raw `simulate_input` press leaves tooltips alone.
 
 ### `drag`
 
@@ -129,6 +132,12 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 - **Does:** moves to `target`, then presses or releases `button` (`action` `press` default, or `release`); held buttons stay in later motions' `button_mask`. A press answers `pressedOn`, a release `releasedOn`.
 - **Use:** a drag by hand: `mouse_button` press, `simulate_input` `mouse_motion` events, `mouse_button` release; for paths `drag` cannot draw.
+
+### `simulate_action`
+
+- **Does:** injects an InputMap action: `{pointer, heldButtonMask}` as `simulate_input` returns.
+- **Use:** driving a game by its actions (`jump`, `ui_accept`) instead of the keys bound to them. `action`, `options {mode, strength}`: `mode` `tap` (default: press, a frame, release, as `key` taps), `press` or `release`; `strength` 0 to 1 (default 1), carried by the press.
+- **Edges:** an action missing from the project's InputMap is refused. A pressed action stays held until released. It goes through `simulate_input`'s `action` event, so a raw sequence can still mix actions with other events there.
 
 ### `simulate_input`
 
@@ -159,7 +168,13 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 - **Does:** `action` `pause` or `resume` sets `SceneTree.paused`; `step` advances exactly `count` (1 to 1000, default 1) drawn frames, or physics ticks with `options.unit: "physics"`, and leaves the game paused; `time_scale` sets `Engine.time_scale` to `scale` (above 0, at most 100). Returns `{paused, timeScale, processFrames, physicsFrames}`.
 - **Use:** freezing the game to inspect it; `step` with `options.screenshot: true` to capture the exact frame reached; `time_scale` to fast-forward a slow sequence.
-- **Edges:** nodes whose `process_mode` ignores pause keep running. A step counts drawn frames, so it is refused while the window is minimized or in low-processor mode, and a step whose frames stop being drawn fails at its deadline. A step fails if the game pauses itself midway. While a step runs, other steps, `pause` and `resume` are refused.
+- **Edges:** nodes whose `process_mode` ignores pause keep running. A step counts drawn frames, so it is refused while the window is minimized or in low-processor mode, and a step whose frames stop being drawn fails at its deadline. A step fails if the game pauses itself midway. While a step or a `monitor_property` runs, other steps, `pause` and `resume` are refused.
+
+### `monitor_property`
+
+- **Does:** samples a live node's property once per frame for `samples` frames and returns the changes: `{samples: [{frame, value}], requested, droppedDuplicates, elapsedMs}`, `frame` counting from 0 at the first sample.
+- **Use:** seeing how a value moves over time (a tween, a velocity, a counter) in one call. `node`, `property` (subproperty paths like `position:x`), `options {samples, unit, changesOnly}`: `samples` 1 to 600 (default 60), `unit` `process` (default) or `physics`, `changesOnly` (default true) drops a sample equal to the last kept one (numbers within 1e-6) and counts it in `droppedDuplicates`; the first is always kept.
+- **Edges:** each sample, the first included, is taken when the next frame starts, before the nodes process it. Refused while the game is paused, and while a step or another monitor runs; while it runs, `frame_control`'s `pause`, `resume` and `step` are refused. A missing node or property is refused up front; a node freed partway samples as null. A game that pauses itself partway keeps being sampled, frozen. It ends at 10 s plus 100 ms a sample, saying how many frames it got.
 
 ### `wait_for`
 

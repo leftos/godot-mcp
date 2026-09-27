@@ -3,6 +3,7 @@ using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
+using ModelContextProtocol;
 
 namespace GodotMcp.IntegrationTests;
 
@@ -80,6 +81,27 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         + "for frame in 3:\n\t\t"
         + "await scene_tree.process_frame\n\t"
         + "return Vector2(popup.position) + button.get_global_rect().get_center()";
+
+    // Whether probe_jump is held, and how many presses of it PadProbe's _input has counted.
+    private const string ReadJump = "return [Input.is_action_pressed(\"probe_jump\"), scene_tree.root.get_node(\"Main/PadProbe\").jump_count]";
+
+    // The rect {x, y, width, height} of the first tooltip panel (the theme type variation Viewport gives it) seen visible within
+    // 2 s, or null when none shows.
+    private const string AwaitTooltipScript =
+        "var until := Time.get_ticks_msec() + 2000\n\t"
+        + "while Time.get_ticks_msec() < until:\n\t\t"
+        + "for window in scene_tree.root.get_embedded_subwindows():\n\t\t\t"
+        + "if window.visible and window.theme_type_variation == &\"TooltipPanel\":\n\t\t\t\t"
+        + "return {\"x\": window.position.x, \"y\": window.position.y, \"width\": window.size.x, \"height\": window.size.y}\n\t\t"
+        + "await scene_tree.process_frame\n\t"
+        + "return null";
+
+    // Whether a tooltip panel is visible now.
+    private const string TooltipShownNow =
+        "for window in scene_tree.root.get_embedded_subwindows():\n\t\t"
+        + "if window.visible and window.theme_type_variation == &\"TooltipPanel\":\n\t\t\t"
+        + "return true\n\t"
+        + "return false";
     private const string ReadSmallButtonPresses = "return scene_tree.root.get_node(\"Main/SmallButton\").press_count";
     private readonly SharedProbeSession _shared = shared;
     private readonly RuntimeTools _tools = new(shared.Sessions);
@@ -310,6 +332,58 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         Assert.False(pressed.AsObject().ContainsKey("releasedOn"), pressed.ToJsonString());
         AssertHit(released, "releasedOn", "SmallButton", "Button");
         Assert.False(released.AsObject().ContainsKey("pressedOn"), released.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SimulateActionPressesReleasesAndTapsAnInputMapAction()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        await _tools.SimulateActionAsync("probe_jump", new ActionOptions("press"), cancellationToken: cancellation);
+        JsonNode pressed = await RunAsync(ReadJump);
+        await _tools.SimulateActionAsync("probe_jump", new ActionOptions("release"), cancellationToken: cancellation);
+        JsonNode released = await RunAsync(ReadJump);
+        await _tools.SimulateActionAsync("probe_jump", cancellationToken: cancellation);
+        JsonNode tapped = await RunAsync(ReadJump);
+
+        Assert.Equal("""[true,1]""", pressed.ToJsonString());
+        Assert.Equal("""[false,1]""", released.ToJsonString());
+        Assert.Equal("""[false,2]""", tapped.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SimulateActionRefusesAnActionMissingFromTheInputMap()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SimulateActionAsync("probe_fly", cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.Contains("no input action 'probe_fly' in the project's InputMap", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AClickInsideAShowingTooltipReportsTheControlBeneath()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        // A motion with no button over ProbeButton ((20, 70) to (140, 110), tooltip_text set) shows its tooltip after
+        // gui/timers/tooltip_delay_sec (0.5 s by default), at the pointer plus display/mouse_cursor/tooltip_position_offset.
+        await _tools.SimulateInputAsync([Motion(80, 90)], cancellationToken: cancellation);
+        JsonNode? tooltip = await RunAsync(AwaitTooltipScript);
+        Assert.True(tooltip is JsonObject, "no tooltip showed over ProbeButton, so the click proves nothing");
+        double x = tooltip!["x"]!.GetValue<double>() + 3;
+        double y = tooltip["y"]!.GetValue<double>() + 3;
+        Assert.True(x < 140 && y < 110, $"({x}, {y}), inside the tooltip {tooltip.ToJsonString()}, is not over ProbeButton");
+
+        JsonNode clicked = JsonNode.Parse(await _tools.ClickAsync(new InputTarget(null, x, y), "left", false, cancellationToken: cancellation))!;
+        JsonNode again = JsonNode.Parse(await _tools.ClickAsync(new InputTarget(null, x, y), "left", false, cancellationToken: cancellation))!;
+        bool tooltipAfter = (await RunAsync(TooltipShownNow)).GetValue<bool>();
+
+        AssertHit(clicked, "pressedOn", "ProbeButton", "Button");
+        AssertHit(again, "pressedOn", "ProbeButton", "Button");
+        AssertHit(again, "releasedOn", "ProbeButton", "Button");
+        Assert.False(clicked.AsObject().ContainsKey("errors"), clicked.ToJsonString());
+        Assert.False(again.AsObject().ContainsKey("errors"), again.ToJsonString());
+        Assert.False(tooltipAfter, "a tooltip showed again after the clicks");
     }
 
     // A hit is {path, class}: the Control's path, which ends with its name, and its engine class.

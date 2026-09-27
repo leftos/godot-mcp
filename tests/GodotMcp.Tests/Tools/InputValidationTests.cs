@@ -233,6 +233,62 @@ public sealed class InputValidationTests : IDisposable
         Assert.Equal("action 'hold' is not one of tap, press, release.", refused.Message);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task SimulateActionRefusesAnEmptyAction(string action)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SimulateActionAsync(action, cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.StartsWith("action is empty.", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SimulateActionRefusesAnUnknownMode()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SimulateActionAsync("probe_jump", new ActionOptions("hold"), cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("mode 'hold' is not one of tap, press, release.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(-0.1, "strength must be between 0 and 1; got -0.1.")]
+    [InlineData(1.1, "strength must be between 0 and 1; got 1.1.")]
+    [InlineData(double.NaN, "strength must be between 0 and 1; got NaN.")]
+    public async Task SimulateActionRefusesAStrengthOutsideZeroToOne(double strength, string message)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SimulateActionAsync("probe_jump", new ActionOptions("press", strength), cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(message, refused.Message);
+    }
+
+    [Theory]
+    [InlineData(
+        "tap",
+        0.5,
+        """[{"type":"action","action":"jump","pressed":true,"strength":0.5},{"type":"action","action":"jump","pressed":false}]"""
+    )]
+    [InlineData("press", 0.0, """[{"type":"action","action":"jump","pressed":true,"strength":0}]""")]
+    [InlineData("release", 1.0, """[{"type":"action","action":"jump","pressed":false}]""")]
+    public void SimulateActionSendsTheModesEvents(string mode, double strength, string events) =>
+        Assert.Equal(events, RuntimeTools.BuildActionEvents("jump", new ActionOptions(mode, strength)).ToJsonString());
+
+    [Fact]
+    public async Task AValidSimulateActionWithoutASessionSaysNoneIsRunning()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SimulateActionAsync("probe_jump", new ActionOptions("release", 0), cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task MouseButtonRefusesTap()
     {

@@ -305,6 +305,7 @@ func _command_handlers() -> Dictionary:
 		"snapshot": _handle_inspect.bind("snapshot"),
 		"frame": _handle_time.bind("frame"),
 		"wait_for": _handle_time.bind("wait_for"),
+		"monitor": _handle_time.bind("monitor"),
 		"compare_screenshot": _handle_compare,
 		"preview": _handle_preview,
 		"movie_frame": _handle_movie_frame,
@@ -523,13 +524,17 @@ func _handle_run_script(id: int, params: Dictionary) -> void:
 	_reply_ok(id, {"value": _json.to_json(value)})
 
 
-## Runs a frame or wait_for request on the clock child, which answers {result} or {error}.
+## Runs a frame, wait_for or monitor request on the clock child, which answers {result} or
+## {error}.
 func _handle_time(id: int, params: Dictionary, command: String) -> void:
 	var outcome: Dictionary
-	if command == "frame":
-		outcome = await _time.frame_control(params)
-	else:
-		outcome = await _time.wait_for(params)
+	match command:
+		"frame":
+			outcome = await _time.frame_control(params)
+		"monitor":
+			outcome = await _time.monitor(params)
+		_:
+			outcome = await _time.wait_for(params)
 	if outcome.has("error"):
 		_reply_error(id, str(outcome["error"]))
 		return

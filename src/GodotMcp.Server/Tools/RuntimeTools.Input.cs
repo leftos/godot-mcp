@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
 using ModelContextProtocol;
@@ -215,6 +216,79 @@ internal sealed partial class RuntimeTools
         JsonObject parameters = new() { ["gesture"] = "events", ["events"] = list };
         TimeSpan allowance = (PerStepAllowance * events.Length) + TimeSpan.FromMilliseconds(waitMs);
         return SendInputAsync(session, "simulate_input", parameters, allowance, cancellationToken);
+    }
+
+    [McpServerTool(Name = "simulate_action", ReadOnly = false, Destructive = false, OpenWorld = false)]
+    [Description(
+        "Presses, releases or taps (press, a frame, release) an InputMap action in the running game with an InputEventAction, "
+            + "as simulate_input's action event does: Input.is_action_pressed and get_action_strength follow it and the game's "
+            + "input handlers receive it, whatever keys or buttons the action is bound to. An action missing from the project's "
+            + "InputMap is refused. Returns {pointer, heldButtonMask} as simulate_input does."
+            + ErrorNote
+    )]
+    public Task<string> SimulateActionAsync(
+        [Description("The action's name as the project's InputMap has it: ui_accept, jump.")] string action,
+        [Description("{mode, strength}: mode tap (the default), press or release; strength 0 to 1 (1 when left out), carried by the press.")]
+            ActionOptions? options = null,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        JsonArray events = BuildActionEvents(action, options);
+        JsonObject parameters = new() { ["gesture"] = "events", ["events"] = events };
+        return SendInputAsync(session, "simulate_action", parameters, PerStepAllowance * events.Count, cancellationToken);
+    }
+
+    /// <summary>
+    /// simulate_input's action events for simulate_action: a press, a release, or both a frame apart for a tap, the press
+    /// carrying the strength (Godot reads a released InputEventAction's strength as 0, core/input/input_map.cpp L300 in
+    /// 4.7.2).
+    /// </summary>
+    /// <exception cref="McpException">An empty action, an unknown mode, or a strength outside 0 to 1.</exception>
+    internal static JsonArray BuildActionEvents(string action, ActionOptions? options)
+    {
+        CheckName(action, "action", "Pass the name of an action in the project's InputMap, such as ui_accept.");
+        ActionOptions checkedOptions = options ?? new ActionOptions();
+        string mode = checkedOptions.Mode;
+        if (mode is not ("tap" or "press" or "release"))
+        {
+            throw new McpException($"mode '{mode}' is not one of tap, press, release.");
+        }
+
+        double strength = checkedOptions.Strength;
+        if (strength is not (>= 0 and <= 1))
+        {
+            throw new McpException($"strength must be between 0 and 1; got {strength.ToString(CultureInfo.InvariantCulture)}.");
+        }
+
+        JsonArray events = [];
+        if (mode != "release")
+        {
+            events.Add(ActionEvent(action, true, strength));
+        }
+
+        if (mode != "press")
+        {
+            events.Add(ActionEvent(action, false, null));
+        }
+
+        return events;
+    }
+
+    private static JsonObject ActionEvent(string action, bool pressed, double? strength)
+    {
+        JsonObject item = new()
+        {
+            ["type"] = "action",
+            ["action"] = action,
+            ["pressed"] = pressed,
+        };
+        if (strength is not null)
+        {
+            item["strength"] = strength;
+        }
+
+        return item;
     }
 
     /// <summary>
