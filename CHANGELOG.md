@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `capture_frames` saves frames at set moments of game time (`at`, or `every` and `for`) in one call, following `time_scale`.
+
 ### Changed
 
 - `add_node` and `batch_scene_operations` take a `.gd` or `.cs` script path as `nodeType`, making a node of its base class with the script attached.

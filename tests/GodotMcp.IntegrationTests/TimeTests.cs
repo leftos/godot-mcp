@@ -674,6 +674,93 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.Contains(PausedRefusal, refused.Message, StringComparison.Ordinal);
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task CaptureFramesTakesEachPointInOneCall()
+    {
+        JsonObject captured = await CaptureFramesAsync([0.1, 0.3, 0.3], null, TestContext.Current.CancellationToken);
+
+        JsonArray frames = captured["frames"]!.AsArray();
+        Assert.Equal(3, frames.Count);
+        Assert.Equal([0.1, 0.3, 0.3], frames.Select(frame => frame!["at"]!.GetValue<double>()));
+        Assert.Equal(frames[1]!["path"]!.GetValue<string>(), frames[2]!["path"]!.GetValue<string>());
+        Assert.All(frames, frame => Assert.True(File.Exists(frame!["path"]!.GetValue<string>()), captured.ToJsonString()));
+        Assert.All(
+            frames,
+            frame => Assert.True(frame!["gameSeconds"]!.GetValue<double>() >= frame["at"]!.GetValue<double>(), captured.ToJsonString())
+        );
+        long[] numbers = [.. frames.Select(frame => frame!["frame"]!.GetValue<long>())];
+        Assert.True(numbers.Zip(numbers.Skip(1)).All(pair => pair.First <= pair.Second), captured.ToJsonString());
+        Assert.False(captured.ContainsKey("stopped"), captured.ToJsonString());
+        Assert.False(captured.ContainsKey("missed"), captured.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task CaptureFramesEveryForTakesEachPoint()
+    {
+        JsonObject captured = await CaptureFramesAsync(null, new CaptureFramesOptions(0.1, 0.3), TestContext.Current.CancellationToken);
+
+        JsonArray frames = captured["frames"]!.AsArray();
+        Assert.Equal(3, frames.Count);
+        Assert.All(frames, frame => Assert.True(File.Exists(frame!["path"]!.GetValue<string>()), captured.ToJsonString()));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task CaptureFramesFollowsTimeScale()
+    {
+        await FrameAsync("time_scale", scale: 4);
+        try
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            JsonObject captured = await CaptureFramesAsync([2.0], null, TestContext.Current.CancellationToken);
+            watch.Stop();
+
+            JsonNode frame = Assert.Single(captured["frames"]!.AsArray())!;
+            Assert.True(frame["gameSeconds"]!.GetValue<double>() >= 2.0, captured.ToJsonString());
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1.5), $"2 s of game time at time_scale 4 took {watch.Elapsed} of wall time");
+        }
+        finally
+        {
+            await FrameAsync("time_scale", scale: 1);
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task CaptureFramesIsRefusedWhilePaused()
+    {
+        await FrameAsync("pause");
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => CaptureFramesAsync([0.1], null, TestContext.Current.CancellationToken));
+
+        Assert.Contains(
+            "The game is paused, so its game time does not advance and capture_frames cannot reach its points",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task CaptureFramesStoppedAtTheTimeoutReportsWhatItMissed()
+    {
+        await FrameAsync("time_scale", scale: 0.1);
+        try
+        {
+            JsonObject captured = await CaptureFramesAsync(
+                [0.05, 5.0],
+                new CaptureFramesOptions(TimeoutMs: 1500),
+                TestContext.Current.CancellationToken
+            );
+
+            JsonNode frame = Assert.Single(captured["frames"]!.AsArray())!;
+            Assert.Equal(0.05, frame["at"]!.GetValue<double>());
+            Assert.True(captured["stopped"]!.GetValue<bool>(), captured.ToJsonString());
+            Assert.Equal([5.0], captured["missed"]!.AsArray().Select(point => point!.GetValue<double>()));
+        }
+        finally
+        {
+            await FrameAsync("time_scale", scale: 1);
+        }
+    }
+
     // Adds OpenButton, a Button under the root, and OpenedPanel, a Panel hidden until the button is pressed; the button acts on
     // the press (ACTION_MODE_BUTTON_PRESS), not the release, and takes no focus. Returns the panel's path.
     private async Task<string> AddOpenerAsync() =>
@@ -729,6 +816,9 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         JsonNode
             .Parse(await _tools.MonitorPropertyAsync("TimeProbe", property, options, cancellationToken: TestContext.Current.CancellationToken))!
             .AsObject();
+
+    private async Task<JsonObject> CaptureFramesAsync(double[]? at, CaptureFramesOptions? options, CancellationToken cancellationToken) =>
+        JsonNode.Parse(await _tools.CaptureFramesAsync(at, options, cancellationToken: cancellationToken))!.AsObject();
 
     private async Task<JsonObject> WaitAsync(WaitCondition condition, int timeoutMs = 10_000) =>
         JsonNode.Parse(Text(await _tools.WaitForAsync(condition, timeoutMs, cancellationToken: TestContext.Current.CancellationToken)))!.AsObject();

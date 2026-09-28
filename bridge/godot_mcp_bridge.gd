@@ -31,7 +31,7 @@ const DOTNET_SCRIPT := "godot_mcp_dotnet.gd"
 ## stops and a call_method it stops awaiting (_cancel); the server cancels one when its
 ## load-adjusted allowance passes before the request's backstopMs.
 const CANCELLABLE: PackedStringArray = [
-	"frame", "wait_for", "monitor", "dotnet", "run_script", "call_method"
+	"frame", "wait_for", "monitor", "frames", "dotnet", "run_script", "call_method"
 ]
 ## A stopped run_script's answer, the restored clause (_restore) filled in.
 const SCRIPT_STOPPED := (
@@ -464,6 +464,7 @@ func _command_handlers() -> Dictionary:
 		"frame": _handle_time.bind("frame"),
 		"wait_for": _handle_time.bind("wait_for"),
 		"monitor": _handle_time.bind("monitor"),
+		"frames": _handle_time.bind("frames"),
 		"compare_screenshot": _handle_compare,
 		"preview": _handle_preview,
 		"movie_frame": _handle_movie_frame,
@@ -809,8 +810,8 @@ func _on_script_completed(value: Variant, id: int) -> void:
 	_reply_ok(id, {"value": _json.to_json(value)})
 
 
-## Runs a frame, wait_for or monitor request on the clock child, which answers {result} or
-## {error}.
+## Runs a frame, wait_for, monitor or frames (capture_frames) request on the clock child, which
+## answers {result} or {error}.
 func _handle_time(id: int, params: Dictionary, command: String) -> void:
 	var outcome: Dictionary
 	match command:
@@ -818,6 +819,8 @@ func _handle_time(id: int, params: Dictionary, command: String) -> void:
 			outcome = await _time.frame_control(params)
 		"monitor":
 			outcome = await _time.monitor(params)
+		"frames":
+			outcome = await _time.capture_frames(params)
 		_:
 			outcome = await _time.wait_for(params)
 	if outcome.has("error"):

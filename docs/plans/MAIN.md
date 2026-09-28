@@ -15,7 +15,6 @@ Waves run in order; bug reports sit ahead of the backlog inside each. The single
 
 Shared: the screenshot grabs in `bridge/godot_mcp_bridge.gd`, `godot_mcp_time.gd`, `godot_mcp_baseline.gd` and `godot_mcp_preview.gd`, and `src/GodotMcp.Server/Tools/RuntimeTools.cs` / `RuntimeTools.Time.cs`. Gate: `pwsh run.ps1 test`, `pwsh run.ps1 gdtest` and `pwsh run.ps1 itest` (the `reads` and `time` groups); a human check looks at the captured frames. Both items as decided in [DECISIONS.md](../DECISIONS.md) 15; the helper has landed (`grab_frame`).
 
-- [ ] #25: a `capture_frames` tool that captures at set game-time points (`at` or `{every, for}`) in one call, through the capture helper
 - [ ] Measure `grab_frame`'s popup placement at a stretch other than 1:1 (a project with `stretch/mode` and a window bigger than the base size, `quiet: false`): only the 1:1 transform has been measured
 
 ### Release

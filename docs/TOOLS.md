@@ -15,6 +15,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | Drive with a pad | `gamepad_button`, `gamepad_stick`, `gamepad_axis` | `simulate_input` joypad events |
 | Land a check on an exact frame | `frame_control` (`pause`, `step`), then `wait_for` with `timeoutMs: 0` | `wait_for` with a timeout on a running game |
 | Watch a value change over frames | `monitor_property` | a loop of `inspect_node` calls |
+| Frames at set moments of an animation or a timed sequence | `capture_frames` | a `take_screenshot` per moment, whose timing drifts |
 | Press an InputMap action | `simulate_action` | `key` on a key bound to it |
 | Find the input a game cannot survive | `stress_input` | a hand-written loop of random `simulate_input` calls |
 | Wait for something to happen | `wait_for` | polling `inspect_node` or `run_script` |
@@ -196,7 +197,13 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 - **Does:** `action` `pause` or `resume` sets `SceneTree.paused`; `step` advances exactly `count` (1 to 1000, default 1) drawn frames, or physics ticks with `options.unit: "physics"`, and leaves the game paused; `time_scale` sets `Engine.time_scale` to `scale` (above 0, at most 100). Returns `{paused, timeScale, processFrames, physicsFrames}`.
 - **Use:** freezing the game to inspect it; `step` with `options.screenshot: true` to capture the exact frame reached; `time_scale` to fast-forward a slow sequence.
-- **Edges:** nodes whose `process_mode` ignores pause keep running. A step counts drawn frames, so it is refused while the window is minimized or in low-processor mode, and a step whose frames stop being drawn fails at its deadline (10 s + 100 ms a frame, load-adjusted), leaving the game paused. A step fails if the game pauses itself midway. While a step or a `monitor_property` runs, other steps, `pause` and `resume` are refused.
+- **Edges:** nodes whose `process_mode` ignores pause keep running. A step counts drawn frames, so it is refused while the window is minimized or in low-processor mode, and a step whose frames stop being drawn fails at its deadline (10 s + 100 ms a frame, load-adjusted), leaving the game paused. A step fails if the game pauses itself midway. While a step, a `monitor_property` or a `capture_frames` runs, other steps, `pause` and `resume` are refused.
+
+### `capture_frames`
+
+- **Does:** saves the game's frame at each of a list of moments in one call, with no round trip per frame: `{frames: [{at, frame, gameSeconds, late, path, width, height}], stopped?, missed?}`, paths only, no images.
+- **Use:** frames at set points of an animation or a timer-driven sequence. `at` (1 to 1000 ascending seconds, each 0 to 120), or `options {every, for}` for evenly spaced points (`every` 0.5 with `for` 1.2 gives 0.5 and 1.0); `options.crop` as `take_screenshot`'s. The seconds are game time from the call's start, the sum of each frame's delta, so they follow `Engine.time_scale` as the game's own timers do.
+- **Edges:** a point is taken in the first frame at or after it, and `late` says by how many seconds; points due in the same frame share one file. Refused while the game is paused (its game time does not advance; step it with `frame_control` and `options.screenshot` instead) and while a step or a `monitor_property` runs; while it runs, `pause`, `resume`, a step and a monitor are refused. It ends at `options.timeoutMs` (default the last point + 10 s + 100 ms a point, load-adjusted; 1 to 600000) and then answers the frames taken with `stopped: true` and `missed`, the points not reached, still a success: under a small `time_scale`, raise `timeoutMs`. A game that pauses itself partway stops its clock, so it ends the same way.
 
 ### `monitor_property`
 

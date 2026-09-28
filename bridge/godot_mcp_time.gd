@@ -37,6 +37,15 @@ const MONITORING_REFUSAL := (
 	"A monitor_property is still running on this game; wait for its reply before pause, "
 	+ "resume, a step or another monitor."
 )
+const CAPTURING_REFUSAL := (
+	"A capture_frames is still running on this game; wait for its reply before pause, resume, "
+	+ "a step, a monitor or another capture."
+)
+## monitor's PAUSED_REFUSAL for capture_frames, whose clock is the game's own.
+const CAPTURE_PAUSED_REFUSAL := (
+	"The game is paused, so its game time does not advance and capture_frames cannot reach its "
+	+ "points; resume it first, or step it with frame_control and its screenshot option."
+)
 const MONITOR_STALLED := (
 	"The monitor stopped after %d of %d frames: its deadline passed before the rest ran "
 	+ "(is the game running slowly?)."
@@ -72,8 +81,8 @@ const NO_UI_BASELINE := (
 
 ## The bridge this clock belongs to, for its node lookup, JSON conversion and screenshots.
 var bridge: Node
-## What runs now, "step" or "monitor", or empty: while one runs, pause, resume, a step and a
-## monitor are refused until it ends.
+## What runs now, "step", "monitor" or "frames" (capture_frames), or empty: while one runs, pause,
+## resume, a step, a monitor and a capture are refused until it ends.
 var _running: String = ""
 ## Whether the running step's or monitor's deadline has passed.
 var _deadline_passed: bool = false
@@ -118,9 +127,14 @@ func _set_time_scale(scale: float) -> String:
 	return ""
 
 
-## Why a step or a monitor cannot start while the one running goes on.
+## Why a step, a monitor or a capture cannot start while the one running goes on.
 func _busy_refusal() -> String:
-	return MONITORING_REFUSAL if _running == "monitor" else STEPPING_REFUSAL
+	match _running:
+		"monitor":
+			return MONITORING_REFUSAL
+		"frames":
+			return CAPTURING_REFUSAL
+	return STEPPING_REFUSAL
 
 
 ## Refuses a step that would wait for draws that never come; else runs it under the step mark
@@ -140,11 +154,11 @@ func _guarded_step(params: Dictionary, result: Dictionary) -> String:
 	return error
 
 
-## Marks kind ("step" or "monitor") running for the request holding params, set before the first
-## await so a request read in the same frame is refused, and arms its deadline of real time:
-## params.backstopMs when the server sends one (its allowance measured in load-adjusted time, so
-## the server cancels sooner), else deadline_ms, the server's own allowance; either way a run the
-## server has given up on still frees the mark. Returns the deadline.
+## Marks kind ("step", "monitor" or "frames") running for the request holding params, set before
+## the first await so a request read in the same frame is refused, and arms its deadline of real
+## time: params.backstopMs when the server sends one (its allowance measured in load-adjusted
+## time, so the server cancels sooner), else deadline_ms, the server's own allowance; either way a
+## run the server has given up on still frees the mark. Returns the deadline.
 func _begin(kind: String, deadline_ms: float, params: Dictionary) -> SceneTreeTimer:
 	_running = kind
 	_running_params = params
@@ -170,9 +184,10 @@ func _end(deadline: SceneTreeTimer) -> void:
 	_running_params = null
 
 
-## Ends the running step or monitor as its deadline would, when params is the very Dictionary its
-## request holds (a step leaves the tree paused and answers STEP_STALLED; a monitor answers
-## MONITOR_STALLED). Returns whether it ended one.
+## Ends the running step, monitor or capture as its deadline would, when params is the very
+## Dictionary its request holds (a step leaves the tree paused and answers STEP_STALLED; a monitor
+## answers MONITOR_STALLED; a capture answers the frames taken, stopped and missed). Returns
+## whether it ended one.
 func cancel(params: Dictionary) -> bool:
 	if _running.is_empty() or not is_same(params, _running_params):
 		return false
@@ -385,6 +400,104 @@ func _sample(params: Dictionary, count: int) -> Dictionary:
 ## Whether value equals the last sample kept, in JSON space; false before the first.
 func _repeats(kept: Array, value: Variant) -> bool:
 	return not kept.is_empty() and _json_equal(value, kept[-1]["value"])
+
+
+## Captures a frame at each of params.points, ascending seconds of game time from the request:
+## the sum of each process frame's delta, which Engine.time_scale already scales, so the points
+## follow the game's timers; a frame that finds the tree paused adds nothing, as it stops them.
+## A point is due in the first frame whose sum reaches it; that frame is grabbed once at its
+## frame_post_draw and saved as take_screenshot saves it (params.crop, no preview), and every point
+## due in it shares the file. Returns {result: frames_result}, stopped with the points missed when
+## the deadline (params.deadlineMs, or params.backstopMs) or a cancel ends it first, or {error}
+## when it cannot start or a frame cannot be saved.
+func capture_frames(params: Dictionary) -> Dictionary:
+	var refusal: String = _capture_refusal(get_tree().paused)
+	if not refusal.is_empty():
+		return {"error": refusal}
+	var points: Array = params["points"] if params.get("points") is Array else []
+	var deadline: SceneTreeTimer = _begin(
+		"frames", float(params.get("deadlineMs", 10000 + 100 * points.size())), params
+	)
+	var taken: Variant = await _capture_points(points, params)
+	_end(deadline)
+	if taken is String:
+		return {"error": taken}
+	return {"result": frames_result(points, taken)}
+
+
+## Why a capture cannot start now, or empty: a step, a monitor or another capture runs, or the
+## tree is paused, so its game time would not advance.
+func _capture_refusal(paused: bool) -> String:
+	if not _running.is_empty():
+		return _busy_refusal()
+	return CAPTURE_PAUSED_REFUSAL if paused else ""
+
+
+## Runs the capture's clock from the next process_frame until every point is taken, the deadline
+## passes or a cancel comes. Returns the entries (frame_entries) taken, or a String saying why a
+## frame could not be saved.
+func _capture_points(points: Array, params: Dictionary) -> Variant:
+	var tree: SceneTree = get_tree()
+	var elapsed: float = 0.0
+	var entries: Array = []
+	while entries.size() < points.size():
+		if not await _next(tree.process_frame):
+			break
+		if not tree.paused:
+			elapsed += get_process_delta_time()
+		var due: Array = due_points(points, entries.size(), elapsed)
+		if due.is_empty():
+			continue
+		if not await _next(RenderingServer.frame_post_draw):
+			break
+		var saved: Variant = bridge._save_screenshot(bridge.grab_frame(), params)
+		if saved is String:
+			return saved
+		entries.append_array(frame_entries(due, saved, Engine.get_process_frames(), elapsed))
+	return entries
+
+
+## The points from index taken on that are due at elapsed seconds: each at or before elapsed, in
+## order, stopping at the first still to come.
+static func due_points(points: Array, taken: int, elapsed: float) -> Array:
+	var due: Array = []
+	for index in range(taken, points.size()):
+		if float(points[index]) > elapsed:
+			break
+		due.append(points[index])
+	return due
+
+
+## One entry per due point, all sharing saved's file: {at, frame, gameSeconds, late, path, width,
+## height}, with late the seconds gameSeconds passed at by, to the millisecond.
+static func frame_entries(due: Array, saved: Dictionary, frame: int, elapsed: float) -> Array:
+	var entries: Array = []
+	for at: Variant in due:
+		(
+			entries
+			. append(
+				{
+					"at": at,
+					"frame": frame,
+					"gameSeconds": elapsed,
+					"late": snappedf(elapsed - float(at), 0.001),
+					"path": saved["path"],
+					"width": saved["width"],
+					"height": saved["height"],
+				}
+			)
+		)
+	return entries
+
+
+## A capture's result: {frames}, plus stopped: true and missed, the points not taken, when it ended
+## before taking them all.
+static func frames_result(points: Array, entries: Array) -> Dictionary:
+	var result: Dictionary = {"frames": entries}
+	if entries.size() < points.size():
+		result["stopped"] = true
+		result["missed"] = points.slice(entries.size())
+	return result
 
 
 ## Waits for params.kind (exists, property, signal, expression or uiChanged) with params {node,
