@@ -26,6 +26,16 @@ public abstract class SnippetGlobals
     /// <summary>The root window, <see cref="Tree"/>'s <c>Root</c>.</summary>
     protected Window Root => Tree.Root;
 
+    /// <summary>
+    /// The token the call's timeout cancels: hand it to an await or check it in a loop, and the snippet stops once the call
+    /// has been answered as timed out. A snippet that ignores it keeps running, and a loop on the main thread that never
+    /// yields cannot see the cancel.
+    /// </summary>
+    protected CancellationToken Cancellation { get; private set; }
+
+    /// <summary>Binds the call's token to <see cref="Cancellation"/> before the snippet's <c>RunAsync</c> is invoked.</summary>
+    internal void Bind(CancellationToken cancellation) => Cancellation = cancellation;
+
     /// <summary>The node a path or a bare name names, by the bridge's rule: a path, or the first node of that name.</summary>
     /// <exception cref="InvalidOperationException">No such node, or it is the bridge's own.</exception>
     protected Node Node(string path) =>

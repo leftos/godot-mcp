@@ -12,7 +12,8 @@ extends Node
 ## A reply saying the helper's call is pending (its Task has not finished) is polled once a frame,
 ## never waited on in place: the Task's continuation runs on a later frame of this same thread.
 ## Past the request's timeoutMs (its backstopMs when the server sends one), or when the server
-## cancels the request, the call is forgotten, its Task left running in the game.
+## cancels the request, the call is forgotten, its Task left running in the game while the
+## Cancellation token a snippet was given is cancelled.
 
 ## The SceneTree meta the helper stores its callable under (Helper.MetaName in the helper).
 const META_NAME := "godot_mcp_dotnet"

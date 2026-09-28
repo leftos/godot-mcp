@@ -40,17 +40,21 @@ internal static class Snippets
             return Helper.Failure(stale);
         }
         SnippetContext context = new(SnippetContext.Holding(request["game"]!.GetValue<string>()));
+        // Never disposed: the snippet may hold or have registered on the token after the entry is settled or forgotten, and a
+        // source with no timer holds nothing the collector cannot take back.
+        CancellationTokenSource cancellation = new();
         SnippetGlobals snippet;
         try
         {
             snippet = Create(context, request);
+            snippet.Bind(cancellation.Token);
         }
         catch
         {
             context.Unload();
             throw;
         }
-        return Execute(snippet, context, new Shape(maxDepth, request["keep"]?.GetValue<bool>() ?? false));
+        return Execute(snippet, context, new Shape(maxDepth, request["keep"]?.GetValue<bool>() ?? false), cancellation);
     }
 
     /// <summary>The refusal naming each expected assembly the game has loaded from another build, in order; null when none is.</summary>
@@ -85,7 +89,7 @@ internal static class Snippets
         "CA1031:Do not catch general exception types",
         Justification = "The snippet runs game code; whatever it throws is the failure to report."
     )]
-    private static JsonObject Execute(SnippetGlobals snippet, SnippetContext context, Shape shape)
+    private static JsonObject Execute(SnippetGlobals snippet, SnippetContext context, Shape shape, CancellationTokenSource cancellation)
     {
         Task<object?> task;
         try
@@ -99,7 +103,7 @@ internal static class Snippets
         }
         if (!task.IsCompleted)
         {
-            return PendingTasks.Add(task, () => Settled(task, shape), context.Unload);
+            return PendingTasks.Add(task, () => Settled(task, shape), context.Unload, cancellation);
         }
         try
         {

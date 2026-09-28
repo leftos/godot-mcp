@@ -800,6 +800,42 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
     }
 
     [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpPastItsTimeoutCancelsItsToken()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        const string code =
+            "try { await Task.Delay(10000, Cancellation); } "
+            + "catch (OperationCanceledException) { Tree.Root.SetMeta(\"gm_cancelled\", true); } return 1;";
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => RunCSharpAsync(code, new RunCSharpOptions(TimeoutMs: 200), cancellation));
+        Assert.StartsWith("run_csharp failed: ", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("the call did not complete within 200 ms; its Task is still running in the game", refused.Message, StringComparison.Ordinal);
+
+        bool cancelled = await WaitsForTheCancelledSnippet(cancellation);
+        await RunCSharpAsync("Tree.Root.RemoveMeta(\"gm_cancelled\"); return 0;", null, cancellation);
+
+        Assert.True(cancelled, "The snippet's Cancellation was not cancelled within 5 s of its call timing out.");
+    }
+
+    /// <summary>Whether the timed-out snippet's catch block ran within 5 s, well inside the 10 s delay it was awaiting.</summary>
+    private async Task<bool> WaitsForTheCancelledSnippet(CancellationToken cancellation)
+    {
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        bool cancelled = false;
+        while (!cancelled && DateTime.UtcNow < deadline)
+        {
+            JsonObject probe = await RunCSharpAsync("return Tree.Root.HasMeta(\"gm_cancelled\");", null, cancellation);
+            cancelled = probe["value"]?.GetValue<bool>() ?? false;
+            if (!cancelled)
+            {
+                await Task.Delay(100, cancellation);
+            }
+        }
+
+        return cancelled;
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
     public async Task RunCSharpCallsAnInternalMethodDirectly()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

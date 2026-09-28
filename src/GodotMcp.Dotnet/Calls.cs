@@ -138,7 +138,7 @@ internal static class Calls
         }
         Task task = value as Task ?? (Task)declared.GetMethod(nameof(ValueTask.AsTask), Type.EmptyTypes)!.Invoke(value, null)!;
         Waiting waiting = shell with { Task = task };
-        return task.IsCompleted ? Settled(waiting) : PendingTasks.Add(task, () => Settled(waiting), null);
+        return task.IsCompleted ? Settled(waiting) : PendingTasks.Add(task, () => Settled(waiting), null, null);
     }
 
     [SuppressMessage(
