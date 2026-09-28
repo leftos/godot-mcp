@@ -11,19 +11,23 @@ The first version replaced godot-mcp-runtime at parity and went further: every p
 
 Waves run in order; bug reports sit ahead of the backlog inside each. The singles' order is not a ranking.
 
+### Release 0.5.0
+
+#23-#28 have landed under `## Unreleased`; the release waits for #29 (user, 2026-09-28).
+
+- [ ] #29: `add_node` refuses `properties: {layout_mode: 0}` on a `ColorRect` under a `Control` ("it read 3 after the set"): `layout_mode` is editor-side and its stored value depends on the parent, so set it the way the editor does (after the node is added, or by the anchors it implies), or say which values the parent allows
+- [ ] Cut the release once #29 has landed: 0.5.0, a minor bump for the new `capture_frames` and `move_node` tools (DEVELOPMENT.md's "CI and releases"), then `pwsh run.ps1 install` from the main checkout; the local install holds 0.4.1+eda56c9 until then
+
 ### Wave 1: capture
 
-Shared: the screenshot grabs in `bridge/godot_mcp_bridge.gd`, `godot_mcp_time.gd`, `godot_mcp_baseline.gd` and `godot_mcp_preview.gd`, and `src/GodotMcp.Server/Tools/RuntimeTools.cs` / `RuntimeTools.Time.cs`. Gate: `pwsh run.ps1 test`, `pwsh run.ps1 gdtest` and `pwsh run.ps1 itest` (the `reads` and `time` groups); a human check looks at the captured frames. Both items as decided in [DECISIONS.md](../DECISIONS.md) 15; the helper has landed (`grab_frame`).
+Shared: the screenshot grabs in `bridge/godot_mcp_bridge.gd`, `godot_mcp_time.gd`, `godot_mcp_baseline.gd` and `godot_mcp_preview.gd`. Gate: `pwsh run.ps1 test`, `pwsh run.ps1 gdtest` and `pwsh run.ps1 itest` (the `reads` group); a human check looks at the captured frames.
 
 - [ ] Measure `grab_frame`'s popup placement at a stretch other than 1:1 (a project with `stretch/mode` and a window bigger than the base size, `quiet: false`): only the 1:1 transform has been measured
-
-
-### Release
-
-- [ ] Cut a release (DEVELOPMENT.md's "CI and releases") once #23, #24, #25 and #26 have landed (user, 2026-09-28)
+- [ ] #28 follow-up: when delve is free (user, 2026-09-28: later), run `Scratch/CrushScratch` and stop it to see which `killReason` or `leftRunning` the new stop reports, pinning whether delve's kill was a lingering child or a slow teardown
 
 ### Singles
 
+- [ ] `restart_project` reports the old run's `previousGameExitCode` but not the `killReason` and `leftRunning` `stop_project` now gives; add them as `previousKillReason` and `previousLeftRunning`
 - [ ] Timing tests that fail under other agents' load and pass on a retry: `BridgeListenerTests.ASilentConnectionIsRefusedOnceNoWaiterIsPending` and `HangProbeTests.ACallToAGamePausedUnderADebuggerFailsFast` (2.98 s against its 2 s bound) in the unit hook, `WatchdogTests.StopReturnsOnlyOnceAKilledGameHasLetGoOfItsFolder` past xunit's 60 s, `InspectionTests.DescribeClassFindsAScriptClassOfTheRunningGame` past its 45 s in a 17-minute full itest, `GitRunnerTests.AHungGitIsKilledAtItsCeiling` and `ToolProcessStallTests.AStallKillsASilentChild` in the unit hook: find what each times on wall clock
 - [ ] `run_csharp`: give snippets a `CancellationToken` the timeout's cancel fires, so a timed-out snippet can stop itself (today its `Task` is forgotten and keeps running)
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see [DECISIONS.md](../DECISIONS.md#gamepad-input-from-godot-472s-source))
