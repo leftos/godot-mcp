@@ -20,8 +20,8 @@ gates through this script on Windows; it is Windows only.
  - The command inherits this script's standard input, output and error (STARTF_USESTDHANDLES with bInheritHandles),
    so everything it prints lands where this script's output goes: tools/gate.ps1's log.
  - It is started with CREATE_NO_WINDOW: CREATE_NEW_CONSOLE makes Windows Terminal open a visible window.
- - It runs in a job object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE held only by this script, so when a gate's ceiling
-   kills this script, the kernel closes the job and kills the command with every process it started. On a normal end
+ - It runs in a job object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE held only by this script, so when the gate kills
+   this script, the kernel closes the job and kills the command with every process it started. On a normal end
    the limit is lifted before the job is closed, so a process the command leaves behind (a build server that another
    worktree's build may be using) outlives it, as it would without this script.
  - The command line is built with the Microsoft C runtime's quoting rules, since CreateProcessW takes one string, and

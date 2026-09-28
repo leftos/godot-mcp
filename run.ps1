@@ -6,17 +6,21 @@ Builds, tests, formats and publishes godot-mcp.
 
 .DESCRIPTION
 Every command runs under tools/gate.ps1: its whole output goes to .tmp/<command>.log, the last lines are printed, and it
-exits with the command's own status, or 124 when it outlived its ceiling and was killed with its children.
+exits with the command's own status, or 124 when the gate's watchdog killed it with every process it started. The
+watchdog kills a run for the first of three reasons, each named by a kill line in the log that this script prints with
+its reading: STALLED (no output and no CPU for 120 s: it hung), TIMED OUT (the ceiling ran out on a clock that runs
+slower while other work keeps the machine busy: a busy loop or a ceiling set too tight) or BACKSTOP (five times the
+ceiling in plain wall time: the machine was busy, so run it once more alone). The ceilings below are load-adjusted.
 
   build    dotnet build GodotMcp.slnx, warnings as errors; ceiling 300 s
-  test     the unit tests (tests/GodotMcp.Tests); ceiling 180 s, and the runner's own --timeout 3m
+  test     the unit tests (tests/GodotMcp.Tests); ceiling 180 s
   itest    the integration tests against the real Godot (GODOT_PATH, else a Godot*console*.exe on PATH), in the class
            groups of the table at the top of this script (lifecycle, input, reads). It first checks that every
            `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly one group and every listed
            class exists, and stops with status 1 before running anything when not. It then runs the dotnet command (as
            below; a -Filter run does so only when the filter matches a class of the csharp group), builds the project once
            (.tmp/itest-build.log, ceiling 300 s) and runs each group as its own gate (.tmp/itest-<group>.log, ceiling
-           300 s, the runner's own --timeout 4m). Every group runs even when an earlier one fails; a summary line per
+           300 s). Every group runs even when an earlier one fails; a summary line per
            group follows, and the exit status is the first non-zero group's. On Windows every test run (a group's or
            a -Filter one) goes through tools/hidden-desktop.ps1, on a desktop of its own, so no Godot window shows.
   format   dotnet format style (info severity), then CSharpier, on the whole solution; ceiling 180 s each
@@ -63,7 +67,7 @@ exits with the command's own status, or 124 when it outlived its ceiling and was
            for quiet: false, and then its window is meant to show.
 
 -Filter narrows test or itest to one test class, e.g. -Filter "*SessionLifecycleTests". A filtered itest skips the
-groups: one gate, .tmp/itest.log, ceiling 300 s, --timeout 4m.
+groups: one gate, .tmp/itest.log, ceiling 300 s.
 
 .EXAMPLE
 pwsh run.ps1 itest -Filter "*McpServerSmokeTests"
@@ -115,8 +119,41 @@ $dotnetStaging = Join-Path $logDir 'dotnet-publish'
 
 $gate = Join-Path $root 'tools/gate.ps1'
 
+# The last kill line of the gate in a log (a match whose first group is STALLED, TIMED OUT or BACKSTOP), or $null.
+function Get-GateKillLine {
+    param([Parameter(Mandatory)] [string]$Log)
+    return Select-String -LiteralPath $Log -Pattern '^gate: (STALLED|TIMED OUT|BACKSTOP)' -ErrorAction SilentlyContinue |
+        Select-Object -Last 1
+}
+
+# The kind of the gate's kill in a log, STALLED, TIMED OUT or BACKSTOP; '' when the log has no kill line.
+function Get-GateKillKind {
+    param([Parameter(Mandatory)] [string]$Log)
+    $line = Get-GateKillLine -Log $Log
+    if (-not $line) {
+        return ''
+    }
+    return $line.Matches[0].Groups[1].Value
+}
+
+# The gate's kill line in a log followed by what it means, or a note that the log has none.
+function Get-GateKill {
+    param([Parameter(Mandatory)] [string]$Log)
+    $line = Get-GateKillLine -Log $Log
+    if (-not $line) {
+        return "no kill line in $Log"
+    }
+    $reading = switch ($line.Matches[0].Groups[1].Value) {
+        'STALLED' { "It hung: read $Log for where it stopped." }
+        'TIMED OUT' { "It kept working past its ceiling even allowing for load: a busy loop or a ceiling set too tight; read $Log before raising it." }
+        default { 'The machine was busy: run it once more alone.' }
+    }
+    return "$($line.Line) $reading"
+}
+
 # Runs a program under tools/gate.ps1: the whole output to .tmp/<Name>.log, the last 15 lines on the screen, and the
-# process tree killed with status 124 when it outlives its ceiling (a run that reaches one has hung, not slowed).
+# process tree killed with status 124 when the watchdog stops it (stalled, past its load-adjusted ceiling, or past five
+# times it in wall time), with the log's kill line and its reading printed.
 function Invoke-Gated {
     param(
         [Parameter(Mandatory)] [string]$Name,
@@ -132,7 +169,11 @@ function Invoke-Gated {
         $gateOptions += '-NoMarkers'
     }
     & $gate @gateOptions -- $Program @Arguments | Out-Host
-    return $LASTEXITCODE
+    $status = $LASTEXITCODE
+    if ($status -eq 124) {
+        Write-Host "$Name was killed by the gate: $(Get-GateKill -Log $log)" -ForegroundColor Yellow
+    }
+    return $status
 }
 
 # Runs dotnet under tools/gate.ps1, as Invoke-Gated does.
@@ -224,7 +265,6 @@ function Invoke-GdtestImport {
 function Get-TestArgumentList {
     param(
         [Parameter(Mandatory)] [string]$Project,
-        [Parameter(Mandatory)] [string]$Timeout,
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Classes,
         [switch]$NoBuild
     )
@@ -232,9 +272,8 @@ function Get-TestArgumentList {
     if ($NoBuild) {
         $arguments += '--no-build'
     }
-    $arguments += @('--', '--timeout', $Timeout)
     if ($Classes.Count -gt 0) {
-        $arguments += @('--filter-class') + $Classes
+        $arguments += @('--', '--filter-class') + $Classes
     }
     return $arguments
 }
@@ -286,12 +325,22 @@ function Test-ItestFilterNeedsDotnet {
     return $false
 }
 
+# A killed group's summary verdict: the kind of kill its log names, STALLED, TIMED OUT or BACKSTOP.
+function Get-ItestKillVerdict {
+    param([Parameter(Mandatory)] [string]$Group)
+    $kind = Get-GateKillKind -Log (Join-Path $logDir "itest-$Group.log")
+    if ($kind) {
+        return $kind
+    }
+    return 'KILLED (status 124, no kill line in its log)'
+}
+
 function Write-ItestSummary {
     param([Parameter(Mandatory)] [System.Collections.Specialized.OrderedDictionary]$Results)
     foreach ($group in $Results.Keys) {
         $verdict = switch ($Results[$group]) {
             0 { 'passed' }
-            124 { 'TIMED OUT' }
+            124 { Get-ItestKillVerdict -Group $group }
             default { "FAILED (status $_)" }
         }
         Write-Host "itest ${group}: $verdict"
@@ -317,7 +366,7 @@ function Invoke-ItestByGroup {
     $results = [ordered]@{}
     foreach ($group in $itestGroups.Keys) {
         $classes = @($itestGroups[$group] | ForEach-Object { "$itestNamespace.$_" })
-        $arguments = Get-TestArgumentList -Project $itestProject -Timeout '4m' -Classes $classes -NoBuild
+        $arguments = Get-TestArgumentList -Project $itestProject -Classes $classes -NoBuild
         $results[$group] = Invoke-ItestGated -Name "itest-$group" -Arguments $arguments
     }
     Write-ItestSummary -Results $results
@@ -501,7 +550,7 @@ switch ($Command) {
         exit (Invoke-Logged -Name 'build' -TimeoutSeconds 300 -Arguments @('build', $solution, '-warnaserror'))
     }
     'test' {
-        $arguments = Get-TestArgumentList -Project 'tests/GodotMcp.Tests/GodotMcp.Tests.csproj' -Timeout '3m' -Classes $filterClasses
+        $arguments = Get-TestArgumentList -Project 'tests/GodotMcp.Tests/GodotMcp.Tests.csproj' -Classes $filterClasses
         exit (Invoke-Logged -Name 'test' -TimeoutSeconds 180 -Arguments $arguments)
     }
     'itest' {
@@ -514,7 +563,7 @@ switch ($Command) {
                 exit $dotnet
             }
         }
-        $arguments = Get-TestArgumentList -Project $itestProject -Timeout '4m' -Classes $filterClasses
+        $arguments = Get-TestArgumentList -Project $itestProject -Classes $filterClasses
         exit (Invoke-ItestGated -Name 'itest' -Arguments $arguments)
     }
     'format' {
