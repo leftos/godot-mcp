@@ -16,8 +16,9 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
   test     the unit tests (tests/GodotMcp.Tests): the project built in Release first (.tmp/test-build.log, ceiling 300 s),
            then its dotnet test -c Release --no-build; ceiling 180 s
   itest    the integration tests against the real Godot (GODOT_PATH, else a Godot*console*.exe on PATH), in the class
-           groups of the table at the top of this script (lifecycle, input, reads), which run in the two lanes of the
-           table below it: timing (the wall-clock-sensitive groups) and build (the C# builds and headless runs). It
+           groups of the table at the top of this script, which run in the two lanes of the table below it: timing
+           (lifecycle, input, time, recording, reads: the wall-clock-sensitive groups) and build (prep, headless,
+           scene, nodes, csharp: the C# builds and headless runs). It
            first checks that every `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly
            one group, every listed class exists, and every group is in exactly one lane that names only groups, and
            stops with status 1 before running anything when not. It then runs the dotnet command (as below; a -Filter
