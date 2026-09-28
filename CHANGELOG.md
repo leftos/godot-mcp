@@ -2,12 +2,11 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
-## Unreleased
+## 0.6.0 - 2026-09-28
 
 ### Added
 
 - A `run_csharp` snippet gets `Cancellation`, a token its timeout cancels, so a snippet that awaits with it stops once the call times out.
-
 - Scene tools write the `.uid` the editor would for a script that has none, list it in `uidFilesWritten`, and `run_project` imports so Godot's cache learns it.
 
 ### Fixed
