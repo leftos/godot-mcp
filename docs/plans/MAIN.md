@@ -11,8 +11,8 @@ The first version replaced godot-mcp-runtime at parity and went further: every p
 
 Measured 2026-09-28 on a loaded machine: unit 894 tests in 37 s, bounded by `ToolProcessTests` (56 s of summed test time, serial within its class); itest ~8.5 min fully serial, 452 s of test time in a 470 s run of four groups, so fixtures cost little and concurrency is the lever.
 
-- [ ] Run the unit and integration tests as the built test programs in Release rather than through `dotnet test` in Debug (user's global rule, 2026-09-28): `run.ps1` `test`, `itest` and `-Filter` runs, the build step and the docs that name `bin/Debug`
 - [ ] Run the itest groups 2–3 at a time in `run.ps1`, timing-sensitive groups kept apart; the Godot-launch-under-load flake below may have to be fixed first
+- [ ] Cut a release once the suite work above has landed (user, 2026-09-28)
 
 ## Next
 

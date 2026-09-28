@@ -12,19 +12,21 @@ its reading: STALLED (no output and no CPU for 120 s: it hung), TIMED OUT (the c
 slower while other work keeps the machine busy: a busy loop or a ceiling set too tight) or BACKSTOP (five times the
 ceiling in plain wall time: the machine was busy, so run it once more alone). The ceilings below are load-adjusted.
 
-  build    dotnet build GodotMcp.slnx, warnings as errors; ceiling 300 s
-  test     the unit tests (tests/GodotMcp.Tests); ceiling 180 s
+  build    dotnet build GodotMcp.slnx in Release, warnings as errors; ceiling 300 s
+  test     the unit tests (tests/GodotMcp.Tests): the project built in Release first (.tmp/test-build.log, ceiling 300 s),
+           then its dotnet test -c Release --no-build; ceiling 180 s
   itest    the integration tests against the real Godot (GODOT_PATH, else a Godot*console*.exe on PATH), in the class
            groups of the table at the top of this script (lifecycle, input, reads), which run in the two lanes of the
            table below it: timing (the wall-clock-sensitive groups) and build (the C# builds and headless runs). It
            first checks that every `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly
            one group, every listed class exists, and every group is in exactly one lane that names only groups, and
            stops with status 1 before running anything when not. It then runs the dotnet command (as below; a -Filter
-           run does so only when the filter matches a class of the csharp group), builds the project once
+           run does so only when the filter matches a class of the csharp group), builds the project once in Release
            (.tmp/itest-build.log, ceiling 300 s) and runs each group as its own gate in a process of its own
-           (.tmp/itest-<group>.log, ceiling 300 s): each lane's groups one at a time in the table's order, the two lanes
-           at once. A group's console output, the gate's tail and verdict, goes to .tmp/itest-<group>.console (errors to
-           .tmp/itest-<group>.console.err) and is printed under "== itest <group> (lane <lane>)" when the group ends.
+           (.tmp/itest-<group>.log, ceiling 300 s, dotnet test -c Release --no-build): each lane's groups one at a time
+           in the table's order, the two lanes at once. A group's console output, the gate's tail and verdict, goes to
+           .tmp/itest-<group>.console (errors to .tmp/itest-<group>.console.err) and is printed under
+           "== itest <group> (lane <lane>)" when the group ends.
            Every group runs even when an earlier one fails; a summary line per group follows in the groups table's order,
            then "itest: <n> groups in <m> lanes, wall <time>", and the exit status is the first non-zero group's in
            that order. Each gate takes one of the machine's gate slots, so the two lanes take two. On Windows every
@@ -74,10 +76,11 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            for quiet: false, and then its window is meant to show.
 
 -Filter narrows test or itest to one test class, e.g. -Filter "*SessionLifecycleTests". A filtered itest skips the
-groups: one gate, ceiling 300 s, logged to .tmp/itest-filter-<slug>.log, where <slug> is the filter with every run of
-characters outside A-Z, a-z and 0-9 turned into one '-' and trimmed of '-' at both ends
-(.tmp/itest-filter-SessionLifecycleTests.log for the example), so filtered runs of different classes in one tree at once
-keep their logs apart and never write a group's log; a filter that leaves no slug logs to .tmp/itest.log.
+groups: the project built in Release first (.tmp/itest-build.log, ceiling 300 s), then one gate, ceiling 300 s, logged to
+.tmp/itest-filter-<slug>.log, where <slug> is the filter with every run of characters outside A-Z, a-z and 0-9 turned
+into one '-' and trimmed of '-' at both ends (.tmp/itest-filter-SessionLifecycleTests.log for the example), so filtered
+runs of different classes in one tree at once keep their logs apart and never write a group's log; a filter that leaves
+no slug logs to .tmp/itest.log.
 
 Every command runs from the folder of this script, whatever folder it was started from, and gives the caller's location
 back when it ends; a relative -Calls path is read against the caller's location.
@@ -127,6 +130,10 @@ $itestLanes = [ordered]@{
 }
 $itestNamespace = 'GodotMcp.IntegrationTests'
 $itestProject = 'tests/GodotMcp.IntegrationTests/GodotMcp.IntegrationTests.csproj'
+$unitTestProject = 'tests/GodotMcp.Tests/GodotMcp.Tests.csproj'
+# The configuration every build of this script and every test run uses: a test run is preceded by the build of its own
+# project here and passes -c Release --no-build, so it never builds a configuration of its own.
+$configuration = 'Release'
 
 $root = $PSScriptRoot
 $logDir = Join-Path $root '.tmp'
@@ -204,6 +211,17 @@ function Invoke-Logged {
         [Parameter(Mandatory)] [string[]]$Arguments
     )
     return Invoke-Gated -Name $Name -TimeoutSeconds $TimeoutSeconds -Program 'dotnet' -Arguments $Arguments
+}
+
+# Builds a test project in $configuration, warnings as errors, under its own gate, so the run after it has nothing to
+# build and the runner loads that build. Returns the build's status.
+function Invoke-TestBuild {
+    param(
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$Project
+    )
+    $arguments = @('build', (Join-Path $root $Project), '-c', $configuration, '-warnaserror')
+    return Invoke-Logged -Name $Name -TimeoutSeconds 300 -Arguments $arguments
 }
 
 # The program and arguments of an integration test run: dotnet with the given arguments, on Windows through
@@ -296,7 +314,7 @@ function Get-TestArgumentList {
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Classes,
         [switch]$NoBuild
     )
-    $arguments = @('test', '--project', (Join-Path $root $Project))
+    $arguments = @('test', '--project', (Join-Path $root $Project), '-c', $configuration)
     if ($NoBuild) {
         $arguments += '--no-build'
     }
@@ -539,7 +557,7 @@ function Invoke-ItestByGroup {
     if ($dotnet -ne 0) {
         return $dotnet
     }
-    $build = Invoke-Logged -Name 'itest-build' -TimeoutSeconds 300 -Arguments @('build', (Join-Path $root $itestProject), '-warnaserror')
+    $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject
     if ($build -ne 0) {
         return $build
     }
@@ -736,10 +754,14 @@ Push-Location -LiteralPath $root
 try {
     switch ($Command) {
         'build' {
-            exit (Invoke-Logged -Name 'build' -TimeoutSeconds 300 -Arguments @('build', $solution, '-warnaserror'))
+            exit (Invoke-Logged -Name 'build' -TimeoutSeconds 300 -Arguments @('build', $solution, '-c', $configuration, '-warnaserror'))
         }
         'test' {
-            $arguments = Get-TestArgumentList -Project 'tests/GodotMcp.Tests/GodotMcp.Tests.csproj' -Classes $filterClasses
+            $build = Invoke-TestBuild -Name 'test-build' -Project $unitTestProject
+            if ($build -ne 0) {
+                exit $build
+            }
+            $arguments = Get-TestArgumentList -Project $unitTestProject -Classes $filterClasses -NoBuild
             exit (Invoke-Logged -Name 'test' -TimeoutSeconds 180 -Arguments $arguments)
         }
         'itest' {
@@ -752,7 +774,11 @@ try {
                     exit $dotnet
                 }
             }
-            $arguments = Get-TestArgumentList -Project $itestProject -Classes $filterClasses
+            $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject
+            if ($build -ne 0) {
+                exit $build
+            }
+            $arguments = Get-TestArgumentList -Project $itestProject -Classes $filterClasses -NoBuild
             exit (Invoke-ItestGated -Name (Get-ItestFilterLogName -Filter $Filter) -Arguments $arguments)
         }
         'format' {

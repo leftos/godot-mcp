@@ -19,7 +19,7 @@ repos:
         types: [c#]
       - id: dotnet-build
         name: dotnet build -warnaserror
-        entry: dotnet build GodotMcp.slnx -warnaserror
+        entry: dotnet build GodotMcp.slnx -c Release -warnaserror
         language: system
         pass_filenames: false
         files: \.(cs|csproj|props|slnx|editorconfig)$|^global\.json$
