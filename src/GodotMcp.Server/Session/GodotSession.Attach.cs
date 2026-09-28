@@ -151,7 +151,7 @@ internal sealed partial class GodotSession
 
     private async Task<BridgeConnection> AcceptAttachedBridgeAsync(HandshakeExpectation expected, TimeSpan wait, CancellationToken cancellationToken)
     {
-        using LoadDeadline deadline = registry.Clock.Start(wait, cancellationToken);
+        using LoadDeadline deadline = registry.LaunchClock.Start(wait, cancellationToken);
         try
         {
             return await registry.Listener.AcceptBridgeAsync(expected, deadline.Token);

@@ -7,10 +7,6 @@ Open work only, in working order: the next item is the first line from the top; 
 
 The first version replaced godot-mcp-runtime at parity and went further: every planned step and the sixteen features the user added have landed, and opening-hand and delve-the-dungeon drive their clients through it (cutover 2026-09-26).
 
-### Current: cleanup after 0.4.0 (user, 2026-09-28)
-
-- [ ] Find why a Godot launch in the itests fails under load ("the bridge did not connect within 15 s", exit 0xC06D007F; the Singles line below) and why `McpServerSmokeTests.ListsTheToolsRunsTheProbeReadsItClicksItAndStopsIt` passed its 45 s timeout beside the build lane (soak run 1, 2026-09-28)
-
 ## Next
 
 The singles' order is not a ranking.
@@ -18,7 +14,6 @@ The singles' order is not a ranking.
 ### Singles
 
 - [ ] `take_screenshot` misses popups and tooltips in a project that sets `display/window/subwindows/embed_subwindows=false`, since each is its own OS window outside the root viewport's texture (measured 2026-09-27 for #9): composite each visible non-embedded `Window` onto the capture at its offset from the root, through one capture helper so crops, baselines and frame steps inherit it; check the offset on a visible desktop first, since a native popup's `position` read (0,0) on the hidden one (user, 2026-09-27: build later)
-- [ ] A Godot launch in the itests died once with exit 0xC06D007F (a delay-load failure) before the bridge connected (`CaptureTests.SentPadInputIsCaptured`, full `itest` 2026-09-26, beside two other trees' itests; passed on the rerun): find what fails to load if it recurs. Recurred in kind 2026-09-27: a `TimeTests` run beside another tree's `HeadlessTests` failed all 38 at the fixture's launch ("the bridge did not connect within 15 s", no stderr, no Godot process ever seen by a 10 s sampler), while the same branch passed alone and on a quiet machine; the same load also gave a `WaitForNodeExists` flake and a test host outliving the 300 s ceiling, and `pwsh run.ps1 format` passing its 180 s ceiling with an empty log as the first command in a cold worktree (it passed once the tree was built)
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see [DECISIONS.md](../DECISIONS.md#gamepad-input-from-godot-472s-source))
 - [ ] A patched Godot build for internal development (user, 2026-09-26: patches kept in a repo, rebuilt and reviewed on every upstream update). Agreed order (user, 2026-09-26): solve each need on stock 4.7.2 first; a need stock cannot meet gets a small patch sent upstream as a PR and carried only until it merges; the full patches repo and rebuild pipeline only if a patch upstream will not take. No candidate today: the test window flash, the first one, is gone on stock 4.7.2 (measured 2026-09-26: no window on the user's desktop from gdtest, filtered itests or the import prep, all behind the hidden desktop; see the DEVELOPMENT.md footgun on how Godot shows its window), and the user chose to keep this line idle until a need stock cannot meet appears (user, 2026-09-26). Open for that pipeline: the .NET build's GodotSharp packages, which the C# projects must resolve without a tracked-file change; tests on a patched engine against games shipped on stock export templates
 - [ ] The profiler, autoload-editing and file-parsing tools, if a need shows up

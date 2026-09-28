@@ -23,6 +23,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     // The number of the last preview session named, under _lock; each preview's name carries the next.
     private int _previews;
     private readonly Dictionary<string, GodotSession> _sessions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly LoadClock? _launchClock;
 
     // One per folder a prep has run on, kept for the server's lifetime. Never disposed: a prep still in flight at shutdown
     // releases its lock after the registry is gone, and a SemaphoreSlim whose wait handle is never asked for holds no handle.
@@ -34,6 +35,17 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
     /// <summary>The clock every ceiling the sessions enforce runs on: the listener's.</summary>
     internal LoadClock Clock => Listener.Clock;
+
+    /// <summary>
+    /// The clock a launch's handshake and an attach's wait for its game run on: <see cref="Clock"/> unless set. A harness that
+    /// keeps <see cref="Clock"/> on wall time, so short ceilings keep their text, sets it to a load-adjusted clock, so a game
+    /// slow to start on a busy machine is waited for.
+    /// </summary>
+    internal LoadClock LaunchClock
+    {
+        get => _launchClock ?? Clock;
+        init => _launchClock = value;
+    }
 
     internal ILogger Logger => logger;
 

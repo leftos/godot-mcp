@@ -19,7 +19,9 @@ public sealed class McpServerSmokeTests : IDisposable
 
     public void Dispose() => _probe.Dispose();
 
-    [Fact(Timeout = 45_000)]
+    // xUnit's timeouts are wall time: the headroom lets a run on a busy machine reach the server's own load-adjusted
+    // deadlines, which end at 5 x their budget in wall time, before xUnit kills it.
+    [Fact(Timeout = 180_000)]
     public async Task ListsTheToolsRunsTheProbeReadsItClicksItAndStopsIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -127,7 +129,7 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.False(File.Exists(_probe.OverrideFile));
     }
 
-    [Fact(Timeout = 30_000)]
+    [Fact(Timeout = 120_000)]
     public async Task ToolsCarryTheirAnnotations()
     {
         await using McpClient client = await ConnectAsync();

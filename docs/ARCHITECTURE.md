@@ -36,7 +36,7 @@ Every ceiling the server enforces counts load-adjusted time: a clock that keeps 
 - **Kill text**: a prep, headless or ffmpeg process killed by any of the three says `did not finish within 300 s of load-adjusted time (wall 812 s, machine free 37% on average)` at the ceiling, and `did not finish (<detail>)` for the other two: `stalled: no output and no CPU for 120 s`, or `ran 1500 s of wall time, 5 x its 300 s ceiling (load-adjusted 118 s, machine free 8% on average)`. A bridge or tool timeout keeps its usual text at the ceiling and adds the backstop clause (see [A request's path](#a-requests-path)) at the backstop.
 - **Wall time**: the pings (the hang probe's 2 s, the debugger check's 500 ms), the `shutdown` reply, the `cancel` itself, `stop_project`'s 3 s / 30 s grace, the listener's 5 s hello read, and the kill and exit graces (a killed tree's and git's 5 s, the output drain, a recording's 10 s wait for the game to exit).
 
-The integration tests' `SessionHarness` runs its sessions on a wall-time clock, so another build loading the machine cannot move a short ceiling into its backstop; the unit tests cover the load with `FakeTimeProvider` and `FakeLoadSource`.
+The integration tests' `SessionHarness` runs its requests' and tools' ceilings on a wall-time clock, so another build loading the machine cannot move a short ceiling into its backstop and change the text a test asserts, and sets the registry's `LaunchClock` to the load-adjusted clock, so a launch's handshake and an attach's wait for its game wait out the load as they do in the server (`LaunchClock` is `Clock` unless set); the unit tests cover the load with `FakeTimeProvider` and `FakeLoadSource`.
 
 ## Session lifecycle
 

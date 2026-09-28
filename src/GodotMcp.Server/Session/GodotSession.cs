@@ -494,7 +494,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     private async Task<BridgeConnection> WaitForHandshakeAsync(GodotRun run, HandshakeExpectation expected, CancellationToken cancellationToken)
     {
-        using LoadDeadline deadline = registry.Clock.Start(HandshakeTimeout, cancellationToken);
+        using LoadDeadline deadline = registry.LaunchClock.Start(HandshakeTimeout, cancellationToken);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         Task<BridgeConnection> accept = registry.Listener.AcceptBridgeAsync(expected, timeout.Token);
         Task exited = run.Process.WaitForExitAsync(timeout.Token);

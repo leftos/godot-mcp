@@ -15,15 +15,16 @@ internal sealed class SessionHarness : IAsyncDisposable
     /// <summary>How long a killed game gets to let go of its project folder before the test fails.</summary>
     private static readonly TimeSpan GameExitWait = TimeSpan.FromSeconds(10);
 
-    // Wall time: another build loading the machine would stretch a short ceiling into its backstop and change its text; the
-    // unit tests cover the load on fakes.
+    // Wall time for every request's and tool's ceiling: another build loading the machine would stretch a short ceiling into
+    // its backstop and change its text, which the tests assert; the unit tests cover the load on fakes. A launch's handshake
+    // and an attach's wait run load-adjusted, as the server's do, so a game slow to start on a busy machine is waited for.
     private readonly LoadClock _wallClock = new(TimeProvider.System, new NoLoadSource());
     private readonly BridgeListener _listener;
 
     public SessionHarness()
     {
         _listener = new(NullLogger<BridgeListener>.Instance) { Clock = _wallClock };
-        Sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance);
+        Sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance) { LaunchClock = LoadClock.Shared };
     }
 
     public SessionRegistry Sessions { get; }
