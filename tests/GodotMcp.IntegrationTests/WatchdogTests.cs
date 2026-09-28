@@ -53,7 +53,7 @@ public sealed partial class WatchdogTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
-    public async Task ASlowScriptOnALiveThreadIsReportedAsBusy()
+    public async Task ASlowScriptOnALiveThreadIsStopped()
     {
         await LaunchAsync(TestContext.Current.CancellationToken);
 
@@ -62,7 +62,8 @@ public sealed partial class WatchdogTests : IAsyncDisposable
         );
 
         Assert.Equal(
-            "'run_script' timed out after 1000 ms, but the game answered a ping, so its main thread is running; "
+            "run_script timed out after 1 s and was stopped: its coroutine will not resume. A coroutine it "
+                + "awaited on another object, such as a node's own method, keeps running; restart_project stops everything; "
                 + "a script that needs longer can raise timeoutMs.",
             timedOut.Message
         );

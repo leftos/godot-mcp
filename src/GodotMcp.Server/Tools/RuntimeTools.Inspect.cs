@@ -142,7 +142,9 @@ internal sealed partial class RuntimeTools
             + "coroutine. Each JSON argument is converted by the parameter's declared type, as set_property converts. "
             + "Fails when the node has no such method, when the argument count does not fit, and when Godot refuses the "
             + "call. A value whose JSON is longer than 2000 characters comes back as {valuePreview, valueLength}. Errors the "
-            + "method raises come back in errors, with file, line and stack; a GDScript error ends the method with null."
+            + "method raises come back in errors, with file, line and stack; a GDScript error ends the method with null. Past "
+            + "options.timeoutMs the call fails and the method keeps running on its node, which only restart_project stops; "
+            + "Engine.time_scale and SceneTree.paused go back to their values at the call's start."
             + ValueNote
             + BridgeNote
     )]
@@ -161,8 +163,11 @@ internal sealed partial class RuntimeTools
             ["method"] = CheckName(method, "method", "Pass the name of a method the node has."),
             ["args"] = new JsonArray([.. (args ?? []).Select(arg => JsonSerializer.SerializeToNode(arg))]),
         };
-        BridgeCall call = new("call_method", "call_method", parameters, TimeSpan.FromMilliseconds(CheckCallTimeout(options?.TimeoutMs)));
-        BridgeResult result = await CallWithErrorsAsync(Find(session), call, cancellationToken);
+        var timeout = TimeSpan.FromMilliseconds(CheckCallTimeout(options?.TimeoutMs));
+        GodotSession target = Find(session);
+        long mark = target.Errors.Mark();
+        JsonNode? reply = await CallStoppableAsync(target, "call_method", parameters, timeout, cancellationToken);
+        BridgeResult result = new(reply, target.Errors.ErrorsSince(mark));
         ErrorEntry? refused = result.Errors.FirstOrDefault(IsRefusedCall);
         if (refused is not null)
         {

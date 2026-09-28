@@ -233,7 +233,7 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 - **Does:** calls `method` on a live `node` with `args` converted by the parameters' declared types, awaiting a coroutine: `{path, method, value}`.
 - **Use:** triggering game logic directly (spawn, damage, load a level); C# methods, `internal` ones included, are reached. `options {timeoutMs}` (1 to 120000, default 10000, load-adjusted).
-- **Edges:** fails when the method is missing, the argument count does not fit, an argument does not convert (an array of Objects says why), or Godot refuses the call. A GDScript error inside it ends it with a null `value` and comes back in `errors`; the call itself succeeds, so read `errors`.
+- **Edges:** fails when the method is missing, the argument count does not fit, an argument does not convert (an array of Objects says why), or Godot refuses the call. A GDScript error inside it ends it with a null `value` and comes back in `errors`; the call itself succeeds, so read `errors`. Past `timeoutMs` the call fails, `Engine.time_scale` and `SceneTree.paused` go back to their values at the call's start (the error names what it restored), and the method keeps running on its node: only `restart_project` stops it.
 
 ### `cs_members`
 
@@ -281,7 +281,7 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 - **Does:** runs GDScript inside the game; the `script` must `extends RefCounted` and define `func execute(scene_tree: SceneTree) -> Variant` (it may await). Returns `{value}` as JSON.
 - **Use:** anything `inspect_node`, `set_property` and `call_method` cannot express: loops, several nodes at once, engine singletons. `timeoutMs` default 30000, load-adjusted.
-- **Edges:** fails on a compile error, or when `execute` returns null and an error is located in the script itself; a null with errors elsewhere still succeeds. GDScript cannot reach a C# member Godot does not marshal (a `List<T>`, a plain C# class, a private member): in a C# project such a failure (Godot's `Invalid access to property or key`, `Invalid assignment of property or key` or `Invalid call. Nonexistent function`) ends with a line pointing to `cs_get`, `cs_call` and `run_csharp`, which reach it. A value over 20000 characters comes back as `{valuePreview, valueLength}`.
+- **Edges:** fails on a compile error, or when `execute` returns null and an error is located in the script itself; a null with errors elsewhere still succeeds. GDScript cannot reach a C# member Godot does not marshal (a `List<T>`, a plain C# class, a private member): in a C# project such a failure (Godot's `Invalid access to property or key`, `Invalid assignment of property or key` or `Invalid call. Nonexistent function`) ends with a line pointing to `cs_get`, `cs_call` and `run_csharp`, which reach it. A value over 20000 characters comes back as `{valuePreview, valueLength}`. Past `timeoutMs` the script is stopped and the call fails: `execute` never resumes, and `Engine.time_scale` and `SceneTree.paused` go back to their values at the call's start (the error names what it restored), so a timed-out script cannot disturb the next call. A coroutine it awaited on another object, such as a node's own method, keeps running. A script that finishes keeps its changes.
 
 ## Errors and debug output
 

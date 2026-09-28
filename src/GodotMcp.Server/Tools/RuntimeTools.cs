@@ -26,6 +26,12 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
         "path_only: the path and size only; preview: also the image, scaled down to previewMaxWidth when wider "
         + "(the scaled copy is saved beside the full one); full: also the full-resolution image.";
     internal const string PreviewMaxWidthDescription = "The widest the preview image may be, in pixels; 480 by default.";
+
+    /// <summary>How the bridge's answer to a run_script it stopped at its timeout begins.</summary>
+    private const string ScriptStoppedAnswer = "stopped: ";
+
+    /// <summary>How the bridge's answer to a call_method it stopped awaiting at its timeout begins.</summary>
+    private const string CallForgottenAnswer = "no longer awaited: ";
     private static readonly TimeSpan ScreenshotTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan UiElementsTimeout = TimeSpan.FromSeconds(10);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -165,12 +171,14 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
             + "come back in errors, each with its file, line and stack. The call fails, with those errors, on a compile error, "
             + "or when execute returns null and an error is located in the script itself (its file, or its most recent frame, is "
             + "gdscript://…): a runtime error ends execute with null. A null value with errors located elsewhere (a game "
-            + "script execute called, another thread) still succeeds. In a C# project, read C# members with cs_get, cs_call or "
-            + "run_csharp: GDScript cannot reach a member Godot does not marshal."
+            + "script execute called, another thread) still succeeds. Past timeoutMs the script is stopped and the call fails: "
+            + "execute's coroutine never resumes, and Engine.time_scale and SceneTree.paused go back to their values at the "
+            + "call's start; a coroutine it awaited on another object, such as a node's own method, keeps running. In a C# "
+            + "project, read C# members with cs_get, cs_call or run_csharp: GDScript cannot reach a member Godot does not marshal."
     )]
     public async Task<string> RunScriptAsync(
         [Description("The GDScript source.")] string script,
-        [Description("How long to wait for execute to return, in milliseconds, load-adjusted.")] int timeoutMs = 30000,
+        [Description("How long to wait for execute to return, in milliseconds, load-adjusted; past it the script is stopped.")] int timeoutMs = 30000,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
@@ -269,8 +277,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     {
         try
         {
-            BridgeCall call = new("run_script", "run_script", new JsonObject { ["source"] = script }, timeout);
-            return await CallBridgeAsync(target, call, cancellationToken);
+            return await CallStoppableAsync(target, "run_script", new JsonObject { ["source"] = script }, timeout, cancellationToken);
         }
         catch (McpException e) when (e.InnerException is InvalidOperationException refused)
         {
@@ -302,6 +309,64 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
         {
             throw new McpException(e.Message, e);
         }
+    }
+
+    /// <summary>
+    /// Sends a run_script or call_method (the bridge command is the tool's name), which the bridge stops, or stops awaiting, once
+    /// <paramref name="timeout"/> passes in load-adjusted time: the timeout is the request's release, and the server waits
+    /// <see cref="WaitReplyAllowance"/> more for the bridge's answer to the cancel. That answer fails the tool as
+    /// <see cref="StoppedMessage"/> says; a game that answers nothing, not even the cancel, is described as any other timeout,
+    /// by <paramref name="timeout"/>.
+    /// </summary>
+    internal static async Task<JsonNode?> CallStoppableAsync(
+        GodotSession target,
+        string tool,
+        JsonObject parameters,
+        TimeSpan timeout,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            return await SendMappedAsync(
+                target,
+                tool,
+                timeout,
+                () => target.SendAsync(tool, parameters, timeout + WaitReplyAllowance, cancellationToken, timeout),
+                cancellationToken
+            );
+        }
+        catch (McpException e)
+            when (e.InnerException is InvalidOperationException refused && StoppedMessage(tool, timeout, refused.Message) is { } stopped)
+        {
+            // The inner exception is the mapped one, not the bridge's refusal, so run_script's catch for refusals lets it pass.
+            throw new McpException(stopped, e);
+        }
+    }
+
+    /// <summary>
+    /// The error of a run_script or call_method the bridge stopped at its timeout: <c>run_script timed out after &lt;n&gt; s and was
+    /// </c> (<c>call_method timed out after &lt;n&gt; s; it was </c>) and the bridge's answer, then the tool's hint; null when
+    /// <paramref name="refusal"/>, the bridge's refusal as <see cref="BridgeConnection"/> words it, is not a stop.
+    /// </summary>
+    internal static string? StoppedMessage(string tool, TimeSpan timeout, string refusal)
+    {
+        string refusedPrefix = $"The bridge refused '{tool}': ";
+        if (!refusal.StartsWith(refusedPrefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        string answer = refusal[refusedPrefix.Length..].TrimEnd('.');
+        string seconds = LoadDeadline.Seconds(timeout);
+        return tool switch
+        {
+            "run_script" when answer.StartsWith(ScriptStoppedAnswer, StringComparison.Ordinal) =>
+                $"run_script timed out after {seconds} s and was {answer}; a script that needs longer can raise timeoutMs.",
+            "call_method" when answer.StartsWith(CallForgottenAnswer, StringComparison.Ordinal) =>
+                $"call_method timed out after {seconds} s; it was {answer}; a method that needs longer can raise options.timeoutMs.",
+            _ => null,
+        };
     }
 
     private static async Task<JsonNode?> CallBridgeAsync(GodotSession target, BridgeCall call, CancellationToken cancellationToken)

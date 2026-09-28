@@ -318,6 +318,67 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         Assert.Equal(0, all["dropped"]!.GetValue<long>());
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task RunScriptTimeoutStopsTheScript()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string counting =
+            "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\tEngine.time_scale = 2.0\n\t"
+            + "scene_tree.root.set_meta(\"stop_probe\", 0)\n\twhile true:\n\t\tawait scene_tree.process_frame\n\t\t"
+            + "scene_tree.root.set_meta(\"stop_probe\", scene_tree.root.get_meta(\"stop_probe\") + 1)\n\treturn null\n";
+
+        McpException stopped = await Assert.ThrowsAsync<McpException>(() => _tools.RunScriptAsync(counting, 1000, cancellationToken: cancellation));
+        JsonNode after = await RunAsync(
+            "var first: int = scene_tree.root.get_meta(\"stop_probe\")\n\tfor frame in 5:\n\t\tawait scene_tree.process_frame\n\t"
+                + "var last: int = scene_tree.root.get_meta(\"stop_probe\")\n\tscene_tree.root.remove_meta(\"stop_probe\")\n\t"
+                + "return [first, last, Engine.time_scale]",
+            cancellation
+        );
+
+        Assert.StartsWith(
+            "run_script timed out after 1 s and was stopped: its coroutine will not resume; restored Engine.time_scale to 1",
+            stopped.Message,
+            StringComparison.Ordinal
+        );
+        Assert.EndsWith("; a script that needs longer can raise timeoutMs.", stopped.Message, StringComparison.Ordinal);
+        Assert.True(after[0]!.GetValue<int>() > 0, after.ToJsonString());
+        Assert.Equal(after[0]!.GetValue<int>(), after[1]!.GetValue<int>());
+        Assert.Equal(1.0, after[2]!.GetValue<double>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task CallMethodTimeoutSaysTheMethodKeepsRunning()
+    {
+        // Adds Holder under the root: its hold() speeds time up and then waits an hour. The reset frees it with the other
+        // root children.
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            "var script := GDScript.new()\n\t"
+                + "script.source_code = \"extends Node\\n\\n\\nfunc hold() -> bool:\\n\\tEngine.time_scale = 2.0\\n\\t"
+                + "await get_tree().create_timer(3600.0).timeout\\n\\treturn true\\n\"\n\t"
+                + "script.reload()\n\tvar holder := Node.new()\n\tholder.name = \"Holder\"\n\tholder.set_script(script)\n\t"
+                + "scene_tree.root.add_child(holder)\n\treturn true",
+            cancellation
+        );
+
+        McpException forgotten = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.CallMethodAsync("/root/Holder", "hold", options: new CallOptions(1000), cancellationToken: cancellation)
+        );
+        JsonNode timeScale = await RunAsync("return Engine.time_scale", cancellation);
+
+        Assert.StartsWith(
+            "call_method timed out after 1 s; it was no longer awaited: the method keeps running on its node; restored Engine.time_scale to 1",
+            forgotten.Message,
+            StringComparison.Ordinal
+        );
+        Assert.EndsWith(
+            "; restart_project stops it; a method that needs longer can raise options.timeoutMs.",
+            forgotten.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(1.0, timeScale.GetValue<double>());
+    }
+
     private async Task<JsonNode> RunAsync(string body, CancellationToken cancellation) =>
         (await RunForResultAsync(_tools, body, cancellation))["value"]!;
 

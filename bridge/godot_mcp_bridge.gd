@@ -27,9 +27,21 @@ const UI_SNAPSHOT_SCRIPT := "godot_mcp_ui_snapshot.gd"
 const CLASS_INFO_SCRIPT := "godot_mcp_class_info.gd"
 const CAPTURE_SCRIPT := "godot_mcp_capture.gd"
 const DOTNET_SCRIPT := "godot_mcp_dotnet.gd"
-## The commands a cancel request can end early; the server cancels one when its load-adjusted
-## allowance passes before the request's backstopMs.
-const CANCELLABLE: PackedStringArray = ["frame", "wait_for", "monitor", "dotnet"]
+## The commands a cancel request can end early, answering the request at once for a run_script it
+## stops and a call_method it stops awaiting (_cancel); the server cancels one when its
+## load-adjusted allowance passes before the request's backstopMs.
+const CANCELLABLE: PackedStringArray = [
+	"frame", "wait_for", "monitor", "dotnet", "run_script", "call_method"
+]
+## A stopped run_script's answer, the restored clause (_restore) filled in.
+const SCRIPT_STOPPED := (
+	"stopped: its coroutine will not resume%s. A coroutine it awaited on another "
+	+ "object, such as a node's own method, keeps running; restart_project stops everything."
+)
+## A cancelled call_method's answer, the restored clause (_restore) filled in.
+# gdformat joins any split of this text back into one line past gdlint's 100 characters.
+# gdlint: ignore=max-line-length
+const CALL_FORGOTTEN := "no longer awaited: the method keeps running on its node%s; restart_project stops it."
 ## A quiet session's frame-rate cap when the project sets none: its frames are never seen, so
 ## drawing at the monitor's refresh rate only burns the GPU.
 const QUIET_MAX_FPS := 60
@@ -83,6 +95,13 @@ var _handlers: Dictionary = {}
 ## The cancellable requests still running: id -> the params Dictionary their handler holds, from
 ## the frame that read them until their reply.
 var _running_requests: Dictionary = {}
+## The run_script calls whose execute is suspended at an await: id -> {instance, state, before},
+## the script's instance, the GDScriptFunctionState execute returned and the _snapshot from the
+## call's start. They are the bridge's only references to the instance and its coroutine, so
+## dropping an entry lets the coroutine go (_drop_script).
+var _running_scripts: Dictionary = {}
+## The call_method calls still awaiting their method: id -> the _snapshot from the call's start.
+var _running_calls: Dictionary = {}
 ## The server to dial, found in _init; empty when the bridge is off.
 var _endpoint: Dictionary = {}
 ## The logger (godot_mcp_logger.gd beside this script) collecting the game's errors, registered
@@ -236,9 +255,14 @@ func _process(_delta: float) -> void:
 
 ## Marks the connection gone and cancels each running request before forgetting it: no cancel can
 ## reach them from the server now, and a wait_for, monitor or dotnet call would otherwise poll on
-## until its backstopMs for a reply nobody reads.
+## until its backstopMs for a reply nobody reads. A suspended run_script is dropped as a cancel
+## stops it, and a call_method is left to end unanswered, neither restoring the time scale or the
+## pause: no server is left to be told.
 func _end_connection() -> void:
 	_connection_lost = true
+	for request: int in _running_scripts.keys():
+		_drop_script(request)
+	_running_calls.clear()
 	for request: int in _running_requests.keys():
 		_cancel(request)
 	_running_requests.clear()
@@ -342,15 +366,80 @@ func _handle_cancel(id: int, params: Dictionary) -> void:
 
 
 ## Marks the running request's params _cancelled, which ends a wait_for's poll and a dotnet call's
-## at their next frame, and ends a running step or monitor as its deadline would. Returns false
-## when the request has been answered, was never cancellable, or is unknown.
+## at their next frame, and ends a running step or monitor as its deadline would. A suspended
+## run_script is stopped (_stop_script) and a call_method no longer awaited (_forget_call), each
+## answered here. Returns false when the request has been answered, was never cancellable, or is
+## unknown.
 func _cancel(request: int) -> bool:
 	if not _running_requests.has(request):
 		return false
 	var params: Dictionary = _running_requests[request]
 	params["_cancelled"] = true
 	_time.cancel(params)
+	if _running_scripts.has(request):
+		_stop_script(request)
+	elif _running_calls.has(request):
+		_forget_call(request)
 	return true
+
+
+## Stops a suspended run_script and answers it with SCRIPT_STOPPED, once its time scale and pause
+## are restored.
+func _stop_script(request: int) -> void:
+	var before: Dictionary = _drop_script(request)
+	_reply_error(request, SCRIPT_STOPPED % _restore(before))
+
+
+## Drops the bridge's references to a suspended run_script's instance and coroutine, freeing an
+## instance that is not RefCounted; returns the _snapshot from its start. The instance's
+## destructor clears each coroutine still pending on it, which then never resumes and raises no
+## error: an await keeps only a raw pointer to the instance (modules/gdscript/gdscript_vm.cpp,
+## OPCODE_AWAIT), and GDScriptInstance::~GDScriptInstance clears the pending states' connections
+## and stacks (modules/gdscript/gdscript.cpp in 4.7.2).
+func _drop_script(request: int) -> Dictionary:
+	var running: Dictionary = _running_scripts[request]
+	_running_scripts.erase(request)
+	var before: Dictionary = running["before"]
+	_free_unless_counted(running["instance"])
+	running.clear()
+	return before
+
+
+## Stops awaiting a call_method whose method is still running, which the bridge cannot stop, and
+## answers it with CALL_FORGOTTEN once its time scale and pause are restored; its handler sends
+## nothing when the method ends later (_handle_inspect).
+func _forget_call(request: int) -> void:
+	var before: Dictionary = _running_calls[request]
+	_running_calls.erase(request)
+	_reply_error(request, CALL_FORGOTTEN % _restore(before))
+
+
+## The game's SceneTree: the main loop, the tree this autoload is in. Read from the engine rather
+## than get_tree, which the bridge's unit tests cannot give a tree before the runner's root enters.
+func _scene_tree() -> SceneTree:
+	return Engine.get_main_loop() as SceneTree
+
+
+## Engine.time_scale and SceneTree.paused now, {time_scale, paused}, for _restore.
+func _snapshot() -> Dictionary:
+	return {"time_scale": Engine.time_scale, "paused": _scene_tree().paused}
+
+
+## Puts Engine.time_scale and SceneTree.paused back to before's values and says which it changed:
+## empty when neither, else "; restored " and each changed one, joined by " and ".
+func _restore(before: Dictionary) -> String:
+	var restored: PackedStringArray = []
+	var time_scale: float = before["time_scale"]
+	if Engine.time_scale != time_scale:
+		Engine.time_scale = time_scale
+		restored.append("Engine.time_scale to %s" % time_scale)
+	var paused: bool = before["paused"]
+	if _scene_tree().paused != paused:
+		_scene_tree().paused = paused
+		restored.append("SceneTree.paused to %s" % ("true" if paused else "false"))
+	if restored.is_empty():
+		return ""
+	return "; restored " + " and ".join(restored)
 
 
 ## Every command's handler, func(id, params), by command name; built once in _ready.
@@ -406,9 +495,16 @@ func _handle_ui_elements(id: int, params: Dictionary) -> void:
 
 
 ## Runs a scene_tree, inspect_node, set_property or call_method request on the Inspect child,
-## which answers a Dictionary or a String saying why it could not.
+## which answers a Dictionary or a String saying why it could not. A call_method is kept in
+## _running_calls while its method runs; one cancelled meanwhile (_forget_call) is not answered
+## again when the method ends.
 func _handle_inspect(id: int, params: Dictionary, command: String) -> void:
+	if command == "call_method":
+		_running_calls[id] = _snapshot()
 	var result: Variant = await _inspect.handle(command, params)
+	_running_calls.erase(id)
+	if params.get("_cancelled", false):
+		return
 	if result is String:
 		_reply_error(id, result)
 	else:
@@ -600,23 +696,56 @@ func _describe_control(control: Control) -> Dictionary:
 	return element
 
 
-## Compiles source, runs its execute(scene_tree) and replies {value}. A runtime error inside
-## execute ends the call with null; the error itself reaches the server through the logger,
-## flushed before the reply.
+## Compiles source, runs its execute(scene_tree) and replies {value}. An execute that returns at
+## once is answered now; one suspended at an await is kept in _running_scripts and answered when
+## it completes (_on_script_completed), unless a cancel stops it first (_stop_script). It is never
+## awaited here: a coroutine of the bridge's own suspended on it would hold the instance, which no
+## cancel could then drop. A runtime error inside execute ends the call with null; the error itself
+## reaches the server through the logger, flushed before the reply.
 func _handle_run_script(id: int, params: Dictionary) -> void:
+	var instance: Variant = _compile_script(id, str(params.get("source", "")))
+	if instance == null:
+		return
+	var before: Dictionary = _snapshot()
+	# Object.call runs execute to its first await and returns the GDScriptFunctionState that await
+	# made (modules/gdscript/gdscript_vm.cpp, OPCODE_AWAIT, in 4.7.2), whose completed signal
+	# carries execute's return value. A direct instance.execute() without await would not: a debug
+	# build ends the caller with "Trying to call an async function without "await"."
+	var value: Variant = (instance as Object).call("execute", _scene_tree())
+	if value is Object and is_instance_valid(value):
+		if (value as Object).is_class("GDScriptFunctionState"):
+			_running_scripts[id] = {"instance": instance, "state": value, "before": before}
+			(value as Object).connect("completed", _on_script_completed.bind(id))
+			return
+	_free_unless_counted(instance)
+	_reply_ok(id, {"value": _json.to_json(value)})
+
+
+## The run_script instance compiled from source, or null once the request is answered with why it
+## cannot run: a compile error, or no execute method.
+func _compile_script(id: int, source: String) -> Variant:
 	var script := GDScript.new()
-	script.source_code = str(params.get("source", ""))
+	script.source_code = source
 	var error: Error = script.reload()
 	if error != OK:
 		_reply_error(id, "the script did not compile (%s, error %d)" % [error_string(error), error])
-		return
+		return null
 	var instance: Variant = script.new()
 	if not instance is Object or not (instance as Object).has_method("execute"):
 		_free_unless_counted(instance)
 		_reply_error(id, "the script defines no func execute(scene_tree: SceneTree) -> Variant")
+		return null
+	return instance
+
+
+## Answers a suspended run_script whose execute has returned, with its value, and frees its
+## instance; a script already stopped is no longer in _running_scripts and is left alone.
+func _on_script_completed(value: Variant, id: int) -> void:
+	if not _running_scripts.has(id):
 		return
-	var value: Variant = await instance.execute(get_tree())
-	_free_unless_counted(instance)
+	var running: Dictionary = _running_scripts[id]
+	_running_scripts.erase(id)
+	_free_unless_counted(running["instance"])
 	_reply_ok(id, {"value": _json.to_json(value)})
 
 
