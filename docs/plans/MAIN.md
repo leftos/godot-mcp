@@ -7,13 +7,6 @@ Open work only, in working order: the next item is the first line from the top; 
 
 The first version replaced godot-mcp-runtime at parity and went further: every planned step and the sixteen features the user added have landed, and opening-hand and delve-the-dungeon drive their clients through it (cutover 2026-09-26).
 
-### Current: a faster test suite (user, 2026-09-28)
-
-Measured 2026-09-28 on a loaded machine: unit 894 tests in 37 s, bounded by `ToolProcessTests` (56 s of summed test time, serial within its class); itest ~8.5 min fully serial, 452 s of test time in a 470 s run of four groups, so fixtures cost little and concurrency is the lever.
-
-- [ ] Run the itest groups 2–3 at a time in `run.ps1`, timing-sensitive groups kept apart; the Godot-launch-under-load flake below may have to be fixed first
-- [ ] Cut a release once the suite work above has landed (user, 2026-09-28)
-
 ## Next
 
 The singles' order is not a ranking.
