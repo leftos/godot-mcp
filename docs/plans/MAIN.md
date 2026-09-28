@@ -15,19 +15,20 @@ Waves run in order; bug reports sit ahead of the backlog inside each. The single
 
 Shared: `src/GodotMcp.Server/Tools/HeadlessTools.Scene.cs`, `HeadlessTools.Batch.cs`, `SceneBatchStep.cs` and the headless script they run. Gate: `pwsh run.ps1 test` and `pwsh run.ps1 itest` (the `scene` group); a human check reads the `.tscn` diff of a one-node edit.
 
-- [ ] #24: a one-node `add_node` / `batch_scene_operations` / `attach_script` / `save_scene` edit re-saves the whole `.tscn` in 4.7 form (`load_steps` dropped, `unique_id=` on every node, reordered properties); keep the diff to the nodes the call touched
+- [ ] #24: a one-node `add_node` / `batch_scene_operations` / `attach_script` edit re-saves the whole `.tscn` in 4.7 form (`load_steps` dropped, `unique_id=` on every node, reordered properties); splice the changed sections into the original text, as decided in [DECISIONS.md](../DECISIONS.md) 15
 - [ ] #23: `add_node` / `batch_scene_operations` refuse a C# script path (a script without `[GlobalClass]`) as `nodeType` with "is not a scene"; make a node of the script's base type with the script attached
 
 ### Wave 2: capture
 
-Shared: `bridge/godot_mcp_capture.gd`, `src/GodotMcp.Server/Tools/RuntimeTools.Capture.cs`. Gate: `pwsh run.ps1 test` and `pwsh run.ps1 itest` (the `reads` group, which holds the screenshot tests); a human check looks at the captured frames.
+Shared: the screenshot grabs in `bridge/godot_mcp_bridge.gd`, `godot_mcp_time.gd`, `godot_mcp_baseline.gd` and `godot_mcp_preview.gd`, and `src/GodotMcp.Server/Tools/RuntimeTools.cs` / `RuntimeTools.Time.cs`. Gate: `pwsh run.ps1 test`, `pwsh run.ps1 gdtest` and `pwsh run.ps1 itest` (the `reads` and `time` groups); a human check looks at the captured frames. Both items as decided in [DECISIONS.md](../DECISIONS.md) 15; the helper lands first.
 
-- [ ] #25: capture frames at set times in one call (a list of `{at, path}`, or every N s for M s, or a mark plus an offset) instead of a `take_screenshot` round trip per frame
-- [ ] `take_screenshot` misses popups and tooltips in a project that sets `display/window/subwindows/embed_subwindows=false`, since each is its own OS window outside the root viewport's texture (measured 2026-09-27 for #9): composite each visible non-embedded `Window` onto the capture at its offset from the root, through one capture helper so crops, baselines and frame steps inherit it; check the offset on a visible desktop first, since a native popup's `position` read (0,0) on the hidden one (user, 2026-09-27: build later)
+- [ ] `take_screenshot` misses popups and tooltips in a project that sets `display/window/subwindows/embed_subwindows=false`, since each is its own OS window outside the root viewport's texture (measured 2026-09-27 for #9): one capture helper for every grab that composites each visible non-embedded `Window` at its offset from the root; check the offset on a visible desktop first, since a native popup's `position` read (0,0) on the hidden one
+- [ ] #25: a `capture_frames` tool that captures at set game-time points (`at` or `{every, for}`) in one call, through the capture helper
 
 ### Singles
 
-- [ ] #26: a `run_script` that times out keeps running in the game and corrupts the next run; cancel it in the game on timeout, or say plainly it is still running and offer a stop short of `restart_project`
+- [ ] #26: a `run_script` (and `call_method`) that times out keeps running in the game and corrupts the next run; stop it on timeout and restore `time_scale` and `paused`, as decided in [DECISIONS.md](../DECISIONS.md) 15
+- [ ] `run_csharp`: give snippets a `CancellationToken` the timeout's cancel fires, so a timed-out snippet can stop itself (today its `Task` is forgotten and keeps running)
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see [DECISIONS.md](../DECISIONS.md#gamepad-input-from-godot-472s-source))
 - [ ] A patched Godot build for internal development (user, 2026-09-26: patches kept in a repo, rebuilt and reviewed on every upstream update). Agreed order (user, 2026-09-26): solve each need on stock 4.7.2 first; a need stock cannot meet gets a small patch sent upstream as a PR and carried only until it merges; the full patches repo and rebuild pipeline only if a patch upstream will not take. No candidate today: the test window flash, the first one, is gone on stock 4.7.2 (measured 2026-09-26: no window on the user's desktop from gdtest, filtered itests or the import prep, all behind the hidden desktop; see the DEVELOPMENT.md footgun on how Godot shows its window), and the user chose to keep this line idle until a need stock cannot meet appears (user, 2026-09-26). Open for that pipeline: the .NET build's GodotSharp packages, which the C# projects must resolve without a tracked-file change; tests on a patched engine against games shipped on stock export templates
 - [ ] The profiler, autoload-editing and file-parsing tools, if a need shows up
