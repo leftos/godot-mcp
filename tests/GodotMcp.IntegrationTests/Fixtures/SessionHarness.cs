@@ -30,9 +30,10 @@ internal sealed class SessionHarness : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        // A bare kill does not wait: Godot_console.exe exits before the Godot.exe it wraps lets go of the folder, so every
-        // game's own process is opened before the stop loop and killed and waited for after it. Opening the handles first
-        // keeps a pid the stop frees from being reused by another process before the kill.
+        // A bare kill does not wait: Windows sets a process's exit code before it closes the process's handles, its current
+        // directory among them, so a game's folder stays held a few tens of ms past the exit. Every game's own process is
+        // opened before the stop loop and killed and waited for after it; opening the handles first keeps a pid the stop
+        // frees from being reused by another process before the kill.
         List<Process> games = OpenGames();
         foreach (SessionInfo session in Sessions.List(includeStopped: true))
         {
@@ -69,7 +70,10 @@ internal sealed class SessionHarness : IAsyncDisposable
 
             try
             {
-                games.Add(Process.GetProcessById(processId));
+                var game = Process.GetProcessById(processId);
+                // Reading Handle opens the process handle and keeps it on the object, so the handle is held before the stop frees the pid.
+                _ = game.Handle;
+                games.Add(game);
             }
             catch (ArgumentException)
             {
@@ -85,31 +89,25 @@ internal sealed class SessionHarness : IAsyncDisposable
     {
         using (game)
         {
+            if (await ProcessExit.WaitUntilGoneAsync(game, GameExitWait))
+            {
+                return;
+            }
+
             try
             {
-                if (game.HasExited)
-                {
-                    return;
-                }
-
                 game.Kill(entireProcessTree: true);
             }
             catch (InvalidOperationException)
             {
-                // The game exited between the open and the kill.
+                // The game exited between the wait and the kill.
                 return;
             }
 
-            using CancellationTokenSource wait = new(GameExitWait);
-            try
-            {
-                await game.WaitForExitAsync(wait.Token);
-            }
-            catch (OperationCanceledException e)
+            if (!await ProcessExit.WaitUntilGoneAsync(game, GameExitWait))
             {
                 throw new InvalidOperationException(
-                    $"the game (pid {game.Id}) still holds its project folder {GameExitWait.TotalSeconds:0} s after it was killed",
-                    e
+                    $"the game (pid {game.Id}) still holds its project folder {GameExitWait.TotalSeconds:0} s after it was killed"
                 );
             }
         }

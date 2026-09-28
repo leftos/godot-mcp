@@ -219,12 +219,7 @@ internal static class ToolProcess
 
     private static async Task WaitAfterKillAsync(Process process, string fileName, ILogger logger)
     {
-        using CancellationTokenSource wait = new(KillWait);
-        try
-        {
-            await process.WaitForExitAsync(wait.Token);
-        }
-        catch (OperationCanceledException)
+        if (!await ProcessExit.WaitUntilGoneAsync(process, KillWait))
         {
             Log.ToolStillRunningAfterKill(logger, fileName, KillWait.TotalSeconds);
         }

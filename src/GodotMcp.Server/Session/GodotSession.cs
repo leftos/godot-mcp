@@ -590,17 +590,13 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
 
         TimeSpan exitGrace = CurrentExitGrace;
-        using CancellationTokenSource grace = new(exitGrace);
-        try
+        if (await ProcessExit.WaitUntilGoneAsync(run.Process, exitGrace))
         {
-            await run.Process.WaitForExitAsync(grace.Token);
             return true;
         }
-        catch (OperationCanceledException)
-        {
-            Log.ExitGraceExpired(_logger, run.ProjectDir, exitGrace.TotalSeconds);
-            return false;
-        }
+
+        Log.ExitGraceExpired(_logger, run.ProjectDir, exitGrace.TotalSeconds);
+        return false;
     }
 
     /// <summary>
@@ -658,12 +654,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             Log.KillFailed(_logger, e, run.ProjectDir);
         }
 
-        using CancellationTokenSource wait = new(KillWait);
-        try
-        {
-            await run.Process.WaitForExitAsync(wait.Token);
-        }
-        catch (OperationCanceledException)
+        if (!await ProcessExit.WaitUntilGoneAsync(run.Process, KillWait))
         {
             Log.StillRunningAfterKill(_logger, run.ProjectDir, KillWait.TotalSeconds);
         }

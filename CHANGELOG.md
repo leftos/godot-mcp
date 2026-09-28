@@ -14,6 +14,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - Timeouts and ceilings, caller-set ones included, run on load-adjusted time that slows while other work loads the machine, and end at 5x in wall time.
 - A git call that runs past 30 s is stopped and treated as a failed git call instead of holding up the tool.
 
+### Fixed
+
+- `stop_project` returns only once a killed game has let go of its project folder, so the folder can be moved or deleted at once.
+
 ## 0.3.5 - 2026-09-27
 
 ### Changed

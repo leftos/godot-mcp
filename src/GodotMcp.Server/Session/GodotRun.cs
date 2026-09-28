@@ -191,15 +191,14 @@ internal sealed class GodotRun(string projectDir, IRunProcess launcher, GodotRun
 
     private static async Task<int?> ReadExitCodeAsync(Process game)
     {
-        using CancellationTokenSource wait = new(GameExitWait);
-        try
-        {
-            await game.WaitForExitAsync(wait.Token);
-            return game.ExitCode;
-        }
-        catch (OperationCanceledException)
+        if (!await ProcessExit.WaitUntilGoneAsync(game, GameExitWait))
         {
             return null;
+        }
+
+        try
+        {
+            return game.ExitCode;
         }
         catch (InvalidOperationException)
         {

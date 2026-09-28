@@ -87,6 +87,22 @@ public sealed partial class WatchdogTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task StopReturnsOnlyOnceAKilledGameHasLetGoOfItsFolder()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await LaunchAsync(cancellation);
+        McpException timedOut = await Assert.ThrowsAsync<McpException>(() => RunScriptAsync(BlockMainThread, 1000));
+        Assert.Contains("its main thread is stuck", timedOut.Message, StringComparison.Ordinal);
+
+        StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
+
+        // Windows refuses to rename a folder that is a live process's current directory, as it refuses to delete it. The moved
+        // folder stays inside the probe's temp folder, which the class's dispose deletes.
+        Assert.True(stopped.Killed);
+        Assert.Null(Record.Exception(() => Directory.Move(_probe.Directory, _probe.Directory + "-moved")));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task StopOfAHealthyGameStillQuitsGracefully()
     {
         await LaunchAsync(TestContext.Current.CancellationToken);

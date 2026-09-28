@@ -84,17 +84,20 @@ internal sealed partial class GodotSession
         try
         {
             using var game = Process.GetProcessById(gameProcessId);
-            using CancellationTokenSource wait = new(GameExitWait);
-            await game.WaitForExitAsync(wait.Token);
+            if (!await ProcessExit.WaitUntilGoneAsync(game, GameExitWait))
+            {
+                Log.GameExitWaitEnded(
+                    _logger,
+                    new TimeoutException($"the game (pid {gameProcessId}) was still running {GameExitWait.TotalSeconds:0} s after its run ended"),
+                    ProjectDir,
+                    GameExitWait.TotalSeconds
+                );
+            }
         }
         catch (ArgumentException e)
         {
             // No process has the id any more: the game has already exited, which is what the wait is for.
             Log.GameAlreadyExited(_logger, e, ProjectDir, gameProcessId);
-        }
-        catch (OperationCanceledException e)
-        {
-            Log.GameExitWaitEnded(_logger, e, ProjectDir, GameExitWait.TotalSeconds);
         }
         catch (Exception e) when (e is InvalidOperationException or Win32Exception)
         {
