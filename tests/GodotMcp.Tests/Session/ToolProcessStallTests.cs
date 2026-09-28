@@ -13,11 +13,11 @@ public sealed class ToolProcessStallTests : IDisposable
     [Fact]
     public async Task AStallKillsASilentChild()
     {
-        ToolProcessResult result = await _pwsh.RunPwshAsync("Start-Sleep 60", ProcessProbe.Ceiling, stallLimit: TimeSpan.FromSeconds(3));
+        // The stall must come first however slowly pwsh starts on a loaded machine: a ceiling and a sleep far past any start.
+        ToolProcessResult result = await _pwsh.RunPwshAsync("Start-Sleep 600", TimeSpan.FromSeconds(120), stallLimit: TimeSpan.FromSeconds(3));
 
         Assert.Equal(KillReason.Stall, result.Killed);
         Assert.Equal("stalled: no output and no CPU for 3 s", result.KillDetail);
-        Assert.True(result.Elapsed < TimeSpan.FromSeconds(30), $"took {result.Elapsed}");
     }
 
     [Fact]

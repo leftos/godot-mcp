@@ -236,7 +236,7 @@ internal sealed class BridgeListener : IDisposable
     /// </summary>
     private async Task HoldUntilAbandonedAsync(CancellationTokenSource hello)
     {
-        await Task.Delay(HelloTimeout, hello.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        await Task.Delay(HelloTimeout, Clock.Time, hello.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         await NoWaiterPending.WaitAsync(hello.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         await hello.CancelAsync().ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     }

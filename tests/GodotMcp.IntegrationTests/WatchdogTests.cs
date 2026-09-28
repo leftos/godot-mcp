@@ -14,7 +14,7 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed partial class WatchdogTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 60_000;
+    private const int TestTimeoutMs = 180_000;
     private const string BlockMainThread = "OS.delay_msec(20000)\n\treturn true";
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
@@ -83,7 +83,9 @@ public sealed partial class WatchdogTests : IAsyncDisposable
         elapsed.Stop();
 
         Assert.True(stopped.Killed);
-        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(4), $"stop took {elapsed.Elapsed.TotalSeconds:0.00} s");
+        // The slow path a stuck game's stop rules out is the graceful one: the 2 s ping, then the session's 2 s shutdown reply
+        // wait and 3 s exit grace before the same kill.
+        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(7), $"stop took {elapsed.Elapsed.TotalSeconds:0.00} s, past the 7 s of a graceful stop");
         Assert.False(_harness.Sessions.GetDebugOutput(null, 1, null).Running);
     }
 

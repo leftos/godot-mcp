@@ -108,7 +108,8 @@ public sealed partial class HangProbeTests : IAsyncDisposable
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() => RunScriptAsync(10_000, cancellation));
 
-        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(2), $"the call failed after {elapsed.Elapsed}, not within about 1 s");
+        // The message pins the path: only the 0.5 s debugger ping words it so; the call's own 10 s timeout and the hang probe word it otherwise.
+        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(10), $"the call failed after {elapsed.Elapsed}, at or past its own 10 s timeout");
         Assert.Equal(
             $"The game (pid {Environment.ProcessId}) did not answer within 0.5 s while a debugger is attached: it is most likely paused at "
                 + "a breakpoint. Continue it in the debugger, or retry if it was only busy.",
