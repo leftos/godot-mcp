@@ -18,7 +18,8 @@ internal sealed partial class HeadlessTools
     private const string WriteNote =
         " Runs the prep first, as run_project does (a C# build when stale, an import when needed). A scene that uses C# scripts is "
         + "not saved while the project's C# build fails. Refused while a session is live on the project (a headless run would "
-        + "load the bridge from its override.cfg); stop_project or detach_project it first.";
+        + "load the bridge from its override.cfg); stop_project or detach_project it first. A script the scene uses that has no "
+        + ".uid file gets the one the editor would write; uidFilesWritten lists those .uid files (res:// paths) to commit.";
 
     private const string EditNote =
         " The file keeps every part the edit does not change as it was; when that cannot be done, it is saved in Godot's full "
@@ -51,7 +52,8 @@ internal sealed partial class HeadlessTools
     [Description(
         "Creates a scene file holding one root node, in a headless Godot, without running the game. Missing folders are "
             + "created; an existing file is refused unless options.overwrite. The new scene gets a new uid; a replaced file keeps "
-            + "its own, so what referred to it finds the new scene. Returns {scenePath, root: {name, type}, uid, warning?, errors?}: errors "
+            + "its own, so what referred to it finds the new scene. Returns {scenePath, root: {name, type}, uid, uidFilesWritten?, warning?, "
+            + "errors?}: errors "
             + "lists what Godot logged as errors while it worked."
             + WriteNote
     )]
@@ -85,7 +87,7 @@ internal sealed partial class HeadlessTools
             + "save-as). It is saved as the editor saves it: instanced and inherited scenes stay references to their files, and the "
             + "uids of the scene and of the files it uses are kept. Saved in place, the scene keeps its uid; saved as a new file, "
             + "the copy gets a new uid; saved over an existing file (options.overwrite), it takes that file's uid. Returns "
-            + "{scenePath, savedTo, uid, warning?, errors?}: warning names a C# field saved as the engine property it hides."
+            + "{scenePath, savedTo, uid, uidFilesWritten?, warning?, errors?}: warning names a C# field saved as the engine property it hides."
             + WriteNote
     )]
     public async Task<string> SaveSceneAsync(
@@ -112,7 +114,7 @@ internal sealed partial class HeadlessTools
         "Deletes nodes, with their children, from a scene file and saves it, in a headless Godot, without running the game. "
             + "The scene's root cannot be deleted, nor a node inside an instanced scene (edit that scene's own file instead); the "
             + "root of an instance can, which removes the instance. All or nothing: when any path is refused, nothing is saved and "
-            + "the error names every refused path. Returns {deleted, warning?, errors?}: deleted lists the paths as given."
+            + "the error names every refused path. Returns {deleted, uidFilesWritten?, warning?, errors?}: deleted lists the paths as given."
             + WriteNote
             + EditNote
     )]
@@ -147,8 +149,11 @@ internal sealed partial class HeadlessTools
             + "without running the game. The script must compile and extend the node's class or one of its parents. A node inside "
             + "an instanced scene is refused (attach it in that scene's own file); an instance's root and a node an inherited "
             + "scene gets from its base are allowed, saved as overrides. A C# script is refused while the project's C# build "
-            + "fails. Returns {path, script: {resource, uid?}, previous?: {resource, uid?}, warning?, errors?}: path is the node's path "
-            + "from the scene's root, previous the script it had."
+            + "fails. Returns {path, script: {resource, uid?}, previous?: {resource, uid?}, kept?, dropped?, uidFilesWritten?, warning?, "
+            + "errors?}: path is the node's path "
+            + "from the scene's root, previous the script it had. The values the previous script stored carry over as the "
+            + "editor carries them, when the new script declares the property and it takes the value's type; kept and dropped "
+            + "(present when there was a previous script) name those carried over and those not."
             + WriteNote
             + EditNote
     )]
@@ -186,7 +191,7 @@ internal sealed partial class HeadlessTools
             + "nodes outside the copy, are kept; connections coming into the copy from outside it are not. The scene's root, a "
             + "node inside an instanced "
             + "scene and a parent inside one are refused (an instance's root is a valid parent). Returns {originalPath, newPath, "
-            + "warning?, errors?}, both paths from the scene's root."
+            + "uidFilesWritten?, warning?, errors?}, both paths from the scene's root."
             + WriteNote
             + EditNote
     )]
@@ -245,7 +250,8 @@ internal sealed partial class HeadlessTools
             + "scene (an instance's own root may be the parent); a parent that is the node or below it; a parent that already "
             + "has a child of the node's name; an index out of range, or a sibling the parent does not have. NodePath-typed "
             + "properties of other nodes that point at the moved node are not rewritten; Node-typed exports and signal "
-            + "connections follow it, since the save recomputes them. Returns {path, previousPath, index, warning?, errors?}: "
+            + "connections follow it, since the save recomputes them. Returns {path, previousPath, index, uidFilesWritten?, "
+            + "warning?, errors?}: "
             + "the node's path from the scene's root after and before the move, and its index among its siblings."
             + WriteNote
             + EditNote
@@ -339,7 +345,8 @@ internal sealed partial class HeadlessTools
             + "the editor's full scan of the project: it writes an .import file beside every asset never imported and a .uid file "
             + "beside every script. An image in a folder Godot does not scan (a name starting with \".\", or holding a .gdignore) "
             + "is refused. A node inside an instanced scene is "
-            + "refused. Returns {path, texture: {resource, uid?}, warning?, errors?}: path is the node's path from the scene's root."
+            + "refused. Returns {path, texture: {resource, uid?}, uidFilesWritten?, warning?, errors?}: path is the node's path from "
+            + "the scene's root."
             + WriteNote
             + EditNote
     )]

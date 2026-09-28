@@ -120,7 +120,10 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
             cancellation
         );
 
-        Assert.Equal("""{"from":"Btn","signal":"pressed","target":".","method":"on_pressed"}""", connected);
+        Assert.Equal(
+            """{"from":"Btn","signal":"pressed","target":".","method":"on_pressed","uidFilesWritten":["res://level.gd.uid","res://btn.gd.uid"]}""",
+            connected
+        );
         Assert.Equal(
             [
                 "[connection signal=\"button_down\" from=\"Btn\" to=\".\" method=\"on_pressed\"]",
@@ -311,7 +314,11 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         );
         JsonNode read = JsonNode.Parse(await _tools.GetNodeSignalsAsync(directory, "level.tscn", "Btn", null, cancellation))!;
 
-        Assert.Equal("""{"from":"Btn","signal":"pressed","target":"Boss/Sprite","method":"hide"}""", connected);
+        Assert.Equal(
+            """{"from":"Btn","signal":"pressed","target":"Boss/Sprite","method":"hide","uidFilesWritten":"""
+                + """["res://level.gd.uid","res://btn.gd.uid"]}""",
+            connected
+        );
         Assert.Contains("[connection signal=\"pressed\" from=\"Btn\" to=\"Boss/Sprite\" method=\"hide\"]", Connections(directory, "level.tscn"));
         Assert.Equal("""[{"target":"Boss/Sprite","method":"hide"}]""", Signal(read, "pressed")["connections"]!.ToJsonString());
     }
@@ -331,7 +338,10 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
             cancellation
         );
 
-        Assert.Equal("""{"from":"Boss/Sprite","signal":"visibility_changed","target":".","method":"on_pressed"}""", connected);
+        Assert.Equal(
+            """{"from":"Boss/Sprite","signal":"visibility_changed","target":".","method":"on_pressed","uidFilesWritten":["res://level.gd.uid"]}""",
+            connected
+        );
         Assert.Equal(
             ["[connection signal=\"visibility_changed\" from=\"Boss/Sprite\" to=\".\" method=\"on_pressed\"]"],
             Connections(directory, "editable.tscn")
@@ -353,7 +363,11 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
             cancellation
         );
 
-        Assert.Equal("""{"from":"Btn","signal":"button_down","target":".","method":"on_pressed"}""", disconnected);
+        Assert.Equal(
+            """{"from":"Btn","signal":"button_down","target":".","method":"on_pressed","uidFilesWritten":"""
+                + """["res://level.gd.uid","res://btn.gd.uid"]}""",
+            disconnected
+        );
         Assert.Empty(Connections(directory, "level.tscn"));
         Assert.Contains("[node name=\"Btn\" ", Read(directory, "level.tscn"), StringComparison.Ordinal);
     }

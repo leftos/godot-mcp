@@ -56,7 +56,7 @@ internal sealed partial class HeadlessTools
             + "a missing node, signal or method; the emitting node inside an instanced scene, unless the instance is an editable "
             + "instance (the target may be inside one); a signal's arguments and binds that together do not fit the method's "
             + "parameter count, or a bind that does not convert; and a signal already connected to that method, whatever its binds. "
-            + "Returns {from, signal, target, method, warning?, errors?}: from and target are paths from the scene's root."
+            + "Returns {from, signal, target, method, uidFilesWritten?, warning?, errors?}: from and target are paths from the scene's root."
             + WriteNote
             + EditNote
     )]
@@ -105,7 +105,8 @@ internal sealed partial class HeadlessTools
         "Removes a connection from a node's signal to a method in a scene file and saves the scene, in a headless Godot, without "
             + "running the game; the connection is found by its target and method, whatever its binds. Refused, with nothing "
             + "saved: a missing node, a connection the scene does not make, and one it gets from a scene it instances or inherits "
-            + "(disconnect it in that scene's file, which the error names). Returns {from, signal, target, method, warning?, errors?}: from "
+            + "(disconnect it in that scene's file, which the error names). Returns {from, signal, target, method, "
+            + "uidFilesWritten?, warning?, errors?}: from "
             + "and target are paths from the scene's root."
             + WriteNote
             + EditNote

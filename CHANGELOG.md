@@ -8,8 +8,11 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - A `run_csharp` snippet gets `Cancellation`, a token its timeout cancels, so a snippet that awaits with it stops once the call times out.
 
+- Scene tools write the `.uid` the editor would for a script that has none, list it in `uidFilesWritten`, and `run_project` imports so Godot's cache learns it.
+
 ### Fixed
 
+- `attach_script` keeps the values the previous script stored when the new script declares them, as the editor does, and lists them in `kept` and `dropped`.
 - Headless scene saves store the engine's value when a C# field shares an engine property's name, such as `scale`, on plain and instanced nodes alike, and warn naming the field.
 
 ## 0.5.1 - 2026-09-28

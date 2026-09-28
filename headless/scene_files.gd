@@ -17,6 +17,9 @@ const UID_PREFIX := "uid://"
 ## The extensions of the text formats whose ext_resource tags are written back; a binary .res or
 ## .scn is never rewritten as text.
 const TEXT_EXTENSIONS: Array[String] = ["tscn", "tres"]
+## The extensions of the files the editor's scan gives a <path>.uid: those whose loader keeps no uid
+## of its own (4.7.2 core/io/resource_loader.cpp L1428-1440, should_create_uid_file).
+const UID_FILE_EXTENSIONS: Array[String] = ["gd", "cs", "gdshader", "gdshaderinc"]
 
 
 ## Saves resource to path with the uid uid, creating missing folders, and, for a text scene or
@@ -24,7 +27,8 @@ const TEXT_EXTENSIONS: Array[String] = ["tscn", "tres"]
 ## first, else the one its file records. With keep_layout, a file that existed before the save
 ## keeps the text of every section the save left alone (SceneSplice.splice); when a section
 ## cannot be mapped the file stays as saved and the result carries a warning. {uid, warning?} with
-## uid as uid:// text, or {error}.
+## uid as uid:// text, or {error}. A script the scene names that had no uid is given one
+## (uid_or_new), and the saved dictionary's uidFilesWritten lists the .uid files it wrote.
 static func save_resource(
 	resource: Resource, path: String, uid: int, known: Dictionary, keep_layout: bool
 ) -> Dictionary:
@@ -35,7 +39,8 @@ static func save_resource(
 	error = ResourceSaver.save(resource, path)
 	if error != OK:
 		return {"error": "%s could not be saved: %s" % [path, error_string(error)]}
-	error = _write_uids(path, uid, known)
+	var written: PackedStringArray = []
+	error = _write_uids(path, uid, known, written)
 	if error != OK:
 		var reason: String = error_string(error)
 		return {
@@ -46,6 +51,7 @@ static func save_resource(
 			)
 		}
 	var saved: Dictionary = {"uid": ResourceUID.id_to_text(uid)}
+	note_written(saved, written)
 	if not original.is_empty():
 		var warning: String = _splice_into(path, original)
 		if not warning.is_empty():
@@ -53,12 +59,23 @@ static func save_resource(
 	return saved
 
 
-## Sets the uid of the file at path and, in a text file, writes each ext_resource's uid back; an
-## error code.
-static func _write_uids(path: String, uid: int, known: Dictionary) -> int:
+## Adds the .uid files in written to result's uidFilesWritten; result is left alone when there are
+## none.
+static func note_written(result: Dictionary, written: PackedStringArray) -> void:
+	if not written.is_empty():
+		var listed: Array = result.get("uidFilesWritten", [])
+		listed.append_array(Array(written))
+		result["uidFilesWritten"] = listed
+
+
+## Sets the uid of the file at path and, in a text file, writes each ext_resource's uid back,
+## appending each .uid file written to written; an error code.
+static func _write_uids(
+	path: String, uid: int, known: Dictionary, written: PackedStringArray
+) -> int:
 	var error: int = ResourceSaver.set_uid(path, uid)
 	if error == OK and path.get_extension().to_lower() in TEXT_EXTENSIONS:
-		error = _restore_ext_uids(path, known)
+		error = _restore_ext_uids(path, known, written)
 	return error
 
 
@@ -104,6 +121,41 @@ static func uid_of(path: String) -> int:
 		return id
 	var text: String = _uid_text_of(path)
 	return ResourceUID.INVALID_ID if text.is_empty() else ResourceUID.text_to_id(text)
+
+
+## The uid of the file at path (uid_of). A res:// file with none, no .import and no .uid, of a kind
+## the editor's scan gives a .uid (UID_FILE_EXTENSIONS), gets the one that scan would write:
+## ResourceUID.create_id_for_path, stored as one line in <path>.uid (4.7.2
+## editor/file_system/editor_file_system.cpp L1384-1394) and registered in ResourceUID, and the
+## .uid file's path is appended to written. INVALID_ID when there is none and none was written.
+static func uid_or_new(path: String, written: PackedStringArray) -> int:
+	var id: int = uid_of(path)
+	if id != ResourceUID.INVALID_ID or not _takes_uid_file(path):
+		return id
+	id = ResourceUID.create_id_for_path(path)
+	var file := FileAccess.open(path + ".uid", FileAccess.WRITE)
+	if file == null:
+		var reason: String = error_string(FileAccess.get_open_error())
+		push_warning("%s.uid could not be written (%s): %s keeps no uid." % [path, reason, path])
+		return ResourceUID.INVALID_ID
+	file.store_line(ResourceUID.id_to_text(id))
+	file.close()
+	if ResourceUID.has_id(id):
+		ResourceUID.set_id(id, path)
+	else:
+		ResourceUID.add_id(id, path)
+	written.append(path + ".uid")
+	return id
+
+
+## Whether path is a res:// file of a kind the editor's scan gives a .uid, with neither a .uid nor
+## an .import beside it.
+static func _takes_uid_file(path: String) -> bool:
+	if not path.begins_with("res://") or not FileAccess.file_exists(path):
+		return false
+	if FileAccess.file_exists(path + ".uid") or FileAccess.file_exists(path + ".import"):
+		return false
+	return path.get_extension().to_lower() in UID_FILE_EXTENSIONS
 
 
 ## The value of key="..." in line, where key starts the line or follows a space; "" when absent.
@@ -213,15 +265,16 @@ static func _sidecar_uid(sidecar: String) -> String:
 
 
 ## Writes each ext_resource's uid back into the text file at path, from known first, else from
-## the file the tag names; an error code.
-static func _restore_ext_uids(path: String, known: Dictionary) -> int:
+## the file the tag names (uid_or_new, which appends each .uid file it writes to written); an error
+## code.
+static func _restore_ext_uids(path: String, known: Dictionary, written: PackedStringArray) -> int:
 	var text: String = FileAccess.get_file_as_string(path)
 	var uids: Dictionary = known.duplicate()
 	for line in text.split("\n"):
 		var ext_path: String = ext_resource_path(line)
 		if ext_path.is_empty() or uids.has(ext_path):
 			continue
-		var id: int = uid_of(ext_path)
+		var id: int = uid_or_new(ext_path, written)
 		if id != ResourceUID.INVALID_ID:
 			uids[ext_path] = ResourceUID.id_to_text(id)
 	var file := FileAccess.open(path, FileAccess.WRITE)

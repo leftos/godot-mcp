@@ -51,6 +51,8 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
 
     private const string GradientUid = "uid://bqgradient0a";
 
+    private const string CardScript = "extends Node2D\n\n@export var card: PackedScene\n";
+
     // A 1x1 PNG.
     private const string DotPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
@@ -520,13 +522,85 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         JsonNode attached = JsonNode.Parse(await _tools.AttachScriptAsync(probe.Directory, "scripted.tscn", ".", "res://b.gd", cancellation))!;
 
         Assert.Equal(".", attached["path"]!.GetValue<string>());
-        Assert.Equal("""{"resource":"res://b.gd"}""", attached["script"]!.ToJsonString());
-        Assert.Equal("""{"resource":"res://a.gd"}""", attached["previous"]!.ToJsonString());
+        // Neither script had a .uid file: each gets the one the editor's scan would write.
+        Assert.Equal(ScriptFacts(probe.Directory, "b.gd"), attached["script"]!.ToJsonString());
+        Assert.Equal(ScriptFacts(probe.Directory, "a.gd"), attached["previous"]!.ToJsonString());
+        Assert.Equal("""["res://b.gd.uid","res://a.gd.uid"]""", attached["uidFilesWritten"]!.ToJsonString());
         string text = File.ReadAllText(Path.Combine(probe.Directory, "scripted.tscn"));
         Assert.Contains("path=\"res://b.gd\"", text, StringComparison.Ordinal);
         Assert.DoesNotContain("res://a.gd", text, StringComparison.Ordinal);
         JsonNode root = (await TreeAsync(probe.Directory, "scripted.tscn", cancellation))["nodes"]![0]!;
         Assert.Equal("res://b.gd", root["script"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AttachScriptGivesAScriptWithNoUidFileTheUidTheEditorWould()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "c.gd"), "extends Node2D\n");
+        File.WriteAllText(Path.Combine(probe.Directory, "plain2d.tscn"), "[gd_scene format=3]\n\n[node name=\"Plain\" type=\"Node2D\"]\n");
+
+        JsonNode attached = JsonNode.Parse(await _tools.AttachScriptAsync(probe.Directory, "plain2d.tscn", ".", "c.gd", cancellation))!;
+
+        string uidFile = Path.Combine(probe.Directory, "c.gd.uid");
+        Assert.True(File.Exists(uidFile));
+        string uid = File.ReadAllText(uidFile).Trim();
+        Assert.StartsWith("uid://", uid, StringComparison.Ordinal);
+        Assert.Equal(uid, attached["script"]!["uid"]!.GetValue<string>());
+        AssertExtUid(probe.Directory, "plain2d.tscn", uid, "res://c.gd");
+        Assert.Equal("""["res://c.gd.uid"]""", attached["uidFilesWritten"]!.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AttachScriptKeepsTheExportsTheNewScriptDeclares()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        File.WriteAllText(Path.Combine(probe.Directory, "a.gd"), CardScript);
+        File.WriteAllText(Path.Combine(probe.Directory, "b.gd"), CardScript);
+        WriteCardedScene(probe.Directory, "res://a.gd");
+
+        JsonNode attached = JsonNode.Parse(await _tools.AttachScriptAsync(probe.Directory, "carded.tscn", ".", "b.gd", cancellation))!;
+
+        AssertCardKept(probe.Directory, attached, "res://b.gd");
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task AttachScriptKeepsTheCSharpExportsTheNewScriptDeclares()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        csProbe.WriteSource("CardHolder.cs", CardHolderSource("CardHolder"));
+        csProbe.WriteSource("OtherCardHolder.cs", CardHolderSource("OtherCardHolder"));
+        File.WriteAllText(Path.Combine(csProbe.Directory, "enemy.tscn"), EnemyScene);
+        WriteCardedScene(csProbe.Directory, "res://CardHolder.cs");
+
+        JsonNode attached = JsonNode.Parse(
+            await _tools.AttachScriptAsync(csProbe.Directory, "carded.tscn", ".", "OtherCardHolder.cs", cancellation)
+        )!;
+
+        AssertCardKept(csProbe.Directory, attached, "res://OtherCardHolder.cs");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AttachScriptDropsAValueWhoseTypeTheNewScriptChanges()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        File.WriteAllText(Path.Combine(probe.Directory, "a.gd"), CardScript);
+        File.WriteAllText(Path.Combine(probe.Directory, "counted.gd"), "extends Node2D\n\n@export var card: int\n");
+        WriteCardedScene(probe.Directory, "res://a.gd");
+
+        JsonNode attached = JsonNode.Parse(await _tools.AttachScriptAsync(probe.Directory, "carded.tscn", ".", "counted.gd", cancellation))!;
+
+        string text = File.ReadAllText(Path.Combine(probe.Directory, "carded.tscn"));
+        Assert.Contains("path=\"res://counted.gd\"", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("card =", text, StringComparison.Ordinal);
+        Assert.Equal("[]", attached["kept"]!.ToJsonString());
+        Assert.Equal("""["card"]""", attached["dropped"]!.ToJsonString());
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -928,7 +1002,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
 
         JsonNode attached = JsonNode.Parse(await _tools.AttachScriptAsync(probe.Directory, "level.tscn", "Box", "b.gd", cancellation))!;
 
-        Assert.Equal("""{"resource":"res://b.gd"}""", attached["script"]!.ToJsonString());
+        Assert.Equal(ScriptFacts(probe.Directory, "b.gd"), attached["script"]!.ToJsonString());
         Assert.Contains("path=\"res://b.gd\"", File.ReadAllText(Path.Combine(probe.Directory, "level.tscn")), StringComparison.Ordinal);
     }
 
@@ -1429,6 +1503,43 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
             File.ReadLines(Path.Combine(directory, scene)),
             line => line.StartsWith("[ext_resource ", StringComparison.Ordinal) && line.Contains(expected, StringComparison.Ordinal)
         );
+    }
+
+    /// <summary>The {resource, uid} facts of the script at the project-relative path, its uid read from the .uid file beside it.</summary>
+    private static string ScriptFacts(string directory, string script)
+    {
+        string uid = File.ReadAllText(Path.Combine(directory, script + ".uid")).Trim();
+        Assert.StartsWith("uid://", uid, StringComparison.Ordinal);
+        return $$"""{"resource":"res://{{script}}","uid":"{{uid}}"}""";
+    }
+
+    /// <summary>A C# Node2D script named name whose exported private field card holds a PackedScene.</summary>
+    private static string CardHolderSource(string name) =>
+        "using Godot;\n\nnamespace CsProbe;\n\npublic partial class "
+        + name
+        + " : Node2D\n{\n    [Export]\n    private PackedScene card = null!;\n}\n";
+
+    /// <summary>Writes carded.tscn, whose root has the script at scriptPath and its card set to enemy.tscn.</summary>
+    private static void WriteCardedScene(string directory, string scriptPath) =>
+        File.WriteAllText(
+            Path.Combine(directory, "carded.tscn"),
+            "[gd_scene load_steps=3 format=3]\n\n[ext_resource type=\"Script\" path=\""
+                + scriptPath
+                + "\" id=\"1\"]\n[ext_resource type=\"PackedScene\" uid=\""
+                + EnemyUid
+                + "\" path=\"res://enemy.tscn\" id=\"2\"]\n\n"
+                + "[node name=\"Carded\" type=\"Node2D\"]\nscript = ExtResource(\"1\")\ncard = ExtResource(\"2\")\n"
+        );
+
+    /// <summary>carded.tscn's root has the script at scriptPath and still has its card, and the result says card was kept.</summary>
+    private static void AssertCardKept(string directory, JsonNode attached, string scriptPath)
+    {
+        string text = File.ReadAllText(Path.Combine(directory, "carded.tscn"));
+        Assert.Contains($"path=\"{scriptPath}\"", text, StringComparison.Ordinal);
+        Assert.Contains("\ncard = ExtResource(", text, StringComparison.Ordinal);
+        AssertExtUid(directory, "carded.tscn", EnemyUid, "res://enemy.tscn");
+        Assert.Equal("""["card"]""", attached["kept"]!.ToJsonString());
+        Assert.Equal("[]", attached["dropped"]!.ToJsonString());
     }
 
     private static void WriteScenes(string directory)

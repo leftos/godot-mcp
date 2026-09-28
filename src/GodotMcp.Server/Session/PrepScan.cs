@@ -16,12 +16,12 @@ internal sealed record CsprojLookup(CsprojKind Kind, string? ProjectFile, string
 
 /// <summary>
 /// The files the prep looks at, as full paths: the C# build's inputs from the whole git top level (or the project folder
-/// outside git), and the project folder's <c>.import</c> sidecars, whether it holds <c>.uid</c> files, and its GDScript files.
+/// outside git), and the project folder's <c>.import</c> sidecars, <c>.uid</c> files and GDScript files.
 /// </summary>
 internal sealed record ProjectFiles(
     IReadOnlyList<string> BuildInputs,
     IReadOnlyList<string> ImportFiles,
-    bool HasUidFiles,
+    IReadOnlyList<string> UidFiles,
     IReadOnlyList<string> Scripts
 );
 
@@ -100,7 +100,7 @@ internal static partial class PrepScan
         return new ProjectFiles(
             [.. topFiles.Where(IsBuildInput)],
             [.. projectFiles.Where(file => HasExtension(file, ".import"))],
-            projectFiles.Any(file => HasExtension(file, ".uid")),
+            [.. projectFiles.Where(file => HasExtension(file, ".uid"))],
             [.. projectFiles.Where(file => HasExtension(file, ".gd"))]
         );
     }
@@ -127,18 +127,23 @@ internal static partial class PrepScan
     }
 
     /// <summary>
-    /// Whether a Godot import is needed: a <c>.import</c> sidecar whose <c>dest_files</c> are not all present, or
-    /// <c>.uid</c> files with no <c>.godot/uid_cache.bin</c>, or a script declaring <c>class_name</c> that the class cache
-    /// may not hold yet. A missing <c>.godot/</c> alone is not a reason.
+    /// Whether a Godot import is needed: a <c>.import</c> sidecar whose <c>dest_files</c> are not all present, or a
+    /// <c>.uid</c> file newer than <c>.godot/uid_cache.bin</c> or with no cache at all (the headless tools write one for a
+    /// script that had none, and only an import records it in the cache), or a script declaring <c>class_name</c> that the
+    /// class cache may not hold yet. A missing <c>.godot/</c> alone is not a reason.
     /// </summary>
-    public static bool ImportNeeded(string projectDir, ProjectFiles files)
-    {
-        if (files.HasUidFiles && !File.Exists(Path.Combine(projectDir, ".godot", "uid_cache.bin")))
-        {
-            return true;
-        }
+    public static bool ImportNeeded(string projectDir, ProjectFiles files) =>
+        IsUidCacheStale(projectDir, files.UidFiles)
+        || files.ImportFiles.Any(sidecar => HasMissingTarget(projectDir, sidecar))
+        || IsClassCacheStale(projectDir, files.Scripts);
 
-        return files.ImportFiles.Any(sidecar => HasMissingTarget(projectDir, sidecar)) || IsClassCacheStale(projectDir, files.Scripts);
+    /// <summary>Whether a <c>.uid</c> file is newer than <c>.godot/uid_cache.bin</c>, or the cache is missing while any exists.</summary>
+    private static bool IsUidCacheStale(string projectDir, IEnumerable<string> uidFiles)
+    {
+        string cache = Path.Combine(projectDir, ".godot", "uid_cache.bin");
+        bool cached = File.Exists(cache);
+        DateTime written = File.GetLastWriteTimeUtc(cache);
+        return uidFiles.Where(File.Exists).Any(file => !cached || File.GetLastWriteTimeUtc(file) > written);
     }
 
     /// <summary>

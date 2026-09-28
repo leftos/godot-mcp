@@ -60,8 +60,12 @@ static func apply_delete_nodes(root: Node, params: Dictionary, context: Dictiona
 
 
 ## Attaches the script at params.script to the node at params.nodePath: {result: {path, script,
-## previous?}}, or {error} with nothing changed. The script must compile and extend the node's
-## class or a parent class of it; a C# script is refused while the prep's C# build failed.
+## previous?, kept?, dropped?, uidFilesWritten?}}, or {error} with nothing changed. The script must
+## compile and extend the node's class or a parent class of it; a C# script is refused while the
+## prep's C# build failed. The values the previous script stored carry over as the editor carries
+## them (_carry_script_values); kept and dropped name them. A script with no uid is given the one
+## the editor would give it (SceneFiles.uid_or_new), and uidFilesWritten names the .uid files
+## written.
 static func apply_attach_script(root: Node, params: Dictionary, context: Dictionary) -> Dictionary:
 	var found: Dictionary = _editable_node(root, params, context["scene"])
 	if found.has("error"):
@@ -81,11 +85,10 @@ static func apply_attach_script(root: Node, params: Dictionary, context: Diction
 	if not ClassDB.is_parent_class(node.get_class(), base):
 		var facts: Array = [script_path, base, found["path"], node.get_class()]
 		return {"error": "%s extends %s, so it cannot be attached to %s, a %s." % facts}
-	var result: Dictionary = {"path": found["path"], "script": _resource_facts(script)}
-	var previous := node.get_script() as Script
-	if previous != null:
-		result["previous"] = _resource_facts(previous)
-	node.set_script(script)
+	var written: PackedStringArray = []
+	var result: Dictionary = {"path": found["path"], "script": _resource_facts(script, written)}
+	_swap_script(node, script, result, written)
+	SceneFiles.note_written(result, written)
 	return {"result": result}
 
 
@@ -154,7 +157,10 @@ static func apply_load_sprite(root: Node, params: Dictionary, context: Dictionar
 	if loaded.has("error"):
 		return loaded
 	node.set("texture", loaded["texture"])
-	var result: Dictionary = {"path": found["path"], "texture": _resource_facts(loaded["texture"])}
+	var written: PackedStringArray = []
+	var texture: Dictionary = _resource_facts(loaded["texture"], written)
+	var result: Dictionary = {"path": found["path"], "texture": texture}
+	SceneFiles.note_written(result, written)
 	return {"result": result}
 
 
@@ -211,6 +217,77 @@ static func _has_texture_2d(node: Node) -> bool:
 	return false
 
 
+## Sets script on node. When the node had a script, result gains previous, and the values that
+## script stored carry over to the new one (_carry_script_values), kept and dropped naming them.
+## A .uid file written for the previous script is appended to written (_resource_facts).
+static func _swap_script(
+	node: Node, script: Script, result: Dictionary, written: PackedStringArray
+) -> void:
+	var previous := node.get_script() as Script
+	if previous == null:
+		node.set_script(script)
+		return
+	result["previous"] = _resource_facts(previous, written)
+	var stored: Array = _stored_script_values(node, previous)
+	node.set_script(script)
+	result.merge(_carry_script_values(node, script, stored))
+
+
+## [name, value] for each property script declares with PROPERTY_USAGE_STORAGE, read from node, as
+## the editor stores them before it changes a script (4.7.2 editor/docks/inspector_dock.cpp
+## L631-650, core/object/script_instance.cpp L61-73): Object.set_script keeps no value of the
+## script it replaces (core/object/object.cpp L979-991).
+static func _stored_script_values(node: Node, script: Script) -> Array:
+	var stored: Array = []
+	for entry: Dictionary in script.get_script_property_list():
+		if entry["usage"] & PROPERTY_USAGE_STORAGE:
+			stored.append([entry["name"], node.get(entry["name"])])
+	return stored
+
+
+## Sets on node each stored [name, value] the node's new script declares and takes, as the editor's
+## apply_script_properties does (inspector_dock.cpp L652-683; see _takes_value): {kept, dropped},
+## the names set and the names not.
+static func _carry_script_values(node: Node, script: Script, stored: Array) -> Dictionary:
+	var declared: Dictionary = {}
+	for entry: Dictionary in script.get_script_property_list():
+		declared[entry["name"]] = entry
+	var kept: Array = []
+	var dropped: Array = []
+	for pair: Array in stored:
+		var name: String = pair[0]
+		if declared.has(name) and _takes_value(node.get(name), declared[name], pair[1]):
+			node.set(name, pair[1])
+			kept.append(name)
+		else:
+			dropped.append(name)
+	return {"kept": kept, "dropped": dropped}
+
+
+## Whether a new script's property entry, now holding current, takes value: when current has
+## value's type, or when the property holds an Object and value is an Object of the class its hint
+## names, or has a script whose global class, or a base script's, is that name.
+static func _takes_value(current: Variant, entry: Dictionary, value: Variant) -> bool:
+	if typeof(current) == typeof(value):
+		return true
+	if typeof(value) != TYPE_OBJECT or entry["type"] != TYPE_OBJECT:
+		return false
+	if not is_instance_valid(value):
+		return false
+	var object: Object = value
+	var hint: String = entry["hint_string"]
+	return object.is_class(hint) or _script_class_is(object.get_script() as Script, hint)
+
+
+## Whether script, or a script it extends, declares the global class name.
+static func _script_class_is(script: Script, name: String) -> bool:
+	while script != null:
+		if script.get_global_name() == name:
+			return true
+		script = script.get_base_script()
+	return false
+
+
 ## {script} for the script at path, which must compile; or {error} quoting what the load logged.
 static func _load_script(path: String) -> Dictionary:
 	var start: int = _log_count()
@@ -235,10 +312,11 @@ static func _load_texture(path: String) -> Dictionary:
 	return {"texture": resource}
 
 
-## {resource, uid?} for a resource saved in its own file.
-static func _resource_facts(resource: Resource) -> Dictionary:
+## {resource, uid?} for a resource saved in its own file; a script with no uid is given one
+## (SceneFiles.uid_or_new), and the .uid file written is appended to written.
+static func _resource_facts(resource: Resource, written: PackedStringArray) -> Dictionary:
 	var facts: Dictionary = {"resource": resource.resource_path}
-	var uid: int = SceneFiles.uid_of(resource.resource_path)
+	var uid: int = SceneFiles.uid_or_new(resource.resource_path, written)
 	if uid != ResourceUID.INVALID_ID:
 		facts["uid"] = ResourceUID.id_to_text(uid)
 	return facts

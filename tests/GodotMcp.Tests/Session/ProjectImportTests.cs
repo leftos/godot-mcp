@@ -40,6 +40,26 @@ public sealed class ProjectImportTests : IDisposable
     }
 
     [Fact]
+    public void ImportNeededWhenAUidFileIsNewerThanTheUidCache()
+    {
+        string game = ProjectPrepFixtures.CreateBuiltRepository(_temp);
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, ".godot", "uid_cache.bin"), "cache", ProjectPrepFixtures.Built);
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, "player.gd.uid"), "uid://b1234567", ProjectPrepFixtures.Later);
+
+        Assert.True(PrepAssertions.IsImportNeeded(game));
+    }
+
+    [Fact]
+    public void ImportNotNeededWhenEveryUidFileIsOlderThanTheUidCache()
+    {
+        string game = ProjectPrepFixtures.CreateBuiltRepository(_temp);
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, ".godot", "uid_cache.bin"), "cache", ProjectPrepFixtures.Built);
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, "player.gd.uid"), "uid://b1234567", ProjectPrepFixtures.Old);
+
+        Assert.False(PrepAssertions.IsImportNeeded(game));
+    }
+
+    [Fact]
     public void AnInputProbeCopyNeedsNoImport()
     {
         string probe = _temp.Combine("InputProbe");

@@ -83,8 +83,7 @@ static func create_scene(params: Dictionary) -> Dictionary:
 	if saved.has("error"):
 		return _fail(saved["error"])
 	var result: Dictionary = {"scenePath": scene_path, "root": facts, "uid": saved["uid"]}
-	if saved.has("warning"):
-		result["warning"] = saved["warning"]
+	_carry_save_notes(result, saved)
 	return {"ok": true, "result": result}
 
 
@@ -101,8 +100,7 @@ static func save_scene(params: Dictionary) -> Dictionary:
 	if saved.has("error"):
 		return _fail(saved["error"])
 	var result: Dictionary = {"scenePath": scene_path, "savedTo": target, "uid": saved["uid"]}
-	if saved.has("warning"):
-		result["warning"] = saved["warning"]
+	_carry_save_notes(result, saved)
 	return {"ok": true, "result": result}
 
 
@@ -120,8 +118,8 @@ static func edit_scene(op: String, params: Dictionary) -> Dictionary:
 		var saved: Dictionary = _save_checked(root, scene_path, scene_path, params, true)
 		if saved.has("error"):
 			applied = saved
-		elif saved.has("warning"):
-			applied["result"]["warning"] = saved["warning"]
+		else:
+			_carry_save_notes(applied["result"], saved)
 	root.free()
 	if applied.has("error"):
 		return _fail(applied["error"])
@@ -166,8 +164,7 @@ static func batch_scene(params: Dictionary) -> Dictionary:
 		return _fail(saved["error"])
 	if saved.has("uid"):
 		report["uid"] = saved["uid"]
-	if saved.has("warning"):
-		report["warning"] = saved["warning"]
+	_carry_save_notes(report, saved)
 	var written: Dictionary = SceneMesh.write_pending(pending)
 	if written.has("error"):
 		var prefix: String = "the scene was saved, but " if saved.has("uid") else ""
@@ -192,6 +189,14 @@ static func _apply_steps(root: Node, steps: Array, context: Dictionary) -> Dicti
 		entry["result"] = applied["result"]
 		entries.append(entry)
 	return {"passed": true, "steps": entries}
+
+
+## Copies a save's warning and uidFilesWritten (the .uid files it wrote for scripts that had none)
+## into result, adding to the uidFilesWritten result already has.
+static func _carry_save_notes(result: Dictionary, saved: Dictionary) -> void:
+	if saved.has("warning"):
+		result["warning"] = saved["warning"]
+	SceneFiles.note_written(result, PackedStringArray(saved.get("uidFilesWritten", [])))
 
 
 ## Saves the batch's scene in place, keeping the text of every section the steps left alone, unless
