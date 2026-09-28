@@ -98,7 +98,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 - **Does:** captures the game's next drawn frame to a PNG under `.godot/godot-mcp/screenshots/` and returns its path and size, plus an image.
 - **Use:** `responseMode` `path_only`, `preview` (default, at most `previewMaxWidth` wide, 480 by default) or `full`; `crop {x, y, width, height}` in the screenshot's pixels.
-- **Edges:** the crop is in screenshot pixels, not viewport coordinates (see Rules). `path_only` saves context when only the file matters. The capture is the root viewport's texture with every visible popup and tooltip on it: embedded ones (Godot's default) are in the texture, and in a project that sets `display/window/subwindows/embed_subwindows=false`, where each is its own OS window, they are pasted at their place in the viewport. Every capture (baselines, frame steps, `wait_for`, `preview_scene`) does the same.
+- **Edges:** the crop is in screenshot pixels, not viewport coordinates (see Rules). `path_only` saves context when only the file matters. The capture is the root viewport's texture with every visible popup and tooltip on it: embedded ones (Godot's default) are in the texture, and in a project that sets `display/window/subwindows/embed_subwindows=false`, where each is its own OS window, they are pasted where the window shows them, at any stretch mode and window size. Every capture (baselines, frame steps, `wait_for`, `preview_scene`) does the same.
 
 ### `get_ui_elements`
 

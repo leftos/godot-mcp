@@ -18,7 +18,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - A timed-out `run_script` is stopped in the game, and `run_script` and `call_method` timeouts restore `Engine.time_scale` and `SceneTree.paused`.
-- Screenshots, baselines, frame steps and previews include popups and tooltips in projects that turn `embed_subwindows` off, quiet runs included.
+- Screenshots, baselines, frame steps and previews include popups and tooltips, in place at any stretch, in projects that turn `embed_subwindows` off, quiet runs included.
 - `stop_project` no longer reports a kill for a game that quit but left processes running; it lists them in `leftRunning`, and a real kill gives `killReason`.
 
 ## 0.4.0 - 2026-09-28

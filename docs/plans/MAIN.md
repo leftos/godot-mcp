@@ -18,12 +18,6 @@ Waves run in order; bug reports sit ahead of the backlog inside each. The single
 - [ ] #29: `add_node` refuses `properties: {layout_mode: 0}` on a `ColorRect` under a `Control` ("it read 3 after the set"): `layout_mode` is editor-side and its stored value depends on the parent, so set it the way the editor does (after the node is added, or by the anchors it implies), or say which values the parent allows
 - [ ] Cut the release once #29 has landed, in the same session without asking again (user, 2026-09-28): 0.5.0, a minor bump for the new `capture_frames` and `move_node` tools (DEVELOPMENT.md's "CI and releases"), then `pwsh run.ps1 install` from the main checkout; the local install holds 0.4.1+eda56c9 until then
 
-### Wave 1: capture
-
-Shared: the screenshot grabs in `bridge/godot_mcp_bridge.gd`, `godot_mcp_time.gd`, `godot_mcp_baseline.gd` and `godot_mcp_preview.gd`. Gate: `pwsh run.ps1 test`, `pwsh run.ps1 gdtest` and `pwsh run.ps1 itest` (the `reads` group); a human check looks at the captured frames.
-
-- [ ] Measure `grab_frame`'s popup placement at a stretch other than 1:1 (a project with `stretch/mode` and a window bigger than the base size, `quiet: false`): only the 1:1 transform has been measured
-
 ### Singles
 
 - [ ] #30: a tool argument that fails to bind (`run_project` `options.prepare: true`, a string option) answers only "An error occurred invoking 'run_project'."; name the argument and the values it takes

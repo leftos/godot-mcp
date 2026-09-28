@@ -35,9 +35,9 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         + "scene_tree.root.add_child(recorder)\n\t"
         + "return true";
 
-    // Opens a PopupPanel of solid magenta, 90 x 50 window pixels, over the game; returns whether it is embedded and visible,
-    // and its place and size in viewport pixels (through the inverse of the root's screen transform).
-    private const string MagentaPopupScript =
+    // Opens a PopupPanel of solid magenta at (100, 60) from the root window, 90 x 50 window pixels; returns whether it is
+    // embedded and visible.
+    private const string MagentaPopupAtWindowOffsetScript =
         "var root := scene_tree.root\n\t"
         + "var style := StyleBoxFlat.new()\n\t"
         + "style.bg_color = Color(1, 0, 1)\n\t"
@@ -45,11 +45,7 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         + "popup.add_theme_stylebox_override(\"panel\", style)\n\t"
         + "root.add_child(popup)\n\t"
         + "popup.popup(Rect2i(root.position + Vector2i(100, 60), Vector2i(90, 50)))\n\t"
-        + "var to_viewport := root.get_screen_transform().affine_inverse()\n\t"
-        + "var place: Vector2 = to_viewport * Vector2(100, 60)\n\t"
-        + "var size: Vector2 = to_viewport.basis_xform(Vector2(popup.size))\n\t"
-        + "return {\"embedded\": popup.is_embedded(), \"visible\": popup.visible, \"x\": place.x, \"y\": place.y, "
-        + "\"width\": size.x, \"height\": size.y}";
+        + "return {\"embedded\": popup.is_embedded(), \"visible\": popup.visible}";
 
     // Where the root window and the popup are on the screen, and their sizes, for a failure message.
     private const string WindowPlacesScript =
@@ -99,23 +95,36 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         Assert.Equal(string.Empty, Git.Status(probe.Directory));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
-    public async Task TakeScreenshotIncludesANonEmbeddedPopup()
+    [Theory(Timeout = TestTimeoutMs)]
+    // At the fixture's 640 x 360 base a frame pixel is a viewport unit.
+    [InlineData("canvas_items", 640, 360, "100,60,90,50")]
+    // canvas_items renders the root at the window's resolution less the letterbox bars, so the screenshot is in window
+    // pixels: the popup keeps its size and its offset less the bar, (600 - 562) / 2 = 19 at 1000 x 600 (4.7.2 window.cpp
+    // L1372-1412).
+    [InlineData("canvas_items", 1280, 720, "100,60,90,50")]
+    [InlineData("canvas_items", 1000, 600, "100,41,90,50")]
+    // viewport renders the root at its 640 x 360 base and scales it to the window (window.cpp L1414-1423), so the popup
+    // shrinks with it: 100 / 1.5625, (60 - 19) / (562 / 360), 90 / 1.5625, 50 / (562 / 360), rounded.
+    [InlineData("viewport", 1000, 600, "64,26,58,32")]
+    public async Task TakeScreenshotPlacesANonEmbeddedPopupWhereTheWindowShowsIt(string mode, int width, int height, string expected)
     {
-        // With embedded subwindows off the popup is an OS window of its own, outside the root viewport's texture. A quiet
-        // run's window sits at (0, 0) on the hidden desktop, so the popup opens where it was asked, at its offset from it.
+        // A quiet run's window sits at (0, 0) on the hidden desktop, so the popup opens where it was asked, at its offset from it.
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         using ProbeProject probe = new();
-        string settings = File.ReadAllText(probe.ProjectFile);
-        File.WriteAllText(
-            probe.ProjectFile,
-            settings.Replace("[display]", "[display]\nwindow/subwindows/embed_subwindows=false", StringComparison.Ordinal)
-        );
+        string settings = File.ReadAllText(probe.ProjectFile)
+            .Replace(
+                "[display]",
+                $"[display]\nwindow/subwindows/embed_subwindows=false\nwindow/size/window_width_override={width}\n"
+                    + $"window/size/window_height_override={height}",
+                StringComparison.Ordinal
+            )
+            .Replace("window/stretch/mode=\"canvas_items\"", $"window/stretch/mode=\"{mode}\"", StringComparison.Ordinal);
+        File.WriteAllText(probe.ProjectFile, settings);
         await using SessionHarness harness = new();
         RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
         await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
 
-        JsonNode popup = (await RunForResultAsync(tools, MagentaPopupScript, cancellation))["value"]!;
+        JsonNode popup = (await RunForResultAsync(tools, MagentaPopupAtWindowOffsetScript, cancellation))["value"]!;
         List<ContentBlock> blocks = [.. await tools.TakeScreenshotAsync("full", null, 960, cancellationToken: cancellation)];
         string path = JsonNode.Parse(Text(blocks))!["path"]!.GetValue<string>();
         JsonNode found = (await RunForResultAsync(tools, MagentaBoundsScript(path), cancellation))["value"]!;
@@ -123,17 +132,10 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         await harness.Sessions.StopAsync(null, cancellation);
 
         Assert.Equal((false, true), (popup["embedded"]!.GetValue<bool>(), popup["visible"]!.GetValue<bool>()));
-        Assert.True(
-            found["found"]!.GetValue<bool>(),
-            $"no magenta pixel in the screenshot; the popup: {popup.ToJsonString()}, the windows: {windows.ToJsonString()}"
-        );
-        Assert.InRange(found["width"]!.GetValue<double>(), popup["width"]!.GetValue<double>() - 1, popup["width"]!.GetValue<double>() + 1);
-        Assert.InRange(found["height"]!.GetValue<double>(), popup["height"]!.GetValue<double>() - 1, popup["height"]!.GetValue<double>() + 1);
-        Assert.True(
-            Math.Abs(found["x"]!.GetValue<double>() - popup["x"]!.GetValue<double>()) <= 1
-                && Math.Abs(found["y"]!.GetValue<double>() - popup["y"]!.GetValue<double>()) <= 1,
-            $"the popup landed at {found.ToJsonString()}, asked at {popup.ToJsonString()}; the windows: {windows.ToJsonString()}"
-        );
+        Assert.True(found["found"]!.GetValue<bool>(), $"no magenta pixel in the screenshot; the windows: {windows.ToJsonString()}");
+        int Read(string key) => (int)found[key]!.GetValue<double>();
+        string landed = $"{Read("x")},{Read("y")},{Read("width")},{Read("height")}";
+        Assert.True(expected == landed, $"the popup landed at {landed}, expected at {expected}; the windows: {windows.ToJsonString()}");
     }
 
     [Fact(Timeout = TestTimeoutMs)]

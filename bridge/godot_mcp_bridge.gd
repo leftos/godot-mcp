@@ -577,7 +577,7 @@ func _handle_screenshot(id: int, params: Dictionary) -> void:
 
 ## The root viewport's image with every visible window that is not embedded (a popup or tooltip
 ## of a project that turns embed_subwindows off, an OS window of its own) pasted on it at its place
-## in the viewport, in the order the display server lists them; null when the viewport has no
+## in the frame, in the order the display server lists them; null when the viewport has no
 ## image. Embedded windows are already in the root viewport's image.
 func grab_frame() -> Image:
 	var canvas: Image = get_viewport().get_texture().get_image()
@@ -604,7 +604,7 @@ static func paste_windows(canvas: Image, windows: Array[Dictionary]) -> Image:
 
 
 ## Every visible window of this process other than the root that is not embedded, as
-## {image, rect} with rect in root viewport pixels, in the display server's order.
+## {image, rect} with rect in frame pixels, in the display server's order.
 func _native_window_images() -> Array[Dictionary]:
 	var found: Array[Dictionary] = []
 	var root: Window = get_tree().root
@@ -615,17 +615,23 @@ func _native_window_images() -> Array[Dictionary]:
 			continue
 		var image: Image = window.get_texture().get_image()
 		if image != null:
-			found.append({"image": image, "rect": _window_rect_in_viewport(window)})
+			found.append({"image": image, "rect": _window_rect_in_frame(window)})
 	return found
 
 
-## A window's screen rect in root viewport pixels: its offset from the root window, through the
-## inverse of the root viewport's screen transform (the stretch scale and the letterbox offset).
-func _window_rect_in_viewport(window: Window) -> Rect2i:
-	var to_viewport: Transform2D = get_viewport().get_screen_transform().affine_inverse()
+## A window's screen rect in frame pixels (the render target's pixels: the window less its
+## letterbox bars under canvas_items, the base size under viewport): its offset from the root
+## window, through the viewport's final transform with the inverse of its screen transform on
+## the right, which divides the window transform back out.
+func _window_rect_in_frame(window: Window) -> Rect2i:
+	var viewport := get_viewport()
+	var to_frame: Transform2D = (
+		viewport.get_stretch_transform() * viewport.get_global_canvas_transform()
+	)
+	to_frame = to_frame * viewport.get_screen_transform().affine_inverse()
 	var origin := Vector2(window.position - get_tree().root.position)
-	var top_left: Vector2 = to_viewport * origin
-	var bottom_right: Vector2 = to_viewport * (origin + Vector2(window.size))
+	var top_left: Vector2 = to_frame * origin
+	var bottom_right: Vector2 = to_frame * (origin + Vector2(window.size))
 	return Rect2i(Vector2i(top_left.round()), Vector2i((bottom_right - top_left).round()))
 
 
