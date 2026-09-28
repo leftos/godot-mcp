@@ -67,6 +67,7 @@ internal sealed partial class GodotSession
                 PreviousAlreadyExited = previousAlreadyExited,
                 PreviousGameExitCode = previousGameExitCode,
                 PreviousKillReason = previousEnd?.KillReason,
+                PreviousQuitMs = QuitMs(previousEnd),
                 PreviousLeftRunning = LeftRunning(previousEnd),
                 Recording = started.Recording,
                 PreviousRecording = replaced?.Outcome,
@@ -81,6 +82,12 @@ internal sealed partial class GodotSession
             }
         }
     }
+
+    /// <summary>
+    /// The replaced game's quit time as <see cref="RestartResult.PreviousQuitMs"/> reports it: null when it did not quit
+    /// within the grace, or the run had already ended.
+    /// </summary>
+    private static int? QuitMs(RunEnd? ended) => ended?.QuitMs;
 
     /// <summary>The replaced game's leftovers as <see cref="StopResult.LeftRunning"/> reports them: null when there were none.</summary>
     private static IReadOnlyList<string>? LeftRunning(RunEnd? ended)

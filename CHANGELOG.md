@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Changed
+
+- `stop_project` gives `quitMs`, how long a game that quit took after the quit request, and `restart_project` gives `previousQuitMs`.
+
 ## 0.5.0 - 2026-09-28
 
 ### Added

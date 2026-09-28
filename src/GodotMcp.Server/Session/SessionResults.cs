@@ -85,6 +85,13 @@ internal sealed record RestartResult(
     public string? PreviousKillReason { get; init; }
 
     /// <summary>
+    /// How long the replaced game took to exit after the quit request, in wall milliseconds; left out when it was killed or had
+    /// already exited. Against the grace (3 s, 30 s for a recording run), it shows a quit coming close to a kill.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? PreviousQuitMs { get; init; }
+
+    /// <summary>
     /// The processes the replaced game started and left running when it quit, as "name (pid N)"; they were ended with the
     /// console wrapper. Left out when there were none.
     /// </summary>
@@ -122,6 +129,13 @@ internal sealed record StopResult(string Session, string ProjectPath, int? ExitC
     /// <summary>Why the game had to be killed; left out when it quit.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? KillReason { get; init; }
+
+    /// <summary>
+    /// How long the game took to exit after the quit request, in wall milliseconds; left out when it was killed or had already
+    /// exited. Against the grace (3 s, 30 s for a recording run), it shows a quit coming close to a kill.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? QuitMs { get; init; }
 
     /// <summary>
     /// The processes the game started and left running when it quit, as "name (pid N)"; they were ended with the console

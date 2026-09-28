@@ -156,6 +156,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 GameExitCode = gameExitCode,
                 KillReason = ended.KillReason,
                 LeftRunning = ended.LeftRunning.Count == 0 ? null : ended.LeftRunning,
+                QuitMs = ended.QuitMs,
                 Recording = recording,
                 Warning = ended.Warning,
             };
@@ -327,9 +328,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>
     /// How <see cref="EndRunAsync"/> ended a run: whether the game had to be killed and why, the processes it left running
-    /// when it quit, and the warning when a debugger was attached to it.
+    /// when it quit, how long a quit took, and the warning when a debugger was attached to it.
     /// </summary>
-    private readonly record struct RunEnd(bool Killed, string? Warning, string? KillReason, IReadOnlyList<string> LeftRunning);
+    private readonly record struct RunEnd(bool Killed, string? Warning, string? KillReason, IReadOnlyList<string> LeftRunning, int? QuitMs);
 
     /// <summary>The warning stop_project and restart_project carry when they end a running game a debugger is attached to; null otherwise.</summary>
     private string? WarnIfDebugged(GodotRun run) =>
@@ -611,19 +612,21 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         if (await IsSilentAsync(run))
         {
             await KillAsync(run);
-            return new RunEnd(Killed: true, Warning: null, GameKillReason.Silent, LeftRunning: []);
+            return new RunEnd(Killed: true, Warning: null, GameKillReason.Silent, LeftRunning: [], QuitMs: null);
         }
 
+        long askedAt = Stopwatch.GetTimestamp();
         QuitRequest request = await AskToQuitAsync(run);
         TimeSpan exitGrace = CurrentExitGrace;
         if (!await ProcessExit.WaitUntilGoneAsync(run.Game ?? run.Process, exitGrace))
         {
             Log.ExitGraceExpired(_logger, run.ProjectDir, exitGrace.TotalSeconds);
             await KillAsync(run);
-            return new RunEnd(Killed: true, Warning: null, GameKillReason.AfterGrace(request, exitGrace), LeftRunning: []);
+            return new RunEnd(Killed: true, Warning: null, GameKillReason.AfterGrace(request, exitGrace), LeftRunning: [], QuitMs: null);
         }
 
-        return new RunEnd(Killed: false, Warning: null, KillReason: null, await EndWrapperAsync(run));
+        int quitMs = (int)Math.Round(Stopwatch.GetElapsedTime(askedAt).TotalMilliseconds);
+        return new RunEnd(Killed: false, Warning: null, KillReason: null, await EndWrapperAsync(run), quitMs);
     }
 
     /// <summary>
@@ -655,7 +658,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     private async Task<RunEnd> EndRunAsync(GodotRun run)
     {
         string? warning = WarnIfDebugged(run);
-        RunEnd ended = run.IsRunning ? await StopRunningAsync(run) : new RunEnd(Killed: false, Warning: null, KillReason: null, LeftRunning: []);
+        RunEnd ended = run.IsRunning
+            ? await StopRunningAsync(run)
+            : new RunEnd(Killed: false, Warning: null, KillReason: null, LeftRunning: [], QuitMs: null);
         if (run.Connection is not null)
         {
             await run.Connection.DisposeAsync();

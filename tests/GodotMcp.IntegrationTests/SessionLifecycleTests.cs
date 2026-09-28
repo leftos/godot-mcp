@@ -35,6 +35,17 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         + "\tscene_tree.root.add_child(node)\n"
         + "\treturn true\n";
 
+    // The same, but blocking 1.2 s: the game quits, only just inside the stop's 3 s grace.
+    private const string SlowButInTimeScript =
+        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
+        + "\tvar script := GDScript.new()\n"
+        + "\tscript.source_code = \"extends Node\\n\\n\\nfunc _exit_tree() -> void:\\n\\tOS.delay_msec(1200)\\n\"\n"
+        + "\tscript.reload()\n"
+        + "\tvar node := Node.new()\n"
+        + "\tnode.set_script(script)\n"
+        + "\tscene_tree.root.add_child(node)\n"
+        + "\treturn true\n";
+
     private static readonly TimeSpan ChildExitWait = TimeSpan.FromSeconds(5);
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
@@ -322,6 +333,8 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
 
         Assert.False(stopped.Killed);
         Assert.Null(stopped.KillReason);
+        Assert.NotNull(stopped.QuitMs);
+        Assert.InRange(stopped.QuitMs.Value, 0, 2999);
         Assert.Equal(0, stopped.GameExitCode);
         Assert.True(stopped.OverrideRemoved);
         Assert.NotNull(stopped.LeftRunning);
@@ -344,7 +357,24 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.Null(stopped.GameExitCode);
         Assert.NotNull(stopped.KillReason);
         Assert.Contains("still shutting down", stopped.KillReason, StringComparison.Ordinal);
+        Assert.Null(stopped.QuitMs);
         Assert.Null(stopped.LeftRunning);
+        Assert.True(stopped.OverrideRemoved);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStopSaysHowLongTheQuitTook()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
+        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        await tools.RunScriptAsync(SlowButInTimeScript, 10_000, null, cancellation);
+
+        StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.False(stopped.Killed);
+        Assert.NotNull(stopped.QuitMs);
+        Assert.InRange(stopped.QuitMs.Value, 1200, 2999);
         Assert.True(stopped.OverrideRemoved);
     }
 
@@ -382,6 +412,23 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.NotNull(restarted.PreviousKillReason);
         Assert.Contains("still shutting down", restarted.PreviousKillReason, StringComparison.Ordinal);
         Assert.Null(restarted.PreviousLeftRunning);
+        Assert.Null(restarted.PreviousQuitMs);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ARestartSaysHowLongTheOldGameTookToQuit()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
+        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        await tools.RunScriptAsync(SlowButInTimeScript, 10_000, null, cancellation);
+
+        RestartResult restarted = await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
+        await _harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.Null(restarted.PreviousKillReason);
+        Assert.NotNull(restarted.PreviousQuitMs);
+        Assert.InRange(restarted.PreviousQuitMs.Value, 1200, 2999);
     }
 
     private LaunchRequest Request(string[]? userArgs = null, bool quiet = true, bool shutOutRealGamepads = false) =>
