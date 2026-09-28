@@ -313,7 +313,7 @@ static func _copy_of(source: Node, root: Node) -> Dictionary:
 	if packing.has("error"):
 		return {"error": "%s could not be copied: %s" % [path, packing["error"]]}
 	var packed: PackedScene = packing["packed"]
-	var copy_holder: Node = packed.instantiate(PackedScene.GEN_EDIT_STATE_MAIN)
+	var copy_holder: Node = SceneEdit.instantiate_native(packed, PackedScene.GEN_EDIT_STATE_MAIN)
 	if copy_holder == null:
 		return {"error": "%s was packed, but its copy could not be instantiated." % path}
 	var copy: Node = copy_holder.get_child(0)

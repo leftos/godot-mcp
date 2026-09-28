@@ -193,7 +193,7 @@ static func _instance_of(path: String, scene: String) -> Dictionary:
 		return {"error": _not_a_node_type(path)}
 	if _contains_scene(packed, scene, 0):
 		return {"error": "%s is or instances %s, which cannot contain itself." % [path, scene]}
-	var node: Node = packed.instantiate(PackedScene.GEN_EDIT_STATE_INSTANCE)
+	var node: Node = SceneEdit.instantiate_native(packed, PackedScene.GEN_EDIT_STATE_INSTANCE)
 	if node == null:
 		return {"error": "%s loaded but could not be instantiated." % path}
 	return {"node": node, "type": node.get_class(), "instance": path}

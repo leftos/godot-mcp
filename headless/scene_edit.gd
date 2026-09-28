@@ -30,10 +30,51 @@ static func open(path: String) -> Dictionary:
 	var scene := ResourceLoader.load(path) as PackedScene
 	if scene == null:
 		return {"error": "%s did not load as a scene" % path}
-	var root: Node = scene.instantiate(PackedScene.GEN_EDIT_STATE_MAIN)
+	var root: Node = instantiate_native(scene, PackedScene.GEN_EDIT_STATE_MAIN)
 	if root == null:
 		return {"error": "%s loaded but could not be instantiated" % path}
 	return {"root": root}
+
+
+## scene instantiated with edit_state, or null, with each engine property a script member of the
+## same name hides holding the value the scenes store for it. An instance is built whole, script
+## included, before the instancing scene's values are set (4.7.2 packed_scene.cpp L233, L266,
+## L494), and Object.set gives the script instance first refusal (object.cpp L239-245), so an
+## override of such a property reaches the member instead. A stored Object value is left as the
+## instantiation set it, so a resource local to the scene is never shared.
+static func instantiate_native(scene: PackedScene, edit_state: int) -> Node:
+	var root: Node = scene.instantiate(edit_state)
+	if root != null:
+		_restore_hidden(root, scene.get_state(), 0)
+	return root
+
+
+## Sets the hidden engine properties of the nodes under root that state's records store, a
+## record's instanced or base scene first, so an inner value lands before the outer one.
+static func _restore_hidden(root: Node, state: SceneState, depth: int) -> void:
+	if depth > MAX_BASE_DEPTH:
+		return
+	for index in state.get_node_count():
+		var node: Node = root.get_node_or_null(state.get_node_path(index))
+		if node == null:
+			continue
+		var inner: PackedScene = state.get_node_instance(index)
+		if inner != null:
+			_restore_hidden(node, inner.get_state(), depth + 1)
+		_restore_values(node, state, index)
+
+
+## Sets on node, through ClassDB, each hidden engine property the record at index of state stores,
+## other than an Object value.
+static func _restore_values(node: Node, state: SceneState, index: int) -> void:
+	var names: PackedStringArray = _hidden_names(node)
+	if names.is_empty():
+		return
+	for pair in state.get_node_property_count(index):
+		var property: String = state.get_node_property_name(index, pair)
+		var value: Variant = state.get_node_property_value(index, pair)
+		if names.has(property) and typeof(value) != TYPE_OBJECT:
+			ClassDB.class_set_property(node, property, value)
 
 
 ## The node at path, relative to root ("." is root itself), or null.
@@ -235,7 +276,9 @@ static func pack_native(root: Node) -> Dictionary:
 		var names: PackedStringArray = _hidden_names(node)
 		if names.is_empty():
 			continue
-		fixes[index] = {"node": node, "names": names}
+		fixes[index] = {
+			"node": node, "names": names, "bases": _base_values(state, index, node, names)
+		}
 		for property in names:
 			var clause: String = _clash_clause(node, property)
 			if not clashes.has(clause):
@@ -331,27 +374,111 @@ static func _with_native_values(bundled: Dictionary, fixes: Dictionary) -> Dicti
 
 
 ## pairs, a node record's (name index, value index) pairs, storing the engine's value of each of
-## fix.names on fix.node. A stored pair points at that value, or is dropped when it is the class
-## default and the record is plain (neither instanced nor inherited, so no other scene supplies a
-## value); a missing pair is added when the value is not the default.
+## fix.names on fix.node. A stored pair points at that value, or is dropped when the value is the
+## base one: the class default for a plain record (neither instanced nor inherited, so no other
+## scene supplies a value), else fix.bases, what the instanced or base scenes give the node; a
+## missing pair is added when the value is not the base one.
 static func _native_pairs(
 	bundled: Dictionary, pairs: PackedInt32Array, fix: Dictionary, plain: bool
 ) -> PackedInt32Array:
 	var node: Node = fix["node"]
+	var bases: Dictionary = fix["bases"]
 	for property: String in fix["names"]:
 		var value: Variant = ClassDB.class_get_property(node, property)
-		var class_default: Variant = ClassDB.class_get_property_default_value(
-			node.get_class(), property
-		)
-		var is_default: bool = Json.same(value, class_default)
+		var base: Variant = ClassDB.class_get_property_default_value(node.get_class(), property)
+		if not plain:
+			base = bases[property]
+		var is_base: bool = Json.same(value, base)
 		var at: int = _pair_at(bundled["names"], pairs, property)
-		if at >= 0 and is_default and plain:
+		if at >= 0 and is_base:
 			pairs = pairs.slice(0, at) + pairs.slice(at + 2)
 		elif at >= 0:
 			pairs[at + 1] = _variant_index(bundled, value)
-		elif not is_default:
+		elif not is_base:
 			pairs = _with_pair(bundled, pairs, property, value)
 	return pairs
+
+
+## {property: value} for each of names: the value the scenes the record at index of state
+## instances or inherits give node, as PropertyUtils finds a stored property's default: the value
+## stored for the node in the nearest of those scenes that stores one, else the class default.
+static func _base_values(
+	state: SceneState, index: int, node: Node, names: PackedStringArray
+) -> Dictionary:
+	var bases: Dictionary = {}
+	var path: String = _plain_path(state.get_node_path(index))
+	for property in names:
+		var supplied: Array = _supplied_value(state, path, property, false, 0)
+		if supplied.is_empty():
+			bases[property] = ClassDB.class_get_property_default_value(node.get_class(), property)
+		else:
+			bases[property] = supplied[0]
+	return bases
+
+
+## [value] of property for the node at path (relative to state's root): state's own record for
+## path when own and it stores one, else what the instanced or base scene that holds the node
+## gives it; [] when no scene stores it.
+static func _supplied_value(
+	state: SceneState, path: String, property: String, own: bool, depth: int
+) -> Array:
+	if depth > MAX_BASE_DEPTH:
+		return []
+	if own:
+		var stored: Array = _stored_value(state, path, property)
+		if not stored.is_empty():
+			return stored
+	var supplier: int = _supplier(state, path)
+	if supplier < 0:
+		return []
+	var inner: String = _relative_path(path, _plain_path(state.get_node_path(supplier)))
+	var scene: PackedScene = state.get_node_instance(supplier)
+	return _supplied_value(scene.get_state(), inner, property, true, depth + 1)
+
+
+## [value] of property in state's record for the node at path, or [] when it stores none.
+static func _stored_value(state: SceneState, path: String, property: String) -> Array:
+	for index in state.get_node_count():
+		if _plain_path(state.get_node_path(index)) != path:
+			continue
+		for pair in state.get_node_property_count(index):
+			if state.get_node_property_name(index, pair) == property:
+				return [state.get_node_property_value(index, pair)]
+		return []
+	return []
+
+
+## The record of state that instances or inherits the scene holding the node at path: the
+## deepest record at path or above it with an instance, or -1. Records come in tree order, so the
+## last such record is the deepest.
+static func _supplier(state: SceneState, path: String) -> int:
+	var supplier: int = -1
+	for index in state.get_node_count():
+		if state.get_node_instance(index) == null:
+			continue
+		if _relative_path(path, _plain_path(state.get_node_path(index))) != "":
+			supplier = index
+	return supplier
+
+
+## path relative to at, both relative to one root ("." for the root itself), or "" when path is
+## not at or below at.
+static func _relative_path(path: String, at: String) -> String:
+	if at == ".":
+		return path
+	if path == at:
+		return "."
+	if path.begins_with(at + "/"):
+		return path.substr(at.length() + 1)
+	return ""
+
+
+## path as text without a leading "./", "." for the root.
+static func _plain_path(path: NodePath) -> String:
+	var text: String = str(path)
+	if text.begins_with("./"):
+		text = text.substr(2)
+	return "." if text.is_empty() else text
 
 
 ## pairs with a pair for property holding value, placed before the script's pair: instantiation

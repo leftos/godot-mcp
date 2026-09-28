@@ -10,7 +10,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
-- Headless scene saves store the engine's value when a C# field shares an engine property's name, such as `scale`, and warn naming the field.
+- Headless scene saves store the engine's value when a C# field shares an engine property's name, such as `scale`, on plain and instanced nodes alike, and warn naming the field.
 
 ## 0.5.1 - 2026-09-28
 

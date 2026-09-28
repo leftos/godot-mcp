@@ -1023,6 +1023,77 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.DoesNotContain("scale = 1.0", text, StringComparison.Ordinal);
     }
 
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task SaveSceneKeepsAnInstanceOverrideOfAPropertyAScriptFieldHides()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        WriteShadowInstance(csProbe, "scale = Vector2(2, 2)\n");
+
+        await _tools.SaveSceneAsync(csProbe.Directory, "host.tscn", cancellationToken: cancellation);
+
+        string text = File.ReadAllText(Path.Combine(csProbe.Directory, "host.tscn"));
+        Assert.Contains("instance=ExtResource(\"1_trail\")]\nscale = Vector2(2, 2)\n", text, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task SaveSceneAddsNoOverrideToAnInstanceWhoseScriptFieldHidesAProperty()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        WriteShadowInstance(csProbe, "");
+
+        await _tools.SaveSceneAsync(csProbe.Directory, "host.tscn", cancellationToken: cancellation);
+
+        string text = File.ReadAllText(Path.Combine(csProbe.Directory, "host.tscn"));
+        Assert.EndsWith("instance=ExtResource(\"1_trail\")]\n", text, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task SaveSceneAddsNoOverrideWhereTheBaseSceneSetsAHiddenProperty()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        WriteShadowInstance(csProbe, "");
+        File.WriteAllText(Path.Combine(csProbe.Directory, "trail.tscn"), ShadowTrailScene("scale = Vector2(3, 3)\n"));
+
+        await _tools.SaveSceneAsync(csProbe.Directory, "host.tscn", cancellationToken: cancellation);
+
+        string text = File.ReadAllText(Path.Combine(csProbe.Directory, "host.tscn"));
+        Assert.DoesNotContain("scale", text, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task SaveSceneKeepsAnInheritedRootOverrideOfAPropertyAScriptFieldHides()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        WriteShadowInstance(csProbe, "");
+        File.WriteAllText(
+            Path.Combine(csProbe.Directory, "big_trail.tscn"),
+            "[gd_scene format=3]\n\n[ext_resource type=\"PackedScene\" path=\"res://trail.tscn\" id=\"1_trail\"]\n\n"
+                + "[node name=\"Trail\" instance=ExtResource(\"1_trail\")]\nscale = Vector2(2, 2)\n"
+        );
+
+        await _tools.SaveSceneAsync(csProbe.Directory, "big_trail.tscn", cancellationToken: cancellation);
+
+        string text = File.ReadAllText(Path.Combine(csProbe.Directory, "big_trail.tscn"));
+        Assert.Contains("instance=ExtResource(\"1_trail\")]\nscale = Vector2(2, 2)\n", text, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task DuplicateNodeKeepsAnInstanceOverrideOfAPropertyAScriptFieldHides()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        WriteShadowInstance(csProbe, "scale = Vector2(2, 2)\n");
+
+        await _tools.DuplicateNodeAsync(csProbe.Directory, "host.tscn", "Trail", "Copy", cancellationToken: cancellation);
+
+        string text = File.ReadAllText(Path.Combine(csProbe.Directory, "host.tscn"));
+        Assert.Equal(2, text.Split("scale = Vector2(2, 2)\n").Length - 1);
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task LoadSpriteRefusesAResourceThatIsNotATexture()
     {
@@ -1323,6 +1394,30 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
                 + ShadowScaled
         );
     }
+
+    /// <summary>
+    /// Writes ShadowTrail.cs, trail.tscn (a Node2D root Trail with that script) and host.tscn, whose child Trail instances
+    /// trail.tscn with the property lines overrides.
+    /// </summary>
+    private static void WriteShadowInstance(CsProbeProject csProbe, string overrides)
+    {
+        csProbe.WriteSource("ShadowTrail.cs", ShadowTrailSource);
+        File.WriteAllText(Path.Combine(csProbe.Directory, "trail.tscn"), ShadowTrailScene(""));
+        File.WriteAllText(
+            Path.Combine(csProbe.Directory, "host.tscn"),
+            "[gd_scene format=3]\n\n[ext_resource type=\"PackedScene\" path=\"res://trail.tscn\" id=\"1_trail\"]\n\n"
+                + "[node name=\"Host\" type=\"Node2D\"]\n\n"
+                + "[node name=\"Trail\" parent=\".\" instance=ExtResource(\"1_trail\")]\n"
+                + overrides
+        );
+    }
+
+    /// <summary>trail.tscn: a Node2D root Trail holding the property lines properties, then the ShadowTrail script.</summary>
+    private static string ShadowTrailScene(string properties) =>
+        "[gd_scene format=3]\n\n[ext_resource type=\"Script\" path=\"res://ShadowTrail.cs\" id=\"1_shadow\"]\n\n"
+        + "[node name=\"Trail\" type=\"Node2D\"]\n"
+        + properties
+        + "script = ExtResource(\"1_shadow\")\n";
 
     private static string FirstLine(string directory, string relative) => File.ReadLines(Path.Combine(directory, relative)).First();
 

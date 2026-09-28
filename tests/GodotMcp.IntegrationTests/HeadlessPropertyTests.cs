@@ -909,6 +909,29 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task GetNodePropertiesReadsAnInstanceOverrideUnderAScriptFieldOfTheSameName()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        csProbe.WriteSource("ShadowTrail.cs", ShadowTrailSource);
+        File.WriteAllText(
+            Path.Combine(csProbe.Directory, "trail.tscn"),
+            "[gd_scene format=3]\n\n[ext_resource type=\"Script\" path=\"res://ShadowTrail.cs\" id=\"1_shadow\"]\n\n"
+                + "[node name=\"Trail\" type=\"Node2D\"]\nscript = ExtResource(\"1_shadow\")\n"
+        );
+        File.WriteAllText(
+            Path.Combine(csProbe.Directory, "host.tscn"),
+            "[gd_scene format=3]\n\n[ext_resource type=\"PackedScene\" path=\"res://trail.tscn\" id=\"1_trail\"]\n\n"
+                + "[node name=\"Host\" type=\"Node2D\"]\n\n"
+                + "[node name=\"Trail\" parent=\".\" instance=ExtResource(\"1_trail\")]\nscale = Vector2(2, 2)\n"
+        );
+
+        JsonNode read = await PropertiesAsync(csProbe.Directory, "host.tscn", [new NodePropertyQuery("Trail", ["scale"])], cancellation);
+
+        AssertVector(read["results"]![0]!["properties"]!["scale"]!, 2, 2);
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
     public async Task SetNodePropertiesSetsTheNativeValueUnderAScriptFieldOfTheSameName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
