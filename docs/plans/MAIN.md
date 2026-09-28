@@ -11,12 +11,6 @@ The first version replaced godot-mcp-runtime at parity and went further: every p
 
 Waves run in order; bug reports sit ahead of the backlog inside each. The singles' order is not a ranking.
 
-### Release 0.5.0
-
-#23-#29 have landed under `## Unreleased`.
-
-- [ ] Cut the release once #29 has landed, in the same session without asking again (user, 2026-09-28): 0.5.0, a minor bump for the new `capture_frames` and `move_node` tools (DEVELOPMENT.md's "CI and releases"), then `pwsh run.ps1 install` from the main checkout; the local install holds 0.4.1+eda56c9 until then
-
 ### Singles
 
 - [ ] #30: a tool argument that fails to bind (`run_project` `options.prepare: true`, a string option) answers only "An error occurred invoking 'run_project'."; name the argument and the values it takes
