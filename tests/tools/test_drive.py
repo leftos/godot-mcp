@@ -202,7 +202,7 @@ def test_the_gate_takes_a_drive_by_its_exit_status_alone(tmp_path: Path, gate_op
     fake = _fake(tmp_path, [_text(quoted_failure)])
     command = [sys.executable, str(TOOL_PATH), *_drive_arguments(tmp_path, '[{"tool": "get_errors"}]', _fake_command(fake))]
     log = tmp_path / "drive.log"
-    gate = ["pwsh", "-NoProfile", "-File", str(GATE_PATH), *gate_options, "-Log", str(log), "-TimeoutSeconds", "60", "--", *command]
+    gate = ["pwsh", "-NoProfile", "-File", str(GATE_PATH), *gate_options, "-Log", str(log), "-TimeoutSeconds", "60", "-Slot", "light", "--", *command]
 
     result = subprocess.run(gate, capture_output=True, text=True, timeout=90, check=False)
 

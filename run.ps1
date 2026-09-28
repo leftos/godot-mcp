@@ -188,11 +188,12 @@ function Invoke-Gated {
         [Parameter(Mandatory)] [int]$TimeoutSeconds,
         [Parameter(Mandatory)] [string]$Program,
         [Parameter(Mandatory)] [string[]]$Arguments,
+        [Parameter(Mandatory)] [ValidateSet('heavy', 'light')] [string]$Slot,
         [switch]$NoMarkers
     )
     $log = Join-Path $logDir "$Name.log"
-    Write-Host "$Program $($Arguments -join ' ')  (log: $log, ceiling: $TimeoutSeconds s)"
-    $gateOptions = @('-Log', $log, '-TimeoutSeconds', $TimeoutSeconds, '-Tail', 15)
+    Write-Host "$Program $($Arguments -join ' ')  (log: $log, ceiling: $TimeoutSeconds s, slot: $Slot)"
+    $gateOptions = @('-Log', $log, '-TimeoutSeconds', $TimeoutSeconds, '-Slot', $Slot, '-Tail', 15)
     if ($NoMarkers) {
         $gateOptions += '-NoMarkers'
     }
@@ -209,9 +210,10 @@ function Invoke-Logged {
     param(
         [Parameter(Mandatory)] [string]$Name,
         [Parameter(Mandatory)] [int]$TimeoutSeconds,
-        [Parameter(Mandatory)] [string[]]$Arguments
+        [Parameter(Mandatory)] [string[]]$Arguments,
+        [Parameter(Mandatory)] [ValidateSet('heavy', 'light')] [string]$Slot
     )
-    return Invoke-Gated -Name $Name -TimeoutSeconds $TimeoutSeconds -Program 'dotnet' -Arguments $Arguments
+    return Invoke-Gated -Name $Name -TimeoutSeconds $TimeoutSeconds -Program 'dotnet' -Arguments $Arguments -Slot $Slot
 }
 
 # Builds a test project in $configuration, warnings as errors, under its own gate, so the run after it has nothing to
@@ -222,7 +224,7 @@ function Invoke-TestBuild {
         [Parameter(Mandatory)] [string]$Project
     )
     $arguments = @('build', (Join-Path $root $Project), '-c', $configuration, '-warnaserror')
-    return Invoke-Logged -Name $Name -TimeoutSeconds 300 -Arguments $arguments
+    return Invoke-Logged -Name $Name -TimeoutSeconds 300 -Arguments $arguments -Slot heavy
 }
 
 # The program and arguments of an integration test run: dotnet with the given arguments, on Windows through
@@ -241,10 +243,11 @@ function Get-ItestCommand {
 function Invoke-ItestGated {
     param(
         [Parameter(Mandatory)] [string]$Name,
-        [Parameter(Mandatory)] [string[]]$Arguments
+        [Parameter(Mandatory)] [string[]]$Arguments,
+        [Parameter(Mandatory)] [ValidateSet('heavy', 'light')] [string]$Slot
     )
     $command = Get-ItestCommand -Arguments $Arguments
-    return Invoke-Gated -Name $Name -TimeoutSeconds 300 -Program $command.Program -Arguments $command.Arguments
+    return Invoke-Gated -Name $Name -TimeoutSeconds 300 -Program $command.Program -Arguments $command.Arguments -Slot $Slot
 }
 
 # The Godot executable as the server finds it (Installation.FindGodot): GODOT_PATH when set and a file, else the first folder
@@ -298,7 +301,7 @@ function Invoke-GdtestImport {
         return 0
     }
     $arguments = @('--headless', '--path', $gdtestDir, '--import')
-    $status = Invoke-Gated -Name 'gdtest-import' -TimeoutSeconds 120 -Program (Get-GodotPath) -Arguments $arguments
+    $status = Invoke-Gated -Name 'gdtest-import' -TimeoutSeconds 120 -Program (Get-GodotPath) -Arguments $arguments -Slot light
     if ($status -ne 0) {
         return $status
     }
@@ -444,6 +447,30 @@ function ConvertTo-CommandLineWord {
     return $Word
 }
 
+# The gate slot kind of an itest group: heavy for the build lane's groups, whose tests run dotnet builds of the CsProbe
+# project on top of their Godot runs; light for the timing lane's, which run Godot and at most one small fixture build.
+function Get-ItestGroupSlot {
+    param([Parameter(Mandatory)] [string]$Group)
+    if ($itestLanes['build'] -contains $Group) {
+        return 'heavy'
+    }
+    return 'light'
+}
+
+# The gate slot kind of a filtered itest: heavy when a filter selects a class of a build lane group, as
+# Get-ItestGroupSlot gives that group in a full run; light otherwise. Each filter is matched against the class's full
+# name, as the runner's --filter-class matches it.
+function Get-ItestFilterSlot {
+    param([Parameter(Mandatory)] [string[]]$Filters)
+    $classes = @($itestLanes['build'] | ForEach-Object { $itestGroups[$_] } | ForEach-Object { "$itestNamespace.$_" })
+    foreach ($filter in $Filters) {
+        if (@($classes | Where-Object { $_ -like $filter }).Count -gt 0) {
+            return 'heavy'
+        }
+    }
+    return 'light'
+}
+
 # Starts a group's gate as a process of its own, so the lanes' gates run at once: its console output (the gate's tail
 # and verdict) goes to .tmp/itest-<group>.console, its errors to .tmp/itest-<group>.console.err. Returns the process.
 function Invoke-ItestGroupProcess {
@@ -454,8 +481,10 @@ function Invoke-ItestGroupProcess {
     $classes = @($itestGroups[$Group] | ForEach-Object { "$itestNamespace.$_" })
     $command = Get-ItestCommand -Arguments (Get-TestArgumentList -Project $itestProject -Classes $classes -NoBuild)
     $log = Join-Path $logDir "itest-$Group.log"
-    $words = @('-NoProfile', '-File', $gate, '-Log', $log, '-TimeoutSeconds', '300', '-Tail', '15', '--', $command.Program) + $command.Arguments
-    Write-Host "itest ${Group}: started in lane $Lane (log: $log, ceiling: 300 s)"
+    $slot = Get-ItestGroupSlot -Group $Group
+    $gateOptions = @('-Log', $log, '-TimeoutSeconds', '300', '-Slot', $slot, '-Tail', '15')
+    $words = @('-NoProfile', '-File', $gate) + $gateOptions + @('--', $command.Program) + $command.Arguments
+    Write-Host "itest ${Group}: started in lane $Lane (log: $log, ceiling: 300 s, slot: $slot)"
     $console = Join-Path $logDir "itest-$Group.console"
     $process = Start-Process -FilePath 'pwsh' -ArgumentList @($words | ForEach-Object { ConvertTo-CommandLineWord -Word $_ }) `
         -NoNewWindow -PassThru -RedirectStandardOutput $console -RedirectStandardError "$console.err"
@@ -662,7 +691,7 @@ function Invoke-DotnetPublish {
     foreach ($name in $dotnetProjects.Keys) {
         $project = $dotnetProjects[$name]
         $arguments = @('publish', (Join-Path $root $project.Project), '-c', 'Release', '-o', (Join-Path $dotnetStaging $name)) + $project.Extra
-        $status = Invoke-Logged -Name "dotnet-$name" -TimeoutSeconds 300 -Arguments $arguments
+        $status = Invoke-Logged -Name "dotnet-$name" -TimeoutSeconds 300 -Arguments $arguments -Slot heavy
         if ($status -ne 0) {
             return $status
         }
@@ -674,7 +703,7 @@ function Invoke-DotnetPublish {
 
 # Publishes the server into bin/publish, then the C# helper, copying bin/dotnet to bin/publish/dotnet.
 function Invoke-Publish {
-    $status = Invoke-Logged -Name 'publish' -TimeoutSeconds 300 -Arguments (Get-PublishArgumentList)
+    $status = Invoke-Logged -Name 'publish' -TimeoutSeconds 300 -Arguments (Get-PublishArgumentList) -Slot heavy
     if ($status -ne 0) {
         return $status
     }
@@ -698,7 +727,7 @@ function Invoke-Install {
         '-NoProfile', '-File', (Join-Path $root 'tools/install.ps1'),
         '-Root', $root, '-InstallDir', $installDir, '-SkillsDir', $skillsDir
     )
-    return Invoke-Gated -Name 'install' -TimeoutSeconds 60 -Program 'pwsh' -Arguments $arguments
+    return Invoke-Gated -Name 'install' -TimeoutSeconds 60 -Program 'pwsh' -Arguments $arguments -Slot light
 }
 
 # Publishes into an emptied bin/publish, so no file of an earlier publish reaches the zip, then runs tools/package.ps1
@@ -716,7 +745,7 @@ function Invoke-Package {
         '-NoProfile', '-File', (Join-Path $root 'tools/package.ps1'),
         '-Root', $root, '-OutputDir', (Join-Path $logDir 'package')
     )
-    return Invoke-Gated -Name 'package' -TimeoutSeconds 60 -Program 'pwsh' -Arguments $arguments
+    return Invoke-Gated -Name 'package' -TimeoutSeconds 60 -Program 'pwsh' -Arguments $arguments -Slot light
 }
 
 # Builds the server project, then runs tools/drive.py under its own gate: the calls of a file sent in order to the
@@ -728,7 +757,7 @@ function Invoke-Drive {
         return 2
     }
     $project = Join-Path $root 'src/GodotMcp.Server/GodotMcp.Server.csproj'
-    $build = Invoke-Logged -Name 'drive-build' -TimeoutSeconds 300 -Arguments @('build', $project, '-warnaserror')
+    $build = Invoke-Logged -Name 'drive-build' -TimeoutSeconds 300 -Arguments @('build', $project, '-warnaserror') -Slot heavy
     if ($build -ne 0) {
         return $build
     }
@@ -739,7 +768,7 @@ function Invoke-Drive {
         '--calls', $CallsFile, '--images', (Join-Path $logDir 'drive'), '--server-log', (Join-Path $logDir 'drive-server.log'), $server
     )
     # A tool result can quote a game's error lines, which the gate's failure markers would read as drive's own failure.
-    return Invoke-Gated -Name 'drive' -TimeoutSeconds 300 -Program 'uv' -Arguments $arguments -NoMarkers
+    return Invoke-Gated -Name 'drive' -TimeoutSeconds 300 -Program 'uv' -Arguments $arguments -Slot light -NoMarkers
 }
 
 [string[]]$filterClasses = @($Filter | Where-Object { $_ })
@@ -755,7 +784,7 @@ Push-Location -LiteralPath $root
 try {
     switch ($Command) {
         'build' {
-            exit (Invoke-Logged -Name 'build' -TimeoutSeconds 300 -Arguments @('build', $solution, '-c', $configuration, '-warnaserror'))
+            exit (Invoke-Logged -Name 'build' -TimeoutSeconds 300 -Arguments @('build', $solution, '-c', $configuration, '-warnaserror') -Slot heavy)
         }
         'test' {
             $build = Invoke-TestBuild -Name 'test-build' -Project $unitTestProject
@@ -763,7 +792,9 @@ try {
                 exit $build
             }
             $arguments = Get-TestArgumentList -Project $unitTestProject -Classes $filterClasses -NoBuild
-            exit (Invoke-Logged -Name 'test' -TimeoutSeconds 180 -Arguments $arguments)
+            # The whole unit suite runs its classes in parallel across the machine; a filtered run is a class or two.
+            $slot = if ($filterClasses.Count -gt 0) { 'light' } else { 'heavy' }
+            exit (Invoke-Logged -Name 'test' -TimeoutSeconds 180 -Arguments $arguments -Slot $slot)
         }
         'itest' {
             if ($filterClasses.Count -eq 0) {
@@ -780,14 +811,15 @@ try {
                 exit $build
             }
             $arguments = Get-TestArgumentList -Project $itestProject -Classes $filterClasses -NoBuild
-            exit (Invoke-ItestGated -Name (Get-ItestFilterLogName -Filter $Filter) -Arguments $arguments)
+            $slot = Get-ItestFilterSlot -Filters $filterClasses
+            exit (Invoke-ItestGated -Name (Get-ItestFilterLogName -Filter $Filter) -Arguments $arguments -Slot $slot)
         }
         'format' {
-            $status = Invoke-Logged -Name 'format-style' -TimeoutSeconds 180 -Arguments @('format', 'style', $solution, '--severity', 'info')
+            $status = Invoke-Logged -Name 'format-style' -TimeoutSeconds 180 -Arguments @('format', 'style', $solution, '--severity', 'info') -Slot heavy
             if ($status -ne 0) {
                 exit $status
             }
-            exit (Invoke-Logged -Name 'format' -TimeoutSeconds 180 -Arguments @('csharpier', 'format', $root))
+            exit (Invoke-Logged -Name 'format' -TimeoutSeconds 180 -Arguments @('csharpier', 'format', $root) -Slot heavy)
         }
         'dotnet' {
             exit (Invoke-DotnetPublish)
@@ -807,7 +839,7 @@ try {
                 exit $import
             }
             $arguments = @('--headless', '--path', $gdtestDir, '--script', 'res://run_tests.gd')
-            exit (Invoke-Gated -Name 'gdtest' -TimeoutSeconds 60 -Program (Get-GodotPath) -Arguments $arguments)
+            exit (Invoke-Gated -Name 'gdtest' -TimeoutSeconds 60 -Program (Get-GodotPath) -Arguments $arguments -Slot light)
         }
         'drive' {
             exit (Invoke-Drive -CallsFile $Calls)
