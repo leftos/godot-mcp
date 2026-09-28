@@ -1,9 +1,9 @@
 extends RefCounted
 ## The headless scene edits operations.gd dispatches: create_scene, save_scene, and the edits that
 ## open a scene, apply one change and save it: delete_nodes and the edits of one node
-## (attach_script, duplicate_node, load_sprite) in scene_nodes.gd, add_node and the property ops
-## (set_node_properties, and get_node_properties, a read) in scene_props.gd, the signal ops
-## (get_node_signals, a read, connect_signal, disconnect_signal) in scene_signals.gd, and
+## (attach_script, duplicate_node, move_node, load_sprite) in scene_nodes.gd, add_node and the
+## property ops (set_node_properties, and get_node_properties, a read) in scene_props.gd, the
+## signal ops (get_node_signals, a read, connect_signal, disconnect_signal) in scene_signals.gd, and
 ## export_mesh_library in scene_mesh.gd, which never saves the scene and writes a file of its own.
 ##
 ## Each edit is apply_<op>(root, params, context) -> {result} or {error}, on a scene already open,
@@ -26,6 +26,7 @@ const EDIT_MODULES := {
 	"delete_nodes": SceneNodes,
 	"attach_script": SceneNodes,
 	"duplicate_node": SceneNodes,
+	"move_node": SceneNodes,
 	"load_sprite": SceneNodes,
 	"add_node": SceneProps,
 	"set_node_properties": SceneProps,

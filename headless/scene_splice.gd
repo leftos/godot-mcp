@@ -57,15 +57,22 @@ static func splice(original: String, saved: String) -> Dictionary:
 
 
 ## "" when spliced and saved hold the same sections, each by its key with an equal canonical form
-## (the gd_scene header left out); else what differs.
+## (the gd_scene header left out), and their node sections in the same order; else what differs.
 static func self_check(spliced: String, saved: String) -> String:
 	var mine: Dictionary = _parse(spliced)
 	var theirs: Dictionary = _parse(saved)
 	for doc: Dictionary in [mine, theirs]:
 		if not doc["error"].is_empty():
 			return doc["error"]
-	var ours: Dictionary = _forms(mine)
-	var wanted: Dictionary = _forms(theirs)
+	var failure: String = _form_difference(_forms(mine), _forms(theirs))
+	if failure.is_empty() and _node_keys(mine) != _node_keys(theirs):
+		failure = "the spliced text put the nodes in another order than the save"
+	return failure
+
+
+## The first section ours lost, changed or kept relative to wanted (each {key: canonical form}),
+## or "".
+static func _form_difference(ours: Dictionary, wanted: Dictionary) -> String:
 	for key: String in wanted:
 		if ours.get(key, "") != wanted[key]:
 			var lost: bool = not ours.has(key)
@@ -270,8 +277,8 @@ static func _lines_of(content: String) -> PackedStringArray:
 
 ## The output: original's header with load_steps recomputed, then original's sections in order,
 ## each kept, replaced by saved's text where it changed, or dropped where saved has no section with
-## its key, and saved's new sections each after the section that precedes it in saved. {text} or
-## {fallback}.
+## its key, and saved's new sections each after the section that precedes it in saved; then the
+## node sections put in saved's order, in the slots node sections fill. {text} or {fallback}.
 static func _build(before: Dictionary, after: Dictionary) -> Dictionary:
 	var ids: Dictionary = _id_map(before, after)
 	var entries: Array[Dictionary] = _kept_entries(before, after, ids)
@@ -358,23 +365,77 @@ static func _collision(entries: Array[Dictionary], added: Dictionary) -> String:
 	return ""
 
 
-## The output text: each entry, and after it the sections added after it in saved, each with the
-## blank lines saved gives it and the last with the entry's own.
+## The output text: the flattened sections, the nodes put in saved's order.
 static func _joined(
 	entries: Array[Dictionary], added: Dictionary, after: Dictionary, ids: Dictionary
 ) -> String:
+	var items: Array[Dictionary] = _flattened(entries, added, after, ids)
+	_in_saved_order(items, after)
 	var parts: PackedStringArray = []
+	for item: Dictionary in items:
+		parts.append(item["content"])
+		parts.append(item["sep"])
+	return "".join(parts)
+
+
+## The output sections as {kind, key, content, sep}: each entry, and after it the sections added
+## after it in saved, each with the blank lines saved gives it and the last with the entry's own.
+static func _flattened(
+	entries: Array[Dictionary], added: Dictionary, after: Dictionary, ids: Dictionary
+) -> Array[Dictionary]:
+	var items: Array[Dictionary] = []
 	for entry: Dictionary in entries:
-		parts.append(entry["content"])
+		items.append(entry)
 		var news: Array = added.get(entry["key"], [])
 		if news.is_empty():
-			parts.append(entry["sep"])
 			continue
-		parts.append(after["by_key"][entry["key"]]["sep"])
+		var own_sep: String = entry["sep"]
+		entry["sep"] = after["by_key"][entry["key"]]["sep"]
 		for index in news.size():
-			parts.append(_mapped(news[index], ids))
-			parts.append(entry["sep"] if index == news.size() - 1 else news[index]["sep"])
-	return "".join(parts)
+			var section: Dictionary = news[index]
+			(
+				items
+				. append(
+					{
+						"kind": section["kind"],
+						"key": section["key"],
+						"content": _mapped(section, ids),
+						"sep": own_sep if index == news.size() - 1 else section["sep"],
+					}
+				)
+			)
+	return items
+
+
+## Refills the slots items' node sections fill with those sections in saved's node order, each
+## slot keeping its blank lines, so every other section stays where it is. items stays as it is
+## when its node keys are not saved's (self_check then says which section differs).
+static func _in_saved_order(items: Array[Dictionary], after: Dictionary) -> void:
+	var slots: Array[int] = []
+	var by_key: Dictionary = {}
+	for index in items.size():
+		if items[index]["kind"] == "node":
+			slots.append(index)
+			by_key[items[index]["key"]] = items[index]
+	var order: PackedStringArray = _node_keys(after)
+	if order.size() != slots.size() or not by_key.has_all(Array(order)):
+		return
+	var placed: Array[Dictionary] = []
+	for place in slots.size():
+		var item: Dictionary = by_key[order[place]]
+		placed.append({"kind": "node", "key": item["key"], "content": item["content"]})
+	for place in slots.size():
+		placed[place]["sep"] = items[slots[place]]["sep"]
+		items[slots[place]] = placed[place]
+
+
+## The keys of doc's node sections, in file order.
+static func _node_keys(doc: Dictionary) -> PackedStringArray:
+	var keys: PackedStringArray = []
+	for section: Dictionary in doc["sections"]:
+		if section["kind"] == "node":
+			keys.append(section["key"])
+	return keys
 
 
 ## original's header line with load_steps=<resources + 1> where it had load_steps, and saved's uid

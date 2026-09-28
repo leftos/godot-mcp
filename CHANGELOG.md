@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - `capture_frames` saves frames at set moments of game time (`at`, or `every` and `for`) in one call, following `time_scale`.
+- `move_node` reorders a node among its siblings or moves it under another parent; `add_node` takes the same `options.position`.
 
 ### Changed
 

@@ -1,6 +1,8 @@
 extends RefCounted
 ## The headless node edits of an open scene, which scene_ops.gd dispatches and saves:
-## delete_nodes, and the edits of one node, attach_script, duplicate_node and load_sprite. Each is
+## delete_nodes, and the edits of one node, attach_script, duplicate_node, move_node and
+## load_sprite, with resolve_position, the place in its parent's children a position (an index, or
+## before or after a sibling) gives a node, which add_node shares. Each is
 ## apply_<op>(root, params, context) -> {result} or {error}, and changes nothing when it refuses.
 ##
 ## duplicate_node packs the node under a bare holder and instantiates the pack, so an instance in
@@ -19,6 +21,21 @@ const SCRIPT_CONNECT_FLAGS := (
 )
 const ROOT_DUPLICATE_REFUSAL := (
 	"The scene root cannot be duplicated; " + "save_scene with newPath copies the whole scene."
+)
+const ROOT_MOVE_REFUSAL := "the scene's root cannot be moved."
+const MOVE_NEEDS_REFUSAL := "move_node needs options.parent, options.position or both."
+## The keys a position takes, exactly one of them.
+const POSITION_KEYS: Array[String] = ["index", "before", "after"]
+const POSITION_KEYS_REFUSAL := "position takes exactly one of index, before or after; got %s."
+const MOVE_INSTANCE_REFUSAL := (
+	"%s is inside the instance of %s at %s, " + "so its move would not be saved. Edit %s instead."
+)
+const MOVE_INHERITED_REFUSAL := (
+	"%s comes from the base scene %s, " + "so its move would not be saved. Edit %s instead."
+)
+const INDEX_RANGE_REFUSAL := (
+	"position.index %d is out of range: %s has %d children once the node is placed, "
+	+ "so index takes %d to %d."
 )
 
 
@@ -98,6 +115,29 @@ static func apply_duplicate_node(root: Node, params: Dictionary, context: Dictio
 	_place(copy, parent["node"], source, copied["owned"], root)
 	_connect_outbound(copy, copied["outbound"], SCRIPT_CONNECT_FLAGS)
 	return {"result": {"originalPath": found["path"], "newPath": String(root.get_path_to(copy))}}
+
+
+## Moves the node at params.nodePath to params.position among its siblings, or under params.parent
+## (at params.position there, else last), keeping its global transform unless
+## params.keepGlobalTransform is false, and keeping the scene root the owner of it and of the nodes
+## below it the root owned: {result: {path, previousPath, index}}, or {error} with nothing changed.
+static func apply_move_node(root: Node, params: Dictionary, context: Dictionary) -> Dictionary:
+	if params.get("parent") == null and params.get("position") == null:
+		return {"error": MOVE_NEEDS_REFUSAL}
+	var planned: Dictionary = _plan_move(root, params, context["scene"])
+	if planned.has("error"):
+		return planned
+	var node: Node = planned["node"]
+	var parent: Node = planned["parent"]
+	var previous: String = String(root.get_path_to(node))
+	if parent != node.get_parent():
+		_reparent(node, parent, root, bool(params.get("keepGlobalTransform", true)))
+	if planned.has("index"):
+		parent.move_child(node, planned["index"])
+	var result: Dictionary = {
+		"path": String(root.get_path_to(node)), "previousPath": previous, "index": node.get_index()
+	}
+	return {"result": result}
 
 
 ## Sets the texture of the node at params.nodePath to the Texture2D at params.texture: {result:
@@ -358,3 +398,164 @@ static func _delete_refusal(root: Node, path: String, scene_path: String) -> Str
 	if refusal.is_empty():
 		refusal = SceneEdit.inherited_delete_refusal(scene_path, root, node, path)
 	return refusal
+
+
+## Why node (found at path, not the root) cannot be moved, or "": it is inside an instance, or it
+## comes from a base scene; the saved file records the move of neither (4.7.2 packed_scene.cpp
+## L491, L766-776).
+static func _move_held_refusal(root: Node, node: Node, path: String, scene_path: String) -> String:
+	var instance: Node = node.owner
+	if instance == null:
+		return "%s is not saved with the scene: it has no owner." % path
+	if instance != root:
+		var file: String = instance.scene_file_path
+		var facts: Array = [path, file, String(root.get_path_to(instance)), file]
+		return MOVE_INSTANCE_REFUSAL % facts
+	var base: String = SceneEdit.inherited_from(scene_path, String(root.get_path_to(node)))
+	return "" if base.is_empty() else MOVE_INHERITED_REFUSAL % [path, base, base]
+
+
+## {node, parent, index?}: the node at params.nodePath, the parent it moves under (its own when
+## params.parent is absent) and the index params.position gives it there; or {error}.
+static func _plan_move(root: Node, params: Dictionary, scene: String) -> Dictionary:
+	var path: String = str(params.get("nodePath", ""))
+	var found: Dictionary = SceneEdit.node_or_error(root, path, scene)
+	if found.has("error"):
+		return found
+	var node: Node = found["node"]
+	if node == root:
+		return {"error": ROOT_MOVE_REFUSAL}
+	var refusal: String = _move_held_refusal(root, node, path, scene)
+	if not refusal.is_empty():
+		return {"error": refusal}
+	var target: Dictionary = _move_target(root, node, params.get("parent"), path, scene)
+	if target.has("error"):
+		return target
+	var placed: Dictionary = placement(target["node"], node, params.get("position"))
+	if placed.has("error"):
+		return placed
+	placed["node"] = node
+	placed["parent"] = target["node"]
+	return placed
+
+
+## {node}: the parent node moves under, given (a path from root) or, when null, its own; or {error}
+## for a missing parent, one add_node could not add to, node itself or a node below it, or a parent
+## with a child of node's name.
+static func _move_target(
+	root: Node, node: Node, given: Variant, path: String, scene: String
+) -> Dictionary:
+	if given == null:
+		return {"node": node.get_parent()}
+	var parent_path: String = str(given)
+	var found: Dictionary = SceneEdit.node_or_error(root, parent_path, scene)
+	if found.has("error"):
+		return found
+	var parent: Node = found["node"]
+	var refusal: String = SceneEdit.unsaved_edit_refusal(root, parent, parent_path)
+	if refusal.is_empty():
+		refusal = _parent_refusal(root, node, parent, parent_path, path)
+	return {"node": parent} if refusal.is_empty() else {"error": refusal}
+
+
+## Why node (found at path) cannot move under parent (found at parent_path), or "": parent is node
+## or below it, or another parent already has a child of node's name (add_node's wording).
+static func _parent_refusal(
+	root: Node, node: Node, parent: Node, parent_path: String, path: String
+) -> String:
+	if parent == node or node.is_ancestor_of(parent):
+		return "%s cannot move under itself or its own child %s." % [path, parent_path]
+	if parent != node.get_parent() and parent.has_node(NodePath(String(node.name))):
+		var named: String = "The scene root" if parent == root else parent_path
+		return "%s already has a child named %s." % [named, node.name]
+	return ""
+
+
+## Moves node under parent, keeping its global transform when keep, and gives root back node and
+## the nodes below it root owned; a node owned by an instance's root keeps that owner. A Node3D's
+## global transform is composed here: outside the scene tree, where an edited scene is, getting
+## Node3D.global_transform fails and returns Transform3D.IDENTITY (4.7.2 doc/classes/Node3D.xml
+## L318).
+static func _reparent(node: Node, parent: Node, root: Node, keep: bool) -> void:
+	var owned: Array[Node] = _owned_by(node, root)
+	if node is Node3D and keep and not (node as Node3D).top_level:
+		var global: Transform3D = _global_3d(node)
+		node.reparent(parent, false)
+		(node as Node3D).transform = _global_3d(parent).affine_inverse() * global
+	else:
+		node.reparent(parent, keep)
+	for each: Node in owned:
+		each.owner = root
+
+
+## node's transform composed with those of the Node3D parents above it, as Node3D composes its
+## global transform: up to the first parent that is not a Node3D or that is top_level.
+static func _global_3d(node: Node) -> Transform3D:
+	var composed := Transform3D.IDENTITY
+	var at: Node = node
+	while at is Node3D:
+		composed = (at as Node3D).transform * composed
+		if (at as Node3D).top_level:
+			break
+		at = at.get_parent()
+	return composed
+
+
+## {index} for position ({index | before | after}) among parent's children, as
+## resolve_position says, when position is not null; {} when it is; or {error}.
+static func placement(parent: Node, node: Node, position: Variant) -> Dictionary:
+	if position == null:
+		return {}
+	return resolve_position(parent, node, position if position is Dictionary else {})
+
+
+## {index}: the to_index Node.move_child takes to put node at position among parent's children,
+## node being one of them by then (it may be already); or {error}. position holds exactly one of
+## index (a negative one counting from the end, -1 last), before or after (a sibling's name):
+## before a sibling is its index once node is taken out, after it the index past that.
+static func resolve_position(parent: Node, node: Node, position: Dictionary) -> Dictionary:
+	var keys: PackedStringArray = []
+	for key: Variant in position:
+		if position[key] != null:
+			keys.append(str(key))
+	if keys.size() != 1 or not POSITION_KEYS.has(keys[0]):
+		var got: String = "none" if keys.is_empty() else ", ".join(keys)
+		return {"error": POSITION_KEYS_REFUSAL % got}
+	if keys[0] == "index":
+		return _index_position(parent, node, position["index"])
+	return _sibling_position(parent, node, keys[0], str(position[keys[0]]))
+
+
+static func _index_position(parent: Node, node: Node, given: Variant) -> Dictionary:
+	var count: int = parent.get_child_count() + (0 if node.get_parent() == parent else 1)
+	var numeric: bool = typeof(given) == TYPE_INT or typeof(given) == TYPE_FLOAT
+	if not numeric or float(int(given)) != float(given):
+		return {"error": "position.index takes an integer; got %s." % JSON.stringify(given)}
+	var index: int = int(given)
+	if index < -count or index >= count:
+		var facts: Array = [index, _parent_label(parent), count, -count, count - 1]
+		return {"error": INDEX_RANGE_REFUSAL % facts}
+	return {"index": index + count if index < 0 else index}
+
+
+static func _sibling_position(parent: Node, node: Node, key: String, name: String) -> Dictionary:
+	var sibling: Node = parent.get_node_or_null(NodePath(name))
+	if sibling == null or sibling.get_parent() != parent:
+		return {
+			"error": "position.%s names no child %s of %s." % [key, name, _parent_label(parent)]
+		}
+	if sibling == node:
+		return {"error": "position.%s names the node being moved." % key}
+	var index: int = sibling.get_index()
+	if node.get_parent() == parent and node.get_index() < index:
+		index -= 1
+	return {"index": index + 1 if key == "after" else index}
+
+
+## node as a refusal names it: its path from the top of its tree, the scene's root, or "the scene
+## root" for the root itself.
+static func _parent_label(node: Node) -> String:
+	var top: Node = node
+	while top.get_parent() != null:
+		top = top.get_parent()
+	return "the scene root" if top == node else String(top.get_path_to(node))

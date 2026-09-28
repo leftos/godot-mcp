@@ -85,6 +85,32 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task ABatchAddsThenMovesANode()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "stage.tscn"), StageScene);
+        JsonObject move = new()
+        {
+            ["nodePath"] = "Go",
+            ["options"] = new JsonObject { ["position"] = new JsonObject { ["index"] = 0 } },
+        };
+        SceneBatchStep[] steps = [AddNode("Node2D", "Go"), new("move_node", move)];
+
+        JsonObject batch = await BatchAsync(probe.Directory, "stage.tscn", steps, cancellation);
+
+        Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        JsonArray entries = batch["steps"]!.AsArray();
+        Assert.Equal(1, entries[0]!["result"]!["index"]!.GetValue<int>());
+        Assert.Equal("""{"path":"Go","previousPath":"Go","index":0}""", entries[1]!["result"]!.ToJsonString());
+        string saved = Read(probe.Directory, "stage.tscn");
+        int go = saved.IndexOf("[node name=\"Go\" type=\"Node2D\" parent=\".\"", StringComparison.Ordinal);
+        int box = saved.IndexOf("[node name=\"Box\" type=\"Node2D\" parent=\".\"]", StringComparison.Ordinal);
+        Assert.True(go > 0 && go < box, saved);
+        Assert.StartsWith($"[gd_scene format=3 uid=\"{StageUid}\"]", saved, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AFailedStepStopsTheBatchAndSavesNothing()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

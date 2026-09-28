@@ -17,9 +17,6 @@ Shared: the screenshot grabs in `bridge/godot_mcp_bridge.gd`, `godot_mcp_time.gd
 
 - [ ] Measure `grab_frame`'s popup placement at a stretch other than 1:1 (a project with `stretch/mode` and a window bigger than the base size, `quiet: false`): only the 1:1 transform has been measured
 
-### Wave 2: new issues
-
-- [ ] #27: the headless scene tools cannot move or reorder a node among its siblings (sibling order is 2D draw order); a move op in `batch_scene_operations` and an `add_node` position option
 
 ### Release
 

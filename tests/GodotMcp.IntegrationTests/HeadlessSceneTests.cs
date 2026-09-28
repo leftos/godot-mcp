@@ -62,6 +62,13 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         + "[connection signal=\"pressed\" from=\"Group/B\" to=\"Group/Grunt\" method=\"hide\"]\n"
         + "[connection signal=\"pressed\" from=\"Btn\" to=\"Group/Grunt\" method=\"hide\"]\n";
 
+    // stage.tscn, in parts: Stage holding A, B and C.
+    private const string StageHeader = "[gd_scene format=3 uid=\"uid://bqstage00000a\"]\n\n";
+    private const string StageRoot = "[node name=\"Stage\" type=\"Node2D\"]\n\n";
+    private const string StageA = "[node name=\"A\" type=\"Node2D\" parent=\".\"]\nposition = Vector2(1, 0)\n";
+    private const string StageB = "[node name=\"B\" type=\"Node2D\" parent=\".\"]\n";
+    private const string StageC = "[node name=\"C\" type=\"Node2D\" parent=\".\"]\nposition = Vector2(3, 0)\n";
+
     private readonly SessionHarness _harness = new();
     private readonly HeadlessTools _tools;
     private readonly List<IDisposable> _projects = [];
@@ -1056,6 +1063,192 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
 
         Assert.Equal("load_sprite failed: Box is a Node2D, which has no Texture2D texture property.", refused.Message);
         Assert.Equal(LevelScene, File.ReadAllText(Path.Combine(probe.Directory, "level.tscn")));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task MoveNodeReordersSiblingsAndKeepsTheRestOfTheFile()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteMoveScenes(probe.Directory);
+
+        JsonNode moved = JsonNode.Parse(await MoveAsync(probe.Directory, "stage.tscn", "C", null, new NodePosition(Index: 0), cancellation))!;
+
+        Assert.Equal("""{"path":"C","previousPath":"C","index":0}""", moved.ToJsonString());
+        string expected =
+            StageHeader + StageRoot + "[node name=\"C\" type=\"Node2D\" parent=\".\"]\nposition = Vector2(3, 0)\n\n" + StageA + "\n" + StageB;
+        Assert.Equal(expected, File.ReadAllText(Path.Combine(probe.Directory, "stage.tscn")));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task MoveNodeBeforeAndAfterASibling()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteMoveScenes(probe.Directory);
+
+        JsonNode after = JsonNode.Parse(await MoveAsync(probe.Directory, "stage.tscn", "A", null, new NodePosition(After: "B"), cancellation))!;
+        string[] afterOrder = NodeNames(probe.Directory, "stage.tscn");
+        JsonNode before = JsonNode.Parse(await MoveAsync(probe.Directory, "stage.tscn", "C", null, new NodePosition(Before: "B"), cancellation))!;
+
+        Assert.Equal(1, after["index"]!.GetValue<int>());
+        Assert.Equal(["Stage", "B", "A", "C"], afterOrder);
+        Assert.Equal(0, before["index"]!.GetValue<int>());
+        Assert.Equal(["Stage", "C", "B", "A"], NodeNames(probe.Directory, "stage.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task MoveNodeWithANegativeIndex()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteMoveScenes(probe.Directory);
+
+        JsonNode moved = JsonNode.Parse(await MoveAsync(probe.Directory, "stage.tscn", "A", null, new NodePosition(Index: -1), cancellation))!;
+
+        Assert.Equal(2, moved["index"]!.GetValue<int>());
+        Assert.Equal(["Stage", "B", "C", "A"], NodeNames(probe.Directory, "stage.tscn"));
+    }
+
+    [Theory(Timeout = TestTimeoutMs)]
+    [InlineData(true, "Vector2(110, 0)")]
+    [InlineData(false, "Vector2(10, 0)")]
+    public async Task MoveNodeReparentsKeepingTheGlobalPosition(bool keep, string position)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteMoveScenes(probe.Directory);
+
+        JsonNode moved = JsonNode.Parse(
+            await _tools.MoveNodeAsync(probe.Directory, "nest.tscn", "From/Mover", new MoveNodeOptions("To", KeepGlobalTransform: keep), cancellation)
+        )!;
+
+        Assert.Equal("""{"path":"To/Mover","previousPath":"From/Mover","index":1}""", moved.ToJsonString());
+        string[] lines = File.ReadAllLines(Path.Combine(probe.Directory, "nest.tscn"));
+        int mover = Array.FindIndex(lines, line => line.StartsWith("[node name=\"Mover\" type=\"Node2D\" parent=\"To\"", StringComparison.Ordinal));
+        Assert.True(mover > 0, string.Join("\n", lines));
+        Assert.Equal($"position = {position}", lines[mover + 1]);
+        Assert.Equal(["Nest", "From", "To", "Leaf", "Mover", "Leaf", "Btn"], NodeNames(probe.Directory, "nest.tscn"));
+    }
+
+    [Theory(Timeout = TestTimeoutMs)]
+    [InlineData(true, "Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 0, -5)")]
+    [InlineData(false, "Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0)")]
+    public async Task MoveNodeReparentsA3DNodeKeepingItsGlobalPosition(bool keep, string transform)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(
+            Path.Combine(probe.Directory, "yard.tscn"),
+            "[gd_scene format=3 uid=\"uid://bqyard3d0000a\"]\n\n[node name=\"Yard\" type=\"Node3D\"]\n\n"
+                + "[node name=\"From\" type=\"Node3D\" parent=\".\"]\ntransform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 0, 0)\n\n"
+                + "[node name=\"Mover\" type=\"Node3D\" parent=\"From\"]\ntransform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0)\n\n"
+                + "[node name=\"To\" type=\"Node3D\" parent=\".\"]\ntransform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 5)\n"
+        );
+
+        JsonNode moved = JsonNode.Parse(
+            await _tools.MoveNodeAsync(probe.Directory, "yard.tscn", "From/Mover", new MoveNodeOptions("To", KeepGlobalTransform: keep), cancellation)
+        )!;
+
+        Assert.Equal("""{"path":"To/Mover","previousPath":"From/Mover","index":0}""", moved.ToJsonString());
+        string[] lines = File.ReadAllLines(Path.Combine(probe.Directory, "yard.tscn"));
+        int mover = Array.FindIndex(lines, line => line.StartsWith("[node name=\"Mover\" type=\"Node3D\" parent=\"To\"", StringComparison.Ordinal));
+        Assert.True(mover > 0, string.Join("\n", lines));
+        Assert.Equal($"transform = {transform}", lines[mover + 1]);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task MoveNodeKeepsASignalConnection()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteMoveScenes(probe.Directory);
+        File.AppendAllText(
+            Path.Combine(probe.Directory, "nest.tscn"),
+            "\n[connection signal=\"pressed\" from=\"Btn\" to=\"From/Mover\" method=\"hide\"]\n"
+        );
+
+        await _tools.MoveNodeAsync(probe.Directory, "nest.tscn", "From/Mover", new MoveNodeOptions("."), cancellation);
+        JsonNode read = JsonNode.Parse(await _tools.GetNodeSignalsAsync(probe.Directory, "nest.tscn", "Btn", null, cancellation))!;
+
+        JsonNode pressed = Assert.Single(read["signals"]!.AsArray(), entry => entry!["name"]!.GetValue<string>() == "pressed")!;
+        Assert.Equal("""[{"target":"Mover","method":"hide"}]""", pressed["connections"]!.ToJsonString());
+    }
+
+    [Theory(Timeout = TestTimeoutMs)]
+    [InlineData("stage.tscn", ".", null, 0, "the scene's root cannot be moved.")]
+    [InlineData(
+        "level.tscn",
+        "Boss/Sprite",
+        ".",
+        null,
+        "Boss/Sprite is inside the instance of res://enemy.tscn at Boss, so its move would not be saved. Edit res://enemy.tscn instead."
+    )]
+    [InlineData(
+        "elite.tscn",
+        "Sprite",
+        null,
+        0,
+        "Sprite comes from the base scene res://enemy.tscn, so its move would not be saved. Edit res://enemy.tscn instead."
+    )]
+    [InlineData("nest.tscn", "From", "From/Mover", null, "From cannot move under itself or its own child From/Mover.")]
+    [InlineData("nest.tscn", "To/Leaf", ".", null, "The scene root already has a child named Leaf.")]
+    [InlineData(
+        "stage.tscn",
+        "A",
+        null,
+        3,
+        "position.index 3 is out of range: the scene root has 3 children once the node is placed, so index takes -3 to 2."
+    )]
+    public async Task MoveNodeRefusalsLeaveTheFileAsItWas(string scene, string nodePath, string? parent, int? index, string refusal)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        WriteMoveScenes(probe.Directory);
+        string path = Path.Combine(probe.Directory, scene);
+        string before = File.ReadAllText(path);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            MoveAsync(probe.Directory, scene, nodePath, parent, index is null ? null : new NodePosition(index), cancellation)
+        );
+
+        Assert.Equal($"move_node failed: {refusal}", refused.Message);
+        Assert.Equal(before, File.ReadAllText(path));
+    }
+
+    private Task<string> MoveAsync(
+        string projectDir,
+        string scene,
+        string nodePath,
+        string? parent,
+        NodePosition? position,
+        CancellationToken cancellation
+    ) => _tools.MoveNodeAsync(projectDir, scene, nodePath, new MoveNodeOptions(parent, position), cancellation);
+
+    /// <summary>The names of the scene file's node sections, in file order.</summary>
+    private static string[] NodeNames(string directory, string scene) =>
+        [
+            .. File.ReadLines(Path.Combine(directory, scene))
+                .Where(line => line.StartsWith("[node name=\"", StringComparison.Ordinal))
+                .Select(line => line.Split('"')[1]),
+        ];
+
+    /// <summary>
+    /// stage.tscn: Stage holding A, B and C. nest.tscn: Nest holding From at (100, 0) with Mover at (10, 0), To at the origin with
+    /// a Leaf, a Leaf of its own, and a button.
+    /// </summary>
+    private static void WriteMoveScenes(string directory)
+    {
+        File.WriteAllText(Path.Combine(directory, "stage.tscn"), StageHeader + StageRoot + StageA + "\n" + StageB + "\n" + StageC);
+        File.WriteAllText(
+            Path.Combine(directory, "nest.tscn"),
+            "[gd_scene format=3 uid=\"uid://bqnest000000a\"]\n\n[node name=\"Nest\" type=\"Node2D\"]\n\n"
+                + "[node name=\"From\" type=\"Node2D\" parent=\".\"]\nposition = Vector2(100, 0)\n\n"
+                + "[node name=\"Mover\" type=\"Node2D\" parent=\"From\"]\nposition = Vector2(10, 0)\n\n"
+                + "[node name=\"To\" type=\"Node2D\" parent=\".\"]\n\n[node name=\"Leaf\" type=\"Node2D\" parent=\"To\"]\n\n"
+                + "[node name=\"Leaf\" type=\"Node2D\" parent=\".\"]\n\n[node name=\"Btn\" type=\"Button\" parent=\".\"]\n"
+        );
     }
 
     /// <summary>An unbuilt CsProbe copy whose CsProbeNode.cs does not compile, with the given [autoload] entries in its project.godot.</summary>

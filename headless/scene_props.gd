@@ -7,15 +7,17 @@ extends RefCounted
 ## wrong type (see bridge/godot_mcp_inspect.gd's header), so every set is read back.
 
 const SceneEdit := preload("scene_edit.gd")
+const SceneNodes := preload("scene_nodes.gd")
 const ScenePaths := preload("scene_paths.gd")
 const SceneValues := preload("scene_values.gd")
 const Json := preload("../bridge/godot_mcp_json.gd")
 const SCENE_PREFIX := "res://"
 
 
-## Adds a node of params.nodeType named params.nodeName under params.parent, with
-## params.properties set on it before it is added: {result: {path, type, instance?, script?}}, or
-## {error} naming every failing property, with nothing added. The new node is owned by the scene's
+## Adds a node of params.nodeType named params.nodeName under params.parent, at params.position
+## among its children (SceneNodes.resolve_position) or last, with params.properties set on it
+## before it is added: {result: {path, type, index, instance?, script?}}, or {error} naming every
+## failing property or the bad position, with nothing added. The new node is owned by the scene's
 ## root; an instanced scene's own nodes keep the instance's owners.
 static func apply_add_node(root: Node, params: Dictionary, context: Dictionary) -> Dictionary:
 	var parent_path: String = str(params.get("parent", "."))
@@ -32,6 +34,10 @@ static func apply_add_node(root: Node, params: Dictionary, context: Dictionary) 
 	var node: Node = made.node
 	node.name = node_name
 	var parent: Node = SceneEdit.find(root, parent_path)
+	var placed: Dictionary = SceneNodes.placement(parent, node, params.get("position"))
+	if placed.has("error"):
+		node.free()
+		return placed
 	var properties: Variant = params.get("properties", {})
 	var failures: PackedStringArray = _set_all(
 		node,
@@ -44,12 +50,22 @@ static func apply_add_node(root: Node, params: Dictionary, context: Dictionary) 
 		return {"error": " ".join(failures)}
 	parent.add_child(node)
 	node.owner = root
-	var result: Dictionary = {"path": String(root.get_path_to(node)), "type": made.type}
+	if placed.has("index"):
+		parent.move_child(node, placed["index"])
+	return {"result": _added_result(root, node, made)}
+
+
+## add_node's result for node, added as made ({type, instance?, script?}) says: {path, type, index,
+## instance?, script?}.
+static func _added_result(root: Node, node: Node, made: Dictionary) -> Dictionary:
+	var result: Dictionary = {
+		"path": String(root.get_path_to(node)), "type": made.type, "index": node.get_index()
+	}
 	if made.has("instance"):
 		result["instance"] = made.instance
 	if made.has("script"):
 		result["script"] = made.script
-	return {"result": result}
+	return result
 
 
 ## Sets each of params.updates ({nodePath, property, value}) and reads it back:

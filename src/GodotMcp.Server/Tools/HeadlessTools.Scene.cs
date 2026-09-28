@@ -7,8 +7,8 @@ using ModelContextProtocol.Server;
 namespace GodotMcp.Server.Tools;
 
 /// <summary>
-/// The headless scene edits (headless/scene_ops.gd): create_scene, save_scene, delete_nodes, attach_script, duplicate_node and
-/// load_sprite. Each always runs the prep, opens
+/// The headless scene edits (headless/scene_ops.gd): create_scene, save_scene, delete_nodes, attach_script, duplicate_node,
+/// move_node and load_sprite. Each always runs the prep, opens
 /// the scene as the editor does, and saves it with its uids kept; an edit is all or nothing.
 /// </summary>
 internal sealed partial class HeadlessTools
@@ -30,6 +30,8 @@ internal sealed partial class HeadlessTools
     private const string NodePathDescription = "The node, by its path relative to the scene's root (\".\" for the root, Boss/Sprite).";
 
     private const string RootDuplicateRefusal = "The scene root cannot be duplicated; save_scene with newPath copies the whole scene.";
+
+    private const string MoveNeedsRefusal = "move_node needs options.parent, options.position or both.";
 
     // What Godot logs for each C# script and C# autoload while the project assembly is missing (IsMissingAssemblySymptom).
     private const string CSharpClassMissing = "Cannot instantiate C# script because the associated class could not be found";
@@ -228,6 +230,105 @@ internal sealed partial class HeadlessTools
     /// <summary>duplicate_node's options.parent checked and trimmed, or "" for the node's own parent.</summary>
     private static string CheckDuplicateParent(DuplicateNodeOptions? options) =>
         options?.Parent is null ? string.Empty : CheckNodePath(options.Parent);
+
+    [McpServerTool(Name = "move_node", ReadOnly = false, Destructive = false, OpenWorld = false)]
+    [Description(
+        "Moves a node of a scene file among its siblings, or under another parent, and saves the scene, in a headless Godot, "
+            + "without running the game. In 2D, sibling order is draw order: a later sibling draws on top. options.position is "
+            + "exactly one of {index}, the node's place among its siblings once moved, a negative index counting from the end "
+            + "(-1 is last), {before: name} or {after: name}, a sibling's name. options.parent moves the node, with its children, "
+            + "under another parent, last unless options.position places it; it keeps its global transform unless "
+            + "options.keepGlobalTransform is false, and it and its children stay the scene's own nodes. At least one of "
+            + "options.parent and options.position is needed. Refused: the scene's root; a node inside an instanced scene or one "
+            + "the scene inherits from its base scene, since the file cannot record their move; a parent inside an instanced "
+            + "scene (an instance's own root may be the parent); a parent that is the node or below it; a parent that already "
+            + "has a child of the node's name; an index out of range, or a sibling the parent does not have. NodePath-typed "
+            + "properties of other nodes that point at the moved node are not rewritten; Node-typed exports and signal "
+            + "connections follow it, since the save recomputes them. Returns {path, previousPath, index, warning?, errors?}: "
+            + "the node's path from the scene's root after and before the move, and its index among its siblings."
+            + WriteNote
+            + EditNote
+    )]
+    public async Task<string> MoveNodeAsync(
+        [Description(ProjectPathDescription)] string projectPath,
+        [Description(ScenePathDescription)] string scenePath,
+        [Description(NodePathDescription + " Not the root.")] string nodePath,
+        [Description(
+            "{parent, position, keepGlobalTransform}: the new parent's path from the scene's root, where the node goes among "
+                + "its siblings ({index}, {before} or {after}), and whether a reparented node keeps its global transform (true by "
+                + "default). At least one of parent and position."
+        )]
+            MoveNodeOptions? options = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        // Refused before the project is read; the builder checks them again.
+        _ = MoveNodeParameters(nodePath, options);
+        HeadlessResult run = await RunAsync(() =>
+        {
+            string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
+            string scene = CheckEditableScenePath(projectDir, scenePath);
+            JsonObject parameters = MoveNodeParameters(nodePath, options);
+            parameters["scene"] = scene;
+            return RunWriteAsync(projectDir, "move_node", parameters, cancellationToken);
+        });
+        return WithErrors(run);
+    }
+
+    /// <summary>move_node's request parameters but the scene: <c>{nodePath, keepGlobalTransform, parent?, position?}</c>.</summary>
+    /// <exception cref="McpException">
+    /// As <see cref="CheckNodePath"/> for the node, then neither options.parent nor options.position is given, then as
+    /// <see cref="CheckNodePath"/> for the parent, then as <see cref="CheckNodePosition"/>.
+    /// </exception>
+    internal static JsonObject MoveNodeParameters(string nodePath, MoveNodeOptions? options)
+    {
+        JsonObject parameters = new() { ["nodePath"] = CheckNodePath(nodePath) };
+        if (options is null || (options.Parent is null && options.Position is null))
+        {
+            throw new McpException(MoveNeedsRefusal);
+        }
+
+        parameters["keepGlobalTransform"] = options.KeepGlobalTransform ?? true;
+        if (options.Parent is not null)
+        {
+            parameters["parent"] = CheckNodePath(options.Parent);
+        }
+
+        if (options.Position is not null)
+        {
+            parameters["position"] = CheckNodePosition(options.Position);
+        }
+
+        return parameters;
+    }
+
+    /// <summary>A position as the request's <c>{index}</c>, <c>{before}</c> or <c>{after}</c>: the one key given.</summary>
+    /// <exception cref="McpException">The position gives none of the three keys, or more than one.</exception>
+    internal static JsonObject CheckNodePosition(NodePosition position)
+    {
+        List<string> given = [];
+        JsonObject built = [];
+        if (position.Index is int index)
+        {
+            given.Add("index");
+            built["index"] = index;
+        }
+
+        if (position.Before is not null)
+        {
+            given.Add("before");
+            built["before"] = position.Before;
+        }
+
+        if (position.After is not null)
+        {
+            given.Add("after");
+            built["after"] = position.After;
+        }
+
+        string got = given.Count == 0 ? "none" : string.Join(", ", given);
+        return given.Count == 1 ? built : throw new McpException($"position takes exactly one of index, before or after; got {got}.");
+    }
 
     [McpServerTool(Name = "load_sprite", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
@@ -455,6 +556,24 @@ internal sealed partial class HeadlessTools
 internal sealed record DuplicateNodeOptions(
     [property: Description("The node to put the copy under, by its path relative to the scene's root; the node's own parent by default.")]
         string? Parent = null
+);
+
+/// <summary>Where move_node moves a node: under another parent, to a place among its siblings, or both.</summary>
+internal sealed record MoveNodeOptions(
+    [property: Description("The node to move the node under, by its path relative to the scene's root; the node's own parent by default.")]
+        string? Parent = null,
+    [property: Description("Where the node goes among its siblings: {index}, {before} or {after}, exactly one; last under a new parent by default.")]
+        NodePosition? Position = null,
+    [property: Description("Whether a node moved under another parent keeps its global transform (its place on screen); true by default.")]
+        bool? KeepGlobalTransform = null
+);
+
+/// <summary>A node's place among its siblings: exactly one of an index, before a sibling, or after one.</summary>
+internal sealed record NodePosition(
+    [property: Description("The node's index among its siblings once placed; a negative index counts from the end, -1 being last.")]
+        int? Index = null,
+    [property: Description("The name of the sibling the node goes right before.")] string? Before = null,
+    [property: Description("The name of the sibling the node goes right after.")] string? After = null
 );
 
 /// <summary>Whether a scene tool may replace the file it writes.</summary>

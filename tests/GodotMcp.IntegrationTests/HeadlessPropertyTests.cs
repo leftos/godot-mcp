@@ -71,7 +71,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
 
         string added = await _tools.AddNodeAsync(probe.Directory, "level.tscn", "Sprite2D", "Marker", options, cancellation);
 
-        Assert.Equal("""{"path":"Box/Marker","type":"Sprite2D"}""", added);
+        Assert.Equal("""{"path":"Box/Marker","type":"Sprite2D","index":0}""", added);
         (string header, string[] body) = Section(probe.Directory, "level.tscn", "Marker");
         Assert.Contains("type=\"Sprite2D\" parent=\"Box\"", header, StringComparison.Ordinal);
         Assert.Equal(["modulate = Color(1, 0, 0, 0.5)", "position = Vector2(3, 4)"], body);
@@ -88,7 +88,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
 
         string added = await _tools.AddNodeAsync(probe.Directory, "level.tscn", "HBoxContainer", "Icons", options, cancellation);
 
-        Assert.Equal("""{"path":"Box/Icons","type":"HBoxContainer"}""", added);
+        Assert.Equal("""{"path":"Box/Icons","type":"HBoxContainer","index":0}""", added);
         string[] body = Section(probe.Directory, "level.tscn", "Icons").Body;
         Assert.Contains("theme_type_variation = &\"PopoverIconRow\"", body);
     }
@@ -102,7 +102,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
 
         string added = await _tools.AddNodeAsync(probe.Directory, "level.tscn", "enemy.tscn", "Minion", cancellationToken: cancellation);
 
-        Assert.Equal("""{"path":"Minion","type":"CharacterBody2D","instance":"res://enemy.tscn"}""", added);
+        Assert.Equal("""{"path":"Minion","type":"CharacterBody2D","index":4,"instance":"res://enemy.tscn"}""", added);
         string header = Section(probe.Directory, "level.tscn", "Minion").Header;
         Assert.Contains("parent=\".\"", header, StringComparison.Ordinal);
         Assert.Contains("instance=ExtResource(", header, StringComparison.Ordinal);
@@ -119,7 +119,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
 
         string added = await _tools.AddNodeAsync(probe.Directory, "plain.tscn", "plain_node.gd", "Scripted", cancellationToken: cancellation);
 
-        Assert.Equal("""{"path":"Scripted","type":"Node2D","script":"res://plain_node.gd"}""", added);
+        Assert.Equal("""{"path":"Scripted","type":"Node2D","index":0,"script":"res://plain_node.gd"}""", added);
         (string header, string[] body) = Section(probe.Directory, "plain.tscn", "Scripted");
         Assert.Contains("type=\"Node2D\"", header, StringComparison.Ordinal);
         Assert.Contains("script = ExtResource(", string.Join("\n", body), StringComparison.Ordinal);
@@ -138,6 +138,49 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         );
 
         Assert.Equal("add_node failed: The scene root already has a child named Box.", refused.Message);
+        Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AddNodeAtAPosition()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        AddNodeOptions options = new(Position: new NodePosition(Before: "Box"));
+
+        JsonNode added = JsonNode.Parse(await _tools.AddNodeAsync(probe.Directory, "level.tscn", "Node2D", "Hat", options, cancellation))!;
+
+        Assert.Equal(1, added["index"]!.GetValue<int>());
+        string[] names =
+        [
+            .. Read(probe.Directory, "level.tscn")
+                .Split('\n')
+                .Where(line => line.StartsWith("[node name=\"", StringComparison.Ordinal))
+                .Select(line => line.Split('"')[1]),
+        ];
+        Assert.Equal(["Level", "Boss", "Hat", "Box", "Pic", "Holder"], names);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AddNodeWithABadPositionAddsNothing()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+
+        McpException missing = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.AddNodeAsync(probe.Directory, "level.tscn", "Node2D", "Hat", new(Position: new NodePosition(Before: "Nope")), cancellation)
+        );
+        McpException outOfRange = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.AddNodeAsync(probe.Directory, "level.tscn", "Node2D", "Hat", new(Position: new NodePosition(Index: 5)), cancellation)
+        );
+
+        Assert.Equal("add_node failed: position.before names no child Nope of the scene root.", missing.Message);
+        Assert.Equal(
+            "add_node failed: position.index 5 is out of range: the scene root has 5 children once the node is placed, so index takes -5 to 4.",
+            outOfRange.Message
+        );
         Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
     }
 
@@ -169,7 +212,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
 
         string added = await _tools.AddNodeAsync(probe.Directory, "level.tscn", "Node2D", "Hat", new AddNodeOptions("Boss"), cancellation);
 
-        Assert.Equal("""{"path":"Boss/Hat","type":"Node2D"}""", added);
+        Assert.Equal("""{"path":"Boss/Hat","type":"Node2D","index":1}""", added);
         Assert.Contains("type=\"Node2D\" parent=\"Boss\"", Section(probe.Directory, "level.tscn", "Hat").Header, StringComparison.Ordinal);
         Assert.Contains("Boss/Hat", await PathsAsync(probe.Directory, "level.tscn", cancellation));
     }
@@ -209,7 +252,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
 
         string added = await _tools.AddNodeAsync(probe.Directory, "level.tscn", "Node2D", "Marker", cancellationToken: cancellation);
 
-        Assert.Equal("""{"path":"Marker","type":"Node2D"}""", added);
+        Assert.Equal("""{"path":"Marker","type":"Node2D","index":4}""", added);
         string[] original = LevelScene.Split('\n');
         string[] lines = Read(probe.Directory, "level.tscn").Split('\n');
         int marker = original.Length;
@@ -552,7 +595,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
 
         string added = await _tools.AddNodeAsync(probe.Directory, "editable.tscn", "Node2D", "Hat", new AddNodeOptions("Boss/Sprite"), cancellation);
 
-        Assert.Equal("""{"path":"Boss/Sprite/Hat","type":"Node2D"}""", added);
+        Assert.Equal("""{"path":"Boss/Sprite/Hat","type":"Node2D","index":0}""", added);
         Assert.Contains("parent=\"Boss/Sprite\"", Section(probe.Directory, "editable.tscn", "Hat").Header, StringComparison.Ordinal);
         Assert.Contains("[editable path=\"Boss\"]", Read(probe.Directory, "editable.tscn"), StringComparison.Ordinal);
         Assert.Contains("Boss/Sprite/Hat", await PathsAsync(probe.Directory, "editable.tscn", cancellation));
@@ -669,7 +712,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
 
         string added = await _tools.AddNodeAsync(probe.Directory, "level.tscn", "MarkerNode", "Marker", cancellationToken: cancellation);
 
-        Assert.Equal("""{"path":"Marker","type":"MarkerNode"}""", added);
+        Assert.Equal("""{"path":"Marker","type":"MarkerNode","index":4}""", added);
         (string header, string[] body) = Section(probe.Directory, "level.tscn", "Marker");
         Assert.Contains("type=\"Sprite2D\"", header, StringComparison.Ordinal);
         Assert.StartsWith("script = ExtResource(", Assert.Single(body), StringComparison.Ordinal);

@@ -35,7 +35,7 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 **Edit the project without running it**
 
 - Check that scripts and scenes load, including a C# file through the real build, with compiler errors quoted.
-- Create and save scenes; add, delete and duplicate nodes; attach scripts; load sprites; set properties; connect and disconnect signals; many edits in one batch.
+- Create and save scenes; add, delete, duplicate, reorder and reparent nodes, touching only the lines an edit changes; attach scripts; load sprites; set properties; connect and disconnect signals; many edits in one batch.
 - Read a scene file's node tree, a node's properties and its signal connections.
 - For C# projects, build the game's assembly and run Godot's import first when either is stale.
 

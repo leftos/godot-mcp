@@ -29,9 +29,12 @@ internal sealed partial class HeadlessTools
             + "derived from Node, a script's class_name whose base is one, a script path (res://foo.gd, res://Foo.cs), which makes "
             + "a node of the script's base class with the script attached, or a scene (.tscn or .scn in the project), which is "
             + "added as an instance of that scene. options.properties are set on the new node before it is added: when any does "
-            + "not take, nothing is added and the error names every failing property. Refused: a name a sibling already has, and "
-            + "a parent inside an instanced scene (an instance's own root may be the parent). Returns {path, type, instance?, "
-            + "script?, warning?, errors?}: path is the new node's path from the scene's root."
+            + "not take, nothing is added and the error names every failing property. The node goes last under its parent, or "
+            + "where options.position puts it among its siblings (in 2D, a later sibling draws on top): exactly one of {index}, a "
+            + "negative index counting from the end (-1 is last), {before: name} or {after: name}, a sibling's name. Refused: a "
+            + "name a sibling already has, a parent inside an instanced scene (an instance's own root may be the parent), and an "
+            + "index out of range or a sibling the parent does not have. Returns {path, type, index, instance?, script?, warning?, "
+            + "errors?}: path is the new node's path from the scene's root, index its place among its siblings."
             + ValuesNote
             + WriteNote
             + EditNote
@@ -46,13 +49,17 @@ internal sealed partial class HeadlessTools
         )]
             string nodeType,
         [Description("The new node's name; it may not hold . : @ / \" or %.")] string nodeName,
-        [Description("{parent, properties}: the parent's path from the scene's root (\".\", the root, by default), and {name: value} to set.")]
+        [Description(
+            "{parent, properties, position}: the parent's path from the scene's root (\".\", the root, by default), {name: value} to "
+                + "set, and where the node goes among its siblings ({index}, {before} or {after}; last by default)."
+        )]
             AddNodeOptions? options = null,
         CancellationToken cancellationToken = default
     )
     {
         // Refused before the project is read; the builder checks them again.
         _ = CheckNewNode(nodeName, options?.Parent);
+        _ = options?.Position is null ? null : CheckNodePosition(options.Position);
         HeadlessResult run = await RunAsync(() =>
         {
             string projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
@@ -72,13 +79,19 @@ internal sealed partial class HeadlessTools
     internal static JsonObject AddNodeParameters(string projectDir, string scene, string nodeType, string nodeName, AddNodeOptions? options)
     {
         (string name, string parent) = CheckNewNode(nodeName, options?.Parent);
-        return new JsonObject
+        JsonObject parameters = new()
         {
             ["nodeType"] = CheckNodeType(projectDir, nodeType, scene),
             ["nodeName"] = name,
             ["parent"] = parent,
             ["properties"] = new JsonObject([.. (options?.Properties ?? []).Select(entry => KeyValuePair.Create(entry.Key, ToNode(entry.Value)))]),
         };
+        if (options?.Position is not null)
+        {
+            parameters["position"] = CheckNodePosition(options.Position);
+        }
+
+        return parameters;
     }
 
     [McpServerTool(Name = "set_node_properties", ReadOnly = false, Destructive = false, OpenWorld = false)]
@@ -310,7 +323,9 @@ internal sealed partial class HeadlessTools
 internal sealed record AddNodeOptions(
     [property: Description("The parent's path from the scene's root; the root (\".\") when left out.")] string? Parent = null,
     [property: Description("{name: value}: properties to set on the new node before it is added (position, modulate, a script variable...).")]
-        Dictionary<string, JsonElement>? Properties = null
+        Dictionary<string, JsonElement>? Properties = null,
+    [property: Description("Where the new node goes among its siblings: {index}, {before} or {after}, exactly one; last by default.")]
+        NodePosition? Position = null
 );
 
 /// <summary>One property set_node_properties sets.</summary>

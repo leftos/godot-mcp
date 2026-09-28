@@ -14,9 +14,9 @@ namespace GodotMcp.Tests.Tools;
 /// <summary>batch_scene_operations' checks of its steps, which refuse the whole batch before a headless Godot starts; no Godot runs here.</summary>
 public sealed class HeadlessBatchValidationTests : IDisposable
 {
-    private const string Nine =
-        "delete_nodes, attach_script, duplicate_node, load_sprite, add_node, set_node_properties, connect_signal, disconnect_signal, "
-        + "export_mesh_library";
+    private const string Ten =
+        "delete_nodes, attach_script, duplicate_node, move_node, load_sprite, add_node, set_node_properties, connect_signal, "
+        + "disconnect_signal, export_mesh_library";
 
     private readonly TempDirectory _temp = new();
     private readonly BridgeListener _listener = new(NullLogger<BridgeListener>.Instance);
@@ -54,11 +54,11 @@ public sealed class HeadlessBatchValidationTests : IDisposable
     }
 
     [Fact]
-    public async Task AnUnknownToolIsRefusedListingTheNine()
+    public async Task AnUnknownToolIsRefusedListingTheTen()
     {
         McpException refused = await RefusedAsync([DeleteBox(), new SceneBatchStep("get_node_properties", [])]);
 
-        Assert.Equal($"step 1 (get_node_properties): 'get_node_properties' cannot run in a scene batch; tool is one of: {Nine}.", refused.Message);
+        Assert.Equal($"step 1 (get_node_properties): 'get_node_properties' cannot run in a scene batch; tool is one of: {Ten}.", refused.Message);
     }
 
     [Fact]
@@ -133,9 +133,39 @@ public sealed class HeadlessBatchValidationTests : IDisposable
     }
 
     [Fact]
+    public async Task AMoveNodeStepIsCheckedAsTheSingleToolChecksIt()
+    {
+        JsonObject bare = new() { ["nodePath"] = "Box" };
+        JsonObject twoKeys = new()
+        {
+            ["nodePath"] = "Box",
+            ["options"] = new JsonObject
+            {
+                ["position"] = new JsonObject { ["index"] = 0, ["before"] = "Hat" },
+            },
+        };
+        JsonObject wrongIndex = new()
+        {
+            ["nodePath"] = "Box",
+            ["options"] = new JsonObject { ["position"] = new JsonObject { ["index"] = "first" } },
+        };
+
+        McpException noPlace = await RefusedAsync([new SceneBatchStep("move_node", bare)]);
+        McpException ambiguous = await RefusedAsync([DeleteBox(), new SceneBatchStep("move_node", twoKeys)]);
+        McpException wrongType = await RefusedAsync([new SceneBatchStep("move_node", wrongIndex)]);
+
+        Assert.Equal("step 0 (move_node): move_node needs options.parent, options.position or both.", noPlace.Message);
+        Assert.Equal("step 1 (move_node): position takes exactly one of index, before or after; got index, before.", ambiguous.Message);
+        Assert.Equal(
+            "step 0 (move_node): args.options.position.index has the wrong type for move_node; see the tool's schema for what it takes.",
+            wrongType.Message
+        );
+    }
+
+    [Fact]
     public void EachToolsArgsAreItsSchemaPropertiesButProjectPathAndScenePath()
     {
-        foreach (string tool in Nine.Split(", "))
+        foreach (string tool in Ten.Split(", "))
         {
             JsonElement schema = SchemaOf(tool);
             string[] properties = [.. schema.GetProperty("properties").EnumerateObject().Select(property => property.Name).Where(IsStepArgument)];

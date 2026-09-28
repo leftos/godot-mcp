@@ -15,6 +15,22 @@ const SAVED_BOX := '[node name="Box" type="Node2D" parent="." unique_id=33]'
 const MARKER := '[node name="Marker" type="Sprite2D" parent="Box" unique_id=55]'
 const BOX_SCRIPT_EXT := '[ext_resource type="Script" path="res://box.gd" id="3_klmno"]'
 const CONNECTION := '[connection signal="ready" from="Box" to="." method="_on_box_ready"]'
+## _original's lines before its nodes, and each of its nodes' lines.
+const ORIGINAL_HEAD := [ORIGINAL_HEADER, "", ENEMY_EXT, HOLDER_EXT]
+const LEVEL := ['[node name="Level" type="Node2D"]']
+const BOSS := ['[node name="Boss" parent="." instance=ExtResource("1")]']
+const BOX := [
+	'[node name="Box" type="Node2D" parent="."]', "visible = false", "position = Vector2(1, 2)"
+]
+const HOLDER := ['[node name="Holder" type="Node2D" parent="."]', 'script = ExtResource("2")']
+## The same as Godot 4.7 saves them.
+const SAVED_HEAD := [SAVED_HEADER, "", SAVED_ENEMY_EXT, SAVED_HOLDER_EXT]
+const SAVED_LEVEL := ['[node name="Level" type="Node2D" unique_id=11]']
+const SAVED_BOSS := ['[node name="Boss" parent="." unique_id=22 instance=ExtResource("1_abcde")]']
+const SAVED_BOX_LINES := [SAVED_BOX, "position = Vector2(1, 2)", "visible = false"]
+const SAVED_HOLDER := [
+	'[node name="Holder" type="Node2D" parent="." unique_id=44]', 'script = ExtResource("2_fghij")'
+]
 
 var _splice: GDScript = load(
 	ProjectSettings.globalize_path("res://").path_join(SCENE_SPLICE_SCRIPT).simplify_path()
@@ -244,6 +260,65 @@ func test_an_added_identical_sub_resource_is_added() -> void:
 		+ 'shape = SubResource("RectangleShape2D_ccccc")\n'
 	)
 	assert_eq(spliced, {"text": expected}, "the third equal shape and its node are added")
+
+
+func test_a_reordered_node_takes_its_saved_place() -> void:
+	var saved: String = _nodes_text(
+		SAVED_HEAD, [SAVED_LEVEL, SAVED_HOLDER, SAVED_BOSS, SAVED_BOX_LINES]
+	)
+
+	var spliced: Dictionary = _splice.splice(_original(), saved)
+
+	var expected: String = _nodes_text(ORIGINAL_HEAD, [LEVEL, HOLDER, BOSS, BOX])
+	assert_eq(spliced, {"text": expected}, "Holder moves first, every node keeping its own text")
+
+
+func test_a_move_and_an_add_splice_in_the_saved_order() -> void:
+	var marker: Array = [MARKER, "position = Vector2(3, 4)"]
+	var saved: String = _nodes_text(
+		SAVED_HEAD, [SAVED_LEVEL, SAVED_HOLDER, SAVED_BOSS, SAVED_BOX_LINES, marker]
+	)
+
+	var spliced: Dictionary = _splice.splice(_original(), saved)
+
+	var expected: String = _nodes_text(ORIGINAL_HEAD, [LEVEL, HOLDER, BOSS, BOX, marker])
+	assert_eq(spliced, {"text": expected}, "the moved node and the new one take their saved places")
+
+
+func test_a_reparented_node_moves_to_its_new_parent() -> void:
+	var moved_box: Array = [
+		'[node name="Box" type="Node2D" parent="Holder" unique_id=33]',
+		"position = Vector2(1, 2)",
+		"visible = false",
+	]
+	var saved: String = _nodes_text(SAVED_HEAD, [SAVED_LEVEL, SAVED_BOSS, SAVED_HOLDER, moved_box])
+
+	var spliced: Dictionary = _splice.splice(_original(), saved)
+
+	var expected: String = _nodes_text(ORIGINAL_HEAD, [LEVEL, BOSS, HOLDER, moved_box])
+	assert_eq(spliced, {"text": expected}, "Box leaves its old place and follows its new parent")
+
+
+func test_self_check_falls_back_on_a_lost_order() -> void:
+	var swapped: String = _nodes_text(ORIGINAL_HEAD, [LEVEL, BOSS, HOLDER, BOX])
+
+	var lost: String = _splice.self_check(_original(), swapped)
+	var kept: String = _splice.self_check(swapped, swapped)
+
+	assert_eq(
+		lost,
+		"the spliced text put the nodes in another order than the save",
+		"a text with the nodes in another order fails the check"
+	)
+	assert_eq(kept, "", "the same order passes")
+
+
+## head's lines, then each node's lines, a blank line before each.
+func _nodes_text(head: Array, nodes: Array) -> String:
+	var lines: Array = head.duplicate()
+	for node: Array in nodes:
+		lines += [""] + node
+	return _text(lines)
 
 
 ## A body with two collision shapes, A and B, whose rectangles are equal.

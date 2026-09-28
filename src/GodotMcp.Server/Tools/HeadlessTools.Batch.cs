@@ -18,8 +18,8 @@ internal sealed partial class HeadlessTools
     internal const int MaxSceneBatchSteps = 100;
 
     internal const string SceneBatchTools =
-        "delete_nodes, attach_script, duplicate_node, load_sprite, add_node, set_node_properties, connect_signal, disconnect_signal, "
-        + "export_mesh_library";
+        "delete_nodes, attach_script, duplicate_node, move_node, load_sprite, add_node, set_node_properties, connect_signal, "
+        + "disconnect_signal, export_mesh_library";
 
     private static readonly TimeSpan BatchCeiling = TimeSpan.FromSeconds(120);
 
@@ -30,6 +30,7 @@ internal sealed partial class HeadlessTools
             (target, args) => AttachScriptParameters(target.ProjectDir, args.NodePath, args.ScriptPath)
         ),
         ["duplicate_node"] = SceneStepKind.Of<DuplicateNodeArgs>((_, args) => DuplicateNodeParameters(args.NodePath, args.NewName, args.Options)),
+        ["move_node"] = SceneStepKind.Of<MoveNodeArgs>((_, args) => MoveNodeParameters(args.NodePath, args.Options)),
         ["load_sprite"] = SceneStepKind.Of<LoadSpriteArgs>(
             (target, args) => LoadSpriteParameters(target.ProjectDir, args.NodePath, args.TexturePath),
             (target, args) => LoadSpriteImportAssets(target.ProjectDir, args.TexturePath)
@@ -50,8 +51,8 @@ internal sealed partial class HeadlessTools
     [McpServerTool(Name = "batch_scene_operations", ReadOnly = false, Destructive = true, OpenWorld = false)]
     [Description(
         "Runs several scene edits on one scene file in a single headless Godot and saves the scene once, without running the "
-            + "game. Each step is {tool, args}: tool is one of delete_nodes, attach_script, duplicate_node, load_sprite, add_node, "
-            + "set_node_properties, connect_signal, disconnect_signal or export_mesh_library, and args are that tool's own "
+            + "game. Each step is {tool, args}: tool is one of delete_nodes, attach_script, duplicate_node, move_node, load_sprite, "
+            + "add_node, set_node_properties, connect_signal, disconnect_signal or export_mesh_library, and args are that tool's own "
             + "arguments without projectPath and scenePath. Every step is checked before Godot starts. The steps run in order on "
             + "the open scene, each seeing the ones before it; at the first step that fails nothing is saved and no mesh library "
             + "is written. When all pass, the scene is saved once (unless every step was export_mesh_library), then each mesh "
@@ -261,6 +262,8 @@ internal sealed partial class HeadlessTools
     private sealed record AttachScriptArgs(string NodePath, string ScriptPath);
 
     private sealed record DuplicateNodeArgs(string NodePath, string? NewName = null, DuplicateNodeOptions? Options = null);
+
+    private sealed record MoveNodeArgs(string NodePath, MoveNodeOptions? Options = null);
 
     private sealed record LoadSpriteArgs(string NodePath, string TexturePath);
 
