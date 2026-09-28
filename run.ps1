@@ -34,6 +34,7 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            test run (a group's or a -Filter one) goes through tools/hidden-desktop.ps1, on a desktop of its own, so no
            Godot window shows.
   format   dotnet format style (info severity), then CSharpier, on the whole solution; ceiling 180 s each
+  format-check  dotnet csharpier check on the repo, changing nothing; ceiling 180 s
   dotnet   the C# helper into bin/dotnet: the NativeAOT shim godot_mcp_dotnet.dll (win-x64, no pdb) and
            dotnet/godot_mcp_dotnet.gdextension at the top, loader/ (GodotMcp.Dotnet.Loader.dll and its
            runtimeconfig.json) and helper/ (GodotMcp.Dotnet.dll and GodotMcp.Dotnet.Core.dll, which the loader
@@ -63,6 +64,7 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            global class list holds every script's class_name, then runs godot --headless --path tests/bridge --script
            res://run_tests.gd. Each failure prints as "FAIL <file>::<test>: <message>", then
            "gdtest: <passed> passed, <failed> failed"; ceiling 60 s
+  pytest   the Python tools' tests (tests/tools) under pytest, which uv supplies together with gdtoolkit; ceiling 120 s
   drive    drives this tree's own server with the tool calls of -Calls <file.json>, a JSON array of
            {"tool": "<name>", "arguments": {...}} objects (arguments optional). It first builds the server project
            (.tmp/drive-build.log, ceiling 300 s), then runs tools/drive.py (.tmp/drive.log, ceiling 300 s), which checks
@@ -97,7 +99,7 @@ pwsh run.ps1 drive -Calls .tmp/calls.json
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('build', 'test', 'itest', 'format', 'dotnet', 'publish', 'install', 'package', 'gdtest', 'drive', 'help')]
+    [ValidateSet('build', 'test', 'itest', 'format', 'format-check', 'dotnet', 'publish', 'install', 'package', 'gdtest', 'pytest', 'drive', 'help')]
     [string]$Command = 'help',
 
     [string]$Filter = '',
@@ -821,6 +823,9 @@ try {
             }
             exit (Invoke-Logged -Name 'format' -TimeoutSeconds 180 -Arguments @('csharpier', 'format', $root) -Slot heavy)
         }
+        'format-check' {
+            exit (Invoke-Logged -Name 'format-check' -TimeoutSeconds 180 -Arguments @('csharpier', 'check', $root) -Slot heavy)
+        }
         'dotnet' {
             exit (Invoke-DotnetPublish)
         }
@@ -840,6 +845,10 @@ try {
             }
             $arguments = @('--headless', '--path', $gdtestDir, '--script', 'res://run_tests.gd')
             exit (Invoke-Gated -Name 'gdtest' -TimeoutSeconds 60 -Program (Get-GodotPath) -Arguments $arguments -Slot light)
+        }
+        'pytest' {
+            $arguments = @('run', '--quiet', '--with', 'pytest', '--with', 'gdtoolkit>=4,<5', 'pytest', '-q', 'tests/tools')
+            exit (Invoke-Gated -Name 'pytest' -TimeoutSeconds 120 -Program 'uv' -Arguments $arguments -Slot light)
         }
         'drive' {
             exit (Invoke-Drive -CallsFile $Calls)
