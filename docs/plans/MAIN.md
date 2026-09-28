@@ -9,7 +9,6 @@ The first version replaced godot-mcp-runtime at parity and went further: every p
 
 ### Current: cleanup after 0.4.0 (user, 2026-09-28)
 
-- [ ] `GodotRun.IsRunning` and `ExitCode` read the handle's signal, not `HasExited`, so a run reads stopped only once its game has let go of its folder
 - [ ] Find why a Godot launch in the itests fails under load ("the bridge did not connect within 15 s", exit 0xC06D007F; the Singles line below) and why `McpServerSmokeTests.ListsTheToolsRunsTheProbeReadsItClicksItAndStopsIt` passed its 45 s timeout beside the build lane (soak run 1, 2026-09-28)
 
 ## Next
