@@ -33,6 +33,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     private static readonly TimeSpan ExitGrace = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan KillWait = TimeSpan.FromSeconds(5);
 
+    /// <summary>How long a stop waits for the console wrapper to follow a game that quit before ending it.</summary>
+    private static readonly TimeSpan WrapperExitWait = TimeSpan.FromSeconds(1);
+
     // SilentUnderDebugger's text quotes this.
     private static readonly TimeSpan DebuggerPingTimeout = TimeSpan.FromMilliseconds(500);
     private const int FailureStderrLines = 20;
@@ -151,6 +154,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             {
                 AlreadyExited = alreadyExited,
                 GameExitCode = gameExitCode,
+                KillReason = ended.KillReason,
+                LeftRunning = ended.LeftRunning.Count == 0 ? null : ended.LeftRunning,
                 Recording = recording,
                 Warning = ended.Warning,
             };
@@ -321,9 +326,10 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     }
 
     /// <summary>
-    /// How <see cref="EndRunAsync"/> ended a run: whether the game had to be killed, and the warning when a debugger was attached to it.
+    /// How <see cref="EndRunAsync"/> ended a run: whether the game had to be killed and why, the processes it left running
+    /// when it quit, and the warning when a debugger was attached to it.
     /// </summary>
-    private readonly record struct RunEnd(bool Killed, string? Warning);
+    private readonly record struct RunEnd(bool Killed, string? Warning, string? KillReason, IReadOnlyList<string> LeftRunning);
 
     /// <summary>The warning stop_project and restart_project carry when they end a running game a debugger is attached to; null otherwise.</summary>
     private string? WarnIfDebugged(GodotRun run) =>
@@ -575,51 +581,91 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
-    private async Task<bool> ShutDownGracefullyAsync(GodotRun run)
+    private async Task<QuitRequest> AskToQuitAsync(GodotRun run)
     {
-        if (run.Connection is { IsOpen: true } connection)
+        if (run.Connection is not { IsOpen: true } connection)
         {
-            try
-            {
-                await connection.SendRawAsync("shutdown", null, ShutdownReplyTimeout, CancellationToken.None);
-            }
-            catch (Exception e) when (e is TimeoutException or IOException or InvalidOperationException)
-            {
-                Log.ShutdownNotAcknowledged(_logger, e);
-            }
+            return QuitRequest.NotSent;
         }
 
+        try
+        {
+            await connection.SendRawAsync("shutdown", null, ShutdownReplyTimeout, CancellationToken.None);
+            return QuitRequest.Acknowledged;
+        }
+        catch (Exception e) when (e is TimeoutException or IOException or InvalidOperationException)
+        {
+            Log.ShutdownNotAcknowledged(_logger, e);
+            return QuitRequest.Unanswered;
+        }
+    }
+
+    /// <summary>
+    /// Stops a running game: a silent one is killed at once; one that answers is asked to quit, and killed if it has not
+    /// exited within the grace. The grace watches the game's own process when the run has a handle on it, since on Windows
+    /// the console wrapper also waits for every process the game started; a game that quit is then followed by
+    /// <see cref="EndWrapperAsync"/>.
+    /// </summary>
+    private async Task<RunEnd> StopRunningAsync(GodotRun run)
+    {
+        if (await IsSilentAsync(run))
+        {
+            await KillAsync(run);
+            return new RunEnd(Killed: true, Warning: null, GameKillReason.Silent, LeftRunning: []);
+        }
+
+        QuitRequest request = await AskToQuitAsync(run);
         TimeSpan exitGrace = CurrentExitGrace;
-        if (await ProcessExit.WaitUntilGoneAsync(run.Process, exitGrace))
+        if (!await ProcessExit.WaitUntilGoneAsync(run.Game ?? run.Process, exitGrace))
         {
-            return true;
+            Log.ExitGraceExpired(_logger, run.ProjectDir, exitGrace.TotalSeconds);
+            await KillAsync(run);
+            return new RunEnd(Killed: true, Warning: null, GameKillReason.AfterGrace(request, exitGrace), LeftRunning: []);
         }
 
-        Log.ExitGraceExpired(_logger, run.ProjectDir, exitGrace.TotalSeconds);
-        return false;
+        return new RunEnd(Killed: false, Warning: null, KillReason: null, await EndWrapperAsync(run));
+    }
+
+    /// <summary>
+    /// After the game quit: waits up to <see cref="WrapperExitWait"/> for the console wrapper to follow it, as it does unless
+    /// the game left processes running. A wrapper still running then is ended, which closes its job and ends those processes.
+    /// </summary>
+    /// <returns>The processes the game left running, as leftRunning lists them; empty when the wrapper exited by itself.</returns>
+    private async Task<IReadOnlyList<string>> EndWrapperAsync(GodotRun run)
+    {
+        if (run.Game is not { } game || !run.IsRunning || await ProcessExit.WaitUntilGoneAsync(run.Process, WrapperExitWait))
+        {
+            return [];
+        }
+
+        IReadOnlyList<string> leftRunning = LeftBehind.Find(game, _logger);
+        Log.GameLeftProcessesRunning(_logger, run.ProjectDir, leftRunning.Count == 0 ? "no process it could list" : string.Join(", ", leftRunning));
+        await TerminateAsync(run);
+        return leftRunning;
     }
 
     /// <summary>
     /// Ends a run the way stop_project does, without releasing the folder: a silent game is killed at once, one that answers
     /// is asked to quit and killed after the grace; then its connection is closed.
     /// </summary>
-    /// <returns>Whether the game had to be killed, and the warning when a debugger was attached to it as it was ended.</returns>
+    /// <returns>
+    /// Whether the game had to be killed and why, the processes it left running when it quit, and the warning when a debugger
+    /// was attached to it as it was ended.
+    /// </returns>
     private async Task<RunEnd> EndRunAsync(GodotRun run)
     {
         string? warning = WarnIfDebugged(run);
-        bool killed = run.IsRunning && (await IsSilentAsync(run) || !await ShutDownGracefullyAsync(run));
-        if (killed)
-        {
-            await KillAsync(run);
-        }
-
+        RunEnd ended = run.IsRunning ? await StopRunningAsync(run) : new RunEnd(Killed: false, Warning: null, KillReason: null, LeftRunning: []);
         if (run.Connection is not null)
         {
             await run.Connection.DisposeAsync();
             run.Connection = null;
         }
 
-        return new RunEnd(killed, warning);
+        return ended with
+        {
+            Warning = warning,
+        };
     }
 
     /// <summary>
@@ -645,6 +691,13 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             recording.Killed = true;
         }
 
+        run.MarkKilled();
+        await TerminateAsync(run);
+    }
+
+    /// <summary>Kills the run's process and everything it started, and waits up to <see cref="KillWait"/> for it to exit.</summary>
+    private async Task TerminateAsync(GodotRun run)
+    {
         try
         {
             run.Process.Kill(entireProcessTree: true);

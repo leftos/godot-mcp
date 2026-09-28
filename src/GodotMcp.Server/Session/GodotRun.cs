@@ -85,6 +85,7 @@ internal sealed class GodotRun(string projectDir, IRunProcess launcher, GodotRun
 
     private Process? _game;
     private int? _gameExitCode;
+    private bool _killed;
 
     /// <summary>A run of a process started with <see cref="System.Diagnostics.Process.Start()"/>, not yet started.</summary>
     public GodotRun(string projectDir, Process process, GodotRun? previous)
@@ -102,6 +103,9 @@ internal sealed class GodotRun(string projectDir, IRunProcess launcher, GodotRun
     public OutputBuffer Stderr { get; } = previous?.Stderr ?? new(OutputCapacity);
 
     public BridgeConnection? Connection { get; set; }
+
+    /// <summary>The game's own process, kept from its hello by <see cref="KeepGameHandle"/>; null before, without one, or once released.</summary>
+    public Process? Game => _game;
 
     public bool IsRunning
     {
@@ -157,14 +161,21 @@ internal sealed class GodotRun(string projectDir, IRunProcess launcher, GodotRun
     }
 
     /// <summary>
+    /// Records that the server killed the game, so <see cref="ReleaseGameAsync"/> reports no exit code: the code read after
+    /// a kill is not the game's own.
+    /// </summary>
+    public void MarkKilled() => _killed = true;
+
+    /// <summary>
     /// Lets go of the game's handle and keeps its exit code, so a later call returns the same. It waits up to
-    /// <see cref="GameExitWait"/> for a game still ending; null with no handle, or while the game still runs.
+    /// <see cref="GameExitWait"/> for a game still ending; null with no handle, while the game still runs, or after
+    /// <see cref="MarkKilled"/>.
     /// </summary>
     public async Task<int?> ReleaseGameAsync()
     {
         if (_game is not { } game)
         {
-            return _gameExitCode;
+            return _killed ? null : _gameExitCode;
         }
 
         _game = null;
@@ -173,7 +184,7 @@ internal sealed class GodotRun(string projectDir, IRunProcess launcher, GodotRun
             _gameExitCode = await ReadExitCodeAsync(game);
         }
 
-        return _gameExitCode;
+        return _killed ? null : _gameExitCode;
     }
 
     public async ValueTask DisposeAsync()

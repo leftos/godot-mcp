@@ -90,6 +90,18 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Warning, Message = "Godot for {Project} was still running {Seconds} s after the kill.")]
     public static partial void StillRunningAfterKill(ILogger logger, string project, double seconds);
 
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "The game for {Project} quit leaving {Processes} running; ending them with its console wrapper."
+    )]
+    public static partial void GameLeftProcessesRunning(ILogger logger, string project, string processes);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Reading the start time of process {Pid} failed; it is not listed as left running.")]
+    public static partial void LeftRunningUnreadable(ILogger logger, Exception exception, int pid);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Listing processes with {Call} failed with Win32 error {Error}; leftRunning may be incomplete.")]
+    public static partial void ProcessListFailed(ILogger logger, string call, int error);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Godot for {Project} exited; its override.cfg is removed.")]
     public static partial void OverrideRemovedAfterExit(ILogger logger, string project);
 

@@ -19,7 +19,6 @@ Shared: the screenshot grabs in `bridge/godot_mcp_bridge.gd`, `godot_mcp_time.gd
 
 ### Wave 2: new issues
 
-- [ ] #28: `stop_project` kills a game whose tree is paused (`killed: true` after about 3 s) instead of quitting it; unpause before the quit request, or say the pause is why
 - [ ] #27: the headless scene tools cannot move or reorder a node among its siblings (sibling order is 2D draw order); a move op in `batch_scene_operations` and an `add_node` position option
 
 ### Release

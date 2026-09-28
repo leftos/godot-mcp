@@ -18,6 +18,24 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
     private const string QuitSoonScript =
         "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
         + "\tscene_tree.create_timer(0.3).timeout.connect(scene_tree.quit)\n\treturn true\n";
+
+    // Starts a ping that outlives the game and returns its pid.
+    private const string LingeringChildScript =
+        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
+        + "\treturn OS.create_process(\"ping\", [\"-n\", \"10\", \"127.0.0.1\"])\n";
+
+    // Adds a node whose _exit_tree blocks for 5 s, so the game is still shutting down when the stop's grace ends.
+    private const string SlowToQuitScript =
+        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
+        + "\tvar script := GDScript.new()\n"
+        + "\tscript.source_code = \"extends Node\\n\\n\\nfunc _exit_tree() -> void:\\n\\tOS.delay_msec(5000)\\n\"\n"
+        + "\tscript.reload()\n"
+        + "\tvar node := Node.new()\n"
+        + "\tnode.set_script(script)\n"
+        + "\tscene_tree.root.add_child(node)\n"
+        + "\treturn true\n";
+
+    private static readonly TimeSpan ChildExitWait = TimeSpan.FromSeconds(5);
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
 
@@ -290,6 +308,46 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.False(stopped.Killed);
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AGameThatQuitsWithAChildStillRunningIsNotKilled()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
+        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        string started = await tools.RunScriptAsync(LingeringChildScript, 10_000, null, cancellation);
+        int pingId = JsonNode.Parse(started)!["value"]!.GetValue<int>();
+
+        StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
+        bool pingGone = await ProcessGoneAsync(pingId);
+
+        Assert.False(stopped.Killed);
+        Assert.Null(stopped.KillReason);
+        Assert.Equal(0, stopped.GameExitCode);
+        Assert.True(stopped.OverrideRemoved);
+        Assert.NotNull(stopped.LeftRunning);
+        string left = Assert.Single(stopped.LeftRunning);
+        Assert.Equal($"ping.exe (pid {pingId})", left, ignoreCase: true);
+        Assert.True(pingGone, $"ping (pid {pingId}) was still running after the stop");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AGameSlowToQuitIsKilledAndSaysWhy()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
+        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        await tools.RunScriptAsync(SlowToQuitScript, 10_000, null, cancellation);
+
+        StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.True(stopped.Killed);
+        Assert.Null(stopped.GameExitCode);
+        Assert.NotNull(stopped.KillReason);
+        Assert.Contains("still shutting down", stopped.KillReason, StringComparison.Ordinal);
+        Assert.Null(stopped.LeftRunning);
+        Assert.True(stopped.OverrideRemoved);
+    }
+
     private LaunchRequest Request(string[]? userArgs = null, bool quiet = true, bool shutOutRealGamepads = false) =>
         new(_probe.Directory, null, [], userArgs ?? [], quiet, shutOutRealGamepads, Prepare: true);
 
@@ -297,6 +355,24 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
     {
         JsonNode? pong = await _harness.Sessions.Resolve(session).SendAsync("ping", null, PingTimeout, TestContext.Current.CancellationToken);
         return pong?["pong"]?.GetValue<bool>() == true;
+    }
+
+    private static async Task<bool> ProcessGoneAsync(int processId)
+    {
+        Process process;
+        try
+        {
+            process = Process.GetProcessById(processId);
+        }
+        catch (ArgumentException)
+        {
+            return true;
+        }
+
+        using (process)
+        {
+            return await ProcessExit.WaitUntilGoneAsync(process, ChildExitWait);
+        }
     }
 
     private static async Task<string> ScreenshotPathAsync(RuntimeTools tools, string session)

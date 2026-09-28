@@ -102,8 +102,22 @@ internal sealed record StopResult(string Session, string ProjectPath, int? ExitC
     /// <summary>Whether the run had already ended when the stop began: the game quit, crashed or was killed from outside.</summary>
     public required bool AlreadyExited { get; init; }
 
-    /// <summary>The game's own exit code; null without a handle on it, or when it could not be read.</summary>
+    /// <summary>
+    /// The game's own exit code; null without a handle on it, when it could not be read, or when the game had to be killed,
+    /// since the code read after a kill is not the game's own.
+    /// </summary>
     public required int? GameExitCode { get; init; }
+
+    /// <summary>Why the game had to be killed; left out when it quit.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? KillReason { get; init; }
+
+    /// <summary>
+    /// The processes the game started and left running when it quit, as "name (pid N)"; they were ended with the console
+    /// wrapper. Left out when there were none.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? LeftRunning { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? Recording { get; init; }
