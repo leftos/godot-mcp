@@ -15,14 +15,21 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
   build    dotnet build GodotMcp.slnx, warnings as errors; ceiling 300 s
   test     the unit tests (tests/GodotMcp.Tests); ceiling 180 s
   itest    the integration tests against the real Godot (GODOT_PATH, else a Godot*console*.exe on PATH), in the class
-           groups of the table at the top of this script (lifecycle, input, reads). It first checks that every
-           `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly one group and every listed
-           class exists, and stops with status 1 before running anything when not. It then runs the dotnet command (as
-           below; a -Filter run does so only when the filter matches a class of the csharp group), builds the project once
-           (.tmp/itest-build.log, ceiling 300 s) and runs each group as its own gate (.tmp/itest-<group>.log, ceiling
-           300 s). Every group runs even when an earlier one fails; a summary line per
-           group follows, and the exit status is the first non-zero group's. On Windows every test run (a group's or
-           a -Filter one) goes through tools/hidden-desktop.ps1, on a desktop of its own, so no Godot window shows.
+           groups of the table at the top of this script (lifecycle, input, reads), which run in the two lanes of the
+           table below it: timing (the wall-clock-sensitive groups) and build (the C# builds and headless runs). It
+           first checks that every `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly
+           one group, every listed class exists, and every group is in exactly one lane that names only groups, and
+           stops with status 1 before running anything when not. It then runs the dotnet command (as below; a -Filter
+           run does so only when the filter matches a class of the csharp group), builds the project once
+           (.tmp/itest-build.log, ceiling 300 s) and runs each group as its own gate in a process of its own
+           (.tmp/itest-<group>.log, ceiling 300 s): each lane's groups one at a time in the table's order, the two lanes
+           at once. A group's console output, the gate's tail and verdict, goes to .tmp/itest-<group>.console (errors to
+           .tmp/itest-<group>.console.err) and is printed under "== itest <group> (lane <lane>)" when the group ends.
+           Every group runs even when an earlier one fails; a summary line per group follows in the groups table's order,
+           then "itest: <n> groups in <m> lanes, wall <time>", and the exit status is the first non-zero group's in
+           that order. Each gate takes one of the machine's gate slots, so the two lanes take two. On Windows every
+           test run (a group's or a -Filter one) goes through tools/hidden-desktop.ps1, on a desktop of its own, so no
+           Godot window shows.
   format   dotnet format style (info severity), then CSharpier, on the whole solution; ceiling 180 s each
   dotnet   the C# helper into bin/dotnet: the NativeAOT shim godot_mcp_dotnet.dll (win-x64, no pdb) and
            dotnet/godot_mcp_dotnet.gdextension at the top, loader/ (GodotMcp.Dotnet.Loader.dll and its
@@ -111,6 +118,13 @@ $itestGroups = [ordered]@{
     nodes     = @('HeadlessPropertyTests', 'HeadlessSignalTests')
     csharp    = @('CSharpToolTests')
 }
+# The lanes the groups run in: each lane's groups one at a time in this order, the lanes at once. The timing lane keeps
+# the wall-clock-sensitive groups apart from each other, the build lane holds the C# builds and the headless runs. Every
+# group is in exactly one lane; itest refuses to run while one is not.
+$itestLanes = [ordered]@{
+    timing = @('lifecycle', 'input', 'time', 'recording', 'reads')
+    build  = @('prep', 'headless', 'scene', 'nodes', 'csharp')
+}
 $itestNamespace = 'GodotMcp.IntegrationTests'
 $itestProject = 'tests/GodotMcp.IntegrationTests/GodotMcp.IntegrationTests.csproj'
 
@@ -192,18 +206,26 @@ function Invoke-Logged {
     return Invoke-Gated -Name $Name -TimeoutSeconds $TimeoutSeconds -Program 'dotnet' -Arguments $Arguments
 }
 
-# Runs an integration test gate as Invoke-Logged does, on Windows through tools/hidden-desktop.ps1, so the Godot windows
-# the tests open appear on a desktop of their own and never on the user's screen.
+# The program and arguments of an integration test run: dotnet with the given arguments, on Windows through
+# tools/hidden-desktop.ps1, so the Godot windows the tests open appear on a desktop of their own and never on the
+# user's screen.
+function Get-ItestCommand {
+    param([Parameter(Mandatory)] [string[]]$Arguments)
+    if (-not $IsWindows) {
+        return @{ Program = 'dotnet'; Arguments = $Arguments }
+    }
+    $hidden = @('-NoProfile', '-File', (Join-Path $root 'tools/hidden-desktop.ps1'), '--', 'dotnet') + $Arguments
+    return @{ Program = 'pwsh'; Arguments = $hidden }
+}
+
+# Runs an integration test gate as Invoke-Gated does, with the program and arguments of Get-ItestCommand.
 function Invoke-ItestGated {
     param(
         [Parameter(Mandatory)] [string]$Name,
         [Parameter(Mandatory)] [string[]]$Arguments
     )
-    if (-not $IsWindows) {
-        return Invoke-Logged -Name $Name -TimeoutSeconds 300 -Arguments $Arguments
-    }
-    $hidden = @('-NoProfile', '-File', (Join-Path $root 'tools/hidden-desktop.ps1'), '--', 'dotnet') + $Arguments
-    return Invoke-Gated -Name $Name -TimeoutSeconds 300 -Program 'pwsh' -Arguments $hidden
+    $command = Get-ItestCommand -Arguments $Arguments
+    return Invoke-Gated -Name $Name -TimeoutSeconds 300 -Program $command.Program -Arguments $command.Arguments
 }
 
 # The Godot executable as the server finds it (Installation.FindGodot): GODOT_PATH when set and a file, else the first folder
@@ -294,9 +316,9 @@ function Get-ItestClass {
         Sort-Object -Unique
 }
 
-# How the groups table has drifted from the project, as one message, or '' when every declared class is in exactly one
-# group and every listed class is declared.
-function Get-ItestGroupDrift {
+# How the groups table has drifted from the project, one phrase per kind of drift: a declared class in no group, a
+# listed class not declared, a class listed in more than one group. Empty when there is none.
+function Get-ItestClassDrift {
     $declared = @(Get-ItestClass)
     $listed = @($itestGroups.Values | ForEach-Object { $_ })
     $unlisted = @($declared | Where-Object { $listed -notcontains $_ })
@@ -312,10 +334,38 @@ function Get-ItestGroupDrift {
     if ($repeated.Count -gt 0) {
         $parts += "$($repeated.Count) listed in more than one group: $($repeated -join ', ')"
     }
+    return $parts
+}
+
+# How the lanes table has drifted from the groups table, one phrase per kind of drift: a group in no lane, a group in
+# more than one lane, a lane entry naming no group. Empty when there is none.
+function Get-ItestLaneDrift {
+    $groups = @($itestGroups.Keys)
+    $laned = @($itestLanes.Values | ForEach-Object { $_ })
+    $unlaned = @($groups | Where-Object { $laned -notcontains $_ })
+    $repeated = @($laned | Group-Object | Where-Object Count -GT 1 | ForEach-Object Name)
+    $unknown = @($laned | Where-Object { $groups -notcontains $_ } | Sort-Object -Unique)
+    $parts = @()
+    if ($unlaned.Count -gt 0) {
+        $parts += "$($unlaned.Count) group(s) in no lane: $($unlaned -join ', ')"
+    }
+    if ($repeated.Count -gt 0) {
+        $parts += "$($repeated.Count) group(s) in more than one lane: $($repeated -join ', ')"
+    }
+    if ($unknown.Count -gt 0) {
+        $parts += "$($unknown.Count) lane entr(ies) naming no group: $($unknown -join ', ')"
+    }
+    return $parts
+}
+
+# How the groups and lanes tables have drifted from the project, as one message, or '' when every declared class is in
+# exactly one group, every listed class is declared, and every group is in exactly one lane that names only groups.
+function Get-ItestGroupDrift {
+    $parts = @(Get-ItestClassDrift) + @(Get-ItestLaneDrift)
     if ($parts.Count -eq 0) {
         return ''
     }
-    return "itest groups are out of date: $($parts -join '; '). Edit the groups table in run.ps1."
+    return "itest groups are out of date: $($parts -join '; '). Edit the groups and lanes tables in run.ps1."
 }
 
 # Whether a -Filter selects a class of the csharp group, whose tests need bin/dotnet: each filter is matched against the
@@ -364,14 +414,127 @@ function Write-ItestSummary {
     }
 }
 
-# The whole integration suite: the groups table checked, the project built once, then every group under its own gate,
-# each run whatever the one before it did. Returns the first non-zero status, else 0.
+# One command-line word for Start-Process, which joins its -ArgumentList with single spaces and quotes nothing
+# (https://learn.microsoft.com/powershell/module/microsoft.powershell.management/start-process, -ArgumentList): a word
+# that is empty or holds a space or a quote is wrapped in quotes, its own quotes escaped.
+function ConvertTo-CommandLineWord {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string]$Word)
+    if ($Word -eq '' -or $Word -match '[\s"]') {
+        return '"' + ($Word -replace '"', '\"') + '"'
+    }
+    return $Word
+}
+
+# Starts a group's gate as a process of its own, so the lanes' gates run at once: its console output (the gate's tail
+# and verdict) goes to .tmp/itest-<group>.console, its errors to .tmp/itest-<group>.console.err. Returns the process.
+function Invoke-ItestGroupProcess {
+    param(
+        [Parameter(Mandatory)] [string]$Group,
+        [Parameter(Mandatory)] [string]$Lane
+    )
+    $classes = @($itestGroups[$Group] | ForEach-Object { "$itestNamespace.$_" })
+    $command = Get-ItestCommand -Arguments (Get-TestArgumentList -Project $itestProject -Classes $classes -NoBuild)
+    $log = Join-Path $logDir "itest-$Group.log"
+    $words = @('-NoProfile', '-File', $gate, '-Log', $log, '-TimeoutSeconds', '300', '-Tail', '15', '--', $command.Program) + $command.Arguments
+    Write-Host "itest ${Group}: started in lane $Lane (log: $log, ceiling: 300 s)"
+    $console = Join-Path $logDir "itest-$Group.console"
+    $process = Start-Process -FilePath 'pwsh' -ArgumentList @($words | ForEach-Object { ConvertTo-CommandLineWord -Word $_ }) `
+        -NoNewWindow -PassThru -RedirectStandardOutput $console -RedirectStandardError "$console.err"
+    # Without a handle taken while it runs, the process object of Start-Process has no ExitCode once it has exited.
+    $null = $process.Handle
+    return $process
+}
+
+# Prints a finished group's console output under a header, with the gate's kill line and its reading when it was
+# killed. Returns the group's exit status.
+function Complete-ItestGroup {
+    param(
+        [Parameter(Mandatory)] [string]$Group,
+        [Parameter(Mandatory)] [string]$Lane,
+        [Parameter(Mandatory)] [System.Diagnostics.Process]$Process
+    )
+    $Process.WaitForExit()
+    $status = $Process.ExitCode
+    $console = Join-Path $logDir "itest-$Group.console"
+    Write-Host "== itest $Group (lane $Lane)"
+    Get-Content -LiteralPath $console, "$console.err" -ErrorAction SilentlyContinue | Out-Host
+    if ($status -eq 124) {
+        Write-Host "itest-$Group was killed by the gate: $(Get-GateKill -Log (Join-Path $logDir "itest-$Group.log"))" -ForegroundColor Yellow
+    }
+    return $status
+}
+
+# Starts the next group of a lane's queue when it has one, recording it as the lane's running group.
+function Invoke-ItestLaneNext {
+    param(
+        [Parameter(Mandatory)] [string]$Lane,
+        [Parameter(Mandatory)] [hashtable]$Queues,
+        [Parameter(Mandatory)] [hashtable]$Running
+    )
+    if ($Queues[$Lane].Count -eq 0) {
+        return
+    }
+    $group = $Queues[$Lane].Dequeue()
+    $Running[$Lane] = @{ Group = $group; Process = (Invoke-ItestGroupProcess -Group $group -Lane $Lane) }
+}
+
+# Stops the gates of the groups still running (an interrupted run), each with its whole process tree.
+function Invoke-ItestStopTree {
+    param([Parameter(Mandatory)] [hashtable]$Running)
+    foreach ($entry in $Running.Values) {
+        if (-not $entry.Process.HasExited) {
+            & $gate -StopTree $entry.Process.Id | Out-Host
+        }
+    }
+}
+
+# Runs every group in its lane: each lane's groups one at a time in order, the lanes at once, every group whatever the
+# one before it did. Returns each group's exit status by group name.
+function Invoke-ItestLane {
+    $queues = @{}
+    $running = @{}
+    $statuses = @{}
+    foreach ($lane in $itestLanes.Keys) {
+        $queues[$lane] = [System.Collections.Generic.Queue[string]]::new([string[]]$itestLanes[$lane])
+    }
+    try {
+        foreach ($lane in $itestLanes.Keys) {
+            Invoke-ItestLaneNext -Lane $lane -Queues $queues -Running $running
+        }
+        while ($running.Count -gt 0) {
+            foreach ($lane in @($running.Keys)) {
+                $entry = $running[$lane]
+                if (-not $entry.Process.WaitForExit(500)) {
+                    continue
+                }
+                $statuses[$entry.Group] = Complete-ItestGroup -Group $entry.Group -Lane $lane -Process $entry.Process
+                $running.Remove($lane)
+                Invoke-ItestLaneNext -Lane $lane -Queues $queues -Running $running
+            }
+        }
+    }
+    finally {
+        Invoke-ItestStopTree -Running $running
+    }
+    return $statuses
+}
+
+# A wall time as minutes and seconds, e.g. 5m 12s.
+function Format-WallTime {
+    param([Parameter(Mandatory)] [TimeSpan]$Elapsed)
+    return '{0}m {1:D2}s' -f [int][Math]::Floor($Elapsed.TotalMinutes), $Elapsed.Seconds
+}
+
+# The whole integration suite: the groups and lanes tables checked, the project built once, then every group under its
+# own gate in its lane, each run whatever the one before it did, and a summary line per group in table order with the
+# run's wall time. Returns the first non-zero status in table order, else 0.
 function Invoke-ItestByGroup {
     $drift = Get-ItestGroupDrift
     if ($drift) {
         [Console]::Error.WriteLine($drift)
         return 1
     }
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
     $dotnet = Invoke-DotnetPublish
     if ($dotnet -ne 0) {
         return $dotnet
@@ -380,13 +543,13 @@ function Invoke-ItestByGroup {
     if ($build -ne 0) {
         return $build
     }
+    $statuses = Invoke-ItestLane
     $results = [ordered]@{}
     foreach ($group in $itestGroups.Keys) {
-        $classes = @($itestGroups[$group] | ForEach-Object { "$itestNamespace.$_" })
-        $arguments = Get-TestArgumentList -Project $itestProject -Classes $classes -NoBuild
-        $results[$group] = Invoke-ItestGated -Name "itest-$group" -Arguments $arguments
+        $results[$group] = $statuses[$group]
     }
     Write-ItestSummary -Results $results
+    Write-Host "itest: $($results.Count) groups in $($itestLanes.Count) lanes, wall $(Format-WallTime -Elapsed $clock.Elapsed)"
     $failed = @($results.Values | Where-Object { $_ -ne 0 })
     if ($failed.Count -gt 0) {
         return $failed[0]
