@@ -24,19 +24,27 @@ public sealed partial class HangProbeTests : IAsyncDisposable
     private const string Command = "get_ui_elements";
     private static readonly TimeSpan AttachWait = TimeSpan.FromSeconds(10);
     private readonly TempDirectory _temp = new();
-    private readonly BridgeListener _listener = new(NullLogger<BridgeListener>.Instance);
+
+    // Wall time: a build loading the machine would stretch the 300 ms ceiling into its backstop and change the message
+    // these tests assert word for word; LoadClockTests cover the load itself.
+    private readonly LoadClock _wallClock = new(TimeProvider.System, new NoLoadSource());
+    private readonly BridgeListener _listener;
     private readonly SessionRegistry _sessions;
     private FakeBridge? _game;
     private bool _debuggerAttached;
 
-    public HangProbeTests() =>
+    public HangProbeTests()
+    {
+        _listener = new(NullLogger<BridgeListener>.Instance) { Clock = _wallClock };
         _sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance) { IsDebuggerAttached = _ => _debuggerAttached };
+    }
 
     public ValueTask DisposeAsync()
     {
         _game?.Dispose();
         _sessions.Dispose();
         _listener.Dispose();
+        _wallClock.Dispose();
         _temp.Dispose();
         return ValueTask.CompletedTask;
     }

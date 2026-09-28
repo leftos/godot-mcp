@@ -181,8 +181,9 @@ public sealed class AttachTests : IAsyncDisposable
         game.BeginErrorReadLine();
     }
 
-    // Godot_console.exe exits before the Godot.exe it wraps lets go of the probe folder, so the game's own process is
-    // killed and waited for too.
+    // The harness kills and waits for the games its registry still knows, but detaching drops the session from it and these
+    // games keep running after the detach, so they are killed and waited for here: Godot_console.exe exits before the
+    // Godot.exe it wraps lets go of the probe folder.
     private async Task StopGamesAsync()
     {
         foreach (Process game in _games)

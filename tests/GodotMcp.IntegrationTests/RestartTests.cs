@@ -20,7 +20,6 @@ public sealed class RestartTests : IAsyncDisposable
     private const int TestTimeoutMs = 90_000;
     private const int AttachWaitSeconds = 30;
     private static readonly TimeSpan PingTimeout = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan ExitWait = TimeSpan.FromSeconds(10);
 
     // Quits a moment after returning, so the reply goes out before the game ends.
     private const string QuitSoonScript =
@@ -36,7 +35,6 @@ public sealed class RestartTests : IAsyncDisposable
     private readonly ProjectTools _project;
     private readonly RuntimeTools _runtime;
     private readonly List<IDisposable> _projects = [];
-    private readonly List<Process> _games = [];
 
     public RestartTests()
     {
@@ -47,7 +45,6 @@ public sealed class RestartTests : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await _harness.DisposeAsync();
-        await StopGamesAsync();
         foreach (IDisposable project in _projects)
         {
             project.Dispose();
@@ -218,7 +215,6 @@ public sealed class RestartTests : IAsyncDisposable
         Assert.True(await Poll.UntilAsync(() => File.Exists(AttachFile.PathIn(probe.Directory)), TimeSpan.FromSeconds(10), cancellation));
         StartGame(probe.Directory);
         await attach;
-        _games.Add(Process.GetProcessById((await RunValueAsync("return OS.get_process_id()")).GetValue<int>()));
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() => RestartAsync(null, cancellation));
         bool answered = await PingAsync(null, cancellation);
@@ -276,7 +272,7 @@ public sealed class RestartTests : IAsyncDisposable
     private static string[] Lines(JsonNode output, string stream) => [.. output[stream]!.AsArray().Select(line => line!.GetValue<string>())];
 
     // Godot as a user's script would start it: no GODOT_MCP_* variables, so the bridge can only find the attach file.
-    private void StartGame(string projectDir)
+    private static void StartGame(string projectDir)
     {
         ProcessStartInfo startInfo = new(Installation.FindGodot())
         {
@@ -293,26 +289,8 @@ public sealed class RestartTests : IAsyncDisposable
         }
 
         Process game = Process.Start(startInfo)!;
-        _games.Add(game);
         game.StandardInput.Close();
         game.BeginOutputReadLine();
         game.BeginErrorReadLine();
-    }
-
-    // Godot_console.exe exits before the Godot.exe it wraps lets go of the probe folder, so the game's own process is
-    // killed and waited for too.
-    private async Task StopGamesAsync()
-    {
-        foreach (Process game in _games)
-        {
-            if (!game.HasExited)
-            {
-                game.Kill(entireProcessTree: true);
-            }
-
-            using CancellationTokenSource wait = new(ExitWait);
-            await game.WaitForExitAsync(wait.Token);
-            game.Dispose();
-        }
     }
 }
