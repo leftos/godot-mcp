@@ -9,7 +9,14 @@ extends RefCounted
 ## outside the editor a binary scene's uid cannot be read back (see SceneFiles.uid_of).
 
 const SceneFiles := preload("scene_files.gd")
+const Json := preload("../bridge/godot_mcp_json.gd")
 const RES_PREFIX := "res://"
+## A packed node record's fields before its property count: parent, owner, type, name, instance.
+const RECORD_HEAD := 5
+## The type of a packed node record an instanced or inherited scene holds (4.7.2 packed_scene.h).
+const RECORD_TYPE_INSTANTIATED := 0x7FFFFFFF
+## The bits of a stored property's name index that index names; bit 30 marks a deferred node path.
+const PROPERTY_NAME_MASK := (1 << 30) - 1
 ## How many base scenes deep an inherited scene is followed.
 const MAX_BASE_DEPTH := 64
 
@@ -193,11 +200,49 @@ static func _ends_with_any(text: String, suffixes: Array) -> bool:
 static func save(
 	root: Node, path: String, uid: int, known: Dictionary, keep_layout: bool
 ) -> Dictionary:
+	var packing: Dictionary = pack_native(root)
+	if packing.has("error"):
+		return {"error": "%s could not be packed: %s" % [path, packing["error"]]}
+	var saved: Dictionary = SceneFiles.save_resource(
+		packing["packed"], path, uid, known, keep_layout
+	)
+	var clashes: PackedStringArray = packing["clashes"]
+	if saved.has("error") or clashes.is_empty():
+		return saved
+	var warning: String = "; ".join(clashes)
+	if saved.has("warning"):
+		warning += " " + str(saved["warning"])
+	saved["warning"] = warning
+	return saved
+
+
+## {packed, clashes} for root packed as PackedScene.pack packs it, or {error} with the pack's
+## error text. Headless, a C# script is a real instance, and Object.get asks it before the engine
+## class (4.7.2 object.cpp L319-326), so pack stores a C# field named like an engine property
+## (packed_scene.cpp L883) in the engine property's place. The packed state is rewritten to hold
+## the engine's value there, as an editor save does; clashes holds one clause per distinct
+## (script, name) saying so.
+static func pack_native(root: Node) -> Dictionary:
 	var packed := PackedScene.new()
 	var error: int = packed.pack(root)
 	if error != OK:
-		return {"error": "%s could not be packed: %s" % [path, error_string(error)]}
-	return SceneFiles.save_resource(packed, path, uid, known, keep_layout)
+		return {"error": error_string(error)}
+	var state: SceneState = packed.get_state()
+	var fixes: Dictionary = {}
+	var clashes: PackedStringArray = []
+	for index in state.get_node_count():
+		var node: Node = root.get_node_or_null(state.get_node_path(index))
+		var names: PackedStringArray = _hidden_names(node)
+		if names.is_empty():
+			continue
+		fixes[index] = {"node": node, "names": names}
+		for property in names:
+			var clause: String = _clash_clause(node, property)
+			if not clashes.has(clause):
+				clashes.append(clause)
+	if not fixes.is_empty():
+		packed.set("_bundled", _with_native_values(packed.get("_bundled"), fixes))
+	return {"packed": packed, "clashes": clashes}
 
 
 ## The root name for a new scene at path: its file name in PascalCase (player_ship.tscn and
@@ -232,6 +277,120 @@ static func script_root(path: String) -> Node:
 	if not ClassDB.is_parent_class(script.get_instance_base_type(), "Node"):
 		return null
 	return script.new() as Node
+
+
+## The engine properties node stores whose value a script member of the same name hides: the
+## storage properties of its native class that node.get and ClassDB.class_get_property read
+## differently. Empty for null and for a node with no script.
+static func _hidden_names(node: Node) -> PackedStringArray:
+	var names: PackedStringArray = []
+	if node == null or node.get_script() == null:
+		return names
+	for info: Dictionary in ClassDB.class_get_property_list(node.get_class()):
+		var property: String = info["name"]
+		if (int(info["usage"]) & PROPERTY_USAGE_STORAGE) == 0 or property == "script":
+			continue
+		if not Json.same(node.get(property), ClassDB.class_get_property(node, property)):
+			names.append(property)
+	return names
+
+
+## The warning clause for the script member of node that hides its engine property.
+static func _clash_clause(node: Node, property: String) -> String:
+	var script: String = (node.get_script() as Script).resource_path.get_file().get_basename()
+	return (
+		"%s.%s (a C# field) hides %s.%s; the file stores the engine's value"
+		% [script, property, node.get_class(), property]
+	)
+
+
+## bundled, a PackedScene's _bundled state, with each record of fixes ({record index: {node,
+## names}}) storing the engine's value of its names. A record holds parent, owner, type, name,
+## instance, the property count and as many (name index, value index) pairs into names and
+## variants, then the group count and the groups (4.7.2 packed_scene.cpp get_bundled_scene).
+static func _with_native_values(bundled: Dictionary, fixes: Dictionary) -> Dictionary:
+	var nodes: PackedInt32Array = bundled["nodes"]
+	var rewritten: PackedInt32Array = []
+	var at: int = 0
+	for record in int(bundled["node_count"]):
+		var head: PackedInt32Array = nodes.slice(at, at + RECORD_HEAD)
+		var pairs_start: int = at + RECORD_HEAD + 1
+		var groups_start: int = pairs_start + nodes[at + RECORD_HEAD] * 2
+		var groups_end: int = groups_start + 1 + nodes[groups_start]
+		var pairs: PackedInt32Array = nodes.slice(pairs_start, groups_start)
+		if fixes.has(record):
+			var plain: bool = head[2] != RECORD_TYPE_INSTANTIATED and head[4] == -1
+			pairs = _native_pairs(bundled, pairs, fixes[record], plain)
+		rewritten.append_array(head)
+		rewritten.append(int(pairs.size() / 2.0))
+		rewritten.append_array(pairs)
+		rewritten.append_array(nodes.slice(groups_start, groups_end))
+		at = groups_end
+	bundled["nodes"] = rewritten
+	return bundled
+
+
+## pairs, a node record's (name index, value index) pairs, storing the engine's value of each of
+## fix.names on fix.node. A stored pair points at that value, or is dropped when it is the class
+## default and the record is plain (neither instanced nor inherited, so no other scene supplies a
+## value); a missing pair is added when the value is not the default.
+static func _native_pairs(
+	bundled: Dictionary, pairs: PackedInt32Array, fix: Dictionary, plain: bool
+) -> PackedInt32Array:
+	var node: Node = fix["node"]
+	for property: String in fix["names"]:
+		var value: Variant = ClassDB.class_get_property(node, property)
+		var class_default: Variant = ClassDB.class_get_property_default_value(
+			node.get_class(), property
+		)
+		var is_default: bool = Json.same(value, class_default)
+		var at: int = _pair_at(bundled["names"], pairs, property)
+		if at >= 0 and is_default and plain:
+			pairs = pairs.slice(0, at) + pairs.slice(at + 2)
+		elif at >= 0:
+			pairs[at + 1] = _variant_index(bundled, value)
+		elif not is_default:
+			pairs = _with_pair(bundled, pairs, property, value)
+	return pairs
+
+
+## pairs with a pair for property holding value, placed before the script's pair: instantiation
+## sets the pairs in order, and an engine property set once the script is attached reaches the
+## script's member instead.
+static func _with_pair(
+	bundled: Dictionary, pairs: PackedInt32Array, property: String, value: Variant
+) -> PackedInt32Array:
+	var pair: PackedInt32Array = [_name_index(bundled, property), _variant_index(bundled, value)]
+	var at: int = _pair_at(bundled["names"], pairs, "script")
+	if at < 0:
+		return pairs + pair
+	return pairs.slice(0, at) + pair + pairs.slice(at)
+
+
+## The offset in pairs of the pair whose name is property, or -1.
+static func _pair_at(names: PackedStringArray, pairs: PackedInt32Array, property: String) -> int:
+	for at in range(0, pairs.size(), 2):
+		if names[pairs[at] & PROPERTY_NAME_MASK] == property:
+			return at
+	return -1
+
+
+## The index of property in bundled's names, appended when absent.
+static func _name_index(bundled: Dictionary, property: String) -> int:
+	var names: PackedStringArray = bundled["names"]
+	var index: int = names.find(property)
+	if index < 0:
+		index = names.size()
+		names.append(property)
+		bundled["names"] = names
+	return index
+
+
+## The index of value appended to bundled's variants.
+static func _variant_index(bundled: Dictionary, value: Variant) -> int:
+	var variants: Array = bundled["variants"]
+	variants.append(value)
+	return variants.size() - 1
 
 
 ## The scene an inherited scene's root instances, or null for a scene that inherits nothing.

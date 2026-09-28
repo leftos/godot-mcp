@@ -304,15 +304,15 @@ static func _copy_of(source: Node, root: Node) -> Dictionary:
 		source.get_node(entry["path"]).disconnect(entry["signal"], entry["callable"])
 	var holder := Node.new()
 	_move(source, holder, owned, holder)
-	var packed := PackedScene.new()
-	var error: int = packed.pack(holder)
+	var packing: Dictionary = SceneEdit.pack_native(holder)
 	_move(source, parent, owned, root)
 	parent.move_child(source, index)
 	holder.free()
 	_connect_outbound(source, outbound, ~0)
 	var path: String = String(root.get_path_to(source))
-	if error != OK:
-		return {"error": "%s could not be copied: %s" % [path, error_string(error)]}
+	if packing.has("error"):
+		return {"error": "%s could not be copied: %s" % [path, packing["error"]]}
+	var packed: PackedScene = packing["packed"]
 	var copy_holder: Node = packed.instantiate(PackedScene.GEN_EDIT_STATE_MAIN)
 	if copy_holder == null:
 		return {"error": "%s was packed, but its copy could not be instantiated." % path}

@@ -13,6 +13,9 @@ const SceneValues := preload("scene_values.gd")
 const Json := preload("../bridge/godot_mcp_json.gd")
 const SCENE_PREFIX := "res://"
 
+## The engine property names of each class _is_engine_property has looked at, by class name.
+static var _engine_names: Dictionary = {}
+
 
 ## Adds a node of params.nodeType named params.nodeName under params.parent, at params.position
 ## among its children (SceneNodes.resolve_position) or last, with params.properties set on it once
@@ -292,7 +295,7 @@ static func _converted(
 	var info: Dictionary = Json.property_info(node, property)
 	if info.is_empty():
 		return {"error": "%s has no property %s." % [path, property]}
-	var held: Variant = node.get(property)
+	var held: Variant = _get_prop(node, property)
 	if info.type == TYPE_NIL and held != null:
 		info = {"type": typeof(held)}
 	var converted: Array = SceneValues.from_json(value, info, root)
@@ -314,9 +317,9 @@ static func _converted(
 static func _set_checked(
 	node: Node, path: String, property: String, value: Variant, root: Node
 ) -> Dictionary:
-	var before: Variant = node.get(property)
-	node.set(property, value)
-	var after: Variant = node.get(property)
+	var before: Variant = _get_prop(node, property)
+	_set_prop(node, property, value)
+	var after: Variant = _get_prop(node, property)
 	if not Json.same(after, value):
 		var read: String = JSON.stringify(SceneValues.to_json(after, root))
 		var failed: String = (
@@ -325,6 +328,37 @@ static func _set_checked(
 		)
 		return {"error": failed + _layout_hint(node, property)}
 	return {"before": SceneValues.to_json(before, root), "after": SceneValues.to_json(after, root)}
+
+
+## The value of property on node: an engine property of the node's class through ClassDB, so a
+## script member of the same name (a C# field) does not hide it and the read agrees with what a
+## save stores (SceneEdit.pack_native); any other property through node.get.
+static func _get_prop(node: Node, property: String) -> Variant:
+	if _is_engine_property(node, property):
+		return ClassDB.class_get_property(node, property)
+	return node.get(property)
+
+
+## Sets property on node to value, an engine property of the node's class through ClassDB and any
+## other through node.set, as _get_prop reads it.
+static func _set_prop(node: Node, property: String, value: Variant) -> void:
+	if _is_engine_property(node, property):
+		ClassDB.class_set_property(node, property, value)
+	else:
+		node.set(property, value)
+
+
+## Whether property is one of the properties node's native class declares, other than script.
+static func _is_engine_property(node: Node, property: String) -> bool:
+	if property == "script":
+		return false
+	var type: String = node.get_class()
+	if not _engine_names.has(type):
+		var names: Dictionary = {}
+		for info: Dictionary in ClassDB.class_get_property_list(type):
+			names[info["name"]] = true
+		_engine_names[type] = names
+	return (_engine_names[type] as Dictionary).has(property)
 
 
 ## Why a Control's layout_mode or anchors_preset did not take, appended to the read-back failure:
@@ -360,7 +394,7 @@ static func _read_node(root: Node, query: Dictionary, scene: String) -> Dictiona
 		entry["script"] = script.resource_path
 	var properties: Dictionary = {}
 	for property: String in names:
-		properties[property] = SceneValues.to_json(node.get(property), root)
+		properties[property] = SceneValues.to_json(_get_prop(node, property), root)
 	entry["properties"] = properties
 	return entry
 

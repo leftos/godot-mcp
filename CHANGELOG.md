@@ -8,6 +8,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - A `run_csharp` snippet gets `Cancellation`, a token its timeout cancels, so a snippet that awaits with it stops once the call times out.
 
+### Fixed
+
+- Headless scene saves store the engine's value when a C# field shares an engine property's name, such as `scale`, and warn naming the field.
+
 ## 0.5.1 - 2026-09-28
 
 ### Changed

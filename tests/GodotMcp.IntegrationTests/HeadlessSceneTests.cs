@@ -21,6 +21,14 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
     private const string OtherUid = "uid://bqother00000a";
     private const string ScriptUid = "uid://bqscript0000a";
 
+    private const string ShadowTrailSource =
+        "using Godot;\n\npublic partial class ShadowTrail : Node2D\n{\n    private float scale = 1.0f;\n\n    public float Drawn() => scale;\n}\n";
+
+    private const string ShadowScaled =
+        "[node name=\"Scaled\" type=\"Node2D\" parent=\".\"]\nscale = Vector2(2, 2)\nscript = ExtResource(\"1_shadow\")\n";
+
+    private const string ShadowWarning = "ShadowTrail.scale (a C# field) hides Node2D.scale; the file stores the engine's value";
+
     private const string EnemyScene =
         "[gd_scene format=3 uid=\""
         + EnemyUid
@@ -977,6 +985,44 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Contains("path=\"res://CsProbeNode.cs\"", text, StringComparison.Ordinal);
     }
 
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task AddNodeSavesTheNativeValueUnderAScriptFieldOfTheSameName()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        WriteShadowScene(csProbe);
+        AddNodeOptions options = new(Properties: new() { ["visible"] = System.Text.Json.JsonSerializer.SerializeToElement(false) });
+
+        JsonNode added = JsonNode.Parse(
+            await _tools.AddNodeAsync(csProbe.Directory, "effects.tscn", "res://ShadowTrail.cs", "Added", options, cancellation)
+        )!;
+
+        Assert.Equal(ShadowWarning, added["warning"]!.GetValue<string>());
+        string text = File.ReadAllText(Path.Combine(csProbe.Directory, "effects.tscn"));
+        Assert.Contains(ShadowScaled, text, StringComparison.Ordinal);
+        string section = text[text.IndexOf("[node name=\"Added\"", StringComparison.Ordinal)..];
+        Assert.EndsWith("]\nvisible = false\nscript = ExtResource(\"1_shadow\")\n", section, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task DuplicateNodeKeepsTheNativeValueUnderAScriptFieldOfTheSameName()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        WriteShadowScene(csProbe);
+
+        JsonNode copied = JsonNode.Parse(
+            await _tools.DuplicateNodeAsync(csProbe.Directory, "effects.tscn", "Scaled", cancellationToken: cancellation)
+        )!;
+
+        string text = File.ReadAllText(Path.Combine(csProbe.Directory, "effects.tscn"));
+        string name = copied["newPath"]!.GetValue<string>();
+        string section = text[text.IndexOf($"[node name=\"{name}\"", StringComparison.Ordinal)..];
+        int end = section.IndexOf("\n[", StringComparison.Ordinal);
+        Assert.Contains("\nscale = Vector2(2, 2)\n", end < 0 ? section : section[..(end + 1)], StringComparison.Ordinal);
+        Assert.DoesNotContain("scale = 1.0", text, StringComparison.Ordinal);
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task LoadSpriteRefusesAResourceThatIsNotATexture()
     {
@@ -1262,6 +1308,21 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
     }
 
     private static IEnumerable<string> Paths(JsonNode page) => page["nodes"]!.AsArray().Select(node => node!["path"]!.GetValue<string>());
+
+    /// <summary>
+    /// Writes ShadowTrail.cs, a Node2D script whose private field scale shadows Node2D.scale, and effects.tscn, whose Scaled
+    /// node has that script and an engine scale of (2, 2).
+    /// </summary>
+    private static void WriteShadowScene(CsProbeProject csProbe)
+    {
+        csProbe.WriteSource("ShadowTrail.cs", ShadowTrailSource);
+        File.WriteAllText(
+            Path.Combine(csProbe.Directory, "effects.tscn"),
+            "[gd_scene format=3]\n\n[ext_resource type=\"Script\" path=\"res://ShadowTrail.cs\" id=\"1_shadow\"]\n\n"
+                + "[node name=\"Effects\" type=\"Node2D\"]\n\n"
+                + ShadowScaled
+        );
+    }
 
     private static string FirstLine(string directory, string relative) => File.ReadLines(Path.Combine(directory, relative)).First();
 

@@ -82,7 +82,10 @@ static func create_scene(params: Dictionary) -> Dictionary:
 	root.free()
 	if saved.has("error"):
 		return _fail(saved["error"])
-	return {"ok": true, "result": {"scenePath": scene_path, "root": facts, "uid": saved["uid"]}}
+	var result: Dictionary = {"scenePath": scene_path, "root": facts, "uid": saved["uid"]}
+	if saved.has("warning"):
+		result["warning"] = saved["warning"]
+	return {"ok": true, "result": result}
 
 
 ## Opens params.scene and saves it to params.target (the scene itself for a save in place).
@@ -98,6 +101,8 @@ static func save_scene(params: Dictionary) -> Dictionary:
 	if saved.has("error"):
 		return _fail(saved["error"])
 	var result: Dictionary = {"scenePath": scene_path, "savedTo": target, "uid": saved["uid"]}
+	if saved.has("warning"):
+		result["warning"] = saved["warning"]
 	return {"ok": true, "result": result}
 
 

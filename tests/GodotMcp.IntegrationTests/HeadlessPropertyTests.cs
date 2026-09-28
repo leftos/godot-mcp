@@ -14,6 +14,10 @@ namespace GodotMcp.IntegrationTests;
 public sealed class HeadlessPropertyTests : IAsyncDisposable
 {
     private const int TestTimeoutMs = 120_000;
+    private const int BuildTestTimeoutMs = 240_000;
+
+    private const string ShadowTrailSource =
+        "using Godot;\n\npublic partial class ShadowTrail : Node2D\n{\n    private float scale = 1.0f;\n\n    public float Drawn() => scale;\n}\n";
 
     private const string EnemyScene =
         "[gd_scene format=3 uid=\"uid://bpenemy0000a\"]\n\n[node name=\"Enemy\" type=\"CharacterBody2D\"]\n\n"
@@ -892,6 +896,35 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal("""{"greeting":"hello"}""", read["results"]![0]!["properties"]!.ToJsonString());
     }
 
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task GetNodePropertiesReadsTheNativeValueUnderAScriptFieldOfTheSameName()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        WriteShadowScene(csProbe);
+
+        JsonNode read = await PropertiesAsync(csProbe.Directory, "effects.tscn", [new NodePropertyQuery("Scaled", ["scale"])], cancellation);
+
+        AssertVector(read["results"]![0]!["properties"]!["scale"]!, 2, 2);
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task SetNodePropertiesSetsTheNativeValueUnderAScriptFieldOfTheSameName()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        WriteShadowScene(csProbe);
+
+        await _tools.SetNodePropertiesAsync(
+            csProbe.Directory,
+            "effects.tscn",
+            [new PropertyUpdate("Scaled", "scale", Json("""{"x": 3, "y": 3}"""))],
+            cancellation
+        );
+
+        Assert.Equal(["scale = Vector2(3, 3)", "script = ExtResource(\"1_shadow\")"], Section(csProbe.Directory, "effects.tscn", "Scaled").Body);
+    }
+
     private static string InstancingScene(string instanced, string rootName) =>
         "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"PackedScene\" path=\""
         + instanced
@@ -919,6 +952,21 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         int start = Array.FindIndex(lines, line => line.StartsWith($"[node name=\"{name}\" ", StringComparison.Ordinal));
         Assert.True(start >= 0, $"{scene} has no node {name}.");
         return (lines[start], [.. lines.Skip(start + 1).TakeWhile(line => line.Length > 0 && !line.StartsWith('['))]);
+    }
+
+    /// <summary>
+    /// Writes ShadowTrail.cs, a Node2D script whose private field scale shadows Node2D.scale, and effects.tscn, whose Scaled
+    /// node has that script and an engine scale of (2, 2).
+    /// </summary>
+    private static void WriteShadowScene(CsProbeProject csProbe)
+    {
+        csProbe.WriteSource("ShadowTrail.cs", ShadowTrailSource);
+        File.WriteAllText(
+            Path.Combine(csProbe.Directory, "effects.tscn"),
+            "[gd_scene format=3]\n\n[ext_resource type=\"Script\" path=\"res://ShadowTrail.cs\" id=\"1_shadow\"]\n\n"
+                + "[node name=\"Effects\" type=\"Node2D\"]\n\n"
+                + "[node name=\"Scaled\" type=\"Node2D\" parent=\".\"]\nscale = Vector2(2, 2)\nscript = ExtResource(\"1_shadow\")\n"
+        );
     }
 
     private static void WriteScenes(string directory)

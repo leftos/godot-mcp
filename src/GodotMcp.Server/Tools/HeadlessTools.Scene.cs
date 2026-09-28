@@ -22,7 +22,8 @@ internal sealed partial class HeadlessTools
 
     private const string EditNote =
         " The file keeps every part the edit does not change as it was; when that cannot be done, it is saved in Godot's full "
-        + "form and the result carries a warning saying why.";
+        + "form and the result carries a warning saying why. A C# field named like an engine property (a private scale on a "
+        + "Node2D) is saved as the engine's value, and the result's warning names the field.";
 
     private const string ScenePathDescription =
         "The scene: a res:// path or a path relative to the project folder, ending .tscn (the edit tools write text scenes only).";
@@ -50,7 +51,7 @@ internal sealed partial class HeadlessTools
     [Description(
         "Creates a scene file holding one root node, in a headless Godot, without running the game. Missing folders are "
             + "created; an existing file is refused unless options.overwrite. The new scene gets a new uid; a replaced file keeps "
-            + "its own, so what referred to it finds the new scene. Returns {scenePath, root: {name, type}, uid, errors?}: errors "
+            + "its own, so what referred to it finds the new scene. Returns {scenePath, root: {name, type}, uid, warning?, errors?}: errors "
             + "lists what Godot logged as errors while it worked."
             + WriteNote
     )]
@@ -84,7 +85,7 @@ internal sealed partial class HeadlessTools
             + "save-as). It is saved as the editor saves it: instanced and inherited scenes stay references to their files, and the "
             + "uids of the scene and of the files it uses are kept. Saved in place, the scene keeps its uid; saved as a new file, "
             + "the copy gets a new uid; saved over an existing file (options.overwrite), it takes that file's uid. Returns "
-            + "{scenePath, savedTo, uid, errors?}."
+            + "{scenePath, savedTo, uid, warning?, errors?}: warning names a C# field saved as the engine property it hides."
             + WriteNote
     )]
     public async Task<string> SaveSceneAsync(

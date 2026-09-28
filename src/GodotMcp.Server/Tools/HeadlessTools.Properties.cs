@@ -98,8 +98,9 @@ internal sealed partial class HeadlessTools
     [McpServerTool(Name = "set_node_properties", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Sets properties on a scene file's nodes and saves it, in a headless Godot, without running the game. Each value is "
-            + "set and read back; a read-back that differs fails. A node the scene inherits from its base scene may be set (the "
-            + "override is saved in this scene); a node inside an instanced scene is refused unless the instance is an editable "
+            + "set and read back, an engine property as the engine holds it even when a C# field of the same name hides it; a "
+            + "read-back that differs fails. A node the scene inherits from its base scene may be set (the override is saved in "
+            + "this scene); a node inside an instanced scene is refused unless the instance is an editable "
             + "instance. All or nothing: when any entry fails, nothing is saved and the error names every failing entry. Returns "
             + "{results: [{nodePath, property, before, after}], warning?, errors?}; a value whose JSON is longer than 2000 characters comes "
             + "back as {valuePreview, valueLength}."
@@ -144,7 +145,8 @@ internal sealed partial class HeadlessTools
     [Description(
         "Reads the properties of a scene file's nodes, in a headless Godot, without running the game; nothing is saved. The "
             + "scene is instantiated to read it, so its scripts' _init runs (never _ready). By default a node reads as inspect_node "
-            + "reads one: its script variables and the properties the editor's inspector shows; properties narrows that to a list, "
+            + "reads one: its script variables and the properties the editor's inspector shows, an engine property as the engine "
+            + "holds it even when a C# field of the same name hides it; properties narrows that to a list, "
             + "and changedOnly to the properties the scene file stores for the node (with those of the scenes it instances or "
             + "inherits). A node reads as its path from the scene's root, a resource saved in its own file as {resource, uid?, "
             + "class}, a built-in one as {class, subResource?, properties}. Returns {results: [{nodePath, type, script?, "
