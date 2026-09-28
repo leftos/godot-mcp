@@ -16,14 +16,14 @@ Waves run in order; bug reports sit ahead of the backlog inside each. The single
 #23-#28 have landed under `## Unreleased`; the release waits for #29 (user, 2026-09-28).
 
 - [ ] #29: `add_node` refuses `properties: {layout_mode: 0}` on a `ColorRect` under a `Control` ("it read 3 after the set"): `layout_mode` is editor-side and its stored value depends on the parent, so set it the way the editor does (after the node is added, or by the anchors it implies), or say which values the parent allows
-- [ ] Cut the release once #29 has landed: 0.5.0, a minor bump for the new `capture_frames` and `move_node` tools (DEVELOPMENT.md's "CI and releases"), then `pwsh run.ps1 install` from the main checkout; the local install holds 0.4.1+eda56c9 until then
+- [ ] Cut the release once #29 has landed, in the same session without asking again (user, 2026-09-28): 0.5.0, a minor bump for the new `capture_frames` and `move_node` tools (DEVELOPMENT.md's "CI and releases"), then `pwsh run.ps1 install` from the main checkout; the local install holds 0.4.1+eda56c9 until then
 
 ### Wave 1: capture
 
 Shared: the screenshot grabs in `bridge/godot_mcp_bridge.gd`, `godot_mcp_time.gd`, `godot_mcp_baseline.gd` and `godot_mcp_preview.gd`. Gate: `pwsh run.ps1 test`, `pwsh run.ps1 gdtest` and `pwsh run.ps1 itest` (the `reads` group); a human check looks at the captured frames.
 
 - [ ] Measure `grab_frame`'s popup placement at a stretch other than 1:1 (a project with `stretch/mode` and a window bigger than the base size, `quiet: false`): only the 1:1 transform has been measured
-- [ ] #28 follow-up: when delve is free (user, 2026-09-28: later), run `Scratch/CrushScratch` and stop it to see which `killReason` or `leftRunning` the new stop reports, pinning whether delve's kill was a lingering child or a slow teardown
+- [ ] #28 follow-up: delve is free (user, 2026-09-28), so run `Scratch/CrushScratch` and stop it to see which `killReason` or `leftRunning` the new stop reports, pinning whether delve's kill was a lingering child or a slow teardown
 
 ### Singles
 
@@ -34,4 +34,3 @@ Shared: the screenshot grabs in `bridge/godot_mcp_bridge.gd`, `godot_mcp_time.gd
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see [DECISIONS.md](../DECISIONS.md#gamepad-input-from-godot-472s-source))
 - [ ] A patched Godot build for internal development (user, 2026-09-26: patches kept in a repo, rebuilt and reviewed on every upstream update). Agreed order (user, 2026-09-26): solve each need on stock 4.7.2 first; a need stock cannot meet gets a small patch sent upstream as a PR and carried only until it merges; the full patches repo and rebuild pipeline only if a patch upstream will not take. No candidate today: the test window flash, the first one, is gone on stock 4.7.2 (measured 2026-09-26: no window on the user's desktop from gdtest, filtered itests or the import prep, all behind the hidden desktop; see the DEVELOPMENT.md footgun on how Godot shows its window), and the user chose to keep this line idle until a need stock cannot meet appears (user, 2026-09-26). Open for that pipeline: the .NET build's GodotSharp packages, which the C# projects must resolve without a tracked-file change; tests on a patched engine against games shipped on stock export templates
 - [ ] The profiler, autoload-editing and file-parsing tools, if a need shows up
-- [ ] An editor bridge, so an agent can see a scene it edits and use editor features without running the game (user, 2026-09-26). Whether it is still wanted is decided once agents have used `preview_scene`, shipped 2026-09-26 (user, 2026-09-26); asked again 2026-09-27, still waiting on more use (user). Open questions: enabling an `EditorPlugin` through `override.cfg` rather than the tracked `project.godot`; headless saves racing an open editor's in-memory copy of the scene. Reference: hybridindie/godot-mcp routes every edit through `EditorInterface.get_editor_undo_redo()`, calls `EditorFileSystem.update_file` after writes and a deferred `scan()` after a new `class_name`, and refuses a move while `get_unsaved_scenes()` lists the scene; `get_editor_viewport_2d()`/`_3d()` give the scene view itself
