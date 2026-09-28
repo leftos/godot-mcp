@@ -14,9 +14,9 @@ const SCENE_PREFIX := "res://"
 
 
 ## Adds a node of params.nodeType named params.nodeName under params.parent, with
-## params.properties set on it before it is added: {result: {path, type, instance?}}, or {error}
-## naming every failing property, with nothing added. The new node is owned by the scene's root;
-## an instanced scene's own nodes keep the instance's owners.
+## params.properties set on it before it is added: {result: {path, type, instance?, script?}}, or
+## {error} naming every failing property, with nothing added. The new node is owned by the scene's
+## root; an instanced scene's own nodes keep the instance's owners.
 static func apply_add_node(root: Node, params: Dictionary, context: Dictionary) -> Dictionary:
 	var parent_path: String = str(params.get("parent", "."))
 	var node_name: String = str(params.get("nodeName", ""))
@@ -26,7 +26,7 @@ static func apply_add_node(root: Node, params: Dictionary, context: Dictionary) 
 		refusal = _reserved_key(params.get("properties", {}))
 	if not refusal.is_empty():
 		return {"error": refusal}
-	var made: Dictionary = _new_node(str(params.get("nodeType", "")), scene)
+	var made: Dictionary = _new_node(str(params.get("nodeType", "")), context)
 	if made.has("error"):
 		return made
 	var node: Node = made.node
@@ -47,6 +47,8 @@ static func apply_add_node(root: Node, params: Dictionary, context: Dictionary) 
 	var result: Dictionary = {"path": String(root.get_path_to(node)), "type": made.type}
 	if made.has("instance"):
 		result["instance"] = made.instance
+	if made.has("script"):
+		result["script"] = made.script
 	return {"result": result}
 
 
@@ -132,15 +134,35 @@ static func _add_refusal(
 	return ""
 
 
-## {node, type, instance?} for a Node class, a script class_name or a res:// scene (instanced as
-## an instance, so it saves as one), or {error}.
-static func _new_node(type: String, scene: String) -> Dictionary:
+## {node, type, instance?, script?} for a Node class, a script class_name, a script path (a .gd or
+## .cs file, making a node of the class it extends with the script attached) or a res:// scene
+## (instanced as an instance, so it saves as one), or {error}.
+static func _new_node(type: String, context: Dictionary) -> Dictionary:
+	if type.ends_with(".gd") or type.ends_with(".cs"):
+		return _script_node(type, context)
 	if type.begins_with(SCENE_PREFIX):
-		return _instance_of(type, scene)
+		return _instance_of(type, context["scene"])
 	var node: Node = SceneEdit.new_root(type)
 	if node == null:
 		return {"error": _not_a_node_type(type)}
 	return {"node": node, "type": type}
+
+
+## {node, type, script} for the script at path: a node of the class the script extends, with the
+## script attached. It must compile and extend a Node class; a C# script is refused while the
+## prep's C# build failed.
+static func _script_node(path: String, context: Dictionary) -> Dictionary:
+	var refusal: String = SceneEdit.csharp_refusal(context["scene"], path.ends_with(".cs"), context)
+	if not refusal.is_empty():
+		return {"error": refusal}
+	var node: Node = SceneEdit.script_root(path)
+	if node == null:
+		var message: String = (
+			"nodeType '%s' is a script that cannot make a node: it must compile and extend a Node "
+			+ "class that can be instanced."
+		)
+		return {"error": message % path}
+	return {"node": node, "type": node.get_class(), "script": path}
 
 
 static func _instance_of(path: String, scene: String) -> Dictionary:

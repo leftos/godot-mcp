@@ -26,11 +26,12 @@ internal sealed partial class HeadlessTools
     [McpServerTool(Name = "add_node", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Adds a node to a scene file and saves it, in a headless Godot, without running the game. nodeType is a Godot class "
-            + "derived from Node, a script's class_name whose base is one, or a scene (.tscn or .scn in the project), which is "
+            + "derived from Node, a script's class_name whose base is one, a script path (res://foo.gd, res://Foo.cs), which makes "
+            + "a node of the script's base class with the script attached, or a scene (.tscn or .scn in the project), which is "
             + "added as an instance of that scene. options.properties are set on the new node before it is added: when any does "
             + "not take, nothing is added and the error names every failing property. Refused: a name a sibling already has, and "
             + "a parent inside an instanced scene (an instance's own root may be the parent). Returns {path, type, instance?, "
-            + "errors?}: path is the new node's path from the scene's root."
+            + "script?, errors?}: path is the new node's path from the scene's root."
             + ValuesNote
             + WriteNote
     )]
@@ -38,7 +39,9 @@ internal sealed partial class HeadlessTools
         [Description(ProjectPathDescription)] string projectPath,
         [Description(ScenePathDescription)] string scenePath,
         [Description(
-            "A Node class (Sprite2D), a script's class_name, or a scene to instance: a res:// path or a path relative to the project folder."
+            "A Node class (Sprite2D), a script's class_name, a script path (res://foo.gd, res://Foo.cs), which makes a node of "
+                + "the script's base class with the script attached, or a scene to instance: a res:// path or a path relative to "
+                + "the project folder."
         )]
             string nodeType,
         [Description("The new node's name; it may not hold . : @ / \" or %.")] string nodeName,
@@ -226,25 +229,33 @@ internal sealed partial class HeadlessTools
             };
     }
 
-    /// <summary>add_node's nodeType: a res:// path for a scene (checked to exist in the project), else the class name trimmed.</summary>
+    /// <summary>
+    /// add_node's nodeType: the class name trimmed, or a res:// path (a path with an extension) for a script (.gd or .cs) or a
+    /// scene, each checked to exist in the project.
+    /// </summary>
     /// <exception cref="McpException">
-    /// The type is empty, or it names a scene that is outside the project, missing, or the scene being edited (scene, a res://
-    /// path), compared ignoring case since the file systems the server runs on mostly do.
+    /// The type is empty, or a path names a file that is outside the project, missing, of another kind, or the scene being
+    /// edited (scene, a res:// path), compared ignoring case since the file systems the server runs on mostly do.
     /// </exception>
     internal static string CheckNodeType(string projectDir, string nodeType, string scene)
     {
         string type = nodeType?.Trim() ?? string.Empty;
         if (type.Length == 0)
         {
-            throw new McpException("nodeType is empty; pass a Node class (Sprite2D), a script's class_name or a scene (res://enemy.tscn).");
+            throw new McpException(
+                "nodeType is empty; pass a Node class (Sprite2D), a script's class_name, a .gd or .cs script or a scene (res://enemy.tscn)."
+            );
         }
 
-        bool isScene =
-            type.StartsWith("res://", StringComparison.Ordinal)
-            || SceneExtensions.Contains(Path.GetExtension(type), StringComparer.OrdinalIgnoreCase);
-        if (!isScene)
+        string extension = Path.GetExtension(type);
+        if (!type.StartsWith("res://", StringComparison.Ordinal) && extension.Length == 0)
         {
             return type;
+        }
+
+        if (!SceneExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
+        {
+            return ToResPath(projectDir, type, NodeScriptRule());
         }
 
         string resolved = ToResPath(projectDir, type, SceneRule("nodeType"));
@@ -252,6 +263,16 @@ internal sealed partial class HeadlessTools
             ? throw new McpException($"nodeType '{type}' is the scene being edited; a scene cannot instance itself.")
             : resolved;
     }
+
+    /// <summary>
+    /// add_node's nodeType as a path that is not a scene: a .gd or .cs script, which makes a node of the class it extends.
+    /// </summary>
+    private static PathRule NodeScriptRule() =>
+        new(
+            "nodeType",
+            ScriptExtensions,
+            "is not a script or a scene: nodeType takes a Node class, a script class_name, a .gd or .cs script, or a .tscn or .scn scene."
+        );
 
     private static JsonNode? ToNode(JsonElement value) => JsonSerializer.SerializeToNode(value);
 

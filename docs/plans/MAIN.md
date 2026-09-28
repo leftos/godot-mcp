@@ -16,7 +16,6 @@ Waves run in order; bug reports sit ahead of the backlog inside each. The single
 Shared: `src/GodotMcp.Server/Tools/HeadlessTools.Scene.cs`, `HeadlessTools.Batch.cs`, `SceneBatchStep.cs` and the headless script they run. Gate: `pwsh run.ps1 test` and `pwsh run.ps1 itest` (the `scene` group); a human check reads the `.tscn` diff of a one-node edit.
 
 - [ ] #24: a one-node `add_node` / `batch_scene_operations` / `attach_script` edit re-saves the whole `.tscn` in 4.7 form (`load_steps` dropped, `unique_id=` on every node, reordered properties); splice the changed sections into the original text, as decided in [DECISIONS.md](../DECISIONS.md) 15
-- [ ] #23: `add_node` / `batch_scene_operations` refuse a C# script path (a script without `[GlobalClass]`) as `nodeType` with "is not a scene"; make a node of the script's base type with the script attached
 
 ### Wave 2: capture
 

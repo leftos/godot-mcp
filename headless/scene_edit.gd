@@ -216,11 +216,13 @@ static func new_root(type: String) -> Node:
 		return null
 	for entry: Dictionary in ProjectSettings.get_global_class_list():
 		if entry["class"] == type:
-			return _script_class_root(entry["path"])
+			return script_root(entry["path"])
 	return null
 
 
-static func _script_class_root(path: String) -> Node:
+## A new node of the script at path, a node of the class it extends; null when it does not load,
+## cannot be instantiated or extends a class that is not a Node.
+static func script_root(path: String) -> Node:
 	var script := load(path) as Script
 	if script == null or not script.can_instantiate():
 		return null

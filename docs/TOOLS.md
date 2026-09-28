@@ -357,9 +357,9 @@ These run a headless Godot on the project's files with no game started. All are 
 
 ### `add_node`
 
-- **Does:** adds a node named `nodeName` of `nodeType` (a Node class, a script's `class_name`, or a scene path, added as an instance) and saves: `{path, type, instance?}`.
-- **Use:** `options {parent, properties}`: parent path from the root (default `.`), and `{name: value}` set before the node is added.
-- **Edges:** a sibling name clash, a parent inside an instanced scene (an instance's own root may be the parent), and a scene instancing itself are refused; a property that does not take adds nothing.
+- **Does:** adds a node named `nodeName` of `nodeType` (a Node class, a script's `class_name`, a script path, or a scene path, added as an instance) and saves: `{path, type, instance?, script?}`.
+- **Use:** `options {parent, properties}`: parent path from the root (default `.`), and `{name: value}` set before the node is added. A script path (`res://Foo.cs`, `res://foo.gd`, no `class_name` or `[GlobalClass]` needed) makes a node of the script's base class with the script attached; `type` is that base class and `script` the path.
+- **Edges:** a sibling name clash, a parent inside an instanced scene (an instance's own root may be the parent), and a scene instancing itself are refused; a property that does not take adds nothing. A script that does not compile or does not extend a Node class is refused, and a `.cs` script while the project's C# build fails, as `attach_script` refuses it.
 
 ### `delete_nodes`
 

@@ -110,6 +110,23 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AddNodeTakesAGDScriptPath()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "plain.tscn"), "[gd_scene format=3]\n\n[node name=\"Plain\" type=\"Node2D\"]\n");
+        File.WriteAllText(Path.Combine(probe.Directory, "plain_node.gd"), "extends Node2D\n");
+
+        string added = await _tools.AddNodeAsync(probe.Directory, "plain.tscn", "plain_node.gd", "Scripted", cancellationToken: cancellation);
+
+        Assert.Equal("""{"path":"Scripted","type":"Node2D","script":"res://plain_node.gd"}""", added);
+        (string header, string[] body) = Section(probe.Directory, "plain.tscn", "Scripted");
+        Assert.Contains("type=\"Node2D\"", header, StringComparison.Ordinal);
+        Assert.Contains("script = ExtResource(", string.Join("\n", body), StringComparison.Ordinal);
+        Assert.Contains("[ext_resource type=\"Script\" path=\"res://plain_node.gd\"", Read(probe.Directory, "plain.tscn"), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AddNodeRefusesACollidingName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

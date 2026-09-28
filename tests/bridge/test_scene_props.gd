@@ -2,13 +2,16 @@
 # _holds is a private helper of scene_props.gd, tested directly.
 extends "res://gd_test.gd"
 ## The headless property edits' pure helpers (headless/scene_props.gd): the names a scene file
-## stores for a node, merged across an instanced scene and an inherited base, and which instance
-## path holds a node path. The scenes are written under user:// for the test.
+## stores for a node, merged across an instanced scene and an inherited base, which instance
+## path holds a node path, and the node a script path makes. The scenes and scripts are written
+## under user:// for the test.
 
 const SCENE_PROPS_SCRIPT := "../../headless/scene_props.gd"
 const ENEMY := "user://scene_props_enemy.tscn"
 const LEVEL := "user://scene_props_level.tscn"
 const ELITE := "user://scene_props_elite.tscn"
+const NODE_SCRIPT := "user://scene_props_node.gd"
+const RESOURCE_SCRIPT := "user://scene_props_resource.gd"
 const ENEMY_TEXT := (
 	'[gd_scene format=3]\n\n[node name="Enemy" type="Node2D"]\n\n'
 	+ '[node name="Sprite" type="Sprite2D" parent="."]\nposition = Vector2(1, 2)\n'
@@ -53,6 +56,33 @@ func test_holds_a_path_at_or_under_an_instance() -> void:
 	assert_true(_props._holds("Boss", "Boss/Sprite"), "a node under it")
 	assert_true(not _props._holds("Boss", "Bossy/Sprite"), "a sibling sharing a prefix")
 	assert_true(not _props._holds("Boss/Sprite", "Boss"), "an ancestor")
+
+
+func test_new_node_makes_a_node_of_a_script_path() -> void:
+	_write(NODE_SCRIPT, 'extends Node2D\n\nvar tag := "probe"\n')
+	var made: Dictionary = _props._new_node(NODE_SCRIPT, {"scene": LEVEL})
+	assert_eq(made.get("type", ""), "Node2D", "a script extending Node2D makes one")
+	assert_eq(made.get("script", ""), NODE_SCRIPT, "the result names the script")
+	var node: Node = made.get("node")
+	assert_true(node is Node2D, "the node is of the script's base class")
+	assert_eq(node.get_script().resource_path, NODE_SCRIPT, "the script is attached")
+	node.free()
+
+
+func test_new_node_refuses_a_script_that_cannot_make_a_node() -> void:
+	_write(RESOURCE_SCRIPT, "extends Resource\n")
+	var made: Dictionary = _props._new_node(RESOURCE_SCRIPT, {"scene": LEVEL})
+	assert_eq(
+		made.get("error", ""),
+		(
+			(
+				"nodeType '%s' is a script that cannot make a node: it must compile and extend a Node "
+				+ "class that can be instanced."
+			)
+			% RESOURCE_SCRIPT
+		),
+		"a script whose base class is not a Node"
+	)
 
 
 static func _write(path: String, text: String) -> void:

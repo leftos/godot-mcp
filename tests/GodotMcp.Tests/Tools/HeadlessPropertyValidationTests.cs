@@ -19,6 +19,8 @@ public sealed class HeadlessPropertyValidationTests : IDisposable
         File.WriteAllText(Path.Combine(_project, "project.godot"), "config_version=5\n");
         File.WriteAllText(Path.Combine(_project, "level.tscn"), string.Empty);
         File.WriteAllText(Path.Combine(_project, "enemy.tscn"), string.Empty);
+        File.WriteAllText(Path.Combine(_project, "node.gd"), "extends Node2D\n");
+        File.WriteAllText(Path.Combine(_project, "Node.cs"), string.Empty);
     }
 
     public void Dispose() => _temp.Dispose();
@@ -70,6 +72,26 @@ public sealed class HeadlessPropertyValidationTests : IDisposable
         McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckNodeType(_project, nodeType, "res://level.tscn"));
 
         Assert.StartsWith($"{nodeType} differs in case from the file on disk, res://level.tscn", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("res://node.gd")]
+    [InlineData("res://Node.cs")]
+    public void AddNodeTakesAScriptPath(string nodeType) =>
+        Assert.Equal(nodeType, HeadlessTools.CheckNodeType(_project, nodeType, "res://level.tscn"));
+
+    [Fact]
+    public void AddNodeRefusesAResPathThatIsNeitherScriptNorScene()
+    {
+        File.WriteAllText(Path.Combine(_project, "icon.png"), string.Empty);
+
+        McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckNodeType(_project, "res://icon.png", "res://level.tscn"));
+
+        Assert.Equal(
+            "nodeType 'res://icon.png' is not a script or a scene: nodeType takes a Node class, a script class_name, a .gd or "
+                + ".cs script, or a .tscn or .scn scene.",
+            refused.Message
+        );
     }
 
     [Fact]

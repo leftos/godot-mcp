@@ -934,6 +934,25 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Contains("path=\"res://CsProbeNode.cs\"", File.ReadAllText(Path.Combine(csProbe.Directory, "plain.tscn")), StringComparison.Ordinal);
     }
 
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task AddNodeTakesACSharpScriptPath()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(new CsProbeProject());
+        File.WriteAllText(Path.Combine(csProbe.Directory, "plain.tscn"), "[gd_scene format=3]\n\n[node name=\"Plain\" type=\"Node\"]\n");
+
+        JsonNode added = JsonNode.Parse(
+            await _tools.AddNodeAsync(csProbe.Directory, "plain.tscn", "res://CsProbeNode.cs", "Probe", cancellationToken: cancellation)
+        )!;
+
+        Assert.Equal("Node", added["type"]!.GetValue<string>());
+        Assert.Equal("res://CsProbeNode.cs", added["script"]!.GetValue<string>());
+        string text = File.ReadAllText(Path.Combine(csProbe.Directory, "plain.tscn"));
+        Assert.Contains("[node name=\"Probe\" type=\"Node\"", text, StringComparison.Ordinal);
+        Assert.Contains("script = ExtResource(", text, StringComparison.Ordinal);
+        Assert.Contains("path=\"res://CsProbeNode.cs\"", text, StringComparison.Ordinal);
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task LoadSpriteRefusesAResourceThatIsNotATexture()
     {
