@@ -217,7 +217,7 @@ internal static class ProjectPrep
         string failure = $"dotnet msbuild -getItem:Compile on {csproj}";
         if (listed.WasKilled)
         {
-            throw new SessionException($"{failure} did not finish ({listed.KillDetail}), so the Compile items are unknown. Its log: {log}");
+            throw new SessionException($"{failure} did not finish {listed.KillPhrase}, so the Compile items are unknown. Its log: {log}");
         }
 
         if (listed.ExitCode != 0)
@@ -276,7 +276,7 @@ internal static class ProjectPrep
         if (built.WasKilled)
         {
             throw new SessionException(
-                $"The C# build of {csproj} did not finish ({built.KillDetail}), so it was stopped with its whole process tree "
+                $"The C# build of {csproj} did not finish {built.KillPhrase}, so it was stopped with its whole process tree "
                     + $"and the game was not started. Its log: {log}"
             );
         }
@@ -344,7 +344,7 @@ internal static class ProjectPrep
         if (imported.WasKilled)
         {
             throw new SessionException(
-                $"The Godot import of {projectDir} did not finish ({imported.KillDetail}), so it was stopped with its whole "
+                $"The Godot import of {projectDir} did not finish {imported.KillPhrase}, so it was stopped with its whole "
                     + $"process tree and the game was not started. Its log: {log}"
             );
         }

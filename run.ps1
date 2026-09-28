@@ -67,7 +67,13 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            for quiet: false, and then its window is meant to show.
 
 -Filter narrows test or itest to one test class, e.g. -Filter "*SessionLifecycleTests". A filtered itest skips the
-groups: one gate, .tmp/itest.log, ceiling 300 s.
+groups: one gate, ceiling 300 s, logged to .tmp/itest-filter-<slug>.log, where <slug> is the filter with every run of
+characters outside A-Z, a-z and 0-9 turned into one '-' and trimmed of '-' at both ends
+(.tmp/itest-filter-SessionLifecycleTests.log for the example), so filtered runs of different classes in one tree at once
+keep their logs apart and never write a group's log; a filter that leaves no slug logs to .tmp/itest.log.
+
+Every command runs from the folder of this script, whatever folder it was started from, and gives the caller's location
+back when it ends; a relative -Calls path is read against the caller's location.
 
 .EXAMPLE
 pwsh run.ps1 itest -Filter "*McpServerSmokeTests"
@@ -325,6 +331,17 @@ function Test-ItestFilterNeedsDotnet {
     return $false
 }
 
+# The gate name, and so the .tmp/<name>.log, of a filtered itest: itest-filter-<slug>, never a group's name, the slug being the filter with every run
+# of characters outside [A-Za-z0-9] turned into one '-' and trimmed of '-' at both ends; plain itest when nothing is left.
+function Get-ItestFilterLogName {
+    param([Parameter(Mandatory)] [string]$Filter)
+    $slug = ($Filter -replace '[^A-Za-z0-9]+', '-').Trim('-')
+    if (-not $slug) {
+        return 'itest'
+    }
+    return "itest-filter-$slug"
+}
+
 # A killed group's summary verdict: the kind of kill its log names, STALLED, TIMED OUT or BACKSTOP.
 function Get-ItestKillVerdict {
     param([Parameter(Mandatory)] [string]$Group)
@@ -451,7 +468,7 @@ function Copy-DotnetLayout {
         $folder = Join-Path $dotnetOut $project.Folder
         New-Item -ItemType Directory -Force -Path $folder | Out-Null
         foreach ($file in $project.Files) {
-            Copy-Item -LiteralPath (Join-Path $dotnetStaging $name $file) -Destination $folder
+            Copy-Item -LiteralPath (Join-Path -Path $dotnetStaging -ChildPath $name -AdditionalChildPath $file) -Destination $folder
         }
     }
 }
@@ -545,58 +562,71 @@ function Invoke-Drive {
 
 [string[]]$filterClasses = @($Filter | Where-Object { $_ })
 
-switch ($Command) {
-    'build' {
-        exit (Invoke-Logged -Name 'build' -TimeoutSeconds 300 -Arguments @('build', $solution, '-warnaserror'))
-    }
-    'test' {
-        $arguments = Get-TestArgumentList -Project 'tests/GodotMcp.Tests/GodotMcp.Tests.csproj' -Classes $filterClasses
-        exit (Invoke-Logged -Name 'test' -TimeoutSeconds 180 -Arguments $arguments)
-    }
-    'itest' {
-        if ($filterClasses.Count -eq 0) {
-            exit (Invoke-ItestByGroup)
+# A relative -Calls path names a file from where the caller stands, so it is read before the location moves.
+if (-not [string]::IsNullOrWhiteSpace($Calls)) {
+    $Calls = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Calls)
+}
+
+# Every command runs from the repo root, so dotnet and the gate find the solution and the tools from any folder; the
+# finally gives the caller its location back after an exit, a failure or a gate kill alike.
+Push-Location -LiteralPath $root
+try {
+    switch ($Command) {
+        'build' {
+            exit (Invoke-Logged -Name 'build' -TimeoutSeconds 300 -Arguments @('build', $solution, '-warnaserror'))
         }
-        if (Test-ItestFilterNeedsDotnet -Filters $filterClasses) {
-            $dotnet = Invoke-DotnetPublish
-            if ($dotnet -ne 0) {
-                exit $dotnet
+        'test' {
+            $arguments = Get-TestArgumentList -Project 'tests/GodotMcp.Tests/GodotMcp.Tests.csproj' -Classes $filterClasses
+            exit (Invoke-Logged -Name 'test' -TimeoutSeconds 180 -Arguments $arguments)
+        }
+        'itest' {
+            if ($filterClasses.Count -eq 0) {
+                exit (Invoke-ItestByGroup)
             }
+            if (Test-ItestFilterNeedsDotnet -Filters $filterClasses) {
+                $dotnet = Invoke-DotnetPublish
+                if ($dotnet -ne 0) {
+                    exit $dotnet
+                }
+            }
+            $arguments = Get-TestArgumentList -Project $itestProject -Classes $filterClasses
+            exit (Invoke-ItestGated -Name (Get-ItestFilterLogName -Filter $Filter) -Arguments $arguments)
         }
-        $arguments = Get-TestArgumentList -Project $itestProject -Classes $filterClasses
-        exit (Invoke-ItestGated -Name 'itest' -Arguments $arguments)
-    }
-    'format' {
-        $status = Invoke-Logged -Name 'format-style' -TimeoutSeconds 180 -Arguments @('format', 'style', $solution, '--severity', 'info')
-        if ($status -ne 0) {
-            exit $status
+        'format' {
+            $status = Invoke-Logged -Name 'format-style' -TimeoutSeconds 180 -Arguments @('format', 'style', $solution, '--severity', 'info')
+            if ($status -ne 0) {
+                exit $status
+            }
+            exit (Invoke-Logged -Name 'format' -TimeoutSeconds 180 -Arguments @('csharpier', 'format', $root))
         }
-        exit (Invoke-Logged -Name 'format' -TimeoutSeconds 180 -Arguments @('csharpier', 'format', $root))
-    }
-    'dotnet' {
-        exit (Invoke-DotnetPublish)
-    }
-    'publish' {
-        exit (Invoke-Publish)
-    }
-    'install' {
-        exit (Invoke-Install)
-    }
-    'package' {
-        exit (Invoke-Package)
-    }
-    'gdtest' {
-        $import = Invoke-GdtestImport
-        if ($import -ne 0) {
-            exit $import
+        'dotnet' {
+            exit (Invoke-DotnetPublish)
         }
-        $arguments = @('--headless', '--path', $gdtestDir, '--script', 'res://run_tests.gd')
-        exit (Invoke-Gated -Name 'gdtest' -TimeoutSeconds 60 -Program (Get-GodotPath) -Arguments $arguments)
+        'publish' {
+            exit (Invoke-Publish)
+        }
+        'install' {
+            exit (Invoke-Install)
+        }
+        'package' {
+            exit (Invoke-Package)
+        }
+        'gdtest' {
+            $import = Invoke-GdtestImport
+            if ($import -ne 0) {
+                exit $import
+            }
+            $arguments = @('--headless', '--path', $gdtestDir, '--script', 'res://run_tests.gd')
+            exit (Invoke-Gated -Name 'gdtest' -TimeoutSeconds 60 -Program (Get-GodotPath) -Arguments $arguments)
+        }
+        'drive' {
+            exit (Invoke-Drive -CallsFile $Calls)
+        }
+        default {
+            Get-Help $PSCommandPath -Detailed
+        }
     }
-    'drive' {
-        exit (Invoke-Drive -CallsFile $Calls)
-    }
-    default {
-        Get-Help $PSCommandPath -Detailed
-    }
+}
+finally {
+    Pop-Location
 }

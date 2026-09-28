@@ -366,8 +366,8 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
         HangReport report = await HangProbe.RunAsync(target, cancellationToken);
         LoadDeadline? deadline = (timedOut as LoadTimeoutException)?.Deadline;
         string load =
-            $"{LoadDeadline.Seconds(deadline?.Wall ?? timeout)} s of wall time, the machine "
-            + $"{LoadDeadline.Percent(deadline?.MeanFree ?? 1)}% free on average";
+            $"{LoadDeadline.Seconds(deadline?.Wall ?? timeout)} s of wall time, the machine free "
+            + $"{LoadDeadline.Percent(deadline?.MeanFree ?? 1)}% on average";
         Log.RequestTimedOut(target.Logger, tool, target.Name, load, report.Outcome, report.ProcessState);
         string hint = tool switch
         {

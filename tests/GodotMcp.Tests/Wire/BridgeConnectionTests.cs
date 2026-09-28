@@ -94,6 +94,63 @@ public sealed class BridgeConnectionTests : IDisposable
     }
 
     [Fact]
+    public async Task AReleaseAndAWalkAwayTogetherSendExactlyOneCancel()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        await using BridgeConnection connection = await accept;
+
+        // Which of the two paths runs first is up to the thread pool, so the race is run several times.
+        for (int round = 1; round <= 10; round++)
+        {
+            using var caller = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            Task<JsonNode?> sent = connection.SendAsync(
+                "frame",
+                new JsonObject { ["action"] = "step" },
+                TimeSpan.FromSeconds(15),
+                caller.Token,
+                TimeSpan.FromSeconds(10)
+            );
+            JsonObject request = await ReadRequiredAsync(bridge, $"round {round}'s request", cancellation);
+            Run(TimeSpan.FromSeconds(9.9));
+            _time.Advance(TimeSpan.FromSeconds(0.2));
+            await caller.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sent.WaitAsync(Wait, cancellation));
+            JsonObject cancel = await ReadRequiredAsync(bridge, $"round {round}'s cancel", cancellation);
+            await bridge.ReplyAsync(cancel, new JsonObject { ["cancelled"] = true }, cancellation);
+            JsonObject? second = await ReadWithinAsync(bridge, Quiet, cancellation);
+
+            Assert.Equal($$"""{"request":{{request["id"]!.ToJsonString()}}}""", cancel["params"]!.ToJsonString());
+            Assert.Null(second);
+        }
+    }
+
+    [Fact]
+    public async Task ARequestNeverWrittenSendsNoCancel()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        await using BridgeConnection connection = await accept;
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+
+        // A token cancelled before the call makes the write throw before any byte of the request goes out.
+        await caller.CancelAsync();
+        Task<JsonNode?> sent = connection.SendAsync(
+            "frame",
+            new JsonObject { ["action"] = "step" },
+            TimeSpan.FromSeconds(15),
+            caller.Token,
+            TimeSpan.FromSeconds(10)
+        );
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sent.WaitAsync(Wait, cancellation));
+        JsonObject? after = await ReadWithinAsync(bridge, Quiet, cancellation);
+
+        Assert.Null(after);
+    }
+
+    [Fact]
     public async Task ARequestWithoutReleaseSendsNoCancel()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

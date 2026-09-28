@@ -87,10 +87,17 @@ internal sealed class BridgeConnection : IAsyncDisposable
 
         (long id, PendingRequest pending) = Register(command);
         using LoadDeadline? released = release is { } releaseAfter ? _clock.Start(releaseAfter) : null;
-        using CancellationTokenRegistration cancelling = released?.Token.Register(() => CancelInBackground(id, command)) ?? default;
+        using CancellationTokenRegistration cancelling = released?.Token.Register(() => CancelOnce(id, pending)) ?? default;
         try
         {
             await WriteAsync(Request(id, command, sent), cancellationToken);
+            pending.MarkWritten();
+            if (released is { Token.IsCancellationRequested: true })
+            {
+                // The release passed while the write was still going out, when there was nothing yet to cancel.
+                CancelOnce(id, pending);
+            }
+
             return await pending.Reply.Task.WaitAsync(deadline.Token);
         }
         catch (OperationCanceledException) when (deadline.Expired)
@@ -104,7 +111,12 @@ internal sealed class BridgeConnection : IAsyncDisposable
         }
         finally
         {
-            CancelIfAbandoned(id, command, pending, released);
+            if (released is not null)
+            {
+                // A caller that walked away (a timeout or a cancelled token) from a request still running in the game.
+                CancelOnce(id, pending);
+            }
+
             _pending.TryRemove(id, out _);
         }
     }
@@ -123,14 +135,16 @@ internal sealed class BridgeConnection : IAsyncDisposable
     }
 
     /// <summary>
-    /// Cancels a released request the caller walked away from (a timeout or a cancelled token) while it still runs in the
-    /// game, rather than let it hold the bridge until its <c>backstopMs</c>. One whose release already passed has had its cancel.
+    /// Asks the bridge, on its own task, to end a released request early rather than let it hold the bridge until its
+    /// <c>backstopMs</c>: when its release passes, or when the caller walks away from it. Both paths claim the request's one
+    /// cancel, so a release and a walk-away landing together send exactly one; a request whose frame never went out, or whose
+    /// reply is already in, is not running in the game and gets none.
     /// </summary>
-    private void CancelIfAbandoned(long id, string command, PendingRequest pending, LoadDeadline? released)
+    private void CancelOnce(long id, PendingRequest pending)
     {
-        if (released is { Expired: false } && !pending.Reply.Task.IsCompleted)
+        if (pending.IsWritten && !pending.Reply.Task.IsCompleted && pending.TryClaimCancel())
         {
-            CancelInBackground(id, command);
+            _ = CancelAsync(id, pending.Command);
         }
     }
 
@@ -209,15 +223,6 @@ internal sealed class BridgeConnection : IAsyncDisposable
         PendingRequest pending = new(command);
         _pending[id] = pending;
         return (id, pending);
-    }
-
-    /// <summary>Asks the bridge to end request <paramref name="id"/> early, unless its reply is already in; runs on its own.</summary>
-    private void CancelInBackground(long id, string command)
-    {
-        if (_pending.ContainsKey(id))
-        {
-            _ = CancelAsync(id, command);
-        }
     }
 
     /// <summary>
@@ -406,8 +411,19 @@ internal sealed class BridgeConnection : IAsyncDisposable
 
     private sealed class PendingRequest(string command)
     {
+        private volatile bool _written;
+        private int _cancelClaimed;
+
         public string Command { get; } = command;
 
         public TaskCompletionSource<JsonNode?> Reply { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Whether the request's frame has gone out to the bridge; only a written request can be running there.</summary>
+        public bool IsWritten => _written;
+
+        public void MarkWritten() => _written = true;
+
+        /// <summary>True for the first caller only: the request's one cancel is theirs to send.</summary>
+        public bool TryClaimCancel() => Interlocked.Exchange(ref _cancelClaimed, 1) == 0;
     }
 }

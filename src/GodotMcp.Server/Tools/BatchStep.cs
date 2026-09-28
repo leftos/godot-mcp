@@ -26,7 +26,8 @@ internal sealed record BatchStep(
     )]
         bool? UiChanged = null,
     [property: Description(
-        "property, expression: 0 by default, checked once, now, even while paused; wait: 10000 by default. 0 to 120000, as wait_for takes it."
+        "property, expression: 0 by default, checked once, now, even while paused; wait: 10000 by default. "
+            + "0 to 120000, load-adjusted, as wait_for takes it."
     )]
         int? TimeoutMs = null,
     [property: Description("screenshot: the baseline's name, as save_screenshot_baseline saved it.")] string? Name = null,

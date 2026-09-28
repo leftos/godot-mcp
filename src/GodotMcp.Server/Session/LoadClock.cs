@@ -241,14 +241,14 @@ internal sealed class LoadDeadline : IDisposable
         }
     }
 
-    /// <summary>"; that is 5 x its 60 s ceiling in wall time, the backstop (load-adjusted 41 s, machine 14% free on average)".</summary>
+    /// <summary>"; that is 5 x its 60 s ceiling in wall time, the backstop (load-adjusted 41 s, machine free 14% on average)".</summary>
     public string BackstopClause() =>
         $"; that is {LoadClock.BackstopFactor} x its {Seconds(Budget)} s ceiling in wall time, the backstop "
-        + $"(load-adjusted {Seconds(Adjusted)} s, machine {Percent(MeanFree)}% free on average)";
+        + $"(load-adjusted {Seconds(Adjusted)} s, machine free {Percent(MeanFree)}% on average)";
 
-    /// <summary>"within 300 s of load-adjusted time (wall 812 s, machine 37% free on average)".</summary>
+    /// <summary>"within 300 s of load-adjusted time (wall 812 s, machine free 37% on average)".</summary>
     public string CeilingClause() =>
-        $"within {Seconds(Budget)} s of load-adjusted time (wall {Seconds(Wall)} s, machine {Percent(MeanFree)}% free on average)";
+        $"within {Seconds(Budget)} s of load-adjusted time (wall {Seconds(Wall)} s, machine free {Percent(MeanFree)}% on average)";
 
     public void Dispose()
     {

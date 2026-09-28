@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Reflection;
 using System.Text.Json;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
@@ -24,6 +26,15 @@ public sealed class BatchValidationTests : IDisposable
     {
         _sessions.Dispose();
         _listener.Dispose();
+    }
+
+    [Fact]
+    public void TheStepTimeoutIsDescribedAsLoadAdjusted()
+    {
+        DescriptionAttribute? description = typeof(BatchStep).GetProperty(nameof(BatchStep.TimeoutMs))?.GetCustomAttribute<DescriptionAttribute>();
+
+        Assert.NotNull(description);
+        Assert.Contains("load-adjusted", description.Description, StringComparison.Ordinal);
     }
 
     [Fact]

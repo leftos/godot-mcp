@@ -49,7 +49,7 @@ public sealed class LoadClockTests : IDisposable
         Assert.Equal(DeadlineReason.Ceiling, deadline.Reason);
         Assert.Equal(0.5, _clock.Free, precision: 6);
         Assert.StartsWith("within 10 s of load-adjusted time (wall 19", deadline.CeilingClause(), StringComparison.Ordinal);
-        Assert.EndsWith("machine 53% free on average)", deadline.CeilingClause(), StringComparison.Ordinal);
+        Assert.EndsWith("machine free 53% on average)", deadline.CeilingClause(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public sealed class LoadClockTests : IDisposable
             deadline.BackstopClause(),
             StringComparison.Ordinal
         );
-        Assert.EndsWith("machine 7% free on average)", deadline.BackstopClause(), StringComparison.Ordinal);
+        Assert.EndsWith("machine free 7% on average)", deadline.BackstopClause(), StringComparison.Ordinal);
     }
 
     [Fact]

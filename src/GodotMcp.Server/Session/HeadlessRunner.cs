@@ -179,7 +179,7 @@ internal static class HeadlessRunner
         string what = $"The headless {request.Operation} run on {request.ProjectDir}";
         if (ran.WasKilled)
         {
-            throw new SessionException($"{what} did not finish ({ran.KillDetail}), so it was stopped with its whole process tree. Its log: {log}");
+            throw new SessionException($"{what} did not finish {ran.KillPhrase}, so it was stopped with its whole process tree. Its log: {log}");
         }
 
         if (!File.Exists(resultPath))

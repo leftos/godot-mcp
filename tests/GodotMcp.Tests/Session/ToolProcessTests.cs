@@ -198,7 +198,26 @@ public sealed partial class ToolProcessTests : IDisposable
         Assert.Equal(KillReason.Ceiling, result.Killed);
         Assert.True(result.WasKilled);
         Assert.StartsWith("within 3 s of load-adjusted time (wall ", result.KillDetail, StringComparison.Ordinal);
-        Assert.EndsWith("% free on average)", result.KillDetail, StringComparison.Ordinal);
+        Assert.Contains(" s, machine free ", result.KillDetail, StringComparison.Ordinal);
+        Assert.EndsWith("% on average)", result.KillDetail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ACeilingKillFollowsDidNotFinishWithoutNestedParentheses()
+    {
+        ToolProcessResult ceiling = new(
+            -1,
+            TimeSpan.FromSeconds(812),
+            KillReason.Ceiling,
+            "within 300 s of load-adjusted time (wall 812 s, machine free 37% on average)"
+        );
+        ToolProcessResult stalled = new(-1, TimeSpan.FromSeconds(3), KillReason.Stall, "stalled: no output and no CPU for 3 s");
+
+        Assert.Equal(
+            "did not finish within 300 s of load-adjusted time (wall 812 s, machine free 37% on average)",
+            $"did not finish {ceiling.KillPhrase}"
+        );
+        Assert.Equal("did not finish (stalled: no output and no CPU for 3 s)", $"did not finish {stalled.KillPhrase}");
     }
 
     private Task<ToolProcessResult> RunPwshAsync(string script, TimeSpan ceiling) => RunPwshAsync(script, ceiling, ToolProcess.DefaultStallLimit);

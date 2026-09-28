@@ -51,6 +51,12 @@ internal enum KillReason
 internal sealed record ToolProcessResult(int ExitCode, TimeSpan Elapsed, KillReason Killed, string? KillDetail = null)
 {
     public bool WasKilled => Killed != KillReason.None;
+
+    /// <summary>
+    /// <see cref="KillDetail"/> as it follows "did not finish": a ceiling kill's clause as it is, whose own parentheses hold the
+    /// wall time and the machine's free share, and any other kill's detail in parentheses.
+    /// </summary>
+    public string KillPhrase => Killed == KillReason.Ceiling ? KillDetail ?? string.Empty : $"({KillDetail})";
 }
 
 /// <summary>
@@ -174,7 +180,7 @@ internal static class ToolProcess
                     KillReason.Backstop,
                     $"ran {LoadDeadline.Seconds(deadline.Wall)} s of wall time, {LoadClock.BackstopFactor} x its "
                         + $"{LoadDeadline.Seconds(deadline.Budget)} s ceiling (load-adjusted {LoadDeadline.Seconds(deadline.Adjusted)} s, "
-                        + $"machine {LoadDeadline.Percent(deadline.MeanFree)}% free on average)"
+                        + $"machine free {LoadDeadline.Percent(deadline.MeanFree)}% on average)"
                 );
         }
 

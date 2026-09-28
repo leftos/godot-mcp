@@ -28,12 +28,16 @@ func test_cancel_of_an_answered_request_replies_false() -> void:
 	bridge.free()
 
 
-func test_a_lost_connection_forgets_the_running_requests() -> void:
+func test_a_lost_connection_cancels_and_forgets_the_running_requests() -> void:
 	var bridge: Node = _bridge_script.new()
-	bridge._track(18, "wait_for", {"kind": "exists", "node": "Main", "timeoutMs": 10000})
+	bridge._time = _time_script.new()
+	var waiting: Dictionary = {"kind": "exists", "node": "Main", "timeoutMs": 10000}
+	bridge._track(18, "wait_for", waiting)
 	bridge._end_connection()
 	assert_true(bridge._connection_lost, "the connection is marked lost")
+	assert_eq(waiting.get("_cancelled"), true, "the running wait is cancelled, ending its poll")
 	assert_true(bridge._running_requests.is_empty(), "no running request is left to cancel")
+	bridge._time.free()
 	bridge.free()
 
 

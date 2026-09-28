@@ -234,9 +234,13 @@ func _process(_delta: float) -> void:
 	_read_frames()
 
 
-## Marks the connection gone and forgets the running requests: no cancel can reach them now.
+## Marks the connection gone and cancels each running request before forgetting it: no cancel can
+## reach them from the server now, and a wait_for, monitor or dotnet call would otherwise poll on
+## until its backstopMs for a reply nobody reads.
 func _end_connection() -> void:
 	_connection_lost = true
+	for request: int in _running_requests.keys():
+		_cancel(request)
 	_running_requests.clear()
 
 
