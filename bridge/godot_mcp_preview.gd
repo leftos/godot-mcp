@@ -55,7 +55,7 @@ func capture(params: Dictionary) -> Variant:
 	_add_camera_if_needed(scene)
 	for _frame: int in DRAWN_FRAMES:
 		await bridge._wait_for_drawn_frame()
-	var saved: Variant = bridge._save_screenshot(get_viewport().get_texture().get_image(), params)
+	var saved: Variant = bridge._save_screenshot(bridge.grab_frame(), params)
 	if saved is String:
 		return saved
 	saved["scene"] = scene.scene_file_path

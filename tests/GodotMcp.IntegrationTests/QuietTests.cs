@@ -6,7 +6,10 @@ using GodotMcp.Server.Tools;
 
 namespace GodotMcp.IntegrationTests;
 
-/// <summary>run_project's quiet mode, the default: a window created unfocused and off-screen, and the Dummy audio driver.</summary>
+/// <summary>
+/// run_project's quiet mode, the default: a window created unfocused, out of sight (at (0, 0) on the server's hidden desktop on
+/// Windows, off-screen elsewhere), and the Dummy audio driver.
+/// </summary>
 public sealed class QuietTests : IAsyncDisposable
 {
     private const int TestTimeoutMs = 45_000;
@@ -15,15 +18,20 @@ public sealed class QuietTests : IAsyncDisposable
     // How long the window watch goes on once the game answers: its window is created and shown before the bridge's _ready.
     private const int WatchAfterLaunchMs = 500;
 
-    // Whether the window has focus, whether its rect meets any screen's, and the audio driver in use
-    // (AudioServer.get_driver_name, servers/audio/audio_server.cpp L1498-1500 in 4.7.2).
+    // Whether the window has focus, whether its rect meets any screen's, where it is, whether the server started the game on
+    // its hidden desktop, and the audio driver in use (AudioServer.get_driver_name, servers/audio/audio_server.cpp L1498-1500
+    // in 4.7.2).
     private const string ReadWindowAndAudio =
         "var window := Rect2i(DisplayServer.window_get_position(), DisplayServer.window_get_size())\n\t"
         + "var on_screen := false\n\t"
         + "for screen in DisplayServer.get_screen_count():\n\t\t"
         + "var area := Rect2i(DisplayServer.screen_get_position(screen), DisplayServer.screen_get_size(screen))\n\t\t"
         + "on_screen = on_screen or area.intersects(window)\n\t"
-        + "return {\"focused\": DisplayServer.window_is_focused(), \"onScreen\": on_screen, \"driver\": AudioServer.get_driver_name()}";
+        + "return {\"focused\": DisplayServer.window_is_focused(), \"onScreen\": on_screen, \"x\": window.position.x, "
+        + "\"y\": window.position.y, \"hiddenDesktop\": OS.get_environment(\""
+        + GodotCommandLine.HiddenDesktopVariable
+        + "\") == \"1\", "
+        + "\"driver\": AudioServer.get_driver_name()}";
     private const string ReadText = "return scene_tree.root.get_node(\"Main/TextInput\").text";
     private const string ReadMaxFps = "return Engine.max_fps";
     private readonly ProbeProject _probe = new();
@@ -52,7 +60,17 @@ public sealed class QuietTests : IAsyncDisposable
 
         Assert.True(JsonNode.Parse(launched)!["quiet"]!.GetValue<bool>(), launched);
         Assert.False(state["focused"]!.GetValue<bool>(), state.ToJsonString());
-        Assert.False(state["onScreen"]!.GetValue<bool>(), state.ToJsonString());
+        if (OperatingSystem.IsWindows())
+        {
+            // Out of sight on the server's hidden desktop, where the window stays at (0, 0).
+            Assert.True(state["hiddenDesktop"]!.GetValue<bool>(), state.ToJsonString());
+            Assert.Equal((0, 0), (state["x"]!.GetValue<int>(), state["y"]!.GetValue<int>()));
+        }
+        else
+        {
+            Assert.False(state["onScreen"]!.GetValue<bool>(), state.ToJsonString());
+        }
+
         Assert.Equal("Dummy", state["driver"]!.GetValue<string>());
     }
 

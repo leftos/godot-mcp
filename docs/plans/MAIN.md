@@ -19,10 +19,10 @@ Shared: `src/GodotMcp.Server/Tools/HeadlessTools.Scene.cs`, `HeadlessTools.Batch
 
 ### Wave 2: capture
 
-Shared: the screenshot grabs in `bridge/godot_mcp_bridge.gd`, `godot_mcp_time.gd`, `godot_mcp_baseline.gd` and `godot_mcp_preview.gd`, and `src/GodotMcp.Server/Tools/RuntimeTools.cs` / `RuntimeTools.Time.cs`. Gate: `pwsh run.ps1 test`, `pwsh run.ps1 gdtest` and `pwsh run.ps1 itest` (the `reads` and `time` groups); a human check looks at the captured frames. Both items as decided in [DECISIONS.md](../DECISIONS.md) 15; the helper lands first.
+Shared: the screenshot grabs in `bridge/godot_mcp_bridge.gd`, `godot_mcp_time.gd`, `godot_mcp_baseline.gd` and `godot_mcp_preview.gd`, and `src/GodotMcp.Server/Tools/RuntimeTools.cs` / `RuntimeTools.Time.cs`. Gate: `pwsh run.ps1 test`, `pwsh run.ps1 gdtest` and `pwsh run.ps1 itest` (the `reads` and `time` groups); a human check looks at the captured frames. Both items as decided in [DECISIONS.md](../DECISIONS.md) 15; the helper has landed (`grab_frame`).
 
-- [ ] `take_screenshot` misses popups and tooltips in a project that sets `display/window/subwindows/embed_subwindows=false`, since each is its own OS window outside the root viewport's texture (measured 2026-09-27 for #9): one capture helper for every grab that composites each visible non-embedded `Window` at its offset from the root; check the offset on a visible desktop first, since a native popup's `position` read (0,0) on the hidden one
 - [ ] #25: a `capture_frames` tool that captures at set game-time points (`at` or `{every, for}`) in one call, through the capture helper
+- [ ] Measure `grab_frame`'s popup placement at a stretch other than 1:1 (a project with `stretch/mode` and a window bigger than the base size, `quiet: false`): only the 1:1 transform has been measured
 
 ### Release
 
@@ -30,7 +30,7 @@ Shared: the screenshot grabs in `bridge/godot_mcp_bridge.gd`, `godot_mcp_time.gd
 
 ### Singles
 
-- [ ] Timing tests that fail under other agents' load and pass on a retry: `BridgeListenerTests.ASilentConnectionIsRefusedOnceNoWaiterIsPending` and `HangProbeTests.ACallToAGamePausedUnderADebuggerFailsFast` (2.98 s against its 2 s bound) in the unit hook, `WatchdogTests.StopReturnsOnlyOnceAKilledGameHasLetGoOfItsFolder` past xunit's 60 s: find what each times on wall clock
+- [ ] Timing tests that fail under other agents' load and pass on a retry: `BridgeListenerTests.ASilentConnectionIsRefusedOnceNoWaiterIsPending` and `HangProbeTests.ACallToAGamePausedUnderADebuggerFailsFast` (2.98 s against its 2 s bound) in the unit hook, `WatchdogTests.StopReturnsOnlyOnceAKilledGameHasLetGoOfItsFolder` past xunit's 60 s, `InspectionTests.DescribeClassFindsAScriptClassOfTheRunningGame` past its 45 s in a 17-minute full itest: find what each times on wall clock
 - [ ] `run_csharp`: give snippets a `CancellationToken` the timeout's cancel fires, so a timed-out snippet can stop itself (today its `Task` is forgotten and keeps running)
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see [DECISIONS.md](../DECISIONS.md#gamepad-input-from-godot-472s-source))
 - [ ] A patched Godot build for internal development (user, 2026-09-26: patches kept in a repo, rebuilt and reviewed on every upstream update). Agreed order (user, 2026-09-26): solve each need on stock 4.7.2 first; a need stock cannot meet gets a small patch sent upstream as a PR and carried only until it merges; the full patches repo and rebuild pipeline only if a patch upstream will not take. No candidate today: the test window flash, the first one, is gone on stock 4.7.2 (measured 2026-09-26: no window on the user's desktop from gdtest, filtered itests or the import prep, all behind the hidden desktop; see the DEVELOPMENT.md footgun on how Godot shows its window), and the user chose to keep this line idle until a need stock cannot meet appears (user, 2026-09-26). Open for that pipeline: the .NET build's GodotSharp packages, which the C# projects must resolve without a tracked-file change; tests on a patched engine against games shipped on stock export templates

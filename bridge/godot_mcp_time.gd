@@ -259,7 +259,7 @@ func _save_capture(
 	if physics:
 		if not await _next(RenderingServer.frame_post_draw):
 			return _stalled(count, count)
-		image = bridge.get_viewport().get_texture().get_image()
+		image = bridge.grab_frame()
 	var saved: Variant = bridge._save_screenshot(image, params)
 	if saved is String:
 		return saved
@@ -288,7 +288,7 @@ func _run_frames(count: int, capture: bool) -> Array:
 		return [counted, null]
 	var image: Image = null
 	if capture:
-		image = bridge.get_viewport().get_texture().get_image()
+		image = bridge.grab_frame()
 	tree.paused = true
 	return [counted, image]
 
@@ -510,7 +510,7 @@ func _check_drawn_frame(drawn: Dictionary) -> void:
 	var seen: Array = _keep(probe.call(), drawn)
 	drawn["seen"] = seen
 	if seen[0]:
-		drawn["image"] = bridge.get_viewport().get_texture().get_image()
+		drawn["image"] = bridge.grab_frame()
 
 
 ## The check of the frame drawn since the last call, or the met or failed one kept; nothing on the
@@ -558,7 +558,7 @@ func _with_capture(image: Image, params: Dictionary, result: Dictionary) -> Dict
 ## a process_frame is the frame running now, or null when that frame is not drawn.
 func _capture_this_frame() -> Image:
 	var shot: Array[Image] = []
-	var grab := func() -> void: shot.append(bridge.get_viewport().get_texture().get_image())
+	var grab := func() -> void: shot.append(bridge.grab_frame())
 	RenderingServer.frame_post_draw.connect(grab, CONNECT_ONE_SHOT)
 	await get_tree().process_frame
 	if RenderingServer.frame_post_draw.is_connected(grab):

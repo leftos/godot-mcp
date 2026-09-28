@@ -311,10 +311,16 @@ func _is_real_pointer_event(event: InputEvent) -> bool:
 ## A quiet session's window: its override.cfg created it unfocused, and asked for an off-screen
 ## position that Windows clamps onto the primary screen at creation
 ## (platform/windows/display_server_windows.cpp L7180-7183, L7206-7211 in 4.7.2), so it is moved
-## off-screen here, where window_set_position does not clamp, and made click-through.
+## off-screen here, where window_set_position does not clamp, and made click-through. A run the
+## server started on its hidden desktop (GODOT_MCP_HIDDEN_DESKTOP) is out of sight already, so its
+## window goes to (0, 0) instead: there, a window that is not embedded (a popup of a project that
+## turns embed_subwindows off) opens where the game asked, at its offset from the root window.
 func _park_window() -> void:
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_MOUSE_PASSTHROUGH, true)
-	DisplayServer.window_set_position(Vector2i(-9999, -9999))
+	var on_hidden_desktop: bool = OS.get_environment("GODOT_MCP_HIDDEN_DESKTOP") == "1"
+	DisplayServer.window_set_position(
+		Vector2i.ZERO if on_hidden_desktop else Vector2i(-9999, -9999)
+	)
 
 
 func _read_frames() -> void:
@@ -561,11 +567,65 @@ func _handle_shutdown(id: int, _params: Dictionary) -> void:
 ## Saves the next drawn frame of the root viewport as _save_screenshot does.
 func _handle_screenshot(id: int, params: Dictionary) -> void:
 	await _wait_for_drawn_frame()
-	var saved: Variant = _save_screenshot(get_viewport().get_texture().get_image(), params)
+	var saved: Variant = _save_screenshot(grab_frame(), params)
 	if saved is String:
 		_reply_error(id, saved)
 		return
 	_reply_ok(id, saved)
+
+
+## The root viewport's image with every visible window that is not embedded (a popup or tooltip
+## of a project that turns embed_subwindows off, an OS window of its own) pasted on it at its place
+## in the viewport, in the order the display server lists them; null when the viewport has no
+## image. Embedded windows are already in the root viewport's image.
+func grab_frame() -> Image:
+	var canvas: Image = get_viewport().get_texture().get_image()
+	if canvas == null:
+		return null
+	return paste_windows(canvas, _native_window_images())
+
+
+## canvas with each {image: Image, rect: Rect2i} of windows alpha-blended on it in order: the image
+## scaled to rect's size and converted to canvas's format when they differ (on a copy, never the
+## caller's image), and clipped to the canvas. A rect with no area pastes nothing.
+static func paste_windows(canvas: Image, windows: Array[Dictionary]) -> Image:
+	for window: Dictionary in windows:
+		var rect: Rect2i = window["rect"]
+		if not rect.has_area():
+			continue
+		var image: Image = window["image"]
+		if image.get_size() != rect.size or image.get_format() != canvas.get_format():
+			image = image.duplicate() as Image
+			image.resize(rect.size.x, rect.size.y)
+			image.convert(canvas.get_format())
+		canvas.blend_rect(image, Rect2i(Vector2i.ZERO, image.get_size()), rect.position)
+	return canvas
+
+
+## Every visible window of this process other than the root that is not embedded, as
+## {image, rect} with rect in root viewport pixels, in the display server's order.
+func _native_window_images() -> Array[Dictionary]:
+	var found: Array[Dictionary] = []
+	var root: Window = get_tree().root
+	for window_id: int in DisplayServer.get_window_list():
+		var instance_id: int = DisplayServer.window_get_attached_instance_id(window_id)
+		var window := instance_from_id(instance_id) as Window
+		if window == null or window == root or window.is_embedded() or not window.visible:
+			continue
+		var image: Image = window.get_texture().get_image()
+		if image != null:
+			found.append({"image": image, "rect": _window_rect_in_viewport(window)})
+	return found
+
+
+## A window's screen rect in root viewport pixels: its offset from the root window, through the
+## inverse of the root viewport's screen transform (the stretch scale and the letterbox offset).
+func _window_rect_in_viewport(window: Window) -> Rect2i:
+	var to_viewport: Transform2D = get_viewport().get_screen_transform().affine_inverse()
+	var origin := Vector2(window.position - get_tree().root.position)
+	var top_left: Vector2 = to_viewport * origin
+	var bottom_right: Vector2 = to_viewport * (origin + Vector2(window.size))
+	return Rect2i(Vector2i(top_left.round()), Vector2i((bottom_right - top_left).round()))
 
 
 ## Frames and saves the scene a preview_scene run shows, on the Preview child.

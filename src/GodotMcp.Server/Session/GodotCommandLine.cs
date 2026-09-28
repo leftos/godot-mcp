@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.Versioning;
 using System.Text;
 
 namespace GodotMcp.Server.Session;
@@ -45,6 +46,13 @@ internal static class GodotCommandLine
     public const string QuietVariable = "GODOT_MCP_QUIET";
     public const string ShutOutRealGamepadsVariable = "GODOT_MCP_SHUT_OUT_REAL_GAMEPADS";
     public const string PreviewVariable = "GODOT_MCP_PREVIEW";
+
+    /// <summary>Set for a run started on the server's hidden desktop, where the bridge leaves a quiet window at (0, 0).</summary>
+    public const string HiddenDesktopVariable = "GODOT_MCP_HIDDEN_DESKTOP";
+
+    /// <summary>Whether a run starts on the server's hidden desktop: a quiet run on Windows.</summary>
+    [SupportedOSPlatformGuard("windows")]
+    public static bool UsesHiddenDesktop(bool quiet) => quiet && OperatingSystem.IsWindows();
 
     /// <summary>
     /// A quiet run's audio driver. The Dummy driver still mixes on its own thread, so playback advances
@@ -212,6 +220,7 @@ internal static class GodotCommandLine
         SetFlag(startInfo, QuietVariable, request.Quiet);
         SetFlag(startInfo, ShutOutRealGamepadsVariable, request.ShutOutRealGamepads);
         SetFlag(startInfo, PreviewVariable, request.Preview);
+        SetFlag(startInfo, HiddenDesktopVariable, UsesHiddenDesktop(request.Quiet));
         return startInfo;
     }
 

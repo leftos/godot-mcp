@@ -283,7 +283,14 @@ public sealed class RestartTests : IAsyncDisposable
         };
         startInfo.ArgumentList.Add("--path");
         startInfo.ArgumentList.Add(projectDir);
-        foreach (string variable in new[] { GodotCommandLine.PortVariable, GodotCommandLine.TokenVariable, GodotCommandLine.QuietVariable })
+        string[] variables =
+        [
+            GodotCommandLine.PortVariable,
+            GodotCommandLine.TokenVariable,
+            GodotCommandLine.QuietVariable,
+            GodotCommandLine.HiddenDesktopVariable,
+        ];
+        foreach (string variable in variables)
         {
             startInfo.Environment.Remove(variable);
         }

@@ -35,6 +35,29 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         + "scene_tree.root.add_child(recorder)\n\t"
         + "return true";
 
+    // Opens a PopupPanel of solid magenta, 90 x 50 window pixels, over the game; returns whether it is embedded and visible,
+    // and its place and size in viewport pixels (through the inverse of the root's screen transform).
+    private const string MagentaPopupScript =
+        "var root := scene_tree.root\n\t"
+        + "var style := StyleBoxFlat.new()\n\t"
+        + "style.bg_color = Color(1, 0, 1)\n\t"
+        + "var popup := PopupPanel.new()\n\t"
+        + "popup.add_theme_stylebox_override(\"panel\", style)\n\t"
+        + "root.add_child(popup)\n\t"
+        + "popup.popup(Rect2i(root.position + Vector2i(100, 60), Vector2i(90, 50)))\n\t"
+        + "var to_viewport := root.get_screen_transform().affine_inverse()\n\t"
+        + "var place: Vector2 = to_viewport * Vector2(100, 60)\n\t"
+        + "var size: Vector2 = to_viewport.basis_xform(Vector2(popup.size))\n\t"
+        + "return {\"embedded\": popup.is_embedded(), \"visible\": popup.visible, \"x\": place.x, \"y\": place.y, "
+        + "\"width\": size.x, \"height\": size.y}";
+
+    // Where the root window and the popup are on the screen, and their sizes, for a failure message.
+    private const string WindowPlacesScript =
+        "var root := scene_tree.root\n\t"
+        + "var popup: Window = root.get_child(root.get_child_count() - 1)\n\t"
+        + "return {\"root\": [root.position, root.size], \"popup\": [popup.position, popup.size], "
+        + "\"screen\": str(root.get_screen_transform()), \"windowList\": DisplayServer.get_window_list()}";
+
     // main.tscn's RedSquare: a ColorRect of Color(1, 0, 0) at (400, 40), 120 x 80.
     private static readonly ScreenshotCrop RedSquare = new(400, 40, 120, 80);
     private readonly SharedProbeSession _shared = shared;
@@ -74,6 +97,43 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         Assert.Equal([255, 0, 0], pixel.AsArray().Select(channel => channel!.GetValue<int>()));
         Assert.Equal(Path.Combine(probe.Directory, ".godot", "godot-mcp", "screenshots"), Path.GetDirectoryName(path));
         Assert.Equal(string.Empty, Git.Status(probe.Directory));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task TakeScreenshotIncludesANonEmbeddedPopup()
+    {
+        // With embedded subwindows off the popup is an OS window of its own, outside the root viewport's texture. A quiet
+        // run's window sits at (0, 0) on the hidden desktop, so the popup opens where it was asked, at its offset from it.
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using ProbeProject probe = new();
+        string settings = File.ReadAllText(probe.ProjectFile);
+        File.WriteAllText(
+            probe.ProjectFile,
+            settings.Replace("[display]", "[display]\nwindow/subwindows/embed_subwindows=false", StringComparison.Ordinal)
+        );
+        await using SessionHarness harness = new();
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
+        await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
+
+        JsonNode popup = (await RunForResultAsync(tools, MagentaPopupScript, cancellation))["value"]!;
+        List<ContentBlock> blocks = [.. await tools.TakeScreenshotAsync("full", null, 960, cancellationToken: cancellation)];
+        string path = JsonNode.Parse(Text(blocks))!["path"]!.GetValue<string>();
+        JsonNode found = (await RunForResultAsync(tools, MagentaBoundsScript(path), cancellation))["value"]!;
+        JsonNode windows = (await RunForResultAsync(tools, WindowPlacesScript, cancellation))["value"]!;
+        await harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.Equal((false, true), (popup["embedded"]!.GetValue<bool>(), popup["visible"]!.GetValue<bool>()));
+        Assert.True(
+            found["found"]!.GetValue<bool>(),
+            $"no magenta pixel in the screenshot; the popup: {popup.ToJsonString()}, the windows: {windows.ToJsonString()}"
+        );
+        Assert.InRange(found["width"]!.GetValue<double>(), popup["width"]!.GetValue<double>() - 1, popup["width"]!.GetValue<double>() + 1);
+        Assert.InRange(found["height"]!.GetValue<double>(), popup["height"]!.GetValue<double>() - 1, popup["height"]!.GetValue<double>() + 1);
+        Assert.True(
+            Math.Abs(found["x"]!.GetValue<double>() - popup["x"]!.GetValue<double>()) <= 1
+                && Math.Abs(found["y"]!.GetValue<double>() - popup["y"]!.GetValue<double>()) <= 1,
+            $"the popup landed at {found.ToJsonString()}, asked at {popup.ToJsonString()}; the windows: {windows.ToJsonString()}"
+        );
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -417,6 +477,19 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
             ["x"] = x,
             ["y"] = y,
         };
+
+    // The bounds of the pure magenta pixels in the PNG at path: {found, width, height}.
+    private static string MagentaBoundsScript(string path) =>
+        $"var image := Image.load_from_file(\"{path.Replace('\\', '/')}\")\n\t"
+        + "var low := Vector2i(image.get_width(), image.get_height())\n\t"
+        + "var high := Vector2i(-1, -1)\n\t"
+        + "for y in image.get_height():\n\t\t"
+        + "for x in image.get_width():\n\t\t\t"
+        + "var c := image.get_pixel(x, y)\n\t\t\t"
+        + "if c.r8 == 255 and c.g8 == 0 and c.b8 == 255:\n\t\t\t\t"
+        + "low = low.min(Vector2i(x, y))\n\t\t\t\t"
+        + "high = high.max(Vector2i(x, y))\n\t"
+        + "return {\"found\": high.x >= 0, \"x\": low.x, \"y\": low.y, \"width\": high.x - low.x + 1, \"height\": high.y - low.y + 1}";
 
     private static string Text(IEnumerable<ContentBlock> blocks) => string.Concat(blocks.OfType<TextContentBlock>().Select(block => block.Text));
 

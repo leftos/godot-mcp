@@ -198,6 +198,35 @@ public sealed class GodotCommandLineTests
     }
 
     [Fact]
+    public void TellsTheBridgeItIsOnTheHiddenDesktopOnlyForAQuietWindowsRun()
+    {
+        BridgeEndpoint bridge = new(4321, "t0k3n");
+
+        ProcessStartInfo quiet = GodotCommandLine.CreateStartInfo(
+            "godot.exe",
+            new LaunchRequest(Project, null, [], [], true, false, Prepare: true),
+            bridge,
+            moviePath: null
+        );
+        ProcessStartInfo shown = GodotCommandLine.CreateStartInfo(
+            "godot.exe",
+            new LaunchRequest(Project, null, [], [], false, false, Prepare: true),
+            bridge,
+            moviePath: null
+        );
+
+        Assert.Equal(OperatingSystem.IsWindows(), GodotCommandLine.UsesHiddenDesktop(quiet: true));
+        Assert.False(GodotCommandLine.UsesHiddenDesktop(quiet: false));
+        Assert.Equal(OperatingSystem.IsWindows(), quiet.Environment.ContainsKey(GodotCommandLine.HiddenDesktopVariable));
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Equal("1", quiet.Environment[GodotCommandLine.HiddenDesktopVariable]);
+        }
+
+        Assert.False(shown.Environment.ContainsKey(GodotCommandLine.HiddenDesktopVariable));
+    }
+
+    [Fact]
     public void PassesShutOutRealGamepadsOnlyWhenAsked()
     {
         BridgeEndpoint bridge = new(4321, "t0k3n");

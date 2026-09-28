@@ -466,7 +466,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <exception cref="SessionException">The hidden desktop or the suspended process could not be created.</exception>
     private static IRunProcess CreateRunProcess(ProcessStartInfo startInfo, bool quiet)
     {
-        if (quiet && OperatingSystem.IsWindows())
+        if (GodotCommandLine.UsesHiddenDesktop(quiet))
         {
             return DesktopProcess.CreateSuspended(startInfo, HiddenDesktop.Name);
         }

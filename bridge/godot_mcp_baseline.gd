@@ -93,7 +93,7 @@ static func _diff(now: Image, then: Image, threshold: float) -> Dictionary:
 ## The root viewport's image, cropped to crop when it is a Dictionary; a String when there is
 ## no image or the crop misses it.
 func _capture(crop: Variant) -> Variant:
-	var image: Image = get_viewport().get_texture().get_image()
+	var image: Image = bridge.grab_frame()
 	if image == null:
 		return "the viewport returned no image"
 	if crop is Dictionary:
