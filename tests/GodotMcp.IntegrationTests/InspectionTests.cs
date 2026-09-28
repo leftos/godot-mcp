@@ -21,7 +21,6 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
 {
     private const int TestTimeoutMs = 45_000;
     private const int LaunchTestTimeoutMs = 180_000;
-    private const int CSharpTestTimeoutMs = 150_000;
     private const int ScriptTimeoutMs = 10_000;
     private const string Probe = "/root/InspectProbe";
 
@@ -494,7 +493,7 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
         Assert.Equal(RuntimeTools.MaxPropertyValueLength, called["valuePreview"]!.GetValue<string>().Length);
     }
 
-    [Fact(Timeout = CSharpTestTimeoutMs)]
+    [Fact(Timeout = LaunchTestTimeoutMs)]
     public async Task CallCSharpPublicMethod()
     {
         await using SessionHarness harness = new();
@@ -510,7 +509,7 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
         Assert.Equal(5, called["value"]!.GetValue<int>());
     }
 
-    [Fact(Timeout = CSharpTestTimeoutMs)]
+    [Fact(Timeout = LaunchTestTimeoutMs)]
     public async Task CallCSharpInternalMethod()
     {
         await using SessionHarness harness = new();
