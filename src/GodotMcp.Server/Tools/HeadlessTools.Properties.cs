@@ -28,7 +28,8 @@ internal sealed partial class HeadlessTools
         "Adds a node to a scene file and saves it, in a headless Godot, without running the game. nodeType is a Godot class "
             + "derived from Node, a script's class_name whose base is one, a script path (res://foo.gd, res://Foo.cs), which makes "
             + "a node of the script's base class with the script attached, or a scene (.tscn or .scn in the project), which is "
-            + "added as an instance of that scene. options.properties are set on the new node before it is added: when any does "
+            + "added as an instance of that scene. options.properties are set on the new node once it is under its parent, as the "
+            + "editor sets them: when any does "
             + "not take, nothing is added and the error names every failing property. The node goes last under its parent, or "
             + "where options.position puts it among its siblings (in 2D, a later sibling draws on top): exactly one of {index}, a "
             + "negative index counting from the end (-1 is last), {before: name} or {after: name}, a sibling's name. Refused: a "
@@ -322,7 +323,9 @@ internal sealed partial class HeadlessTools
 /// <summary>Where add_node puts the new node, and what it sets on it.</summary>
 internal sealed record AddNodeOptions(
     [property: Description("The parent's path from the scene's root; the root (\".\") when left out.")] string? Parent = null,
-    [property: Description("{name: value}: properties to set on the new node before it is added (position, modulate, a script variable...).")]
+    [property: Description(
+        "{name: value}: properties to set on the new node once it is under its parent (position, modulate, a script variable...)."
+    )]
         Dictionary<string, JsonElement>? Properties = null,
     [property: Description("Where the new node goes among its siblings: {index}, {before} or {after}, exactly one; last by default.")]
         NodePosition? Position = null

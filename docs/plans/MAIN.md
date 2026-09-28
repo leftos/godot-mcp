@@ -13,9 +13,8 @@ Waves run in order; bug reports sit ahead of the backlog inside each. The single
 
 ### Release 0.5.0
 
-#23-#28 have landed under `## Unreleased`; the release waits for #29 (user, 2026-09-28).
+#23-#29 have landed under `## Unreleased`.
 
-- [ ] #29: `add_node` refuses `properties: {layout_mode: 0}` on a `ColorRect` under a `Control` ("it read 3 after the set"): `layout_mode` is editor-side and its stored value depends on the parent, so set it the way the editor does (after the node is added, or by the anchors it implies), or say which values the parent allows
 - [ ] Cut the release once #29 has landed, in the same session without asking again (user, 2026-09-28): 0.5.0, a minor bump for the new `capture_frames` and `move_node` tools (DEVELOPMENT.md's "CI and releases"), then `pwsh run.ps1 install` from the main checkout; the local install holds 0.4.1+eda56c9 until then
 
 ### Singles

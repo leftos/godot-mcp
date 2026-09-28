@@ -43,6 +43,10 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
 
     private const string GradientTexture = "[gd_resource type=\"GradientTexture2D\" format=3]\n\n[resource]\nwidth = 8\nheight = 8\n";
 
+    private const string UiScene =
+        "[gd_scene format=3]\n\n[node name=\"Root\" type=\"Control\"]\nlayout_mode = 3\nanchors_preset = 0\n\n"
+        + "[node name=\"Box\" type=\"VBoxContainer\" parent=\".\"]\nlayout_mode = 0\n";
+
     private readonly SessionHarness _harness = new();
     private readonly HeadlessTools _tools;
     private readonly List<IDisposable> _projects = [];
@@ -91,6 +95,110 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal("""{"path":"Box/Icons","type":"HBoxContainer","index":0}""", added);
         string[] body = Section(probe.Directory, "level.tscn", "Icons").Body;
         Assert.Contains("theme_type_variation = &\"PopoverIconRow\"", body);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AddNodeKeepsPositionLayoutUnderAControl()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        AddNodeOptions options = new(Properties: new() { ["layout_mode"] = Json("0") });
+
+        string added = await _tools.AddNodeAsync(probe.Directory, "ui.tscn", "ColorRect", "Backdrop", options, cancellation);
+
+        Assert.Equal("""{"path":"Backdrop","type":"ColorRect","index":1}""", added);
+        Assert.Equal(["layout_mode = 0"], Section(probe.Directory, "ui.tscn", "Backdrop").Body);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AddNodeSetsAnchorsLayoutUnderAControl()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        AddNodeOptions options = new(Properties: new() { ["anchors_preset"] = Json("15"), ["layout_mode"] = Json("1") });
+
+        string added = await _tools.AddNodeAsync(probe.Directory, "ui.tscn", "ColorRect", "Backdrop", options, cancellation);
+
+        Assert.Equal("""{"path":"Backdrop","type":"ColorRect","index":1}""", added);
+        Assert.Equal(
+            ["layout_mode = 1", "anchors_preset = 15", "anchor_right = 1.0", "anchor_bottom = 1.0", "grow_horizontal = 2", "grow_vertical = 2"],
+            Section(probe.Directory, "ui.tscn", "Backdrop").Body
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AddNodeRefusesUncontrolledLayoutUnderAControl()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        AddNodeOptions options = new(Properties: new() { ["layout_mode"] = Json("3") });
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.AddNodeAsync(probe.Directory, "ui.tscn", "ColorRect", "Backdrop", options, cancellation)
+        );
+
+        Assert.Contains("Under a Control, layout_mode takes 0 (Position) or 1 (Anchors).", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(UiScene, Read(probe.Directory, "ui.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AddNodeSaysLayoutModeIsFixedWithNoControlParent()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        AddNodeOptions options = new(Properties: new() { ["layout_mode"] = Json("0") });
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.AddNodeAsync(probe.Directory, "level.tscn", "ColorRect", "Backdrop", options, cancellation)
+        );
+
+        Assert.Contains("With no Control parent, layout_mode is 3 (Uncontrolled) and cannot be set.", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetNodePropertiesSaysLayoutModeIsFixedUnderAContainer()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        await _tools.AddNodeAsync(probe.Directory, "ui.tscn", "ColorRect", "Swatch", new AddNodeOptions("Box"), cancellation);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SetNodePropertiesAsync(probe.Directory, "ui.tscn", [new PropertyUpdate("Box/Swatch", "layout_mode", Json("1"))], cancellation)
+        );
+
+        Assert.Contains("Under a Container, layout_mode is 2 (Container) and cannot be set.", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetNodePropertiesSaysAnchorsPresetNeedsAnchorsLayout()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        await _tools.AddNodeAsync(
+            probe.Directory,
+            "ui.tscn",
+            "ColorRect",
+            "Backdrop",
+            new AddNodeOptions(Properties: new() { ["layout_mode"] = Json("0") }),
+            cancellation
+        );
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SetNodePropertiesAsync(probe.Directory, "ui.tscn", [new PropertyUpdate("Backdrop", "anchors_preset", Json("15"))], cancellation)
+        );
+
+        Assert.Contains(
+            "anchors_preset takes only with layout_mode 1 (Anchors); set layout_mode 1 first.",
+            refused.Message,
+            StringComparison.Ordinal
+        );
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -828,6 +936,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         File.WriteAllText(Path.Combine(directory, "crate.tscn"), CrateScene);
         File.WriteAllText(Path.Combine(directory, "greeter.gd"), GreeterScript);
         File.WriteAllText(Path.Combine(directory, "greeter.tscn"), GreeterScene);
+        File.WriteAllText(Path.Combine(directory, "ui.tscn"), UiScene);
     }
 
     private async Task<JsonNode> PropertiesAsync(string projectDir, string scenePath, NodePropertyQuery[] nodes, CancellationToken cancellation) =>

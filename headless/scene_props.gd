@@ -15,10 +15,11 @@ const SCENE_PREFIX := "res://"
 
 
 ## Adds a node of params.nodeType named params.nodeName under params.parent, at params.position
-## among its children (SceneNodes.resolve_position) or last, with params.properties set on it
-## before it is added: {result: {path, type, index, instance?, script?}}, or {error} naming every
-## failing property or the bad position, with nothing added. The new node is owned by the scene's
-## root; an instanced scene's own nodes keep the instance's owners.
+## among its children (SceneNodes.resolve_position) or last, with params.properties set on it once
+## it is under its parent, as the editor sets them (layout_mode first, since Godot computes its
+## value from the parent): {result: {path, type, index, instance?, script?}}, or {error} naming
+## every failing property or the bad position, with nothing added. The new node is owned by the
+## scene's root; an instanced scene's own nodes keep the instance's owners.
 static func apply_add_node(root: Node, params: Dictionary, context: Dictionary) -> Dictionary:
 	var parent_path: String = str(params.get("parent", "."))
 	var node_name: String = str(params.get("nodeName", ""))
@@ -38,17 +39,19 @@ static func apply_add_node(root: Node, params: Dictionary, context: Dictionary) 
 	if placed.has("error"):
 		node.free()
 		return placed
+	parent.add_child(node)
 	var properties: Variant = params.get("properties", {})
 	var failures: PackedStringArray = _set_all(
 		node,
 		_child_path(root, parent, node_name),
 		properties if properties is Dictionary else {},
-		root
+		root,
+		"layout_mode"
 	)
 	if not failures.is_empty():
+		parent.remove_child(node)
 		node.free()
 		return {"error": " ".join(failures)}
-	parent.add_child(node)
 	node.owner = root
 	if placed.has("index"):
 		parent.move_child(node, placed["index"])
@@ -235,12 +238,13 @@ static func _child_path(root: Node, parent: Node, node_name: String) -> String:
 
 
 ## Converts and sets each of properties ({name: value}) on node, reading each back; the reasons
-## the ones that fail do.
+## the ones that fail do. first, when properties holds it, is set before the rest: add_node sets
+## layout_mode first, Godot computing its value from the node's parent.
 static func _set_all(
-	node: Node, path: String, properties: Dictionary, root: Node
+	node: Node, path: String, properties: Dictionary, root: Node, first: String
 ) -> PackedStringArray:
 	var failures: PackedStringArray = []
-	for key: Variant in properties:
+	for key: Variant in _key_order(properties, first):
 		var converted: Dictionary = _converted(node, path, str(key), properties[key], root)
 		if converted.has("error"):
 			failures.append(converted.error)
@@ -249,6 +253,15 @@ static func _set_all(
 		if done.has("error"):
 			failures.append(done.error)
 	return failures
+
+
+## properties' keys, first (when properties holds it) taken out and put in front.
+static func _key_order(properties: Dictionary, first: String) -> Array:
+	var keys: Array = properties.keys()
+	if keys.has(first):
+		keys.erase(first)
+		keys.push_front(first)
+	return keys
 
 
 ## {node, nodePath, property, value} for one update, the node found and the value converted, or
@@ -306,14 +319,30 @@ static func _set_checked(
 	var after: Variant = node.get(property)
 	if not Json.same(after, value):
 		var read: String = JSON.stringify(SceneValues.to_json(after, root))
-		return {
-			"error":
-			(
-				"Property '%s' on '%s' did not take the value: it read %s after the set."
-				% [property, path, read]
-			)
-		}
+		var failed: String = (
+			"Property '%s' on '%s' did not take the value: it read %s after the set."
+			% [property, path, read]
+		)
+		return {"error": failed + _layout_hint(node, property)}
 	return {"before": SceneValues.to_json(before, root), "after": SceneValues.to_json(after, root)}
+
+
+## Why a Control's layout_mode or anchors_preset did not take, appended to the read-back failure:
+## "" for any other property or node. Godot computes layout_mode from the node's parent
+## (scene/gui/control.cpp _get_layout_mode), and anchors_preset takes only in Anchors mode.
+static func _layout_hint(node: Node, property: String) -> String:
+	if not (node is Control):
+		return ""
+	if property == "anchors_preset":
+		return " anchors_preset takes only with layout_mode 1 (Anchors); set layout_mode 1 first."
+	if property != "layout_mode":
+		return ""
+	var parent: Node = node.get_parent()
+	if parent is Container:
+		return " Under a Container, layout_mode is 2 (Container) and cannot be set."
+	if parent is Control:
+		return " Under a Control, layout_mode takes 0 (Position) or 1 (Anchors)."
+	return " With no Control parent, layout_mode is 3 (Uncontrolled) and cannot be set."
 
 
 static func _read_node(root: Node, query: Dictionary, scene: String) -> Dictionary:
