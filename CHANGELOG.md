@@ -13,6 +13,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - `add_node` and `batch_scene_operations` take a `.gd` or `.cs` script path as `nodeType`, making a node of its base class with the script attached.
 - Headless scene edits rewrite only the sections they add, change or delete, keeping the rest of the `.tscn` as it was; a `warning` says when they cannot.
+- `restart_project` says how it stopped the old game in `previousKillReason` and `previousLeftRunning`, as `stop_project` does.
 
 ### Fixed
 

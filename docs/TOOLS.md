@@ -78,7 +78,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 - **Does:** relaunches a run session with the scene, arguments and options it was started with, keeping its name, its error `seq` and its debug output (a marker line separates the two games).
 - **Use:** after editing code or scenes, to pick up the change without losing the session; `options {prepare}`.
-- **Edges:** the prep runs while the old game still runs, so a failed C# build is an error and leaves the old game running. To change the scene or arguments, `stop_project` then `run_project`. An attached session cannot be restarted. The old game is stopped as `stop_project` stops it, with its `warning` when a debugger was attached to it; `previousAlreadyExited` and `previousGameExitCode` (left out when unknown) say how it had ended, as `stop_project`'s `alreadyExited` and `gameExitCode` do. A recording run records the new game to a new file and returns the old one's outcome as `previousRecording`.
+- **Edges:** the prep runs while the old game still runs, so a failed C# build is an error and leaves the old game running. To change the scene or arguments, `stop_project` then `run_project`. An attached session cannot be restarted. The old game is stopped as `stop_project` stops it, with its `warning` when a debugger was attached to it; `previousAlreadyExited` and `previousGameExitCode` (left out when unknown) say how it had ended, as `stop_project`'s `alreadyExited` and `gameExitCode` do, and `previousKillReason` and `previousLeftRunning` (each left out when empty) say how it was stopped, as its `killReason` and `leftRunning` do. A recording run records the new game to a new file and returns the old one's outcome as `previousRecording`.
 
 ### `list_sessions`
 

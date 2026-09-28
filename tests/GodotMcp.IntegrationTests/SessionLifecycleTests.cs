@@ -348,6 +348,42 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.True(stopped.OverrideRemoved);
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ARestartReportsWhatTheOldGameLeftRunning()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
+        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        string started = await tools.RunScriptAsync(LingeringChildScript, 10_000, null, cancellation);
+        int pingId = JsonNode.Parse(started)!["value"]!.GetValue<int>();
+
+        RestartResult restarted = await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
+        await _harness.Sessions.StopAsync(null, cancellation);
+        bool pingGone = await ProcessGoneAsync(pingId);
+
+        Assert.Null(restarted.PreviousKillReason);
+        Assert.NotNull(restarted.PreviousLeftRunning);
+        string left = Assert.Single(restarted.PreviousLeftRunning);
+        Assert.Equal($"ping.exe (pid {pingId})", left, ignoreCase: true);
+        Assert.True(pingGone, $"ping (pid {pingId}) was still running after the restart");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ARestartSaysWhyItKilledTheOldGame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
+        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        await tools.RunScriptAsync(SlowToQuitScript, 10_000, null, cancellation);
+
+        RestartResult restarted = await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
+        await _harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.NotNull(restarted.PreviousKillReason);
+        Assert.Contains("still shutting down", restarted.PreviousKillReason, StringComparison.Ordinal);
+        Assert.Null(restarted.PreviousLeftRunning);
+    }
+
     private LaunchRequest Request(string[]? userArgs = null, bool quiet = true, bool shutOutRealGamepads = false) =>
         new(_probe.Directory, null, [], userArgs ?? [], quiet, shutOutRealGamepads, Prepare: true);
 

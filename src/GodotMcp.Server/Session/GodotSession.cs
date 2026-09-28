@@ -388,7 +388,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <exception cref="SessionException">
     /// Godot was not found, the prep failed, the project has its own override.cfg, or Godot could not start.
     /// </exception>
-    private async Task<(GodotRun Run, PrepResult Prep, string Token, string? ReplacedWarning, string Godot)> PrepareAndStartAsync(
+    private async Task<(GodotRun Run, PrepResult Prep, string Token, RunEnd? Previous, string Godot)> PrepareAndStartAsync(
         LaunchRequest request,
         GodotRun? previous,
         CancellationToken cancellationToken
@@ -402,12 +402,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             PrepContext context = new(ProjectDir, _logger, () => registry.RunningSessionNames(ProjectDir, this));
             PrepResult prep = request.Prepare ? await ProjectPrep.RunAsync(context, cancellationToken) : PrepResult.Skipped;
             string bridgeScript = Installation.FindBridgeScript();
-            string? replacedWarning = null;
+            RunEnd? previousEnd = null;
             if (previous is not null)
             {
                 // A restart cancelled by now must not stop a healthy game that the handshake wait would then kill.
                 cancellationToken.ThrowIfCancellationRequested();
-                replacedWarning = (await EndRunAsync(previous)).Warning;
+                previousEnd = await EndRunAsync(previous);
                 Snapshots.Clear();
                 registry.Captures.End(Name, CaptureStore.EndedByRestart);
                 StopOutputCapture(previous);
@@ -425,7 +425,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             _run = run;
             _recording = moviePath is null ? null : new Recording(moviePath) { DropIdle = request.DropIdle };
             ProcessId = run.Process.Id;
-            return (run, prep, token, replacedWarning, godotPath);
+            return (run, prep, token, previousEnd, godotPath);
         }
         finally
         {
@@ -433,14 +433,14 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
-    /// <returns>The launch, and the warning when a debugger was attached to the game <paramref name="previous"/> ran.</returns>
-    private async Task<(LaunchResult Started, string? ReplacedWarning)> StartRunAsync(
+    /// <returns>The launch, and how the run it replaced ended; that end is null for a launch.</returns>
+    private async Task<(LaunchResult Started, RunEnd? Previous)> StartRunAsync(
         LaunchRequest request,
         GodotRun? previous,
         CancellationToken cancellationToken
     )
     {
-        (GodotRun run, PrepResult prep, string token, string? replacedWarning, string godot) = await PrepareAndStartAsync(
+        (GodotRun run, PrepResult prep, string token, RunEnd? previousEnd, string godot) = await PrepareAndStartAsync(
             request,
             previous,
             cancellationToken
@@ -462,7 +462,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         {
             Recording = _recording is { } recording ? new RecordingResult { Path = recording.Path } : null,
         };
-        return (started, replacedWarning);
+        return (started, previousEnd);
     }
 
     /// <summary>

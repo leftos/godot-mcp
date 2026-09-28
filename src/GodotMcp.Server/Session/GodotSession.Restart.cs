@@ -59,16 +59,18 @@ internal sealed partial class GodotSession
         bool previousAlreadyExited = !previous.IsRunning;
         try
         {
-            (LaunchResult started, string? warning) = await StartRunAsync(launched with { Prepare = prepare }, previous, cancellationToken);
+            (LaunchResult started, RunEnd? previousEnd) = await StartRunAsync(launched with { Prepare = prepare }, previous, cancellationToken);
             int? previousGameExitCode = await previous.ReleaseGameAsync();
             Log.RunRestarted(_logger, ProjectDir, previousProcessId, started.ProcessId);
             return new RestartResult(Name, started.ProjectPath, started.ProcessId, previousProcessId, previous.ExitCode, started.Prep, started.Godot)
             {
                 PreviousAlreadyExited = previousAlreadyExited,
                 PreviousGameExitCode = previousGameExitCode,
+                PreviousKillReason = previousEnd?.KillReason,
+                PreviousLeftRunning = LeftRunning(previousEnd),
                 Recording = started.Recording,
                 PreviousRecording = replaced?.Outcome,
-                Warning = warning,
+                Warning = previousEnd?.Warning,
             };
         }
         finally
@@ -78,5 +80,16 @@ internal sealed partial class GodotSession
                 await previous.DisposeAsync();
             }
         }
+    }
+
+    /// <summary>The replaced game's leftovers as <see cref="StopResult.LeftRunning"/> reports them: null when there were none.</summary>
+    private static IReadOnlyList<string>? LeftRunning(RunEnd? ended)
+    {
+        if (ended is not RunEnd end || end.LeftRunning.Count == 0)
+        {
+            return null;
+        }
+
+        return end.LeftRunning;
     }
 }

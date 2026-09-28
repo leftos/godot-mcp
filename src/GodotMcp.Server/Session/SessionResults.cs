@@ -80,6 +80,17 @@ internal sealed record RestartResult(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public required int? PreviousGameExitCode { get; init; }
 
+    /// <summary>Why the replaced game had to be killed; left out when it quit.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PreviousKillReason { get; init; }
+
+    /// <summary>
+    /// The processes the replaced game started and left running when it quit, as "name (pid N)"; they were ended with the
+    /// console wrapper. Left out when there were none.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? PreviousLeftRunning { get; init; }
+
     /// <summary>The file the new game records to.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? Recording { get; init; }

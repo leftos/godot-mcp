@@ -161,7 +161,8 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "stopped is started again. previousExitCode is the old run's process the server started (on Windows the console "
             + "wrapper), previousGameExitCode the old game's own (both left out when unknown, and previousGameExitCode also when "
             + "the old game had to be killed); previousAlreadyExited is true when "
-            + "the old run had ended before the restart. To change the scene or arguments, use stop_project then run_project. A recording run "
+            + "the old run had ended before the restart. previousKillReason and previousLeftRunning say how the old game was stopped, as "
+            + "stop_project's killReason and leftRunning do. To change the scene or arguments, use stop_project then run_project. A recording run "
             + "records the new game to a new file (recording.path); the old game's recording is finished as stop_project "
             + "finishes it and returned as previousRecording. An attached session cannot be restarted."
     )]
