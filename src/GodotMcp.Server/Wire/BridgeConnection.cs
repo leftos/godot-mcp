@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Text.Json.Nodes;
+using GodotMcp.Server.Session;
 using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Wire;
@@ -16,9 +17,11 @@ internal sealed class BridgeConnection : IAsyncDisposable
 {
     private const string ErrorsFrameType = "errors";
     private const string CapturedFrameType = "captured";
+    private static readonly TimeSpan CancelReplyTimeout = TimeSpan.FromSeconds(2);
     private readonly TcpClient _client;
     private readonly NetworkStream _stream;
     private readonly FrameDecoder _decoder;
+    private readonly LoadClock _clock;
     private readonly ILogger _logger;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly ConcurrentDictionary<long, PendingRequest> _pending = new();
@@ -33,12 +36,14 @@ internal sealed class BridgeConnection : IAsyncDisposable
     /// <param name="client">The accepted connection, its hello already read.</param>
     /// <param name="decoder">The decoder that read the hello, holding any bytes that arrived after it.</param>
     /// <param name="gameProcessId">The game's own process id from the hello, or null when the hello carried none.</param>
+    /// <param name="clock">The clock a request's reply timeout and release run on.</param>
     /// <param name="logger">Where dropped replies and the connection's end are reported.</param>
-    public BridgeConnection(TcpClient client, FrameDecoder decoder, int? gameProcessId, ILogger logger)
+    public BridgeConnection(TcpClient client, FrameDecoder decoder, int? gameProcessId, LoadClock clock, ILogger logger)
     {
         _client = client;
         _stream = client.GetStream();
         _decoder = decoder;
+        _clock = clock;
         _logger = logger;
         GameProcessId = gameProcessId;
         _readLoop = Task.Run(ReadLoopAsync);
@@ -52,32 +57,101 @@ internal sealed class BridgeConnection : IAsyncDisposable
     /// <summary>The game's own process id, as its hello reported it; null when the bridge predates the field.</summary>
     public int? GameProcessId { get; }
 
-    /// <summary>Sends one command and waits for its reply's <c>result</c>.</summary>
+    /// <summary>
+    /// Sends one command and waits for its reply's <c>result</c> for <paramref name="timeout"/> of load-adjusted time, bounded by
+    /// <see cref="LoadClock.BackstopFactor"/> times it in wall time. With <paramref name="release"/>, the request carries
+    /// <c>backstopMs</c>, <see cref="LoadClock.BackstopFactor"/> times the release in milliseconds, as the bridge's own real-time
+    /// limit; when the release passes in load-adjusted time first, a <c>cancel</c> for the request goes to the bridge, which ends
+    /// the request with its usual answer, and the wait goes on for that answer.
+    /// </summary>
+    /// <param name="command">The bridge command.</param>
+    /// <param name="parameters">
+    /// Its parameters, left as they are; the request adds <c>backstopMs</c> to a copy when <paramref name="release"/> is set.
+    /// </param>
+    /// <param name="timeout">How long to wait for the reply, in load-adjusted time.</param>
+    /// <param name="cancellationToken">Withdraws the wait.</param>
+    /// <param name="release">How long the bridge may run the request, in load-adjusted time, before it is cancelled; null sends no cancel.</param>
+    /// <exception cref="LoadTimeoutException">No reply within the timeout; a later reply is dropped.</exception>
+    /// <exception cref="InvalidOperationException">The bridge answered <c>ok: false</c>.</exception>
+    /// <exception cref="IOException">The connection ended before the reply.</exception>
+    public async Task<JsonNode?> SendAsync(
+        string command,
+        JsonObject? parameters,
+        TimeSpan timeout,
+        CancellationToken cancellationToken,
+        TimeSpan? release = null
+    )
+    {
+        using LoadDeadline deadline = _clock.Start(timeout, cancellationToken);
+        JsonObject sent = WithBackstop(parameters, release);
+
+        (long id, PendingRequest pending) = Register(command);
+        using LoadDeadline? released = release is { } releaseAfter ? _clock.Start(releaseAfter) : null;
+        using CancellationTokenRegistration cancelling = released?.Token.Register(() => CancelInBackground(id, command)) ?? default;
+        try
+        {
+            await WriteAsync(Request(id, command, sent), cancellationToken);
+            return await pending.Reply.Task.WaitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException) when (deadline.Expired)
+        {
+            string backstop = deadline.Reason == DeadlineReason.Backstop ? deadline.BackstopClause() : string.Empty;
+            throw new LoadTimeoutException(TimedOut(command, id, timeout, backstop), deadline);
+        }
+        catch (OperationCanceledException e) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(e.Message, e, cancellationToken);
+        }
+        finally
+        {
+            CancelIfAbandoned(id, command, pending, released);
+            _pending.TryRemove(id, out _);
+        }
+    }
+
+    /// <summary>The parameters as sent: with <c>backstopMs</c> added to a copy when the request has a release, else as given.</summary>
+    private static JsonObject WithBackstop(JsonObject? parameters, TimeSpan? release)
+    {
+        if (release is not { } allowance)
+        {
+            return parameters ?? [];
+        }
+
+        JsonObject sent = parameters?.DeepClone().AsObject() ?? [];
+        sent["backstopMs"] = (long)(allowance * LoadClock.BackstopFactor).TotalMilliseconds;
+        return sent;
+    }
+
+    /// <summary>
+    /// Cancels a released request the caller walked away from (a timeout or a cancelled token) while it still runs in the
+    /// game, rather than let it hold the bridge until its <c>backstopMs</c>. One whose release already passed has had its cancel.
+    /// </summary>
+    private void CancelIfAbandoned(long id, string command, PendingRequest pending, LoadDeadline? released)
+    {
+        if (released is { Expired: false } && !pending.Reply.Task.IsCompleted)
+        {
+            CancelInBackground(id, command);
+        }
+    }
+
+    /// <summary>
+    /// Sends one command and waits for its reply's <c>result</c> for <paramref name="timeout"/> of wall time, whatever the
+    /// machine's load: the pings that tell a busy game from a stuck one, a cancel, and the shutdown.
+    /// </summary>
     /// <exception cref="TimeoutException">No reply within <paramref name="timeout"/>; a later reply is dropped.</exception>
     /// <exception cref="InvalidOperationException">The bridge answered <c>ok: false</c>.</exception>
     /// <exception cref="IOException">The connection ended before the reply.</exception>
-    public async Task<JsonNode?> SendAsync(string command, JsonObject? parameters, TimeSpan timeout, CancellationToken cancellationToken)
+    public async Task<JsonNode?> SendRawAsync(string command, JsonObject? parameters, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        long id = Interlocked.Increment(ref _nextId);
-        PendingRequest pending = new(command);
-        _pending[id] = pending;
+        (long id, PendingRequest pending) = Register(command);
         try
         {
-            JsonObject request = new()
-            {
-                ["id"] = id,
-                ["command"] = command,
-                ["params"] = parameters ?? [],
-            };
-            await WriteAsync(request, cancellationToken);
+            await WriteAsync(Request(id, command, parameters ?? []), cancellationToken);
             return await pending.Reply.Task.WaitAsync(timeout, cancellationToken);
         }
         catch (TimeoutException e)
         {
-            throw new TimeoutException(
-                $"The bridge did not answer '{command}' (request {id}) within {timeout.TotalSeconds:0.#} s; a late reply will be dropped.",
-                e
-            );
+            throw new TimeoutException(TimedOut(command, id, timeout, string.Empty), e);
         }
         finally
         {
@@ -116,6 +190,50 @@ internal sealed class BridgeConnection : IAsyncDisposable
         await _readLoop;
         _writeLock.Dispose();
         _closing.Dispose();
+    }
+
+    private static string TimedOut(string command, long id, TimeSpan timeout, string backstop) =>
+        $"The bridge did not answer '{command}' (request {id}) within {timeout.TotalSeconds:0.#} s{backstop}; a late reply will be dropped.";
+
+    private static JsonObject Request(long id, string command, JsonObject parameters) =>
+        new()
+        {
+            ["id"] = id,
+            ["command"] = command,
+            ["params"] = parameters,
+        };
+
+    private (long Id, PendingRequest Pending) Register(string command)
+    {
+        long id = Interlocked.Increment(ref _nextId);
+        PendingRequest pending = new(command);
+        _pending[id] = pending;
+        return (id, pending);
+    }
+
+    /// <summary>Asks the bridge to end request <paramref name="id"/> early, unless its reply is already in; runs on its own.</summary>
+    private void CancelInBackground(long id, string command)
+    {
+        if (_pending.ContainsKey(id))
+        {
+            _ = CancelAsync(id, command);
+        }
+    }
+
+    /// <summary>
+    /// Sends the cancel; one that goes unanswered or is refused (a bridge that predates it) is logged, and the request then ends at
+    /// its <c>backstopMs</c> in the game.
+    /// </summary>
+    private async Task CancelAsync(long id, string command)
+    {
+        try
+        {
+            await SendRawAsync("cancel", new JsonObject { ["request"] = id }, CancelReplyTimeout, CancellationToken.None);
+        }
+        catch (Exception e) when (e is TimeoutException or IOException or InvalidOperationException or ObjectDisposedException)
+        {
+            Log.CancelUnanswered(_logger, command, id, e.Message);
+        }
     }
 
     private async Task WriteAsync(JsonObject message, CancellationToken cancellationToken)

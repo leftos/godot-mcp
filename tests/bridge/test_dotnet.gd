@@ -193,6 +193,55 @@ func test_a_pending_reply_past_its_deadline_is_forgotten() -> void:
 	dotnet.free()
 
 
+func test_a_cancelled_pending_call_is_forgotten() -> void:
+	var replies: Array = [PENDING, PENDING, PENDING, "{}"]
+	var requests: Array = []
+	var params: Dictionary = {"extension": EXTENSION, "request": CALL, "timeoutMs": 60000}
+	var dotnet: Node = _module(
+		GDExtensionManager.LOAD_STATUS_OK, [0], _host_replying(replies, requests)
+	)
+	dotnet.clock = func() -> int: return 1000
+	dotnet.wait_frame = func() -> void: params["_cancelled"] = true
+	assert_eq(
+		dotnet.handle(params),
+		{
+			"error":
+			"the call did not complete within 60000 ms; its Task is still running in the game"
+		},
+		"the deadline's error, naming timeoutMs"
+	)
+	assert_eq(
+		requests,
+		[CALL, POLL, '{"id":"c1","op":"forget"}'],
+		"forgotten at the first check after the cancel, long before the deadline"
+	)
+	dotnet.free()
+
+
+func test_backstop_ms_sets_the_bridges_deadline() -> void:
+	var replies: Array = [PENDING, PENDING, PENDING, PENDING, PENDING, PENDING, "{}"]
+	var requests: Array = []
+	var now: Array = [1000]
+	var dotnet: Node = _module(
+		GDExtensionManager.LOAD_STATUS_OK, [0], _host_replying(replies, requests)
+	)
+	dotnet.clock = func() -> int: return now[0]
+	dotnet.wait_frame = func() -> void: now[0] += 100
+	assert_eq(
+		dotnet.handle(
+			{"extension": EXTENSION, "request": CALL, "timeoutMs": 100, "backstopMs": 450}
+		),
+		{"error": "the call did not complete within 100 ms; its Task is still running in the game"},
+		"the error still names timeoutMs"
+	)
+	assert_eq(
+		requests,
+		[CALL, POLL, POLL, POLL, POLL, POLL, '{"id":"c1","op":"forget"}'],
+		"polled until 1500 ms passed the 1450 ms backstop, not the 1100 ms timeout"
+	)
+	dotnet.free()
+
+
 func test_a_non_pending_reply_is_not_polled() -> void:
 	var failed := '{"ok":false,"error":"Hit threw InvalidOperationException: no"}'
 	var nested := '{"ok":true,"result":{"value":{"pending":"c1"},"type":"Probe"}}'

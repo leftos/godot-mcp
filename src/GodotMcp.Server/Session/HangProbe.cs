@@ -23,9 +23,11 @@ internal sealed record HangReport(bool Answered, string ProcessState, IReadOnlyL
     /// <param name="tool">The tool whose request timed out.</param>
     /// <param name="timeout">The request's timeout.</param>
     /// <param name="hint">What the caller can do about a busy game, starting with "; ", or empty.</param>
-    public string Describe(string tool, TimeSpan timeout, string hint)
+    /// <param name="deadline">The request's deadline, which adds the backstop clause when the backstop ended it; null for none.</param>
+    public string Describe(string tool, TimeSpan timeout, string hint, LoadDeadline? deadline = null)
     {
-        string timedOut = $"'{tool}' timed out after {timeout.TotalMilliseconds:0} ms";
+        string backstop = deadline is { Reason: DeadlineReason.Backstop } ? deadline.BackstopClause() : string.Empty;
+        string timedOut = $"'{tool}' timed out after {timeout.TotalMilliseconds:0} ms{backstop}";
         if (Answered)
         {
             return $"{timedOut}, but the game answered a ping, so its main thread is running{hint}.";

@@ -244,9 +244,8 @@ internal static class RecordingCut
             ToolProcessResult result = await context.Run(request, cancellationToken);
             return result switch
             {
-                { KilledByCeiling: true } =>
-                    $"ffmpeg did not finish {step.Doing} {clipPath} within {request.Ceiling.TotalSeconds:0} s{step.Consequence}. "
-                        + $"See {request.LogPath}.",
+                { Killed: not KillReason.None } => $"ffmpeg did not finish {step.Doing} {clipPath} ({result.KillDetail}){step.Consequence}. "
+                    + $"See {request.LogPath}.",
                 { ExitCode: not 0 } =>
                     $"ffmpeg failed (exit code {result.ExitCode}) {step.Doing} {clipPath}{step.Consequence}. See {request.LogPath}.",
                 _ => null,

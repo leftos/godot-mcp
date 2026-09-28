@@ -27,6 +27,9 @@ const UI_SNAPSHOT_SCRIPT := "godot_mcp_ui_snapshot.gd"
 const CLASS_INFO_SCRIPT := "godot_mcp_class_info.gd"
 const CAPTURE_SCRIPT := "godot_mcp_capture.gd"
 const DOTNET_SCRIPT := "godot_mcp_dotnet.gd"
+## The commands a cancel request can end early; the server cancels one when its load-adjusted
+## allowance passes before the request's backstopMs.
+const CANCELLABLE: PackedStringArray = ["frame", "wait_for", "monitor", "dotnet"]
 ## A quiet session's frame-rate cap when the project sets none: its frames are never seen, so
 ## drawing at the monitor's refresh rate only burns the GPU.
 const QUIET_MAX_FPS := 60
@@ -77,6 +80,9 @@ var _ui_snapshot: GDScript
 var _class_info: GDScript
 ## Every command's handler, func(id, params), by command name (_command_handlers).
 var _handlers: Dictionary = {}
+## The cancellable requests still running: id -> the params Dictionary their handler holds, from
+## the frame that read them until their reply.
+var _running_requests: Dictionary = {}
 ## The server to dial, found in _init; empty when the bridge is off.
 var _endpoint: Dictionary = {}
 ## The logger (godot_mcp_logger.gd beside this script) collecting the game's errors, registered
@@ -210,7 +216,7 @@ func _process(_delta: float) -> void:
 	if status == StreamPeerTCP.STATUS_CONNECTING:
 		return
 	if status != StreamPeerTCP.STATUS_CONNECTED:
-		_connection_lost = true
+		_end_connection()
 		push_warning("godot-mcp bridge: the connection to the server is gone (status %d)." % status)
 		return
 	if not _hello_sent:
@@ -226,6 +232,12 @@ func _process(_delta: float) -> void:
 		)
 	_flush_errors()
 	_read_frames()
+
+
+## Marks the connection gone and forgets the running requests: no cancel can reach them now.
+func _end_connection() -> void:
+	_connection_lost = true
+	_running_requests.clear()
 
 
 ## Sends the errors logged since the last flush as one {type: "errors", entries, dropped}
@@ -288,7 +300,7 @@ func _read_frames() -> void:
 		if length > MAX_FRAME_BYTES:
 			push_error("godot-mcp bridge: a frame of %d bytes is over the limit; closing." % length)
 			_stream.disconnect_from_host()
-			_connection_lost = true
+			_end_connection()
 			return
 		if _buffer.size() < HEADER_BYTES + length:
 			return
@@ -310,7 +322,31 @@ func _handle_frame(text: String) -> void:
 	if not _handlers.has(command):
 		_reply_error(id, "unknown command '%s'" % command)
 		return
+	_track(id, command, params)
 	(_handlers[command] as Callable).call(id, params)
+
+
+## Registers a cancellable request as running until its reply.
+func _track(id: int, command: String, params: Dictionary) -> void:
+	if command in CANCELLABLE:
+		_running_requests[id] = params
+
+
+## Replies {cancelled} to a cancel of params.request.
+func _handle_cancel(id: int, params: Dictionary) -> void:
+	_reply_ok(id, {"cancelled": _cancel(int(params.get("request", -1)))})
+
+
+## Marks the running request's params _cancelled, which ends a wait_for's poll and a dotnet call's
+## at their next frame, and ends a running step or monitor as its deadline would. Returns false
+## when the request has been answered, was never cancellable, or is unknown.
+func _cancel(request: int) -> bool:
+	if not _running_requests.has(request):
+		return false
+	var params: Dictionary = _running_requests[request]
+	params["_cancelled"] = true
+	_time.cancel(params)
+	return true
 
 
 ## Every command's handler, func(id, params), by command name; built once in _ready.
@@ -336,6 +372,7 @@ func _command_handlers() -> Dictionary:
 		"capture": _handle_capture,
 		"dotnet": _handle_dotnet,
 		"shutdown": _handle_shutdown,
+		"cancel": _handle_cancel,
 	}
 
 
@@ -637,11 +674,13 @@ func _free_unless_counted(instance: Variant) -> void:
 
 
 func _reply_ok(id: int, result: Variant) -> void:
+	_running_requests.erase(id)
 	_flush_errors()
 	_send({"id": id, "ok": true, "result": result})
 
 
 func _reply_error(id: int, message: String) -> void:
+	_running_requests.erase(id)
 	_flush_errors()
 	_send({"id": id, "ok": false, "error": message})
 

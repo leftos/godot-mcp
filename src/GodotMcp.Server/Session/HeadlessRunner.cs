@@ -177,11 +177,9 @@ internal static class HeadlessRunner
     private static JsonObject ReadResult(HeadlessRequest request, ToolProcessResult ran, string resultPath, string log)
     {
         string what = $"The headless {request.Operation} run on {request.ProjectDir}";
-        if (ran.KilledByCeiling)
+        if (ran.WasKilled)
         {
-            throw new SessionException(
-                $"{what} passed {request.Ceiling.TotalSeconds:0} s, so it was stopped with its whole process tree. Its log: {log}"
-            );
+            throw new SessionException($"{what} did not finish ({ran.KillDetail}), so it was stopped with its whole process tree. Its log: {log}");
         }
 
         if (!File.Exists(resultPath))

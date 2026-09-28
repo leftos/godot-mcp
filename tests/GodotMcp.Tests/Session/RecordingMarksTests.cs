@@ -164,7 +164,7 @@ public sealed class RecordingMarksTests
                 {
                     requests.Add(request);
                     int exitCode = requests.Count == 1 ? 8 : 0;
-                    return Task.FromResult(new ToolProcessResult(exitCode, TimeSpan.Zero, KilledByCeiling: false));
+                    return Task.FromResult(new ToolProcessResult(exitCode, TimeSpan.Zero, KillReason.None));
                 },
                 TestContext.Current.CancellationToken
             );
@@ -204,7 +204,7 @@ public sealed class RecordingMarksTests
             RecordingResult result = await RecordingCut.CutClipsAsync(
                 recording,
                 "ffmpeg.exe",
-                (_, _) => Task.FromResult(new ToolProcessResult(1, TimeSpan.Zero, KilledByCeiling: false)),
+                (_, _) => Task.FromResult(new ToolProcessResult(1, TimeSpan.Zero, KillReason.None)),
                 TestContext.Current.CancellationToken
             );
 

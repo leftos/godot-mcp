@@ -1,10 +1,29 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GodotMcp.Server;
 
 /// <summary>Every message the server logs; all of it goes to stderr.</summary>
 internal static partial class Log
 {
+    /// <summary>The logger for code no caller hands one to: the load clock's sampler and the own-work job.</summary>
+    public static ILogger Ambient { get; set; } = NullLogger.Instance;
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Reading the machine's CPU times failed with Win32 error {Error}; the load clock runs at wall time until a read succeeds."
+    )]
+    public static partial void LoadSampleFailed(ILogger logger, int error);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Adding a process to {Job} failed with Win32 error {Error}; {Consequence}. Logged once.")]
+    public static partial void OwnWorkAdoptFailed(ILogger logger, string job, int error, string consequence);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "The cancel of '{Command}' (request {Request}) went unanswered: {Reason}; the game ends it at its backstopMs."
+    )]
+    public static partial void CancelUnanswered(ILogger logger, string command, long request, string reason);
+
     [LoggerMessage(Level = LogLevel.Error, Message = "batch_drive step {Index} ({Step}) failed with an unexpected exception.")]
     public static partial void BatchStepFailed(ILogger logger, Exception exception, int index, string step);
 
@@ -31,6 +50,15 @@ internal static partial class Log
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "git could not be started, so {Directory} is treated as outside any repository.")]
     public static partial void GitUnavailable(ILogger logger, Exception exception, string directory);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "git in {Directory} did not finish {Clause}, so it was stopped with its process tree and counts as a git failure."
+    )]
+    public static partial void GitTimedOut(ILogger logger, string directory, string clause);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Reading git's output in {Directory} failed; it counts as a git failure.")]
+    public static partial void GitOutputUnreadable(ILogger logger, Exception? exception, string directory);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Godot {Pid} runs {Project}; the bridge is connected.")]
     public static partial void RunStarted(ILogger logger, int pid, string project);
@@ -94,9 +122,9 @@ internal static partial class Log
 
     [LoggerMessage(
         Level = LogLevel.Warning,
-        Message = "'{Tool}' timed out on session {Session}; the hang probe found the main thread {Outcome}. {ProcessState}"
+        Message = "'{Tool}' timed out on session {Session} after {Load}; the hang probe found the main thread {Outcome}. {ProcessState}"
     )]
-    public static partial void RequestTimedOut(ILogger logger, string tool, string session, string outcome, string processState);
+    public static partial void RequestTimedOut(ILogger logger, string tool, string session, string load, string outcome, string processState);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Attached to a game on {Project}; the bridge is connected.")]
     public static partial void Attached(ILogger logger, string project);
@@ -121,6 +149,19 @@ internal static partial class Log
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Killing {File} and the processes it started failed; some of them may still run.")]
     public static partial void ToolKillFailed(ILogger logger, Exception exception, string file);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "{File} wrote no output and its process tree used no CPU for {Seconds} s; killing it and the processes it started as stalled."
+    )]
+    public static partial void ToolStalled(ILogger logger, string file, double seconds);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "{File}'s process tree is not in a job of its own, so its CPU cannot be measured: the stall guard is off for this run; "
+            + "its ceiling and backstop still apply."
+    )]
+    public static partial void StallGuardOff(ILogger logger, string file);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "{File} was still running {Seconds} s after it was killed.")]
     public static partial void ToolStillRunningAfterKill(ILogger logger, string file, double seconds);

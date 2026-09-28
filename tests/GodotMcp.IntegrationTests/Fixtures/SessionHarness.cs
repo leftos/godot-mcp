@@ -11,9 +11,16 @@ namespace GodotMcp.IntegrationTests.Fixtures;
 /// </summary>
 internal sealed class SessionHarness : IAsyncDisposable
 {
-    private readonly BridgeListener _listener = new(NullLogger<BridgeListener>.Instance);
+    // Wall time: another build loading the machine would stretch a short ceiling into its backstop and change its text; the
+    // unit tests cover the load on fakes.
+    private readonly LoadClock _wallClock = new(TimeProvider.System, new NoLoadSource());
+    private readonly BridgeListener _listener;
 
-    public SessionHarness() => Sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance);
+    public SessionHarness()
+    {
+        _listener = new(NullLogger<BridgeListener>.Instance) { Clock = _wallClock };
+        Sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance);
+    }
 
     public SessionRegistry Sessions { get; }
 
@@ -34,5 +41,6 @@ internal sealed class SessionHarness : IAsyncDisposable
 
         Sessions.Dispose();
         _listener.Dispose();
+        _wallClock.Dispose();
     }
 }

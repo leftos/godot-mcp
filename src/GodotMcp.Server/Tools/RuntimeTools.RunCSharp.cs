@@ -48,7 +48,7 @@ internal sealed partial class RuntimeTools
         [Description("A C# method body: statements (return gives the value), or one expression whose value is returned.")] string code,
         [Description(
             "{usings, timeoutMs, keep, maxDepth}: namespaces added to the default usings, how long the snippet is awaited, 1 to "
-                + "120000 ms (10000 by default), whether a handle to the value comes back too (false by default), and how many "
+                + "120000 ms, load-adjusted (10000 by default), whether a handle to the value comes back too (false by default), and how many "
                 + "levels of nested objects are written, 1 to 32 (8 by default)."
         )]
             RunCSharpOptions? options = null,

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json.Nodes;
+using GodotMcp.Server.Session;
 using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Wire;
@@ -36,6 +37,9 @@ internal sealed class BridgeListener : IDisposable
     }
 
     public int Port { get; }
+
+    /// <summary>The clock the connections' reply timeouts run on; tests swap in a fake one.</summary>
+    internal LoadClock Clock { get; init; } = LoadClock.Shared;
 
     /// <summary>
     /// Waits for the connection whose hello carries the expected token and project; any other connection is closed.
@@ -204,7 +208,7 @@ internal sealed class BridgeListener : IDisposable
             return;
         }
 
-        await HandOverAsync(waiter, new BridgeConnection(client, decoder, HandshakeExpectation.ReadProcessId(hello), _logger));
+        await HandOverAsync(waiter, new BridgeConnection(client, decoder, HandshakeExpectation.ReadProcessId(hello), Clock, _logger));
     }
 
     /// <summary>

@@ -39,7 +39,11 @@ internal sealed partial class GodotSession
         }
         catch (OperationCanceledException e) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new SessionException(DescribeAttachTimeout(wait, AbandonStart(forget: true)), e);
+            throw new SessionException(DescribeAttachTimeout(wait, null, AbandonStart(forget: true)), e);
+        }
+        catch (LoadTimeoutException e)
+        {
+            throw new SessionException(DescribeAttachTimeout(wait, e.Deadline, AbandonStart(forget: true)), e);
         }
         catch
         {
@@ -147,9 +151,15 @@ internal sealed partial class GodotSession
 
     private async Task<BridgeConnection> AcceptAttachedBridgeAsync(HandshakeExpectation expected, TimeSpan wait, CancellationToken cancellationToken)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(wait);
-        return await registry.Listener.AcceptBridgeAsync(expected, timeout.Token);
+        using LoadDeadline deadline = registry.Clock.Start(wait, cancellationToken);
+        try
+        {
+            return await registry.Listener.AcceptBridgeAsync(expected, deadline.Token);
+        }
+        catch (OperationCanceledException) when (deadline.Expired)
+        {
+            throw new LoadTimeoutException($"No game connected within {wait.TotalSeconds:0} s.", deadline);
+        }
     }
 
     /// <summary>Removes the attach file after a failed attach; a failure is logged so the attach's own error still reaches the caller.</summary>
@@ -165,12 +175,13 @@ internal sealed partial class GodotSession
         }
     }
 
-    private string DescribeAttachTimeout(TimeSpan wait, bool overrideRemoved)
+    private string DescribeAttachTimeout(TimeSpan wait, LoadDeadline? deadline, bool overrideRemoved)
     {
         string removed = overrideRemoved
             ? "its override.cfg and attach file are removed"
             : "its attach file is removed (override.cfg stays while another live session uses the folder)";
-        return $"No game on {ProjectDir} connected within {wait.TotalSeconds:0} s, so the attach is abandoned and {removed}. A game "
+        string backstop = deadline is { Reason: DeadlineReason.Backstop } ? deadline.BackstopClause() : string.Empty;
+        return $"No game on {ProjectDir} connected within {wait.TotalSeconds:0} s{backstop}, so the attach is abandoned and {removed}. A game "
             + "attaches only when it starts after attach_project has written them: launch it (a script, godot --path <project>, "
             + "the editor's Play button) within waitSeconds of the call, then call attach_project again.";
     }

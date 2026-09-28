@@ -28,8 +28,9 @@ internal sealed partial class RuntimeTools
     // A generous allowance per stepped frame on top of FrameTimeout: a frame at 60 fps takes about 17 ms.
     private static readonly TimeSpan PerFrameAllowance = TimeSpan.FromMilliseconds(100);
 
-    // The bridge ends a wait at its timeoutMs and a step at its StepAllowance deadline, each with its own answer; the send
-    // waits this much longer for that answer.
+    // A wait's timeoutMs and a step's or monitor's StepAllowance are its release: once that much load-adjusted time has passed,
+    // the server cancels it and the bridge ends it with its own answer (at its backstopMs, 5 x the release in real time, when
+    // the cancel is lost). The send waits this much longer for that answer.
     private static readonly TimeSpan WaitReplyAllowance = TimeSpan.FromSeconds(5);
 
     [McpServerTool(Name = "frame_control", ReadOnly = false, Destructive = false, OpenWorld = false)]
@@ -41,7 +42,7 @@ internal sealed partial class RuntimeTools
             + "NOTIFICATION_UNPAUSED, then NOTIFICATION_PAUSED; it fails if the game pauses itself before count frames have "
             + "run. A step counts drawn frames, so it is refused while the window cannot draw (minimized) or the game runs in "
             + "low-processor mode, and while another step runs, pause and resume are refused too. A step whose frames stop "
-            + "being drawn stops at its deadline (10 s + 100 ms per frame), leaves the game paused and fails. time_scale sets "
+            + "being drawn stops at its deadline (10 s + 100 ms per frame, load-adjusted), leaves the game paused and fails. time_scale sets "
             + "Engine.time_scale, which scales process and physics delta. Returns {paused, timeScale, processFrames, "
             + "physicsFrames}, the frames and ticks the step ran (0 for other actions), plus screenshot when captured."
     )]
@@ -55,8 +56,8 @@ internal sealed partial class RuntimeTools
     )
     {
         JsonObject parameters = BuildFrameParameters(action, count, scale, options);
-        TimeSpan timeout = StepAllowance(count ?? 1) + WaitReplyAllowance;
-        BridgeCall call = new("frame_control", "frame", parameters, timeout);
+        TimeSpan allowance = StepAllowance(count ?? 1);
+        BridgeCall call = new("frame_control", "frame", parameters, allowance + WaitReplyAllowance, action == "step" ? allowance : null);
         BridgeResult result = await CallWithErrorsAsync(Find(session), call, cancellationToken);
         return await ShapeFrameResultAsync(result, cancellationToken);
     }
@@ -82,8 +83,8 @@ internal sealed partial class RuntimeTools
         )]
             WaitCondition condition,
         [Description(
-            "How long to wait, in milliseconds, 0 to 120000. 0 checks the condition once, now, and works while the game is paused; "
-                + "it is refused for a signal wait."
+            "How long to wait, in milliseconds, 0 to 120000, load-adjusted: under load it waits longer in wall time. 0 checks the "
+                + "condition once, now, and works while the game is paused; it is refused for a signal wait."
         )]
             int timeoutMs = 10_000,
         [Description("{screenshot}: screenshot false when left out.")] WaitOptions? options = null,
@@ -116,7 +117,7 @@ internal sealed partial class RuntimeTools
             + "1e-6) is dropped and counted in droppedDuplicates; the first is always kept. A missing node or property is refused "
             + "up front; a node freed mid-way samples as null. Refused while the game is paused and while a frame_control step "
             + "or another monitor runs; while it runs, pause, resume and a step are refused. It fails at its deadline (10 s + "
-            + "100 ms per sample) naming the frames it got."
+            + "100 ms per sample, load-adjusted) naming the frames it got."
     )]
     public async Task<string> MonitorPropertyAsync(
         [Description("The node: its path (/root/Main/Player), a path under the root (Main/Player) or a name.")] string node,
@@ -128,7 +129,8 @@ internal sealed partial class RuntimeTools
     {
         JsonObject parameters = BuildMonitorParameters(node, property, options);
         int samples = parameters["samples"]!.GetValue<int>();
-        BridgeCall call = new("monitor_property", "monitor", parameters, StepAllowance(samples) + WaitReplyAllowance);
+        TimeSpan allowance = StepAllowance(samples);
+        BridgeCall call = new("monitor_property", "monitor", parameters, allowance + WaitReplyAllowance, allowance);
         BridgeResult result = await CallWithErrorsAsync(Find(session), call, cancellationToken);
         JsonObject reply =
             result.Reply?.DeepClone() as JsonObject
@@ -221,7 +223,8 @@ internal sealed partial class RuntimeTools
 
     private async Task<BridgeResult> CallWaitAsync(JsonObject parameters, int timeoutMs, string? session, CancellationToken cancellationToken)
     {
-        BridgeCall call = new("wait_for", "wait_for", parameters, TimeSpan.FromMilliseconds(timeoutMs) + WaitReplyAllowance);
+        var wait = TimeSpan.FromMilliseconds(timeoutMs);
+        BridgeCall call = new("wait_for", "wait_for", parameters, wait + WaitReplyAllowance, timeoutMs > 0 ? wait : null);
         return await CallWithErrorsAsync(Find(session), call, cancellationToken);
     }
 

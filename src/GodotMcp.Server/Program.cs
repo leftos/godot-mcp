@@ -23,6 +23,7 @@ builder
     .WithToolsFromAssembly();
 
 using IHost host = builder.Build();
+Log.Ambient = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("GodotMcp.Server.Load");
 SessionRegistry sessions = host.Services.GetRequiredService<SessionRegistry>();
 host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(sessions.Shutdown);
 AppDomain.CurrentDomain.ProcessExit += (_, _) => sessions.Shutdown();

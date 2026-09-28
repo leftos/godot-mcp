@@ -95,7 +95,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     )]
     public async Task<string> AttachProjectAsync(
         [Description("The folder that holds the project's project.godot.")] string projectPath,
-        [Description("How long to wait for the game's bridge to connect, 1 to 600 seconds.")] int waitSeconds = 60,
+        [Description("How long to wait for the game's bridge to connect, 1 to 600 seconds, load-adjusted.")] int waitSeconds = 60,
         [Description(ShutOutDescription)] bool shutOutRealGamepads = false,
         [Description(AttachQuietDescription)] bool quiet = false,
         [Description(NewSessionDescription)] string? session = null,

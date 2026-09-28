@@ -59,7 +59,7 @@ internal sealed partial class RuntimeTools
             + "defaults to 0: checked once, now, even while paused), wait {any wait_for condition, timeoutMs?} (default "
             + "10000), no_errors {} (no errors since the previous no_errors, or since the batch started), screenshot {name, "
             + "tolerance?, maxChangedRatio?} (compare_screenshot must match). Any step may carry session. At most 100 steps; "
-            + "the whole batch stops after 300 s. Returns {passed, steps: [{index, tool or assert, ok, result or error}], "
+            + "the whole batch stops after 300 s of load-adjusted time. Returns {passed, steps: [{index, tool or assert, ok, result or error}], "
             + "failedAt?: {index, reason}}."
     )]
     public async Task<string> BatchDriveAsync(
@@ -70,9 +70,8 @@ internal sealed partial class RuntimeTools
     )
     {
         CheckBatch(steps);
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(BatchDeadline);
-        BatchRun run = new(server, session, MarkErrorFeeds(steps, session), deadline.Token);
+        using LoadDeadline deadline = sessions.Clock.Start(BatchDeadline, cancellationToken);
+        BatchRun run = new(server, session, MarkErrorFeeds(steps, session), deadline);
         JsonArray entries = [];
         JsonObject? failedAt = null;
         for (int index = 0; index < steps.Count && failedAt is null; index++)
@@ -265,11 +264,11 @@ internal sealed partial class RuntimeTools
         }
         catch (OperationCanceledException) when (DeadlinePassed(run, clientCancellation))
         {
-            return StepOutcome.Failed(DeadlineReason);
+            return StepOutcome.Failed(DeadlineFailure(run));
         }
         catch (McpException e)
         {
-            return StepOutcome.Failed(DeadlinePassed(run, clientCancellation) ? DeadlineReason : e.Message);
+            return StepOutcome.Failed(DeadlinePassed(run, clientCancellation) ? DeadlineFailure(run) : e.Message);
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
@@ -280,6 +279,10 @@ internal sealed partial class RuntimeTools
     /// <summary>Whether the batch's own deadline, not the client, cancelled it.</summary>
     private static bool DeadlinePassed(BatchRun run, CancellationToken clientCancellation) =>
         run.Cancellation.IsCancellationRequested && !clientCancellation.IsCancellationRequested;
+
+    /// <summary><see cref="DeadlineReason"/>, with the backstop clause when the batch's backstop, not its ceiling, ended it.</summary>
+    private string DeadlineFailure(BatchRun run) =>
+        run.Deadline.Reason == Session.DeadlineReason.Backstop ? DeadlineReason + run.Deadline.BackstopClause() : DeadlineReason;
 
     /// <summary>Logs an exception a step raised that no tool turned into an error, and fails the step with its type and message.</summary>
     private static StepOutcome Unexpected(BatchRun run, int index, BatchStep step, Exception exception)
@@ -383,7 +386,11 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>What a batch run carries from step to step: the server, the default session, the error marks and the deadline.</summary>
-    private sealed record BatchRun(McpServer Server, string? Session, Dictionary<GodotSession, long> Marks, CancellationToken Cancellation);
+    private sealed record BatchRun(McpServer Server, string? Session, Dictionary<GodotSession, long> Marks, LoadDeadline Deadline)
+    {
+        /// <summary>Cancelled when the batch's deadline passes or the client cancels the call.</summary>
+        public CancellationToken Cancellation => Deadline.Token;
+    }
 
     /// <summary>One assertion step as it runs: the step, the session it addresses, and its batch.</summary>
     private sealed record AssertionCall(BatchStep Step, string? Session, BatchRun Run);

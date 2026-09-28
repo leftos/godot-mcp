@@ -32,6 +32,9 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
     internal BridgeListener Listener => listener;
 
+    /// <summary>The clock every ceiling the sessions enforce runs on: the listener's.</summary>
+    internal LoadClock Clock => Listener.Clock;
+
     internal ILogger Logger => logger;
 
     /// <summary>The sessions' input captures, by session name, kept past the session they came from.</summary>
@@ -90,20 +93,19 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     )
     {
         string projectDir = NormaliseProjectDir(request.ProjectPath);
-        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        limit.CancelAfter(PreviewLimit);
+        using LoadDeadline limit = Clock.Start(PreviewLimit, cancellationToken);
         GodotSession session = ReservePreview(projectDir);
         try
         {
-            PrepResult prep = request.Prepare ? await PrepareForPreviewAsync(session, limit.Token, cancellationToken) : PrepResult.Skipped;
+            PrepResult prep = request.Prepare ? await PrepareForPreviewAsync(session, limit, cancellationToken) : PrepResult.Skipped;
             await session.LaunchAsync(request with { ProjectPath = projectDir, Prepare = false }, limit.Token);
             return await capture(session, prep, limit.Token);
         }
         catch (OperationCanceledException e) when (!cancellationToken.IsCancellationRequested)
         {
             throw new SessionException(
-                $"preview_scene did not show {request.Scene} within {PreviewLimit.TotalSeconds:0} s (prep, launch and capture together), "
-                    + "so its game was stopped. run_project on the scene shows what holds it up.",
+                $"preview_scene did not show {request.Scene} within {PreviewLimit.TotalSeconds:0} s (prep, launch and capture together)"
+                    + $"{BackstopClauseOf(limit)}, so its game was stopped. run_project on the scene shows what holds it up.",
                 e
             );
         }
@@ -491,17 +493,17 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// whole process tree, and refuses the preview with where the logs are and how to prepare the project beforehand.
     /// </summary>
     /// <exception cref="SessionException">The prep failed, or it passed the preview's limit.</exception>
-    private async Task<PrepResult> PrepareForPreviewAsync(GodotSession session, CancellationToken limit, CancellationToken caller)
+    private async Task<PrepResult> PrepareForPreviewAsync(GodotSession session, LoadDeadline limit, CancellationToken caller)
     {
         string projectDir = session.ProjectDir;
         SemaphoreSlim folderLock = PrepLock(projectDir);
         try
         {
-            await folderLock.WaitAsync(limit);
+            await folderLock.WaitAsync(limit.Token);
             try
             {
                 PrepContext context = new(projectDir, logger, () => RunningSessionNames(projectDir, session));
-                return await ProjectPrep.RunAsync(context, limit);
+                return await ProjectPrep.RunAsync(context, limit.Token);
             }
             finally
             {
@@ -512,13 +514,17 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         {
             throw new SessionException(
                 $"The prep of {projectDir} (its C# build or Godot import) did not finish within preview_scene's "
-                    + $"{PreviewLimit.TotalSeconds:0} s, so it was stopped with its whole process tree and the scene was not shown. "
+                    + $"{PreviewLimit.TotalSeconds:0} s{BackstopClauseOf(limit)}, so it was stopped with its whole process tree and the "
+                    + "scene was not shown. "
                     + $"Its logs are in {ProjectPrep.LogFolder(projectDir)}. Run run_project or validate first to build and import, "
                     + "or pass prepare: never.",
                 e
             );
         }
     }
+
+    /// <summary>The backstop clause of a preview's limit when its backstop ended it; empty when its ceiling did.</summary>
+    private static string BackstopClauseOf(LoadDeadline limit) => limit.Reason == DeadlineReason.Backstop ? limit.BackstopClause() : string.Empty;
 
     /// <summary>Stops a preview's game if it runs, then forgets the session and lets go of it as a replaced session is.</summary>
     private async Task EndPreviewAsync(GodotSession session)

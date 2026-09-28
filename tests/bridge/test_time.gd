@@ -102,6 +102,55 @@ func test_poll_with_timeout_zero_checks_once_without_a_frame() -> void:
 	time.free()
 
 
+func test_cancel_ends_a_running_step_as_its_deadline() -> void:
+	var time: Node = _time_script.new()
+	var params: Dictionary = {"action": "step", "count": 5}
+	var woken: Array = []
+	time.step_woken.connect(func(arrived: bool) -> void: woken.append(arrived))
+	time._running = "step"
+	time._running_params = params
+	assert_true(time.cancel(params), "the running step is cancelled")
+	assert_true(time._deadline_passed, "as its deadline passing would")
+	assert_eq(woken, [false], "the step's wait is woken as by its deadline")
+	time.free()
+
+
+func test_cancel_ignores_another_requests_params() -> void:
+	var time: Node = _time_script.new()
+	var running: Dictionary = {"action": "step", "count": 5}
+	var woken: Array = []
+	time.step_woken.connect(func(arrived: bool) -> void: woken.append(arrived))
+	assert_true(not time.cancel(running), "nothing runs")
+	time._running = "monitor"
+	time._running_params = running
+	assert_true(not time.cancel(running.duplicate()), "an equal Dictionary is another request's")
+	assert_true(not time._deadline_passed, "the running monitor goes on")
+	assert_eq(woken, [], "nothing is woken")
+	time.free()
+
+
+func test_poll_stops_when_cancelled() -> void:
+	var time: Node = _time_script.new()
+	var checks: Array = [0]
+	var probe := func() -> Array:
+		checks[0] += 1
+		return [false, "idle"]
+	var outcome: Dictionary = time._poll(probe, 60000.0, {"_cancelled": true})["result"]
+	assert_eq(outcome["met"], false, "a cancelled wait is not met")
+	assert_eq(outcome["last"], "idle", "the last value seen")
+	assert_eq(outcome["frames"], 0, "no frame waited for")
+	assert_eq(checks, [1], "checked once")
+	time.free()
+
+
+func test_backstop_ms_overrides_the_deadline() -> void:
+	var time: Node = _time_script.new()
+	assert_approx(time._bound_ms({"backstopMs": 55000}, 11000.0), 55000.0, "the backstop wins")
+	assert_approx(time._bound_ms({"deadlineMs": 11000}, 11000.0), 11000.0, "an older server's")
+	assert_approx(time._bound_ms({}, 0.0), 0.0, "a check-once wait stays at 0")
+	time.free()
+
+
 func test_text_reads_only_string_fields() -> void:
 	var time: Node = _time_script.new()
 	assert_eq(time._text({"node": "Main"}, "node"), "Main", "a string")

@@ -165,10 +165,20 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// Sends a command to the live run's or attached game's bridge. When a debugger is attached to the game, a ping with a
     /// <see cref="DebuggerPingTimeout"/> goes first, so a game the debugger holds paused fails the call at once instead of at its timeout.
     /// </summary>
+    /// <remarks>
+    /// <paramref name="timeout"/> and <paramref name="release"/> are load-adjusted, as <see cref="BridgeConnection.SendAsync"/>
+    /// takes them.
+    /// </remarks>
     /// <exception cref="SessionException">
     /// The run is not live, the attached game's connection has ended, or the game is paused under a debugger.
     /// </exception>
-    public async Task<JsonNode?> SendAsync(string command, JsonObject? parameters, TimeSpan timeout, CancellationToken cancellationToken)
+    public async Task<JsonNode?> SendAsync(
+        string command,
+        JsonObject? parameters,
+        TimeSpan timeout,
+        CancellationToken cancellationToken,
+        TimeSpan? release = null
+    )
     {
         BridgeConnection connection = FindLiveConnection();
         if (DebuggedProcessId is int debugged)
@@ -176,13 +186,16 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             await RefuseIfPausedAsync(connection, debugged, cancellationToken);
         }
 
-        return await connection.SendAsync(command, parameters, timeout, cancellationToken);
+        return await connection.SendAsync(command, parameters, timeout, cancellationToken, release);
     }
 
-    /// <summary>Pings the game's bridge without the debugger check <see cref="SendAsync"/> makes first: the hang probe's own ping.</summary>
+    /// <summary>
+    /// Pings the game's bridge, in wall time, without the debugger check <see cref="SendAsync"/> makes first: the hang probe's
+    /// own ping.
+    /// </summary>
     /// <exception cref="SessionException">The run is not live, or the attached game's connection has ended.</exception>
     public Task<JsonNode?> PingAsync(TimeSpan timeout, CancellationToken cancellationToken) =>
-        FindLiveConnection().SendAsync("ping", null, timeout, cancellationToken);
+        FindLiveConnection().SendRawAsync("ping", null, timeout, cancellationToken);
 
     /// <summary>The game's own process id when a debugger is attached to it; null when none is, or while that id is unknown.</summary>
     internal int? DebuggedProcessId => GameProcessId is int game && registry.IsDebuggerAttached(game) ? game : null;
@@ -299,7 +312,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     {
         try
         {
-            await connection.SendAsync("ping", null, DebuggerPingTimeout, cancellationToken);
+            await connection.SendRawAsync("ping", null, DebuggerPingTimeout, cancellationToken);
         }
         catch (TimeoutException e)
         {
@@ -481,8 +494,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     private async Task<BridgeConnection> WaitForHandshakeAsync(GodotRun run, HandshakeExpectation expected, CancellationToken cancellationToken)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(HandshakeTimeout);
+        using LoadDeadline deadline = registry.Clock.Start(HandshakeTimeout, cancellationToken);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         Task<BridgeConnection> accept = registry.Listener.AcceptBridgeAsync(expected, timeout.Token);
         Task exited = run.Process.WaitForExitAsync(timeout.Token);
         await Task.WhenAny(accept, exited);
@@ -500,7 +513,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        throw DescribeFailedLaunch(run, exitedEarly);
+        throw DescribeFailedLaunch(run, exitedEarly, deadline);
     }
 
     private async Task ObserveAbandonedAsync(Task<BridgeConnection> accept, Task exited)
@@ -520,11 +533,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
-    private static SessionException DescribeFailedLaunch(GodotRun run, bool exitedEarly)
+    private static SessionException DescribeFailedLaunch(GodotRun run, bool exitedEarly, LoadDeadline deadline)
     {
+        string backstop = deadline.Reason == DeadlineReason.Backstop ? deadline.BackstopClause() : string.Empty;
         string what = exitedEarly
             ? $"Godot exited with code {run.ExitCode} before the bridge connected"
-            : $"the bridge did not connect within {HandshakeTimeout.TotalSeconds:0} s, so Godot was stopped";
+            : $"the bridge did not connect within {HandshakeTimeout.TotalSeconds:0} s{backstop}, so Godot was stopped";
         string stderr = string.Join('\n', run.Stderr.Tail(FailureStderrLines));
         return new SessionException(
             $"Launching {run.ProjectDir} failed: {what}. Check that the project runs on its own "
@@ -546,7 +560,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
         try
         {
-            await connection.SendAsync("ping", null, HangProbe.PingTimeout, CancellationToken.None);
+            await connection.SendRawAsync("ping", null, HangProbe.PingTimeout, CancellationToken.None);
             return false;
         }
         catch (TimeoutException)
@@ -567,7 +581,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         {
             try
             {
-                await connection.SendAsync("shutdown", null, ShutdownReplyTimeout, CancellationToken.None);
+                await connection.SendRawAsync("shutdown", null, ShutdownReplyTimeout, CancellationToken.None);
             }
             catch (Exception e) when (e is TimeoutException or IOException or InvalidOperationException)
             {

@@ -6,6 +6,35 @@ extends "res://gd_test.gd"
 # gdlint: disable=private-method-call
 
 var _bridge_script: GDScript = load_bridge_script("godot_mcp_bridge.gd")
+var _time_script: GDScript = load_bridge_script("godot_mcp_time.gd")
+
+
+func test_cancel_of_an_answered_request_replies_false() -> void:
+	var bridge: Node = _bridge_script.new()
+	bridge._time = _time_script.new()
+	var waiting: Dictionary = {"kind": "exists", "node": "Main", "timeoutMs": 10000}
+	var answered: Dictionary = {"kind": "exists", "node": "Main", "timeoutMs": 10000}
+	bridge._track(17, "wait_for", answered)
+	bridge._track(18, "wait_for", waiting)
+	bridge._track(19, "ping", {})
+	bridge._running_requests.erase(17)
+	assert_true(not bridge._cancel(17), "an answered request")
+	assert_true(not answered.has("_cancelled"), "an answered request's params are left alone")
+	assert_true(not bridge._cancel(19), "a request that is not cancellable")
+	assert_true(not bridge._cancel(42), "an unknown request")
+	assert_true(bridge._cancel(18), "a running wait")
+	assert_eq(waiting.get("_cancelled"), true, "its params are marked, ending its poll")
+	bridge._time.free()
+	bridge.free()
+
+
+func test_a_lost_connection_forgets_the_running_requests() -> void:
+	var bridge: Node = _bridge_script.new()
+	bridge._track(18, "wait_for", {"kind": "exists", "node": "Main", "timeoutMs": 10000})
+	bridge._end_connection()
+	assert_true(bridge._connection_lost, "the connection is marked lost")
+	assert_true(bridge._running_requests.is_empty(), "no running request is left to cancel")
+	bridge.free()
 
 
 func test_save_preview_leaves_a_narrow_image_alone() -> void:

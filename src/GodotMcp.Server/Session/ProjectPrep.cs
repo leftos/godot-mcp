@@ -150,7 +150,7 @@ internal static class ProjectPrep
 
     private static string StateOf(ToolProcessResult built)
     {
-        if (built.KilledByCeiling)
+        if (built.WasKilled)
         {
             return "stopped";
         }
@@ -215,7 +215,12 @@ internal static class ProjectPrep
             cancellationToken
         );
         string failure = $"dotnet msbuild -getItem:Compile on {csproj}";
-        if (listed.KilledByCeiling || listed.ExitCode != 0)
+        if (listed.WasKilled)
+        {
+            throw new SessionException($"{failure} did not finish ({listed.KillDetail}), so the Compile items are unknown. Its log: {log}");
+        }
+
+        if (listed.ExitCode != 0)
         {
             throw new SessionException($"{failure} failed (exited {listed.ExitCode}), so the Compile items are unknown. Its log: {log}");
         }
@@ -268,10 +273,10 @@ internal static class ProjectPrep
     /// <exception cref="SessionException">The build hit its ceiling or failed.</exception>
     private static void CheckBuild(ToolProcessResult built, string csproj, string log, IReadOnlyList<BuildDiagnostic> diagnostics)
     {
-        if (built.KilledByCeiling)
+        if (built.WasKilled)
         {
             throw new SessionException(
-                $"The C# build of {csproj} did not finish within {Ceiling.TotalSeconds:0} s, so it was stopped with its whole process tree "
+                $"The C# build of {csproj} did not finish ({built.KillDetail}), so it was stopped with its whole process tree "
                     + $"and the game was not started. Its log: {log}"
             );
         }
@@ -336,10 +341,10 @@ internal static class ProjectPrep
         // --import opens the editor headless, waits for its first scan and quits; it never reads override.cfg.
         ToolProcessRequest request = new(godot, ["--headless", "--path", projectDir, "--import"], projectDir, log, Ceiling) { AppendToLog = append };
         ToolProcessResult imported = await RunToolAsync(request, "Godot", context.Logger, cancellationToken);
-        if (imported.KilledByCeiling)
+        if (imported.WasKilled)
         {
             throw new SessionException(
-                $"The Godot import of {projectDir} did not finish within {Ceiling.TotalSeconds:0} s, so it was stopped with its whole "
+                $"The Godot import of {projectDir} did not finish ({imported.KillDetail}), so it was stopped with its whole "
                     + $"process tree and the game was not started. Its log: {log}"
             );
         }

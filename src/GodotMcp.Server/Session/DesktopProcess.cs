@@ -17,13 +17,15 @@ internal static class ChildProcesses
     /// </summary>
     public static readonly Lock StartLock = new();
 
-    /// <summary>Starts <paramref name="process"/> under <see cref="StartLock"/>.</summary>
+    /// <summary>Starts <paramref name="process"/> under <see cref="StartLock"/> and adds it to the server's <see cref="OwnWork"/>.</summary>
     public static void Start(Process process)
     {
         lock (StartLock)
         {
             process.Start();
         }
+
+        OwnWork.Adopt(process);
     }
 }
 
@@ -152,6 +154,8 @@ internal sealed partial class DesktopProcess : IRunProcess
 
     public void Start()
     {
+        // Joined while suspended, so every process it starts joins too.
+        OwnWork.Adopt(_native.Process);
         if (ResumeThread(_native.Thread) == uint.MaxValue)
         {
             int error = Marshal.GetLastPInvokeError();

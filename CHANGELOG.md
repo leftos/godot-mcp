@@ -2,6 +2,18 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- A build, import, headless run or clip cut idle and silent for 120 s is stopped as stalled; such errors now name the limit reached.
+- A frame step, monitor, wait or C# call the server gives up on is cancelled in the game, freeing the bridge for the next call.
+
+### Changed
+
+- Timeouts and ceilings, caller-set ones included, run on load-adjusted time that slows while other work loads the machine, and end at 5x in wall time.
+- A git call that runs past 30 s is stopped and treated as a failed git call instead of holding up the tool.
+
 ## 0.3.5 - 2026-09-27
 
 ### Changed

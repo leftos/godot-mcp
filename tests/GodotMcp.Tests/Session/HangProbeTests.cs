@@ -7,6 +7,7 @@ using GodotMcp.Server.Wire;
 using GodotMcp.Tests.Wire;
 using GodotMcp.TestSupport;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using ModelContextProtocol;
 
 namespace GodotMcp.Tests.Session;
@@ -179,6 +180,40 @@ public sealed partial class HangProbeTests : IAsyncDisposable
                 + "debugger before driving the game.",
             timedOut.Message
         );
+    }
+
+    [Fact]
+    public void ABackstopTimeoutSaysSo()
+    {
+        FakeTimeProvider time = new();
+        FakeLoadSource machine = new(time, processors: 4);
+        using LoadClock clock = new(time, machine);
+        machine.SetLoad(busyShare: 1, ownCores: 0);
+        using LoadDeadline backstopped = clock.Start(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+        using LoadClock idleClock = new(time, new NoLoadSource());
+        using LoadDeadline ceiling = idleClock.Start(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+
+        // A saturated machine runs the clock at 5%: 2 s of load-adjusted time would take far longer than the 10 s backstop.
+        for (int step = 0; step < 105; step++)
+        {
+            time.Advance(TimeSpan.FromMilliseconds(100));
+        }
+
+        HangReport busy = new(true, string.Empty, null, null);
+        const string Running = ", but the game answered a ping, so its main thread is running; a hint.";
+
+        Assert.Equal(DeadlineReason.Backstop, backstopped.Reason);
+        Assert.StartsWith(
+            "; that is 5 x its 2 s ceiling in wall time, the backstop (load-adjusted ",
+            backstopped.BackstopClause(),
+            StringComparison.Ordinal
+        );
+        Assert.Equal(
+            $"'run_script' timed out after 2000 ms{backstopped.BackstopClause()}{Running}",
+            busy.Describe("run_script", TimeSpan.FromSeconds(2), "; a hint", backstopped)
+        );
+        Assert.Equal(DeadlineReason.Ceiling, ceiling.Reason);
+        Assert.Equal($"'run_script' timed out after 2000 ms{Running}", busy.Describe("run_script", TimeSpan.FromSeconds(2), "; a hint", ceiling));
     }
 
     [GeneratedRegex(@"^Process \d+: \d+ ms CPU over 1 s, \d+ threads, main thread \w+(/\w+)?\.$")]

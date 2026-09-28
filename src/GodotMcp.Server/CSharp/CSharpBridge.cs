@@ -16,6 +16,9 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
     /// <summary>The folder beside the extension that holds the helper's managed dlls (run.ps1's <c>dotnet</c> lays it out).</summary>
     private const string HelperFolderName = "helper";
 
+    /// <summary>How long the bridge polls a pending call when the tool gives no timeoutMs: the bridge's own DEFAULT_TIMEOUT_MS.</summary>
+    internal const int DefaultPendingTimeoutMs = 10_000;
+
     /// <summary>
     /// Why the project cannot answer a C# tool, or null when it can: no C# assembly, a C# build the prep skipped, an
     /// assembly that was never built, or a server that ships no helper.
@@ -68,8 +71,9 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
 
     /// <summary>
     /// Sends one helper request through the bridge, copying the helper into the cache first. <paramref name="timeoutMs"/> is how
-    /// long the server waits for the reply; <paramref name="pendingTimeoutMs"/>, when given, is how long the bridge polls a call
-    /// the helper answers as pending (the bridge's own default otherwise).
+    /// long the server waits for the reply; <paramref name="pendingTimeoutMs"/> (<see cref="DefaultPendingTimeoutMs"/> when null)
+    /// is how long the bridge polls a call the helper answers as pending, and the request's release: both in load-adjusted
+    /// time, after which the server cancels the call and the bridge forgets it.
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// The project cannot be asked, the helper's copy could not be prepared, the bridge answered nothing, or the helper
@@ -90,14 +94,16 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
         }
 
         string copied = PrepareCopy(extension!);
-        JsonObject parameters = new() { ["extension"] = copied, ["request"] = requestJson };
-        if (pendingTimeoutMs is { } pending)
+        int pending = pendingTimeoutMs ?? DefaultPendingTimeoutMs;
+        JsonObject parameters = new()
         {
-            parameters["timeoutMs"] = pending;
-        }
-
+            ["extension"] = copied,
+            ["request"] = requestJson,
+            ["timeoutMs"] = pending,
+        };
+        var release = TimeSpan.FromMilliseconds(pending);
         JsonNode? result =
-            await session.SendAsync("dotnet", parameters, TimeSpan.FromMilliseconds(timeoutMs), cancellation)
+            await session.SendAsync("dotnet", parameters, TimeSpan.FromMilliseconds(timeoutMs), cancellation, release)
             ?? throw new InvalidOperationException("The C# helper's reply is missing: the bridge answered no result for 'dotnet'.");
         return ParseReply(result);
     }

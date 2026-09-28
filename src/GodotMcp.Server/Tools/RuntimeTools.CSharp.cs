@@ -146,7 +146,7 @@ internal sealed partial class RuntimeTools
         [Description(
             "{signature, typeArgs, keep, timeoutMs, maxDepth}: the overload's parameter types in cs_members' spelling, a "
                 + "generic method's type arguments, whether a handle to the value comes back too (false by default), how long a "
-                + "Task is awaited, 1 to 120000 ms (10000 by default), and how many levels of nested objects are written, 1 to "
+                + "Task is awaited, 1 to 120000 ms, load-adjusted (10000 by default), and how many levels of nested objects are written, 1 to "
                 + "32 (8 by default)."
         )]
             CsCallOptions? options = null,

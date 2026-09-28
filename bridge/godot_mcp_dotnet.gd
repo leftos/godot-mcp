@@ -11,7 +11,8 @@ extends Node
 ##
 ## A reply saying the helper's call is pending (its Task has not finished) is polled once a frame,
 ## never waited on in place: the Task's continuation runs on a later frame of this same thread.
-## Past the request's timeoutMs the call is forgotten, its Task left running in the game.
+## Past the request's timeoutMs (its backstopMs when the server sends one), or when the server
+## cancels the request, the call is forgotten, its Task left running in the game.
 
 ## The SceneTree meta the helper stores its callable under (Helper.MetaName in the helper).
 const META_NAME := "godot_mcp_dotnet"
@@ -45,8 +46,8 @@ var _loaded_path: String = ""
 var _failure: String = ""
 
 
-## Runs a dotnet request, {extension, request, timeoutMs?}; answers {result: {reply, loadedNow}} or
-## {error}. A coroutine: a pending reply is polled across frames.
+## Runs a dotnet request, {extension, request, timeoutMs?, backstopMs?}; answers {result: {reply,
+## loadedNow}} or {error}. A coroutine: a pending reply is polled across frames.
 func handle(params: Dictionary) -> Dictionary:
 	var refusal: String = _refusal(params)
 	if refusal.is_empty():
@@ -66,15 +67,16 @@ func handle(params: Dictionary) -> Dictionary:
 
 
 ## Calls the helper with the request and, while it answers that the call is pending, polls it once
-## a frame until it answers otherwise or timeoutMs has passed since the call, when it forgets the
-## call and answers why.
+## a frame until it answers otherwise, or its deadline passes (backstopMs since the call when the
+## server sends one, else timeoutMs), or the server cancels the request (params._cancelled), when
+## it forgets the call and answers why, naming timeoutMs.
 func _call(helper: Callable, params: Dictionary, loaded_now: bool) -> Dictionary:
 	var timeout_ms: int = int(params.get("timeoutMs", DEFAULT_TIMEOUT_MS))
-	var deadline: int = clock.call() + timeout_ms
+	var deadline: int = clock.call() + int(params.get("backstopMs", timeout_ms))
 	var reply: String = str(helper.call(params["request"]))
 	while reply.begins_with(PENDING_PREFIX):
 		var id: String = str((JSON.parse_string(reply) as Dictionary)["pending"])
-		if clock.call() >= deadline:
+		if clock.call() >= deadline or params.get("_cancelled", false):
 			helper.call(JSON.stringify({"op": "forget", "id": id}))
 			return {"error": TIMED_OUT % timeout_ms}
 		await wait_frame.call()

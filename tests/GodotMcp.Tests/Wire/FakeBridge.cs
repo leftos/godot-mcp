@@ -8,6 +8,8 @@ namespace GodotMcp.Tests.Wire;
 /// <summary>The game's side of the wire, without Godot: dials, says hello, and answers a request with a name of its own.</summary>
 internal sealed class FakeBridge(TcpClient client) : IDisposable
 {
+    private readonly FrameDecoder _requests = new();
+
     /// <summary>Dials with a hello that carries no pid, as a bridge older than the field does.</summary>
     public static Task<FakeBridge> DialAsync(int port, string token, string projectPath, CancellationToken cancellationToken) =>
         DialAsync(port, token, projectPath, null, cancellationToken);
@@ -106,6 +108,37 @@ internal sealed class FakeBridge(TcpClient client) : IDisposable
         await client.GetStream().WriteAsync(FrameCodec.EncodeJson(reply), cancellationToken);
         return HandshakeExpectation.ReadString(request, "command");
     }
+
+    /// <summary>Reads the next request without answering it, keeping any bytes after it for the next read.</summary>
+    public async Task<JsonObject> ReadRequestAsync(CancellationToken cancellationToken)
+    {
+        byte[] chunk = new byte[4096];
+        byte[] payload;
+        while (!_requests.TryReadFrame(out payload))
+        {
+            int read = await client.GetStream().ReadAsync(chunk, cancellationToken);
+            if (read == 0)
+            {
+                throw new IOException("the server closed the connection before sending a request");
+            }
+
+            _requests.Append(chunk.AsSpan(0, read));
+        }
+
+        return FrameCodec.DecodeJson(payload);
+    }
+
+    /// <summary>Answers <paramref name="request"/>, read by <see cref="ReadRequestAsync"/>, with <paramref name="result"/>.</summary>
+    public Task ReplyAsync(JsonObject request, JsonObject result, CancellationToken cancellationToken) =>
+        WriteAsync(
+            new JsonObject
+            {
+                ["id"] = request["id"]?.DeepClone(),
+                ["ok"] = true,
+                ["result"] = result,
+            },
+            cancellationToken
+        );
 
     /// <summary>Whether the server closes the connection within <paramref name="wait"/>.</summary>
     public async Task<bool> IsClosedByServerAsync(TimeSpan wait)

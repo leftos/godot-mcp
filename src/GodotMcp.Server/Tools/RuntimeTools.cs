@@ -170,7 +170,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     )]
     public async Task<string> RunScriptAsync(
         [Description("The GDScript source.")] string script,
-        [Description("How long to wait for execute to return, in milliseconds.")] int timeoutMs = 30000,
+        [Description("How long to wait for execute to return, in milliseconds, load-adjusted.")] int timeoutMs = 30000,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
@@ -306,12 +306,12 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
 
     private static async Task<JsonNode?> CallBridgeAsync(GodotSession target, BridgeCall call, CancellationToken cancellationToken)
     {
-        (string tool, string command, JsonObject parameters, TimeSpan timeout) = call;
+        (string tool, string command, JsonObject parameters, TimeSpan timeout, TimeSpan? release) = call;
         return await SendMappedAsync(
             target,
             tool,
             timeout,
-            () => target.SendAsync(command, parameters, timeout, cancellationToken),
+            () => target.SendAsync(command, parameters, timeout, cancellationToken, release),
             cancellationToken
         );
     }
@@ -364,7 +364,11 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     )
     {
         HangReport report = await HangProbe.RunAsync(target, cancellationToken);
-        Log.RequestTimedOut(target.Logger, tool, target.Name, report.Outcome, report.ProcessState);
+        LoadDeadline? deadline = (timedOut as LoadTimeoutException)?.Deadline;
+        string load =
+            $"{LoadDeadline.Seconds(deadline?.Wall ?? timeout)} s of wall time, the machine "
+            + $"{LoadDeadline.Percent(deadline?.MeanFree ?? 1)}% free on average";
+        Log.RequestTimedOut(target.Logger, tool, target.Name, load, report.Outcome, report.ProcessState);
         string hint = tool switch
         {
             "run_script" => "; a script that needs longer can raise timeoutMs",
@@ -377,7 +381,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
             "frame_control" => "; a step waits for drawn frames, so a minimized window stalls it",
             _ => string.Empty,
         };
-        return new McpException(report.Describe(tool, timeout, hint), timedOut);
+        return new McpException(report.Describe(tool, timeout, hint, deadline), timedOut);
     }
 
     /// <exception cref="McpException">The mode is not path_only, preview or full.</exception>
@@ -451,8 +455,12 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     // GDScript's JSON reads and writes every number it parsed as a float, so an integer may arrive as 640.0.
     private static int? ReadInt(JsonNode? node) => node is JsonValue value && value.TryGetValue(out double number) ? (int)number : null;
 
-    /// <summary>One request to the bridge: the tool it serves (for messages), the bridge command, its parameters and its timeout.</summary>
-    internal sealed record BridgeCall(string Tool, string Command, JsonObject Parameters, TimeSpan Timeout);
+    /// <summary>
+    /// One request to the bridge: the tool it serves (for messages), the bridge command, its parameters, its reply timeout and,
+    /// for a request the bridge can end early, its release (both load-adjusted, as <see cref="BridgeConnection.SendAsync"/>
+    /// takes them).
+    /// </summary>
+    internal sealed record BridgeCall(string Tool, string Command, JsonObject Parameters, TimeSpan Timeout, TimeSpan? Release = null);
 
     /// <summary>A bridge reply's result and the errors the game raised while it was on its way.</summary>
     internal sealed record BridgeResult(JsonNode? Reply, IReadOnlyList<ErrorEntry> Errors);

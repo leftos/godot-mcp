@@ -77,6 +77,9 @@ var bridge: Node
 var _running: String = ""
 ## Whether the running step's or monitor's deadline has passed.
 var _deadline_passed: bool = false
+## The params Dictionary of the running step or monitor, the very one its request handler holds,
+## so a cancel ends only that request; null while none runs.
+var _running_params: Variant = null
 
 
 ## Runs params.action: pause, resume, step {count, unit, screenshot, previewMaxWidth} or
@@ -121,7 +124,8 @@ func _busy_refusal() -> String:
 
 
 ## Refuses a step that would wait for draws that never come; else runs it under the step mark
-## until it ends or its deadline passes: params.deadlineMs, the server's own allowance for it.
+## until it ends or its deadline passes: params.deadlineMs, the server's own allowance for it, or
+## params.backstopMs when the server sends one.
 func _guarded_step(params: Dictionary, result: Dictionary) -> String:
 	if not DisplayServer.window_can_draw():
 		return NO_DRAW_REFUSAL
@@ -129,23 +133,33 @@ func _guarded_step(params: Dictionary, result: Dictionary) -> String:
 		return LOW_PROCESSOR_REFUSAL
 	var count: int = maxi(1, int(params.get("count", 1)))
 	var deadline: SceneTreeTimer = _begin(
-		"step", float(params.get("deadlineMs", 10000 + 100 * count))
+		"step", float(params.get("deadlineMs", 10000 + 100 * count)), params
 	)
 	var error: String = await _step(params, result)
 	_end(deadline)
 	return error
 
 
-## Marks kind ("step" or "monitor") running, set before the first await so a request read in
-## the same frame is refused, and arms its deadline, deadline_ms of real time: the server's own
-## allowance, so a run the server has given up on still frees the mark. Returns the deadline.
-func _begin(kind: String, deadline_ms: float) -> SceneTreeTimer:
+## Marks kind ("step" or "monitor") running for the request holding params, set before the first
+## await so a request read in the same frame is refused, and arms its deadline of real time:
+## params.backstopMs when the server sends one (its allowance measured in load-adjusted time, so
+## the server cancels sooner), else deadline_ms, the server's own allowance; either way a run the
+## server has given up on still frees the mark. Returns the deadline.
+func _begin(kind: String, deadline_ms: float, params: Dictionary) -> SceneTreeTimer:
 	_running = kind
+	_running_params = params
 	_deadline_passed = false
 	# process_always and ignore_time_scale: the deadline runs in real time, paused or not.
-	var deadline: SceneTreeTimer = get_tree().create_timer(deadline_ms / 1000.0, true, false, true)
+	var seconds: float = _bound_ms(params, deadline_ms) / 1000.0
+	var deadline: SceneTreeTimer = get_tree().create_timer(seconds, true, false, true)
 	deadline.timeout.connect(_on_deadline)
 	return deadline
+
+
+## The real-time limit a request runs under: params.backstopMs when the server sends one, else
+## fallback_ms, the limit an older server's request carries.
+func _bound_ms(params: Dictionary, fallback_ms: float) -> float:
+	return float(params.get("backstopMs", fallback_ms))
 
 
 ## Disarms the deadline _begin armed and clears the mark.
@@ -153,6 +167,17 @@ func _end(deadline: SceneTreeTimer) -> void:
 	if deadline.timeout.is_connected(_on_deadline):
 		deadline.timeout.disconnect(_on_deadline)
 	_running = ""
+	_running_params = null
+
+
+## Ends the running step or monitor as its deadline would, when params is the very Dictionary its
+## request holds (a step leaves the tree paused and answers STEP_STALLED; a monitor answers
+## MONITOR_STALLED). Returns whether it ended one.
+func cancel(params: Dictionary) -> bool:
+	if _running.is_empty() or not is_same(params, _running_params):
+		return false
+	_on_deadline()
+	return true
 
 
 func _on_deadline() -> void:
@@ -300,7 +325,7 @@ func monitor(params: Dictionary) -> Dictionary:
 		return {"error": refusal}
 	var count: int = maxi(1, int(params.get("samples", 60)))
 	var deadline: SceneTreeTimer = _begin(
-		"monitor", float(params.get("deadlineMs", 10000 + 100 * count))
+		"monitor", float(params.get("deadlineMs", 10000 + 100 * count)), params
 	)
 	var outcome: Dictionary = await _sample(params, count)
 	_end(deadline)
@@ -416,30 +441,38 @@ func _check_ui_changed() -> Array:
 	return [true, change]
 
 
-## Polls probe as _poll does; with params.screenshot a met wait also captures the frame it was
+## Polls probe as _poll does, for params.backstopMs when the server sends one, else timeout_ms,
+## until a cancel of the request; with params.screenshot a met wait also captures the frame it was
 ## met on: a waiting one checks probe at each frame's draw instead (_check_at_draws), a
 ## check-once one captures the draw of the frame it runs in. Returns _poll's outcome, its result
 ## with screenshot or warning when met and captured.
 func _poll_capturing(probe: Callable, timeout_ms: int, params: Dictionary) -> Dictionary:
+	var bound_ms: float = _bound_ms(params, timeout_ms)
 	if not bool(params.get("screenshot", false)):
-		return await _poll(probe, timeout_ms)
+		return await _poll(probe, bound_ms, params)
 	var drawn: Dictionary = {}
 	if timeout_ms > 0:
 		probe = _check_at_draws(probe, drawn)
-	var outcome: Dictionary = await _poll(probe, timeout_ms)
+	var outcome: Dictionary = await _poll(probe, bound_ms, params)
 	_stop_draw_checks(drawn)
 	if outcome.has("error") or not outcome["result"]["met"]:
 		return outcome
 	return await _with_capture(drawn.get("image"), params, outcome["result"])
 
 
-## Checks probe now and then once a frame until it is met, cannot be met, or timeout_ms has
-## passed. Returns {result: {met, elapsedMs, frames, value | last}} or {error}.
-func _poll(probe: Callable, timeout_ms: int) -> Dictionary:
+## Checks probe now and then once a frame until it is met, cannot be met, bound_ms has passed, or
+## the request's params are marked _cancelled (the server's cancel). Returns {result: {met,
+## elapsedMs, frames, value | last}} or {error}.
+func _poll(probe: Callable, bound_ms: float, params: Dictionary = {}) -> Dictionary:
 	var began: int = Time.get_ticks_msec()
 	var frames: int = 0
 	var seen: Array = probe.call()
-	while seen.size() == 2 and not seen[0] and Time.get_ticks_msec() - began < timeout_ms:
+	while (
+		seen.size() == 2
+		and not seen[0]
+		and Time.get_ticks_msec() - began < bound_ms
+		and not params.get("_cancelled", false)
+	):
 		await get_tree().process_frame
 		frames += 1
 		seen = probe.call()

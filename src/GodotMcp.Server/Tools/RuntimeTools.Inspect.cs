@@ -150,7 +150,7 @@ internal sealed partial class RuntimeTools
         [Description(NodeDescription)] string node,
         [Description("The method's name; a script's methods and the engine class's alike.")] string method,
         [Description("The arguments, as JSON, in order; none when left out.")] JsonElement[]? args = null,
-        [Description("{timeoutMs}: how long to wait for the method, 1 to 120000 ms; 10000 by default.")] CallOptions? options = null,
+        [Description("{timeoutMs}: how long to wait for the method, 1 to 120000 ms, load-adjusted; 10000 by default.")] CallOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
