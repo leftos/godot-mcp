@@ -70,7 +70,7 @@ static func write_pending(pending: Array) -> Dictionary:
 static func _write(write: Dictionary) -> Dictionary:
 	var output: String = write["output"]
 	return SceneFiles.save_resource(
-		write["library"], output, SceneFiles.uid_for(output), write["ext_uids"]
+		write["library"], output, SceneFiles.uid_for(output), write["ext_uids"], false
 	)
 
 

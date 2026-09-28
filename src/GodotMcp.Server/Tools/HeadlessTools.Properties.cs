@@ -31,9 +31,10 @@ internal sealed partial class HeadlessTools
             + "added as an instance of that scene. options.properties are set on the new node before it is added: when any does "
             + "not take, nothing is added and the error names every failing property. Refused: a name a sibling already has, and "
             + "a parent inside an instanced scene (an instance's own root may be the parent). Returns {path, type, instance?, "
-            + "script?, errors?}: path is the new node's path from the scene's root."
+            + "script?, warning?, errors?}: path is the new node's path from the scene's root."
             + ValuesNote
             + WriteNote
+            + EditNote
     )]
     public async Task<string> AddNodeAsync(
         [Description(ProjectPathDescription)] string projectPath,
@@ -86,10 +87,11 @@ internal sealed partial class HeadlessTools
             + "set and read back; a read-back that differs fails. A node the scene inherits from its base scene may be set (the "
             + "override is saved in this scene); a node inside an instanced scene is refused unless the instance is an editable "
             + "instance. All or nothing: when any entry fails, nothing is saved and the error names every failing entry. Returns "
-            + "{results: [{nodePath, property, before, after}], errors?}; a value whose JSON is longer than 2000 characters comes "
+            + "{results: [{nodePath, property, before, after}], warning?, errors?}; a value whose JSON is longer than 2000 characters comes "
             + "back as {valuePreview, valueLength}."
             + ValuesNote
             + WriteNote
+            + EditNote
     )]
     public async Task<string> SetNodePropertiesAsync(
         [Description(ProjectPathDescription)] string projectPath,

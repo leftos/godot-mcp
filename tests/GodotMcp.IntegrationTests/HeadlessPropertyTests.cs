@@ -201,6 +201,46 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AddNodeKeepsTheRestOfTheFile()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+
+        string added = await _tools.AddNodeAsync(probe.Directory, "level.tscn", "Node2D", "Marker", cancellationToken: cancellation);
+
+        Assert.Equal("""{"path":"Marker","type":"Node2D"}""", added);
+        string[] original = LevelScene.Split('\n');
+        string[] lines = Read(probe.Directory, "level.tscn").Split('\n');
+        int marker = original.Length;
+        Assert.Equal(marker + 2, lines.Length);
+        Assert.StartsWith("[node name=\"Marker\" type=\"Node2D\" parent=\".\" unique_id=", lines[marker], StringComparison.Ordinal);
+        Assert.Equal([.. original[..^1], "", lines[marker], ""], lines);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetNodePropertiesChangesOnlyThatNode()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+
+        await _tools.SetNodePropertiesAsync(
+            probe.Directory,
+            "level.tscn",
+            [new PropertyUpdate("Box", "position", Json("""{"x": 5, "y": 6}"""))],
+            cancellation
+        );
+
+        string[] original = LevelScene.Split('\n');
+        string[] lines = Read(probe.Directory, "level.tscn").Split('\n');
+        int box = Array.IndexOf(original, "[node name=\"Box\" type=\"Node2D\" parent=\".\"]");
+        Assert.Equal(original.Length + 1, lines.Length);
+        Assert.StartsWith("[node name=\"Box\" type=\"Node2D\" parent=\".\" unique_id=", lines[box], StringComparison.Ordinal);
+        Assert.Equal([.. original[..box], lines[box], "position = Vector2(5, 6)", .. original[(box + 1)..]], lines);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task SetNodePropertiesSetsATextureFromAPath()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

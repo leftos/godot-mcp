@@ -77,7 +77,7 @@ static func create_scene(params: Dictionary) -> Dictionary:
 	var named: bool = given is String and not (given as String).is_empty()
 	root.name = given if named else SceneEdit.root_name_for(scene_path)
 	var facts: Dictionary = {"name": String(root.name), "type": type}
-	var saved: Dictionary = _save_checked(root, "", scene_path, params)
+	var saved: Dictionary = _save_checked(root, "", scene_path, params, false)
 	root.free()
 	if saved.has("error"):
 		return _fail(saved["error"])
@@ -92,7 +92,7 @@ static func save_scene(params: Dictionary) -> Dictionary:
 	if opened.has("error"):
 		return _fail(opened["error"])
 	var root: Node = opened["root"]
-	var saved: Dictionary = _save_checked(root, scene_path, target, params)
+	var saved: Dictionary = _save_checked(root, scene_path, target, params, false)
 	root.free()
 	if saved.has("error"):
 		return _fail(saved["error"])
@@ -100,8 +100,9 @@ static func save_scene(params: Dictionary) -> Dictionary:
 	return {"ok": true, "result": result}
 
 
-## Opens params.scene, applies the edit op and saves the scene in place, keeping its uid; nothing
-## is saved when the edit refuses.
+## Opens params.scene, applies the edit op and saves the scene in place, keeping its uid and the
+## text of every section the edit left alone; nothing is saved when the edit refuses. The result
+## carries the save's warning when the file had to be saved in Godot's own form.
 static func edit_scene(op: String, params: Dictionary) -> Dictionary:
 	var scene_path: String = params.get("scene", "")
 	var opened: Dictionary = SceneEdit.open(scene_path)
@@ -110,9 +111,11 @@ static func edit_scene(op: String, params: Dictionary) -> Dictionary:
 	var root: Node = opened["root"]
 	var applied: Dictionary = apply(op, root, params, _context_of(params))
 	if not applied.has("error"):
-		var saved: Dictionary = _save_checked(root, scene_path, scene_path, params)
+		var saved: Dictionary = _save_checked(root, scene_path, scene_path, params, true)
 		if saved.has("error"):
 			applied = saved
+		elif saved.has("warning"):
+			applied["result"]["warning"] = saved["warning"]
 	root.free()
 	if applied.has("error"):
 		return _fail(applied["error"])
@@ -136,7 +139,8 @@ static func read_scene(op: String, params: Dictionary) -> Dictionary:
 ## first step that fails nothing is saved and nothing written. When every step passes, the scene is
 ## saved once (unless every step is export_mesh_library), then the libraries the steps deferred to
 ## context.pending_writes are written. {ok, result: {passed, steps: [{index, tool, ok, result |
-## error}], failedAt?: {index, tool, error}, uid?}}; a failed save or write is {ok: false, error}.
+## error}], failedAt?: {index, tool, error}, uid?, warning?}}; a failed save or write is {ok: false,
+## error}.
 static func batch_scene(params: Dictionary) -> Dictionary:
 	var opened: Dictionary = SceneEdit.open(params.get("scene", ""))
 	if opened.has("error"):
@@ -156,6 +160,8 @@ static func batch_scene(params: Dictionary) -> Dictionary:
 		return _fail(saved["error"])
 	if saved.has("uid"):
 		report["uid"] = saved["uid"]
+	if saved.has("warning"):
+		report["warning"] = saved["warning"]
 	var written: Dictionary = SceneMesh.write_pending(pending)
 	if written.has("error"):
 		var prefix: String = "the scene was saved, but " if saved.has("uid") else ""
@@ -182,21 +188,23 @@ static func _apply_steps(root: Node, steps: Array, context: Dictionary) -> Dicti
 	return {"passed": true, "steps": entries}
 
 
-## Saves the batch's scene in place unless every step is export_mesh_library: {uid}, {error}, or
-## {} when it is not saved.
+## Saves the batch's scene in place, keeping the text of every section the steps left alone, unless
+## every step is export_mesh_library: {uid, warning?}, {error}, or {} when it is not saved.
 static func _save_batch(root: Node, steps: Array, params: Dictionary) -> Dictionary:
 	for step: Dictionary in steps:
 		if step.get("op", "") != "export_mesh_library":
 			var scene_path: String = params.get("scene", "")
-			return _save_checked(root, scene_path, scene_path, params)
+			return _save_checked(root, scene_path, scene_path, params, true)
 	return {}
 
 
 ## Saves root to target with the uid target has (a new one for a new file), unless the scene uses
-## C# scripts while the build failed: {uid} or {error}. source is the file root was opened from,
-## "" for a new scene; its own ext_resource uids are the ones written back first.
+## C# scripts while the build failed: {uid, warning?} or {error}. source is the file root was
+## opened from, "" for a new scene; its own ext_resource uids are the ones written back first.
+## keep_layout splices the save into the file's own text (SceneFiles.save_resource); create_scene
+## and save_scene pass false, so their file takes Godot's full form.
 static func _save_checked(
-	root: Node, source: String, target: String, params: Dictionary
+	root: Node, source: String, target: String, params: Dictionary, keep_layout: bool
 ) -> Dictionary:
 	var uses_csharp: bool = SceneEdit.tree_uses_csharp(root)
 	var known: Dictionary = {}
@@ -207,7 +215,7 @@ static func _save_checked(
 	var refusal: String = SceneEdit.csharp_refusal(named, uses_csharp, params)
 	if not refusal.is_empty():
 		return {"error": refusal}
-	return SceneEdit.save(root, target, SceneFiles.uid_for(target), known)
+	return SceneEdit.save(root, target, SceneFiles.uid_for(target), known, keep_layout)
 
 
 ## The context an edit of the scene params.scene is applied in: {scene, build, buildConfiguration,

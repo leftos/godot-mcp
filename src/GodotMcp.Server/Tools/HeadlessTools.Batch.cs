@@ -56,8 +56,9 @@ internal sealed partial class HeadlessTools
             + "the open scene, each seeing the ones before it; at the first step that fails nothing is saved and no mesh library "
             + "is written. When all pass, the scene is saved once (unless every step was export_mesh_library), then each mesh "
             + "library is written. Returns {passed, steps: [{index, tool, ok, result | error}], failedAt?: {index, tool, error}, "
-            + "uid?, errors?}: each result is what that tool returns on its own, and uid is the saved scene's."
+            + "uid?, warning?, errors?}: each result is what that tool returns on its own, and uid is the saved scene's."
             + WriteNote
+            + EditNote
     )]
     public async Task<string> BatchSceneOperationsAsync(
         [Description(ProjectPathDescription)] string projectPath,

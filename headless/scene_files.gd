@@ -5,7 +5,12 @@ extends RefCounted
 ## file, writes the others back. Outside the editor a file's uid is read from the file itself (see
 ## uid_of).
 
+const SceneSplice := preload("scene_splice.gd")
 const EXT_TAG := "[ext_resource "
+## The warning a save that keeps the layout returns when it cannot, with the reason.
+const LAYOUT_WARNING := (
+	"the scene was saved in Godot's own form, " + "not only the parts the edit changed: %s"
+)
 const PATH_ATTRIBUTE := ' path="'
 const UID_ATTRIBUTE := ' uid="'
 const UID_PREFIX := "uid://"
@@ -16,19 +21,21 @@ const TEXT_EXTENSIONS: Array[String] = ["tscn", "tres"]
 
 ## Saves resource to path with the uid uid, creating missing folders, and, for a text scene or
 ## resource, gives each ext_resource its uid back: the one in known (res:// path to uid:// text)
-## first, else the one its file records. {uid} as uid:// text, or {error}.
+## first, else the one its file records. With keep_layout, a file that existed before the save
+## keeps the text of every section the save left alone (SceneSplice.splice); when a section
+## cannot be mapped the file stays as saved and the result carries a warning. {uid, warning?} with
+## uid as uid:// text, or {error}.
 static func save_resource(
-	resource: Resource, path: String, uid: int, known: Dictionary
+	resource: Resource, path: String, uid: int, known: Dictionary, keep_layout: bool
 ) -> Dictionary:
 	var error: int = DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	if error != OK and error != ERR_ALREADY_EXISTS:
 		return {"error": "cannot create the folder of %s: %s" % [path, error_string(error)]}
+	var original: String = _layout_source(path, keep_layout)
 	error = ResourceSaver.save(resource, path)
 	if error != OK:
 		return {"error": "%s could not be saved: %s" % [path, error_string(error)]}
-	error = ResourceSaver.set_uid(path, uid)
-	if error == OK and path.get_extension().to_lower() in TEXT_EXTENSIONS:
-		error = _restore_ext_uids(path, known)
+	error = _write_uids(path, uid, known)
 	if error != OK:
 		var reason: String = error_string(error)
 		return {
@@ -38,7 +45,46 @@ static func save_resource(
 				% [path, reason]
 			)
 		}
-	return {"uid": ResourceUID.id_to_text(uid)}
+	var saved: Dictionary = {"uid": ResourceUID.id_to_text(uid)}
+	if not original.is_empty():
+		var warning: String = _splice_into(path, original)
+		if not warning.is_empty():
+			saved["warning"] = warning
+	return saved
+
+
+## Sets the uid of the file at path and, in a text file, writes each ext_resource's uid back; an
+## error code.
+static func _write_uids(path: String, uid: int, known: Dictionary) -> int:
+	var error: int = ResourceSaver.set_uid(path, uid)
+	if error == OK and path.get_extension().to_lower() in TEXT_EXTENSIONS:
+		error = _restore_ext_uids(path, known)
+	return error
+
+
+## The text of the file at path before a save that keeps its layout; "" when the layout is not
+## kept or there is no file.
+static func _layout_source(path: String, keep_layout: bool) -> String:
+	if not keep_layout or not FileAccess.file_exists(path):
+		return ""
+	return FileAccess.get_file_as_string(path)
+
+
+## Splices the file at path, as just saved, into original and writes the result back: "", or the
+## warning that the file stays in Godot's own form and why.
+static func _splice_into(path: String, original: String) -> String:
+	var spliced: Dictionary = SceneSplice.splice(original, FileAccess.get_file_as_string(path))
+	var reason: String = spliced.get("fallback", "")
+	if reason.is_empty():
+		var file := FileAccess.open(path, FileAccess.WRITE)
+		if file != null:
+			file.store_string(spliced["text"])
+			file.close()
+			return ""
+		reason = (
+			"the spliced text could not be written (%s)" % error_string(FileAccess.get_open_error())
+		)
+	return LAYOUT_WARNING % reason
 
 
 ## The uid to save path with: the one the file at path has, else a new one.

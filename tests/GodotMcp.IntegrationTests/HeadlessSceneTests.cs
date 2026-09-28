@@ -172,6 +172,23 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task SaveSceneKeepsGodotsFullForm()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+
+        JsonNode saved = JsonNode.Parse(await _tools.SaveSceneAsync(probe.Directory, "level.tscn", cancellationToken: cancellation))!;
+
+        Assert.Null(saved["warning"]);
+        string[] lines = File.ReadAllLines(Path.Combine(probe.Directory, "level.tscn"));
+        Assert.DoesNotContain(lines, line => line.Contains("load_steps=", StringComparison.Ordinal));
+        string[] nodes = [.. lines.Where(line => line.StartsWith("[node ", StringComparison.Ordinal))];
+        Assert.Equal(4, nodes.Length);
+        Assert.All(nodes, node => Assert.Contains(" unique_id=", node, StringComparison.Ordinal));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task SaveSceneKeepsAnExtResourceUidTheSourceCarried()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -259,7 +276,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
 
         Assert.Equal("""["Btn","./Box"]""", deleted["deleted"]!.ToJsonString());
         Assert.Equal([".", "Boss", "Boss/Sprite"], Paths(await TreeAsync(probe.Directory, "level.tscn", cancellation)));
-        Assert.Equal($"[gd_scene format=3 uid=\"{LevelUid}\"]", FirstLine(probe.Directory, "level.tscn"));
+        Assert.Equal($"[gd_scene load_steps=2 format=3 uid=\"{LevelUid}\"]", FirstLine(probe.Directory, "level.tscn"));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -637,7 +654,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal("Btn2", first["newPath"]!.GetValue<string>());
         Assert.Equal("Btn3", second["newPath"]!.GetValue<string>());
         Assert.Equal([".", "Boss", "Boss/Sprite", "Btn", "Btn2", "Btn3", "Box"], Paths(await TreeAsync(probe.Directory, "level.tscn", cancellation)));
-        Assert.Equal($"[gd_scene format=3 uid=\"{LevelUid}\"]", FirstLine(probe.Directory, "level.tscn"));
+        Assert.Equal($"[gd_scene load_steps=2 format=3 uid=\"{LevelUid}\"]", FirstLine(probe.Directory, "level.tscn"));
     }
 
     [Fact(Timeout = TestTimeoutMs)]

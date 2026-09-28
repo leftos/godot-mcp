@@ -188,13 +188,16 @@ static func _ends_with_any(text: String, suffixes: Array) -> bool:
 
 
 ## Packs root and saves it to the text scene at path with the uid uid, as SceneFiles.save_resource
-## does: known holds the source's own ext_resource uids. {uid} as uid:// text, or {error}.
-static func save(root: Node, path: String, uid: int, known: Dictionary) -> Dictionary:
+## does: known holds the source's own ext_resource uids, and keep_layout keeps the text of every
+## section the edit left alone. {uid, warning?} with uid as uid:// text, or {error}.
+static func save(
+	root: Node, path: String, uid: int, known: Dictionary, keep_layout: bool
+) -> Dictionary:
 	var packed := PackedScene.new()
 	var error: int = packed.pack(root)
 	if error != OK:
 		return {"error": "%s could not be packed: %s" % [path, error_string(error)]}
-	return SceneFiles.save_resource(packed, path, uid, known)
+	return SceneFiles.save_resource(packed, path, uid, known, keep_layout)
 
 
 ## The root name for a new scene at path: its file name in PascalCase (player_ship.tscn and

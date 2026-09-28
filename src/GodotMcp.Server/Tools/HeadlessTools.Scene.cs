@@ -20,6 +20,10 @@ internal sealed partial class HeadlessTools
         + "not saved while the project's C# build fails. Refused while a session is live on the project (a headless run would "
         + "load the bridge from its override.cfg); stop_project or detach_project it first.";
 
+    private const string EditNote =
+        " The file keeps every part the edit does not change as it was; when that cannot be done, it is saved in Godot's full "
+        + "form and the result carries a warning saying why.";
+
     private const string ScenePathDescription =
         "The scene: a res:// path or a path relative to the project folder, ending .tscn (the edit tools write text scenes only).";
 
@@ -105,8 +109,9 @@ internal sealed partial class HeadlessTools
         "Deletes nodes, with their children, from a scene file and saves it, in a headless Godot, without running the game. "
             + "The scene's root cannot be deleted, nor a node inside an instanced scene (edit that scene's own file instead); the "
             + "root of an instance can, which removes the instance. All or nothing: when any path is refused, nothing is saved and "
-            + "the error names every refused path. Returns {deleted, errors?}: deleted lists the paths as given."
+            + "the error names every refused path. Returns {deleted, warning?, errors?}: deleted lists the paths as given."
             + WriteNote
+            + EditNote
     )]
     public async Task<string> DeleteNodesAsync(
         [Description(ProjectPathDescription)] string projectPath,
@@ -139,9 +144,10 @@ internal sealed partial class HeadlessTools
             + "without running the game. The script must compile and extend the node's class or one of its parents. A node inside "
             + "an instanced scene is refused (attach it in that scene's own file); an instance's root and a node an inherited "
             + "scene gets from its base are allowed, saved as overrides. A C# script is refused while the project's C# build "
-            + "fails. Returns {path, script: {resource, uid?}, previous?: {resource, uid?}, errors?}: path is the node's path "
+            + "fails. Returns {path, script: {resource, uid?}, previous?: {resource, uid?}, warning?, errors?}: path is the node's path "
             + "from the scene's root, previous the script it had."
             + WriteNote
+            + EditNote
     )]
     public async Task<string> AttachScriptAsync(
         [Description(ProjectPathDescription)] string projectPath,
@@ -177,8 +183,9 @@ internal sealed partial class HeadlessTools
             + "nodes outside the copy, are kept; connections coming into the copy from outside it are not. The scene's root, a "
             + "node inside an instanced "
             + "scene and a parent inside one are refused (an instance's root is a valid parent). Returns {originalPath, newPath, "
-            + "errors?}, both paths from the scene's root."
+            + "warning?, errors?}, both paths from the scene's root."
             + WriteNote
+            + EditNote
     )]
     public async Task<string> DuplicateNodeAsync(
         [Description(ProjectPathDescription)] string projectPath,
@@ -230,8 +237,9 @@ internal sealed partial class HeadlessTools
             + "the editor's full scan of the project: it writes an .import file beside every asset never imported and a .uid file "
             + "beside every script. An image in a folder Godot does not scan (a name starting with \".\", or holding a .gdignore) "
             + "is refused. A node inside an instanced scene is "
-            + "refused. Returns {path, texture: {resource, uid?}, errors?}: path is the node's path from the scene's root."
+            + "refused. Returns {path, texture: {resource, uid?}, warning?, errors?}: path is the node's path from the scene's root."
             + WriteNote
+            + EditNote
     )]
     public async Task<string> LoadSpriteAsync(
         [Description(ProjectPathDescription)] string projectPath,
