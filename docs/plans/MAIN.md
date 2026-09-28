@@ -25,6 +25,10 @@ Shared: the screenshot grabs in `bridge/godot_mcp_bridge.gd`, `godot_mcp_time.gd
 - [ ] `take_screenshot` misses popups and tooltips in a project that sets `display/window/subwindows/embed_subwindows=false`, since each is its own OS window outside the root viewport's texture (measured 2026-09-27 for #9): one capture helper for every grab that composites each visible non-embedded `Window` at its offset from the root; check the offset on a visible desktop first, since a native popup's `position` read (0,0) on the hidden one
 - [ ] #25: a `capture_frames` tool that captures at set game-time points (`at` or `{every, for}`) in one call, through the capture helper
 
+### Release
+
+- [ ] Cut a release (DEVELOPMENT.md's "CI and releases") once #23, #24, #25 and #26 have landed (user, 2026-09-28)
+
 ### Singles
 
 - [ ] #26: a `run_script` (and `call_method`) that times out keeps running in the game and corrupts the next run; stop it on timeout and restore `time_scale` and `paused`, as decided in [DECISIONS.md](../DECISIONS.md) 15
