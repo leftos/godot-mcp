@@ -30,6 +30,7 @@ Shared: the screenshot grabs in `bridge/godot_mcp_bridge.gd`, `godot_mcp_time.gd
 
 ### Singles
 
+- [ ] `BridgeListenerTests.ASilentConnectionIsRefusedOnceNoWaiterIsPending` failed once in a commit hook's unit run while three implementers loaded the machine, then passed on the retry: find what it times on wall clock
 - [ ] #26: a `run_script` (and `call_method`) that times out keeps running in the game and corrupts the next run; stop it on timeout and restore `time_scale` and `paused`, as decided in [DECISIONS.md](../DECISIONS.md) 15
 - [ ] `run_csharp`: give snippets a `CancellationToken` the timeout's cancel fires, so a timed-out snippet can stop itself (today its `Task` is forgotten and keeps running)
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see [DECISIONS.md](../DECISIONS.md#gamepad-input-from-godot-472s-source))
