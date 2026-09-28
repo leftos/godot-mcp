@@ -308,6 +308,14 @@ internal sealed partial class RuntimeTools
             throw new McpException($"The server does not serve {name}, so the batch cannot run it.");
         }
 
+        // The step calls the tool directly, past the server's filters, so it checks its arguments as ArgumentErrors.Filter does.
+        JsonElement schema = tool.ProtocolTool.InputSchema;
+        string? unknown = ArgumentErrors.UnknownArgument(name, schema, arguments.Keys);
+        if (unknown is not null)
+        {
+            throw new McpException(unknown);
+        }
+
         CallToolRequestParams request = new() { Name = name, Arguments = arguments };
         JsonRpcRequest rpc = new() { Id = new RequestId($"{BatchToolName}/{name}"), Method = RequestMethods.ToolsCall };
         RequestContext<CallToolRequestParams> context = new(run.Server, rpc, request) { Services = run.Server.Services };
@@ -317,12 +325,15 @@ internal sealed partial class RuntimeTools
             string text = TextOf(result.Content);
             return result.IsError is true ? StepOutcome.Failed(text) : StepOutcome.Passed(ParseText(text));
         }
-        catch (Exception e) when (e is JsonException or ArgumentException)
+        catch (Exception e) when (ArgumentErrors.Describe(name, schema, arguments, e) is { } message)
         {
-            // The SDK binds a tool's arguments from JSON and throws these when they do not fit its parameters.
-            throw new McpException($"{name}'s args do not fit its parameters: {e.Message}", e);
+            throw new McpException(StepToolMessage(name, message), e);
         }
     }
+
+    /// <summary>An argument error named for the step's tool: one that does not already start with the tool's name gets it as a prefix.</summary>
+    private static string StepToolMessage(string name, string message) =>
+        message.StartsWith(name, StringComparison.Ordinal) ? message : $"{name}: {message}";
 
     private async Task<StepOutcome> AssertWaitAsync(AssertionCall call)
     {

@@ -7,6 +7,11 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Changed
 
 - `stop_project` gives `quitMs`, how long a game that quit took after the quit request, and `restart_project` gives `previousQuitMs`.
+- Every tool, and each `batch_drive` and `batch_scene_operations` step, refuses an argument or options key it does not take, naming the keys it does.
+
+### Fixed
+
+- An argument of the wrong kind or a missing one names the argument, the kind it takes and the value given, instead of a bare "An error occurred".
 
 ## 0.5.0 - 2026-09-28
 

@@ -221,6 +221,34 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 
+    [Fact(Timeout = 120_000)]
+    public async Task AWrongKindArgumentIsRefusedByName()
+    {
+        await using McpClient client = await ConnectAsync();
+        Dictionary<string, object?> options = new() { ["prepare"] = true };
+
+        Dictionary<string, object?> arguments = new() { ["projectPath"] = _probe.Directory, ["options"] = options };
+
+        CallToolResult run = await client.CallToolAsync("run_project", arguments, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(run.IsError, Text(run));
+        Assert.Contains("options.prepare takes a string, not true.", Text(run), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task AnUnknownOptionKeyIsRefused()
+    {
+        await using McpClient client = await ConnectAsync();
+        Dictionary<string, object?> options = new() { ["prepar"] = "auto" };
+
+        Dictionary<string, object?> arguments = new() { ["projectPath"] = _probe.Directory, ["options"] = options };
+
+        CallToolResult run = await client.CallToolAsync("run_project", arguments, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(run.IsError, Text(run));
+        Assert.Contains("options has no 'prepar'", Text(run), StringComparison.Ordinal);
+    }
+
     private static Task<McpClient> ConnectAsync()
     {
         StdioClientTransport transport = new(

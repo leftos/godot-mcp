@@ -1,5 +1,6 @@
 using System.Collections.Frozen;
 using System.ComponentModel;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
@@ -22,6 +23,8 @@ internal sealed partial class HeadlessTools
         + "disconnect_signal, export_mesh_library";
 
     private static readonly TimeSpan BatchCeiling = TimeSpan.FromSeconds(120);
+
+    private static readonly Lazy<FrozenDictionary<string, JsonElement>> SceneStepSchemas = new(FindSceneStepSchemas);
 
     private static readonly FrozenDictionary<string, SceneStepKind> SceneStepKinds = new Dictionary<string, SceneStepKind>
     {
@@ -163,49 +166,72 @@ internal sealed partial class HeadlessTools
     }
 
     /// <summary>
-    /// A step's args as its tool's args record, bound with the serializer options the SDK binds the tool's own arguments with
-    /// (<see cref="McpJsonUtilities.DefaultOptions"/>), so a nested object takes what it takes in the single tool.
+    /// A step's args as its tool's args record, bound with the serializer options the server binds the tool's own arguments with
+    /// (<see cref="ToolJson.Options"/>), so a nested object takes what it takes in the single tool; a failure is named against
+    /// the tool's own input schema by <see cref="ArgumentErrors"/>.
     /// </summary>
     /// <exception cref="McpException">A key the tool does not take, a missing required one, or a value that does not fit its type.</exception>
     private static object BindSceneStepArgs(string tool, SceneStepKind kind, JsonObject? args)
     {
         JsonObject given = args ?? [];
-        CheckSceneStepKeys(tool, kind, given);
+        JsonElement schema = SceneStepSchemas.Value[tool];
+        CheckSceneStepKeys(tool, schema, given);
         try
         {
-            return given.Deserialize(kind.ArgsType, McpJsonUtilities.DefaultOptions)
-                ?? throw new McpException($"args do not fit {tool}'s parameters.");
+            return given.Deserialize(kind.ArgsType, ToolJson.Options) ?? throw new McpException($"args do not fit {tool}'s parameters.");
         }
         catch (JsonException e)
         {
-            // The serializer's own message names .NET types; its path names the key.
-            string where = e.Path?.TrimStart('$').TrimStart('.') ?? string.Empty;
-            throw new McpException($"args.{where} has the wrong type for {tool}; see the tool's schema for what it takes.", e);
+            var arguments = given.ToDictionary(pair => pair.Key, pair => JsonSerializer.SerializeToElement(pair.Value));
+            throw new McpException(ArgumentErrors.Describe(tool, schema, arguments, e) ?? e.Message, e);
         }
     }
 
     /// <exception cref="McpException">A key the tool does not take (projectPath and scenePath among them), or a required one missing.</exception>
-    private static void CheckSceneStepKeys(string tool, SceneStepKind kind, JsonObject given)
+    private static void CheckSceneStepKeys(string tool, JsonElement schema, JsonObject given)
     {
-        foreach (string key in given.Select(pair => pair.Key))
+        string[] keys = [.. given.Select(pair => pair.Key)];
+        string? batchPath = keys.FirstOrDefault(key => key is "projectPath" or "scenePath");
+        if (batchPath is not null)
         {
-            if (key is "projectPath" or "scenePath")
-            {
-                throw new McpException($"args.{key} is not taken: the batch's projectPath and scenePath are every step's.");
-            }
-
-            if (!kind.Names.Contains(key, StringComparer.Ordinal))
-            {
-                throw new McpException($"args.{key} is not an argument of {tool}; it takes {string.Join(", ", kind.Names)}.");
-            }
+            throw new McpException($"args.{batchPath} is not taken: the batch's projectPath and scenePath are every step's.");
         }
 
-        string? missing = kind.Required.FirstOrDefault(name => !given.ContainsKey(name));
-        if (missing is not null)
+        string? refusal = ArgumentErrors.UnknownArgument(tool, schema, keys) ?? ArgumentErrors.MissingArgument(tool, schema, keys);
+        if (refusal is not null)
         {
-            throw new McpException($"args.{missing} is missing; {tool} requires it.");
+            throw new McpException(refusal);
         }
     }
+
+    /// <summary>Each batchable tool's input schema as the server builds it, less projectPath and scenePath, which a step never gives.</summary>
+    private static FrozenDictionary<string, JsonElement> FindSceneStepSchemas() =>
+        typeof(HeadlessTools)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Select(method => (Method: method, method.GetCustomAttribute<McpServerToolAttribute>()?.Name))
+            .Where(tool => tool.Name is not null && SceneStepKinds.ContainsKey(tool.Name))
+            .ToFrozenDictionary(tool => tool.Name!, tool => SceneStepSchema(tool.Method), StringComparer.Ordinal);
+
+    private static JsonElement SceneStepSchema(MethodInfo method)
+    {
+        McpServerToolCreateOptions options = new() { SerializerOptions = ToolJson.Options };
+        var tool = McpServerTool.Create(method, _ => throw new InvalidOperationException("a schema needs no target"), options);
+        JsonObject schema = JsonNode.Parse(tool.ProtocolTool.InputSchema.GetRawText())!.AsObject();
+        if (schema["properties"] is JsonObject properties)
+        {
+            properties.Remove("projectPath");
+            properties.Remove("scenePath");
+        }
+
+        if (schema["required"] is JsonArray required)
+        {
+            schema["required"] = new JsonArray([.. required.Where(name => !IsBatchPath(name)).Select(name => name?.DeepClone())]);
+        }
+
+        return JsonSerializer.SerializeToElement(schema);
+    }
+
+    private static bool IsBatchPath(JsonNode? name) => name?.GetValue<string>() is "projectPath" or "scenePath";
 
     /// <summary>The batch's result with each set_node_properties step's values cut as that tool cuts them, and <c>errors</c> added.</summary>
     private static string ShapeSceneBatch(HeadlessResult run)

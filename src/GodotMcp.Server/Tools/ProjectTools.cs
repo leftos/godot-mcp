@@ -62,10 +62,10 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         [Description("Arguments for the game, passed after --; the game reads them with OS.get_cmdline_user_args().")] string[]? userArgs = null,
         [Description("Arguments for the engine, placed before --, e.g. [\"--resolution\", \"1280x720\"].")] string[]? engineArgs = null,
         [Description(
-            "{quiet, shutOutRealGamepads, session, prepare, preset, record}; when left out, quiet is true unless godot-mcp.json "
+            "{quiet, shutOutRealGamepads, session, prepare, preset, record, dropIdle}; when left out, quiet is true unless godot-mcp.json "
                 + "sets it, shutOutRealGamepads is false, prepare is auto (a stale C# assembly is built and missing imports are run "
                 + "first; the result's prep says what was done), no preset is used, the session is named by the preset's session, "
-                + "else after the project folder, and record is false (with record, the result's recording.path is the movie)."
+                + "else after the project folder, record is false (with record, the result's recording.path is the movie), and dropIdle is false."
         )]
             RunOptions? options = null,
         CancellationToken cancellationToken = default

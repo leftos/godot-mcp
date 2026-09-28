@@ -30,7 +30,7 @@ public sealed class BatchDispatchTests : IAsyncDisposable
         services.AddLogging();
         services.AddSingleton(_sessions);
         services.AddSingleton(TestCSharp.Unused());
-        services.AddMcpServer().WithToolsFromAssembly(typeof(RuntimeTools).Assembly);
+        services.AddMcpServer().WithToolsFromAssembly(typeof(RuntimeTools).Assembly, ToolJson.Options);
         _services = services.BuildServiceProvider();
     }
 
@@ -50,8 +50,7 @@ public sealed class BatchDispatchTests : IAsyncDisposable
 
         string error = batch["steps"]![0]!["error"]!.GetValue<string>();
         Assert.False(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
-        Assert.StartsWith("click's args do not fit its parameters: The JSON value could not be converted to ", error, StringComparison.Ordinal);
-        Assert.Contains("InputTarget", error, StringComparison.Ordinal);
+        Assert.StartsWith("click: target takes an object, not 5. target: ", error, StringComparison.Ordinal);
     }
 
     [Fact]

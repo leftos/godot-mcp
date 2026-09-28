@@ -1,6 +1,7 @@
 using GodotMcp.Server;
 using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
+using GodotMcp.Server.Tools;
 using GodotMcp.Server.Wire;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -20,7 +21,8 @@ builder.Services.AddSingleton(new CSharpBridge(new HelperCache(HelperCache.Defau
 builder
     .Services.AddMcpServer(options => options.ServerInfo = new Implementation { Name = "godot-mcp", Version = ServerVersion.Value })
     .WithStdioServerTransport()
-    .WithToolsFromAssembly();
+    .WithToolsFromAssembly(serializerOptions: ToolJson.Options)
+    .WithRequestFilters(filters => filters.AddCallToolFilter(ArgumentErrors.Filter));
 
 using IHost host = builder.Build();
 Log.Ambient = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("GodotMcp.Server.Load");

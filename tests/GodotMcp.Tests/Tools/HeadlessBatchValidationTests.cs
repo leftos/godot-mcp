@@ -86,28 +86,33 @@ public sealed class HeadlessBatchValidationTests : IDisposable
         McpException refused = await RefusedAsync([new SceneBatchStep("delete_nodes", new JsonObject { ["nodePaths"] = 5 })]);
         McpException nested = await RefusedAsync([new SceneBatchStep("duplicate_node", duplicate)]);
 
-        Assert.Equal(
-            "step 0 (delete_nodes): args.nodePaths has the wrong type for delete_nodes; see the tool's schema for what it takes.",
-            refused.Message
-        );
-        Assert.Equal(
-            "step 0 (duplicate_node): args.options.parent has the wrong type for duplicate_node; see the tool's schema for what it takes.",
-            nested.Message
-        );
+        Assert.StartsWith("step 0 (delete_nodes): nodePaths takes an array, not 5. nodePaths: ", refused.Message, StringComparison.Ordinal);
+        Assert.StartsWith("step 0 (duplicate_node): options.parent takes a string, not 5. parent: ", nested.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task AnUnknownNestedKeyIsIgnoredAsTheSingleToolIgnoresIt()
+    public async Task AnUnknownOrMissingArgIsNamedAsTheSingleToolNamesIt()
+    {
+        JsonObject unknown = new() { ["nodePaths"] = new JsonArray("Box"), ["nodePath"] = "Box" };
+
+        McpException extra = await RefusedAsync([new SceneBatchStep("delete_nodes", unknown)]);
+        McpException missing = await RefusedAsync([new SceneBatchStep("delete_nodes", [])]);
+
+        Assert.Equal("step 0 (delete_nodes): delete_nodes has no argument 'nodePath'; it takes: nodePaths.", extra.Message);
+        Assert.Equal("step 0 (delete_nodes): delete_nodes needs the argument 'nodePaths'.", missing.Message);
+    }
+
+    [Fact]
+    public async Task AnUnknownNestedKeyIsRefusedAsTheSingleToolRefusesIt()
     {
         const string withExtra = """{"parent": "Box", "extra": 1}""";
         JsonObject duplicate = new() { ["nodePath"] = "Box", ["options"] = JsonNode.Parse(withExtra) };
 
-        // The SDK binds the single tool's options with these options, which skip a key no property takes.
-        DuplicateNodeOptions? single = JsonSerializer.Deserialize<DuplicateNodeOptions>(withExtra, McpJsonUtilities.DefaultOptions);
-        McpException refused = await RefusedAsync([new SceneBatchStep("duplicate_node", duplicate), NoPaths()]);
+        McpException refused = await RefusedAsync([new SceneBatchStep("duplicate_node", duplicate)]);
 
-        Assert.Equal("Box", single?.Parent);
-        Assert.StartsWith("step 1 (delete_nodes): ", refused.Message, StringComparison.Ordinal);
+        // The server binds the single tool's options with these options, which refuse a key no property takes.
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<DuplicateNodeOptions>(withExtra, ToolJson.Options));
+        Assert.Equal("step 0 (duplicate_node): options has no 'extra'; it takes: parent.", refused.Message);
     }
 
     [Fact]
@@ -156,9 +161,10 @@ public sealed class HeadlessBatchValidationTests : IDisposable
 
         Assert.Equal("step 0 (move_node): move_node needs options.parent, options.position or both.", noPlace.Message);
         Assert.Equal("step 1 (move_node): position takes exactly one of index, before or after; got index, before.", ambiguous.Message);
-        Assert.Equal(
-            "step 0 (move_node): args.options.position.index has the wrong type for move_node; see the tool's schema for what it takes.",
-            wrongType.Message
+        Assert.StartsWith(
+            "step 0 (move_node): options.position.index takes an integer, not \"first\". index: ",
+            wrongType.Message,
+            StringComparison.Ordinal
         );
     }
 
