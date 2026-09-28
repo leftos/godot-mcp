@@ -79,6 +79,15 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
     private const string StageB = "[node name=\"B\" type=\"Node2D\" parent=\".\"]\n";
     private const string StageC = "[node name=\"C\" type=\"Node2D\" parent=\".\"]\nposition = Vector2(3, 0)\n";
 
+    // screen.tscn: a full-rect Control holding a ColorRect in position mode, which stores no layout_mode (Godot's pack
+    // compares a ColorRect's layout_mode with its class default, 3, and would store the 0 it reads).
+    private const string ScreenBackdrop =
+        "[node name=\"Backdrop\" type=\"ColorRect\" parent=\".\"]\nanchor_right = 1.0\nanchor_bottom = 1.0\nmouse_filter = 2\n";
+    private const string ScreenScene =
+        "[gd_scene format=3]\n\n[node name=\"Screen\" type=\"Control\"]\nlayout_mode = 3\nanchors_preset = 15\nanchor_right = 1.0\n"
+        + "anchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n\n"
+        + ScreenBackdrop;
+
     private readonly SessionHarness _harness = new();
     private readonly HeadlessTools _tools;
     private readonly List<IDisposable> _projects = [];
@@ -280,6 +289,73 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(OtherUid, saved["uid"]!.GetValue<string>());
         Assert.Equal($"[gd_scene format=3 uid=\"{OtherUid}\"]", FirstLine(probe.Directory, "other.tscn"));
         Assert.Equal([".", "Boss", "Boss/Sprite", "Btn", "Box"], Paths(await TreeAsync(probe.Directory, "other.tscn", cancellation)));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SaveSceneAsWritesANodeAsTheSourceStoresIt()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "screen.tscn"), ScreenScene);
+
+        JsonNode saved = JsonNode.Parse(await _tools.SaveSceneAsync(probe.Directory, "screen.tscn", "screen_copy.tscn", null, cancellation))!;
+
+        // The copy's header is its own (a new file gets a new uid); every section after it is the source's text.
+        string uid = saved["uid"]!.GetValue<string>();
+        string copy = File.ReadAllText(Path.Combine(probe.Directory, "screen_copy.tscn"));
+        Assert.Null(saved["warning"]);
+        Assert.Equal($"[gd_scene format=3 uid=\"{uid}\"]", FirstLine(probe.Directory, "screen_copy.tscn"));
+        Assert.Equal(ScreenScene[ScreenScene.IndexOf("[node", StringComparison.Ordinal)..], copy[copy.IndexOf("[node", StringComparison.Ordinal)..]);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SaveSceneInPlaceAddsNoLayoutModeTheSourceLacks()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "screen.tscn"), ScreenScene);
+
+        JsonNode saved = JsonNode.Parse(await _tools.SaveSceneAsync(probe.Directory, "screen.tscn", cancellationToken: cancellation))!;
+
+        Assert.Null(saved["warning"]);
+        Assert.Equal(["anchor_bottom = 1.0", "anchor_right = 1.0", "mouse_filter = 2"], BackdropProperties(probe.Directory, "screen.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SaveSceneKeepsALayoutModeTheSourceStores()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        string storedBackdrop = ScreenBackdrop.Replace("]\n", "]\nlayout_mode = 0\n", StringComparison.Ordinal);
+        File.WriteAllText(
+            Path.Combine(probe.Directory, "screen.tscn"),
+            ScreenScene.Replace(ScreenBackdrop, storedBackdrop, StringComparison.Ordinal)
+        );
+
+        await _tools.SaveSceneAsync(probe.Directory, "screen.tscn", cancellationToken: cancellation);
+
+        Assert.Contains("layout_mode = 0", BackdropProperties(probe.Directory, "screen.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SaveSceneAsKeepsTheSourceExtResourceIds()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "s.gd"), "extends Node2D\n");
+        File.WriteAllText(
+            Path.Combine(probe.Directory, "scripted.tscn"),
+            "[gd_scene format=3]\n\n[ext_resource type=\"Script\" uid=\""
+                + ScriptUid
+                + "\" path=\"res://s.gd\" id=\"2_lye0u\"]\n\n"
+                + "[node name=\"Scripted\" type=\"Node2D\"]\nscript = ExtResource(\"2_lye0u\")\n"
+        );
+
+        await _tools.SaveSceneAsync(probe.Directory, "scripted.tscn", "scripted_copy.tscn", null, cancellation);
+
+        string copy = File.ReadAllText(Path.Combine(probe.Directory, "scripted_copy.tscn"));
+        Assert.Contains($"[ext_resource type=\"Script\" uid=\"{ScriptUid}\" path=\"res://s.gd\" id=\"2_lye0u\"]", copy, StringComparison.Ordinal);
+        Assert.Contains("script = ExtResource(\"2_lye0u\")", copy, StringComparison.Ordinal);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -1494,6 +1570,16 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         + "script = ExtResource(\"1_shadow\")\n";
 
     private static string FirstLine(string directory, string relative) => File.ReadLines(Path.Combine(directory, relative)).First();
+
+    // The property lines of the Backdrop node's section in the scene, sorted.
+    private static string[] BackdropProperties(string directory, string scene) =>
+        [
+            .. File.ReadLines(Path.Combine(directory, scene))
+                .SkipWhile(line => !line.StartsWith("[node name=\"Backdrop\"", StringComparison.Ordinal))
+                .Skip(1)
+                .TakeWhile(line => line.Length > 0 && !line.StartsWith('['))
+                .Order(StringComparer.Ordinal),
+        ];
 
     /// <summary>The scene's ext_resource line for resourcePath carries uid, just before its path.</summary>
     private static void AssertExtUid(string directory, string scene, string uid, string resourcePath)

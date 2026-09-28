@@ -13,6 +13,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - `attach_script` keeps the values the previous script stored when the new script declares them, as the editor does, and lists them in `kept` and `dropped`.
+- Headless saves add no property line the source lacked when the node loads the same, such as `layout_mode = 0`, and a `save_scene` save-as keeps the source's text.
 - Headless scene saves store the engine's value when a C# field shares an engine property's name, such as `scale`, on plain and instanced nodes alike, and warn naming the field.
 
 ## 0.5.1 - 2026-09-28

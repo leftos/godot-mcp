@@ -19,6 +19,12 @@ const RECORD_TYPE_INSTANTIATED := 0x7FFFFFFF
 const PROPERTY_NAME_MASK := (1 << 30) - 1
 ## How many base scenes deep an inherited scene is followed.
 const MAX_BASE_DEPTH := 64
+## The warning a save returns when leaving out the properties its source did not store would
+## change how the scene loads, with the source and what would change.
+const SOURCE_SET_WARNING := (
+	"the scene stores every property Godot's pack stores, not only the ones %s stored, since "
+	+ "leaving the others out would change it: %s"
+)
 
 ## The engine log operations.gd keeps (its ErrorLog, with count() and since(start)), so an edit
 ## can quote what a load it refuses logged; null when nothing set it.
@@ -235,26 +241,71 @@ static func _ends_with_any(text: String, suffixes: Array) -> bool:
 	return false
 
 
-## Packs root and saves it to the text scene at path with the uid uid, as SceneFiles.save_resource
-## does: known holds the source's own ext_resource uids, and keep_layout keeps the text of every
-## section the edit left alone. {uid, warning?} with uid as uid:// text, or {error}.
+## Packs root, opened from the scene file source ("" for a new scene), and saves it to the text
+## scene at path with the uid path has (a new one for a new file), as SceneFiles.save_resource_from
+## does: known holds the source's own ext_resource uids, and keep_layout keeps the text source has
+## for every section the save left alone. A save with a source stores no property the source's
+## record for a node did not store when the node loads the same without it (keep_source_set).
+## {uid, warning?} with uid as uid:// text, or {error}.
 static func save(
-	root: Node, path: String, uid: int, known: Dictionary, keep_layout: bool
+	root: Node, source: String, path: String, known: Dictionary, keep_layout: bool
 ) -> Dictionary:
 	var packing: Dictionary = pack_native(root)
 	if packing.has("error"):
 		return {"error": "%s could not be packed: %s" % [path, packing["error"]]}
-	var saved: Dictionary = SceneFiles.save_resource(
-		packing["packed"], path, uid, known, keep_layout
+	var clauses: PackedStringArray = packing["clashes"]
+	if not source.is_empty():
+		var kept: String = keep_source_set(packing["packed"], source)
+		if not kept.is_empty():
+			clauses.append(kept)
+	var layout_from: String = source if keep_layout else ""
+	var saved: Dictionary = SceneFiles.save_resource_from(
+		packing["packed"], path, SceneFiles.uid_for(path), known, layout_from
 	)
-	var clashes: PackedStringArray = packing["clashes"]
-	if saved.has("error") or clashes.is_empty():
+	if saved.has("error") or clauses.is_empty():
 		return saved
-	var warning: String = "; ".join(clashes)
+	var warning: String = "; ".join(clauses)
 	if saved.has("warning"):
 		warning += " " + str(saved["warning"])
 	saved["warning"] = warning
 	return saved
+
+
+## Drops from packed each (name, value) pair of a node record that the scene at source also lists,
+## when source's record for that node stores no such property and the value is not an Object and
+## equals what the node reads as in source, instantiated afresh. Godot's pack compares against the
+## class default, which for some properties differs from what a node reads in a scene (a Control
+## subclass is built parentless for its defaults, so its layout_mode default is 3, while a child
+## of a Control in position mode reads 0: 4.7.2 class_db.cpp L2184-2196, control.cpp L978-982),
+## so it stores lines the source never had. packed is then instantiated and each dropped property
+## compared with the source's value; on a mismatch packed keeps every pair and the result is the
+## warning saying why, else "".
+static func keep_source_set(packed: PackedScene, source: String) -> String:
+	var scene := ResourceLoader.load(source) as PackedScene
+	var loaded: Node = null
+	if scene != null:
+		loaded = instantiate_native(scene, PackedScene.GEN_EDIT_STATE_MAIN)
+	if loaded == null:
+		return ""
+	var plan: Dictionary = _source_plan(packed.get_state(), scene.get_state(), loaded)
+	var full: Dictionary = packed.get("_bundled")
+	var dropped: Dictionary = {}
+	var trim := func(
+		bundled: Dictionary, record: int, _head: PackedInt32Array, pairs: PackedInt32Array
+	) -> PackedInt32Array:
+		if not plan.has(record):
+			return pairs
+		return _source_pairs(bundled, pairs, plan[record], dropped)
+	var trimmed: Dictionary = _with_pairs(full.duplicate(), trim)
+	loaded.free()
+	if dropped.is_empty():
+		return ""
+	packed.set("_bundled", trimmed)
+	var mismatch: String = _drop_mismatch(packed, dropped)
+	if mismatch.is_empty():
+		return ""
+	packed.set("_bundled", full)
+	return SOURCE_SET_WARNING % [source, mismatch]
 
 
 ## {packed, clashes} for root packed as PackedScene.pack packs it, or {error} with the pack's
@@ -352,6 +403,20 @@ static func _clash_clause(node: Node, property: String) -> String:
 ## instance, the property count and as many (name index, value index) pairs into names and
 ## variants, then the group count and the groups (4.7.2 packed_scene.cpp get_bundled_scene).
 static func _with_native_values(bundled: Dictionary, fixes: Dictionary) -> Dictionary:
+	var fix := func(
+		within: Dictionary, record: int, head: PackedInt32Array, pairs: PackedInt32Array
+	) -> PackedInt32Array:
+		if not fixes.has(record):
+			return pairs
+		var plain: bool = head[2] != RECORD_TYPE_INSTANTIATED and head[4] == -1
+		return _native_pairs(within, pairs, fixes[record], plain)
+	return _with_pairs(bundled, fix)
+
+
+## bundled with each node record's (name index, value index) pairs replaced by what rewrite
+## (bundled, record index, the record's head fields, its pairs) returns for them; the rest of each
+## record as it was.
+static func _with_pairs(bundled: Dictionary, rewrite: Callable) -> Dictionary:
 	var nodes: PackedInt32Array = bundled["nodes"]
 	var rewritten: PackedInt32Array = []
 	var at: int = 0
@@ -360,10 +425,9 @@ static func _with_native_values(bundled: Dictionary, fixes: Dictionary) -> Dicti
 		var pairs_start: int = at + RECORD_HEAD + 1
 		var groups_start: int = pairs_start + nodes[at + RECORD_HEAD] * 2
 		var groups_end: int = groups_start + 1 + nodes[groups_start]
-		var pairs: PackedInt32Array = nodes.slice(pairs_start, groups_start)
-		if fixes.has(record):
-			var plain: bool = head[2] != RECORD_TYPE_INSTANTIATED and head[4] == -1
-			pairs = _native_pairs(bundled, pairs, fixes[record], plain)
+		var pairs: PackedInt32Array = rewrite.call(
+			bundled, record, head, nodes.slice(pairs_start, groups_start)
+		)
 		rewritten.append_array(head)
 		rewritten.append(int(pairs.size() / 2.0))
 		rewritten.append_array(pairs)
@@ -397,6 +461,101 @@ static func _native_pairs(
 		elif not is_base:
 			pairs = _with_pair(bundled, pairs, property, value)
 	return pairs
+
+
+## {record index: {path, node, stored, hidden}} for each record of state whose node (at path,
+## relative to the root) source_state lists and loaded, source's scene instantiated, holds: node is
+## loaded's node, stored the names source_state's record for it stores, hidden its engine
+## properties a script member hides (_hidden_names).
+static func _source_plan(state: SceneState, source_state: SceneState, loaded: Node) -> Dictionary:
+	var stored: Dictionary = _stored_names(source_state)
+	var plan: Dictionary = {}
+	for record in state.get_node_count():
+		var path: String = _plain_path(state.get_node_path(record))
+		var node: Node = loaded.get_node_or_null(NodePath(path))
+		if stored.has(path) and node != null:
+			plan[record] = {
+				"path": path, "node": node, "stored": stored[path], "hidden": _hidden_names(node)
+			}
+	return plan
+
+
+## {path: names} for each record of state: the names of the properties it stores, by the path of
+## its node relative to the root.
+static func _stored_names(state: SceneState) -> Dictionary:
+	var stored: Dictionary = {}
+	for index in state.get_node_count():
+		var names: PackedStringArray = []
+		for pair in state.get_node_property_count(index):
+			names.append(state.get_node_property_name(index, pair))
+		stored[_plain_path(state.get_node_path(index))] = names
+	return stored
+
+
+## pairs, a node record's (name index, value index) pairs, without each pair entry ({path, node,
+## stored, hidden}) lets go (_droppable); dropped gains {entry.path: {name: value}} for each.
+static func _source_pairs(
+	bundled: Dictionary, pairs: PackedInt32Array, entry: Dictionary, dropped: Dictionary
+) -> PackedInt32Array:
+	var names: PackedStringArray = bundled["names"]
+	var kept: PackedInt32Array = []
+	for at in range(0, pairs.size(), 2):
+		var property: String = names[pairs[at] & PROPERTY_NAME_MASK]
+		var value: Variant = bundled["variants"][pairs[at + 1]]
+		if _droppable(entry, property, value):
+			var at_path: Dictionary = dropped.get_or_add(entry["path"], {})
+			at_path[property] = value
+		else:
+			kept.append_array(pairs.slice(at, at + 2))
+	return kept
+
+
+## Whether a pair storing value for property may be left out of the record of entry ({path, node,
+## stored, hidden}): the source's record stores no such property, value is no Object (an Object
+## dropped would stay among the packed variants and still be saved) and entry.node reads value.
+static func _droppable(entry: Dictionary, property: String, value: Variant) -> bool:
+	if (entry["stored"] as PackedStringArray).has(property) or typeof(value) == TYPE_OBJECT:
+		return false
+	return Json.same(_loaded_value(entry["node"], property, entry["hidden"]), value)
+
+
+## What node reads for property as a save stores it: the engine's value for one of hidden, the
+## engine properties a script member of the same name hides (_hidden_names), else node.get.
+static func _loaded_value(node: Node, property: String, hidden: PackedStringArray) -> Variant:
+	if hidden.has(property):
+		return ClassDB.class_get_property(node, property)
+	return node.get(property)
+
+
+## Why packed, instantiated, does not read each dropped property ({path: {name: value}}) as its
+## value, or "".
+static func _drop_mismatch(packed: PackedScene, dropped: Dictionary) -> String:
+	var check: Node = instantiate_native(packed, PackedScene.GEN_EDIT_STATE_MAIN)
+	if check == null:
+		return "the scene without them could not be instantiated"
+	var reason: String = ""
+	for path: String in dropped:
+		reason = _path_mismatch(check, path, dropped[path])
+		if not reason.is_empty():
+			break
+	check.free()
+	return reason
+
+
+## Why the node at path under root does not read each of values ({name: value}), or "".
+static func _path_mismatch(root: Node, path: String, values: Dictionary) -> String:
+	var node: Node = root.get_node_or_null(NodePath(path))
+	if node == null:
+		return "%s would be missing" % path
+	var hidden: PackedStringArray = _hidden_names(node)
+	for property: String in values:
+		var value: Variant = _loaded_value(node, property, hidden)
+		if not Json.same(value, values[property]):
+			return (
+				"%s.%s would load as %s, not %s"
+				% [path, property, var_to_str(value), var_to_str(values[property])]
+			)
+	return ""
 
 
 ## {property: value} for each of names: the value the scenes the record at index of state

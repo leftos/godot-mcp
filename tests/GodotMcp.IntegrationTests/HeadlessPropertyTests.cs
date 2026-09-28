@@ -51,6 +51,15 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         "[gd_scene format=3]\n\n[node name=\"Root\" type=\"Control\"]\nlayout_mode = 3\nanchors_preset = 0\n\n"
         + "[node name=\"Box\" type=\"VBoxContainer\" parent=\".\"]\nlayout_mode = 0\n";
 
+    // screen.tscn: a full-rect Control holding a ColorRect in position mode, which stores no layout_mode (Godot's pack
+    // compares a ColorRect's layout_mode with its class default, 3, and would store the 0 it reads).
+    private const string ScreenBackdrop =
+        "[node name=\"Backdrop\" type=\"ColorRect\" parent=\".\"]\nanchor_right = 1.0\nanchor_bottom = 1.0\nmouse_filter = 2\n";
+    private const string ScreenScene =
+        "[gd_scene format=3]\n\n[node name=\"Screen\" type=\"Control\"]\nlayout_mode = 3\nanchors_preset = 15\nanchor_right = 1.0\n"
+        + "anchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n\n"
+        + ScreenBackdrop;
+
     private readonly SessionHarness _harness = new();
     private readonly HeadlessTools _tools;
     private readonly List<IDisposable> _projects = [];
@@ -203,6 +212,25 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
             refused.Message,
             StringComparison.Ordinal
         );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetNodePropertiesLeavesAnUntouchedControlAsTheFileHadIt()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "screen.tscn"), ScreenScene);
+
+        await _tools.SetNodePropertiesAsync(
+            probe.Directory,
+            "screen.tscn",
+            [new PropertyUpdate(".", "tooltip_text", Json("\"probe\""))],
+            cancellation
+        );
+
+        string text = File.ReadAllText(Path.Combine(probe.Directory, "screen.tscn"));
+        Assert.Contains("tooltip_text = \"probe\"", text, StringComparison.Ordinal);
+        Assert.EndsWith("\n\n" + ScreenBackdrop, text, StringComparison.Ordinal);
     }
 
     [Fact(Timeout = TestTimeoutMs)]

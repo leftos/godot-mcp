@@ -87,7 +87,9 @@ static func create_scene(params: Dictionary) -> Dictionary:
 	return {"ok": true, "result": result}
 
 
-## Opens params.scene and saves it to params.target (the scene itself for a save in place).
+## Opens params.scene and saves it to params.target (the scene itself for a save in place). A save
+## in place takes Godot's full form; a save-as keeps the source's text for every section it left
+## alone.
 static func save_scene(params: Dictionary) -> Dictionary:
 	var scene_path: String = params.get("scene", "")
 	var target: String = params.get("target", scene_path)
@@ -95,7 +97,7 @@ static func save_scene(params: Dictionary) -> Dictionary:
 	if opened.has("error"):
 		return _fail(opened["error"])
 	var root: Node = opened["root"]
-	var saved: Dictionary = _save_checked(root, scene_path, target, params, false)
+	var saved: Dictionary = _save_checked(root, scene_path, target, params, target != scene_path)
 	root.free()
 	if saved.has("error"):
 		return _fail(saved["error"])
@@ -212,8 +214,8 @@ static func _save_batch(root: Node, steps: Array, params: Dictionary) -> Diction
 ## Saves root to target with the uid target has (a new one for a new file), unless the scene uses
 ## C# scripts while the build failed: {uid, warning?} or {error}. source is the file root was
 ## opened from, "" for a new scene; its own ext_resource uids are the ones written back first.
-## keep_layout splices the save into the file's own text (SceneFiles.save_resource); create_scene
-## and save_scene pass false, so their file takes Godot's full form.
+## keep_layout splices the save into source's text (SceneFiles.save_resource_from); create_scene
+## and an in-place save_scene pass false, so their file takes Godot's full form.
 static func _save_checked(
 	root: Node, source: String, target: String, params: Dictionary, keep_layout: bool
 ) -> Dictionary:
@@ -226,7 +228,7 @@ static func _save_checked(
 	var refusal: String = SceneEdit.csharp_refusal(named, uses_csharp, params)
 	if not refusal.is_empty():
 		return {"error": refusal}
-	return SceneEdit.save(root, target, SceneFiles.uid_for(target), known, keep_layout)
+	return SceneEdit.save(root, source, target, known, keep_layout)
 
 
 ## The context an edit of the scene params.scene is applied in: {scene, build, buildConfiguration,

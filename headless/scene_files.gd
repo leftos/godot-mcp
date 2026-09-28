@@ -32,10 +32,20 @@ const UID_FILE_EXTENSIONS: Array[String] = ["gd", "cs", "gdshader", "gdshaderinc
 static func save_resource(
 	resource: Resource, path: String, uid: int, known: Dictionary, keep_layout: bool
 ) -> Dictionary:
+	return save_resource_from(resource, path, uid, known, path if keep_layout else "")
+
+
+## save_resource, the text kept for the sections the save left alone read from the file at
+## layout_from before the save ("" keeps none): path itself for an edit in place, the source scene
+## for a save-as, whose file takes the saved header (its own uid, in Godot's form) and the source's
+## text for everything else. Only a text scene or resource is spliced.
+static func save_resource_from(
+	resource: Resource, path: String, uid: int, known: Dictionary, layout_from: String
+) -> Dictionary:
 	var error: int = DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	if error != OK and error != ERR_ALREADY_EXISTS:
 		return {"error": "cannot create the folder of %s: %s" % [path, error_string(error)]}
-	var original: String = _layout_source(path, keep_layout)
+	var original: String = _layout_source(layout_from, path)
 	error = ResourceSaver.save(resource, path)
 	if error != OK:
 		return {"error": "%s could not be saved: %s" % [path, error_string(error)]}
@@ -53,7 +63,7 @@ static func save_resource(
 	var saved: Dictionary = {"uid": ResourceUID.id_to_text(uid)}
 	note_written(saved, written)
 	if not original.is_empty():
-		var warning: String = _splice_into(path, original)
+		var warning: String = _splice_into(path, original, layout_from != path)
 		if not warning.is_empty():
 			saved["warning"] = warning
 	return saved
@@ -79,18 +89,24 @@ static func _write_uids(
 	return error
 
 
-## The text of the file at path before a save that keeps its layout; "" when the layout is not
-## kept or there is no file.
-static func _layout_source(path: String, keep_layout: bool) -> String:
-	if not keep_layout or not FileAccess.file_exists(path):
+## The text of the file at layout_from before a save to path that keeps its layout; "" when
+## layout_from is "" or no file, or path is not a text file.
+static func _layout_source(layout_from: String, path: String) -> String:
+	if layout_from.is_empty() or not FileAccess.file_exists(layout_from):
 		return ""
-	return FileAccess.get_file_as_string(path)
+	if not path.get_extension().to_lower() in TEXT_EXTENSIONS:
+		return ""
+	return FileAccess.get_file_as_string(layout_from)
 
 
 ## Splices the file at path, as just saved, into original and writes the result back: "", or the
-## warning that the file stays in Godot's own form and why.
-static func _splice_into(path: String, original: String) -> String:
-	var spliced: Dictionary = SceneSplice.splice(original, FileAccess.get_file_as_string(path))
+## warning that the file stays in Godot's own form and why. With own_header (a save-as), original's
+## header line is first replaced by the saved one, so the file keeps its own uid.
+static func _splice_into(path: String, original: String, own_header: bool) -> String:
+	var saved: String = FileAccess.get_file_as_string(path)
+	if own_header:
+		original = _with_header_of(original, saved)
+	var spliced: Dictionary = SceneSplice.splice(original, saved)
 	var reason: String = spliced.get("fallback", "")
 	if reason.is_empty():
 		var file := FileAccess.open(path, FileAccess.WRITE)
@@ -102,6 +118,17 @@ static func _splice_into(path: String, original: String) -> String:
 			"the spliced text could not be written (%s)" % error_string(FileAccess.get_open_error())
 		)
 	return LAYOUT_WARNING % reason
+
+
+## original with its first line replaced by saved's first line, original's line ending kept;
+## original as it is when it has one line.
+static func _with_header_of(original: String, saved: String) -> String:
+	var end: int = original.find("\n")
+	if end < 0:
+		return original
+	if end > 0 and original[end - 1] == "\r":
+		end -= 1
+	return saved.get_slice("\n", 0).trim_suffix("\r") + original.substr(end)
 
 
 ## The uid to save path with: the one the file at path has, else a new one.
