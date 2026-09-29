@@ -27,7 +27,8 @@ internal sealed record RunOptions(
     [property: Description(
         "Records the run with Godot's Movie Maker from launch: video and audio, frame-perfect, at a fixed 60 fps, to "
             + "<project>/.godot/godot-mcp/recordings/<stamp>-<session>.avi. Game time then advances 1/60 s per frame whatever "
-            + "the wall clock does, so millisecond timeouts and gesture durations no longer match game time. Mark the parts to "
+            + "the wall clock does, so wait_for's timeoutMs and the gesture durations (drag's durationMs, hover's tooltip wait, a "
+            + "gamepad sweep) count clip time, 60 frames a second, and a wait's result adds clipMs. Mark the parts to "
             + "keep with record_mark; stop_project finalises the file and cuts them into .mp4 clips. Capped at 10 minutes of "
             + "frames. Not with "
             + "--headless. If the server itself exits, a recording game is killed and its movie is not finalised."

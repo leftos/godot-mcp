@@ -28,9 +28,10 @@ internal sealed partial class RuntimeTools
     // A generous allowance per stepped frame on top of FrameTimeout: a frame at 60 fps takes about 17 ms.
     private static readonly TimeSpan PerFrameAllowance = TimeSpan.FromMilliseconds(100);
 
-    // A wait's timeoutMs and a step's or monitor's StepAllowance are its release: once that much load-adjusted time has passed,
-    // the server cancels it and the bridge ends it with its own answer (at its backstopMs, 5 x the release in real time, when
-    // the cancel is lost). The send waits this much longer for that answer.
+    // A wait's timeoutMs (in a recording, the StepAllowance of its frames) and a step's or monitor's StepAllowance are its
+    // release: once that much load-adjusted time has passed, the server cancels it and the bridge ends it with its own answer
+    // (at its backstopMs, 5 x the release in real time, when the cancel is lost). The send waits this much longer for that
+    // answer.
     private static readonly TimeSpan WaitReplyAllowance = TimeSpan.FromSeconds(5);
 
     [McpServerTool(Name = "frame_control", ReadOnly = false, Destructive = false, OpenWorld = false)]
@@ -67,7 +68,8 @@ internal sealed partial class RuntimeTools
         "Waits in the running game until a condition holds, checking it each frame: a node present or absent, a property "
             + "equal to a value, a signal's next emission, or a Godot Expression returning true. Returns {met, elapsedMs, "
             + "frames, value} (args instead of value for a signal); on timeout {met: false, elapsedMs, frames, last}, the last "
-            + "value seen (a signal wait's timeout has no last), which is not an error. While the game is paused only a "
+            + "value seen (a signal wait's timeout has no last), which is not an error. elapsedMs is real time; in a recording "
+            + "the result adds clipMs, the clip time waited (frames x 1000 / 60). While the game is paused only a "
             + "signal wait or a check-once wait (timeoutMs 0) is accepted. A property the node does not have fails the call "
             + "once the node is found. An expression that does not parse fails the call; one that fails while it runs counts "
             + "as not met, and its error is in errors. uiChanged compares the UI with the snapshot the bridge takes when the "
@@ -83,8 +85,10 @@ internal sealed partial class RuntimeTools
         )]
             WaitCondition condition,
         [Description(
-            "How long to wait, in milliseconds, 0 to 120000, load-adjusted: under load it waits longer in wall time. 0 checks the "
-                + "condition once, now, and works while the game is paused; it is refused for a signal wait."
+            "How long to wait, in milliseconds, 0 to 120000, load-adjusted: under load it waits longer in wall time. In a recording "
+                + "(run_project options.record) it counts clip time instead, 60 movie frames a second, however slowly the game runs, "
+                + "and the result adds clipMs. 0 checks the condition once, now, and works while the game is paused; it is refused "
+                + "for a signal wait."
         )]
             int timeoutMs = 10_000,
         [Description("{screenshot}: screenshot false when left out.")] WaitOptions? options = null,
@@ -223,17 +227,37 @@ internal sealed partial class RuntimeTools
 
     private async Task<BridgeResult> CallWaitAsync(JsonObject parameters, int timeoutMs, string? session, CancellationToken cancellationToken)
     {
-        var wait = TimeSpan.FromMilliseconds(timeoutMs);
-        BridgeCall call = new("wait_for", "wait_for", parameters, wait + WaitReplyAllowance, timeoutMs > 0 ? wait : null);
-        return await CallWithErrorsAsync(Find(session), call, cancellationToken);
+        GodotSession target = Find(session);
+        TimeSpan release = WaitRelease(parameters, timeoutMs, target.ActiveRecording is not null);
+        BridgeCall call = new("wait_for", "wait_for", parameters, release + WaitReplyAllowance, timeoutMs > 0 ? release : null);
+        return await CallWithErrorsAsync(target, call, cancellationToken);
     }
+
+    /// <summary>
+    /// A wait's release: timeoutMs of load-adjusted time; in a recording, timeoutMs of clip time instead, which it adds to
+    /// <paramref name="parameters"/> as timeoutFrames (the bridge counts those frames), released at the step rule's allowance.
+    /// </summary>
+    internal static TimeSpan WaitRelease(JsonObject parameters, int timeoutMs, bool recording)
+    {
+        if (!recording || timeoutMs == 0)
+        {
+            return TimeSpan.FromMilliseconds(timeoutMs);
+        }
+
+        int frames = ClipFrames(timeoutMs);
+        parameters["timeoutFrames"] = frames;
+        return StepAllowance(frames);
+    }
+
+    /// <summary>The movie frames <paramref name="milliseconds"/> of clip time take in a recording, rounded up.</summary>
+    internal static int ClipFrames(long milliseconds) => (int)(((milliseconds * GodotCommandLine.MovieFramesPerSecond) + 999) / 1000);
 
     private static JsonObject WaitReply(BridgeResult result) =>
         result.Reply?.DeepClone() as JsonObject
         ?? throw new McpException($"The bridge's wait_for reply is not an object: {result.Reply?.ToJsonString() ?? "null"}.");
 
     /// <summary>How long a step of <paramref name="frames"/> may take; the bridge stops the step itself at this deadline.</summary>
-    private static TimeSpan StepAllowance(int frames) => FrameTimeout + (PerFrameAllowance * frames);
+    internal static TimeSpan StepAllowance(int frames) => FrameTimeout + (PerFrameAllowance * frames);
 
     private static void AddStepParameters(JsonObject parameters, int? count, StepOptions options)
     {

@@ -6,6 +6,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- In a recorded run, `wait_for` timeouts and drag, hover and gamepad durations count clip time, and a wait adds `clipMs`.
 - `hover` reads and waits for the tooltip Godot shows when it belongs to an ancestor of the hovered Control, naming it in `tooltip.owner`.
 
 ## 0.6.1 - 2026-09-28

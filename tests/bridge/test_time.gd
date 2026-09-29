@@ -143,6 +143,21 @@ func test_poll_stops_when_cancelled() -> void:
 	time.free()
 
 
+func test_keeps_polling_counts_frames_for_a_frame_counted_wait() -> void:
+	var time: Node = _time_script.new()
+	var unmet: Array = [false, "idle"]
+	var counted: Dictionary = {"timeoutFrames": 90}
+	assert_true(time._keeps_polling(unmet, 89, 4999, 5000.0, counted), "short of timeoutFrames")
+	assert_true(not time._keeps_polling(unmet, 90, 0, 5000.0, counted), "at timeoutFrames")
+	assert_true(not time._keeps_polling(unmet, 10, 5000, 5000.0, counted), "the real bound")
+	counted["_cancelled"] = true
+	assert_true(not time._keeps_polling(unmet, 0, 0, 5000.0, counted), "cancelled")
+	assert_true(time._keeps_polling(unmet, 1000, 10, 5000.0, {}), "a timed wait counts no frames")
+	assert_true(not time._keeps_polling([true, 1], 0, 0, 5000.0, {}), "met")
+	assert_true(not time._keeps_polling([false, null, "x"], 0, 0, 5000.0, {}), "failed")
+	time.free()
+
+
 func test_backstop_ms_overrides_the_deadline() -> void:
 	var time: Node = _time_script.new()
 	assert_approx(time._bound_ms({"backstopMs": 55000}, 11000.0), 55000.0, "the backstop wins")

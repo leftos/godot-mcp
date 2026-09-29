@@ -220,6 +220,81 @@ public sealed class RecordingTests : IAsyncDisposable
         Assert.Equal("session 'InputProbe' is not recording; launch it with options.record.", refused.Message);
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitTimeoutInARecordingRunsItsLengthInMovieFrames()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await LaunchAsync(record: true);
+        await SlowTheGameAsync();
+
+        string json = await _tools.WaitForAsync(new WaitCondition(Expression: "false"), 1500, null, cancellation);
+
+        JsonNode reply = JsonNode.Parse(json)!;
+        Assert.False(reply["met"]!.GetValue<bool>(), json);
+        Assert.Equal(1500 * GodotCommandLine.MovieFramesPerSecond / 1000, reply["frames"]!.GetValue<int>());
+        Assert.Equal(1500, reply["clipMs"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ADragInARecordingLastsItsDurationInMovieFrames()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await LaunchAsync(record: true);
+        await SlowTheGameAsync();
+        long before = (await ReadAsync("Engine.get_process_frames()")).GetValue<long>();
+
+        await _tools.DragAsync(new(null, 100, 100), new(null, 300, 100), 500, "left", cancellationToken: cancellation);
+
+        long after = (await ReadAsync("Engine.get_process_frames()")).GetValue<long>();
+        long[] motions =
+        [
+            .. (await ReadAsync("scene_tree.root.get_node(\"Slow\").motion_frames")).AsArray().Select(frame => frame!.GetValue<long>()),
+        ];
+        // 500 ms of clip time is ceil(500 x 60 / 1000) = 30 frames: the bridge sends one held-button motion a frame, 30 in
+        // all, on consecutive frames; the release follows a frame after the last motion and the reply two frames later.
+        const int frames = 500 * GodotCommandLine.MovieFramesPerSecond / 1000;
+        Assert.Equal(frames, motions.Length);
+        Assert.Equal(frames - 1, motions[^1] - motions[0]);
+        Assert.True(
+            after - before >= frames + 3,
+            $"the drag's frames {before} to {after} are fewer than {frames} motions, the release and 2 settles"
+        );
+    }
+
+    /// <summary>
+    /// Adds /root/Slow, which sleeps 100 ms each frame (so the game runs at 10 fps at most and any wall-clock bound ends early)
+    /// and notes the process frame of each mouse motion that carries a held button in motion_frames.
+    /// </summary>
+    private async Task SlowTheGameAsync() =>
+        await _tools.RunScriptAsync(
+            "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
+                + "\tvar script := GDScript.new()\n"
+                + "\tscript.source_code = \"extends Node\\nvar motion_frames: Array = []\\n"
+                + "func _process(_delta: float) -> void:\\n\\tOS.delay_msec(100)\\n"
+                + "func _input(event: InputEvent) -> void:\\n"
+                + "\\tif event is InputEventMouseMotion and event.button_mask != 0:\\n"
+                + "\\t\\tmotion_frames.append(Engine.get_process_frames())\\n\"\n"
+                + "\tscript.reload()\n"
+                + "\tvar slow := Node.new()\n"
+                + "\tslow.name = \"Slow\"\n"
+                + "\tslow.set_script(script)\n"
+                + "\tscene_tree.root.add_child(slow)\n"
+                + "\treturn true\n",
+            10_000,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+    /// <summary>The value of a GDScript expression, run by run_script with scene_tree in scope.</summary>
+    private async Task<JsonNode> ReadAsync(string expression)
+    {
+        string json = await _tools.RunScriptAsync(
+            $"extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\treturn {expression}\n",
+            10_000,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        return JsonNode.Parse(json)!["value"]!;
+    }
+
     /// <summary>Polls list_sessions until the only session's recording has an outcome: clips, or an error.</summary>
     private async Task<RecordingResult> WaitForOutcomeAsync(CancellationToken cancellationToken)
     {

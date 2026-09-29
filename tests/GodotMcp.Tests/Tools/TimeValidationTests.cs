@@ -60,6 +60,42 @@ public sealed class TimeValidationTests : IDisposable
     }
 
     [Theory]
+    [InlineData(1500, 90)]
+    [InlineData(1000, 60)]
+    [InlineData(17, 2)]
+    [InlineData(1, 1)]
+    [InlineData(0, 0)]
+    public void ClipFramesRoundsClipTimeUpToMovieFrames(int milliseconds, int frames) => Assert.Equal(frames, RuntimeTools.ClipFrames(milliseconds));
+
+    [Fact]
+    public void ARecordedWaitCountsMovieFramesAndIsReleasedAtTheStepAllowance()
+    {
+        JsonObject parameters = [];
+
+        TimeSpan release = RuntimeTools.WaitRelease(parameters, 1500, recording: true);
+
+        Assert.Equal(90, parameters["timeoutFrames"]!.GetValue<int>());
+        Assert.Equal(TimeSpan.FromSeconds(10) + TimeSpan.FromMilliseconds(100 * 90), release);
+    }
+
+    [Fact]
+    public void AWaitOutsideARecordingOrCheckingOnceKeepsItsMilliseconds()
+    {
+        JsonObject parameters = [];
+
+        Assert.Equal(TimeSpan.FromMilliseconds(1500), RuntimeTools.WaitRelease(parameters, 1500, recording: false));
+        Assert.Equal(TimeSpan.Zero, RuntimeTools.WaitRelease(parameters, 0, recording: true));
+        Assert.False(parameters.ContainsKey("timeoutFrames"));
+    }
+
+    [Fact]
+    public void ARecordedInputCallGetsTheStepAllowanceOfItsClipFrames()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(13), RuntimeTools.InputAllowance(TimeSpan.FromMilliseconds(500), recording: true));
+        Assert.Equal(TimeSpan.FromMilliseconds(10_500), RuntimeTools.InputAllowance(TimeSpan.FromMilliseconds(500), recording: false));
+    }
+
+    [Theory]
     [InlineData(0, "process", "samples must be between 1 and 600.")]
     [InlineData(601, "process", "samples must be between 1 and 600.")]
     [InlineData(-1, "process", "samples must be between 1 and 600.")]

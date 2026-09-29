@@ -77,7 +77,11 @@ internal sealed partial class RuntimeTools
     public Task<string> DragAsync(
         [Description("Where the drag starts.")] InputTarget from,
         [Description("Where the drag ends and the button is released.")] InputTarget to,
-        [Description("How long the moving part takes, in milliseconds.")] int durationMs = 300,
+        [Description(
+            "How long the moving part takes, in milliseconds; in a recording (run_project options.record), clip time: 60 movie "
+                + "frames a second, however slowly the game runs."
+        )]
+            int durationMs = 300,
         [Description("left, right or middle.")] string button = "left",
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
@@ -353,7 +357,7 @@ internal sealed partial class RuntimeTools
         await target.InputGate.WaitAsync(cancellationToken);
         try
         {
-            BridgeCall call = new(tool, "input", parameters, InputTimeout + allowance);
+            BridgeCall call = new(tool, "input", parameters, InputAllowance(allowance, target.ActiveRecording is not null));
             BridgeResult result = await CallWithErrorsAsync(target, call, cancellationToken);
             JsonObject played = result.Reply as JsonObject ?? [];
             return ErrorReport.AddTo(played, result.Errors).ToJsonString();
@@ -363,6 +367,14 @@ internal sealed partial class RuntimeTools
             target.InputGate.Release();
         }
     }
+
+    /// <summary>
+    /// How long an input call may take: <see cref="InputTimeout"/> plus the call's allowance; in a recording, where the bridge
+    /// plays durations in clip time (60 movie frames a second, however slowly the game runs), the step rule's allowance for
+    /// the allowance's frames instead.
+    /// </summary>
+    internal static TimeSpan InputAllowance(TimeSpan allowance, bool recording) =>
+        recording ? StepAllowance(ClipFrames((long)Math.Ceiling(allowance.TotalMilliseconds))) : InputTimeout + allowance;
 
     internal static JsonObject CheckEvent(JsonObject? item, int index)
     {

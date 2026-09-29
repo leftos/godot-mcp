@@ -573,19 +573,15 @@ func _poll_capturing(probe: Callable, timeout_ms: int, params: Dictionary) -> Di
 	return await _with_capture(drawn.get("image"), params, outcome["result"])
 
 
-## Checks probe now and then once a frame until it is met, cannot be met, bound_ms has passed, or
-## the request's params are marked _cancelled (the server's cancel). Returns {result: {met,
-## elapsedMs, frames, value | last}} or {error}.
+## Checks probe now and then once a frame until it is met, cannot be met, bound_ms has passed,
+## params.timeoutFrames frames have passed (a recording's wait, which the server counts in movie
+## frames), or the request's params are marked _cancelled (the server's cancel). Returns {result:
+## {met, elapsedMs, frames, value | last}}, plus clipMs for a frame-counted wait, or {error}.
 func _poll(probe: Callable, bound_ms: float, params: Dictionary = {}) -> Dictionary:
 	var began: int = Time.get_ticks_msec()
 	var frames: int = 0
 	var seen: Array = probe.call()
-	while (
-		seen.size() == 2
-		and not seen[0]
-		and Time.get_ticks_msec() - began < bound_ms
-		and not params.get("_cancelled", false)
-	):
+	while _keeps_polling(seen, frames, Time.get_ticks_msec() - began, bound_ms, params):
 		await get_tree().process_frame
 		frames += 1
 		seen = probe.call()
@@ -595,7 +591,30 @@ func _poll(probe: Callable, bound_ms: float, params: Dictionary = {}) -> Diction
 		"met": seen[0], "elapsedMs": Time.get_ticks_msec() - began, "frames": frames
 	}
 	result["value" if seen[0] else "last"] = seen[1]
+	if params.has("timeoutFrames"):
+		_add_clip_ms(result, frames)
 	return {"result": result}
+
+
+## Whether a poll goes on after seeing seen, frames frames and elapsed_ms real ms in: not met and
+## not failed, within bound_ms, not cancelled, and, for a frame-counted wait, short of
+## params.timeoutFrames.
+static func _keeps_polling(
+	seen: Array, frames: int, elapsed_ms: int, bound_ms: float, params: Dictionary
+) -> bool:
+	if seen.size() != 2 or seen[0]:
+		return false
+	if elapsed_ms >= bound_ms or params.get("_cancelled", false):
+		return false
+	return not params.has("timeoutFrames") or frames < int(params["timeoutFrames"])
+
+
+## Adds clipMs, the clip time frames movie frames make (frames x 1000 / the recording's rate), to
+## a frame-counted wait's result; nothing when the game does not record.
+func _add_clip_ms(result: Dictionary, frames: int) -> void:
+	var fps: int = bridge._gestures.clip_fps()
+	if fps > 0:
+		result["clipMs"] = floori(float(frames) * 1000.0 / float(fps))
 
 
 ## For a waiting screenshot wait: checks probe at each frame_post_draw, where the state it sees

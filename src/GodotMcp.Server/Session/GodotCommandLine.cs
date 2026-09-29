@@ -50,6 +50,9 @@ internal static class GodotCommandLine
     /// <summary>Set for a run started on the server's hidden desktop, where the bridge leaves a quiet window at (0, 0).</summary>
     public const string HiddenDesktopVariable = "GODOT_MCP_HIDDEN_DESKTOP";
 
+    /// <summary>Set for a recording run to <see cref="MovieFramesPerSecond"/>: the bridge plays gesture durations in its movie frames.</summary>
+    public const string MovieFpsVariable = "GODOT_MCP_MOVIE_FPS";
+
     /// <summary>Whether a run starts on the server's hidden desktop: a quiet run on Windows.</summary>
     [SupportedOSPlatformGuard("windows")]
     public static bool UsesHiddenDesktop(bool quiet) => quiet && OperatingSystem.IsWindows();
@@ -221,6 +224,15 @@ internal static class GodotCommandLine
         SetFlag(startInfo, ShutOutRealGamepadsVariable, request.ShutOutRealGamepads);
         SetFlag(startInfo, PreviewVariable, request.Preview);
         SetFlag(startInfo, HiddenDesktopVariable, UsesHiddenDesktop(request.Quiet));
+        if (request.Record)
+        {
+            startInfo.Environment[MovieFpsVariable] = MovieFramesPerSecond.ToString(CultureInfo.InvariantCulture);
+        }
+        else
+        {
+            startInfo.Environment.Remove(MovieFpsVariable);
+        }
+
         return startInfo;
     }
 

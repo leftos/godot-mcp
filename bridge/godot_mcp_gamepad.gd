@@ -233,7 +233,8 @@ func _read_axis_target(spec: Variant, targets: Dictionary) -> String:
 
 
 ## Sends each axis at its target at once, or, over duration_ms, one event per axis a frame along
-## the straight line from the value it holds.
+## the straight line from the value it holds; in a recording over duration_ms of clip time, its
+## movie frames (the input player's clip_frames).
 func _sweep_axes(device: int, targets: Dictionary, duration_ms: int) -> void:
 	if duration_ms == 0:
 		for axis: int in targets:
@@ -242,11 +243,17 @@ func _sweep_axes(device: int, targets: Dictionary, duration_ms: int) -> void:
 	var starts: Dictionary = {}
 	for axis: int in targets:
 		starts[axis] = float(_axes.get(Vector2i(device, axis), 0.0))
+	var gestures: Node = bridge._gestures
+	var frames: int = gestures.clip_frames(duration_ms, gestures.clip_fps())
 	var began: int = Time.get_ticks_msec()
+	var step: int = 0
 	var progress: float = 0.0
 	while progress < 1.0:
 		await get_tree().process_frame
-		progress = clampf(float(Time.get_ticks_msec() - began) / float(duration_ms), 0.0, 1.0)
+		step += 1
+		progress = gestures.played_progress(
+			step, Time.get_ticks_msec() - began, duration_ms, frames
+		)
 		for axis: int in targets:
 			var value: float = targets[axis]
 			if progress < 1.0:

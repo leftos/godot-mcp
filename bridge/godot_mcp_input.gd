@@ -10,6 +10,8 @@ const SETTLE_FRAMES := 2
 const HIT_GESTURES := ["click", "drag", "mouse_button", "hover"]
 ## The longest a hover waits for a tooltip, the server's own limit on timeoutMs.
 const HOVER_TIMEOUT_CAP_MS := 10000
+## The recording's movie frame rate, which run_project sets beside --write-movie.
+const MOVIE_FPS_VARIABLE := "GODOT_MCP_MOVIE_FPS"
 const PAUSED_TOOLTIP_WARNING := (
 	"the game is paused and %s cannot process, so its tooltip timer never starts; "
 	+ "resume, hover, then pause"
@@ -110,6 +112,33 @@ func ui_change() -> Dictionary:
 ## Drops the baseline, which a met uiChanged wait uses up; the next gesture takes a new one.
 func use_up_ui_baseline() -> void:
 	_ui_baseline = {}
+
+
+## The movie frames a second of a recording, or 0 when the game does not record: Movie Maker
+## runs (Engine.get_write_movie_path is not empty, doc/classes/Engine.xml in 4.7.2) and
+## GODOT_MCP_MOVIE_FPS names its rate. Game time then advances one frame's worth per frame
+## however slowly the game runs, so a played duration counts clip time.
+func clip_fps() -> int:
+	if Engine.get_write_movie_path().is_empty():
+		return 0
+	return maxi(0, int(OS.get_environment(MOVIE_FPS_VARIABLE)))
+
+
+## The frames ms of clip time takes at fps, rounded up; -1 when fps is 0 (no recording), where
+## durations count real time.
+static func clip_frames(ms: int, fps: int) -> int:
+	if fps <= 0:
+		return -1
+	return ceili(float(ms) * float(fps) / 1000.0)
+
+
+## How far a gesture played over duration_ms is at its step'th frame, elapsed_ms after it began,
+## 0 to 1: step of frames in a recording (frames not -1, from clip_frames), else elapsed_ms of
+## duration_ms.
+static func played_progress(step: int, elapsed_ms: int, duration_ms: int, frames: int) -> float:
+	if frames >= 0:
+		return clampf(float(step) / maxf(float(frames), 1.0), 0.0, 1.0)
+	return clampf(float(elapsed_ms) / maxf(float(duration_ms), 1.0), 0.0, 1.0)
 
 
 func _snapshot_ui() -> Dictionary:
@@ -286,22 +315,23 @@ func _play_drag(params: Dictionary) -> String:
 
 
 ## Presses at start, where the pointer already is, then sends one motion a frame along the
-## straight line to end for duration_ms (and at least MIN_DRAG_STEPS frames), each carrying the
-## held button in its button_mask and its step as relative: Godot's viewport starts a drag only
-## from motions with LEFT in the mask whose relatives add up past gui/common/drag_threshold.
-## Records whether the GUI was dragging after any motion, and whether the release dropped it.
+## straight line to end for duration_ms (in a recording, its clip frames; and at least
+## MIN_DRAG_STEPS frames), each carrying the held button in its button_mask and its step as
+## relative: Godot's viewport starts a drag only from motions with LEFT in the mask whose
+## relatives add up past gui/common/drag_threshold. Records whether the GUI was dragging after
+## any motion, and whether the release dropped it.
 func _drag(start: Vector2, end: Vector2, duration_ms: int, button: int) -> void:
 	var root: Window = get_tree().root
 	var gui_drag_started: bool = false
 	_send_and_record(start, button, true, false)
+	var frames: int = clip_frames(duration_ms, clip_fps())
 	var began: int = Time.get_ticks_msec()
 	var step: int = 0
 	var progress: float = 0.0
 	while progress < 1.0:
 		await get_tree().process_frame
 		step += 1
-		var elapsed: float = float(Time.get_ticks_msec() - began)
-		progress = clampf(elapsed / maxf(float(duration_ms), 1.0), 0.0, 1.0)
+		progress = played_progress(step, Time.get_ticks_msec() - began, duration_ms, frames)
 		if step < MIN_DRAG_STEPS:
 			progress = minf(progress, float(step) / MIN_DRAG_STEPS)
 		_move_to(start.lerp(end, progress))
@@ -463,17 +493,28 @@ func _tooltip_timeout_ms(params: Dictionary) -> int:
 
 ## The tooltip popup showing for tooltip_owner, checked now and then on each process_frame,
 ## which fires paused or not (scene/main/scene_tree.cpp L649, L713 in 4.7.2), until one shows or
-## timeout_ms of real time passes: the tooltip timer, once started, ignores pause and the time
-## scale (viewport.cpp L2144-2146). Null when none showed.
+## timeout_ms of real time passes (in a recording, its clip frames): the tooltip timer, once
+## started, ignores pause and the time scale (viewport.cpp L2144-2146). Null when none showed.
 func _await_tooltip(tooltip_owner: Control, timeout_ms: int) -> Window:
 	var until: int = Time.get_ticks_msec() + timeout_ms
+	var frames: int = clip_frames(timeout_ms, clip_fps())
+	var waited: int = 0
 	var popup: Window = _showing_tooltip(tooltip_owner)
-	while popup == null and Time.get_ticks_msec() < until:
+	while popup == null and _within(waited, frames, until):
 		await get_tree().process_frame
+		waited += 1
 		if not is_instance_valid(tooltip_owner):
 			return null
 		popup = _showing_tooltip(tooltip_owner)
 	return popup
+
+
+## Whether a wait that has waited frames of its frames (in a recording; -1 otherwise) is still
+## within its limit, else whether Time.get_ticks_msec is before until_ms.
+static func _within(waited: int, frames: int, until_ms: int) -> bool:
+	if frames >= 0:
+		return waited < frames
+	return Time.get_ticks_msec() < until_ms
 
 
 ## A visible tooltip popup: an embedded subwindow of the root, or a Window under tooltip_owner
