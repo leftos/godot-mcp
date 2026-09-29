@@ -15,10 +15,10 @@ Waves run in order; bug reports sit ahead of the backlog inside each. The single
 
 Shared: `RuntimeTools.Capture.cs`, `RuntimeTools.Input.cs`, `RuntimeTools.Time.cs`, `RuntimeTools.cs` and their bridge modules (`godot_mcp_capture.gd`, `godot_mcp_input.gd`, `godot_mcp_time.gd`). Gate: `pwsh run.ps1 test` and the touched `itest` groups; the evidence is a driven run against a fixture.
 
-- [ ] #40 `wait_for` in a recorded session (`options.record`): a 1500 ms timeout ran 6290 ms and 240 frames; a timeout a recording honours, or a wait in game time or frames
-- [ ] #38 `hover` returns `tooltip: null` when the tooltip Godot shows belongs to an ancestor of the hovered control, and returns before the tooltip delay has passed
-- [ ] #39 `run_project` with `--resolution` larger than the screen: the window is clamped without a warning; give the exact size or say what was given
-- [ ] #37 `take_screenshot` with `crop`: no way to take the crop above 1x
+- [ ] #40 `wait_for` in a recorded session (`options.record`): a 1500 ms timeout ran 6290 ms and 240 frames. Cause: the clip runs 60 frames a second while the server's release (load-adjusted) and the bridge's `_poll` bound (`backstopMs`, real time) count wall time. Decided (user, 2026-09-29): in a recorded session `timeoutMs` counts clip time, `ceil(timeoutMs x 60 / 1000)` movie frames, with no new option; the result keeps `elapsedMs` in real ms and adds `clipMs`; in scope too, every other real-ms duration while recording (a drag's `durationMs`, `hover`'s tooltip wait, the gamepad sweep). Builds on #38 (both edit `godot_mcp_input.gd`)
+- [ ] #38 `hover` returns `tooltip: null` when the tooltip Godot shows belongs to an ancestor of the hovered control, and returns before the tooltip delay has passed. Decided (user, 2026-09-29): walk up the parents as `Viewport::_gui_get_tooltip` does, and the `tooltip` object gains `owner {path, class}`
+- [ ] #39 `run_project` with `--resolution` larger than the screen: the window is clamped without a warning. Decided (user, 2026-09-29): the server passes the last `--resolution` to the bridge, which sets that exact size after start; the bridge's hello carries the window's size, the launch result reports `window {width, height}` and warns when it still differs
+- [ ] #37 `take_screenshot` with `crop`: no way to take the crop above 1x. Decided (user, 2026-09-29): launch at 2x (#39) and crop in viewport coordinates, mapped by the bridge through the stretch transform, so `hover`'s rect crops as-is; `crop` means viewport coordinates everywhere (`take_screenshot`, `capture_frames`, the baselines), replacing screenshot pixels; builds on #39
 
 ### Singles
 
