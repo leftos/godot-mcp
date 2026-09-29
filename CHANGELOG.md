@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Changed
+
+- The several-sessions refusal and every `session` description tell agents to pass the session `run_project` returned on every call from the start.
+
 ## 0.6.0 - 2026-09-28
 
 ### Added

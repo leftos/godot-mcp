@@ -213,7 +213,11 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() => tools.GetUiElementsAsync(cancellationToken: cancellation));
 
-        Assert.Equal("Several sessions exist (live: client, server); pass session to choose one.", refused.Message);
+        Assert.Equal(
+            "Several sessions exist (live: client, server); pass session to choose one. Pass the session run_project "
+                + "or attach_project returned on every call: another agent's game can start at any time.",
+            refused.Message
+        );
     }
 
     [Fact(Timeout = TestTimeoutMs)]

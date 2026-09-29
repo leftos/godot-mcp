@@ -52,7 +52,9 @@ public sealed class SessionResolutionTests : IAsyncDisposable
             unknown.Message
         );
         Assert.Equal(
-            "Several sessions exist (live: none); pass session to choose one. 2 stopped (list_sessions with includeStopped: true lists them).",
+            "Several sessions exist (live: none); pass session to choose one. Pass the session run_project or "
+                + "attach_project returned on every call: another agent's game can start at any time. 2 stopped "
+                + "(list_sessions with includeStopped: true lists them).",
             unnamed.Message
         );
     }
@@ -87,7 +89,11 @@ public sealed class SessionResolutionTests : IAsyncDisposable
 
         SessionException refused = Assert.Throws<SessionException>(() => _harness.Sessions.Resolve(null));
 
-        Assert.Equal("Several sessions exist (live: client, server); pass session to choose one.", refused.Message);
+        Assert.Equal(
+            "Several sessions exist (live: client, server); pass session to choose one. Pass the session run_project "
+                + "or attach_project returned on every call: another agent's game can start at any time.",
+            refused.Message
+        );
     }
 
     [Fact]

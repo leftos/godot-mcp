@@ -400,7 +400,11 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
         return live.Length == 0 && _sessions.Count <= 1
             ? _sessions.Values.FirstOrDefault()
-            : throw new SessionException($"Several sessions exist (live: {DescribeLive()}); pass session to choose one.{DescribeStopped()}");
+            : throw new SessionException(
+                $"Several sessions exist (live: {DescribeLive()}); pass session to choose one. "
+                    + "Pass the session run_project or attach_project returned on every call: "
+                    + $"another agent's game can start at any time.{DescribeStopped()}"
+            );
     }
 
     /// <summary>Registers a new pending session under the spec's name, then lets go of the ended session it replaces.</summary>

@@ -33,7 +33,9 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         + "--audio-driver Dummy. Default false.";
 
     /// <summary>The session parameter of every tool that addresses an existing session.</summary>
-    internal const string SessionDescription = "The session's name; may be omitted while only one session is live, or only one exists.";
+    internal const string SessionDescription =
+        "The session's name, as run_project or attach_project returned it. Pass it on every call: it may be omitted only "
+        + "while one session is live, or only one exists, and another agent's game can start at any time.";
 
     /// <summary>The session parameter of run_project's options and attach_project, which name a new session.</summary>
     internal const string NewSessionDescription =
@@ -44,7 +46,8 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     internal const string SessionsNote =
         " Several sessions can be live at once, on one project folder or several, each under its own name: a live name is "
         + "refused, a new name starts another session, and a name whose session has ended is reused. The other tools take "
-        + "session to pick one, and may omit it while only one session exists; list_sessions lists them.";
+        + "session to pick one: pass the returned session on every call, since another agent's game can start at any time "
+        + "and a call without one is then refused; list_sessions lists them.";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     [McpServerTool(Name = "run_project", ReadOnly = false, Destructive = false, OpenWorld = false)]
