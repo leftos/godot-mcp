@@ -11,12 +11,6 @@ The first version replaced godot-mcp-runtime at parity and went further: every p
 
 Waves run in order; bug reports sit ahead of the backlog inside each. The singles' order is not a ranking.
 
-### Before 0.8.0
-
-The user's cut list (2026-09-29): every line has landed; the cut is next.
-
-- [ ] Cut and install 0.8.0
-
 ### Singles
 
 - [ ] In a recording, the Time module's step, monitor and capture deadline (`_begin`, `bridge/godot_mcp_time.gd` ~L168-172, a `SceneTreeTimer` its comment says "runs in real time") runs in clip time, so at 240 fps its `backstopMs` fires after a quarter of its length in wall time: measure whether it can beat the server's cancel, and correct the comment
