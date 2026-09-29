@@ -215,6 +215,79 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AddNodeRefusesAnchorsLeftInPositionLayout()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        // Anchors without layout_mode 1 leave a Control in Position mode, saved as layout_mode = 0 beside anchor_right = 1.0:
+        // a node the editor cannot make, since its inspector shows anchor_* only in Anchors mode (4.7.2 control.cpp L630-637).
+        AddNodeOptions options = new(Properties: new() { ["anchor_right"] = Json("1"), ["anchor_bottom"] = Json("1") });
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.AddNodeAsync(probe.Directory, "ui.tscn", "ColorRect", "Backdrop", options, cancellation)
+        );
+
+        Assert.Contains("anchor_right takes only with layout_mode 1 (Anchors)", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(UiScene, Read(probe.Directory, "ui.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetNodePropertiesRefusesAnAnchorInPositionLayout()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        await _tools.AddNodeAsync(probe.Directory, "ui.tscn", "ColorRect", "Backdrop", cancellationToken: cancellation);
+        string before = Read(probe.Directory, "ui.tscn");
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SetNodePropertiesAsync(probe.Directory, "ui.tscn", [new PropertyUpdate("Backdrop", "anchor_right", Json("1"))], cancellation)
+        );
+
+        Assert.Contains("anchor_right takes only with layout_mode 1 (Anchors)", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(before, Read(probe.Directory, "ui.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AddNodeTakesAnchorsAfterLayoutModeAnchors()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        AddNodeOptions options = new(
+            Properties: new()
+            {
+                ["layout_mode"] = Json("1"),
+                ["anchor_right"] = Json("1"),
+                ["anchor_bottom"] = Json("1"),
+            }
+        );
+
+        string added = await _tools.AddNodeAsync(probe.Directory, "ui.tscn", "ColorRect", "Backdrop", options, cancellation);
+
+        Assert.Equal("""{"path":"Backdrop","type":"ColorRect","index":1}""", added);
+        // The save also records the anchors_preset the direct anchors imply (15), between layout_mode and the anchors.
+        string body = string.Join("\n", Section(probe.Directory, "ui.tscn", "Backdrop").Body);
+        Assert.Contains("layout_mode = 1", body, StringComparison.Ordinal);
+        Assert.Contains("anchor_right = 1.0", body, StringComparison.Ordinal);
+        Assert.Contains("anchor_bottom = 1.0", body, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AddNodeTakesAZeroAnchorInPositionLayout()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        AddNodeOptions options = new(Properties: new() { ["anchor_left"] = Json("0") });
+
+        string added = await _tools.AddNodeAsync(probe.Directory, "ui.tscn", "ColorRect", "Backdrop", options, cancellation);
+
+        Assert.Equal("""{"path":"Backdrop","type":"ColorRect","index":1}""", added);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task SetNodePropertiesLeavesAnUntouchedControlAsTheFileHadIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

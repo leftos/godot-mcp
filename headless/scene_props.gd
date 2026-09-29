@@ -12,6 +12,10 @@ const ScenePaths := preload("scene_paths.gd")
 const SceneValues := preload("scene_values.gd")
 const Json := preload("../bridge/godot_mcp_json.gd")
 const SCENE_PREFIX := "res://"
+## The Control properties the editor shows only in Anchors mode (_anchor_refusal).
+const ANCHOR_PROPERTIES: PackedStringArray = [
+	"anchor_left", "anchor_top", "anchor_right", "anchor_bottom"
+]
 
 ## The engine property names of each class _is_engine_property has looked at, by class name.
 static var _engine_names: Dictionary = {}
@@ -317,6 +321,9 @@ static func _converted(
 static func _set_checked(
 	node: Node, path: String, property: String, value: Variant, root: Node
 ) -> Dictionary:
+	var refusal: String = _anchor_refusal(node, path, property, value)
+	if not refusal.is_empty():
+		return {"error": refusal}
 	var before: Variant = _get_prop(node, property)
 	_set_prop(node, property, value)
 	var after: Variant = _get_prop(node, property)
@@ -377,6 +384,28 @@ static func _layout_hint(node: Node, property: String) -> String:
 	if parent is Control:
 		return " Under a Control, layout_mode takes 0 (Position) or 1 (Anchors)."
 	return " With no Control parent, layout_mode is 3 (Uncontrolled) and cannot be set."
+
+
+## Why setting an anchor property on node is refused: "" when it takes. The editor shows anchor_*
+## only in Anchors mode, so a Control the anchors would leave in Position mode saves as
+## layout_mode = 0 beside anchor_right = 1.0: a node the editor cannot make (scene/gui/control.cpp).
+static func _anchor_refusal(node: Node, path: String, property: String, value: Variant) -> String:
+	if not (node is Control):
+		return ""
+	if not (property in ANCHOR_PROPERTIES):
+		return ""
+	var parent: Node = node.get_parent()
+	if not (parent is Control) or parent is Container:
+		return ""
+	if ClassDB.class_get_property(node, "layout_mode") != 0:
+		return ""
+	if is_zero_approx(float(value)):
+		return ""
+	var message: String = (
+		"Property '%s' on '%s' was refused: %s takes only with layout_mode 1 (Anchors); set "
+		+ "layout_mode 1 first (with anchors_preset 15 for a full rect)."
+	)
+	return message % [property, path, property]
 
 
 static func _read_node(root: Node, query: Dictionary, scene: String) -> Dictionary:

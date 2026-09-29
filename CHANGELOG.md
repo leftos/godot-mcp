@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Changed
 
 - The several-sessions refusal and every `session` description tell agents to pass the session `run_project` returned on every call from the start.
+- `add_node` and `set_node_properties` refuse a non-zero `anchor_*` on a Control in Position layout, saying to set `layout_mode` 1 first.
 
 ### Fixed
 

@@ -369,7 +369,7 @@ These run a headless Godot on the project's files with no game started. All are 
 ### `add_node`
 
 - **Does:** adds a node named `nodeName` of `nodeType` (a Node class, a script's `class_name`, a script path, or a scene path, added as an instance) and saves: `{path, type, index, instance?, script?}`.
-- **Use:** `options {parent, properties, position}`: parent path from the root (default `.`), `{name: value}` set once the node is under its parent, as the editor sets them (so a Control's `layout_mode` takes 0 or 1 under a Control, is 2 under a Container and 3 with no Control parent; `anchors_preset` needs `layout_mode` 1, which is applied first), and a position among its new siblings as `move_node` takes it (default last; in 2D, sibling order is draw order). A script path (`res://Foo.cs`, `res://foo.gd`, no `class_name` or `[GlobalClass]` needed) makes a node of the script's base class with the script attached; `type` is that base class and `script` the path.
+- **Use:** `options {parent, properties, position}`: parent path from the root (default `.`), `{name: value}` set once the node is under its parent, as the editor sets them (so a Control's `layout_mode` takes 0 or 1 under a Control, is 2 under a Container and 3 with no Control parent; `anchors_preset` and a non-zero `anchor_*` need `layout_mode` 1, which is applied first), and a position among its new siblings as `move_node` takes it (default last; in 2D, sibling order is draw order). A script path (`res://Foo.cs`, `res://foo.gd`, no `class_name` or `[GlobalClass]` needed) makes a node of the script's base class with the script attached; `type` is that base class and `script` the path.
 - **Edges:** a sibling name clash, a parent inside an instanced scene (an instance's own root may be the parent), and a scene instancing itself are refused; a property that does not take adds nothing. A script that does not compile or does not extend a Node class is refused, and a `.cs` script while the project's C# build fails, as `attach_script` refuses it.
 
 ### `delete_nodes`
@@ -403,7 +403,7 @@ These run a headless Godot on the project's files with no game started. All are 
 
 - **Does:** sets 1 to 100 `updates` `{nodePath, property, value}`, reads each back, and saves: `{results: [{nodePath, property, before, after}]}`.
 - **Use:** values as `set_property` takes them, typed arrays and dictionaries included; a resource as a `res://` or `uid://` path, `{resource: path}`, `{type, ...properties}` or null; a Node-typed export as a path from the scene's root.
-- **Edges:** a node from a base scene, or inside an editable instance, may be set (saved as an override); inside another instance it is refused. All or nothing.
+- **Edges:** a node from a base scene, or inside an editable instance, may be set (saved as an override); inside another instance it is refused. A non-zero `anchor_*` on a Control in Position layout (`layout_mode` 0) is refused: set `layout_mode` 1 first, with `anchors_preset` 15 for a full rect; the editor cannot make a Position node with anchors. All or nothing.
 
 ### `get_node_properties`
 
