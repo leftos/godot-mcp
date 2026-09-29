@@ -17,6 +17,7 @@ public sealed class InputValidationTests : IDisposable
         "key",
         "mouse_button",
         "mouse_motion",
+        "pan_gesture",
         "joypad_button",
         "joypad_motion",
         "action",
@@ -98,7 +99,7 @@ public sealed class InputValidationTests : IDisposable
         McpException refused = Assert.Throws<McpException>(() => RuntimeTools.CheckEvent(Event("scroll"), 1));
 
         Assert.Equal(
-            "events[1] has type 'scroll'; the types are key, mouse_button, mouse_motion, joypad_button, joypad_motion, action, "
+            "events[1] has type 'scroll'; the types are key, mouse_button, mouse_motion, pan_gesture, joypad_button, joypad_motion, action, "
                 + "click_element, wait.",
             refused.Message
         );
@@ -327,6 +328,77 @@ public sealed class InputValidationTests : IDisposable
         );
 
         Assert.Equal($"timeoutMs must be 0 to 10000; got {timeoutMs}.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("up")]
+    [InlineData("down")]
+    [InlineData("left")]
+    [InlineData("right")]
+    public void EveryScrollDirectionPasses(string direction) => Assert.Equal(direction, RuntimeTools.CheckScrollDirection(direction));
+
+    [Fact]
+    public void AnUnknownScrollDirectionIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.CheckScrollDirection("Down"));
+
+        Assert.Equal("direction 'Down' is not one of up, down, left, right.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(100)]
+    public void NotchesFromOneToAHundredPass(int notches) => Assert.Equal(notches, RuntimeTools.CheckScrollNotches(notches));
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(101)]
+    public void NotchesOutsideOneToAHundredAreRefused(int notches)
+    {
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.CheckScrollNotches(notches));
+
+        Assert.Equal($"notches must be 1 to 100; got {notches}.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(0.25)]
+    [InlineData(1)]
+    [InlineData(10)]
+    public void AFactorAboveZeroUpToTenPasses(double factor) => Assert.Equal(factor, RuntimeTools.CheckScrollFactor(factor));
+
+    [Theory]
+    [InlineData(0, "0")]
+    [InlineData(-1, "-1")]
+    [InlineData(10.5, "10.5")]
+    [InlineData(double.NaN, "NaN")]
+    public void AFactorOutsideZeroToTenIsRefused(double factor, string shown)
+    {
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.CheckScrollFactor(factor));
+
+        Assert.Equal($"factor must be more than 0 and at most 10; got {shown}.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("wheel")]
+    [InlineData("pan")]
+    public void WheelAndPanPass(string via) => Assert.Equal(via, RuntimeTools.CheckScrollVia(via));
+
+    [Fact]
+    public void AnUnknownViaIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.CheckScrollVia("touch"));
+
+        Assert.Equal("via 'touch' is not one of wheel, pan.", refused.Message);
+    }
+
+    [Fact]
+    public async Task ScrollRefusesBeforeLookingForASession()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.ScrollAsync(Point, "down", 1, new ScrollOptions(Via: "touch"), cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("via 'touch' is not one of wheel, pan.", refused.Message);
     }
 
     [Fact]

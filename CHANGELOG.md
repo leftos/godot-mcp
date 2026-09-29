@@ -2,6 +2,17 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- `scroll` sends mouse wheel notches or trackpad pan gestures at a target, with `notches` and `options.factor` for how far.
+- `simulate_input` plays wheel notches as `wheel_*` mouse buttons with `factor`, and trackpad pans as `pan_gesture` events.
+
+### Changed
+
+- `capture_input` records wheel notches and trackpad pans, so a captured scroll replays through `simulate_input`.
+
 ## 0.8.1 - 2026-09-29
 
 ### Changed

@@ -33,6 +33,10 @@ public sealed class CaptureTests(SharedProbeSession shared) : IAsyncLifetime, IC
         + "Input.flush_buffered_events()\n\t"
         + "return true";
 
+    // ScrollBox's vertical scroll bar's value; ScrollPoint is inside it, clear of its scroll bars.
+    private const string ReadScroll = "return scene_tree.root.get_node(\"Main/ScrollBox\").get_v_scroll_bar().value";
+
+    private static readonly InputTarget ScrollPoint = new(null, 590, 190);
     private static readonly InputTarget SmallButton = new("SmallButton");
     private static readonly InputTarget DragSource = new("DragSource");
     private static readonly InputTarget DropTarget = new("DropTarget");
@@ -68,6 +72,30 @@ public sealed class CaptureTests(SharedProbeSession shared) : IAsyncLifetime, IC
         Assert.Equal((1, 1), (replayed.Presses - captured.Presses, replayed.Drops - captured.Drops));
         Assert.Null(stopped["ended"]);
         Assert.False(stopped["truncated"]!.GetValue<bool>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ASentScrollReplaysAsWheelEvents()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await StartAsync(_tools, new CaptureOptions(Sources: ["sent"]), cancellation);
+        await _tools.ScrollAsync(ScrollPoint, "down", 2, cancellationToken: cancellation);
+        JsonNode stopped = await StopAsync(_tools, cancellation);
+        double captured = (await RunAsync(_tools, ReadScroll, cancellation)).GetValue<double>();
+
+        JsonObject[] events = [.. stopped["events"]!.AsArray().Select(item => item!.DeepClone().AsObject())];
+        await _tools.SimulateInputAsync(events, cancellationToken: cancellation);
+        double replayed = (await RunAsync(_tools, ReadScroll, cancellation)).GetValue<double>();
+
+        string[] wheel =
+        [
+            .. events
+                .Where(item => item["type"]!.GetValue<string>() == "mouse_button")
+                .Select(item => $"{item["button"]!.GetValue<string>()} {item["pressed"]!.GetValue<bool>()} {item["factor"]!.GetValue<double>()}"),
+        ];
+        Assert.Equal(["wheel_down True 1", "wheel_down False 1", "wheel_down True 1", "wheel_down False 1"], wheel);
+        Assert.True(captured > 0, $"two notches down left ScrollBox at {captured}");
+        Assert.True(replayed > captured, $"the replay moved ScrollBox from {captured} to {replayed}");
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

@@ -49,9 +49,47 @@ func test_a_mouse_button_is_in_viewport_coordinates() -> void:
 		"doubleClick": true,
 	}
 	assert_eq(capture.event_spec(click, _screen), expected, "a double click at (50, 100)")
+	capture.free()
+
+
+func test_a_wheel_notch_carries_its_button_and_factor() -> void:
+	var capture: Node = _capture_script.new()
 	var wheel := InputEventMouseButton.new()
-	wheel.button_index = MOUSE_BUTTON_WHEEL_UP
-	assert_eq(capture.event_spec(wheel, _screen), {}, "simulate_input plays no wheel")
+	wheel.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	wheel.pressed = true
+	wheel.factor = 0.5
+	wheel.position = Vector2(100, 300)
+	var expected: Dictionary = {
+		"type": "mouse_button",
+		"x": 50.0,
+		"y": 100.0,
+		"button": "wheel_down",
+		"pressed": true,
+		"factor": 0.5,
+	}
+	assert_eq(capture.event_spec(wheel, _screen), expected, "half a notch down at (50, 100)")
+	var extra := InputEventMouseButton.new()
+	extra.button_index = MOUSE_BUTTON_XBUTTON1
+	assert_eq(capture.event_spec(extra, _screen), {}, "simulate_input plays no extra button")
+	capture.free()
+
+
+func test_a_pan_gesture_keeps_its_delta() -> void:
+	var capture: Node = _capture_script.new()
+	var pan := InputEventPanGesture.new()
+	pan.position = Vector2(100, 300)
+	pan.delta = Vector2(-2, 3)
+	var expected: Dictionary = {
+		"type": "pan_gesture",
+		"x": 50.0,
+		"y": 100.0,
+		"delta_x": -2.0,
+		"delta_y": 3.0,
+	}
+	assert_eq(capture.event_spec(pan, _screen), expected, "a pan at (50, 100), delta unscaled")
+	var magnify := InputEventMagnifyGesture.new()
+	magnify.factor = 1.5
+	assert_eq(capture.event_spec(magnify, _screen), {}, "simulate_input plays no magnify")
 	capture.free()
 
 

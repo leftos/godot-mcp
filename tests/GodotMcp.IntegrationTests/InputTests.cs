@@ -23,6 +23,16 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
     private static readonly InputTarget DragSource = new("DragSource");
     private static readonly InputTarget DropTarget = new("DropTarget");
 
+    // Inside ScrollBox, a ScrollContainer spanning (570, 110) to (630, 290) around a 200 x 600 ScrollContent (filter Pass),
+    // clear of its scroll bars. A wheel notch or a pan delta of 1 moves it an eighth of its page
+    // (scene/gui/scroll_container.cpp L190-226, L311-320 in 4.7.2).
+    private static readonly InputTarget ScrollPoint = new(null, 590, 190);
+
+    // ScrollBox's vertical and horizontal scroll bars' values.
+    private const string ReadScroll =
+        "var box: ScrollContainer = scene_tree.root.get_node(\"Main/ScrollBox\")\n\t"
+        + "return [box.get_v_scroll_bar().value, box.get_h_scroll_bar().value]";
+
     // A real mouse moving over the window, as Godot sees one: a plain motion (device DEVICE_ID_MOUSE, no button_mask) at
     // (600, 20), away from both the source and the target, every frame for 1.4 s, so one lands between the drag's last
     // motion and its release.
@@ -389,6 +399,77 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         Assert.False(moved.AsObject().ContainsKey("pressedOn"), moved.ToJsonString());
         Assert.False(moved.AsObject().ContainsKey("releasedOn"), moved.ToJsonString());
         Assert.Equal(before, await PressCountAsync());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ScrollMovesAScrollContainerDownThenUp()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonNode down = JsonNode.Parse(await _tools.ScrollAsync(ScrollPoint, "down", 3, cancellationToken: cancellation))!;
+        (double Vertical, double Horizontal) afterDown = await ReadScrollAsync();
+        await _tools.ScrollAsync(ScrollPoint, "up", 1, cancellationToken: cancellation);
+        (double Vertical, double Horizontal) afterUp = await ReadScrollAsync();
+
+        AssertHit(down, "scrolledOn", "ScrollContent", "ColorRect");
+        Assert.Equal(0, down["heldButtonMask"]!.GetValue<int>());
+        Assert.True(afterDown.Vertical > 0, $"three notches down left ScrollBox at {afterDown}");
+        Assert.True(afterUp.Vertical > 0 && afterUp.Vertical < afterDown.Vertical, $"one notch up went from {afterDown} to {afterUp}");
+        Assert.Equal(0, afterUp.Horizontal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ScrollViaPanMovesAScrollContainer()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        await _tools.ScrollAsync(ScrollPoint, "right", 2, new ScrollOptions(Via: "pan"), cancellationToken: cancellation);
+        (double Vertical, double Horizontal) scrolled = await ReadScrollAsync();
+
+        Assert.True(scrolled.Horizontal > 0, $"two pan notches right left ScrollBox at {scrolled}");
+        Assert.Equal(0, scrolled.Vertical);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ScrollLeavesTheHeldButtonsAsTheyWere()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await _tools.MouseButtonAsync(ScrollPoint, "right", "press", cancellationToken: cancellation);
+
+        JsonNode scrolled = JsonNode.Parse(await _tools.ScrollAsync(ScrollPoint, "down", 2, cancellationToken: cancellation))!;
+        JsonNode released = JsonNode.Parse(await _tools.MouseButtonAsync(ScrollPoint, "right", "release", cancellationToken: cancellation))!;
+
+        Assert.Equal(2, scrolled["heldButtonMask"]!.GetValue<int>());
+        Assert.Equal(0, released["heldButtonMask"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SimulateInputWheelAndPanEventsScroll()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonObject wheel = new()
+        {
+            ["type"] = "mouse_button",
+            ["x"] = 590,
+            ["y"] = 190,
+            ["button"] = "wheel_down",
+        };
+        JsonObject pan = new()
+        {
+            ["type"] = "pan_gesture",
+            ["x"] = 590,
+            ["y"] = 190,
+            ["delta_x"] = 2,
+        };
+
+        JsonNode wheeled = JsonNode.Parse(await _tools.SimulateInputAsync([wheel], cancellationToken: cancellation))!;
+        (double Vertical, double Horizontal) afterWheel = await ReadScrollAsync();
+        await _tools.SimulateInputAsync([pan], cancellationToken: cancellation);
+        (double Vertical, double Horizontal) afterPan = await ReadScrollAsync();
+
+        Assert.Equal(0, wheeled["heldButtonMask"]!.GetValue<int>());
+        Assert.True(afterWheel.Vertical > 0 && afterWheel.Horizontal == 0, $"a wheel_down event left ScrollBox at {afterWheel}");
+        Assert.True(afterPan.Horizontal > 0, $"a pan of delta_x 2 left ScrollBox at {afterPan}");
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -901,6 +982,12 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
     private Task<JsonNode> HandPressesAsync() => RunAsync("return scene_tree.root.get_node(\"HandProbe\").presses");
 
     private async Task<int> PressCountAsync() => (await RunAsync(ReadSmallButtonPresses)).GetValue<int>();
+
+    private async Task<(double Vertical, double Horizontal)> ReadScrollAsync()
+    {
+        JsonNode scroll = await RunAsync(ReadScroll);
+        return (scroll[0]!.GetValue<double>(), scroll[1]!.GetValue<double>());
+    }
 
     private async Task<string> FocusOwnerNameAsync() => (await RunAsync("return str(scene_tree.root.gui_get_focus_owner().name)")).GetValue<string>();
 

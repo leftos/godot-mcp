@@ -19,17 +19,22 @@ internal sealed partial class RuntimeTools
         " Errors the game's handlers raise while the input plays come back in the result's errors, with file, line and stack; "
         + "the call still succeeds.";
     private const int MaxHoverTimeoutMs = 10_000;
+    private const int MaxScrollNotches = 100;
+    private const double MaxScrollFactor = 10;
     private static readonly TimeSpan InputTimeout = TimeSpan.FromSeconds(10);
 
     // A generous allowance per character or event on top of InputTimeout: each takes a frame or two.
     private static readonly TimeSpan PerStepAllowance = TimeSpan.FromMilliseconds(100);
     private static readonly string[] Buttons = ["left", "right", "middle"];
     private static readonly string[] Modifiers = ["shift", "ctrl", "alt", "meta"];
+    private static readonly string[] ScrollDirections = ["up", "down", "left", "right"];
+    private static readonly string[] ScrollVias = ["wheel", "pan"];
     private static readonly string[] EventTypes =
     [
         "key",
         "mouse_button",
         "mouse_motion",
+        "pan_gesture",
         "joypad_button",
         "joypad_motion",
         "action",
@@ -229,15 +234,75 @@ internal sealed partial class RuntimeTools
             ? timeoutMs
             : throw new McpException($"timeoutMs must be 0 to {MaxHoverTimeoutMs}; got {timeoutMs}.");
 
+    [McpServerTool(Name = "scroll", ReadOnly = false, Destructive = false, OpenWorld = false)]
+    [Description(
+        "Scrolls in the running game as a mouse wheel or a trackpad does: closes a showing tooltip, moves the pointer to the "
+            + "target (carrying any buttons already held), then plays notches one frame apart. A wheel notch is a press and a "
+            + "release of the wheel button in the same frame, carrying factor, as Godot's Windows display server sends one; the "
+            + "wheel never joins heldButtonMask. With options.via pan each notch is one InputEventPanGesture instead, its delta "
+            + "the direction times factor (down and right positive). A ScrollContainer moves an eighth of its page per notch or "
+            + "per delta of 1. Points are viewport coordinates, as get_ui_elements reports them. Returns {pointer, "
+            + "heldButtonMask, scrolledOn}: the Control ({path, class}) under the point, null over none."
+            + ErrorNote
+    )]
+    public Task<string> ScrollAsync(
+        [Description("Where to scroll: the pointer moves there first.")] InputTarget target,
+        [Description("up, down, left or right.")] string direction = "down",
+        [Description("How many notches, 1 to 100, one frame apart.")] int notches = 1,
+        [Description("{factor, via}: factor more than 0 and at most 10 (1 when left out); via wheel (the default) or pan.")]
+            ScrollOptions? options = null,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        ScrollOptions checkedOptions = options ?? new ScrollOptions();
+        JsonObject parameters = new()
+        {
+            ["gesture"] = "scroll",
+            ["target"] = InputTarget.ToBridge(target, "target"),
+            ["direction"] = CheckScrollDirection(direction),
+            ["notches"] = CheckScrollNotches(notches),
+            ["factor"] = CheckScrollFactor(checkedOptions.Factor),
+            ["via"] = CheckScrollVia(checkedOptions.Via),
+        };
+        return SendInputAsync(session, "scroll", parameters, PerStepAllowance * notches, cancellationToken);
+    }
+
+    /// <exception cref="McpException">direction is not up, down, left or right.</exception>
+    internal static string CheckScrollDirection(string direction) =>
+        ScrollDirections.Contains(direction)
+            ? direction
+            : throw new McpException($"direction '{direction}' is not one of {string.Join(", ", ScrollDirections)}.");
+
+    /// <exception cref="McpException">notches is outside 1 to <see cref="MaxScrollNotches"/>.</exception>
+    internal static int CheckScrollNotches(int notches) =>
+        notches is >= 1 and <= MaxScrollNotches ? notches : throw new McpException($"notches must be 1 to {MaxScrollNotches}; got {notches}.");
+
+    /// <exception cref="McpException">factor is not more than 0 and at most <see cref="MaxScrollFactor"/> (NaN included).</exception>
+    internal static double CheckScrollFactor(double factor) =>
+        factor is > 0 and <= MaxScrollFactor
+            ? factor
+            : throw new McpException(
+                $"factor must be more than 0 and at most {MaxScrollFactor}; got {factor.ToString(CultureInfo.InvariantCulture)}."
+            );
+
+    /// <exception cref="McpException">via is not wheel or pan.</exception>
+    internal static string CheckScrollVia(string via) =>
+        ScrollVias.Contains(via) ? via : throw new McpException($"via '{via}' is not one of {string.Join(", ", ScrollVias)}.");
+
     [McpServerTool(Name = "simulate_input", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Sends raw events to the running game, one frame apart; x and y are viewport coordinates. Types: "
-            + "key {key, pressed?, modifiers?, unicode?}; mouse_button {x, y, button?, pressed?, doubleClick?}; "
-            + "mouse_motion {x, y, relative_x?, relative_y?, button_mask?}; joypad_button {button, pressed?, device?}; "
-            + "joypad_motion {axis, value, device?}; action {action, pressed?, strength?}; "
-            + "click_element {element, button?, doubleClick?}; wait {ms}. An omitted pressed on key, mouse_button or "
-            + "joypad_button is a press and a release a frame apart; a motion's relative defaults to the step from the last "
-            + "pointer position and its button_mask to the buttons held now. Joypad names and ranges are gamepad_button's and "
+            + "key {key, pressed?, modifiers?, unicode?}; mouse_button {x, y, button?, pressed?, doubleClick?, factor?}; "
+            + "mouse_motion {x, y, relative_x?, relative_y?, button_mask?}; pan_gesture {x, y, delta_x?, delta_y?}; "
+            + "joypad_button {button, pressed?, device?}; joypad_motion {axis, value, device?}; action {action, pressed?, "
+            + "strength?}; click_element {element, button?, doubleClick?}; wait {ms}. mouse_button's button is left, right, "
+            + "middle, or a wheel notch: wheel_up, wheel_down, wheel_left, wheel_right, with factor (1 when left out; wheel "
+            + "buttons only) for how far it goes. An omitted pressed on key, mouse_button or joypad_button is a press and a "
+            + "release a frame apart, on a wheel button both in one frame, as Godot's Windows display server sends a notch; a "
+            + "wheel button never joins the held buttons. pan_gesture is a trackpad's pan at the point, its deltas 0 when left "
+            + "out (a ScrollContainer scrolls down and right by positive ones). A motion's relative defaults to the step from "
+            + "the last pointer position and its button_mask to the buttons held now. Joypad names and ranges are gamepad_button's and "
             + "gamepad_axis's; device omitted: the id the gamepad tools choose (the lowest no connected real pad holds), "
             + "reported as device."
             + PadNote

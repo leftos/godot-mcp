@@ -20,6 +20,7 @@ const ATTACH_FILE := "res://.godot/godot-mcp/attach.json"
 const OFF_VARIABLE := "GODOT_MCP_OFF"
 const GAMEPAD_SCRIPT := "godot_mcp_gamepad.gd"
 const INPUT_SCRIPT := "godot_mcp_input.gd"
+const RAW_EVENTS_SCRIPT := "godot_mcp_raw_events.gd"
 const INSPECT_SCRIPT := "godot_mcp_inspect.gd"
 const TIME_SCRIPT := "godot_mcp_time.gd"
 const BASELINE_SCRIPT := "godot_mcp_baseline.gd"
@@ -71,8 +72,11 @@ var _gesture_playing: bool = false
 var _dispatching: bool = false
 ## The gamepad (godot_mcp_gamepad.gd beside this script), a child once the bridge is on.
 var _pads: Node
-## The input player (godot_mcp_input.gd beside this script): gestures and raw events.
+## The input player (godot_mcp_input.gd beside this script): the gestures.
 var _gestures: Node
+## The raw event player (godot_mcp_raw_events.gd beside this script): simulate_input's events,
+## played through the input player's senders.
+var _raw_events: Node
 ## The input capture (godot_mcp_capture.gd beside this script): capture_input's recording, which
 ## the input player feeds every event it dispatches.
 var _capture: Node
@@ -167,6 +171,10 @@ func _ready() -> void:
 	_gestures.name = "Gestures"
 	_gestures.bridge = self
 	add_child(_gestures)
+	_raw_events = (load(script_dir.path_join(RAW_EVENTS_SCRIPT)) as GDScript).new()
+	_raw_events.name = "RawEvents"
+	_raw_events.bridge = self
+	add_child(_raw_events)
 	_capture = (load(script_dir.path_join(CAPTURE_SCRIPT)) as GDScript).new()
 	_capture.name = "Capture"
 	_capture.bridge = self
@@ -306,7 +314,8 @@ func _flush_errors() -> void:
 
 
 ## Keeps the real mouse out of injected input: while a gesture plays or injected input holds a
-## button, a mouse button or motion event without the injected mark is marked handled here.
+## button, a mouse button (a wheel notch included), motion or pan gesture event without the
+## injected mark is marked handled here.
 ## The root viewport runs every _input before its GUI (Viewport::push_input), so the GUI never
 ## sees it; hover still follows the real pointer, since push_input updates it before _input.
 ## With emulate_touch_from_mouse on, Input sends each left-button event's touch twin (device
@@ -319,10 +328,15 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
-## Whether event is a mouse button or motion without the injected mark, or a touch twin raised
-## outside _dispatch: the real input _input swallows while injected input is in play.
+## Whether event is a mouse button (a wheel notch included) or motion or a pan gesture without the
+## injected mark, or a touch twin raised outside _dispatch: the real input _input swallows while
+## injected input is in play.
 func _is_real_pointer_event(event: InputEvent) -> bool:
-	if event is InputEventMouseButton or event is InputEventMouseMotion:
+	if (
+		event is InputEventMouseButton
+		or event is InputEventMouseMotion
+		or event is InputEventPanGesture
+	):
 		return event.device != INJECTED_DEVICE
 	if event is InputEventScreenTouch or event is InputEventScreenDrag:
 		return event.device == InputEvent.DEVICE_ID_EMULATION and not _dispatching

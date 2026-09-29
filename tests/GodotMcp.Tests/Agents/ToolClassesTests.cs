@@ -19,6 +19,7 @@ public sealed class ToolClassesTests
 
     [Theory]
     [InlineData("hover", ToolClasses.Drive)]
+    [InlineData("scroll", ToolClasses.Drive)]
     [InlineData("click", ToolClasses.Drive)]
     [InlineData("run_project", ToolClasses.Drive)]
     [InlineData("get_scene_tree", ToolClasses.Read)]

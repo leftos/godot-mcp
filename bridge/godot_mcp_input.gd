@@ -1,13 +1,15 @@
 extends Node
 ## The godot-mcp bridge's input player, a child of the bridge: plays the input tools' gestures
-## (click, drag, type_text, key, mouse_button, hover, the gamepad gestures) and simulate_input's raw
-## events over frames, with new event objects sent through Input. The injected pointer and the
-## held buttons live on the bridge, whose _input keeps the real mouse out while they are in play.
+## (click, drag, type_text, key, mouse_button, hover, scroll, the gamepad gestures) and, through
+## the raw event player (godot_mcp_raw_events.gd), simulate_input's raw events over frames, with
+## new event objects sent through Input. The
+## injected pointer and the held buttons live on the bridge, whose _input keeps the real mouse out
+## while they are in play.
 
 const MIN_DRAG_STEPS := 3
 const SETTLE_FRAMES := 2
 ## The gestures whose result says which Controls they hit, from _hits.
-const HIT_GESTURES := ["click", "drag", "mouse_button", "hover"]
+const HIT_GESTURES := ["click", "drag", "mouse_button", "hover", "scroll"]
 ## The longest a hover waits for a tooltip, the server's own limit on timeoutMs.
 const HOVER_TIMEOUT_CAP_MS := 10000
 ## The recording's movie frame rate, which run_project sets beside --write-movie.
@@ -20,6 +22,23 @@ const MOUSE_BUTTONS := {
 	"left": MOUSE_BUTTON_LEFT,
 	"right": MOUSE_BUTTON_RIGHT,
 	"middle": MOUSE_BUTTON_MIDDLE,
+}
+## The wheel buttons, which only scroll and simulate_input's mouse_button events play: a notch is
+## a press and a release, never held.
+const WHEEL_BUTTONS := {
+	"wheel_up": MOUSE_BUTTON_WHEEL_UP,
+	"wheel_down": MOUSE_BUTTON_WHEEL_DOWN,
+	"wheel_left": MOUSE_BUTTON_WHEEL_LEFT,
+	"wheel_right": MOUSE_BUTTON_WHEEL_RIGHT,
+}
+## A scroll direction's pan gesture delta for factor 1, in ScrollContainer's sense: a positive
+## delta scrolls down or right (scene/gui/scroll_container.cpp L311-320 in 4.7.2), as
+## WHEEL_BUTTONS' wheel_down and wheel_right do (L200-226).
+const SCROLL_DIRECTIONS := {
+	"up": Vector2(0, -1),
+	"down": Vector2(0, 1),
+	"left": Vector2(-1, 0),
+	"right": Vector2(1, 0),
 }
 const MODIFIER_KEYS := {KEY_SHIFT: "shift", KEY_CTRL: "ctrl", KEY_ALT: "alt", KEY_META: "meta"}
 ## A US keyboard's shifted symbols, and at the same index the key that types each unshifted.
@@ -44,7 +63,8 @@ const UNKNOWN_KEY_HINT := (
 
 ## The bridge (godot_mcp_bridge.gd), set by it before this node enters the tree.
 var bridge: Node
-## What the playing gesture hit: pressedOn, releasedOn, guiDragStarted, dropAccepted.
+## What the playing gesture hit: pressedOn, releasedOn, guiDragStarted, dropAccepted,
+## scrolledOn.
 var _hits: Dictionary = {}
 ## The UI snapshot (godot_mcp_ui_snapshot.gd) taken as the first gesture since launch, or since
 ## the last uiChanged wait was met, started: the baseline wait_for {uiChanged} compares with.
@@ -60,10 +80,9 @@ func _ready() -> void:
 
 ## Plays one gesture over frames, then waits two more frames, so the game's handlers have run
 ## and their errors are flushed ahead of the reply. Every point arrives in viewport coordinates.
-## Answers {result: {pointer, heldButtonMask}}, to which a click, drag, mouse_button or hover adds
-## the Controls it hit (a hover its tooltip too) and a pad gesture the gamepad's report (device,
-## warning), or {error}. Takes
-## the uiChanged baseline when none is pending.
+## Answers {result: {pointer, heldButtonMask}}, to which a click, drag, mouse_button, hover or
+## scroll adds the Controls it hit (a hover its tooltip too) and a pad gesture the gamepad's
+## report (device, warning), or {error}. Takes the uiChanged baseline when none is pending.
 func play(params: Dictionary) -> Dictionary:
 	bridge._gesture_playing = true
 	_hits = {}
@@ -173,7 +192,7 @@ func _play_gesture(params: Dictionary) -> String:
 		"gamepad_axes":
 			error = await bridge._pads.play_axes(params)
 		"events":
-			error = await _play_events(params.get("events"))
+			error = await bridge._raw_events.play(params.get("events"))
 	return error
 
 
@@ -189,6 +208,8 @@ func _play_pointer_gesture(gesture: String, params: Dictionary) -> String:
 			error = await _play_mouse_button(params)
 		"hover":
 			error = await _play_hover(params)
+		"scroll":
+			error = await _play_scroll(params)
 	return error
 
 
@@ -419,6 +440,51 @@ func _play_mouse_button(params: Dictionary) -> String:
 	return ""
 
 
+## Scrolls at a target as mouse_button's press aims: refuses the target before anything is sent,
+## dismisses tooltips, then aims, hit-tested, and records the Control under the point as
+## scrolledOn. Then plays params.notches notches one frame apart, and a frame after the last:
+## each a wheel notch (send_notch) or, with via pan, one pan gesture whose delta is the
+## direction times params.factor.
+func _play_scroll(params: Dictionary) -> String:
+	var refusal: String = _scroll_refusal(params)
+	if not refusal.is_empty():
+		return refusal
+	await _dismiss_tooltips()
+	var point: Variant = _aim(params.get("target"), true)
+	if point is String:
+		return point
+	_hits["scrolledOn"] = _control_under(point)
+	var window_point: Vector2 = _to_window(point)
+	var direction: String = str(params.get("direction", "down"))
+	var factor: float = float(params.get("factor", 1.0))
+	var unit: Vector2 = SCROLL_DIRECTIONS[direction]
+	var wheel: int = WHEEL_BUTTONS["wheel_" + direction]
+	var pan: bool = str(params.get("via", "wheel")) == "pan"
+	for notch in maxi(1, int(params.get("notches", 1))):
+		if notch > 0:
+			await get_tree().process_frame
+		if pan:
+			send_pan(window_point, unit * factor)
+		else:
+			send_notch(window_point, wheel, factor)
+	await get_tree().process_frame
+	return ""
+
+
+## Why a scroll cannot play, or "" when it can: its target, direction and via; nothing is sent.
+func _scroll_refusal(params: Dictionary) -> String:
+	var refusal: String = _refusal_of(params.get("target"))
+	if not refusal.is_empty():
+		return refusal
+	var direction: String = str(params.get("direction", "down"))
+	if not SCROLL_DIRECTIONS.has(direction):
+		return "unknown scroll direction '%s'; use up, down, left or right" % direction
+	var via: String = str(params.get("via", "wheel"))
+	if not via in ["wheel", "pan"]:
+		return "unknown scroll via '%s'; use wheel or pan" % via
+	return ""
+
+
 ## After _aim has moved the pointer to a viewport point, carrying the held buttons in the
 ## motion's button_mask and pressing nothing, waits a frame and records the Control under it as
 ## hoveredOn. Returns that Control, or null over none.
@@ -564,143 +630,6 @@ func _find_label(node: Node) -> Label:
 		if found != null:
 			return found
 	return null
-
-
-## Plays a raw event list, one frame apart, stopping at the first event that fails.
-func _play_events(events: Variant) -> String:
-	if not events is Array:
-		return "events must be an array of event objects"
-	var list: Array = events
-	for index in list.size():
-		if index > 0:
-			await get_tree().process_frame
-		var error: String = await _play_event(list[index])
-		if not error.is_empty():
-			return "event %d: %s" % [index, error]
-	return ""
-
-
-func _play_event(event: Variant) -> String:
-	if not event is Dictionary:
-		return "not an object"
-	var spec: Dictionary = event
-	return await _play_event_of_kind(spec)
-
-
-## Plays one raw event by its type, or says why it could not.
-func _play_event_of_kind(spec: Dictionary) -> String:
-	var kind: String = str(spec.get("type", ""))
-	var error: String = (
-		(
-			"unknown type '%s'; the types are key, mouse_button, mouse_motion, joypad_button, "
-			+ "joypad_motion, action, click_element and wait"
-		)
-		% kind
-	)
-	match kind:
-		"key":
-			error = await _play_raw_key(spec)
-		"mouse_button":
-			error = await _play_raw_button(spec)
-		"mouse_motion":
-			error = _play_raw_motion(spec)
-		"joypad_button":
-			error = await bridge._pads.play_raw_button(spec)
-		"joypad_motion":
-			error = bridge._pads.play_raw_motion(spec)
-		"action":
-			error = _play_action(spec)
-		"click_element":
-			error = await _play_click_element(spec)
-		"wait":
-			error = await _play_wait(spec)
-	return error
-
-
-## A click on the element spec names, with its button and doubleClick, as click plays it.
-func _play_click_element(spec: Dictionary) -> String:
-	var click: Dictionary = {
-		"target": {"element": spec.get("element", "")},
-		"button": spec.get("button", "left"),
-		"doubleClick": spec.get("doubleClick", false),
-	}
-	return await _play_click(click)
-
-
-## Waits spec.ms milliseconds (none when negative) of game time the time scale does not stretch:
-## real time in a plain run, clip time in a recording (a movie frame a 60th of a second), since a
-## SceneTreeTimer subtracts the process step (scene/main/scene_tree.cpp L793-812,
-## main/main_timer_sync.cpp L432-435 in 4.7.2). The timer runs while the tree is paused.
-func _play_wait(spec: Dictionary) -> String:
-	var seconds: float = maxf(float(spec.get("ms", 0)), 0.0) / 1000.0
-	await get_tree().create_timer(seconds, true, false, true).timeout
-	return ""
-
-
-## A key event; with pressed omitted, a press and a release one frame apart.
-func _play_raw_key(spec: Dictionary) -> String:
-	var key_name: String = str(spec.get("key", ""))
-	var keycode: int = _parse_key(key_name)
-	if keycode == KEY_NONE:
-		return "unknown key '%s'. %s" % [key_name, UNKNOWN_KEY_HINT]
-	var modifiers := PackedStringArray(spec.get("modifiers", []))
-	var unicode: int = _key_unicode(keycode, modifiers)
-	if spec.get("unicode") is String and not str(spec["unicode"]).is_empty():
-		unicode = str(spec["unicode"]).unicode_at(0)
-	elif spec.get("unicode") is float or spec.get("unicode") is int:
-		unicode = int(spec["unicode"])
-	if spec.has("pressed"):
-		_send_key(keycode, bool(spec["pressed"]), unicode, modifiers)
-		return ""
-	_send_key(keycode, true, unicode, modifiers)
-	await get_tree().process_frame
-	_send_key(keycode, false, unicode, modifiers)
-	return ""
-
-
-## A mouse button event at a point; with pressed omitted, a press and a release one frame
-## apart.
-func _play_raw_button(spec: Dictionary) -> String:
-	if not (spec.has("x") and spec.has("y")):
-		return "mouse_button needs x and y"
-	var button: int = _parse_button(spec.get("button", "left"))
-	if button == 0:
-		return _unknown_button(spec.get("button"))
-	var window_point: Vector2 = _to_window(Vector2(float(spec["x"]), float(spec["y"])))
-	var double_click: bool = bool(spec.get("doubleClick", false))
-	if spec.has("pressed"):
-		_send_button(window_point, button, bool(spec["pressed"]), double_click)
-		return ""
-	_send_button(window_point, button, true, double_click)
-	await get_tree().process_frame
-	_send_button(window_point, button, false, false)
-	return ""
-
-
-## A motion to a point. relative defaults to the step from the last pointer position and
-## button_mask to the buttons held now; an explicit relative is in viewport units.
-func _play_raw_motion(spec: Dictionary) -> String:
-	if not (spec.has("x") and spec.has("y")):
-		return "mouse_motion needs x and y"
-	var window_point: Vector2 = _to_window(Vector2(float(spec["x"]), float(spec["y"])))
-	var relative: Vector2 = window_point - bridge._pointer
-	if spec.has("relative_x") or spec.has("relative_y"):
-		var given := Vector2(float(spec.get("relative_x", 0)), float(spec.get("relative_y", 0)))
-		relative = get_viewport().get_screen_transform().basis_xform(given)
-	_send_motion(window_point, relative, int(spec.get("button_mask", bridge._held_mask)))
-	return ""
-
-
-func _play_action(spec: Dictionary) -> String:
-	var action := StringName(str(spec.get("action", "")))
-	if not InputMap.has_action(action):
-		return "no input action '%s' in the project's InputMap" % action
-	var event := InputEventAction.new()
-	event.action = action
-	event.pressed = bool(spec.get("pressed", true))
-	event.strength = float(spec.get("strength", 1.0))
-	_dispatch(event)
-	return ""
 
 
 ## Resolves a target and moves the pointer to its viewport point: the motion the gesture sends
@@ -892,6 +821,43 @@ func _num(value: float) -> String:
 	return str(rounded)
 
 
+## The senders and parsers the raw event player (godot_mcp_raw_events.gd) plays its events with.
+func click(params: Dictionary) -> String:
+	return await _play_click(params)
+
+
+func to_window(point: Vector2) -> Vector2:
+	return _to_window(point)
+
+
+func send_button(window_point: Vector2, button: int, pressed: bool, double_click: bool) -> void:
+	_send_button(window_point, button, pressed, double_click)
+
+
+func send_motion(window_point: Vector2, relative: Vector2, button_mask: int) -> void:
+	_send_motion(window_point, relative, button_mask)
+
+
+func send_key(keycode: int, pressed: bool, unicode: int, modifiers: PackedStringArray) -> void:
+	_send_key(keycode, pressed, unicode, modifiers)
+
+
+func dispatch(event: InputEvent) -> void:
+	_dispatch(event)
+
+
+func parse_button(value: Variant) -> int:
+	return _parse_button(value)
+
+
+func parse_key(key_name: String) -> int:
+	return _parse_key(key_name)
+
+
+func key_unicode(keycode: int, modifiers: PackedStringArray) -> int:
+	return _key_unicode(keycode, modifiers)
+
+
 ## The one place a viewport (canvas) point becomes the window point the display server's own
 ## events carry: the root window's screen transform holds the stretch scale and the letterbox
 ## offset.
@@ -931,6 +897,40 @@ func _send_button(window_point: Vector2, button: int, pressed: bool, double_clic
 	event.position = window_point
 	event.global_position = window_point
 	bridge._pointer = window_point
+	_dispatch(event)
+
+
+## One wheel notch as Godot's Windows display server sends one for WM_MOUSEWHEEL or
+## WM_MOUSEHWHEEL: a press with the factor, then at once, in the same frame, its duplicate
+## released (platform/windows/display_server_windows.cpp L6472-6499, L6577-6585 in 4.7.2).
+func send_notch(window_point: Vector2, button: int, factor: float) -> void:
+	send_wheel(window_point, button, true, factor)
+	send_wheel(window_point, button, false, factor)
+
+
+## A wheel button event. The display server's press carries the held buttons plus the wheel's
+## bit and its release the held buttons alone (display_server_windows.cpp L6536-6543, L6582 in
+## 4.7.2); the wheel never joins bridge._held_mask, so it is never held.
+func send_wheel(window_point: Vector2, button: int, pressed: bool, factor: float) -> void:
+	var event := InputEventMouseButton.new()
+	event.device = bridge.INJECTED_DEVICE
+	event.button_index = button as MouseButton
+	event.pressed = pressed
+	event.factor = factor
+	event.button_mask = bridge._held_mask | ((1 << (button - 1)) if pressed else 0)
+	event.position = window_point
+	event.global_position = window_point
+	bridge._pointer = window_point
+	_dispatch(event)
+
+
+## A pan gesture, as a trackpad sends one, at a window point; it moves no pointer, since Input
+## tracks the mouse position from mouse events only.
+func send_pan(window_point: Vector2, delta: Vector2) -> void:
+	var event := InputEventPanGesture.new()
+	event.device = bridge.INJECTED_DEVICE
+	event.position = window_point
+	event.delta = delta
 	_dispatch(event)
 
 

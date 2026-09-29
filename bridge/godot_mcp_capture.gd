@@ -25,6 +25,10 @@ const MOUSE_BUTTON_NAMES := {
 	MOUSE_BUTTON_LEFT: "left",
 	MOUSE_BUTTON_RIGHT: "right",
 	MOUSE_BUTTON_MIDDLE: "middle",
+	MOUSE_BUTTON_WHEEL_UP: "wheel_up",
+	MOUSE_BUTTON_WHEEL_DOWN: "wheel_down",
+	MOUSE_BUTTON_WHEEL_LEFT: "wheel_left",
+	MOUSE_BUTTON_WHEEL_RIGHT: "wheel_right",
 }
 
 ## The bridge (godot_mcp_bridge.gd), set by it before this node enters the tree.
@@ -134,8 +138,8 @@ func record_real(event: InputEvent, now_ms: int, screen: Transform2D) -> void:
 
 
 ## event as the simulate_input event that plays it, positions in viewport coordinates through
-## screen's inverse; empty for a kind simulate_input cannot play (touch, gestures, MIDI, wheel
-## and extra mouse buttons, pads outside 0-15).
+## screen's inverse; empty for a kind simulate_input cannot play (touch, gestures other than a
+## pan, MIDI, the extra mouse buttons, pads outside 0-15).
 func event_spec(event: InputEvent, screen: Transform2D) -> Dictionary:
 	var spec: Dictionary = {}
 	if event is InputEventKey:
@@ -144,6 +148,8 @@ func event_spec(event: InputEvent, screen: Transform2D) -> Dictionary:
 		spec = _button_spec(event, screen.affine_inverse())
 	elif event is InputEventMouseMotion:
 		spec = _motion_spec(event, screen.affine_inverse())
+	elif event is InputEventPanGesture:
+		spec = _pan_spec(event, screen.affine_inverse())
 	elif event is InputEventJoypadButton:
 		spec = _pad_button_spec(event)
 	elif event is InputEventJoypadMotion:
@@ -249,7 +255,26 @@ func _button_spec(event: InputEventMouseButton, to_viewport: Transform2D) -> Dic
 	}
 	if event.double_click:
 		spec["doubleClick"] = true
+	if (
+		event.button_index >= MOUSE_BUTTON_WHEEL_UP
+		and event.button_index <= MOUSE_BUTTON_WHEEL_RIGHT
+	):
+		spec["factor"] = event.factor
 	return spec
+
+
+## A pan gesture at its point in viewport coordinates, its delta as the event carries it: the
+## viewport's own transforms leave a gesture's delta alone (InputEventPanGesture::xformed_by,
+## core/input/input_event.cpp L1766-1776 in 4.7.2).
+func _pan_spec(event: InputEventPanGesture, to_viewport: Transform2D) -> Dictionary:
+	var point: Vector2 = to_viewport * event.position
+	return {
+		"type": "pan_gesture",
+		"x": point.x,
+		"y": point.y,
+		"delta_x": event.delta.x,
+		"delta_y": event.delta.y,
+	}
 
 
 func _motion_spec(event: InputEventMouseMotion, to_viewport: Transform2D) -> Dictionary:
