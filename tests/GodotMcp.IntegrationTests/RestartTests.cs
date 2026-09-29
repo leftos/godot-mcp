@@ -150,6 +150,9 @@ public sealed class RestartTests : IAsyncDisposable
         Assert.Equal(1000, argumentsBefore[2]!.GetValue<int>());
         Assert.Equal(900, argumentsBefore[3]!.GetValue<int>());
         Assert.True(JsonNode.DeepEquals(argumentsBefore, argumentsAfter), $"before: {argumentsBefore}\nafter: {argumentsAfter}");
+        Assert.Equal(1000, restarted["window"]!["width"]!.GetValue<int>());
+        Assert.Equal(900, restarted["window"]!["height"]!.GetValue<int>());
+        Assert.Null(restarted["warning"]);
         Assert.True(Array.IndexOf(stdout, marker) > 0, $"no marker after older lines in stdout:\n{string.Join('\n', stdout)}");
         Assert.Contains(marker, stderr);
     }

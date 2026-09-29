@@ -19,7 +19,6 @@ Shared: `RuntimeTools.Capture.cs`, `RuntimeTools.Input.cs`, `RuntimeTools.Time.c
 
 ### Singles
 
-- [ ] `restart_project`'s result (`RestartResult`) carries no `window` or size `warning`, though the relaunch is resized as `run_project`'s is
 - [ ] Integration tests that launch their own game with a 45 s timeout (`ProfileTests.APresetSetsTheSessionAndTheWindowSize`, the own-launch cases in `RuntimeReadTests`) against the DEVELOPMENT.md footgun's 180 s
 - [ ] `TempDirectory.Dispose` (`tests/GodotMcp.IntegrationTests/TempDirectory.cs` L32) throws `IOException` ("being used by another process") under machine load: seen twice on `TakeScreenshotPlacesANonEmbeddedPopupWhereTheWindowShowsIt(canvas_items, 1280, 720)`; it does not retry
 

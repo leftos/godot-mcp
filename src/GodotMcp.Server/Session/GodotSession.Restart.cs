@@ -70,8 +70,9 @@ internal sealed partial class GodotSession
                 PreviousQuitMs = QuitMs(previousEnd),
                 PreviousLeftRunning = LeftRunning(previousEnd),
                 Recording = started.Recording,
+                Window = started.Window,
                 PreviousRecording = replaced?.Outcome,
-                Warning = previousEnd?.Warning,
+                Warning = JoinWarnings(previousEnd?.Warning, started.Warning),
             };
         }
         finally
@@ -81,6 +82,20 @@ internal sealed partial class GodotSession
                 await previous.DisposeAsync();
             }
         }
+    }
+
+    /// <summary>
+    /// The replaced game's debugger warning and the relaunched game's window-size warning as <see cref="RestartResult.Warning"/>
+    /// reports them: the debugger text first, separated by one space, either alone when only one is set, null when both are.
+    /// </summary>
+    internal static string? JoinWarnings(string? debugger, string? window)
+    {
+        if (debugger is null)
+        {
+            return window;
+        }
+
+        return window is null ? debugger : $"{debugger} {window}";
     }
 
     /// <summary>

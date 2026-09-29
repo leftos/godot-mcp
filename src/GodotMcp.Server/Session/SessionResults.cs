@@ -116,11 +116,18 @@ internal sealed record RestartResult(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? Recording { get; init; }
 
+    /// <summary>The game window's size in pixels, as the bridge's hello reported it; left out when the hello carried none.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public WindowSize? Window { get; init; }
+
     /// <summary>How the replaced game's recording ended: its full file or its clips.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? PreviousRecording { get; init; }
 
-    /// <summary>Set when a debugger was attached to the replaced game, whose debug session ended with it.</summary>
+    /// <summary>
+    /// Set when a debugger was attached to the replaced game, whose debug session ended with it, and when the relaunched
+    /// window's size differs from the one --resolution asked for; the debugger warning comes first.
+    /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Warning { get; init; }
 }
