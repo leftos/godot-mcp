@@ -10,8 +10,8 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// Tools that read a project's files in a headless Godot (headless/operations.gd) without running the game: validate and
-/// get_scene_file_tree here, the scene edits in HeadlessTools.Scene.cs. Each runs the prep first, as run_project does, and is
-/// refused while a session is live on the folder.
+/// get_scene_file_tree here, the scene edits in HeadlessTools.Scene.cs. Each runs the prep first, as run_project does, and runs
+/// beside a live session on the folder.
 /// </summary>
 [McpServerToolType]
 internal sealed partial class HeadlessTools(SessionRegistry sessions)
@@ -29,9 +29,6 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
     private const string SkipPrepHint = ", or pass options.prepare: \"never\" to skip the prep";
 
     private const string ProjectPathDescription = "The folder that holds the project's project.godot.";
-    private const string RefusedNote =
-        " Refused while a session is live on the project (a headless run would load the bridge from its override.cfg); "
-        + "stop_project or detach_project it first.";
 
     private static readonly string[] ValidateExtensions = [".gd", ".cs", ".tscn", ".scn", ".tres", ".res"];
     private static readonly string[] SweepExtensions = [".gd", ".tscn", ".tres"];
@@ -54,7 +51,6 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             + "or the last saved one. Errors make valid false, warnings never do. Errors Godot logs before the first file is "
             + "checked (an autoload's _init, the project's settings) are listed under the res:// file they name, else in "
             + "engineErrors [{message, file, line}]; either makes valid false."
-            + RefusedNote
     )]
     public async Task<string> ValidateAsync(
         [Description(ProjectPathDescription)] string projectPath,
@@ -96,7 +92,6 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             + "page, {nodes, total, offset}, plus next, the offset of the following page, while more remain, and errors when Godot "
             + "logged any while reading. A placeholder instance is listed with its instance path, not expanded. For the running "
             + "game's nodes, get_scene_tree."
-            + RefusedNote
     )]
     public async Task<string> GetSceneFileTreeAsync(
         [Description(ProjectPathDescription)] string projectPath,

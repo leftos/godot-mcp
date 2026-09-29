@@ -144,22 +144,25 @@ public sealed class SessionAttachTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task AHeadlessRunIsRefusedWhileASessionIsLive()
+    public async Task AHeadlessRunLeavesALiveSessionsOverrideInPlace()
     {
         string alpha = _harness.Project("alpha");
         using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", null);
-        HeadlessRequest request = new(alpha, "validate", [], Prepare: false, Ceiling: TimeSpan.FromSeconds(60));
 
-        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
-            HeadlessRunner.RunAsync(_harness.Sessions, request, TestContext.Current.CancellationToken)
-        );
+        HeadlessRunner.ClearFolder(_harness.Sessions, alpha);
 
-        Assert.Equal(
-            $"a headless run is refused while session(s) server run on {alpha}: a --script run would load the bridge from its override.cfg. "
-                + "stop_project or detach_project them first.",
-            refused.Message
-        );
         Assert.True(OverrideFile.IsOurs(OverrideFile.PathIn(alpha)));
+    }
+
+    [Fact]
+    public void AHeadlessRunRemovesAMarkedOverrideNoLiveSessionHolds()
+    {
+        string alpha = _harness.Project("alpha");
+        OverrideFile.Write(alpha, Path.Combine(alpha, "bridge.gd"), shutOutRealGamepads: false, quiet: false);
+
+        HeadlessRunner.ClearFolder(_harness.Sessions, alpha);
+
+        Assert.False(File.Exists(OverrideFile.PathIn(alpha)));
     }
 
     [Fact]

@@ -154,7 +154,6 @@ internal sealed partial class HeadlessTools
             + "class}, a built-in one as {class, subResource?, properties}. Returns {results: [{nodePath, type, script?, "
             + "properties} or {nodePath, error}], errors?}: a missing node or property fails its own entry alone. A value whose "
             + "JSON is longer than 2000 characters comes back as {valuePreview, valueLength}."
-            + RefusedNote
     )]
     public async Task<string> GetNodePropertiesAsync(
         [Description(ProjectPathDescription)] string projectPath,

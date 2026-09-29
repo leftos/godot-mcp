@@ -270,6 +270,45 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Equal("res://Excluded.cs is not compiled by CsProbe.csproj: it is outside its Compile items.", refused.Message);
     }
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task HeadlessToolsRunBesideALiveSession()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        LaunchResult launched = await _harness.Sessions.LaunchAsync(
+            new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true),
+            null,
+            cancellation
+        );
+        WriteScenes(probe.Directory);
+
+        JsonNode tree = await TreeAsync(probe.Directory, "level.tscn", null, cancellation);
+        JsonNode saved = JsonNode.Parse(await _tools.SaveSceneAsync(probe.Directory, "level.tscn", "level_copy.tscn", null, cancellation))!;
+        RuntimeTools runtime = new(_harness.Sessions, TestCSharp.Unused());
+        JsonNode live = JsonNode.Parse(await runtime.GetSceneTreeAsync(null, null, null, null, launched.Session, cancellationToken: cancellation))!;
+
+        Assert.Equal("Level", tree["nodes"]![0]!["name"]!.GetValue<string>());
+        Assert.Equal("res://level_copy.tscn", saved["savedTo"]!.GetValue<string>());
+        Assert.True(File.Exists(Path.Combine(probe.Directory, "level_copy.tscn")));
+        Assert.NotEmpty(live["nodes"]!.AsArray());
+        Assert.True(OverrideFile.IsOurs(probe.OverrideFile));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AHeadlessRunRebuildsCSharpBesideALiveCSharpGame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(new CsProbeProject());
+        await _harness.Sessions.LaunchAsync(new LaunchRequest(csProbe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
+        string source = File.ReadAllText(csProbe.SourcePath("CsProbeNode.cs"));
+        csProbe.WriteSource("CsProbeNode.cs", source + "\n// Edited while the game runs.\n");
+
+        JsonNode result = await ValidateAsync(csProbe.Directory, ["CsProbeNode.cs"], cancellation);
+
+        Assert.Equal("built", result["prep"]!["build"]!.GetValue<string>());
+        Assert.True(result["valid"]!.GetValue<bool>(), result.ToJsonString());
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ANewClassNameIsKnownAfterTheImport()
     {

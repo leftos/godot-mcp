@@ -617,7 +617,7 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
     [Fact(Timeout = TestTimeoutMs)]
     public async Task DescribeClassAsksTheRunningGame()
     {
-        // A headless run is refused while the shared session is live on the probe, so the answer is the bridge's.
+        // The shared session is live on the probe, so the answer is its bridge's.
         HeadlessTools tools = new(_shared.Sessions);
 
         JsonNode described = JsonNode.Parse(

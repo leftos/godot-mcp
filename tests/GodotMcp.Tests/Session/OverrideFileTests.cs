@@ -96,25 +96,25 @@ public sealed class OverrideFileTests : IDisposable
     }
 
     [Fact]
-    public void RemoveDeletesAMarkedFile()
+    public void ReleaseDeletesAMarkedFile()
     {
         OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), false, false);
 
-        Assert.True(OverrideFile.Remove(_project.Path));
+        Assert.True(OverrideFile.Release(_project.Path));
         Assert.False(File.Exists(OverrideFile.PathIn(_project.Path)));
     }
 
     [Fact]
-    public void RemoveLeavesAnUnmarkedFileByteIdentical()
+    public void ReleaseLeavesAnUnmarkedFileByteIdentical()
     {
         string path = OverrideFile.PathIn(_project.Path);
         File.WriteAllText(path, UserOverride);
         byte[] before = File.ReadAllBytes(path);
 
-        Assert.False(OverrideFile.Remove(_project.Path));
+        Assert.False(OverrideFile.Release(_project.Path));
         Assert.Equal(before, File.ReadAllBytes(path));
     }
 
     [Fact]
-    public void RemoveWithoutAFileDoesNothing() => Assert.False(OverrideFile.Remove(_project.Path));
+    public void ReleaseWithoutAFileDoesNothing() => Assert.False(OverrideFile.Release(_project.Path));
 }

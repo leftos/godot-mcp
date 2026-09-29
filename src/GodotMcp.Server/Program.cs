@@ -39,6 +39,9 @@ builder
 using IHost host = builder.Build();
 Log.Ambient = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("GodotMcp.Server.Load");
 SessionRegistry sessions = host.Services.GetRequiredService<SessionRegistry>();
+
+// A server killed before its shutdown left its override.cfg files behind; remove the ones no live server owns.
+sessions.OverrideFolders.Sweep();
 host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(sessions.Shutdown);
 AppDomain.CurrentDomain.ProcessExit += (_, _) => sessions.Shutdown();
 

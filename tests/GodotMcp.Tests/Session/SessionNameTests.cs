@@ -90,4 +90,93 @@ public sealed class SessionNameTests : IAsyncDisposable
         Assert.EndsWith(".preview-12", name, StringComparison.Ordinal);
         Assert.Matches("^[A-Za-z0-9._-]{1,64}$", name);
     }
+
+    [Fact]
+    public async Task ADefaultNameHeldLiveOnAnotherFolderIsNumbered()
+    {
+        string one = _harness.Project(Path.Combine("one", "Sky.Client"));
+        string two = _harness.Project(Path.Combine("two", "Sky.Client"));
+        string three = _harness.Project(Path.Combine("three", "Sky.Client"));
+
+        string first = await StartDefaultAttachAsync(one);
+        string second = await StartDefaultAttachAsync(two);
+        string third = await StartDefaultAttachAsync(three);
+
+        Assert.Equal(["Sky.Client", "Sky.Client-2", "Sky.Client-3"], [first, second, third]);
+    }
+
+    [Fact]
+    public async Task ADefaultNameHeldLiveOnTheSameFolderIsStillRefused()
+    {
+        string one = _harness.Project(Path.Combine("one", "Sky.Client"));
+        await StartDefaultAttachAsync(one);
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _harness.Sessions.AttachAsync(one, null, RegistryHarness.LongWait, false, false, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(LiveSkyClientRefusal(one), refused.Message);
+    }
+
+    [Fact]
+    public async Task AGivenNameHeldLiveIsRefusedNotNumbered()
+    {
+        string one = _harness.Project(Path.Combine("one", "Sky.Client"));
+        string two = _harness.Project(Path.Combine("two", "Sky.Client"));
+        await StartDefaultAttachAsync(one);
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _harness.Sessions.AttachAsync(two, "Sky.Client", RegistryHarness.LongWait, false, false, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(LiveSkyClientRefusal(one), refused.Message);
+    }
+
+    [Fact]
+    public async Task ANumberedNameOfALongFolderFitsTheRule()
+    {
+        string folder = new('a', 64);
+        string one = _harness.Project(Path.Combine("one", folder));
+        string two = _harness.Project(Path.Combine("two", folder));
+        await StartDefaultAttachAsync(one);
+
+        string name = await StartDefaultAttachAsync(two);
+
+        Assert.Equal(new string('a', 62) + "-2", name);
+        Assert.Matches("^[A-Za-z0-9._-]{1,64}$", name);
+    }
+
+    [Fact]
+    public async Task ANumberedNameWhoseSessionEndedIsReused()
+    {
+        string one = _harness.Project(Path.Combine("one", "Sky.Client"));
+        string two = _harness.Project(Path.Combine("two", "Sky.Client"));
+        string three = _harness.Project(Path.Combine("three", "Sky.Client"));
+        await StartDefaultAttachAsync(one);
+        await _harness.EndAttachedGameAsync(two, "Sky.Client-2");
+
+        string name = await StartDefaultAttachAsync(three);
+
+        Assert.Equal("Sky.Client-2", name);
+    }
+
+    /// <summary>The refusal of a start under 'Sky.Client' while a session on <paramref name="holderDir"/> holds it live.</summary>
+    private static string LiveSkyClientRefusal(string holderDir) =>
+        $"A session named 'Sky.Client' is live on {ProjectPaths.Normalise(holderDir)}; stop_project or detach_project it, "
+        + "or pass another session name.";
+
+    /// <summary>Starts an attach with no session name that stays waiting for its game; returns the name the registry gave it.</summary>
+    private async Task<string> StartDefaultAttachAsync(string projectDir)
+    {
+        CancellationTokenSource cancel = new();
+        Task attach = _harness.Sessions.AttachAsync(projectDir, null, RegistryHarness.LongWait, false, false, cancel.Token);
+        _harness.Waiting.Add((attach, cancel));
+        SessionInfo? started = null;
+        await RegistryHarness.WaitUntilAsync(() =>
+        {
+            started = _harness.Sessions.List(includeStopped: false).FirstOrDefault(session => ProjectPaths.AreSame(session.ProjectPath, projectDir));
+            return started is not null;
+        });
+        return started!.Name;
+    }
 }

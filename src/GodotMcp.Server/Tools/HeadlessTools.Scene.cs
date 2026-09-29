@@ -17,8 +17,7 @@ internal sealed partial class HeadlessTools
 
     private const string WriteNote =
         " Runs the prep first, as run_project does (a C# build when stale, an import when needed). A scene that uses C# scripts is "
-        + "not saved while the project's C# build fails. Refused while a session is live on the project (a headless run would "
-        + "load the bridge from its override.cfg); stop_project or detach_project it first. A script the scene uses that has no "
+        + "not saved while the project's C# build fails. A script the scene uses that has no "
         + ".uid file gets the one the editor would write; uidFilesWritten lists those .uid files (res:// paths) to commit.";
 
     private const string EditNote =

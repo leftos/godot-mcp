@@ -36,7 +36,11 @@ public sealed partial class HangProbeTests : IAsyncDisposable
     public HangProbeTests()
     {
         _listener = new(NullLogger<BridgeListener>.Instance) { Clock = _wallClock };
-        _sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance) { IsDebuggerAttached = _ => _debuggerAttached };
+        _sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance)
+        {
+            IsDebuggerAttached = _ => _debuggerAttached,
+            OverrideFolders = new OverrideFolders(_temp.Combine("override-folders.txt"), TextWriter.Null),
+        };
     }
 
     public ValueTask DisposeAsync()

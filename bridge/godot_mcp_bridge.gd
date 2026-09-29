@@ -15,6 +15,9 @@ const HEADER_BYTES := 4
 const MAX_FRAME_BYTES := 16 * 1024 * 1024
 const SCREENSHOT_DIR := "res://.godot/godot-mcp/screenshots"
 const ATTACH_FILE := "res://.godot/godot-mcp/attach.json"
+## Set to "1" by the server for its headless runs, which load a live session's override.cfg: the
+## bridge then stays off without looking for a server, and frees itself without a warning.
+const OFF_VARIABLE := "GODOT_MCP_OFF"
 const GAMEPAD_SCRIPT := "godot_mcp_gamepad.gd"
 const INPUT_SCRIPT := "godot_mcp_input.gd"
 const INSPECT_SCRIPT := "godot_mcp_inspect.gd"
@@ -45,6 +48,9 @@ const CALL_FORGOTTEN := "no longer awaited: the method keeps running on its node
 ## A quiet session's frame-rate cap when the project sets none: its frames are never seen, so
 ## drawing at the monitor's refresh rate only burns the GPU.
 const QUIET_MAX_FPS := 60
+## Where a quiet session's override.cfg asks for the main window (the server's
+## OverrideFile.OffScreenPosition), as an absolute initial position (type 0).
+const PARK_POSITION := Vector2i(-9999, -9999)
 ## The device id every injected mouse event carries, so _input can tell it from the real mouse
 ## (DEVICE_ID_MOUSE, 32) and from the engine's own ids: 0-15 joypads, 16-31 keyboards, -1
 ## emulation, -2 internal (core/input/input_event.h L64-67 in 4.7.2).
@@ -110,10 +116,11 @@ var _endpoint: Dictionary = {}
 var _logger: Logger
 
 
-## Finds the server and registers the error logger as early as an autoload can: a logger sees
-## only what is logged after OS.add_logger.
+## Finds the server, none when the server switched the bridge off (OFF_VARIABLE), and registers
+## the error logger as early as an autoload can: a logger sees only what is logged after
+## OS.add_logger.
 func _init() -> void:
-	_endpoint = _find_endpoint()
+	_endpoint = {} if _is_switched_off() else _find_endpoint()
 	if _endpoint.is_empty():
 		return
 	var script_dir: String = (get_script() as Script).resource_path.get_base_dir()
@@ -124,12 +131,18 @@ func _init() -> void:
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	if _endpoint.is_empty():
+		if _is_switched_off():
+			queue_free()
+			return
 		push_warning(
 			(
 				"godot-mcp bridge: GODOT_MCP_PORT and GODOT_MCP_TOKEN are not set and there is no "
-				+ "attach file; the bridge is off."
+				+ "attach file; the bridge is off. It was loaded by an override.cfg a godot-mcp "
+				+ "server wrote, most likely one a stopped server left behind; delete override.cfg "
+				+ "if no godot-mcp session uses this project."
 			)
 		)
+		_restore_parked_window()
 		queue_free()
 		return
 	_token = _endpoint["token"]
@@ -226,6 +239,11 @@ func _find_endpoint() -> Dictionary:
 		"shutOutRealGamepads": bool(attach.get("shutOutRealGamepads", false)),
 		"quiet": quiet_variable or bool(attach.get("quiet", false)),
 	}
+
+
+## Whether the server switched the bridge off for a headless run (OFF_VARIABLE).
+func _is_switched_off() -> bool:
+	return OS.get_environment(OFF_VARIABLE) == "1"
 
 
 func _process(_delta: float) -> void:
@@ -336,8 +354,37 @@ func _apply_window_size() -> void:
 func _park_window() -> void:
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_MOUSE_PASSTHROUGH, true)
 	var on_hidden_desktop: bool = OS.get_environment("GODOT_MCP_HIDDEN_DESKTOP") == "1"
-	DisplayServer.window_set_position(
-		Vector2i.ZERO if on_hidden_desktop else Vector2i(-9999, -9999)
+	DisplayServer.window_set_position(Vector2i.ZERO if on_hidden_desktop else PARK_POSITION)
+
+
+## A game started without a server from a quiet session's override.cfg (one a killed server
+## left): the file created its window unfocusable and asked for it at PARK_POSITION, which Windows
+## clamps onto the primary screen (see _park_window). The window is made focusable again, centred
+## on its screen's usable area and brought to the front. Returns whether it restored the window;
+## a headless run has none.
+func _restore_parked_window() -> bool:
+	if DisplayServer.get_name() == "headless" or not _parked_by_override():
+		return false
+	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_NO_FOCUS, false)
+	var screen: int = DisplayServer.window_get_current_screen()
+	if screen == DisplayServer.INVALID_SCREEN:
+		screen = DisplayServer.get_primary_screen()
+	var usable: Rect2i = DisplayServer.screen_get_usable_rect(screen)
+	var window_size: Vector2i = DisplayServer.window_get_size()
+	DisplayServer.window_set_position(usable.position + (usable.size - window_size) / 2)
+	DisplayServer.window_move_to_foreground()
+	return true
+
+
+## Whether the project settings place the main window as a quiet session's override.cfg does:
+## at PARK_POSITION, absolute. The window's own position cannot tell, since Windows clamped it.
+func _parked_by_override() -> bool:
+	return (
+		ProjectSettings.get_setting("display/window/size/initial_position_type", -1) == 0
+		and (
+			ProjectSettings.get_setting("display/window/size/initial_position", Vector2i.ZERO)
+			== PARK_POSITION
+		)
 	)
 
 

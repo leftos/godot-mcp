@@ -8,7 +8,7 @@ namespace GodotMcp.Server.Session;
 /// <summary>
 /// The server's sessions by name (case-insensitive): runs and attaches share one name space, a live name is refused and a
 /// name whose session has ended is replaced. Several sessions may share a project folder; they share its one marked
-/// override.cfg, which is removed when the last live session on the folder ends.
+/// override.cfg, which is removed when the last live session on the folder ends and no other server's live session uses it.
 /// </summary>
 internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<GodotSession> logger) : IDisposable
 {
@@ -49,6 +49,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
     internal ILogger Logger => logger;
 
+    /// <summary>
+    /// The machine-wide list every folder is recorded in before its override.cfg is written: <see cref="OverrideFolders.Default"/>
+    /// unless set, as a test sets it to a list of its own.
+    /// </summary>
+    internal OverrideFolders OverrideFolders { get; init; } = OverrideFolders.Default;
+
     /// <summary>The sessions' input captures, by session name, kept past the session they came from.</summary>
     internal CaptureStore Captures { get; } = new();
 
@@ -58,18 +64,22 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// </summary>
     internal Func<int, bool> IsDebuggerAttached { get; set; } = processId => DebuggerPresence.IsAttached(processId, logger);
 
-    /// <summary>Launches a run under <paramref name="session"/>, or under the project folder's name when it is null.</summary>
+    /// <summary>
+    /// Launches a run under <paramref name="session"/>, or when it is null under the project folder's name, numbered when a live
+    /// session on another folder holds it (<see cref="DefaultName"/>).
+    /// </summary>
     /// <exception cref="SessionException">The name is invalid or live, the project is missing, or the launch failed.</exception>
     public async Task<LaunchResult> LaunchAsync(LaunchRequest request, string? session, CancellationToken cancellationToken)
     {
         string projectDir = NormaliseProjectDir(request.ProjectPath);
         SessionSpec spec = new(NameFor(session, projectDir), projectDir, SessionKind.Run, request.ShutOutRealGamepads, request.Quiet);
-        GodotSession created = await ReserveAsync(spec);
+        GodotSession created = await ReserveAsync(spec, defaultName: session is null);
         return await created.LaunchAsync(request with { ProjectPath = projectDir }, cancellationToken);
     }
 
     /// <summary>
-    /// Attaches under <paramref name="session"/>, or under the project folder's name when it is null. A <paramref name="quiet"/>
+    /// Attaches under <paramref name="session"/>, or when it is null under the project folder's name, numbered as a launch's
+    /// is (<see cref="DefaultName"/>). A <paramref name="quiet"/>
     /// attach writes the quiet override and tells the bridge to park its window, and shares the folder rules of a quiet run.
     /// </summary>
     /// <exception cref="SessionException">The name is invalid or live, the project is missing, or no game connected in time.</exception>
@@ -85,7 +95,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         string projectDir = NormaliseProjectDir(projectPath);
         string bridgeScript = Installation.FindBridgeScript();
         SessionSpec spec = new(NameFor(session, projectDir), projectDir, SessionKind.Attach, shutOutRealGamepads, quiet);
-        GodotSession created = await ReserveAsync(spec);
+        GodotSession created = await ReserveAsync(spec, defaultName: session is null);
         return await created.AttachAsync(bridgeScript, wait, cancellationToken);
     }
 
@@ -185,8 +195,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
-    /// The last-resort cleanup for the server's own exit: every session's own cleanup, then the override file of every
-    /// folder a session used, since none of them outlives the server.
+    /// The last-resort cleanup for the server's own exit: every session's own cleanup, then this server's release of the
+    /// override file of every folder a session used, since none of them outlives the server.
     /// </summary>
     public void Shutdown()
     {
@@ -243,9 +253,18 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// The name of a folder's <paramref name="number"/>th preview session: <c>&lt;folder name&gt;.preview-&lt;n&gt;</c>, with
     /// the folder part cut so the whole name fits <see cref="NameRule"/> and the suffix stays whole.
     /// </summary>
-    internal static string PreviewName(string folderName, int number)
+    internal static string PreviewName(string folderName, int number) =>
+        WithSuffix(folderName, string.Create(CultureInfo.InvariantCulture, $".preview-{number}"));
+
+    /// <summary>
+    /// A folder's <paramref name="number"/>th default name, <c>&lt;folder name&gt;-&lt;n&gt;</c>, with the folder part cut so
+    /// the whole name fits <see cref="NameRule"/> and the suffix stays whole.
+    /// </summary>
+    internal static string NumberedName(string folderName, int number) =>
+        WithSuffix(folderName, string.Create(CultureInfo.InvariantCulture, $"-{number}"));
+
+    private static string WithSuffix(string folderName, string suffix)
     {
-        string suffix = string.Create(CultureInfo.InvariantCulture, $".preview-{number}");
         int keep = Math.Max(0, 64 - suffix.Length);
         return folderName.Length > keep ? folderName[..keep] + suffix : folderName + suffix;
     }
@@ -292,28 +311,38 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
     }
 
-    /// <summary>Writes the marked override.cfg for a starting session, unless live sessions on its folder already have it.</summary>
+    /// <summary>
+    /// Writes the marked override.cfg for a starting session, with this server among its owners, unless live sessions on its
+    /// folder already have it; the folder is recorded in <see cref="OverrideFolders"/> first.
+    /// </summary>
     /// <exception cref="SessionException">The project has its own override.cfg.</exception>
-    internal void WriteOverride(GodotSession session, string bridgeScript)
-    {
-        lock (_lock)
-        {
-            string path = OverrideFile.PathIn(session.ProjectDir);
-            if (HasOtherLiveSession(session) && File.Exists(path) && OverrideFile.IsOurs(path))
+    internal void WriteOverride(GodotSession session, string bridgeScript) =>
+        OverrideFolders.RecordWhile(
+            session.ProjectDir,
+            () =>
             {
-                return;
+                lock (_lock)
+                {
+                    string path = OverrideFile.PathIn(session.ProjectDir);
+                    if (HasOtherLiveSession(session) && File.Exists(path) && OverrideFile.IsOurs(path))
+                    {
+                        return;
+                    }
+
+                    OverrideFile.Write(session.ProjectDir, bridgeScript, session.ShutOutRealGamepads, session.Quiet);
+                }
             }
+        );
 
-            OverrideFile.Write(session.ProjectDir, bridgeScript, session.ShutOutRealGamepads, session.Quiet);
-        }
-    }
-
-    /// <summary>Removes the session's override.cfg unless another live session uses the folder; returns whether it removed one.</summary>
+    /// <summary>
+    /// Takes this server off the owners of the session's override.cfg unless another of its live sessions uses the folder;
+    /// the file is deleted once no live server owns it. Returns whether it deleted the file.
+    /// </summary>
     internal bool ReleaseFolder(GodotSession session)
     {
         lock (_lock)
         {
-            return !HasOtherLiveSession(session) && OverrideFile.Remove(session.ProjectDir);
+            return !HasOtherLiveSession(session) && OverrideFile.Release(session.ProjectDir);
         }
     }
 
@@ -407,14 +436,22 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             );
     }
 
-    /// <summary>Registers a new pending session under the spec's name, then lets go of the ended session it replaces.</summary>
+    /// <summary>
+    /// Registers a new pending session under the spec's name, or under <see cref="DefaultName"/> when
+    /// <paramref name="defaultName"/> says the spec's name is the folder's, then lets go of the ended session it replaces.
+    /// </summary>
     /// <exception cref="SessionException">The name is live, or the folder's live sessions rule the new one out.</exception>
-    private async Task<GodotSession> ReserveAsync(SessionSpec spec)
+    private async Task<GodotSession> ReserveAsync(SessionSpec spec, bool defaultName)
     {
         GodotSession created;
         GodotSession? replaced;
         lock (_lock)
         {
+            if (defaultName)
+            {
+                spec = spec with { Name = DefaultName(spec.Name, spec.ProjectDir) };
+            }
+
             replaced = _sessions.GetValueOrDefault(spec.Name);
             CheckCanStart(spec, replaced);
             created = new GodotSession(spec, this);
@@ -436,6 +473,28 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
 
         return created;
+    }
+
+    /// <summary>
+    /// The name a session started without one gets: the folder's name, unless a live session on another folder holds it (two
+    /// worktrees of one repo share the leaf), then the first <see cref="NumberedName"/> from 2 that no live session holds. A
+    /// live holder on the same folder keeps the folder's name, so the start is refused as before. The caller holds the lock.
+    /// </summary>
+    private string DefaultName(string folderName, string projectDir)
+    {
+        if (_sessions.GetValueOrDefault(folderName) is not { IsLive: true } holder || ProjectPaths.AreSame(holder.ProjectDir, projectDir))
+        {
+            return folderName;
+        }
+
+        for (int number = 2; ; number++)
+        {
+            string candidate = NumberedName(folderName, number);
+            if (_sessions.GetValueOrDefault(candidate) is not { IsLive: true })
+            {
+                return candidate;
+            }
+        }
     }
 
     /// <summary>Refuses a session whose setting differs from the live ones' on its folder: they share one override.cfg.</summary>
@@ -634,7 +693,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     {
         try
         {
-            OverrideFile.Remove(projectDir);
+            OverrideFile.Release(projectDir);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

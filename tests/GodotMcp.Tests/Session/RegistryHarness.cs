@@ -21,7 +21,10 @@ internal sealed class RegistryHarness : IAsyncDisposable
     public RegistryHarness()
     {
         Listener = new BridgeListener(NullLogger<BridgeListener>.Instance);
-        Sessions = new SessionRegistry(Listener, NullLogger<GodotSession>.Instance);
+        Sessions = new SessionRegistry(Listener, NullLogger<GodotSession>.Instance)
+        {
+            OverrideFolders = new OverrideFolders(_temp.Combine("override-folders.txt"), TextWriter.Null),
+        };
     }
 
     public BridgeListener Listener { get; }

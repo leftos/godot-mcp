@@ -26,7 +26,6 @@ internal sealed partial class HeadlessTools
             + "to the call, and inherited true for a connection the scene gets from a scene it instances or inherits, which only "
             + "that scene's file can change. warning says the node's C# script signals are missing because the C# build failed, "
             + "or may be missing because prepare \"never\" skipped the build."
-            + RefusedNote
     )]
     public async Task<string> GetNodeSignalsAsync(
         [Description(ProjectPathDescription)] string projectPath,

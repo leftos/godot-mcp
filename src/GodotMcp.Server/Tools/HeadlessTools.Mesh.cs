@@ -44,7 +44,6 @@ internal sealed partial class HeadlessTools
             + "than one MeshInstance3D carried, count being how many; the last one's meshes make the item. Runs the prep first, "
             + "as run_project does (a C# build when stale, "
             + "an import when needed)."
-            + RefusedNote
     )]
     public async Task<string> ExportMeshLibraryAsync(
         [Description(ProjectPathDescription)] string projectPath,

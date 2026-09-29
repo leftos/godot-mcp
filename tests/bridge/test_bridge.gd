@@ -235,6 +235,27 @@ func test_a_cancelled_call_method_restores_and_never_replies() -> void:
 	_free_bridge(bridge)
 
 
+func test_the_off_variable_keeps_the_bridge_off_despite_a_port_and_token() -> void:
+	OS.set_environment("GODOT_MCP_PORT", "1")
+	OS.set_environment("GODOT_MCP_TOKEN", "token")
+	OS.set_environment("GODOT_MCP_OFF", "1")
+	var bridge: Node = _bridge_script.new()
+	var switched_off: Dictionary = bridge._endpoint
+	var logger: Variant = bridge._logger
+	# The runner's tests run before the root enters the tree, so _ready is called by hand.
+	bridge._ready()
+	var freed: bool = bridge.is_queued_for_deletion()
+	OS.unset_environment("GODOT_MCP_OFF")
+	var switched_on: Dictionary = bridge._find_endpoint()
+	bridge.free()
+	OS.unset_environment("GODOT_MCP_PORT")
+	OS.unset_environment("GODOT_MCP_TOKEN")
+	assert_eq(switched_off, {}, "GODOT_MCP_OFF=1 finds no endpoint")
+	assert_true(logger == null, "a switched-off bridge registers no logger")
+	assert_true(freed, "a switched-off bridge frees itself in _ready")
+	assert_eq(switched_on.get("port"), 1, "without GODOT_MCP_OFF the same variables find the port")
+
+
 ## A bridge whose frames are kept in its sent Array rather than written to a socket: a subclass
 ## with no _ready, so it neither frees itself nor dials. _free_bridge frees it.
 func _recording_bridge() -> Node:
@@ -306,6 +327,24 @@ func _counting_script(setup: String) -> String:
 func _frames(count: int) -> void:
 	for _frame in count:
 		_tree().process_frame.emit()
+
+
+func test_a_quiet_override_placement_is_recognised_and_left_alone_headless() -> void:
+	var bridge: Node = _bridge_script.new()
+	var type_key := "display/window/size/initial_position_type"
+	var position_key := "display/window/size/initial_position"
+	var type_before: Variant = ProjectSettings.get_setting(type_key)
+	var position_before: Variant = ProjectSettings.get_setting(position_key)
+	assert_true(not bridge._parked_by_override(), "the default placement is not a parked one")
+	ProjectSettings.set_setting(type_key, 0)
+	ProjectSettings.set_setting(position_key, Vector2i(-9999, -9999))
+	assert_true(bridge._parked_by_override(), "a quiet override's placement is")
+	assert_true(not bridge._restore_parked_window(), "a headless run has no window to restore")
+	ProjectSettings.set_setting(position_key, Vector2i(-9999, 0))
+	assert_true(not bridge._parked_by_override(), "another absolute position is not")
+	ProjectSettings.set_setting(type_key, type_before)
+	ProjectSettings.set_setting(position_key, position_before)
+	bridge.free()
 
 
 func _tree() -> SceneTree:

@@ -8,7 +8,7 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// describe_class (bridge/godot_mcp_class_info.gd): an engine class's or a project script class's members. The running game's
-/// bridge answers while a session is live on the project, since a headless run is refused then; otherwise a headless Godot does.
+/// bridge answers while a session is live on the project, since it knows the game's classes as loaded; otherwise a headless Godot does.
 /// </summary>
 internal sealed partial class HeadlessTools
 {

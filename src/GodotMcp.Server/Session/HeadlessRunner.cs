@@ -42,8 +42,9 @@ internal sealed record HeadlessResult(JsonNode? Result, JsonArray EngineErrors, 
 /// <summary>
 /// Runs <c>headless/operations.gd</c> in <c>godot --headless --script</c> on a project folder, under the folder's prep lock
 /// through the prep and the run. The request and the result cross as JSON files under <c>.godot/godot-mcp/headless/</c>.
-/// A <c>--script</c> run reads <c>override.cfg</c> (4.7.2 <c>main.cpp</c> L2107), so it is refused while a session is live
-/// on the folder, and a marked file a crashed session left is removed first. The operation's parameters reach the script
+/// A <c>--script</c> run reads <c>override.cfg</c> (4.7.2 <c>main.cpp</c> L2107), so beside a live session on the folder it
+/// loads the bridge, which <see cref="GodotCommandLine.OffVariable"/> keeps off; a marked file no live server owns, a
+/// killed server's, is removed first. The operation's parameters reach the script
 /// with the prep's C# build state added as <c>build</c>, the configuration it builds as <c>buildConfiguration</c>, and a
 /// failed build's quoted compiler errors (<see cref="CompilerErrorList.Quote"/>) as <c>buildErrors</c>.
 /// </summary>
@@ -53,7 +54,7 @@ internal static class HeadlessRunner
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
     /// <exception cref="SessionException">
-    /// A session is live on the folder, Godot or the script was not found, the prep failed, the run passed its ceiling or wrote
+    /// Godot or the script was not found, the prep failed, the run passed its ceiling or wrote
     /// no result, or the operation refused.
     /// </exception>
     public static async Task<HeadlessResult> RunAsync(SessionRegistry registry, HeadlessRequest request, CancellationToken cancellationToken)
@@ -91,19 +92,16 @@ internal static class HeadlessRunner
         }
     }
 
-    /// <exception cref="SessionException">A session is live on the folder.</exception>
-    private static void ClearFolder(SessionRegistry registry, string projectDir)
+    /// <summary>
+    /// Removes the marked override.cfg when no live server owns it: a killed server's leftover. A file a live session of this
+    /// server or another holds stays.
+    /// </summary>
+    internal static void ClearFolder(SessionRegistry registry, string projectDir)
     {
-        IReadOnlyList<string> live = registry.LiveSessionNames(projectDir);
-        if (live.Count > 0)
+        if (registry.LiveSessionNames(projectDir).Count == 0)
         {
-            throw new SessionException(
-                $"a headless run is refused while session(s) {string.Join(", ", live)} run on {projectDir}: a --script run would load the "
-                    + "bridge from its override.cfg. stop_project or detach_project them first."
-            );
+            OverrideFile.Release(projectDir);
         }
-
-        OverrideFile.Remove(projectDir);
     }
 
     private static async Task<JsonObject> RunGodotAsync(GodotCall call, CancellationToken cancellationToken)
@@ -134,7 +132,10 @@ internal static class HeadlessRunner
             await File.WriteAllTextAsync(requestPath, body.ToJsonString(), Utf8NoBom, cancellationToken);
             string[] arguments = ["--headless", "--path", projectDir, "--script", ForGodot(call.Script), "--", ForGodot(requestPath)];
             ToolProcessResult ran = await StartAsync(
-                new ToolProcessRequest(call.Godot, arguments, projectDir, log, call.Request.Ceiling),
+                new ToolProcessRequest(call.Godot, arguments, projectDir, log, call.Request.Ceiling)
+                {
+                    SetVariables = new Dictionary<string, string> { [GodotCommandLine.OffVariable] = "1" },
+                },
                 call,
                 cancellationToken
             );

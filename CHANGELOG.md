@@ -2,6 +2,18 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Changed
+
+- Headless tools run beside a live session on the project folder instead of refusing; the game keeps running and sees edits after `restart_project`.
+- `run_project` and `attach_project` without a session name take `<name>-2`, `-3`, … when a live session on another folder holds the default name.
+
+### Fixed
+
+- A killed server's `override.cfg` is removed at the next server start, and a game run by hand from it meanwhile opens its window on screen.
+- One server no longer deletes the `override.cfg` that another server's live session on the same folder still uses.
+
 ## 0.8.0 - 2026-09-29
 
 ### Added

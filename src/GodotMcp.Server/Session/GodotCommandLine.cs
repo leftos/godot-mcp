@@ -70,6 +70,12 @@ internal static partial class GodotCommandLine
     /// <summary>Set for a recording run to <see cref="MovieFramesPerSecond"/>: the bridge plays gesture durations in its movie frames.</summary>
     public const string MovieFpsVariable = "GODOT_MCP_MOVIE_FPS";
 
+    /// <summary>
+    /// Set to "1" for every headless run: its <c>--script</c> run reads a live session's override.cfg (4.7.2 <c>main.cpp</c>
+    /// L2107) and so loads the bridge, which then stays off without looking for a server to dial.
+    /// </summary>
+    public const string OffVariable = "GODOT_MCP_OFF";
+
     /// <summary>Whether a run starts on the server's hidden desktop: a quiet run on Windows.</summary>
     [SupportedOSPlatformGuard("windows")]
     public static bool UsesHiddenDesktop(bool quiet) => quiet && OperatingSystem.IsWindows();
