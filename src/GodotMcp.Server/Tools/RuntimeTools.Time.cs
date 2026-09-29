@@ -18,10 +18,15 @@ internal sealed partial class RuntimeTools
     internal const int MaxStepCount = 1000;
     internal const double MaxTimeScale = 100;
     internal const int MaxWaitMs = 120_000;
+    internal const int MaxWaitGameMs = 120_000;
+    internal const int MaxWaitFrames = 7200;
     internal const int MaxMonitorSamples = 600;
+    private const int DefaultWaitMs = 10_000;
+    private const int MaxDerivedWaitMs = 600_000;
     private const int CapturePreviewMaxWidth = 480;
     private const string ConditionMessage =
-        "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}.";
+        "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
+        + "{gameMs}, {frames}.";
     private static readonly string[] FrameActions = ["pause", "resume", "step", "time_scale"];
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(10);
 
@@ -66,11 +71,14 @@ internal sealed partial class RuntimeTools
     [McpServerTool(Name = "wait_for", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Waits in the running game until a condition holds, checking it each frame: a node present or absent, a property "
-            + "equal to a value, a signal's next emission, or a Godot Expression returning true. Returns {met, elapsedMs, "
-            + "frames, value} (args instead of value for a signal); on timeout {met: false, elapsedMs, frames, last}, the last "
+            + "equal to a value, a signal's next emission, a Godot Expression returning true, gameMs milliseconds of game time "
+            + "(process delta over unpaused frames, so it follows Engine.time_scale) or frames unpaused process frames. Returns "
+            + "{met, elapsedMs, frames, value} (args instead of value for a signal; the game ms or frames reached for gameMs and "
+            + "frames); on timeout {met: false, elapsedMs, frames, last}, the last "
             + "value seen (a signal wait's timeout has no last), which is not an error. elapsedMs is real time; in a recording "
             + "the result adds clipMs, the clip time waited (frames x 1000 / 60). While the game is paused only a "
-            + "signal wait or a check-once wait (timeoutMs 0) is accepted. A property the node does not have fails the call "
+            + "signal wait or a check-once wait (timeoutMs 0) is accepted; a pause during a gameMs or frames wait stops its "
+            + "count. A property the node does not have fails the call "
             + "once the node is found. An expression that does not parse fails the call; one that fails while it runs counts "
             + "as not met, and its error is in errors. uiChanged compares the UI with the snapshot the bridge takes when the "
             + "first input gesture since launch, or since the last met uiChanged wait, starts (later gestures keep it; a met "
@@ -81,33 +89,35 @@ internal sealed partial class RuntimeTools
     )]
     public async Task<IEnumerable<ContentBlock>> WaitForAsync(
         [Description(
-            "Exactly one of {node, exists}, {node, property, equals}, {node, signal}, {expression} (with node optional), {uiChanged: true}."
+            "Exactly one of {node, exists}, {node, property, equals}, {node, signal}, {expression} (with node optional), {uiChanged: true}, "
+                + "{gameMs}, {frames}."
         )]
             WaitCondition condition,
         [Description(
-            "How long to wait, in milliseconds, 0 to 120000, load-adjusted: under load it waits longer in wall time. In a recording "
+            "How long to wait, in milliseconds, 0 to 120000, load-adjusted: under load it waits longer in wall time. Left out: "
+                + "10000, gameMs + 10000 for a gameMs wait, 10 s + 100 ms a frame for a frames wait. In a recording "
                 + "(run_project options.record) it counts clip time instead, 60 movie frames a second, however slowly the game runs, "
                 + "and the result adds clipMs. 0 checks the condition once, now, and works while the game is paused; it is refused "
-                + "for a signal wait."
+                + "for a signal, gameMs or frames wait."
         )]
-            int timeoutMs = 10_000,
+            int? timeoutMs = null,
         [Description("{screenshot}: screenshot false when left out.")] WaitOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
         JsonObject parameters = BuildWaitParameters(condition, timeoutMs, options);
-        BridgeResult result = await CallWaitAsync(parameters, timeoutMs, session, cancellationToken);
+        BridgeResult result = await CallWaitAsync(parameters, session, cancellationToken);
         JsonObject reply = WaitReply(result);
         return await WithCaptureAsync(reply, reply, result.Errors, cancellationToken);
     }
 
     /// <summary>wait_for without a capture, answered as its JSON text: the form a batch step runs.</summary>
     /// <exception cref="McpException">The condition or timeoutMs is refused, or the call failed.</exception>
-    internal async Task<string> WaitForAsync(WaitCondition condition, int timeoutMs, string? session, CancellationToken cancellationToken)
+    internal async Task<string> WaitForAsync(WaitCondition condition, int? timeoutMs, string? session, CancellationToken cancellationToken)
     {
         JsonObject parameters = BuildWaitParameters(condition, timeoutMs);
-        BridgeResult result = await CallWaitAsync(parameters, timeoutMs, session, cancellationToken);
+        BridgeResult result = await CallWaitAsync(parameters, session, cancellationToken);
         return ErrorReport.AddTo(WaitReply(result), result.Errors).ToJsonString();
     }
 
@@ -194,40 +204,70 @@ internal sealed partial class RuntimeTools
         return parameters;
     }
 
-    /// <summary>The bridge's wait parameters: the condition's fields as given, its kind, and timeoutMs.</summary>
-    /// <exception cref="McpException">The condition is not exactly one kind, timeoutMs is out of range, or 0 for a signal wait.</exception>
-    internal static JsonObject BuildWaitParameters(WaitCondition? condition, int timeoutMs)
+    /// <summary>The bridge's wait parameters: the condition's fields as given, its kind, and the timeoutMs it runs under
+    /// (<see cref="WaitTimeoutMs"/>).</summary>
+    /// <exception cref="McpException">The condition is not exactly one kind, gameMs or frames is out of range, timeoutMs is
+    /// out of range, or 0 for a signal, gameMs or frames wait.</exception>
+    internal static JsonObject BuildWaitParameters(WaitCondition? condition, int? timeoutMs)
     {
         string kind = CheckCondition(condition);
+        CheckGameTime(condition!);
         if (timeoutMs is < 0 or > MaxWaitMs)
         {
             throw new McpException($"timeoutMs must be between 0 and {MaxWaitMs}.");
         }
 
-        if (timeoutMs == 0 && kind == "signal")
+        if (timeoutMs == 0 && kind is "signal" or "gameMs" or "frames")
         {
-            throw new McpException("timeoutMs 0 checks once, which a signal wait cannot do; give it a timeout.");
+            throw new McpException($"timeoutMs 0 checks once, which a {kind} wait cannot do; give it a timeout.");
         }
 
         JsonObject parameters = JsonSerializer.SerializeToNode(condition, Json)!.AsObject();
         parameters["kind"] = kind;
-        parameters["timeoutMs"] = timeoutMs;
+        parameters["timeoutMs"] = WaitTimeoutMs(condition!, timeoutMs);
         return parameters;
     }
 
-    /// <summary>The bridge's wait parameters as <see cref="BuildWaitParameters(WaitCondition?, int)"/> builds them, plus
+    /// <summary>The bridge's wait parameters as <see cref="BuildWaitParameters(WaitCondition?, int?)"/> builds them, plus
     /// {screenshot, previewMaxWidth} when <paramref name="options"/> asks for the capture.</summary>
-    /// <exception cref="McpException">The condition is not exactly one kind, timeoutMs is out of range, or 0 for a signal wait.</exception>
-    internal static JsonObject BuildWaitParameters(WaitCondition? condition, int timeoutMs, WaitOptions? options)
+    /// <exception cref="McpException">The condition, gameMs, frames or timeoutMs is refused as the other form refuses them.</exception>
+    internal static JsonObject BuildWaitParameters(WaitCondition? condition, int? timeoutMs, WaitOptions? options)
     {
         JsonObject parameters = BuildWaitParameters(condition, timeoutMs);
         AddScreenshot(parameters, options?.Screenshot);
         return parameters;
     }
 
-    private async Task<BridgeResult> CallWaitAsync(JsonObject parameters, int timeoutMs, string? session, CancellationToken cancellationToken)
+    /// <summary>
+    /// The timeout a wait runs under: <paramref name="timeoutMs"/> when given; else gameMs + 10 s for a gameMs wait, the step
+    /// allowance of its frames for a frames wait (either at most 600 s), and 10 s for any other.
+    /// </summary>
+    internal static int WaitTimeoutMs(WaitCondition condition, int? timeoutMs) =>
+        timeoutMs
+        ?? condition switch
+        {
+            { GameMs: int gameMs } => (int)Math.Min((long)gameMs + DefaultWaitMs, MaxDerivedWaitMs),
+            { Frames: int frames } => (int)Math.Min(StepAllowance(frames).TotalMilliseconds, MaxDerivedWaitMs),
+            _ => DefaultWaitMs,
+        };
+
+    private static void CheckGameTime(WaitCondition condition)
+    {
+        if (condition.GameMs is < 1 or > MaxWaitGameMs)
+        {
+            throw new McpException($"gameMs must be between 1 and {MaxWaitGameMs}; got {condition.GameMs}.");
+        }
+
+        if (condition.Frames is < 1 or > MaxWaitFrames)
+        {
+            throw new McpException($"frames must be between 1 and {MaxWaitFrames}; got {condition.Frames}.");
+        }
+    }
+
+    private async Task<BridgeResult> CallWaitAsync(JsonObject parameters, string? session, CancellationToken cancellationToken)
     {
         GodotSession target = Find(session);
+        int timeoutMs = parameters["timeoutMs"]!.GetValue<int>();
         TimeSpan release = WaitRelease(parameters, timeoutMs, target.ActiveRecording is not null);
         BridgeCall call = new("wait_for", "wait_for", parameters, release + WaitReplyAllowance, timeoutMs > 0 ? release : null);
         return await CallWithErrorsAsync(target, call, cancellationToken);
@@ -318,7 +358,7 @@ internal sealed partial class RuntimeTools
         }
     }
 
-    /// <summary>The condition's one kind: exists, property, signal, expression or uiChanged.</summary>
+    /// <summary>The condition's one kind: exists, property, signal, expression, uiChanged, gameMs or frames.</summary>
     private static string CheckCondition(WaitCondition? condition)
     {
         string? kind = condition is null ? null : KindOf(condition);
@@ -334,6 +374,8 @@ internal sealed partial class RuntimeTools
             ("signal", condition.Signal is not null),
             ("expression", condition.Expression is not null),
             ("uiChanged", condition.UiChanged is not null),
+            ("gameMs", condition.GameMs is not null),
+            ("frames", condition.Frames is not null),
         ];
         string[] given = [.. kinds.Where(kind => kind.Given).Select(kind => kind.Kind)];
         return given.Length == 1 ? given[0] : null;
@@ -344,6 +386,7 @@ internal sealed partial class RuntimeTools
         {
             "expression" => true,
             "uiChanged" => IsUiChangedAlone(condition),
+            "gameMs" or "frames" => condition.Node is null,
             "property" => !string.IsNullOrEmpty(condition.Node) && !string.IsNullOrEmpty(condition.Property) && HasEquals(condition),
             _ => !string.IsNullOrEmpty(condition.Node),
         };

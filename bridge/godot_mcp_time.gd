@@ -70,6 +70,8 @@ const STEP_STALLED := (
 ## An expression's inputs besides node. Expression resolves only its inputs and its base
 ## instance's members, not singletons (core/math/expression.cpp L707-734 in 4.7.2).
 const EXPRESSION_INPUTS: PackedStringArray = ["root", "tree", "Input", "Engine"]
+## The wait kinds counted on the game's own clock (_wait_for_game_time).
+const GAME_TIME_KINDS: PackedStringArray = ["gameMs", "frames"]
 const NOT_DRAWN_WARNING := (
 	"The frame the condition was met on was not drawn (is the window minimized, or the game in "
 	+ "low-processor mode?), so there is no screenshot."
@@ -500,11 +502,12 @@ static func frames_result(points: Array, entries: Array) -> Dictionary:
 	return result
 
 
-## Waits for params.kind (exists, property, signal, expression or uiChanged) with params {node,
-## exists, property, equals, signal, expression, timeoutMs, screenshot, previewMaxWidth}. Returns
-## {result: {met, elapsedMs, frames, value | args[, screenshot | warning]}}, with last instead of
-## value on a timeout, or {error}. A timeoutMs of 0 checks the condition once, now, paused or not.
-## With screenshot, a met wait captures the frame it was met on (see _poll_capturing).
+## Waits for params.kind (exists, property, signal, expression, uiChanged, gameMs or frames) with
+## params {node, exists, property, equals, signal, expression, gameMs, frames, timeoutMs,
+## screenshot, previewMaxWidth}. Returns {result: {met, elapsedMs, frames, value | args[,
+## screenshot | warning]}}, with last instead of value on a timeout, or {error}. A timeoutMs of 0
+## checks the condition once, now, paused or not. With screenshot, a met wait captures the frame
+## it was met on (see _poll_capturing).
 func wait_for(params: Dictionary) -> Dictionary:
 	var kind: String = str(params.get("kind", ""))
 	var timeout_ms: int = int(params.get("timeoutMs", 10000))
@@ -513,6 +516,8 @@ func wait_for(params: Dictionary) -> Dictionary:
 	var refusal: String = _paused_refusal(get_tree().paused, timeout_ms)
 	if not refusal.is_empty():
 		return {"error": refusal}
+	if kind in GAME_TIME_KINDS:
+		return await _wait_for_game_time(kind, params, timeout_ms, get_tree().process_frame)
 	var probe: Variant = _make_probe(kind, params)
 	if probe is String:
 		return {"error": probe}
@@ -542,6 +547,45 @@ func _make_probe(kind: String, params: Dictionary) -> Variant:
 		"uiChanged":
 			probe = _check_ui_changed if bridge._gestures.has_ui_baseline() else NO_UI_BASELINE
 	return probe
+
+
+## Waits for params.gameMs milliseconds of game time or params.frames unpaused process frames,
+## counted by a clock that frame (the tree's process_frame) ticks from its next emission on. The
+## clock lives outside the probe, which may run several times a frame (at a draw and at the
+## frame), so the probe only reads it; it is disconnected however the poll ends.
+func _wait_for_game_time(
+	kind: String, params: Dictionary, timeout_ms: int, frame: Signal
+) -> Dictionary:
+	var clock: Dictionary = {"seconds": 0.0, "frames": 0}
+	var tick: Callable = _tick_game_clock.bind(clock)
+	frame.connect(tick)
+	var probe: Callable = _check_game_time.bind(kind, int(params.get(kind, 0)), clock)
+	var outcome: Dictionary = await _poll_capturing(probe, timeout_ms, params)
+	frame.disconnect(tick)
+	return outcome
+
+
+## Advances clock by this frame, as _capture_points counts game time: this node's process delta,
+## which Engine.time_scale already scales, unless the tree is paused.
+func _tick_game_clock(clock: Dictionary) -> void:
+	advance_game_clock(clock, get_tree().paused, get_process_delta_time())
+
+
+## Adds a frame of delta seconds to clock {seconds, frames}; a paused frame adds nothing.
+static func advance_game_clock(clock: Dictionary, paused: bool, delta: float) -> void:
+	if paused:
+		return
+	clock["seconds"] += delta
+	clock["frames"] += 1
+
+
+## Met once clock has reached target: whole game milliseconds for gameMs, frames for frames; the
+## value is what it has reached.
+func _check_game_time(kind: String, target: int, clock: Dictionary) -> Array:
+	var reached: int = int(clock["frames"])
+	if kind == "gameMs":
+		reached = floori(float(clock["seconds"]) * 1000.0)
+	return [reached >= target, reached]
 
 
 ## Met on the first check whose UI differs from the input module's baseline, with the change as

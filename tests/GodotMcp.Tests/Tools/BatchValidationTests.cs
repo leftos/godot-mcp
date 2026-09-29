@@ -108,7 +108,8 @@ public sealed class BatchValidationTests : IDisposable
     [InlineData("screenshot", "step 0: the screenshot assertion needs name.")]
     [InlineData(
         "wait",
-        "step 0: condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}."
+        "step 0: condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
+            + "{gameMs}, {frames}."
     )]
     public async Task AnAssertionMissingAFieldIsRefused(string assert, string message)
     {
@@ -137,6 +138,21 @@ public sealed class BatchValidationTests : IDisposable
         McpException refused = await RefusedAsync([new BatchStep(Assert: "wait", Node: "Main", UiChanged: true)]);
 
         Assert.StartsWith("step 0: condition needs exactly one of: ", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AGameMsWaitAssertionIsAccepted() => RuntimeTools.CheckBatch([new BatchStep(Assert: "wait", GameMs: 500)]);
+
+    [Fact]
+    public void AFramesWaitAssertionWhoseDefaultTimeoutPassesTheExplicitCapIsAccepted() =>
+        RuntimeTools.CheckBatch([new BatchStep(Assert: "wait", Frames: RuntimeTools.MaxWaitFrames)]);
+
+    [Fact]
+    public async Task AGameMsWaitAssertionOutOfRangeIsRefusedBeforeTheBatchRuns()
+    {
+        McpException refused = await RefusedAsync([new BatchStep(Assert: "no_errors"), new BatchStep(Assert: "wait", GameMs: 0)]);
+
+        Assert.Equal("step 1: gameMs must be between 1 and 120000; got 0.", refused.Message);
     }
 
     [Fact]

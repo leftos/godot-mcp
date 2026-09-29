@@ -4,6 +4,9 @@ extends "res://gd_test.gd"
 ## the tree; only functions that do not need it are called.
 # gdlint: disable=private-method-call
 
+## Stands in for the tree's process_frame in a game-time wait, so its connections can be read.
+signal test_frame
+
 var _time_script: GDScript = load_bridge_script("godot_mcp_time.gd")
 
 
@@ -155,6 +158,46 @@ func test_keeps_polling_counts_frames_for_a_frame_counted_wait() -> void:
 	assert_true(time._keeps_polling(unmet, 1000, 10, 5000.0, {}), "a timed wait counts no frames")
 	assert_true(not time._keeps_polling([true, 1], 0, 0, 5000.0, {}), "met")
 	assert_true(not time._keeps_polling([false, null, "x"], 0, 0, 5000.0, {}), "failed")
+	time.free()
+
+
+func test_a_game_ms_check_is_unmet_until_enough_game_time_has_passed() -> void:
+	var time: Node = _time_script.new()
+	var clock: Dictionary = {"seconds": 0.0, "frames": 0}
+	assert_eq(time._check_game_time("gameMs", 50, clock), [false, 0], "no frame yet")
+	time.advance_game_clock(clock, false, 0.03125)
+	assert_eq(time._check_game_time("gameMs", 50, clock), [false, 31], "31.25 ms of 50")
+	time.advance_game_clock(clock, false, 0.03125)
+	assert_eq(time._check_game_time("gameMs", 50, clock), [true, 62], "past it within a frame")
+	time.free()
+
+
+func test_a_paused_frame_adds_no_game_time_and_no_frame() -> void:
+	var clock: Dictionary = {"seconds": 0.25, "frames": 2}
+	_time_script.advance_game_clock(clock, true, 0.5)
+	assert_approx(clock["seconds"], 0.25, "the game time is kept")
+	assert_eq(clock["frames"], 2, "the frame count is kept")
+
+
+func test_a_frames_check_counts_only_unpaused_frames() -> void:
+	var time: Node = _time_script.new()
+	var clock: Dictionary = {"seconds": 0.0, "frames": 0}
+	time.advance_game_clock(clock, false, 0.016)
+	time.advance_game_clock(clock, true, 0.016)
+	time.advance_game_clock(clock, false, 0.016)
+	assert_eq(time._check_game_time("frames", 3, clock), [false, 2], "two of three ran unpaused")
+	time.advance_game_clock(clock, false, 0.016)
+	assert_eq(time._check_game_time("frames", 3, clock), [true, 3], "the third")
+	time.free()
+
+
+func test_a_game_time_wait_disconnects_its_clock_when_the_poll_ends() -> void:
+	var time: Node = _time_script.new()
+	var params: Dictionary = {"kind": "gameMs", "gameMs": 100, "_cancelled": true}
+	var outcome: Dictionary = time._wait_for_game_time("gameMs", params, 60000, test_frame)
+	assert_eq(outcome["result"]["met"], false, "a cancelled wait is not met")
+	assert_eq(outcome["result"]["last"], 0, "no game time counted")
+	assert_eq(test_frame.get_connections().size(), 0, "the clock is disconnected")
 	time.free()
 
 

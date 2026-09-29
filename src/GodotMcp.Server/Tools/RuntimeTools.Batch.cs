@@ -24,7 +24,6 @@ internal sealed partial class RuntimeTools
     internal const int MaxBatchSteps = 100;
     internal const string BatchToolName = "batch_drive";
     internal static readonly TimeSpan DefaultBatchDeadline = TimeSpan.FromSeconds(300);
-    private const int WaitAssertionMs = 10_000;
     private const int DefaultTolerance = 2;
     private const string AssertionKindList = "property, expression, wait, no_errors, screenshot";
 
@@ -56,8 +55,9 @@ internal sealed partial class RuntimeTools
             + "failed tool step. A step is either {tool, args}: a runtime tool by its name with the arguments it takes on its "
             + "own (take_screenshot and compare_screenshot are forced to path_only; image blocks are dropped), or an assertion "
             + "{assert, ...}: property {node, property, equals, timeoutMs?}, expression {expression, timeoutMs?} (timeoutMs "
-            + "defaults to 0: checked once, now, even while paused), wait {any wait_for condition, timeoutMs?} (default "
-            + "10000), no_errors {} (no errors since the previous no_errors, or since the batch started), screenshot {name, "
+            + "defaults to 0: checked once, now, even while paused), wait {any wait_for condition, gameMs and frames included, "
+            + "timeoutMs?} (default 10000; gameMs + 10000 for gameMs, 10 s + 100 ms a frame for frames), no_errors {} (no "
+            + "errors since the previous no_errors, or since the batch started), screenshot {name, "
             + "tolerance?, maxChangedRatio?} (compare_screenshot must match). Any step may carry session. At most 100 steps; "
             + "the whole batch stops after 300 s of load-adjusted time. Returns {passed, steps: [{index, tool or assert, ok, result or error}], "
             + "failedAt?: {index, reason}}."
@@ -219,10 +219,21 @@ internal sealed partial class RuntimeTools
         {
             "property" => new WaitCondition(Node: step.Node, Property: step.Property, EqualsValue: step.EqualsValue),
             "expression" => new WaitCondition(Node: step.Node, Expression: step.Expression),
-            _ => new WaitCondition(step.Node, step.Exists, step.Property, step.EqualsValue, step.Signal, step.Expression, step.UiChanged),
+            _ => new WaitCondition(
+                step.Node,
+                step.Exists,
+                step.Property,
+                step.EqualsValue,
+                step.Signal,
+                step.Expression,
+                step.UiChanged,
+                step.GameMs,
+                step.Frames
+            ),
         };
 
-    private static int TimeoutOf(BatchStep step) => step.TimeoutMs ?? (step.Assert == "wait" ? WaitAssertionMs : 0);
+    /// <summary>The step's timeoutMs; left out, 0 for property and expression, and wait_for's own default for wait.</summary>
+    private static int? TimeoutOf(BatchStep step) => step.Assert == "wait" ? step.TimeoutMs : step.TimeoutMs ?? 0;
 
     private static CompareOptions CompareOptionsOf(BatchStep step) => new(step.MaxChangedRatio ?? 0, "path_only");
 
@@ -338,8 +349,9 @@ internal sealed partial class RuntimeTools
     private async Task<StepOutcome> AssertWaitAsync(AssertionCall call)
     {
         WaitCondition condition = ConditionOf(call.Step);
-        int timeoutMs = TimeoutOf(call.Step);
-        JsonObject reply = JsonNode.Parse(await WaitForAsync(condition, timeoutMs, call.Session, call.Run.Cancellation))!.AsObject();
+        int? given = TimeoutOf(call.Step);
+        int timeoutMs = WaitTimeoutMs(condition, given);
+        JsonObject reply = JsonNode.Parse(await WaitForAsync(condition, given, call.Session, call.Run.Cancellation))!.AsObject();
         if (reply["met"]?.GetValue<bool>() is true)
         {
             return StepOutcome.Passed(reply);

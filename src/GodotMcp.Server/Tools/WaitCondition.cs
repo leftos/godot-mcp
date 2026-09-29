@@ -6,7 +6,7 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// What wait_for waits for, exactly one kind: {node, exists}, {node, property, equals}, {node, signal}, {expression}
-/// (node optional) or {uiChanged: true}.
+/// (node optional), {uiChanged: true}, {gameMs} or {frames}.
 /// </summary>
 internal sealed record WaitCondition(
     [property: Description(
@@ -35,5 +35,15 @@ internal sealed record WaitCondition(
             + "when the first input gesture since launch, or since the last met uiChanged wait, started. Met, it carries "
             + "{appeared, disappeared, appearedCount, disappearedCount}, plus focus and popup {before, after} when they changed."
     )]
-        bool? UiChanged = null
+        bool? UiChanged = null,
+    [property: Description(
+        "Alone: wait until this many milliseconds of game time, 1 to 120000, have passed since the wait started: process delta "
+            + "summed over unpaused frames, so it follows Engine.time_scale and stops while the game is paused. Met, value is the "
+            + "game milliseconds reached, which may pass it by up to one frame."
+    )]
+        int? GameMs = null,
+    [property: Description(
+        "Alone: wait until this many process frames, 1 to 7200, have run unpaused since the wait started. Met, value is the frames counted."
+    )]
+        int? Frames = null
 );

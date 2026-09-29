@@ -12,7 +12,8 @@ namespace GodotMcp.Tests.Tools;
 public sealed class TimeValidationTests : IDisposable
 {
     private const string ConditionMessage =
-        "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}.";
+        "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
+        + "{gameMs}, {frames}.";
     private const string ScaleMessage = "time_scale needs scale, greater than 0 and at most 100.";
     private readonly BridgeListener _listener = new(NullLogger<BridgeListener>.Instance);
     private readonly SessionRegistry _sessions;
@@ -244,6 +245,86 @@ public sealed class TimeValidationTests : IDisposable
         );
 
         Assert.Equal("timeoutMs 0 checks once, which a signal wait cannot do; give it a timeout.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(0, null, "gameMs must be between 1 and 120000; got 0.")]
+    [InlineData(120_001, null, "gameMs must be between 1 and 120000; got 120001.")]
+    [InlineData(null, 0, "frames must be between 1 and 7200; got 0.")]
+    [InlineData(null, 7201, "frames must be between 1 and 7200; got 7201.")]
+    [InlineData(null, -3, "frames must be between 1 and 7200; got -3.")]
+    public async Task WaitForRefusesGameTimeOutOfRange(int? gameMs, int? frames, string message)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(GameMs: gameMs, Frames: frames), null, null, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(message, refused.Message);
+    }
+
+    [Theory]
+    [InlineData("Main", null, 500, null)]
+    [InlineData("Main", null, null, 3)]
+    [InlineData(null, "true", 500, null)]
+    [InlineData(null, null, 500, 3)]
+    public async Task AGameTimeWaitWithAnotherFieldIsRefused(string? node, string? expression, int? gameMs, int? frames)
+    {
+        WaitCondition condition = new(Node: node, Expression: expression, GameMs: gameMs, Frames: frames);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(condition, null, null, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(ConditionMessage, refused.Message);
+    }
+
+    [Theory]
+    [InlineData(500, null, "gameMs")]
+    [InlineData(null, 3, "frames")]
+    public async Task ACheckOnceGameTimeWaitIsRefused(int? gameMs, int? frames, string kind)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(GameMs: gameMs, Frames: frames), 0, null, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal($"timeoutMs 0 checks once, which a {kind} wait cannot do; give it a timeout.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(500, null)]
+    [InlineData(null, 3)]
+    public async Task AGameTimeWaitIsAccepted(int? gameMs, int? frames)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(GameMs: gameMs, Frames: frames), null, null, TestContext.Current.CancellationToken)
+        );
+
+        Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(15_000, null, 25_000)]
+    [InlineData(120_000, null, 130_000)]
+    [InlineData(null, 3, 10_300)]
+    [InlineData(null, 7200, 600_000)]
+    [InlineData(null, null, 10_000)]
+    public void AWaitWithoutATimeoutSendsItsKindsDefault(int? gameMs, int? frames, int expected)
+    {
+        WaitCondition condition = gameMs is null && frames is null ? new(Expression: "true") : new(GameMs: gameMs, Frames: frames);
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(condition, null);
+
+        Assert.Equal(expected, parameters["timeoutMs"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void AnExplicitTimeoutWinsOverAGameTimeWaitsDefault()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(GameMs: 15_000), 2000);
+
+        Assert.Equal(2000, parameters["timeoutMs"]!.GetValue<int>());
+        Assert.Equal("gameMs", parameters["kind"]!.GetValue<string>());
+        Assert.Equal(15_000, parameters["gameMs"]!.GetValue<int>());
     }
 
     [Fact]

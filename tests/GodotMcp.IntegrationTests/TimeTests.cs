@@ -707,21 +707,86 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     [Fact(Timeout = TestTimeoutMs)]
     public async Task CaptureFramesFollowsTimeScale()
     {
-        await FrameAsync("time_scale", scale: 4);
+        await FrameAsync("time_scale", scale: 8);
         try
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
-            JsonObject captured = await CaptureFramesAsync([2.0], null, TestContext.Current.CancellationToken);
+            JsonObject captured = await CaptureFramesAsync([8.0], null, TestContext.Current.CancellationToken);
             watch.Stop();
 
             JsonNode frame = Assert.Single(captured["frames"]!.AsArray())!;
-            Assert.True(frame["gameSeconds"]!.GetValue<double>() >= 2.0, captured.ToJsonString());
-            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1.5), $"2 s of game time at time_scale 4 took {watch.Elapsed} of wall time");
+            Assert.True(frame["gameSeconds"]!.GetValue<double>() >= 8.0, captured.ToJsonString());
+            Assert.True(
+                watch.Elapsed < TimeSpan.FromSeconds(8),
+                $"8 s of game time at time_scale 8 took {watch.Elapsed}; ignoring time_scale takes at least 8 s"
+            );
         }
         finally
         {
             await FrameAsync("time_scale", scale: 1);
         }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task WaitForGameMsFollowsTimeScale()
+    {
+        await FrameAsync("time_scale", scale: 4);
+        try
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            JsonObject waited = await WaitAsync(new WaitCondition(GameMs: 4000), TestContext.Current.CancellationToken);
+            watch.Stop();
+
+            Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+            Assert.True(waited["value"]!.GetValue<double>() >= 4000, waited.ToJsonString());
+            Assert.True(
+                watch.Elapsed < TimeSpan.FromSeconds(4),
+                $"4 s of game time at time_scale 4 took {watch.Elapsed}; ignoring time_scale takes at least 4 s"
+            );
+        }
+        finally
+        {
+            await FrameAsync("time_scale", scale: 1);
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task WaitForFramesMeetsAfterNFrames()
+    {
+        JsonObject waited = await WaitAsync(new WaitCondition(Frames: 30), TestContext.Current.CancellationToken);
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.InRange(waited["value"]!.GetValue<int>(), 30, 31);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AGameMsWaitWhilePausedIsRefused()
+    {
+        await FrameAsync("pause");
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            WaitAsync(new WaitCondition(GameMs: 500), TestContext.Current.CancellationToken)
+        );
+
+        Assert.Contains(PausedRefusal, refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AGameMsWaitWithScreenshotReturnsTheCapture()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        List<ContentBlock> blocks =
+        [
+            .. await _tools.WaitForAsync(new WaitCondition(GameMs: 200), null, new WaitOptions(Screenshot: true), cancellationToken: cancellation),
+        ];
+        JsonNode reply = JsonNode.Parse(Text(blocks))!;
+
+        Assert.True(reply["met"]!.GetValue<bool>(), reply.ToJsonString());
+        Assert.True(reply["value"]!.GetValue<double>() >= 200, reply.ToJsonString());
+        Assert.Null(reply["warning"]);
+        Assert.True(File.Exists(reply["screenshot"]!["path"]!.GetValue<string>()), reply.ToJsonString());
+        Assert.Equal("image/png", Assert.Single(blocks.OfType<ImageContentBlock>()).MimeType);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -811,6 +876,10 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         );
         return JsonNode.Parse(Text(blocks))!.AsObject();
     }
+
+    /// <summary>A wait under the timeout wait_for gives its kind when timeoutMs is left out.</summary>
+    private async Task<JsonObject> WaitAsync(WaitCondition condition, CancellationToken cancellationToken) =>
+        JsonNode.Parse(Text(await _tools.WaitForAsync(condition, cancellationToken: cancellationToken)))!.AsObject();
 
     private async Task<JsonObject> MonitorAsync(string property, MonitorOptions options) =>
         JsonNode

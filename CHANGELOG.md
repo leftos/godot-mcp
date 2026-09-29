@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `wait_for` and `batch_drive`'s wait take `{gameMs}` and `{frames}`, a pause in the game's own time or frames that machine load does not stretch.
+
 ### Changed
 
 - `restart_project`'s result reports the relaunched `window` and, in `warning`, a window that differs from `--resolution`, as `run_project`'s does.

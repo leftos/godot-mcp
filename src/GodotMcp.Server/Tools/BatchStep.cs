@@ -25,9 +25,11 @@ internal sealed record BatchStep(
             + "since the last met uiChanged wait, started, as wait_for's uiChanged."
     )]
         bool? UiChanged = null,
+    [property: Description("wait: alone, the milliseconds of game time to wait for, 1 to 120000, as wait_for's gameMs.")] int? GameMs = null,
+    [property: Description("wait: alone, the unpaused process frames to wait for, 1 to 7200, as wait_for's frames.")] int? Frames = null,
     [property: Description(
-        "property, expression: 0 by default, checked once, now, even while paused; wait: 10000 by default. "
-            + "0 to 120000, load-adjusted, as wait_for takes it."
+        "property, expression: 0 by default, checked once, now, even while paused; wait: 10000 by default (gameMs + 10000 for "
+            + "gameMs, 10 s + 100 ms a frame for frames). 0 to 120000, load-adjusted, as wait_for takes it."
     )]
         int? TimeoutMs = null,
     [property: Description("screenshot: the baseline's name, as save_screenshot_baseline saved it.")] string? Name = null,
