@@ -19,9 +19,8 @@ internal sealed class StressTools(SessionRegistry sessions)
     internal const int MaxCount = 1000;
     internal const int MaxGapMs = 5000;
     internal const string EmptyPoolMessage = "pool is empty: give at least one of actions, keys, elements";
-    private static readonly TimeSpan InputTimeout = TimeSpan.FromSeconds(10);
 
-    // A generous allowance per event on top of InputTimeout: each takes a frame or two.
+    // A generous allowance per event on top of the input tools' timeout: each takes a frame or two.
     private static readonly TimeSpan PerEventAllowance = TimeSpan.FromMilliseconds(100);
 
     [McpServerTool(Name = ToolName, ReadOnly = false, Destructive = false, OpenWorld = false)]
@@ -169,12 +168,16 @@ internal sealed class StressTools(SessionRegistry sessions)
         return continues;
     }
 
+    /// <summary>The reply timeout of one stress call: the input tools' allowance for its events and gap, in clip frames in a recording.</summary>
+    internal static TimeSpan ReplyTimeout(int eventCount, int gapMs, bool recording) =>
+        RuntimeTools.InputAllowance((PerEventAllowance * eventCount) + TimeSpan.FromMilliseconds(gapMs), recording);
+
     /// <summary>Plays one drawn input through the input bridge command, under the session's input gate, as the input tools do.</summary>
     private static async Task SendAsync(StressRun run, PoolEntry entry)
     {
         JsonArray events = EventsFor(entry, run.Plan.GapMs);
         JsonObject parameters = new() { ["gesture"] = "events", ["events"] = events };
-        TimeSpan allowance = InputTimeout + (PerEventAllowance * events.Count) + TimeSpan.FromMilliseconds(run.Plan.GapMs);
+        TimeSpan allowance = ReplyTimeout(events.Count, run.Plan.GapMs, run.Target.ActiveRecording is not null);
         await run.Target.InputGate.WaitAsync(run.Cancellation);
         try
         {

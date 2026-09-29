@@ -12,6 +12,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - `restart_project`'s result reports the relaunched `window` and, in `warning`, a window that differs from `--resolution`, as `run_project`'s does.
 
+### Fixed
+
+- `stress_input` in a recorded run waits for each input in clip time, so a gapped run in a slow recorded game is no longer cut short.
+
 ## 0.7.0 - 2026-09-29
 
 ### Added

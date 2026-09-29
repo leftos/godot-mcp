@@ -81,4 +81,20 @@ public sealed class StressValidationTests
 
         Assert.Equal("seed must be 0 or more; got -1.", refused.Message);
     }
+
+    [Fact]
+    public void AStressCallInARecordingIsAllowedItsGapInClipFrames()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(41.2), StressTools.ReplyTimeout(2, 5000, recording: true));
+
+        Assert.Equal(TimeSpan.FromSeconds(11.2), StressTools.ReplyTimeout(2, 0, recording: true));
+    }
+
+    [Fact]
+    public void ANonRecordedStressCallKeepsItsRealTimeAllowance()
+    {
+        TimeSpan allowance = StressTools.ReplyTimeout(2, 5000, recording: false);
+
+        Assert.Equal(TimeSpan.FromSeconds(15.2), allowance);
+    }
 }
