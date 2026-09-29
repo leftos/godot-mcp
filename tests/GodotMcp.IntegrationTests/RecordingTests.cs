@@ -260,6 +260,25 @@ public sealed class RecordingTests : IAsyncDisposable
         );
     }
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ARawWaitInARecordingLastsItsLengthInMovieFrames()
+    {
+        await LaunchAsync(record: true);
+        await SlowTheGameAsync();
+        long before = (await ReadAsync("Engine.get_process_frames()")).GetValue<long>();
+
+        await _tools.SimulateInputAsync(
+            [new JsonObject { ["type"] = "wait", ["ms"] = 1000 }],
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        long after = (await ReadAsync("Engine.get_process_frames()")).GetValue<long>();
+        // 1000 ms of clip time is 60 movie frames; a wall-clock wait in the slowed game would span about 10. A few frames more
+        // are the round trips between the reads and the wait (measured 4 at 240 fps, 8 at 20 fps).
+        const int frames = 1000 * GodotCommandLine.MovieFramesPerSecond / 1000;
+        Assert.InRange(after - before, frames, frames + 20);
+    }
+
     /// <summary>
     /// Adds /root/Slow, which sleeps 100 ms each frame (so the game runs at 10 fps at most and any wall-clock bound ends early)
     /// and notes the process frame of each mouse motion that carries a held button in motion_frames.

@@ -34,7 +34,11 @@ internal sealed class StressTools(SessionRegistry sessions)
             StressPool pool,
         [Description("How many inputs to fire, 1 to 1000; 100 by default.")] int count = 100,
         [Description("The draw's seed, 0 or more; one drawn from the random generator and returned when left out.")] int? seed = null,
-        [Description("options {gapMs?}: the real time waited after each input, 0 to 5000 ms; 0 by default.")] StressOptions? options = null,
+        [Description(
+            "options {gapMs?}: the time waited after each input, 0 to 5000 ms, of game time the time scale does not "
+                + "stretch (real time in a plain run, clip time in a recording); 0 by default."
+        )]
+            StressOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
@@ -192,7 +196,8 @@ internal sealed class StressTools(SessionRegistry sessions)
 
     /// <summary>
     /// The one gesture an entry plays: the tap simulate_action builds for an action, a key press and release, or a click
-    /// on the element; then the real-time wait the caller asked for, which the bridge runs on its own clock.
+    /// on the element; then the gap wait the caller asked for, of game time the time scale does not stretch (clip time
+    /// in a recording), which the bridge runs on its own clock.
     /// </summary>
     private static JsonArray EventsFor(PoolEntry entry, int gapMs)
     {
@@ -365,7 +370,11 @@ internal sealed record StressPool(
     [property: Description("UI elements, as click takes them: a node path, a path under the root, or a node name.")] string[]? Elements = null
 );
 
-/// <summary>How stress_input spaces its inputs out in real time.</summary>
+/// <summary>How stress_input spaces its inputs out, in game time the time scale does not stretch.</summary>
 internal sealed record StressOptions(
-    [property: Description("The real time waited after each input, in milliseconds, 0 to 5000; 0 by default.")] int GapMs = 0
+    [property: Description(
+        "The time waited after each input, in milliseconds, 0 to 5000, of game time the time scale does not stretch "
+            + "(real time in a plain run, clip time in a recording); 0 by default."
+    )]
+        int GapMs = 0
 );

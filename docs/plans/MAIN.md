@@ -13,9 +13,8 @@ Waves run in order; bug reports sit ahead of the backlog inside each. The single
 
 ### Before 0.8.0
 
-The user's cut list (2026-09-29): 0.8.0 is cut once the line below has landed.
+The user's cut list (2026-09-29): every line has landed; the cut is next.
 
-- [ ] `simulate_input`'s `wait` and `stress_input`'s gaps count clip time in a recording (measured: a `SceneTreeTimer` ran 120 frames for 2000 ms at 240 and 20 fps; DEVELOPMENT.md's recorded-run footgun). Left: after the popup-tooltip item lands (it holds `godot_mcp_input.gd`), correct `_play_wait`'s "real time" doc comment (`godot_mcp_input.gd` ~L626) and `gapMs`'s "real time" descriptions (`RuntimeTools.Stress.cs` ~L38, ~L367), and pin it with `RecordingTests.ARawWaitInARecordingLastsItsLengthInMovieFrames` (slowed game, `simulate_input wait 1000`, 60 to 80 process frames between reads)
 - [ ] Cut and install 0.8.0
 
 ### Singles

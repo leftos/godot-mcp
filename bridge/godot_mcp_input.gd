@@ -627,8 +627,10 @@ func _play_click_element(spec: Dictionary) -> String:
 	return await _play_click(click)
 
 
-## Waits spec.ms milliseconds (none when negative) of real time: the timer runs while the tree
-## is paused and ignores the time scale.
+## Waits spec.ms milliseconds (none when negative) of game time the time scale does not stretch:
+## real time in a plain run, clip time in a recording (a movie frame a 60th of a second), since a
+## SceneTreeTimer subtracts the process step (scene/main/scene_tree.cpp L793-812,
+## main/main_timer_sync.cpp L432-435 in 4.7.2). The timer runs while the tree is paused.
 func _play_wait(spec: Dictionary) -> String:
 	var seconds: float = maxf(float(spec.get("ms", 0)), 0.0) / 1000.0
 	await get_tree().create_timer(seconds, true, false, true).timeout
