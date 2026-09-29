@@ -85,7 +85,10 @@ internal sealed partial class RuntimeTools
             + "wait uses it up, a timeout keeps it), and is refused when no gesture has taken one. options.screenshot: true "
             + "captures the frame the condition was met on as take_screenshot does, for a scene that changes faster than a "
             + "following take_screenshot can catch, adding screenshot to the result (a timed-out wait captures nothing, and a "
-            + "frame that was not drawn gives a warning instead)."
+            + "frame that was not drawn gives a warning instead). options.call {node, method, args}, with a gameMs or frames wait "
+            + "only, calls a method in the frame the count starts, so the count runs from its entry (a coroutine is not "
+            + "awaited), and adds call: {value}, its return value as call_method returns it; a refused call, or an error the "
+            + "method raises, fails the wait."
     )]
     public async Task<IEnumerable<ContentBlock>> WaitForAsync(
         [Description(
@@ -101,7 +104,7 @@ internal sealed partial class RuntimeTools
                 + "for a signal, gameMs or frames wait."
         )]
             int? timeoutMs = null,
-        [Description("{screenshot}: screenshot false when left out.")] WaitOptions? options = null,
+        [Description("{screenshot, call}: screenshot false and no call when left out.")] WaitOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
@@ -109,6 +112,7 @@ internal sealed partial class RuntimeTools
         JsonObject parameters = BuildWaitParameters(condition, timeoutMs, options);
         BridgeResult result = await CallWaitAsync(parameters, session, cancellationToken);
         JsonObject reply = WaitReply(result);
+        CutMethodValue(reply["call"] as JsonObject);
         return await WithCaptureAsync(reply, reply, result.Errors, cancellationToken);
     }
 
@@ -229,12 +233,21 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>The bridge's wait parameters as <see cref="BuildWaitParameters(WaitCondition?, int?)"/> builds them, plus
-    /// {screenshot, previewMaxWidth} when <paramref name="options"/> asks for the capture.</summary>
-    /// <exception cref="McpException">The condition, gameMs, frames or timeoutMs is refused as the other form refuses them.</exception>
+    /// {screenshot, previewMaxWidth} when <paramref name="options"/> asks for the capture, and call when it gives one.</summary>
+    /// <exception cref="McpException">The condition, gameMs, frames or timeoutMs is refused as the other form refuses them, a
+    /// call is given to a wait other than gameMs or frames, or its node or method is empty.</exception>
     internal static JsonObject BuildWaitParameters(WaitCondition? condition, int? timeoutMs, WaitOptions? options)
     {
         JsonObject parameters = BuildWaitParameters(condition, timeoutMs);
         AddScreenshot(parameters, options?.Screenshot);
+        if (options?.Call is { } call)
+        {
+            string kind = parameters["kind"]!.GetValue<string>();
+            parameters["call"] = kind is "gameMs" or "frames"
+                ? MethodCallParameters(call)
+                : throw new McpException($"options.call is taken only by a gameMs or frames wait; this condition is {kind}.");
+        }
+
         return parameters;
     }
 

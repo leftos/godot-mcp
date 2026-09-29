@@ -11,15 +11,9 @@ The first version replaced godot-mcp-runtime at parity and went further: every p
 
 Waves run in order; bug reports sit ahead of the backlog inside each. The singles' order is not a ranking.
 
-### Wave 1: capture and drive bug reports from opening-hand
-
-Shared: `RuntimeTools.Capture.cs`, `RuntimeTools.Input.cs`, `RuntimeTools.Time.cs`, `RuntimeTools.cs` and their bridge modules (`godot_mcp_capture.gd`, `godot_mcp_input.gd`, `godot_mcp_time.gd`). Gate: `pwsh run.ps1 test` and the touched `itest` groups; the evidence is a driven run against a fixture.
-
-- [ ] #41 Open: `options.call` on `capture_frames` and the game-time waits; the `gameMs` and `frames` waits have landed. `wait_for` used as a timed pause (`expression: "false"`) in a plain session stretches with load (2000 ms ran 10016 ms), so a shot meant to land mid-effect lands after it; wanted: a pause in game time or frames that load does not stretch. Decided (user, 2026-09-29): two new `wait_for` conditions, `{gameMs: N}` (met once N ms of game time, summed delta with `time_scale` applied, have passed) and `{frames: N}` (met after N process frames), each taking `options.screenshot` as any wait does. Its comment's shape (`call_method` then `capture_frames` at 0.3 s misses, the round trip falling outside the capture's clock) is decided too (user, 2026-09-29): `capture_frames` and the two game-time waits take `options.call {node, method, args}`, which the bridge runs in the frame their clock starts, so `at` and `gameMs` count from the call; a call that throws answers its error and no frames. The rest is [DECISIONS.md](../DECISIONS.md) 22 (user, 2026-09-29). Its other half, `capture_frames` missing from the implementer agent, is fixed: the user-level agents' tool lists now carry every tool
-
 ### Before 0.8.0
 
-The user's cut list (2026-09-29): 0.8.0 is cut once #41's `options.call`, the `stress_input` recorded allowance and the two lines below have landed.
+The user's cut list (2026-09-29): 0.8.0 is cut once the line below has landed.
 
 - [ ] `simulate_input`'s `wait` and `stress_input`'s gaps count clip time in a recording (measured: a `SceneTreeTimer` ran 120 frames for 2000 ms at 240 and 20 fps; DEVELOPMENT.md's recorded-run footgun). Left: after the popup-tooltip item lands (it holds `godot_mcp_input.gd`), correct `_play_wait`'s "real time" doc comment (`godot_mcp_input.gd` ~L626) and `gapMs`'s "real time" descriptions (`RuntimeTools.Stress.cs` ~L38, ~L367), and pin it with `RecordingTests.ARawWaitInARecordingLastsItsLengthInMovieFrames` (slowed game, `simulate_input wait 1000`, 60 to 80 process frames between reads)
 - [ ] Cut and install 0.8.0

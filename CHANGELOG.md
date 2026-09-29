@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - `wait_for` and `batch_drive`'s wait take `{gameMs}` and `{frames}`, a pause in the game's own time or frames that machine load does not stretch.
+- `capture_frames` and the `gameMs` and `frames` waits take `options.call`, a method called in the frame their clock starts, so they count from it.
 
 ### Changed
 

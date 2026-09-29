@@ -409,9 +409,11 @@ func _repeats(kept: Array, value: Variant) -> bool:
 ## follow the game's timers; a frame that finds the tree paused adds nothing, as it stops them.
 ## A point is due in the first frame whose sum reaches it; that frame is grabbed once at its
 ## frame_post_draw and saved as take_screenshot saves it (params.crop, no preview), and every point
-## due in it shares the file. Returns {result: frames_result}, stopped with the points missed when
-## the deadline (params.deadlineMs, or params.backstopMs) or a cancel ends it first, or {error}
-## when it cannot start or a frame cannot be saved.
+## due in it shares the file. With params.call {node, method, args}, the method is called in the
+## clock's first frame (_call_once), so the points count from its entry. Returns {result:
+## frames_result}, with call: {value} when the method was called, stopped with the points missed
+## when the deadline (params.deadlineMs, or params.backstopMs) or a cancel ends it first, or
+## {error} when it cannot start, the call fails or a frame cannot be saved.
 func capture_frames(params: Dictionary) -> Dictionary:
 	var refusal: String = _capture_refusal(get_tree().paused)
 	if not refusal.is_empty():
@@ -420,11 +422,15 @@ func capture_frames(params: Dictionary) -> Dictionary:
 	var deadline: SceneTreeTimer = _begin(
 		"frames", float(params.get("deadlineMs", 10000 + 100 * points.size())), params
 	)
-	var taken: Variant = await _capture_points(points, params)
+	var called: Dictionary = {}
+	var taken: Variant = await _capture_points(points, params, called)
 	_end(deadline)
 	if taken is String:
 		return {"error": taken}
-	return {"result": frames_result(points, taken)}
+	var result: Dictionary = frames_result(points, taken)
+	if not called.is_empty():
+		result["call"] = called
+	return {"result": result}
 
 
 ## Why a capture cannot start now, or empty: a step, a monitor or another capture runs, or the
@@ -436,17 +442,21 @@ func _capture_refusal(paused: bool) -> String:
 
 
 ## Runs the capture's clock from the next process_frame until every point is taken, the deadline
-## passes or a cancel comes. Returns the entries (frame_entries) taken, or a String saying why a
-## frame could not be saved.
-func _capture_points(points: Array, params: Dictionary) -> Variant:
+## passes or a cancel comes, calling params.call in its first frame into called. Returns the
+## entries (frame_entries) taken, or a String saying why the call failed or a frame could not be
+## saved.
+func _capture_points(points: Array, params: Dictionary, called: Dictionary) -> Variant:
 	var tree: SceneTree = get_tree()
-	var elapsed: float = 0.0
+	var clock: Dictionary = {"seconds": 0.0, "frames": 0}
 	var entries: Array = []
 	while entries.size() < points.size():
 		if not await _next(tree.process_frame):
 			break
-		if not tree.paused:
-			elapsed += get_process_delta_time()
+		var failed: String = _call_once(params, called)
+		if not failed.is_empty():
+			return failed
+		advance_game_clock(clock, tree.paused, get_process_delta_time())
+		var elapsed: float = clock["seconds"]
 		var due: Array = due_points(points, entries.size(), elapsed)
 		if due.is_empty():
 			continue
@@ -457,6 +467,24 @@ func _capture_points(points: Array, params: Dictionary) -> Variant:
 			return saved
 		entries.append_array(frame_entries(due, saved, Engine.get_process_frames(), elapsed))
 	return entries
+
+
+## Calls params.call {node, method, args} with the inspector's call_now, the first time it is
+## asked in a request, putting its {value} into called; nothing when params has no call or called
+## already holds its value. Returns why the call failed, or "".
+##
+## It runs inside a process_frame emission, which SceneTree::process sends before it processes
+## the nodes (scene/main/scene_tree.cpp L713, L719 in 4.7.2), so a method called here has its
+## nodes' _process run in the same frame with that frame's delta: the clock counts that delta
+## too, and its game time is the game time the method's effect has seen.
+func _call_once(params: Dictionary, called: Dictionary) -> String:
+	if not called.is_empty() or not params.get("call") is Dictionary:
+		return ""
+	var outcome: Variant = bridge._inspect.call_now(params["call"])
+	if outcome is String:
+		return outcome
+	called.merge(outcome)
+	return ""
 
 
 ## The points from index taken on that are due at elapsed seconds: each at or before elapsed, in
@@ -552,17 +580,42 @@ func _make_probe(kind: String, params: Dictionary) -> Variant:
 ## Waits for params.gameMs milliseconds of game time or params.frames unpaused process frames,
 ## counted by a clock that frame (the tree's process_frame) ticks from its next emission on. The
 ## clock lives outside the probe, which may run several times a frame (at a draw and at the
-## frame), so the probe only reads it; it is disconnected however the poll ends.
+## frame), so the probe only reads it; it is disconnected however the poll ends. With params.call
+## the clock starts with the method's call instead (_start_with_call), and a met or timed-out
+## result adds call: {value}; a failed call answers {error} and no wait.
 func _wait_for_game_time(
 	kind: String, params: Dictionary, timeout_ms: int, frame: Signal
 ) -> Dictionary:
 	var clock: Dictionary = {"seconds": 0.0, "frames": 0}
+	var called: Dictionary = {}
+	var failed: String = await _start_with_call(params, called, clock, frame)
+	if not failed.is_empty():
+		return {"error": failed}
 	var tick: Callable = _tick_game_clock.bind(clock)
 	frame.connect(tick)
 	var probe: Callable = _check_game_time.bind(kind, int(params.get(kind, 0)), clock)
 	var outcome: Dictionary = await _poll_capturing(probe, timeout_ms, params)
 	frame.disconnect(tick)
+	if not called.is_empty() and outcome.has("result"):
+		outcome["result"]["call"] = called
 	return outcome
+
+
+## With params.call: waits for frame's next emission, calls the method there (_call_once, which
+## says why that frame is the one) and counts that frame on clock, so the wait's clock starts with
+## the method's entry; a tick connected afterwards is not called in the emission it was connected
+## in, since emit_signalp copies the slots before calling them (core/object/object.cpp
+## L1212-1218 in 4.7.2). Returns why the call failed, or ""; without a call, "" at once.
+func _start_with_call(
+	params: Dictionary, called: Dictionary, clock: Dictionary, frame: Signal
+) -> String:
+	if not params.get("call") is Dictionary:
+		return ""
+	await frame
+	var failed: String = _call_once(params, called)
+	if failed.is_empty():
+		_tick_game_clock(clock)
+	return failed
 
 
 ## Advances clock by this frame, as _capture_points counts game time: this node's process delta,

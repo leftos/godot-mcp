@@ -1,7 +1,9 @@
 extends "res://gd_test.gd"
 ## capture_frames' pure logic on the clock (bridge/godot_mcp_time.gd): which points a frame's game
-## time makes due, the entries a grab gives them, the result a stopped capture answers, and its
-## refusals. The node is never added to the tree; only functions that do not need it are called.
+## time makes due, the entries a grab gives them, the result a stopped capture answers, its
+## refusals, and the method call a capture or a game-time wait makes as its clock starts
+## (_call_once), against a stand-in bridge. The clock node is never added to the tree; only
+## functions that do not need it are called.
 # gdlint: disable=private-method-call
 
 const SAVED := {"path": "C:/shots/a.png", "width": 64, "height": 32}
@@ -90,3 +92,143 @@ func test_a_capture_refuses_and_is_refused_by_the_others() -> void:
 	assert_eq(time._capture_refusal(false), time.CAPTURING_REFUSAL, "while another capture runs")
 	assert_eq(time._monitor_refusal("Main", "position"), time.CAPTURING_REFUSAL, "a monitor")
 	time.free()
+
+
+func test_call_once_puts_the_methods_value_into_called() -> void:
+	var rig: Dictionary = _call_rig()
+	var called: Dictionary = {}
+	var call: Dictionary = {"node": "CallTarget", "method": "add", "args": [2, 3]}
+	assert_eq(rig["time"]._call_once({"call": call}, called), "", "the call succeeds")
+	assert_eq(called, {"value": 5}, "its value, as JSON")
+	assert_eq(rig["time"]._call_once({"call": call}, called), "", "a second ask")
+	assert_eq(rig["target"].calls, 1, "calls the method once only")
+	assert_eq(rig["time"]._call_once({}, {}), "", "no call, nothing to do")
+	_free_call_rig(rig)
+
+
+## A missing method or a wrong argument count names the node's path, which a node outside a
+## running tree cannot give without an engine error, so the integration tests cover those.
+func test_call_once_answers_a_missing_node_as_call_method_refuses_it() -> void:
+	var rig: Dictionary = _call_rig()
+	var called: Dictionary = {}
+	var no_node: String = rig["time"]._call_once(
+		{"call": {"node": "Nowhere", "method": "add"}}, called
+	)
+	assert_eq(
+		no_node,
+		rig["bridge"]._inspect.not_found("Nowhere", "get_scene_tree lists the nodes' paths"),
+		"a missing node"
+	)
+	assert_eq(called, {}, "no value")
+	assert_eq(rig["target"].calls, 0, "nothing is called")
+	_free_call_rig(rig)
+
+
+func test_call_once_fails_on_an_error_the_feed_logs_across_the_call() -> void:
+	var rig: Dictionary = _call_rig()
+	rig["target"].log_to_feed(Logger.ERROR_TYPE_ERROR, "an older error")
+	var called: Dictionary = {}
+	var clean: String = rig["time"]._call_once(
+		{"call": {"node": "CallTarget", "method": "add", "args": [1, 1]}}, called
+	)
+	assert_eq(clean, "", "an error logged before the call is not the call's")
+	var warned: Dictionary = {}
+	var warning: String = rig["time"]._call_once(
+		{"call": {"node": "CallTarget", "method": "warn"}}, warned
+	)
+	assert_eq(warning, "", "a warning does not fail the call")
+	assert_eq(warned, {"value": 2}, "and its value comes back")
+	var failed: Dictionary = {}
+	var error: String = rig["time"]._call_once(
+		{"call": {"node": "CallTarget", "method": "fail"}}, failed
+	)
+	assert_eq(error, "the method failed", "the first new error's message")
+	assert_eq(failed, {}, "no value")
+	_free_call_rig(rig)
+
+
+## A clock whose bridge is a stand-in holding the inspector, the JSON module and an unregistered
+## logger, and CallTarget, a node outside any tree (the runner's root is not in one yet) with
+## add(a, b), warn() and fail(), the last two logging a warning or an error to that logger as the
+## engine would.
+func _call_rig() -> Dictionary:
+	var bridge: Node = _compile(
+		(
+			"\n"
+			. join(
+				[
+					"extends Node",
+					"",
+					"var _json: GDScript",
+					"var _logger: Logger",
+					"var _inspect: Node",
+					"var target: Node",
+					"",
+					"",
+					"func _find_node(element: String) -> Node:",
+					"\treturn target if element == str(target.name) else null",
+				]
+			)
+		)
+	)
+	var target: Node = _compile(
+		(
+			"\n"
+			. join(
+				[
+					"extends Node",
+					"",
+					"var logger: Logger",
+					"var calls: int = 0",
+					"",
+					"",
+					"func add(a: int, b: int) -> int:",
+					"\tcalls += 1",
+					"\treturn a + b",
+					"",
+					"",
+					"func warn() -> int:",
+					"\tlog_to_feed(Logger.ERROR_TYPE_WARNING, 'a warning')",
+					"\treturn 2",
+					"",
+					"",
+					"func fail() -> int:",
+					"\tlog_to_feed(Logger.ERROR_TYPE_ERROR, 'the method failed')",
+					"\tlog_to_feed(Logger.ERROR_TYPE_ERROR, 'a second error')",
+					"\treturn 3",
+					"",
+					"",
+					"func log_to_feed(type: int, message: String) -> void:",
+					"\tvar none: Array[ScriptBacktrace] = []",
+					"\tlogger._log_error('f', 'res://t.gd', 1, message, '', false, type, none)",
+				]
+			)
+		)
+	)
+	target.name = "CallTarget"
+	var logger: Logger = load_bridge_script("godot_mcp_logger.gd").new()
+	target.logger = logger
+	var inspect: Node = load_bridge_script("godot_mcp_inspect.gd").new()
+	inspect._bridge = bridge
+	bridge._json = load_bridge_script("godot_mcp_json.gd")
+	bridge._logger = logger
+	bridge._inspect = inspect
+	bridge.target = target
+	var time: Node = _time_script.new()
+	time.bridge = bridge
+	return {"time": time, "target": target, "bridge": bridge}
+
+
+func _free_call_rig(rig: Dictionary) -> void:
+	rig["time"].free()
+	rig["bridge"]._inspect.free()
+	rig["bridge"].free()
+	rig["target"].free()
+
+
+## An instance of a script compiled from source.
+func _compile(source: String) -> Object:
+	var script := GDScript.new()
+	script.source_code = source
+	script.reload()
+	return script.new()

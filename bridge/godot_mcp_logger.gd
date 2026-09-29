@@ -19,6 +19,10 @@ const SCRIPT_PREFIXES: PackedStringArray = ["res://", "gdscript://"]
 var _mutex := Mutex.new()
 var _pending: Array = []
 var _dropped: int = 0
+## Entries logged since the logger was made, held or dropped: the sequence number the next entry
+## takes. The held entries are numbered on from the first one take_pending has not sent, and the
+## dropped ones come after them, since nothing is held once the cap is reached.
+var _sequence: int = 0
 
 
 func _log_error(
@@ -42,11 +46,36 @@ func _log_error(
 	if not _is_script_file(file):
 		_locate_in_script(entry, script_backtraces)
 	_mutex.lock()
+	_sequence += 1
 	if _pending.size() < MAX_PENDING:
 		_pending.append(entry)
 	else:
 		_dropped += 1
 	_mutex.unlock()
+
+
+## The sequence number the next entry logged takes, the mark first_error_since reads from.
+func sequence() -> int:
+	_mutex.lock()
+	var next: int = _sequence
+	_mutex.unlock()
+	return next
+
+
+## The message of the first error (not a warning) logged at or after sequence number since that is
+## still held, or "" when there is none: one take_pending has sent, or one dropped over the cap, is
+## not seen.
+func first_error_since(since: int) -> String:
+	_mutex.lock()
+	var first_held: int = _sequence - _dropped - _pending.size()
+	var found: String = ""
+	for index in range(maxi(0, since - first_held), _pending.size()):
+		var entry: Dictionary = _pending[index]
+		if entry["type"] == "error":
+			found = entry["message"]
+			break
+	_mutex.unlock()
+	return found
 
 
 ## The entries logged since the last call and how many were dropped over the cap, as

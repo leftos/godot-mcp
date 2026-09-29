@@ -144,6 +144,20 @@ public sealed class BatchValidationTests : IDisposable
     public void AGameMsWaitAssertionIsAccepted() => RuntimeTools.CheckBatch([new BatchStep(Assert: "wait", GameMs: 500)]);
 
     [Fact]
+    public void AWaitAssertionHasNoCallToGive()
+    {
+        const string Wait = """{"assert":"wait","gameMs":500""";
+
+        BatchStep? bound = JsonSerializer.Deserialize<BatchStep>(Wait + "}", ToolJson.Options);
+        JsonException refused = Assert.Throws<JsonException>(() =>
+            JsonSerializer.Deserialize<BatchStep>(Wait + ""","call":{"node":"TimeProbe","method":"start_clock"}}""", ToolJson.Options)
+        );
+
+        Assert.Equal(500, bound?.GameMs);
+        Assert.Contains("call", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AFramesWaitAssertionWhoseDefaultTimeoutPassesTheExplicitCapIsAccepted() =>
         RuntimeTools.CheckBatch([new BatchStep(Assert: "wait", Frames: RuntimeTools.MaxWaitFrames)]);
 

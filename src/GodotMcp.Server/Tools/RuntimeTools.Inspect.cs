@@ -157,12 +157,7 @@ internal sealed partial class RuntimeTools
         CancellationToken cancellationToken = default
     )
     {
-        JsonObject parameters = new()
-        {
-            ["node"] = CheckNode(node),
-            ["method"] = CheckName(method, "method", "Pass the name of a method the node has."),
-            ["args"] = new JsonArray([.. (args ?? []).Select(arg => JsonSerializer.SerializeToNode(arg))]),
-        };
+        JsonObject parameters = MethodCallParameters(new MethodCall(node, method, args));
         var timeout = TimeSpan.FromMilliseconds(CheckCallTimeout(options?.TimeoutMs));
         GodotSession target = Find(session);
         long mark = target.Errors.Mark();
@@ -175,14 +170,34 @@ internal sealed partial class RuntimeTools
         }
 
         JsonObject shaped = result.Reply?.DeepClone() as JsonObject ?? [];
-        if (ValuePreview(shaped["value"], MaxPropertyValueLength) is JsonObject preview)
+        CutMethodValue(shaped);
+        return ErrorReport.AddTo(shaped, result.Errors).ToJsonString();
+    }
+
+    /// <summary>The bridge's parameters for a method call, {node, method, args}, as call_method checks and sends them.</summary>
+    /// <exception cref="McpException">The node or the method is empty.</exception>
+    internal static JsonObject MethodCallParameters(MethodCall call) =>
+        new()
         {
-            shaped.Remove("value");
-            shaped["valuePreview"] = preview["valuePreview"]!.DeepClone();
-            shaped["valueLength"] = preview["valueLength"]!.DeepClone();
+            ["node"] = CheckNode(call.Node),
+            ["method"] = CheckName(call.Method, "method", "Pass the name of a method the node has."),
+            ["args"] = new JsonArray([.. (call.Args ?? []).Select(arg => JsonSerializer.SerializeToNode(arg))]),
+        };
+
+    /// <summary>
+    /// A method's value in <paramref name="holder"/> as call_method returns it: kept, or replaced by {valuePreview, valueLength}
+    /// when its JSON is longer than <see cref="MaxPropertyValueLength"/> characters. Nothing when there is no holder.
+    /// </summary>
+    private static void CutMethodValue(JsonObject? holder)
+    {
+        if (holder is null || ValuePreview(holder["value"], MaxPropertyValueLength) is not JsonObject preview)
+        {
+            return;
         }
 
-        return ErrorReport.AddTo(shaped, result.Errors).ToJsonString();
+        holder.Remove("value");
+        holder["valuePreview"] = preview["valuePreview"]!.DeepClone();
+        holder["valueLength"] = preview["valueLength"]!.DeepClone();
     }
 
     /// <summary>

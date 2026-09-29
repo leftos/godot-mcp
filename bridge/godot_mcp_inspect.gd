@@ -291,26 +291,64 @@ func _not_converted(
 ## error at the callv line below, in this file's call_method, and the server fails the call on
 ## an error located there alone, which reaches it ahead of this reply.
 func call_method(params: Dictionary) -> Variant:
+	var prepared: Variant = _prepare_call(params)
+	if prepared is String:
+		return prepared
+	var node: Node = prepared[0]
+	var method: String = prepared[1]
+	var path: String = str(node.get_path())
+	var value: Variant = node.callv(method, prepared[2])
+	# A GDScript coroutine returns a GDScriptFunctionState at its first await, and awaiting that
+	# waits for its completed signal and gives the function's return value
+	# (modules/gdscript/gdscript_vm.cpp L2586-2598 in 4.7.2).
+	if _is_coroutine(value):
+		value = await value
+	return {"path": path, "method": method, "value": _bridge._json.to_json(value)}
+
+
+## {value}: the method params names ({node, method, args}, as call_method takes them) called now
+## with callv and never awaited, so a coroutine runs to its first await and its value is null.
+## Returns a String instead when the call is refused as call_method refuses it, or when the error
+## feed logged an error (not a warning) across the callv: a GDScript runtime error or a C#
+## exception cannot be caught, and Godot refusing the callv itself logs one too; the String is the
+## first such error's message.
+func call_now(params: Dictionary) -> Variant:
+	var prepared: Variant = _prepare_call(params)
+	if prepared is String:
+		return prepared
+	var node: Node = prepared[0]
+	var mark: int = _bridge._logger.sequence()
+	var value: Variant = node.callv(prepared[1], prepared[2])
+	var raised: String = _bridge._logger.first_error_since(mark)
+	if not raised.is_empty():
+		return raised
+	return {"value": null if _is_coroutine(value) else _bridge._json.to_json(value)}
+
+
+## [node, method, args] for params {node, method, args}: the node found, the method it has, and
+## the arguments converted by its declared parameter types; or a String saying why not.
+func _prepare_call(params: Dictionary) -> Variant:
 	var found: Variant = _resolve(str(params.get("node", "")))
 	if found is String:
 		return found
 	var node: Node = found
 	var method: String = str(params.get("method", ""))
-	var path: String = str(node.get_path())
 	if not node.has_method(method):
-		return "Node '%s' has no method '%s'." % [path, method]
+		return "Node '%s' has no method '%s'." % [str(node.get_path()), method]
 	var given: Array = params.get("args") if params.get("args") is Array else []
 	var args: Variant = _method_args(node, method, given)
 	if args is String:
 		return args
-	var value: Variant = node.callv(method, args)
-	# A GDScript coroutine returns a GDScriptFunctionState at its first await, and awaiting that
-	# waits for its completed signal and gives the function's return value
-	# (modules/gdscript/gdscript_vm.cpp L2586-2598 in 4.7.2).
-	if value is Object and is_instance_valid(value):
-		if (value as Object).is_class("GDScriptFunctionState"):
-			value = await value
-	return {"path": path, "method": method, "value": _bridge._json.to_json(value)}
+	return [node, method, args]
+
+
+## Whether value is the GDScriptFunctionState a GDScript coroutine returns at its first await.
+static func _is_coroutine(value: Variant) -> bool:
+	return (
+		value is Object
+		and is_instance_valid(value)
+		and (value as Object).is_class("GDScriptFunctionState")
+	)
 
 
 ## The arguments converted by the method's declared parameter types, or a String saying why they

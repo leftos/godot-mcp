@@ -373,6 +373,86 @@ public sealed class TimeValidationTests : IDisposable
         Assert.False(parameters.ContainsKey("previewMaxWidth"), parameters.ToJsonString());
     }
 
+    [Theory]
+    [InlineData(500, null)]
+    [InlineData(null, 3)]
+    public async Task AGameTimeWaitWithACallIsAccepted(int? gameMs, int? frames)
+    {
+        WaitOptions options = new(Call: new MethodCall("TimeProbe", "start_clock", [Json("300")]));
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(
+                new WaitCondition(GameMs: gameMs, Frames: frames),
+                null,
+                options,
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(500, null)]
+    [InlineData(null, 3)]
+    public void AGameTimeWaitSendsItsCallToTheBridge(int? gameMs, int? frames)
+    {
+        WaitOptions options = new(Call: new MethodCall("TimeProbe", "start_clock", [Json("300")]));
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(GameMs: gameMs, Frames: frames), null, options);
+
+        JsonObject call = parameters["call"]!.AsObject();
+        Assert.Equal("TimeProbe", call["node"]!.GetValue<string>());
+        Assert.Equal("start_clock", call["method"]!.GetValue<string>());
+        Assert.Equal("[300]", call["args"]!.ToJsonString());
+    }
+
+    [Fact]
+    public void ACallWithoutArgsSendsAnEmptyList()
+    {
+        WaitOptions options = new(Call: new MethodCall("TimeProbe", "start_clock"));
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(GameMs: 500), null, options);
+
+        Assert.Equal("[]", parameters["call"]!["args"]!.ToJsonString());
+    }
+
+    [Fact]
+    public void AWaitWithoutACallSendsNone() =>
+        Assert.False(RuntimeTools.BuildWaitParameters(new WaitCondition(GameMs: 500), null, new WaitOptions()).ContainsKey("call"));
+
+    [Theory]
+    [InlineData(null, null, "true", "expression")]
+    [InlineData("Main", true, null, "exists")]
+    public async Task ACallOnAnotherWaitKindIsRefused(string? node, bool? exists, string? expression, string kind)
+    {
+        WaitCondition condition = new(Node: node, Exists: exists, Expression: expression);
+        WaitOptions options = new(Call: new MethodCall("TimeProbe", "start_clock"));
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(condition, 1000, options, cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal($"options.call is taken only by a gameMs or frames wait; this condition is {kind}.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("TimeProbe", "")]
+    [InlineData("", "start_clock")]
+    public async Task ACallWithAnEmptyNameIsRefusedAsCallMethodRefusesIt(string node, string method)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        WaitOptions options = new(Call: new MethodCall(node, method));
+
+        McpException expected = await Assert.ThrowsAsync<McpException>(() => _tools.CallMethodAsync(node, method, cancellationToken: cancellation));
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(GameMs: 500), null, options, cancellationToken: cancellation)
+        );
+
+        Assert.Equal(expected.Message, refused.Message);
+        Assert.Contains(" is empty. ", refused.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task AScreenshotWaitChecksItsConditionBeforeTheSession()
     {
@@ -397,4 +477,6 @@ public sealed class TimeValidationTests : IDisposable
 
         Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
     }
+
+    private static JsonElement Json(string json) => JsonSerializer.Deserialize<JsonElement>(json);
 }

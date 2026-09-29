@@ -826,6 +826,67 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         }
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task CaptureFramesCountsFromTheCall()
+    {
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
+        CaptureFramesOptions options = new(Call: new MethodCall("TimeProbe", "start_clock"));
+
+        JsonObject captured = await CaptureFramesAsync([0.3], options, TestContext.Current.CancellationToken);
+
+        // start_clock sums the probe's own delta from the frame it is called in. A capture whose clock starts in that same
+        // frame has summed the same deltas at the frame it grabbed; a call a round trip ahead of the clock puts the probe's
+        // sum ahead by those frames' delta, and a call after the clock's first frame puts it behind.
+        JsonNode frame = Assert.Single(captured["frames"]!.AsArray())!;
+        long grabbed = frame["frame"]!.GetValue<long>();
+        long started = captured["call"]!["value"]!.GetValue<long>();
+        JsonNode? probeSeconds = await RunAsync($"return {Probe}.clock_at({grabbed})");
+        Assert.True(started <= grabbed, captured.ToJsonString());
+        Assert.NotNull(probeSeconds);
+        Assert.Equal(frame["gameSeconds"]!.GetValue<double>(), probeSeconds.GetValue<double>(), 6);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task WaitForGameMsWithACallCountsFromTheCall()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        WaitOptions options = new(Call: new MethodCall("TimeProbe", "start_clock", [Json("300")]));
+
+        // start_clock(300) pauses the tree in the frame the probe's own sum from the call reaches 300 ms, after the bridge's
+        // check of that frame. A wait whose clock starts in the call's frame has the same sum there and is met; one started a
+        // round trip later is behind when the pause stops its count, and times out.
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(new WaitCondition(GameMs: 300), 5000, options, cancellationToken: cancellation);
+        JsonObject waited = JsonNode.Parse(Text(blocks))!.AsObject();
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.True(waited["value"]!.GetValue<int>() >= 300, waited.ToJsonString());
+        Assert.True(waited["call"]!["value"]!.GetValue<long>() > 0, waited.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACallThatErrorsAnswersTheErrorAndNoFrames()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        MethodCall failing = new("TimeProbe", "fail_on_null");
+
+        McpException capture = await Assert.ThrowsAsync<McpException>(() =>
+            CaptureFramesAsync([0.1], new CaptureFramesOptions(Call: failing), cancellation)
+        );
+        McpException wait = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(Frames: 3), null, new WaitOptions(Call: failing), cancellationToken: cancellation)
+        );
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            CaptureFramesAsync([0.1], new CaptureFramesOptions(Call: new MethodCall("TimeProbe", "no_such_method")), cancellation)
+        );
+
+        Assert.Contains("queue_free", capture.Message, StringComparison.Ordinal);
+        Assert.Contains("queue_free", wait.Message, StringComparison.Ordinal);
+        Assert.Contains("Node '/root/TimeProbe' has no method 'no_such_method'.", refused.Message, StringComparison.Ordinal);
+    }
+
     // Adds OpenButton, a Button under the root, and OpenedPanel, a Panel hidden until the button is pressed; the button acts on
     // the press (ACTION_MODE_BUTTON_PRESS), not the release, and takes no focus. Returns the panel's path.
     private async Task<string> AddOpenerAsync() =>

@@ -36,12 +36,15 @@ internal sealed partial class RuntimeTools
             + "passes first, for example under a small time_scale, it answers the frames taken with stopped: true and missed, "
             + "the points not reached. Refused while the game is paused, since its game time does not advance (frame_control "
             + "step with options.screenshot captures a paused game), and while a frame_control step or a monitor_property runs; "
-            + "while it runs, pause, resume, a step and a monitor are refused."
+            + "while it runs, pause, resume, a step and a monitor are refused. options.call {node, method, args} calls a method "
+            + "in the frame the clock starts, so the points count from its entry (a coroutine is not awaited), and adds call: "
+            + "{value}, its return value as call_method returns it; a refused call, or an error the method raises, fails the "
+            + "capture with no frames."
     )]
     public async Task<string> CaptureFramesAsync(
         [Description("The points to capture, in seconds of game time from the call's start: 1 to 1000 of them, each 0 to 120, ascending.")]
             double[]? at = null,
-        [Description("{every, for, crop, timeoutMs}: every and for instead of at; no crop and the default timeout when left out.")]
+        [Description("{every, for, crop, timeoutMs, call}: every and for instead of at; no crop, the default timeout and no call when left out.")]
             CaptureFramesOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
@@ -49,15 +52,14 @@ internal sealed partial class RuntimeTools
     {
         double[] points = CapturePoints(at, options);
         TimeSpan allowance = CaptureAllowance(points, options?.TimeoutMs);
-        JsonObject parameters = BuildScreenshotParameters(ScreenshotMode.PathOnly, options?.Crop, 0);
-        parameters["points"] = new JsonArray([.. points.Select(point => JsonValue.Create(point))]);
-        parameters["deadlineMs"] = (long)allowance.TotalMilliseconds;
+        JsonObject parameters = BuildCaptureParameters(points, allowance, options);
         BridgeCall call = new("capture_frames", "frames", parameters, allowance + WaitReplyAllowance, allowance);
         BridgeResult result = await CallWithErrorsAsync(Find(session), call, cancellationToken);
         JsonObject reply =
             result.Reply?.DeepClone() as JsonObject
             ?? throw new McpException($"The bridge's capture_frames reply is not an object: {result.Reply?.ToJsonString() ?? "null"}.");
         NativeFramePaths(reply);
+        CutMethodValue(reply["call"] as JsonObject);
         return ErrorReport.AddTo(reply, result.Errors).ToJsonString();
     }
 
@@ -71,6 +73,21 @@ internal sealed partial class RuntimeTools
             (null, { } every, { } span) => EvenPoints(every, span),
             _ => throw new McpException(CaptureFormsMessage),
         };
+    }
+
+    /// <summary>The bridge's frames parameters: the path-only screenshot's with options.crop, {points, deadlineMs}, and call when given.</summary>
+    /// <exception cref="McpException">The crop, or the call's node or method, is refused.</exception>
+    internal static JsonObject BuildCaptureParameters(double[] points, TimeSpan allowance, CaptureFramesOptions? options)
+    {
+        JsonObject parameters = BuildScreenshotParameters(ScreenshotMode.PathOnly, options?.Crop, 0);
+        parameters["points"] = new JsonArray([.. points.Select(point => JsonValue.Create(point))]);
+        parameters["deadlineMs"] = (long)allowance.TotalMilliseconds;
+        if (options?.Call is { } call)
+        {
+            parameters["call"] = MethodCallParameters(call);
+        }
+
+        return parameters;
     }
 
     /// <summary>How long capture_frames may run: timeoutMs when given, else the last point's seconds + 10 s + 100 ms a point.</summary>

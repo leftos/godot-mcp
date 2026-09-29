@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Server.Wire;
@@ -159,6 +161,44 @@ public sealed class CaptureFramesValidationTests : IDisposable
         );
 
         Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AValidCallWithAMethodCallWithoutASessionSaysNoneIsRunning()
+    {
+        McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Call: new MethodCall("TimeProbe", "start_clock")));
+
+        Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ACaptureSendsItsCallToTheBridge()
+    {
+        JsonElement arg = JsonSerializer.Deserialize<JsonElement>("300");
+        CaptureFramesOptions options = new(Call: new MethodCall("TimeProbe", "start_clock", [arg]));
+
+        JsonObject parameters = RuntimeTools.BuildCaptureParameters([0.3], TimeSpan.FromSeconds(11), options);
+
+        JsonObject call = parameters["call"]!.AsObject();
+        Assert.Equal("TimeProbe", call["node"]!.GetValue<string>());
+        Assert.Equal("start_clock", call["method"]!.GetValue<string>());
+        Assert.Equal("[300]", call["args"]!.ToJsonString());
+        Assert.Equal("[0.3]", parameters["points"]!.ToJsonString());
+        Assert.Equal(11_000, parameters["deadlineMs"]!.GetValue<long>());
+    }
+
+    [Fact]
+    public void ACaptureWithoutACallSendsNone() =>
+        Assert.False(RuntimeTools.BuildCaptureParameters([0.3], TimeSpan.FromSeconds(11), null).ContainsKey("call"));
+
+    [Theory]
+    [InlineData("", "start_clock", "node is empty. ")]
+    [InlineData("TimeProbe", " ", "method is empty. ")]
+    public async Task ACallWithAnEmptyNodeOrMethodIsRefused(string node, string method, string start)
+    {
+        McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Call: new MethodCall(node, method)));
+
+        Assert.StartsWith(start, refused.Message, StringComparison.Ordinal);
     }
 
     [Fact]
