@@ -43,9 +43,9 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
     }
 
     /// <summary>
-    /// Deletes the marked override.cfg of every listed folder whose owners have all exited, and drops from the list every
-    /// folder that no longer holds a marked file (an unmarked override.cfg is never touched). Never throws: a failure is
-    /// reported with its folder, and a folder whose file could not be removed stays listed for the next sweep.
+    /// Deletes the marked override.cfg and the armed.json of every listed folder whose owners have all exited, and drops from
+    /// the list every folder that no longer holds either (an unmarked override.cfg is never touched). Never throws: a failure
+    /// is reported with its folder, and a folder whose file could not be removed stays listed for the next sweep.
     /// </summary>
     public void Sweep()
     {
@@ -71,30 +71,65 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
         }
     }
 
-    /// <summary>Removes the folder's stale marked file; returns whether the folder stays listed.</summary>
+    /// <summary>
+    /// Removes the folder's stale marked override.cfg and its stale armed.json (<see cref="ArmFile"/>); returns whether the
+    /// folder stays listed: either file is still in use, or its removal failed.
+    /// </summary>
     private bool KeepAfterSweep(string projectDir)
+    {
+        bool keepArm = SweepOne(projectDir, "armed.json", SweepArmFile);
+        bool keepOverride = SweepOne(projectDir, OverrideFile.FileName, SweepOverride);
+        return keepArm || keepOverride;
+    }
+
+    /// <summary>Runs one file's sweep; a failure is reported with its folder and keeps the folder listed.</summary>
+    private bool SweepOne(string projectDir, string file, Func<string, bool> sweep)
     {
         try
         {
-            string path = OverrideFile.PathIn(projectDir);
-            if (!File.Exists(path) || !OverrideFile.IsOurs(path))
-            {
-                return false;
-            }
-
-            if (OverrideFile.LiveOwners(projectDir).Count > 0)
-            {
-                return true;
-            }
-
-            File.Delete(path);
-            return false;
+            return sweep(projectDir);
         }
         catch (Exception e) when (IsFileSystemFailure(e))
         {
-            errors.WriteLine($"godot-mcp: removing the leftover override.cfg in {projectDir} at startup failed: {Describe(e)}");
+            errors.WriteLine($"godot-mcp: removing the leftover {file} in {projectDir} at startup failed: {Describe(e)}");
             return true;
         }
+    }
+
+    /// <summary>Deletes the folder's marked override.cfg when its owners have all exited; returns whether a live one is left.</summary>
+    private static bool SweepOverride(string projectDir)
+    {
+        string path = OverrideFile.PathIn(projectDir);
+        if (!File.Exists(path) || !OverrideFile.IsOurs(path))
+        {
+            return false;
+        }
+
+        if (OverrideFile.LiveOwners(projectDir).Count > 0)
+        {
+            return true;
+        }
+
+        File.Delete(path);
+        return false;
+    }
+
+    /// <summary>Deletes the folder's armed.json when its owners have all exited or it lists none; returns whether a live one is left.</summary>
+    private static bool SweepArmFile(string projectDir)
+    {
+        string path = ArmFile.PathIn(projectDir);
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+
+        if (ArmFile.LiveOwners(projectDir).Count > 0)
+        {
+            return true;
+        }
+
+        File.Delete(path);
+        return false;
     }
 
     private void TryAdd(FileStream list, string projectDir)

@@ -71,6 +71,8 @@ public sealed class BatchValidationTests : IDisposable
     [InlineData("restart_project")]
     [InlineData("attach_project")]
     [InlineData("detach_project")]
+    [InlineData("arm_project")]
+    [InlineData("disarm_project")]
     [InlineData("list_sessions")]
     [InlineData("get_debug_output")]
     [InlineData("no_such_tool")]

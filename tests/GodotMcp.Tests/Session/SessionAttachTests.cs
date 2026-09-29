@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Tests.Wire;
@@ -20,7 +21,10 @@ public sealed class SessionAttachTests : IAsyncDisposable
         string alpha = _harness.Project("alpha");
 
         await Assert.ThrowsAsync<SessionException>(() =>
-            _harness.Sessions.AttachAsync(alpha, null, TimeSpan.FromSeconds(1), false, false, TestContext.Current.CancellationToken)
+            _harness.Sessions.AttachAsync(
+                new AttachRequest(alpha, null, TimeSpan.FromSeconds(1), false, false, null),
+                TestContext.Current.CancellationToken
+            )
         );
 
         Assert.Empty(_harness.Sessions.List(includeStopped: true));
@@ -33,7 +37,10 @@ public sealed class SessionAttachTests : IAsyncDisposable
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string alpha = _harness.Project("alpha");
         string attachFile = AttachFile.PathIn(alpha);
-        Task<AttachResult> first = _harness.Sessions.AttachAsync(alpha, "first", RegistryHarness.LongWait, false, false, cancellation);
+        Task<AttachResult> first = _harness.Sessions.AttachAsync(
+            new AttachRequest(alpha, "first", RegistryHarness.LongWait, false, false, null),
+            cancellation
+        );
         await RegistryHarness.WaitUntilAsync(() => File.Exists(attachFile));
         string token = JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>();
         using FakeBridge game = await FakeBridge.DialAsync(_harness.Listener.Port, token, alpha, cancellation);
@@ -175,7 +182,10 @@ public sealed class SessionAttachTests : IAsyncDisposable
         Task<AttachResult> attach;
         try
         {
-            attach = _harness.Sessions.AttachAsync(alpha, "server", TimeSpan.FromSeconds(2), false, false, TestContext.Current.CancellationToken);
+            attach = _harness.Sessions.AttachAsync(
+                new AttachRequest(alpha, "server", TimeSpan.FromSeconds(2), false, false, null),
+                TestContext.Current.CancellationToken
+            );
             await Task.Delay(200, TestContext.Current.CancellationToken);
             Assert.False(File.Exists(overrideFile));
         }
@@ -195,5 +205,125 @@ public sealed class SessionAttachTests : IAsyncDisposable
         await _harness.StartWaitingAttachAsync(alpha, "server");
 
         Assert.Empty(_harness.Sessions.RunningSessionNames(alpha, except: null));
+    }
+
+    [Fact]
+    public async Task APidThatIsDormantIsJoinedThroughItsJoinFile()
+    {
+        string alpha = _harness.Project("alpha");
+        RegistryHarness.WriteDormant(alpha, 4101);
+        RegistryHarness.WriteDormant(alpha, 4102);
+
+        (AttachResult result, FakeBridge game) = await _harness.JoinFakeGameAsync(alpha, "joined", pid: 4102, joinedPid: 4102);
+        using FakeBridge joined = game;
+
+        Assert.Equal(4102, result.JoinedPid);
+        Assert.Equal(4102, _harness.Sessions.Resolve("joined").GameProcessId);
+        Assert.False(File.Exists(DormantGames.JoinPathIn(alpha, 4102)));
+        Assert.False(File.Exists(DormantGames.JoinPathIn(alpha, 4101)));
+        Assert.False(File.Exists(AttachFile.PathIn(alpha)));
+        Assert.True(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
+    [Fact]
+    public async Task APidThatIsNotDormantIsRefusedListingTheDormantGames()
+    {
+        string alpha = _harness.Project("alpha");
+        RegistryHarness.WriteDormant(alpha, 4101);
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _harness.Sessions.AttachAsync(
+                new AttachRequest(alpha, null, RegistryHarness.LongWait, false, false, 999),
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.StartsWith($"No dormant game with pid 999 waits on {alpha}. The dormant games on {alpha} are: pid 4101, started ", refused.Message);
+        Assert.EndsWith(
+            "A game started before arm_project, or on a folder that is not armed, has no bridge to join: relaunch it while the folder is armed.",
+            refused.Message
+        );
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
+        Assert.False(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
+    [Fact]
+    public async Task APidOnAFolderWithNoDormantGameSaysThereAreNone()
+    {
+        string alpha = _harness.Project("alpha");
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _harness.Sessions.AttachAsync(
+                new AttachRequest(alpha, null, RegistryHarness.LongWait, false, false, 999),
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Contains($"No dormant game waits on {alpha}.", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheOnlyDormantGameIsJoinedWithoutAPid()
+    {
+        string alpha = _harness.Project("alpha");
+        RegistryHarness.WriteDormant(alpha, 4101);
+
+        (AttachResult result, FakeBridge game) = await _harness.JoinFakeGameAsync(alpha, "joined", pid: null, joinedPid: 4101);
+        using FakeBridge joined = game;
+
+        Assert.Equal(4101, result.JoinedPid);
+        Assert.False(File.Exists(AttachFile.PathIn(alpha)));
+    }
+
+    [Fact]
+    public async Task SeveralDormantGamesWithoutAPidAreRefusedListingEach()
+    {
+        string alpha = _harness.Project("alpha");
+        RegistryHarness.WriteDormant(alpha, 4102);
+        RegistryHarness.WriteDormant(alpha, 4101);
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _harness.Sessions.AttachAsync(
+                new AttachRequest(alpha, null, RegistryHarness.LongWait, false, false, null),
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Matches(
+            $"^2 dormant games wait on {Regex.Escape(alpha)}: pid 4101, started [0-9TZ:.-]+; pid 4102, started [0-9TZ:.-]+\\. "
+                + "Pass options\\.pid to choose one\\.$",
+            refused.Message
+        );
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
+    }
+
+    [Fact]
+    public async Task NoDormantGameMeansTheAttachWaitsForALaunch()
+    {
+        string alpha = _harness.Project("alpha");
+
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", null);
+
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(AttachFile.PathIn(alpha))!, "join-*.json"));
+        Assert.False(File.Exists(AttachFile.PathIn(alpha)));
+        Assert.Equal("server", Assert.Single(_harness.Sessions.List(includeStopped: false)).Name);
+    }
+
+    [Fact]
+    public async Task AJoinThatIsNeverAnsweredRemovesItsJoinFileAndSaysTheGameDidNotAnswer()
+    {
+        string alpha = _harness.Project("alpha");
+        RegistryHarness.WriteDormant(alpha, 4101);
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _harness.Sessions.AttachAsync(
+                new AttachRequest(alpha, null, TimeSpan.FromSeconds(1), false, false, null),
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.StartsWith($"The dormant game (pid 4101) on {alpha} did not answer within 1 s", refused.Message);
+        Assert.False(File.Exists(DormantGames.JoinPathIn(alpha, 4101)));
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
     }
 }

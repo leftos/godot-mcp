@@ -24,6 +24,7 @@ internal sealed class RegistryHarness : IAsyncDisposable
         Sessions = new SessionRegistry(Listener, NullLogger<GodotSession>.Instance)
         {
             OverrideFolders = new OverrideFolders(_temp.Combine("override-folders.txt"), TextWriter.Null),
+            Dormant = new DormantGames(_ => new ProcessStart(Exists: true, StartTime: null), TextWriter.Null),
         };
     }
 
@@ -65,7 +66,7 @@ internal sealed class RegistryHarness : IAsyncDisposable
     public async Task StartWaitingAttachAsync(string projectDir, string name)
     {
         CancellationTokenSource cancel = new();
-        Task attach = Sessions.AttachAsync(projectDir, name, LongWait, false, false, cancel.Token);
+        Task attach = Sessions.AttachAsync(new AttachRequest(projectDir, name, LongWait, false, false, null), cancel.Token);
         _waiting.Add((attach, cancel));
         await WaitUntilAsync(() => Sessions.List(includeStopped: true).Any(session => session.Name == name));
     }
@@ -75,12 +76,45 @@ internal sealed class RegistryHarness : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string attachFile = AttachFile.PathIn(projectDir);
-        Task<AttachResult> attach = Sessions.AttachAsync(projectDir, name, LongWait, false, false, cancellation);
+        Task<AttachResult> attach = Sessions.AttachAsync(new AttachRequest(projectDir, name, LongWait, false, false, null), cancellation);
         await WaitUntilAsync(() => File.Exists(attachFile));
         string token = JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>();
         FakeBridge game = await FakeBridge.DialAsync(Listener.Port, token, projectDir, processId, cancellation);
         await attach;
         return game;
+    }
+
+    /// <summary>
+    /// Writes a dormant game's entry on the folder, as its bridge would; the harness's process boundary counts every pid as a
+    /// live process whose start time cannot be read.
+    /// </summary>
+    public static void WriteDormant(string projectDir, int pid)
+    {
+        string folder = DormantGames.FolderIn(projectDir);
+        Directory.CreateDirectory(folder);
+        long started = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        File.WriteAllText(System.IO.Path.Combine(folder, $"{pid}.json"), $"{{\"pid\":{pid},\"startedUnixMs\":{started}}}");
+    }
+
+    /// <summary>
+    /// Starts an attach asking for <paramref name="pid"/> (null for none), waits for the join file of
+    /// <paramref name="joinedPid"/>, and dials in as that game with the token it carries.
+    /// </summary>
+    public async Task<(AttachResult Result, FakeBridge Game)> JoinFakeGameAsync(string projectDir, string name, int? pid, int joinedPid)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string joinFile = DormantGames.JoinPathIn(projectDir, joinedPid);
+        Task<AttachResult> attach = Sessions.AttachAsync(new AttachRequest(projectDir, name, LongWait, false, false, pid), cancellation);
+        await WaitUntilAsync(() => File.Exists(joinFile) || attach.IsCompleted);
+        if (attach.IsCompleted)
+        {
+            await attach;
+            Assert.Fail("the attach ended before it wrote the join file");
+        }
+
+        string token = JsonNode.Parse(File.ReadAllText(joinFile))!["token"]!.GetValue<string>();
+        FakeBridge game = await FakeBridge.DialAsync(Listener.Port, token, projectDir, joinedPid, cancellation);
+        return (await attach, game);
     }
 
     /// <summary>Attaches a session to a fake game, then ends the game, leaving the session stopped.</summary>

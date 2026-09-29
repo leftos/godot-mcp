@@ -18,19 +18,28 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         "By default the machine's real gamepads stay live and feed the same actions and ui_* bindings as the gamepad tools' "
         + "injected pad; shutOutRealGamepads keeps them out.";
 
-    /// <summary>The shutOutRealGamepads option, for run_project's options and attach_project.</summary>
-    internal const string ShutOutDescription =
+    /// <summary>What the shutOutRealGamepads option does, without its default.</summary>
+    internal const string ShutOutEffect =
         "Keep the machine's real gamepads out of the game, so only the gamepad tools' injected pad reaches it: the bridge "
         + "marks the game unfocused, at startup and again after every real focus change, and Godot then drops real pad input. "
         + "Costs: the game's nodes receive application focus-out notifications (a game that pauses or mutes on focus loss "
         + "will), held injected keys are released on each real focus change, and held injected pad buttons and axes are sent "
-        + "again after it, so their actions fire again. Default false.";
+        + "again after it, so their actions fire again.";
 
-    /// <summary>attach_project's quiet parameter.</summary>
-    internal const string AttachQuietDescription =
+    /// <summary>The shutOutRealGamepads option, for run_project's and arm_project's options.</summary>
+    internal const string ShutOutDescription = ShutOutEffect + " Default false.";
+
+    /// <summary>What attach_project's and arm_project's quiet option does, without its default.</summary>
+    internal const string AttachQuietEffect =
         "Park the game's window off-screen and unfocused and cap it at 60 fps, as run_project's quiet does. Only a launcher can "
         + "hide a window fully, so it still shows for a moment as the game starts; to silence it, launch the game with "
-        + "--audio-driver Dummy. Default false.";
+        + "--audio-driver Dummy.";
+
+    /// <summary>arm_project's quiet option.</summary>
+    internal const string AttachQuietDescription = AttachQuietEffect + " Default false.";
+
+    /// <summary>What attach_project's quiet and shutOutRealGamepads are when left out.</summary>
+    internal const string ArmedDefault = " Left out on an armed folder, the arm's value; else false.";
 
     /// <summary>The session parameter of every tool that addresses an existing session.</summary>
     internal const string SessionDescription =
@@ -92,10 +101,13 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     [McpServerTool(Name = "attach_project", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Attaches to a Godot game that run_project does not start (a second client, a --server run, a smoke script, the "
-            + "editor's Play button): injects the bridge through a temporary override.cfg plus a one-use attach file under "
+            + "editor's Play button). On a folder arm_project has armed, it joins a game already running there whose bridge "
+            + "waits dormant: the only one, or the one options.pid names when several wait (the result's joinedPid says which). "
+            + "Otherwise it injects the bridge through a temporary override.cfg plus a one-use attach file under "
             + ".godot/godot-mcp/, then blocks until a game started on the project connects, or waitSeconds pass. Only a game "
             + "that starts after the files are written attaches, so start the launch in the background, delayed a second or "
-            + "two (e.g. Start-Sleep 2; godot --path <project>), just before this call, or launch within waitSeconds after it. "
+            + "two (e.g. Start-Sleep 2; godot --path <project>), just before this call, or launch within waitSeconds after it; "
+            + "or arm the folder before the game starts. "
             + "The runtime tools then work as with run_project; get_debug_output does not (the game's own console has its "
             + "output), and detach_project, not stop_project, ends the session, leaving the game running. The result's window "
             + "{width, height} is the game window's size in pixels."
@@ -106,9 +118,12 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     public async Task<string> AttachProjectAsync(
         [Description("The folder that holds the project's project.godot.")] string projectPath,
         [Description("How long to wait for the game's bridge to connect, 1 to 600 seconds, load-adjusted.")] int waitSeconds = 60,
-        [Description(ShutOutDescription)] bool shutOutRealGamepads = false,
-        [Description(AttachQuietDescription)] bool quiet = false,
-        [Description(NewSessionDescription)] string? session = null,
+        [Description(
+            "{quiet, shutOutRealGamepads, session, pid}; when left out, quiet and shutOutRealGamepads take the values the folder "
+                + "was armed with, else false, the session is named after the project folder, and the only dormant game on the "
+                + "folder is joined (with none, the attach waits for a launch)."
+        )]
+            AttachOptions? options = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -117,15 +132,63 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             throw new McpException($"waitSeconds must be 1 to {MaxAttachWaitSeconds}; got {waitSeconds}.");
         }
 
-        var wait = TimeSpan.FromSeconds(waitSeconds);
-        AttachResult result = await RunAsync(() => sessions.AttachAsync(projectPath, session, wait, shutOutRealGamepads, quiet, cancellationToken));
+        AttachOptions chosen = options ?? new AttachOptions();
+        AttachRequest request = new(
+            projectPath,
+            chosen.Session,
+            TimeSpan.FromSeconds(waitSeconds),
+            chosen.ShutOutRealGamepads,
+            chosen.Quiet,
+            chosen.Pid
+        );
+        AttachResult result = await RunAsync(() => sessions.AttachAsync(request, cancellationToken));
+        return JsonSerializer.Serialize(result, Json);
+    }
+
+    [McpServerTool(Name = "arm_project", ReadOnly = false, Destructive = false, OpenWorld = false)]
+    [Description(
+        "Arms a project folder so a game already running on it can be joined: every game started on the folder from now until "
+            + "disarm_project (by a script, a launcher, the editor's Play button or by hand) carries a dormant bridge that "
+            + "attach_project can join. A game already running before this call has no bridge and cannot be joined; relaunch it. "
+            + "Writes the bridge's override.cfg and .godot/godot-mcp/armed.json; the override.cfg stays until disarm_project or "
+            + "the server exits, through detaches and stops. Arming again with the same options changes nothing; other options "
+            + "are refused until disarm_project, and so are options that differ from the live sessions' on the folder. The "
+            + "result's dormant lists the games waiting to be joined, each {pid, startedAt}."
+    )]
+    public async Task<string> ArmProjectAsync(
+        [Description("The folder that holds the project's project.godot.")] string projectPath,
+        [Description(
+            "{quiet, shutOutRealGamepads}, as attach_project's options take them; both false when left out. An attach on the "
+                + "folder while it is armed must use the same values."
+        )]
+            ArmOptions? options = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        ArmOptions chosen = options ?? new ArmOptions();
+        ArmState result = await RunAsync(() =>
+            sessions.ArmAsync(projectPath, new ArmSettings(chosen.Quiet, chosen.ShutOutRealGamepads), cancellationToken)
+        );
+        return JsonSerializer.Serialize(result, Json);
+    }
+
+    [McpServerTool(Name = "disarm_project", ReadOnly = false, Destructive = false, OpenWorld = false)]
+    [Description(
+        "Disarms a folder arm_project armed: removes .godot/godot-mcp/armed.json (unless another server has armed the folder "
+            + "too), and the override.cfg unless a live session uses the folder. Dormant games stop waiting and can no longer be "
+            + "joined; attached sessions stay attached. overrideRemoved says whether the override.cfg was deleted."
+    )]
+    public async Task<string> DisarmProjectAsync([Description("The folder that holds the project's project.godot.")] string projectPath)
+    {
+        DisarmResult result = await RunAsync(() => Task.FromResult(sessions.Disarm(projectPath)));
         return JsonSerializer.Serialize(result, Json);
     }
 
     [McpServerTool(Name = "detach_project", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Ends a session attach_project started: closes the connection and removes the injected override.cfg, unless another "
-            + "live session uses the project folder. The game keeps running; its bridge goes idle."
+            + "live session uses the project folder or it is armed. The game keeps running; its bridge goes idle, or dormant "
+            + "again on an armed folder, where attach_project can join it again."
     )]
     public async Task<string> DetachProjectAsync(
         [Description(SessionDescription)] string? session = null,
@@ -140,7 +203,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     [Description(
         "Stops a session run_project started (asks the game to quit, kills it after 3 s, or after 30 s for a recording run, "
             + "whose quit finalises its movie) and removes the injected override.cfg, unless another live session uses the "
-            + "project folder. exitCode is the process the server started (on Windows the console wrapper); gameExitCode is the "
+            + "project folder or it is armed. exitCode is the process the server started (on Windows the console wrapper); gameExitCode is the "
             + "game's own, null when unreadable or when the game had to be killed; alreadyExited is true when the run had ended "
             + "before the stop (the game quit, crashed or was killed from outside). killed is true only when the game itself had "
             + "not exited, and killReason then says why (it did not answer a ping, did not answer the quit request, or was still "
@@ -232,11 +295,13 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "ends; null for an attached game) and its gameProcessId (the game's own process, the one a debugger attaches to; "
             + "null until the game's bridge has connected), plus for a recording run its recording: {path} while it runs, and "
             + "once it has ended, stopped or quit, what stop_project returns for it. A session whose run has ended is kept, "
-            + "until its name is reused (detach_project removes an attached one), and is listed only with includeStopped."
+            + "until its name is reused (detach_project removes an attached one), and is listed only with includeStopped. armed "
+            + "lists the folders this server has armed (arm_project), ordered by path: each one's projectPath, quiet, "
+            + "shutOutRealGamepads and dormant, the games waiting there to be joined, each {pid, startedAt}."
     )]
     public string ListSessions(
         [Description("Also list sessions whose run has stopped; they stay until their name is reused.")] bool includeStopped = false
-    ) => JsonSerializer.Serialize(new SessionList(sessions.List(includeStopped)), Json);
+    ) => JsonSerializer.Serialize(new SessionList(sessions.List(includeStopped), sessions.ListArmed()), Json);
 
     /// <summary>
     /// The project's godot-mcp.json, loaded from the normalised folder. An empty path gets an empty profile, so the launch

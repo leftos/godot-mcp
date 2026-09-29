@@ -48,7 +48,7 @@ public sealed class AttachTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
 
-        Task<string> attach = _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, false, cancellationToken: cancellation);
+        Task<string> attach = _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, cancellationToken: cancellation);
         Assert.True(await Poll.UntilAsync(() => File.Exists(AttachFilePath), TimeSpan.FromSeconds(10), cancellation));
         StartGame();
         JsonNode attached = JsonNode.Parse(await attach)!;
@@ -85,7 +85,12 @@ public sealed class AttachTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
 
-        Task<string> attach = _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, false, quiet: true, cancellationToken: cancellation);
+        Task<string> attach = _project.AttachProjectAsync(
+            _probe.Directory,
+            AttachWaitSeconds,
+            new AttachOptions(Quiet: true),
+            cancellationToken: cancellation
+        );
         Assert.True(await Poll.UntilAsync(() => File.Exists(AttachFilePath), TimeSpan.FromSeconds(10), cancellation));
         StartGame();
         JsonNode attached = JsonNode.Parse(await attach)!;
@@ -105,7 +110,7 @@ public sealed class AttachTests : IAsyncDisposable
     public async Task AttachWithoutALaunchTimesOutAndLeavesNoFiles()
     {
         McpException timedOut = await Assert.ThrowsAsync<McpException>(() =>
-            _project.AttachProjectAsync(_probe.Directory, 1, false, cancellationToken: TestContext.Current.CancellationToken)
+            _project.AttachProjectAsync(_probe.Directory, 1, cancellationToken: TestContext.Current.CancellationToken)
         );
 
         Assert.Contains("connected within 1 s", timedOut.Message, StringComparison.Ordinal);
@@ -120,7 +125,7 @@ public sealed class AttachTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
 
-        Task<string> attach = _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, false, cancellationToken: cancellation);
+        Task<string> attach = _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, cancellationToken: cancellation);
         Assert.True(await Poll.UntilAsync(() => File.Exists(AttachFilePath), TimeSpan.FromSeconds(10), cancellation));
         StartGame();
         await attach;
@@ -137,7 +142,7 @@ public sealed class AttachTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
 
-        Task<string> attach = _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, false, cancellationToken: cancellation);
+        Task<string> attach = _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, cancellationToken: cancellation);
         Assert.True(await Poll.UntilAsync(() => File.Exists(AttachFilePath), TimeSpan.FromSeconds(10), cancellation));
         StartGame();
         await attach;

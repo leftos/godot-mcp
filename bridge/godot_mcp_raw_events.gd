@@ -18,6 +18,25 @@ func _ready() -> void:
 	_gestures_script = _gestures.get_script() as GDScript
 
 
+## The mouse buttons a MouseButtonMask holds, as button indices (bit n is button n + 1), lowest
+## first.
+static func held_buttons(mask: int) -> Array[int]:
+	var buttons: Array[int] = []
+	for button in range(1, 33):
+		if (mask & (1 << (button - 1))) != 0:
+			buttons.append(button)
+	return buttons
+
+
+## Lets go of the injected input still held when a connection ends: each mouse button in the
+## bridge's held mask released at the pointer, through the input player's sender, so Input sees
+## it up, and the injected pads' buttons and axes (the gamepad's release_all).
+func release_all() -> void:
+	for button in held_buttons(bridge._held_mask):
+		_gestures.send_button(bridge._pointer, button, false, false)
+	bridge._pads.release_all()
+
+
 ## Plays a raw event list, one frame apart, stopping at the first event that fails.
 func play(events: Variant) -> String:
 	if not events is Array:

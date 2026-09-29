@@ -8,7 +8,7 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 **Run and watch the game**
 
-- Launch the game (or one scene), restart it, stop it, or attach to a game you started from the editor; run several sessions side by side.
+- Launch the game (or one scene), restart it, stop it, or attach to a game you started from the editor, or (once the folder is armed) to one already running; run several sessions side by side.
 - Launch quietly by default: off-screen, unfocused, silent and deaf to your own mouse, keyboard and pads, so the agent can play while you work.
 - Preview a single scene as a picture without playing it, 2D or 3D, framing a 3D scene that has no camera.
 - Take screenshots, whole or cropped, or a series at set moments of an animation in one call, and save baselines to catch visual regressions.

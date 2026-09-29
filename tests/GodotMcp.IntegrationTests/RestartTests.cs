@@ -213,7 +213,7 @@ public sealed class RestartTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         ProbeProject probe = Track(new ProbeProject());
-        Task<string> attach = _project.AttachProjectAsync(probe.Directory, AttachWaitSeconds, false, cancellationToken: cancellation);
+        Task<string> attach = _project.AttachProjectAsync(probe.Directory, AttachWaitSeconds, cancellationToken: cancellation);
         Assert.True(await Poll.UntilAsync(() => File.Exists(AttachFile.PathIn(probe.Directory)), TimeSpan.FromSeconds(10), cancellation));
         StartGame(probe.Directory);
         await attach;

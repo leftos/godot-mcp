@@ -22,6 +22,15 @@ internal static class AttachFile
     {
         string path = PathIn(projectDir);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, EndpointJson(endpoint, shutOutRealGamepads, quiet), Utf8NoBom);
+    }
+
+    /// <summary>
+    /// The text of a file that tells a game where to dial, <c>{port, token, shutOutRealGamepads, quiet}</c> and a newline: the
+    /// attach file's, and a dormant game's join file's (<see cref="DormantGames.WriteJoinFile"/>).
+    /// </summary>
+    internal static string EndpointJson(BridgeEndpoint endpoint, bool shutOutRealGamepads, bool quiet)
+    {
         JsonObject content = new()
         {
             ["port"] = endpoint.Port,
@@ -29,7 +38,7 @@ internal static class AttachFile
             ["shutOutRealGamepads"] = shutOutRealGamepads,
             ["quiet"] = quiet,
         };
-        File.WriteAllText(path, content.ToJsonString() + "\n", Utf8NoBom);
+        return content.ToJsonString() + "\n";
     }
 
     /// <summary>Deletes the file; returns whether there was one.</summary>

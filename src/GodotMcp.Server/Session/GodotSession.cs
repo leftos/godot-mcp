@@ -270,7 +270,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         {
             if (Kind == SessionKind.Attach)
             {
-                AttachFile.Remove(ProjectDir);
+                RemoveHandoffFile();
             }
             else if (_run is { IsRunning: true } run)
             {

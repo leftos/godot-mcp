@@ -182,13 +182,23 @@ internal sealed record AttachResult(string Session, string ProjectPath, bool Qui
     /// <summary>The game window's size in pixels, as the bridge's hello reported it; left out when the hello carried none.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public WindowSize? Window { get; init; }
+
+    /// <summary>The process id of the dormant game the attach joined; left out when it waited for a game launched after the call.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? JoinedPid { get; init; }
 }
 
 /// <summary>How detach_project left the project: the game still runs; whether the server's override.cfg was deleted.</summary>
 internal sealed record DetachResult(string Session, string ProjectPath, bool OverrideRemoved);
 
-/// <summary>What list_sessions returns: the sessions it was asked for, ordered by name.</summary>
-internal sealed record SessionList(IReadOnlyList<SessionInfo> Sessions);
+/// <summary>An armed folder, as arm_project and list_sessions report it: its settings and the dormant games waiting on it.</summary>
+internal sealed record ArmState(string ProjectPath, bool Quiet, bool ShutOutRealGamepads, IReadOnlyList<DormantGame> Dormant);
+
+/// <summary>How disarm_project left the project: whether the server's override.cfg was deleted.</summary>
+internal sealed record DisarmResult(string ProjectPath, bool OverrideRemoved);
+
+/// <summary>What list_sessions returns: the sessions it was asked for, ordered by name, and this server's armed folders.</summary>
+internal sealed record SessionList(IReadOnlyList<SessionInfo> Sessions, IReadOnlyList<ArmState> Armed);
 
 /// <summary>
 /// The latest run's state and a page of each stream: its lines, and the number of the first of them (null when there are

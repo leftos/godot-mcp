@@ -43,6 +43,7 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.Equal(
             [
                 "add_node",
+                "arm_project",
                 "attach_project",
                 "attach_script",
                 "batch_drive",
@@ -62,6 +63,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "describe_class",
                 "detach_project",
                 "diff_snapshots",
+                "disarm_project",
                 "disconnect_signal",
                 "drag",
                 "duplicate_node",
@@ -146,6 +148,7 @@ public sealed class McpServerSmokeTests : IDisposable
         Dictionary<string, (bool?, bool?, bool?)> expected = new()
         {
             ["add_node"] = changesTheGame,
+            ["arm_project"] = changesTheGame,
             ["attach_project"] = changesTheGame,
             ["attach_script"] = changesTheGame,
             ["batch_drive"] = destructive,
@@ -165,6 +168,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["describe_class"] = readsTheGame,
             ["detach_project"] = changesTheGame,
             ["diff_snapshots"] = readsTheGame,
+            ["disarm_project"] = changesTheGame,
             ["disconnect_signal"] = destructive,
             ["drag"] = changesTheGame,
             ["duplicate_node"] = changesTheGame,
@@ -219,7 +223,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(63, actual.Count);
+        Assert.Equal(65, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

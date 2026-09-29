@@ -252,7 +252,7 @@ public sealed partial class HangProbeTests : IAsyncDisposable
         Directory.CreateDirectory(projectDir);
         File.WriteAllText(Path.Combine(projectDir, "project.godot"), "config_version=5\n");
         string attachFile = AttachFile.PathIn(projectDir);
-        Task<AttachResult> attach = _sessions.AttachAsync(projectDir, null, AttachWait, false, false, cancellation);
+        Task<AttachResult> attach = _sessions.AttachAsync(new AttachRequest(projectDir, null, AttachWait, false, false, null), cancellation);
         DateTime deadline = DateTime.UtcNow + AttachWait;
         while (!File.Exists(attachFile))
         {

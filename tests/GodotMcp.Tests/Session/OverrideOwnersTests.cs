@@ -156,6 +156,36 @@ public sealed class OverrideOwnersTests : IDisposable
         Assert.Empty(_errors.ToString());
     }
 
+    [Fact]
+    public void SweepRemovesAnArmFileWhoseOwnersAreDeadAndKeepsALiveOne()
+    {
+        string stale = Project("stale-arm");
+        string ownerless = Project("ownerless-arm");
+        string live = Project("live-arm");
+        OverrideOwner foreign = StartForeignOwner();
+        WriteArm(stale, $"[\"{Dead}\"]");
+        WriteMarked(stale, $"{OverrideFile.OwnersPrefix}{Dead}\n{Body}");
+        WriteArm(ownerless, "[]");
+        WriteArm(live, $"[\"{foreign}\"]");
+        string list = WriteList(stale, ownerless, live);
+
+        new OverrideFolders(list, _errors).Sweep();
+
+        Assert.False(File.Exists(ArmFile.PathIn(stale)));
+        Assert.False(File.Exists(OverrideFile.PathIn(stale)));
+        Assert.False(File.Exists(ArmFile.PathIn(ownerless)));
+        Assert.Equal([foreign], ArmFile.Read(live)!.Owners);
+        Assert.Equal([live], File.ReadAllLines(list));
+        Assert.Empty(_errors.ToString());
+    }
+
+    private static void WriteArm(string project, string owners)
+    {
+        string path = ArmFile.PathIn(project);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, $"{{\"quiet\":false,\"shutOutRealGamepads\":false,\"owners\":{owners}}}");
+    }
+
     private string Project(string name)
     {
         string project = _temp.Combine(name);

@@ -112,7 +112,10 @@ public sealed class SessionNameTests : IAsyncDisposable
         await StartDefaultAttachAsync(one);
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
-            _harness.Sessions.AttachAsync(one, null, RegistryHarness.LongWait, false, false, TestContext.Current.CancellationToken)
+            _harness.Sessions.AttachAsync(
+                new AttachRequest(one, null, RegistryHarness.LongWait, false, false, null),
+                TestContext.Current.CancellationToken
+            )
         );
 
         Assert.Equal(LiveSkyClientRefusal(one), refused.Message);
@@ -126,7 +129,10 @@ public sealed class SessionNameTests : IAsyncDisposable
         await StartDefaultAttachAsync(one);
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
-            _harness.Sessions.AttachAsync(two, "Sky.Client", RegistryHarness.LongWait, false, false, TestContext.Current.CancellationToken)
+            _harness.Sessions.AttachAsync(
+                new AttachRequest(two, "Sky.Client", RegistryHarness.LongWait, false, false, null),
+                TestContext.Current.CancellationToken
+            )
         );
 
         Assert.Equal(LiveSkyClientRefusal(one), refused.Message);
@@ -169,7 +175,7 @@ public sealed class SessionNameTests : IAsyncDisposable
     private async Task<string> StartDefaultAttachAsync(string projectDir)
     {
         CancellationTokenSource cancel = new();
-        Task attach = _harness.Sessions.AttachAsync(projectDir, null, RegistryHarness.LongWait, false, false, cancel.Token);
+        Task attach = _harness.Sessions.AttachAsync(new AttachRequest(projectDir, null, RegistryHarness.LongWait, false, false, null), cancel.Token);
         _harness.Waiting.Add((attach, cancel));
         SessionInfo? started = null;
         await RegistryHarness.WaitUntilAsync(() =>

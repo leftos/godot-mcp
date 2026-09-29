@@ -2,6 +2,18 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- `arm_project` prepares a folder so every game started on it can be joined later by `attach_project` while it runs; `disarm_project` ends that.
+- `list_sessions` lists armed folders and the games on them waiting to be joined.
+
+### Changed
+
+- `attach_project` takes `quiet`, `shutOutRealGamepads` and `session` in `options`, beside a new `pid` choosing which waiting game to join.
+- A game detached on an armed folder waits to be joined again instead of going idle.
+
 ## 0.9.0 - 2026-09-29
 
 ### Added

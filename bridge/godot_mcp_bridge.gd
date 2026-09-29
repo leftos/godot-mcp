@@ -4,7 +4,8 @@ extends Node
 ## It dials the server at 127.0.0.1:GODOT_MCP_PORT, says hello with GODOT_MCP_TOKEN, the
 ## project path and its own process id, then answers the server's requests. A game run_project
 ## did not launch finds the port and token in the attach file attach_project writes instead;
-## with neither, the bridge stays off. Frames are a 4-byte big-endian length
+## with neither, a game in an armed folder waits dormant for a join (godot_mcp_dormant.gd), and
+## any other game's bridge stays off. Frames are a 4-byte big-endian length
 ## followed by UTF-8 JSON. Requests are {id, command, params}; replies are
 ## {id, ok: true, result} or {id, ok: false, error}. The errors and warnings the game logs
 ## (godot_mcp_logger.gd) go out as {type: "errors", entries, dropped} frames without an id,
@@ -14,10 +15,6 @@ const HOST := "127.0.0.1"
 const HEADER_BYTES := 4
 const MAX_FRAME_BYTES := 16 * 1024 * 1024
 const SCREENSHOT_DIR := "res://.godot/godot-mcp/screenshots"
-const ATTACH_FILE := "res://.godot/godot-mcp/attach.json"
-## Set to "1" by the server for its headless runs, which load a live session's override.cfg: the
-## bridge then stays off without looking for a server, and frees itself without a warning.
-const OFF_VARIABLE := "GODOT_MCP_OFF"
 const GAMEPAD_SCRIPT := "godot_mcp_gamepad.gd"
 const INPUT_SCRIPT := "godot_mcp_input.gd"
 const RAW_EVENTS_SCRIPT := "godot_mcp_raw_events.gd"
@@ -31,6 +28,8 @@ const UI_SNAPSHOT_SCRIPT := "godot_mcp_ui_snapshot.gd"
 const CLASS_INFO_SCRIPT := "godot_mcp_class_info.gd"
 const CAPTURE_SCRIPT := "godot_mcp_capture.gd"
 const DOTNET_SCRIPT := "godot_mcp_dotnet.gd"
+const DORMANT_SCRIPT := "godot_mcp_dormant.gd"
+const WINDOW_SCRIPT := "godot_mcp_window.gd"
 ## The commands a cancel request can end early, answering the request at once for a run_script it
 ## stops and a call_method it stops awaiting (_cancel); the server cancels one when its
 ## load-adjusted allowance passes before the request's backstopMs.
@@ -46,12 +45,6 @@ const SCRIPT_STOPPED := (
 # gdformat joins any split of this text back into one line past gdlint's 100 characters.
 # gdlint: ignore=max-line-length
 const CALL_FORGOTTEN := "no longer awaited: the method keeps running on its node%s; restart_project stops it."
-## A quiet session's frame-rate cap when the project sets none: its frames are never seen, so
-## drawing at the monitor's refresh rate only burns the GPU.
-const QUIET_MAX_FPS := 60
-## Where a quiet session's override.cfg asks for the main window (the server's
-## OverrideFile.OffScreenPosition), as an absolute initial position (type 0).
-const PARK_POSITION := Vector2i(-9999, -9999)
 ## The device id every injected mouse event carries, so _input can tell it from the real mouse
 ## (DEVICE_ID_MOUSE, 32) and from the engine's own ids: 0-15 joypads, 16-31 keyboards, -1
 ## emulation, -2 internal (core/input/input_event.h L64-67 in 4.7.2).
@@ -115,27 +108,66 @@ var _running_calls: Dictionary = {}
 ## The server to dial, found in _init; empty when the bridge is off.
 var _endpoint: Dictionary = {}
 ## The logger (godot_mcp_logger.gd beside this script) collecting the game's errors, registered
-## in _init when there is a server to send them to. It is never removed: the engine removes
-## script loggers at shutdown, and remove_logger is unsafe while other threads log.
+## in _init when there is a server to send them to, else at a dormant game's first join. It is
+## never removed: the engine removes script loggers at shutdown, and remove_logger is unsafe while
+## other threads log.
 var _logger: Logger
+## The dormant mode's script (godot_mcp_dormant.gd beside this script), static functions.
+var _dormant_script: GDScript
+## The main window's script (godot_mcp_window.gd beside this script), static functions.
+var _window: GDScript
+## The globalised folder of the attach, armed, dormant and join files.
+var _state_dir: String = ""
+## The folder of this script and the modules beside it.
+var _script_dir: String = ""
+## The dormant waiter, a child made the first time the bridge goes dormant.
+var _dormant: Node
+## How the bridge runs, one of the dormant script's MODE_* values, decided in _init.
+var _mode: String = ""
+## Where _endpoint came from, one of the dormant script's SOURCE_* values; empty with no endpoint.
+var _endpoint_source: String = ""
+## When the game started, in ms since the Unix epoch, taken in _init.
+var _started_unix_ms: int = 0
 
 
 ## Finds the server, none when the server switched the bridge off (OFF_VARIABLE), and registers
 ## the error logger as early as an autoload can: a logger sees only what is logged after
-## OS.add_logger.
+## OS.add_logger. With no server but an armed folder, the bridge is dormant and registers none.
 func _init() -> void:
-	_endpoint = {} if _is_switched_off() else _find_endpoint()
-	if _endpoint.is_empty():
+	_started_unix_ms = int(Time.get_unix_time_from_system() * 1000)
+	# A subclass compiled from source (the unit tests') has no path; this script, its base, has.
+	var script: Script = get_script()
+	while script.resource_path.is_empty() and script.get_base_script() != null:
+		script = script.get_base_script()
+	_script_dir = script.resource_path.get_base_dir()
+	_dormant_script = load(_script_dir.path_join(DORMANT_SCRIPT)) as GDScript
+	_window = load(_script_dir.path_join(WINDOW_SCRIPT)) as GDScript
+	_state_dir = ProjectSettings.globalize_path(_dormant_script.STATE_DIR)
+	var chosen: Dictionary = _dormant_script.choose(_state_dir)
+	_mode = chosen["mode"]
+	_endpoint = chosen["endpoint"]
+	_endpoint_source = chosen["source"]
+	if not _endpoint.is_empty():
+		_add_logger()
+
+
+## Registers the error logger, once; the engine removes it at shutdown.
+func _add_logger() -> void:
+	if _logger != null:
 		return
-	var script_dir: String = (get_script() as Script).resource_path.get_base_dir()
-	_logger = (load(script_dir.path_join(LOGGER_SCRIPT)) as GDScript).new()
+	_logger = (load(_script_dir.path_join(LOGGER_SCRIPT)) as GDScript).new()
 	OS.add_logger(_logger)
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	if _mode == _dormant_script.MODE_DORMANT:
+		if _dormant_script.armed_quiet(_state_dir):
+			_window.park_window()
+		_go_dormant()
+		return
 	if _endpoint.is_empty():
-		if _is_switched_off():
+		if _dormant_script.is_switched_off():
 			queue_free()
 			return
 		push_warning(
@@ -146,112 +178,134 @@ func _ready() -> void:
 				+ "if no godot-mcp session uses this project."
 			)
 		)
-		_restore_parked_window()
+		_window.restore_parked_window()
 		queue_free()
 		return
-	_token = _endpoint["token"]
-	var port: int = _endpoint["port"]
-	_apply_window_size()
-	if _endpoint["quiet"]:
-		_park_window()
-		if Engine.max_fps == 0:
-			Engine.max_fps = QUIET_MAX_FPS
 	# A preview's scene enters after this autoload's _ready, so it never runs a frame unpaused.
 	if OS.get_environment("GODOT_MCP_PREVIEW") == "1":
 		get_tree().paused = true
-	var script_dir: String = (get_script() as Script).resource_path.get_base_dir()
-	_json = load(script_dir.path_join(JSON_SCRIPT)) as GDScript
-	_ui_snapshot = load(script_dir.path_join(UI_SNAPSHOT_SCRIPT)) as GDScript
-	_class_info = load(script_dir.path_join(CLASS_INFO_SCRIPT)) as GDScript
-	_pads = (load(script_dir.path_join(GAMEPAD_SCRIPT)) as GDScript).new()
+	_join(_endpoint, _endpoint_source)
+
+
+## Makes the children, the static modules and the command handlers, the first time only.
+func _build_once() -> void:
+	if _pads != null:
+		return
+	_json = load(_script_dir.path_join(JSON_SCRIPT)) as GDScript
+	_ui_snapshot = load(_script_dir.path_join(UI_SNAPSHOT_SCRIPT)) as GDScript
+	_class_info = load(_script_dir.path_join(CLASS_INFO_SCRIPT)) as GDScript
+	_pads = (load(_script_dir.path_join(GAMEPAD_SCRIPT)) as GDScript).new()
 	_pads.name = "Gamepad"
 	_pads.bridge = self
 	add_child(_pads)
-	_gestures = (load(script_dir.path_join(INPUT_SCRIPT)) as GDScript).new()
+	_gestures = (load(_script_dir.path_join(INPUT_SCRIPT)) as GDScript).new()
 	_gestures.name = "Gestures"
 	_gestures.bridge = self
 	add_child(_gestures)
-	_raw_events = (load(script_dir.path_join(RAW_EVENTS_SCRIPT)) as GDScript).new()
+	_raw_events = (load(_script_dir.path_join(RAW_EVENTS_SCRIPT)) as GDScript).new()
 	_raw_events.name = "RawEvents"
 	_raw_events.bridge = self
 	add_child(_raw_events)
-	_capture = (load(script_dir.path_join(CAPTURE_SCRIPT)) as GDScript).new()
+	_capture = (load(_script_dir.path_join(CAPTURE_SCRIPT)) as GDScript).new()
 	_capture.name = "Capture"
 	_capture.bridge = self
 	_capture.send_frame = _send_captured
 	add_child(_capture)
-	_dotnet = (load(script_dir.path_join(DOTNET_SCRIPT)) as GDScript).new()
+	_dotnet = (load(_script_dir.path_join(DOTNET_SCRIPT)) as GDScript).new()
 	_dotnet.name = "Dotnet"
 	_dotnet.bridge = self
 	add_child(_dotnet)
-	_inspect = (load(script_dir.path_join(INSPECT_SCRIPT)) as GDScript).new()
+	_inspect = (load(_script_dir.path_join(INSPECT_SCRIPT)) as GDScript).new()
 	_inspect.name = "Inspect"
 	add_child(_inspect)
-	if _endpoint["shutOutRealGamepads"]:
-		_pads.shut_out_real_pads()
-	_time = (load(script_dir.path_join(TIME_SCRIPT)) as GDScript).new()
+	_time = (load(_script_dir.path_join(TIME_SCRIPT)) as GDScript).new()
 	_time.name = "Time"
 	_time.bridge = self
 	add_child(_time)
-	_baseline = (load(script_dir.path_join(BASELINE_SCRIPT)) as GDScript).new()
+	_baseline = (load(_script_dir.path_join(BASELINE_SCRIPT)) as GDScript).new()
 	_baseline.name = "Baseline"
 	_baseline.bridge = self
 	add_child(_baseline)
-	_preview = (load(script_dir.path_join(PREVIEW_SCRIPT)) as GDScript).new()
+	_preview = (load(_script_dir.path_join(PREVIEW_SCRIPT)) as GDScript).new()
 	_preview.name = "Preview"
 	_preview.bridge = self
 	add_child(_preview)
 	_handlers = _command_handlers()
+
+
+## Serves endpoint, from source (a SOURCE_*; a join drops the errors logged before it): builds the
+## children once, sizes the window, parks it and caps the frame rate when quiet, shuts the real
+## pads out if asked, and dials; a dial refused at once in an armed folder goes dormant again.
+func _join(endpoint: Dictionary, source: String) -> void:
+	_build_once()
+	_endpoint = endpoint
+	_endpoint_source = source
+	_token = endpoint["token"]
+	_add_logger()
+	if source == _dormant_script.SOURCE_JOIN:
+		_logger.take_pending()
+	_window.apply_window_size(get_tree().root)
+	if endpoint["quiet"]:
+		_window.park_window()
+		if Engine.max_fps == 0:
+			Engine.max_fps = _window.QUIET_MAX_FPS
+	if endpoint["shutOutRealGamepads"]:
+		_pads.shut_out_real_pads()
+	var port: int = endpoint["port"]
 	_stream = StreamPeerTCP.new()
 	_stream.big_endian = true
 	var error: Error = _stream.connect_to_host(HOST, port)
 	if error != OK:
 		push_error("godot-mcp bridge: cannot dial %s:%d (error %d)." % [HOST, port, error])
 		_stream = null
+		_dormant_if_armed()
 
 
-## The server to dial, whether to shut the real pads out and whether to park the window, {port,
-## token, shutOutRealGamepads, quiet}: GODOT_MCP_PORT, GODOT_MCP_TOKEN,
-## GODOT_MCP_SHUT_OUT_REAL_GAMEPADS and GODOT_MCP_QUIET from run_project, else the attach file
-## attach_project writes (GODOT_MCP_QUIET still makes an attached game quiet); empty when there
-## is neither. override.cfg's joypad and window settings are written to match, but the bridge
-## reads only these.
-func _find_endpoint() -> Dictionary:
-	var port_text: String = OS.get_environment("GODOT_MCP_PORT")
-	var token: String = OS.get_environment("GODOT_MCP_TOKEN")
-	var quiet_variable: bool = OS.get_environment("GODOT_MCP_QUIET") == "1"
-	if port_text.is_valid_int() and not token.is_empty():
-		var shut_out_real_gamepads: bool = (
-			OS.get_environment("GODOT_MCP_SHUT_OUT_REAL_GAMEPADS") == "1"
-		)
-		return {
-			"port": port_text.to_int(),
-			"token": token,
-			"shutOutRealGamepads": shut_out_real_gamepads,
-			"quiet": quiet_variable,
-		}
-	var path: String = ProjectSettings.globalize_path(ATTACH_FILE)
-	if not FileAccess.file_exists(path):
-		return {}
-	var attach: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
-	if (
-		not attach is Dictionary
-		or not (attach as Dictionary).has("port")
-		or not (attach as Dictionary).has("token")
-	):
-		push_warning("godot-mcp bridge: %s holds no {port, token}; the bridge is off." % path)
-		return {}
-	return {
-		"port": int(attach["port"]),
-		"token": str(attach["token"]),
-		"shutOutRealGamepads": bool(attach.get("shutOutRealGamepads", false)),
-		"quiet": quiet_variable or bool(attach.get("quiet", false)),
-	}
+## Waits for attach_project to join, polling for a join file even while the game is paused.
+func _go_dormant() -> void:
+	if _dormant == null:
+		_dormant = _dormant_script.new()
+		_dormant.name = "Dormant"
+		_dormant.state_dir = _state_dir
+		_dormant.started_unix_ms = _started_unix_ms
+		_dormant.joined.connect(_join.bind(_dormant_script.SOURCE_JOIN))
+		_dormant.disarmed.connect(_on_disarmed)
+		add_child(_dormant)
+	_dormant.enter()
 
 
-## Whether the server switched the bridge off for a headless run (OFF_VARIABLE).
-func _is_switched_off() -> bool:
-	return OS.get_environment(OFF_VARIABLE) == "1"
+## The folder was disarmed while the game waited: the bridge goes, as with no server.
+func _on_disarmed() -> void:
+	_window.restore_window()
+	queue_free()
+
+
+## Goes dormant again when the endpoint came from attach.json or a join file and the folder is
+## still armed; a run's game, or one in a disarmed folder, stays idle.
+func _dormant_if_armed() -> void:
+	var armed: bool = FileAccess.file_exists(_dormant_script.armed_path(_state_dir))
+	if _dormant_script.goes_dormant_again(_endpoint_source, armed):
+		_go_dormant_again()
+
+
+## Forgets the connection that ended and a capture it ran, lets go of the injected input still
+## held, keeps the window parked when the arm is quiet or gives back one parked, and waits.
+func _go_dormant_again() -> void:
+	_capture.stop()
+	_raw_events.release_all()
+	_stream = null
+	_buffer = PackedByteArray()
+	_hello_sent = false
+	_connection_lost = false
+	_token = ""
+	_endpoint = {}
+	_endpoint_source = ""
+	_gesture_playing = false
+	if _dormant_script.armed_quiet(_state_dir):
+		_window.park_window()
+	else:
+		_window.restore_window()
+	_go_dormant()
 
 
 func _process(_delta: float) -> void:
@@ -295,6 +349,7 @@ func _end_connection() -> void:
 	for request: int in _running_requests.keys():
 		_cancel(request)
 	_running_requests.clear()
+	_dormant_if_armed()
 
 
 ## Sends the errors logged since the last flush as one {type: "errors", entries, dropped}
@@ -341,65 +396,6 @@ func _is_real_pointer_event(event: InputEvent) -> bool:
 	if event is InputEventScreenTouch or event is InputEventScreenDrag:
 		return event.device == InputEvent.DEVICE_ID_EMULATION and not _dispatching
 	return false
-
-
-## Gives the window run_project's --resolution (GODOT_MCP_WINDOW_SIZE, "WIDTHxHEIGHT") exactly.
-## Windows holds a window created larger than the desktop to the desktop's size
-## (platform/windows/display_server_windows.cpp _create_window L7175-7257 in 4.7.2), and a resize
-## after start is not held (window_set_size's MoveWindow, L2492-2520). The root Window's size is
-## set rather than the display server's, so the root's viewport follows in the same call.
-func _apply_window_size() -> void:
-	var wanted: String = OS.get_environment("GODOT_MCP_WINDOW_SIZE")
-	if wanted.get_slice_count("x") != 2:
-		return
-	var size := Vector2i(wanted.get_slice("x", 0).to_int(), wanted.get_slice("x", 1).to_int())
-	if size.x < 1 or size.y < 1 or DisplayServer.window_get_size() == size:
-		return
-	get_tree().root.size = size
-
-
-## A quiet session's window: its override.cfg created it unfocused, and asked for an off-screen
-## position that Windows clamps onto the primary screen at creation
-## (platform/windows/display_server_windows.cpp L7180-7183, L7206-7211 in 4.7.2), so it is moved
-## off-screen here, where window_set_position does not clamp, and made click-through. A run the
-## server started on its hidden desktop (GODOT_MCP_HIDDEN_DESKTOP) is out of sight already, so its
-## window goes to (0, 0) instead: there, a window that is not embedded (a popup of a project that
-## turns embed_subwindows off) opens where the game asked, at its offset from the root window.
-func _park_window() -> void:
-	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_MOUSE_PASSTHROUGH, true)
-	var on_hidden_desktop: bool = OS.get_environment("GODOT_MCP_HIDDEN_DESKTOP") == "1"
-	DisplayServer.window_set_position(Vector2i.ZERO if on_hidden_desktop else PARK_POSITION)
-
-
-## A game started without a server from a quiet session's override.cfg (one a killed server
-## left): the file created its window unfocusable and asked for it at PARK_POSITION, which Windows
-## clamps onto the primary screen (see _park_window). The window is made focusable again, centred
-## on its screen's usable area and brought to the front. Returns whether it restored the window;
-## a headless run has none.
-func _restore_parked_window() -> bool:
-	if DisplayServer.get_name() == "headless" or not _parked_by_override():
-		return false
-	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_NO_FOCUS, false)
-	var screen: int = DisplayServer.window_get_current_screen()
-	if screen == DisplayServer.INVALID_SCREEN:
-		screen = DisplayServer.get_primary_screen()
-	var usable: Rect2i = DisplayServer.screen_get_usable_rect(screen)
-	var window_size: Vector2i = DisplayServer.window_get_size()
-	DisplayServer.window_set_position(usable.position + (usable.size - window_size) / 2)
-	DisplayServer.window_move_to_foreground()
-	return true
-
-
-## Whether the project settings place the main window as a quiet session's override.cfg does:
-## at PARK_POSITION, absolute. The window's own position cannot tell, since Windows clamped it.
-func _parked_by_override() -> bool:
-	return (
-		ProjectSettings.get_setting("display/window/size/initial_position_type", -1) == 0
-		and (
-			ProjectSettings.get_setting("display/window/size/initial_position", Vector2i.ZERO)
-			== PARK_POSITION
-		)
-	)
 
 
 func _read_frames() -> void:
@@ -984,7 +980,10 @@ func _reply_error(id: int, message: String) -> void:
 	_send({"id": id, "ok": false, "error": message})
 
 
+## Writes one frame; none without a stream or before the hello (a late reply to a lost one).
 func _send(message: Dictionary) -> void:
+	if _stream == null or not _hello_sent:
+		return
 	var payload: PackedByteArray = JSON.stringify(message).to_utf8_buffer()
 	_stream.put_u32(payload.size())
 	_stream.put_data(payload)

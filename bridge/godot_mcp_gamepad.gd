@@ -261,6 +261,16 @@ func _sweep_axes(device: int, targets: Dictionary, duration_ms: int) -> void:
 			_set_axis(device, axis, value)
 
 
+## Lets go of everything the injected pads hold, through the events a gesture sends: each held
+## button released and each axis away from rest set back to 0.
+func release_all() -> void:
+	for held: Vector2i in _held_buttons.keys():
+		_set_button(held.x, held.y, false)
+	for key: Vector2i in _axes.keys():
+		if _axes[key] != 0.0:
+			_set_axis(key.x, key.y, 0.0)
+
+
 func _set_button(device: int, button: int, pressed: bool) -> void:
 	if pressed:
 		_held_buttons[Vector2i(device, button)] = true

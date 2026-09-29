@@ -31,6 +31,11 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal
     );
 
+    // The folders this server has armed, by normalised path, under _lock.
+    private readonly Dictionary<string, ArmSettings> _armed = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal
+    );
+
     internal BridgeListener Listener => listener;
 
     /// <summary>The clock every ceiling the sessions enforce runs on: the listener's.</summary>
@@ -55,6 +60,9 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// </summary>
     internal OverrideFolders OverrideFolders { get; init; } = OverrideFolders.Default;
 
+    /// <summary>The dormant games on armed folders: <see cref="DormantGames.Default"/> unless set, as a test sets a fake process boundary.</summary>
+    internal DormantGames Dormant { get; init; } = DormantGames.Default;
+
     /// <summary>The sessions' input captures, by session name, kept past the session they came from.</summary>
     internal CaptureStore Captures { get; } = new();
 
@@ -78,25 +86,87 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
-    /// Attaches under <paramref name="session"/>, or when it is null under the project folder's name, numbered as a launch's
-    /// is (<see cref="DefaultName"/>). A <paramref name="quiet"/>
-    /// attach writes the quiet override and tells the bridge to park its window, and shares the folder rules of a quiet run.
+    /// Attaches under the request's session, or when it is null under the project folder's name, numbered as a launch's
+    /// is (<see cref="DefaultName"/>). A quiet attach writes the quiet override and tells the bridge to park its window, and
+    /// shares the folder rules of a quiet run. The game is a dormant one on the folder when one is chosen
+    /// (<see cref="ChooseDormantGame"/>), else one launched after the call.
     /// </summary>
-    /// <exception cref="SessionException">The name is invalid or live, the project is missing, or no game connected in time.</exception>
-    public async Task<AttachResult> AttachAsync(
-        string projectPath,
-        string? session,
-        TimeSpan wait,
-        bool shutOutRealGamepads,
-        bool quiet,
-        CancellationToken cancellationToken
-    )
+    /// <exception cref="SessionException">
+    /// The name is invalid or live, the project is missing, the dormant game asked for is not there or several could be
+    /// meant, or no game connected in time.
+    /// </exception>
+    public async Task<AttachResult> AttachAsync(AttachRequest request, CancellationToken cancellationToken)
+    {
+        string projectDir = NormaliseProjectDir(request.ProjectPath);
+        string bridgeScript = Installation.FindBridgeScript();
+        int? joinPid = ChooseDormantGame(projectDir, request.Pid);
+        ArmSettings settings = AttachSettings(projectDir, request);
+        SessionSpec spec = new(NameFor(request.Session, projectDir), projectDir, SessionKind.Attach, settings.ShutOutRealGamepads, settings.Quiet);
+        GodotSession created = await ReserveAsync(spec, defaultName: request.Session is null);
+        return await created.AttachAsync(bridgeScript, joinPid, request.Wait, cancellationToken);
+    }
+
+    /// <summary>
+    /// Arms the folder: writes its override.cfg (recorded in <see cref="OverrideFolders"/>, unless live sessions on it already
+    /// have it) and its armed.json under the folder's prep lock, so every game started on it until <see cref="Disarm"/> or the
+    /// server's exit carries a dormant bridge. Arming a folder again with the same settings changes nothing.
+    /// </summary>
+    /// <exception cref="SessionException">
+    /// The project is missing or has its own override.cfg, the folder is armed with other settings, or its live sessions run
+    /// with other settings.
+    /// </exception>
+    public async Task<ArmState> ArmAsync(string projectPath, ArmSettings settings, CancellationToken cancellationToken)
     {
         string projectDir = NormaliseProjectDir(projectPath);
         string bridgeScript = Installation.FindBridgeScript();
-        SessionSpec spec = new(NameFor(session, projectDir), projectDir, SessionKind.Attach, shutOutRealGamepads, quiet);
-        GodotSession created = await ReserveAsync(spec, defaultName: session is null);
-        return await created.AttachAsync(bridgeScript, wait, cancellationToken);
+        SemaphoreSlim folderLock = PrepLock(projectDir);
+        await folderLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (!IsArmedAlready(projectDir, settings))
+            {
+                ArmFolder(projectDir, bridgeScript, settings);
+            }
+        }
+        finally
+        {
+            folderLock.Release();
+        }
+
+        return DescribeArm(projectDir, settings);
+    }
+
+    /// <summary>
+    /// Disarms a folder this server armed: takes this server off its armed.json's owners, then releases its override.cfg unless
+    /// a live session of this server uses the folder. Attached sessions stay attached.
+    /// </summary>
+    /// <exception cref="SessionException">The project is missing, or this server has not armed the folder.</exception>
+    public DisarmResult Disarm(string projectPath)
+    {
+        string projectDir = NormaliseProjectDir(projectPath);
+        lock (_lock)
+        {
+            if (!_armed.Remove(projectDir))
+            {
+                throw new SessionException($"{projectDir} is not armed; arm_project arms it.");
+            }
+
+            ArmFile.Release(projectDir);
+            bool removed = !HasLiveSessionOn(projectDir, except: null) && OverrideFile.Release(projectDir);
+            return new DisarmResult(projectDir, removed);
+        }
+    }
+
+    /// <summary>The folders this server has armed, ordered by path, each with its settings and its dormant games.</summary>
+    public IReadOnlyList<ArmState> ListArmed()
+    {
+        KeyValuePair<string, ArmSettings>[] armed;
+        lock (_lock)
+        {
+            armed = [.. _armed.OrderBy(folder => folder.Key, StringComparer.OrdinalIgnoreCase)];
+        }
+
+        return [.. armed.Select(folder => DescribeArm(folder.Key, folder.Value))];
     }
 
     /// <summary>
@@ -195,15 +265,18 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
-    /// The last-resort cleanup for the server's own exit: every session's own cleanup, then this server's release of the
-    /// override file of every folder a session used, since none of them outlives the server.
+    /// The last-resort cleanup for the server's own exit: every session's own cleanup, every armed folder disarmed, then this
+    /// server's release of the override file of every folder a session used or was armed, since none of them outlives the server.
     /// </summary>
     public void Shutdown()
     {
         GodotSession[] sessions;
+        string[] armed;
         lock (_lock)
         {
             sessions = [.. _sessions.Values];
+            armed = [.. _armed.Keys];
+            _armed.Clear();
         }
 
         foreach (GodotSession session in sessions)
@@ -211,9 +284,14 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             session.Shutdown();
         }
 
-        foreach (string projectDir in sessions.Select(session => session.ProjectDir).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (string projectDir in armed)
         {
-            RemoveOverrideAtShutdown(projectDir);
+            AtShutdown(projectDir, () => ArmFile.Release(projectDir));
+        }
+
+        foreach (string projectDir in sessions.Select(session => session.ProjectDir).Concat(armed).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            AtShutdown(projectDir, () => OverrideFile.Release(projectDir));
         }
     }
 
@@ -303,8 +381,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                 name = PreviewName(folderName, _previews);
             } while (_sessions.ContainsKey(name));
 
-            GodotSession? onFolder = _sessions.Values.FirstOrDefault(other => other.IsLive && ProjectPaths.AreSame(other.ProjectDir, projectDir));
-            SessionSpec spec = new(name, projectDir, SessionKind.Run, onFolder?.ShutOutRealGamepads ?? false, onFolder?.Quiet ?? true);
+            ArmSettings settings = FolderSettingsForPreview(projectDir);
+            SessionSpec spec = new(name, projectDir, SessionKind.Run, settings.ShutOutRealGamepads, settings.Quiet);
             GodotSession created = new(spec, this);
             _sessions[name] = created;
             return created;
@@ -312,37 +390,27 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
-    /// Writes the marked override.cfg for a starting session, with this server among its owners, unless live sessions on its
-    /// folder already have it; the folder is recorded in <see cref="OverrideFolders"/> first.
+    /// Writes the marked override.cfg for a starting session, with this server among its owners, unless the folder is held
+    /// (another live session uses it, or it is armed) and already has it; the folder is recorded in <see cref="OverrideFolders"/> first.
     /// </summary>
     /// <exception cref="SessionException">The project has its own override.cfg.</exception>
     internal void WriteOverride(GodotSession session, string bridgeScript) =>
-        OverrideFolders.RecordWhile(
+        WriteOverrideUnlessHeld(
             session.ProjectDir,
-            () =>
-            {
-                lock (_lock)
-                {
-                    string path = OverrideFile.PathIn(session.ProjectDir);
-                    if (HasOtherLiveSession(session) && File.Exists(path) && OverrideFile.IsOurs(path))
-                    {
-                        return;
-                    }
-
-                    OverrideFile.Write(session.ProjectDir, bridgeScript, session.ShutOutRealGamepads, session.Quiet);
-                }
-            }
+            bridgeScript,
+            new ArmSettings(session.Quiet, session.ShutOutRealGamepads),
+            () => IsHeldByOther(session)
         );
 
     /// <summary>
-    /// Takes this server off the owners of the session's override.cfg unless another of its live sessions uses the folder;
-    /// the file is deleted once no live server owns it. Returns whether it deleted the file.
+    /// Takes this server off the owners of the session's override.cfg unless the folder is held: another of its live sessions
+    /// uses it, or it is armed. The file is deleted once no live server owns it. Returns whether it deleted the file.
     /// </summary>
     internal bool ReleaseFolder(GodotSession session)
     {
         lock (_lock)
         {
-            return !HasOtherLiveSession(session) && OverrideFile.Release(session.ProjectDir);
+            return !IsHeldByOther(session) && OverrideFile.Release(session.ProjectDir);
         }
     }
 
@@ -560,8 +628,210 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         ];
         CheckSameSetting(spec, onFolder, "shutOutRealGamepads", session => session.ShutOutRealGamepads, spec.ShutOutRealGamepads);
         CheckSameSetting(spec, onFolder, "quiet", session => session.Quiet, spec.Quiet);
+        if (_armed.TryGetValue(spec.ProjectDir, out ArmSettings? arm))
+        {
+            CheckArmSetting(spec.ProjectDir, "shutOutRealGamepads", arm.ShutOutRealGamepads, spec.ShutOutRealGamepads);
+            CheckArmSetting(spec.ProjectDir, "quiet", arm.Quiet, spec.Quiet);
+        }
+
         return onFolder;
     }
+
+    /// <summary>Refuses a session whose setting differs from the folder's arm: the arm's override.cfg is the one it would share.</summary>
+    private static void CheckArmSetting(string projectDir, string option, bool armed, bool wanted)
+    {
+        if (armed != wanted)
+        {
+            throw new SessionException(
+                $"{projectDir} is armed with {option}={(armed ? "true" : "false")}; start this session with the same value, or "
+                    + "disarm_project first."
+            );
+        }
+    }
+
+    /// <summary>
+    /// Whether the folder is already armed with <paramref name="wanted"/>, once it is checked that it is not armed with other
+    /// settings and that its live sessions run with the same ones.
+    /// </summary>
+    /// <exception cref="SessionException">The folder is armed with other settings, or its live sessions run with other ones.</exception>
+    private bool IsArmedAlready(string projectDir, ArmSettings wanted)
+    {
+        lock (_lock)
+        {
+            if (_armed.TryGetValue(projectDir, out ArmSettings? armed))
+            {
+                return armed == wanted
+                    ? true
+                    : throw new SessionException(
+                        $"{projectDir} is already armed with quiet={Flag(armed.Quiet)} and shutOutRealGamepads={Flag(armed.ShutOutRealGamepads)}; "
+                            + "disarm_project first to arm it with other settings."
+                    );
+            }
+
+            GodotSession[] onFolder = [.. _sessions.Values.Where(other => other.IsLive && ProjectPaths.AreSame(other.ProjectDir, projectDir))];
+            CheckSessionsForArm(projectDir, onFolder, "shutOutRealGamepads", session => session.ShutOutRealGamepads, wanted.ShutOutRealGamepads);
+            CheckSessionsForArm(projectDir, onFolder, "quiet", session => session.Quiet, wanted.Quiet);
+
+            // Recorded with the check, under one lock, so a session reserved while the files are written meets the arm's settings.
+            _armed[projectDir] = wanted;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// An attach's pad and quiet settings: each the request's when given, else the value of this server's arm on the folder,
+    /// else false.
+    /// </summary>
+    private ArmSettings AttachSettings(string projectDir, AttachRequest request)
+    {
+        ArmSettings? arm;
+        lock (_lock)
+        {
+            arm = _armed.GetValueOrDefault(projectDir);
+        }
+
+        return new ArmSettings(
+            Quiet: request.Quiet ?? arm?.Quiet ?? false,
+            ShutOutRealGamepads: request.ShutOutRealGamepads ?? arm?.ShutOutRealGamepads ?? false
+        );
+    }
+
+    /// <summary>Refuses an arm whose setting differs from the live sessions' on its folder: they share one override.cfg.</summary>
+    private static void CheckSessionsForArm(string projectDir, GodotSession[] onFolder, string option, Func<GodotSession, bool> setting, bool wanted)
+    {
+        if (onFolder.FirstOrDefault(other => setting(other) != wanted) is { } differing)
+        {
+            throw new SessionException(
+                $"Sessions on {projectDir} run with {option}={Flag(setting(differing))}; arm it with the same value, or stop them first."
+            );
+        }
+    }
+
+    private static string Flag(bool value) => value ? "true" : "false";
+
+    /// <summary>
+    /// Writes the folder's override.cfg (unless live sessions on it already have it), hides it from git and writes its
+    /// armed.json, then records the arm; a failure after the override was written releases it again.
+    /// </summary>
+    private void ArmFolder(string projectDir, string bridgeScript, ArmSettings settings)
+    {
+        try
+        {
+            WriteOverrideUnlessHeld(projectDir, bridgeScript, settings, () => HasLiveSessionOn(projectDir, except: null));
+            GitExclude.Ensure(projectDir, OverrideFile.FileName, logger);
+            ArmFile.Write(projectDir, settings);
+        }
+        catch
+        {
+            lock (_lock)
+            {
+                _armed.Remove(projectDir);
+            }
+
+            ReleaseAfterFailedArm(projectDir);
+            throw;
+        }
+    }
+
+    /// <summary>Releases the override.cfg an arm wrote before it failed; a failure is logged, so the arm's own error reaches the caller.</summary>
+    private void ReleaseAfterFailedArm(string projectDir)
+    {
+        try
+        {
+            lock (_lock)
+            {
+                if (!HasLiveSessionOn(projectDir, except: null))
+                {
+                    OverrideFile.Release(projectDir);
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.CleanupFailed(logger, e, OverrideFile.FileName, projectDir);
+        }
+    }
+
+    private ArmState DescribeArm(string projectDir, ArmSettings settings) =>
+        new(projectDir, settings.Quiet, settings.ShutOutRealGamepads, Dormant.List(projectDir));
+
+    /// <summary>
+    /// The dormant game an attach joins: <paramref name="pid"/> when given, which must be one of the folder's; else the only
+    /// one; else none, and the attach waits for a game launched after it.
+    /// </summary>
+    /// <exception cref="SessionException">The given pid is not a dormant game on the folder, or several wait and none was given.</exception>
+    private int? ChooseDormantGame(string projectDir, int? pid)
+    {
+        IReadOnlyList<DormantGame> dormant = Dormant.List(projectDir);
+        if (pid is int wanted)
+        {
+            return dormant.Any(game => game.Pid == wanted) ? wanted : throw new SessionException(DescribeNotDormant(projectDir, wanted, dormant));
+        }
+
+        return dormant.Count switch
+        {
+            0 => null,
+            1 => dormant[0].Pid,
+            _ => throw new SessionException(
+                $"{dormant.Count} dormant games wait on {projectDir}: {DescribeDormant(dormant)}. Pass options.pid to choose one."
+            ),
+        };
+    }
+
+    private static string DescribeNotDormant(string projectDir, int pid, IReadOnlyList<DormantGame> dormant)
+    {
+        string waiting =
+            dormant.Count == 0 ? $"No dormant game waits on {projectDir}." : $"The dormant games on {projectDir} are: {DescribeDormant(dormant)}.";
+        return $"No dormant game with pid {pid} waits on {projectDir}. {waiting} A game started before arm_project, or on a folder that is "
+            + "not armed, has no bridge to join: relaunch it while the folder is armed.";
+    }
+
+    /// <summary>"pid N, started &lt;UTC ISO time&gt;" for each game, separated by "; ".</summary>
+    private static string DescribeDormant(IEnumerable<DormantGame> dormant) =>
+        string.Join(
+            "; ",
+            dormant.Select(game =>
+                string.Create(CultureInfo.InvariantCulture, $"pid {game.Pid}, started {game.StartedAt.UtcDateTime:yyyy-MM-ddTHH:mm:ss.fffZ}")
+            )
+        );
+
+    /// <summary>
+    /// The pad and quiet settings a preview takes: those of a live session on the folder, else the folder's arm, else quiet with
+    /// the real pads live.
+    /// </summary>
+    private ArmSettings FolderSettingsForPreview(string projectDir)
+    {
+        GodotSession? onFolder = _sessions.Values.FirstOrDefault(other => other.IsLive && ProjectPaths.AreSame(other.ProjectDir, projectDir));
+        if (onFolder is not null)
+        {
+            return new ArmSettings(onFolder.Quiet, onFolder.ShutOutRealGamepads);
+        }
+
+        return _armed.GetValueOrDefault(projectDir) ?? new ArmSettings(Quiet: true, ShutOutRealGamepads: false);
+    }
+
+    /// <summary>
+    /// Writes the marked override.cfg with this server among its owners, unless <paramref name="held"/> says this server
+    /// already holds the folder and the file is there; the folder is recorded in <see cref="OverrideFolders"/> first.
+    /// </summary>
+    /// <exception cref="SessionException">The project has its own override.cfg.</exception>
+    private void WriteOverrideUnlessHeld(string projectDir, string bridgeScript, ArmSettings settings, Func<bool> held) =>
+        OverrideFolders.RecordWhile(
+            projectDir,
+            () =>
+            {
+                lock (_lock)
+                {
+                    string path = OverrideFile.PathIn(projectDir);
+                    if (held() && File.Exists(path) && OverrideFile.IsOurs(path))
+                    {
+                        return;
+                    }
+
+                    OverrideFile.Write(projectDir, bridgeScript, settings.ShutOutRealGamepads, settings.Quiet);
+                }
+            }
+        );
 
     /// <summary>
     /// A preview's prep under the folder's prep lock, as a launch's is. Passing <paramref name="limit"/> stops it, with its
@@ -635,8 +905,15 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         replaced.Dispose();
     }
 
-    private bool HasOtherLiveSession(GodotSession session) =>
-        _sessions.Values.Any(other => !ReferenceEquals(other, session) && other.IsLive && ProjectPaths.AreSame(other.ProjectDir, session.ProjectDir));
+    /// <summary>
+    /// Whether the session's folder is held by something else of this server: another live session, or its arm. The caller
+    /// holds the lock.
+    /// </summary>
+    private bool IsHeldByOther(GodotSession session) => HasLiveSessionOn(session.ProjectDir, session) || _armed.ContainsKey(session.ProjectDir);
+
+    /// <summary>Whether a live session but <paramref name="except"/> uses the folder. The caller holds the lock.</summary>
+    private bool HasLiveSessionOn(string projectDir, GodotSession? except) =>
+        _sessions.Values.Any(other => !ReferenceEquals(other, except) && other.IsLive && ProjectPaths.AreSame(other.ProjectDir, projectDir));
 
     private IEnumerable<GodotSession> Ordered() => _sessions.Values.OrderBy(session => session.Name, StringComparer.OrdinalIgnoreCase);
 
@@ -689,11 +966,11 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             : throw new SessionException($"{projectDir} holds no project.godot. Pass the folder that holds the project's project.godot.");
     }
 
-    private static void RemoveOverrideAtShutdown(string projectDir)
+    private static void AtShutdown(string projectDir, Func<bool> release)
     {
         try
         {
-            OverrideFile.Release(projectDir);
+            release();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -716,3 +993,10 @@ internal sealed record SessionInfo(string Name, string ProjectPath, string Kind,
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? Recording { get; init; }
 }
+
+/// <summary>
+/// What attach_project asks for: the project, the new session's name (the folder's when null), how long to wait for the game,
+/// its pad and quiet settings (the arm's when null on a folder this server armed, else false), and the dormant game to join
+/// (the only one when null, if any).
+/// </summary>
+internal sealed record AttachRequest(string ProjectPath, string? Session, TimeSpan Wait, bool? ShutOutRealGamepads, bool? Quiet, int? Pid);

@@ -15,6 +15,8 @@ const SCRIPT_STOPPED := (
 
 var _bridge_script: GDScript = load_bridge_script("godot_mcp_bridge.gd")
 var _time_script: GDScript = load_bridge_script("godot_mcp_time.gd")
+var _dormant_script: GDScript = load_bridge_script("godot_mcp_dormant.gd")
+var _window_script: GDScript = load_bridge_script("godot_mcp_window.gd")
 
 
 func test_cancel_of_an_answered_request_replies_false() -> void:
@@ -246,7 +248,7 @@ func test_the_off_variable_keeps_the_bridge_off_despite_a_port_and_token() -> vo
 	bridge._ready()
 	var freed: bool = bridge.is_queued_for_deletion()
 	OS.unset_environment("GODOT_MCP_OFF")
-	var switched_on: Dictionary = bridge._find_endpoint()
+	var switched_on: Dictionary = _dormant_script.find_endpoint(bridge._state_dir)
 	bridge.free()
 	OS.unset_environment("GODOT_MCP_PORT")
 	OS.unset_environment("GODOT_MCP_TOKEN")
@@ -330,21 +332,23 @@ func _frames(count: int) -> void:
 
 
 func test_a_quiet_override_placement_is_recognised_and_left_alone_headless() -> void:
-	var bridge: Node = _bridge_script.new()
 	var type_key := "display/window/size/initial_position_type"
 	var position_key := "display/window/size/initial_position"
 	var type_before: Variant = ProjectSettings.get_setting(type_key)
 	var position_before: Variant = ProjectSettings.get_setting(position_key)
-	assert_true(not bridge._parked_by_override(), "the default placement is not a parked one")
+	assert_true(
+		not _window_script.parked_by_override(), "the default placement is not a parked one"
+	)
 	ProjectSettings.set_setting(type_key, 0)
 	ProjectSettings.set_setting(position_key, Vector2i(-9999, -9999))
-	assert_true(bridge._parked_by_override(), "a quiet override's placement is")
-	assert_true(not bridge._restore_parked_window(), "a headless run has no window to restore")
+	assert_true(_window_script.parked_by_override(), "a quiet override's placement is")
+	assert_true(
+		not _window_script.restore_parked_window(), "a headless run has no window to restore"
+	)
 	ProjectSettings.set_setting(position_key, Vector2i(-9999, 0))
-	assert_true(not bridge._parked_by_override(), "another absolute position is not")
+	assert_true(not _window_script.parked_by_override(), "another absolute position is not")
 	ProjectSettings.set_setting(type_key, type_before)
 	ProjectSettings.set_setting(position_key, position_before)
-	bridge.free()
 
 
 func _tree() -> SceneTree:

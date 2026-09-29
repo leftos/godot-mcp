@@ -104,11 +104,7 @@ public sealed class SessionResolutionTests : IAsyncDisposable
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
             _harness.Sessions.AttachAsync(
-                _harness.Project("beta"),
-                "SERVER",
-                RegistryHarness.LongWait,
-                false,
-                false,
+                new AttachRequest(_harness.Project("beta"), "SERVER", RegistryHarness.LongWait, false, false, null),
                 TestContext.Current.CancellationToken
             )
         );
@@ -126,7 +122,10 @@ public sealed class SessionResolutionTests : IAsyncDisposable
         await _harness.StartWaitingAttachAsync(alpha, "server");
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
-            _harness.Sessions.AttachAsync(alpha, "client", RegistryHarness.LongWait, false, false, TestContext.Current.CancellationToken)
+            _harness.Sessions.AttachAsync(
+                new AttachRequest(alpha, "client", RegistryHarness.LongWait, false, false, null),
+                TestContext.Current.CancellationToken
+            )
         );
 
         Assert.Equal($"Another attach on {alpha} is still waiting for its game; wait for it or let it time out first.", refused.Message);
@@ -155,7 +154,9 @@ public sealed class SessionResolutionTests : IAsyncDisposable
     {
         string alpha = _harness.Project("alpha");
         CancellationTokenSource cancel = new();
-        _harness.Waiting.Add((_harness.Sessions.AttachAsync(alpha, "server", RegistryHarness.LongWait, false, true, cancel.Token), cancel));
+        _harness.Waiting.Add(
+            (_harness.Sessions.AttachAsync(new AttachRequest(alpha, "server", RegistryHarness.LongWait, false, true, null), cancel.Token), cancel)
+        );
         await RegistryHarness.WaitUntilAsync(() => _harness.Sessions.List(includeStopped: true).Any(session => session.Name == "server"));
         LaunchRequest request = new(alpha, null, [], [], Quiet: false, ShutOutRealGamepads: false, Prepare: true);
 
