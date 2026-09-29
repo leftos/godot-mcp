@@ -9,6 +9,7 @@ using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 
 namespace GodotMcp.IntegrationTests;
 
@@ -894,6 +895,54 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
         Assert.Equal(TargetsPath, byPath["path"]?.GetValue<string>());
     }
 
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task InspectWaitMonitorAndSetReachAPrivateFieldGodotDoesNotList()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+        using var five = JsonDocument.Parse("5");
+        using var seven = JsonDocument.Parse("7");
+
+        JsonObject inspected = JsonNode.Parse(await _tools.InspectNodeAsync(TargetsPath, ["_clamped"], cancellationToken: cancellation))!.AsObject();
+        JsonObject waited = JsonNode
+            .Parse(
+                Text(
+                    await _tools.WaitForAsync(
+                        new WaitCondition(Node: TargetsPath, Property: "_clamped", EqualsValue: five.RootElement),
+                        0,
+                        cancellationToken: cancellation
+                    )
+                )
+            )!
+            .AsObject();
+        JsonObject monitored = JsonNode
+            .Parse(await _tools.MonitorPropertyAsync(TargetsPath, "_clamped", new MonitorOptions(Samples: 2), cancellationToken: cancellation))!
+            .AsObject();
+        // A method is what `in` also finds on the node, and it is still not a property.
+        McpException method = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.InspectNodeAsync(TargetsPath, ["Hit"], cancellationToken: cancellation)
+        );
+
+        Assert.Equal(5, inspected["properties"]?["_clamped"]?.GetValue<int>());
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Equal(5, waited["value"]?.GetValue<int>());
+        Assert.Equal(5, monitored["samples"]!.AsArray()[0]!["value"]?.GetValue<int>());
+        Assert.Contains("has no property 'Hit'", method.Message, StringComparison.Ordinal);
+
+        try
+        {
+            JsonObject set = JsonNode
+                .Parse(await _tools.SetPropertyAsync(TargetsPath, "_clamped", seven.RootElement, cancellationToken: cancellation))!
+                .AsObject();
+
+            Assert.Equal(7, set["after"]?.GetValue<int>());
+        }
+        finally
+        {
+            await _tools.SetPropertyAsync(TargetsPath, "_clamped", five.RootElement, cancellationToken: cancellation);
+        }
+    }
+
     private async Task<JsonObject> RunCSharpAsync(string code, RunCSharpOptions? options, CancellationToken cancellation)
     {
         string json = await _tools.RunCSharpAsync(code, options, cancellationToken: cancellation);
@@ -970,6 +1019,8 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
 
     private static string[] Helpers(JsonNode extensions) =>
         [.. extensions.AsArray().Select(path => path!.GetValue<string>()).Where(path => path.EndsWith(ExtensionFileName, StringComparison.Ordinal))];
+
+    private static string Text(IEnumerable<ContentBlock> blocks) => string.Concat(blocks.OfType<TextContentBlock>().Select(block => block.Text));
 
     private static async Task<JsonNode> RunAsync(RuntimeTools tools, string body, CancellationToken cancellation)
     {

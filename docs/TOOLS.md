@@ -23,7 +23,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | See everything an action changed in a subtree | `snapshot_subtree`, act, `diff_snapshots` | `inspect_node` on each node before and after |
 | Learn a class's members | `describe_class` | guessing names, then reading `call_method` errors |
 | Learn a C# object's or type's members, private ones and overloads included | `cs_members` | `describe_class`, which shows only what Godot's call can reach |
-| Read or change a C# member Godot's `get`/`set` cannot reach (a private record field, a `List<T>`, a static) | `cs_get`, `cs_set` | `inspect_node`/`set_property`, which read such a member as null |
+| Read or change a C# member Godot's `get`/`set` cannot reach (a private record field, a `List<T>`, a static) | `cs_get`, `cs_set` | `inspect_node`/`set_property`, which read such a member as null (a private field of a Godot type, such as a `float`, they do reach by name) |
 | Run several C# steps in the game at once: build a record and pass it, loop, await | `run_csharp` | a chain of `cs_call`s, or `run_script`, which cannot name C# types |
 | Call a C# method Godot's call cannot reach (overloads, generics, records, statics, an async `Task`) or construct a C# object | `cs_call` | `call_method`, which marshals only Variant types |
 | Find a live node | `get_scene_tree` | `get_scene_file_tree`, which reads a scene file |
@@ -230,8 +230,8 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 ### `inspect_node`
 
-- **Does:** reads a live node: `{path, class, script, properties}`, by default its script variables and the inspector's properties.
-- **Use:** `node`, and `properties` to read exactly those names (a name the node lacks fails).
+- **Does:** reads a live node: `{path, class, script, properties}`, by default its script variables and the inspector's properties. For a C# script the default holds only its `[Export]` members: the editor build Godot runs leaves the others out of the property list.
+- **Use:** `node`, and `properties` to read exactly those names (a name the node lacks fails). A named non-exported C# field is read too, as `set_property`, `wait_for {property}` and `monitor_property` reach it; `cs_members` lists them.
 - **Edges:** values over 2000 characters come back as `{valuePreview, valueLength}`.
 
 ### `set_property`

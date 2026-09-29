@@ -691,17 +691,10 @@ func _check_property(node_name: String, property: String, wanted: Variant) -> Ar
 	if node == null:
 		return [false, null]
 	var first: String = property.get_slice(":", 0)
-	if not _has_property(node, first):
+	if not bridge._json.has_property(node, first):
 		return [false, null, "'%s' has no property '%s'." % [node.get_path(), first]]
 	var value: Variant = bridge._json.to_json(node.get_indexed(NodePath(property)))
 	return [_json_equal(value, wanted), value]
-
-
-func _has_property(node: Node, property: String) -> bool:
-	for entry: Dictionary in node.get_property_list():
-		if entry["name"] == property:
-			return true
-	return false
 
 
 ## Parses source once with its inputs (node too when node_name is set, also the base instance)

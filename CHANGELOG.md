@@ -8,6 +8,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - The several-sessions refusal and every `session` description tell agents to pass the session `run_project` returned on every call from the start.
 
+### Fixed
+
+- `inspect_node`, `set_property`, `wait_for` and `monitor_property` read a named non-exported C# field instead of refusing it as missing.
+
 ## 0.6.0 - 2026-09-28
 
 ### Added

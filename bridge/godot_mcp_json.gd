@@ -585,6 +585,23 @@ static func property_info(object: Object, property_name: String) -> Dictionary:
 	return {}
 
 
+## Whether the object has a property of that name: property_info finds it, or it is a member that
+## holds a value. The editor build lists only a C# class's [Export] members while its script reads
+## every field through the generated getter, so an unlisted field is a property still; `in` finds
+## it, but finds a method, a signal and a class constant too, which this leaves out.
+static func has_property(object: Object, property_name: String) -> bool:
+	if not property_info(object, property_name).is_empty():
+		return true
+	if not property_name in object:
+		return false
+	var member: bool = (
+		object.has_method(property_name)
+		or object.has_signal(property_name)
+		or ClassDB.class_has_integer_constant(object.get_class(), property_name)
+	)
+	return not member
+
+
 ## Whether a property-list entry is one the inspector shows: a script variable or an editor
 ## property, not a section heading.
 static func is_shown(info: Dictionary) -> bool:

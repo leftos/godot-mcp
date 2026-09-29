@@ -14,7 +14,6 @@ Waves run in order; bug reports sit ahead of the backlog inside each. The single
 ### Issue reports
 
 - [ ] Headless scene tools stop writing `layout_mode = 0` on nodes of a new scene, and `attach_script` leaves no uid the next headless run calls invalid ([#34](https://github.com/leftos/godot-mcp/issues/34), recurs after #33)
-- [ ] `inspect_node`, `wait_for` and `monitor_property` read private C# fields, or the docs say which tool reaches them ([#36](https://github.com/leftos/godot-mcp/issues/36))
 
 ### Singles
 

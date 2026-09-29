@@ -175,7 +175,7 @@ func _snapshot_node(node: Node, filter: Dictionary) -> Dictionary:
 func _present_properties(node: Node, names: Array) -> Dictionary:
 	var properties: Dictionary = {}
 	for property_name: String in names:
-		if not _bridge._json.property_info(node, property_name).is_empty():
+		if _bridge._json.has_property(node, property_name):
 			properties[property_name] = _bridge._json.to_json(node.get(property_name))
 	return properties
 
@@ -217,7 +217,7 @@ func inspect_node(params: Dictionary) -> Variant:
 func _named_properties(node: Node, names: Array) -> Variant:
 	var properties: Dictionary = {}
 	for property_name: Variant in names:
-		if _bridge._json.property_info(node, str(property_name)).is_empty():
+		if not _bridge._json.has_property(node, str(property_name)):
 			return _no_property(node, str(property_name))
 		properties[str(property_name)] = _bridge._json.to_json(node.get(str(property_name)))
 	return properties
@@ -243,7 +243,9 @@ func set_property(params: Dictionary) -> Variant:
 	var property_name: String = str(params.get("property", ""))
 	var info: Dictionary = _bridge._json.property_info(node, property_name)
 	if info.is_empty():
-		return _no_property(node, property_name)
+		if not _bridge._json.has_property(node, property_name):
+			return _no_property(node, property_name)
+		info = {"type": TYPE_NIL}
 	var before: Variant = node.get(property_name)
 	if info["type"] == TYPE_NIL and before != null:
 		info = {"type": typeof(before)}
