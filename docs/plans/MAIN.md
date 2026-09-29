@@ -20,10 +20,6 @@ Shared: `RuntimeTools.Capture.cs`, `RuntimeTools.Input.cs`, `RuntimeTools.Time.c
 - [ ] #39 `run_project` with `--resolution` larger than the screen: the window is clamped without a warning; give the exact size or say what was given
 - [ ] #37 `take_screenshot` with `crop`: no way to take the crop above 1x
 
-### Docs
-
-- [ ] Re-read `docs/csharp-runtime-tools.md` against 48ec52d (`run_csharp` snippets get a `Cancellation` token their timeout cancels), which landed after it
-
 ### Singles
 
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see [DECISIONS.md](../DECISIONS.md#gamepad-input-from-godot-472s-source))
