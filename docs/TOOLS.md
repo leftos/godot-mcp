@@ -168,13 +168,13 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 ### `simulate_input`
 
 - **Does:** sends raw `events`, one frame apart: `key`, `mouse_button`, `mouse_motion`, `joypad_button`, `joypad_motion`, `action` (an InputMap action with `pressed?`, `strength?`), `click_element`, `wait {ms}`.
-- **Use:** input actions directly, curved mouse paths, precise event timing. An omitted `pressed` on a key, mouse or pad button is a press and a release a frame apart; a motion's `relative` and `button_mask` default from the pointer and held buttons.
+- **Use:** input actions directly, curved mouse paths, precise event timing. A `wait {ms}` is game time that `time_scale` does not stretch, so in a recording it lasts its length in the clip however slowly the game runs. An omitted `pressed` on a key, mouse or pad button is a press and a release a frame apart; a motion's `relative` and `button_mask` default from the pointer and held buttons.
 - **Edges:** `x`, `y` are viewport coordinates as everywhere.
 
 ### `stress_input`
 
 - **Does:** fires `count` random inputs, one a bridge call, each drawn uniformly and seeded from `pool`, and reports `{survived, seed, iterations, stoppedAt?, drawn {actions, keys, elements}, errors, skipped}`. An action is tapped as `simulate_action` taps it, a key as `key` taps it, an element clicked as `click` clicks it. `errors` lists each new error once, keyed by message, file and line, with the `iteration` it first appeared at and its `count`.
-- **Use:** `pool {actions?, keys?, elements?}` (1 to 200 entries in all), `count` (1 to 1000, default 100), `seed` (0 or more; left out, one is drawn and returned), `options {gapMs}` (0 to 5000 real milliseconds after each input, default 0). The same seed and pool replay the same sequence, so a failing run is reproduced by passing its `seed` back.
+- **Use:** `pool {actions?, keys?, elements?}` (1 to 200 entries in all), `count` (1 to 1000, default 100), `seed` (0 or more; left out, one is drawn and returned), `options {gapMs}` (0 to 5000 milliseconds after each input, default 0, of game time `time_scale` does not stretch: in a recording, clip time). The same seed and pool replay the same sequence, so a failing run is reproduced by passing its `seed` back.
 - **Edges:** a draw the bridge refuses (an action missing from the InputMap, an element hidden at that moment, an unknown key) does not end the run: it is counted under `skipped` with the bridge's reason, the iteration it was first refused at and its count. The run stops at the first input the game does not answer, with `survived: false` and `stoppedAt`; otherwise `survived` means the game still runs and answers a ping at the end. It cannot run inside `batch_drive` (a thousand inputs outrun its deadline), and its result has no ordinary `errors` key: the run's own `errors` replace it. In a recording, each input's reply is waited on in clip frames, as the input tools' is, so a slow recorded game does not end a gapped run early.
 
 ### `gamepad_button`
