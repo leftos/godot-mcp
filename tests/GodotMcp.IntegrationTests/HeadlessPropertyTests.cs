@@ -60,6 +60,12 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         + "anchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n\n"
         + ScreenBackdrop;
 
+    // dome.tscn: a full-rect Control holding a ColorRect in position mode whose anchors the file already stores.
+    private const string DomeScene =
+        "[gd_scene format=3]\n\n[node name=\"Dome\" type=\"Control\"]\nlayout_mode = 3\nanchors_preset = 15\nanchor_right = 1.0\n"
+        + "anchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n\n"
+        + "[node name=\"Backdrop\" type=\"ColorRect\" parent=\".\"]\nlayout_mode = 0\nanchor_right = 1.0\nanchor_bottom = 1.0\nmouse_filter = 2\n";
+
     private readonly SessionHarness _harness = new();
     private readonly HeadlessTools _tools;
     private readonly List<IDisposable> _projects = [];
@@ -229,7 +235,69 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         );
 
         Assert.Contains("anchor_right takes only with layout_mode 1 (Anchors)", refused.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            "a full rect is layout_mode 1, anchors_preset 15, grow_horizontal/grow_vertical 2",
+            refused.Message,
+            StringComparison.Ordinal
+        );
         Assert.Equal(UiScene, Read(probe.Directory, "ui.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AddNodeRefusesAnchorsUnderAContainer()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        // Under a Container, Godot strips the storage of anchor_*, offset_*, grow_* and anchors_preset (4.7.2 control.cpp
+        // L568-571): the set reads back and the save writes only layout_mode = 2.
+        AddNodeOptions options = new("Box", new() { ["anchor_right"] = Json("1"), ["anchor_bottom"] = Json("1") });
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.AddNodeAsync(probe.Directory, "ui.tscn", "ColorRect", "Fill", options, cancellation)
+        );
+
+        Assert.Contains("under a Container, layout_mode is 2 (Container) and Godot saves no anchor_*", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(UiScene, Read(probe.Directory, "ui.tscn"));
+    }
+
+    [Theory(Timeout = TestTimeoutMs)]
+    [InlineData("offset_left", "5.5")]
+    [InlineData("grow_horizontal", "2")]
+    [InlineData("anchors_preset", "15")]
+    public async Task SetNodePropertiesRefusesAPlacementUnderAContainer(string property, string value)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        await _tools.AddNodeAsync(probe.Directory, "ui.tscn", "ColorRect", "Swatch", new AddNodeOptions("Box"), cancellation);
+        string before = Read(probe.Directory, "ui.tscn");
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SetNodePropertiesAsync(probe.Directory, "ui.tscn", [new PropertyUpdate("Box/Swatch", property, Json(value))], cancellation)
+        );
+
+        Assert.Contains(
+            $"Property '{property}' on 'Box/Swatch' was refused: under a Container, layout_mode is 2 (Container)",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(before, Read(probe.Directory, "ui.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetNodePropertiesTakesAnAnchorTheNodeAlreadyHolds()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "dome.tscn"), DomeScene);
+
+        await _tools.SetNodePropertiesAsync(probe.Directory, "dome.tscn", [new PropertyUpdate("Backdrop", "anchor_right", Json("1"))], cancellation);
+
+        Assert.Equal(
+            ["layout_mode = 0", "anchor_right = 1.0", "anchor_bottom = 1.0", "mouse_filter = 2"],
+            Section(probe.Directory, "dome.tscn", "Backdrop").Body
+        );
     }
 
     [Fact(Timeout = TestTimeoutMs)]

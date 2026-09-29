@@ -403,7 +403,7 @@ These run a headless Godot on the project's files with no game started. All are 
 
 - **Does:** sets 1 to 100 `updates` `{nodePath, property, value}`, reads each back, and saves: `{results: [{nodePath, property, before, after}]}`.
 - **Use:** values as `set_property` takes them, typed arrays and dictionaries included; a resource as a `res://` or `uid://` path, `{resource: path}`, `{type, ...properties}` or null; a Node-typed export as a path from the scene's root.
-- **Edges:** a node from a base scene, or inside an editable instance, may be set (saved as an override); inside another instance it is refused. A non-zero `anchor_*` on a Control in Position layout (`layout_mode` 0) is refused: set `layout_mode` 1 first, with `anchors_preset` 15 for a full rect; the editor cannot make a Position node with anchors. All or nothing.
+- **Edges:** a node from a base scene, or inside an editable instance, may be set (saved as an override); inside another instance it is refused. A non-zero `anchor_*` on a Control in Position layout (`layout_mode` 0) is refused unless the node already holds that value: set `layout_mode` 1 first (a full rect is `layout_mode` 1, `anchors_preset` 15, `grow_*` 2); the editor cannot make a Position node with anchors. Under a Container, `anchor_*`, `offset_*`, `grow_*` and `anchors_preset` are refused unless unchanged, since Godot saves none of them there: set `size_flags_*` instead. All or nothing.
 
 ### `get_node_properties`
 

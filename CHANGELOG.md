@@ -17,6 +17,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `run_project` gives a `--resolution` larger than the screen exactly, and its result and `attach_project`'s report the window's size.
 - In a recorded run, `wait_for` timeouts and drag, hover and gamepad durations count clip time, and a wait adds `clipMs`.
 - `hover` reads and waits for the tooltip Godot shows when it belongs to an ancestor of the hovered Control, naming it in `tooltip.owner`.
+- `add_node` and `set_node_properties` refuse anchors, offsets, grow and `anchors_preset` under a Container, which Godot drops at save, and take an unchanged anchor.
 
 ## 0.6.1 - 2026-09-28
 

@@ -16,6 +16,21 @@ const SCENE_PREFIX := "res://"
 const ANCHOR_PROPERTIES: PackedStringArray = [
 	"anchor_left", "anchor_top", "anchor_right", "anchor_bottom"
 ]
+## The Control properties Godot saves no value of under a Container, which places the node itself
+## (scene/gui/control.cpp L568-571): _container_refusal.
+const CONTAINER_PLACED_PROPERTIES: PackedStringArray = [
+	"anchor_left",
+	"anchor_top",
+	"anchor_right",
+	"anchor_bottom",
+	"offset_left",
+	"offset_top",
+	"offset_right",
+	"offset_bottom",
+	"grow_horizontal",
+	"grow_vertical",
+	"anchors_preset",
+]
 
 ## The engine property names of each class _is_engine_property has looked at, by class name.
 static var _engine_names: Dictionary = {}
@@ -386,26 +401,48 @@ static func _layout_hint(node: Node, property: String) -> String:
 	return " With no Control parent, layout_mode is 3 (Uncontrolled) and cannot be set."
 
 
-## Why setting an anchor property on node is refused: "" when it takes. The editor shows anchor_*
-## only in Anchors mode, so a Control the anchors would leave in Position mode saves as
-## layout_mode = 0 beside anchor_right = 1.0: a node the editor cannot make (scene/gui/control.cpp).
+## Why setting a placement property on a Control is refused: "" when it takes. Under a Container,
+## _container_refusal decides. Under any other Control, the editor shows anchor_* only in Anchors
+## mode, so a Control the anchors would leave in Position mode saves as layout_mode = 0 beside
+## anchor_right = 1.0: a node the editor cannot make (scene/gui/control.cpp). A zero anchor, or
+## the value the anchor already holds, changes nothing and takes.
 static func _anchor_refusal(node: Node, path: String, property: String, value: Variant) -> String:
 	if not (node is Control):
 		return ""
-	if not (property in ANCHOR_PROPERTIES):
-		return ""
 	var parent: Node = node.get_parent()
-	if not (parent is Control) or parent is Container:
+	if parent is Container:
+		return _container_refusal(node, path, property, value)
+	if not (property in ANCHOR_PROPERTIES) or not (parent is Control):
 		return ""
 	if ClassDB.class_get_property(node, "layout_mode") != 0:
 		return ""
-	if is_zero_approx(float(value)):
+	if is_zero_approx(float(value)) or Json.same(_get_prop(node, property), value):
 		return ""
 	var message: String = (
-		"Property '%s' on '%s' was refused: %s takes only with layout_mode 1 (Anchors); set "
-		+ "layout_mode 1 first (with anchors_preset 15 for a full rect)."
+		"Property '%s' on '%s' was refused: %s takes only with layout_mode 1 (Anchors), the mode "
+		+ "the editor stores anchors in; set layout_mode 1 first (a full rect is layout_mode 1, "
+		+ "anchors_preset 15, grow_horizontal/grow_vertical 2)."
 	)
 	return message % [property, path, property]
+
+
+## Why setting property on node, a child of a Container, is refused: "" when it takes. The
+## container places the node, and Godot strips the storage of its anchors, offsets, grow
+## directions and anchors preset (scene/gui/control.cpp L568-571), so such a set would read back
+## and be lost at save. The value the node already holds changes nothing and takes.
+static func _container_refusal(
+	node: Node, path: String, property: String, value: Variant
+) -> String:
+	if not (property in CONTAINER_PLACED_PROPERTIES):
+		return ""
+	if Json.same(_get_prop(node, property), value):
+		return ""
+	var message: String = (
+		"Property '%s' on '%s' was refused: under a Container, layout_mode is 2 (Container) and "
+		+ "Godot saves no anchor_*, offset_*, grow_* or anchors_preset; the container places the "
+		+ "node (set size_flags_horizontal/size_flags_vertical instead)."
+	)
+	return message % [property, path]
 
 
 static func _read_node(root: Node, query: Dictionary, scene: String) -> Dictionary:
