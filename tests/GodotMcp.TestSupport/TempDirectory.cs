@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace GodotMcp.TestSupport;
 
 /// <summary>
@@ -6,6 +8,9 @@ namespace GodotMcp.TestSupport;
 /// </summary>
 public sealed class TempDirectory : IDisposable
 {
+    private const int RetryIntervalMs = 20;
+    private const int RetryBudgetMs = 2000;
+
     public TempDirectory()
     {
         Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "godot-mcp-tests", Guid.NewGuid().ToString("N"));
@@ -16,7 +21,35 @@ public sealed class TempDirectory : IDisposable
 
     public string Combine(params string[] parts) => System.IO.Path.Combine([Path, .. parts]);
 
+    /// <summary>Deletes the folder, retrying for up to 2 s one that another process still holds.</summary>
     public void Dispose()
+    {
+        var clock = Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                DeleteAttempt();
+                return;
+            }
+            catch (Exception e) when (IsFileSystemRefusal(e) && clock.ElapsedMilliseconds < RetryBudgetMs)
+            {
+                if (!Directory.Exists(Path))
+                {
+                    return;
+                }
+
+                Thread.Sleep(RetryIntervalMs);
+            }
+        }
+    }
+
+    /// <summary>
+    /// One delete attempt. A killed game keeps its project folder for tens of milliseconds after it reports exited, and
+    /// a scanner holds a fresh file, so a refusal here is retried by <see cref="Dispose"/>: NTFS refuses to delete a
+    /// folder whose file is held meanwhile.
+    /// </summary>
+    private void DeleteAttempt()
     {
         if (!Directory.Exists(Path))
         {
@@ -31,4 +64,6 @@ public sealed class TempDirectory : IDisposable
 
         Directory.Delete(Path, recursive: true);
     }
+
+    private static bool IsFileSystemRefusal(Exception e) => e is IOException or UnauthorizedAccessException;
 }
