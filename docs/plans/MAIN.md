@@ -1,5 +1,5 @@
 # Main Plan
-<!-- plan-doc-hygiene: 2026-09-28 b0c3120 -->
+<!-- plan-doc-hygiene: 2026-09-29 688b4ab -->
 
 Open work only, in working order: the next item is the first line from the top; a finished line is deleted (git keeps the history). The user's decisions are in [DECISIONS.md](../DECISIONS.md).
 
@@ -10,6 +10,19 @@ The first version replaced godot-mcp-runtime at parity and went further: every p
 ## Next
 
 Waves run in order; bug reports sit ahead of the backlog inside each. The singles' order is not a ranking.
+
+### Wave 1: capture and drive bug reports from opening-hand
+
+Shared: `RuntimeTools.Capture.cs`, `RuntimeTools.Input.cs`, `RuntimeTools.Time.cs`, `RuntimeTools.cs` and their bridge modules (`godot_mcp_capture.gd`, `godot_mcp_input.gd`, `godot_mcp_time.gd`). Gate: `pwsh run.ps1 test` and the touched `itest` groups; the evidence is a driven run against a fixture.
+
+- [ ] #40 `wait_for` in a recorded session (`options.record`): a 1500 ms timeout ran 6290 ms and 240 frames; a timeout a recording honours, or a wait in game time or frames
+- [ ] #38 `hover` returns `tooltip: null` when the tooltip Godot shows belongs to an ancestor of the hovered control, and returns before the tooltip delay has passed
+- [ ] #39 `run_project` with `--resolution` larger than the screen: the window is clamped without a warning; give the exact size or say what was given
+- [ ] #37 `take_screenshot` with `crop`: no way to take the crop above 1x
+
+### Docs
+
+- [ ] Re-read `docs/csharp-runtime-tools.md` against 48ec52d (`run_csharp` snippets get a `Cancellation` token their timeout cancels), which landed after it
 
 ### Singles
 
