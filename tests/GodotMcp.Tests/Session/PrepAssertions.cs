@@ -10,7 +10,7 @@ internal static class PrepAssertions
     public static bool IsStale(string game) =>
         PrepScan.IsStale(PrepScan.AssemblyPath(game, "Game"), PrepScan.StampPath(game), PrepScan.Scan(game, NullLogger.Instance).BuildInputs);
 
-    public static bool IsImportNeeded(string game) => PrepScan.ImportNeeded(game, PrepScan.Scan(game, NullLogger.Instance));
+    public static bool IsImportNeeded(string game) => PrepScan.ImportNeeded(game, PrepScan.Scan(game, NullLogger.Instance), NullLogger.Instance);
 
     public static bool IsInsideGit(string folder)
     {

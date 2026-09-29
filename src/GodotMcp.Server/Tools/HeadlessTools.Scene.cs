@@ -402,30 +402,13 @@ internal sealed partial class HeadlessTools
             throw new McpException($"{ResOf(projectDir, full)} does not exist.");
         }
 
-        string? unscanned = UnscannedFolder(projectDir, full);
+        // An import never reaches a file in a folder the scan skips, so it would be due on every request.
+        string? unscanned = PrepScan.UnscannedFolder(projectDir, full);
         return unscanned is null
             ? full
-            : throw new McpException($"{ResOf(projectDir, full)} is in {unscanned}, which Godot does not scan; move the asset out of it.");
-    }
-
-    /// <summary>
-    /// The res:// path of the outermost folder holding the file that Godot's scan skips (a name starting with "." or a folder
-    /// holding a .gdignore), or null. An import never reaches such a file, so it would be due on every request.
-    /// </summary>
-    private static string? UnscannedFolder(string projectDir, string full)
-    {
-        string folder = projectDir;
-        string relative = Path.GetRelativePath(projectDir, Path.GetDirectoryName(full)!);
-        foreach (string name in relative.Split(Path.DirectorySeparatorChar).Where(name => name != "."))
-        {
-            folder = Path.Combine(folder, name);
-            if (name.StartsWith('.') || File.Exists(Path.Combine(folder, ".gdignore")))
-            {
-                return ResOf(projectDir, folder);
-            }
-        }
-
-        return null;
+            : throw new McpException(
+                $"{ResOf(projectDir, full)} is in {ResOf(projectDir, unscanned)}, which Godot does not scan; move the asset out of it."
+            );
     }
 
     /// <summary>The node path duplicate_node copies, checked as <see cref="CheckNodePath"/> does.</summary>

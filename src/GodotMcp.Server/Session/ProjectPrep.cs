@@ -296,7 +296,7 @@ internal static class ProjectPrep
     private static async Task<PrepStep> ImportAsync(PrepContext context, ProjectFiles files, CancellationToken cancellationToken)
     {
         if (
-            !PrepScan.ImportNeeded(context.ProjectDir, files)
+            !PrepScan.ImportNeeded(context.ProjectDir, files, context.Logger)
             && !context.ImportAssets.Any(asset => PrepScan.AssetNeedsImport(context.ProjectDir, asset))
         )
         {

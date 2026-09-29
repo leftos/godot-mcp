@@ -14,6 +14,8 @@ const LAYOUT_WARNING := (
 const PATH_ATTRIBUTE := ' path="'
 const UID_ATTRIBUTE := ' uid="'
 const UID_PREFIX := "uid://"
+## The uid cache an import writes and every run loads at start.
+const UID_CACHE := "res://.godot/uid_cache.bin"
 ## The extensions of the text formats whose ext_resource tags are written back; a binary .res or
 ## .scn is never rewritten as text.
 const TEXT_EXTENSIONS: Array[String] = ["tscn", "tres"]
@@ -78,12 +80,14 @@ static func note_written(result: Dictionary, written: PackedStringArray) -> void
 		result["uidFilesWritten"] = listed
 
 
-## Sets the uid of the file at path and, in a text file, writes each ext_resource's uid back,
-## appending each .uid file written to written; an error code.
+## Sets the uid of the file at path, registering it (register_uid), and, in a text file, writes
+## each ext_resource's uid back, appending each .uid file written to written; an error code.
 static func _write_uids(
 	path: String, uid: int, known: Dictionary, written: PackedStringArray
 ) -> int:
 	var error: int = ResourceSaver.set_uid(path, uid)
+	if error == OK:
+		register_uid(uid, path)
 	if error == OK and path.get_extension().to_lower() in TEXT_EXTENSIONS:
 		error = _restore_ext_uids(path, known, written)
 	return error
@@ -167,12 +171,48 @@ static func uid_or_new(path: String, written: PackedStringArray) -> int:
 		return ResourceUID.INVALID_ID
 	file.store_line(ResourceUID.id_to_text(id))
 	file.close()
-	if ResourceUID.has_id(id):
-		ResourceUID.set_id(id, path)
-	else:
-		ResourceUID.add_id(id, path)
+	register_uid(id, path)
 	written.append(path + ".uid")
 	return id
+
+
+## Registers id for path in this run's ResourceUID and, when the id was not known yet (not in
+## .godot/uid_cache.bin, which the run loaded, nor added earlier in this run), records it in that
+## cache too (cache_uid), so a run started outside the server finds it.
+static func register_uid(id: int, path: String) -> void:
+	if ResourceUID.has_id(id):
+		ResourceUID.set_id(id, path)
+		return
+	cache_uid(id, path)
+	ResourceUID.add_id(id, path)
+
+
+## Appends id and its res:// path to res://.godot/uid_cache.bin, as the engine appends a new entry
+## (4.7.2 core/io/resource_uid.cpp L343-375, update_cache): at the end a 64-bit id, a 32-bit byte
+## length and the path's UTF-8 bytes with no terminator (the res:// path as add_id got it,
+## L162-174), then the 32-bit entry count at offset 0 rewritten; nothing follows the entries
+## (load_from_cache L305-341 reads the count, then exactly that many entries). Little-endian,
+## FileAccess's default. A missing cache is left missing (only an import creates one), and a path
+## outside res:// is skipped.
+static func cache_uid(id: int, path: String) -> void:
+	if not path.begins_with("res://") or not FileAccess.file_exists(UID_CACHE):
+		return
+	var file := FileAccess.open(UID_CACHE, FileAccess.READ_WRITE)
+	if file == null:
+		var reason: String = error_string(FileAccess.get_open_error())
+		push_error("%s could not be opened to record %s (%s)." % [UID_CACHE, path, reason])
+		return
+	var count: int = file.get_32()
+	var bytes: PackedByteArray = path.to_utf8_buffer()
+	file.seek_end()
+	var stored: bool = file.store_64(id) and file.store_32(bytes.size())
+	stored = stored and file.store_buffer(bytes)
+	file.seek(0)
+	stored = stored and file.store_32(count + 1)
+	var error: int = file.get_error()
+	file.close()
+	if not stored:
+		push_error("%s could not record %s (%s)." % [UID_CACHE, path, error_string(error)])
 
 
 ## Whether path is a res:// file of a kind the editor's scan gives a .uid, with neither a .uid nor

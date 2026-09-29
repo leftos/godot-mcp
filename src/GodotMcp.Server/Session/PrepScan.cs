@@ -16,13 +16,15 @@ internal sealed record CsprojLookup(CsprojKind Kind, string? ProjectFile, string
 
 /// <summary>
 /// The files the prep looks at, as full paths: the C# build's inputs from the whole git top level (or the project folder
-/// outside git), and the project folder's <c>.import</c> sidecars, <c>.uid</c> files and GDScript files.
+/// outside git), and the project folder's <c>.import</c> sidecars, <c>.uid</c> files, GDScript files and text scenes and
+/// resources (<c>.tscn</c>, <c>.tres</c>).
 /// </summary>
 internal sealed record ProjectFiles(
     IReadOnlyList<string> BuildInputs,
     IReadOnlyList<string> ImportFiles,
     IReadOnlyList<string> UidFiles,
-    IReadOnlyList<string> Scripts
+    IReadOnlyList<string> Scripts,
+    IReadOnlyList<string> TextResources
 );
 
 /// <summary>What run_project's prep finds in a project before deciding to build or import.</summary>
@@ -36,6 +38,12 @@ internal static partial class PrepScan
     // The files a load reads without an import: Godot's own resources, and the textures modules/dds and modules/ktx register
     // a loader for (4.7.2 register_types.cpp of each).
     private static readonly HashSet<string> LoadsWithoutImportExtensions = new([".tres", ".res", ".dds", ".ktx"], StringComparer.OrdinalIgnoreCase);
+
+    private const string UidPrefix = "uid://";
+
+    // ResourceUID's char_count ('z' - 'a', 25) and base (char_count + ('9' - '0'), 34): 4.7.2 core/io/resource_uid.cpp L44-45.
+    private const ulong UidCharCount = 'z' - 'a';
+    private const ulong UidBase = UidCharCount + ('9' - '0');
 
     private static readonly HashSet<string> InputNames = new(["global.json", "nuget.config", "packages.lock.json"], StringComparer.OrdinalIgnoreCase);
 
@@ -101,7 +109,8 @@ internal static partial class PrepScan
             [.. topFiles.Where(IsBuildInput)],
             [.. projectFiles.Where(file => HasExtension(file, ".import"))],
             [.. projectFiles.Where(file => HasExtension(file, ".uid"))],
-            [.. projectFiles.Where(file => HasExtension(file, ".gd"))]
+            [.. projectFiles.Where(file => HasExtension(file, ".gd"))],
+            [.. projectFiles.Where(file => HasExtension(file, ".tscn") || HasExtension(file, ".tres"))]
         );
     }
 
@@ -127,23 +136,165 @@ internal static partial class PrepScan
     }
 
     /// <summary>
-    /// Whether a Godot import is needed: a <c>.import</c> sidecar whose <c>dest_files</c> are not all present, or a
-    /// <c>.uid</c> file newer than <c>.godot/uid_cache.bin</c> or with no cache at all (the headless tools write one for a
-    /// script that had none, and only an import records it in the cache), or a script declaring <c>class_name</c> that the
-    /// class cache may not hold yet. A missing <c>.godot/</c> alone is not a reason.
+    /// Whether a Godot import is needed: a <c>.import</c> sidecar whose <c>dest_files</c> are not all present, or a uid
+    /// <c>.godot/uid_cache.bin</c> does not hold (<see cref="IsUidCacheStale"/>), or a script declaring <c>class_name</c> that
+    /// the class cache may not hold yet. A missing <c>.godot/</c> alone is not a reason.
     /// </summary>
-    public static bool ImportNeeded(string projectDir, ProjectFiles files) =>
-        IsUidCacheStale(projectDir, files.UidFiles)
+    public static bool ImportNeeded(string projectDir, ProjectFiles files, ILogger logger) =>
+        IsUidCacheStale(projectDir, files, logger)
         || files.ImportFiles.Any(sidecar => HasMissingTarget(projectDir, sidecar))
         || IsClassCacheStale(projectDir, files.Scripts);
 
-    /// <summary>Whether a <c>.uid</c> file is newer than <c>.godot/uid_cache.bin</c>, or the cache is missing while any exists.</summary>
-    private static bool IsUidCacheStale(string projectDir, IEnumerable<string> uidFiles)
+    /// <summary>
+    /// Whether <c>.godot/uid_cache.bin</c> lacks a uid the project's files record: with no cache, whether any <c>.uid</c>
+    /// file exists; else whether a <c>.uid</c> file's id or a <c>.tscn</c>/<c>.tres</c> header's <c>uid="…"</c> is not among
+    /// the cache's ids. Contents are compared, not times: the headless tools append the uids they mint to the cache, and an
+    /// editor open on the project rewrites the cache from its own list on its next save, dropping them (4.7.2
+    /// <c>core/io/resource_uid.cpp</c> L343-375). A cache that does not parse is stale, and logged. Only files the scan
+    /// reaches count (<see cref="IsScanned"/>): an import records no other, so one elsewhere would make it due on every run.
+    /// </summary>
+    private static bool IsUidCacheStale(string projectDir, ProjectFiles files, ILogger logger)
     {
         string cache = Path.Combine(projectDir, ".godot", "uid_cache.bin");
-        bool cached = File.Exists(cache);
-        DateTime written = File.GetLastWriteTimeUtc(cache);
-        return uidFiles.Where(File.Exists).Any(file => !cached || File.GetLastWriteTimeUtc(file) > written);
+        string[] uidFiles = [.. files.UidFiles.Where(file => File.Exists(file) && IsScanned(projectDir, file))];
+        if (!File.Exists(cache))
+        {
+            return uidFiles.Length > 0;
+        }
+
+        HashSet<long>? cached = ReadUidCache(cache, logger);
+        if (cached is null)
+        {
+            return true;
+        }
+
+        IEnumerable<string> recorded = uidFiles
+            .Select(ReadUidFile)
+            .Concat(files.TextResources.Where(file => File.Exists(file) && IsScanned(projectDir, file)).Select(ReadHeaderUid));
+        return recorded.Where(text => text.Length > 0).Select(text => DecodeUid(text, logger)).Any(id => id is { } known && !cached.Contains(known));
+    }
+
+    /// <summary>
+    /// The full path of the outermost folder between <paramref name="projectDir"/> and <paramref name="file"/> that Godot's
+    /// scan skips for its name starting with "." or for holding a <c>.gdignore</c> (4.7.2
+    /// <c>editor/file_system/editor_file_system.cpp</c> L1179-1185 and L3502-3505), or null.
+    /// </summary>
+    internal static string? UnscannedFolder(string projectDir, string file) =>
+        FoldersBetween(projectDir, file)
+            .FirstOrDefault(folder => Path.GetFileName(folder).StartsWith('.') || File.Exists(Path.Combine(folder, ".gdignore")));
+
+    /// <summary>
+    /// Whether Godot's scan, and so an import, reaches <paramref name="file"/>: no folder on its way skips it
+    /// (<see cref="UnscannedFolder"/>) or holds a <c>project.godot</c> of its own, a nested project the scan skips
+    /// (<c>editor_file_system.cpp</c> L3494-3500).
+    /// </summary>
+    private static bool IsScanned(string projectDir, string file) =>
+        UnscannedFolder(projectDir, file) is null
+        && !FoldersBetween(projectDir, file).Any(folder => File.Exists(Path.Combine(folder, "project.godot")));
+
+    /// <summary>The folders from <paramref name="projectDir"/>'s child down to the one holding <paramref name="file"/>, outermost first.</summary>
+    private static IEnumerable<string> FoldersBetween(string projectDir, string file)
+    {
+        string folder = projectDir;
+        string relative = Path.GetRelativePath(projectDir, Path.GetDirectoryName(file)!);
+        foreach (string name in relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]).Where(name => name is not ("." or "")))
+        {
+            folder = Path.Combine(folder, name);
+            yield return folder;
+        }
+    }
+
+    /// <summary>
+    /// The ids in a uid cache, in the engine's layout (4.7.2 <c>core/io/resource_uid.cpp</c> L305-341, <c>load_from_cache</c>;
+    /// written by <c>encode_binary_cache</c> L259-272 and appended to by <c>update_cache</c> L343-375): a little-endian 32-bit
+    /// entry count, then per entry a 64-bit id, a 32-bit byte length and that many bytes of UTF-8 <c>res://</c> path; bytes
+    /// after the last entry are not read. Null, logged, when the file does not parse or cannot be read.
+    /// </summary>
+    internal static HashSet<long>? ReadUidCache(string cache, ILogger logger)
+    {
+        try
+        {
+            using FileStream stream = File.OpenRead(cache);
+            using BinaryReader reader = new(stream);
+            uint count = reader.ReadUInt32();
+            HashSet<long> ids = [];
+            for (uint entry = 0; entry < count; entry++)
+            {
+                ids.Add(reader.ReadInt64());
+                int length = reader.ReadInt32();
+                if (length < 0 || length > stream.Length - stream.Position)
+                {
+                    throw new InvalidDataException($"entry {entry} of {count} claims a {length}-byte path past the end of the file");
+                }
+
+                stream.Seek(length, SeekOrigin.Current);
+            }
+
+            return ids;
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            UidCacheUnreadable(logger, e, cache);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The 64-bit id of <c>uid://…</c> text, ported from 4.7.2 <c>ResourceUID::text_to_id</c> (<c>core/io/resource_uid.cpp</c>
+    /// L92-111, with <c>char_count</c> and <c>base</c> from L44-45): base 34, <c>a</c>-<c>z</c> worth 0-25 and <c>0</c>-<c>9</c>
+    /// worth 25-34, the top bit cleared. Null for text the engine reads as invalid.
+    /// </summary>
+    internal static long? TextToId(string text)
+    {
+        if (!text.StartsWith(UidPrefix, StringComparison.Ordinal) || text == "uid://<invalid>")
+        {
+            return null;
+        }
+
+        ulong uid = 0;
+        foreach (char c in text.AsSpan(UidPrefix.Length))
+        {
+            ulong digit;
+            if (c is >= 'a' and <= 'z')
+            {
+                digit = (ulong)(c - 'a');
+            }
+            else if (c is >= '0' and <= '9')
+            {
+                digit = (ulong)(c - '0') + UidCharCount;
+            }
+            else
+            {
+                return null;
+            }
+
+            uid = unchecked((uid * UidBase) + digit);
+        }
+
+        return (long)(uid & 0x7FFFFFFFFFFFFFFF);
+    }
+
+    private static long? DecodeUid(string text, ILogger logger)
+    {
+        long? id = TextToId(text);
+        if (id is null)
+        {
+            UidUndecodable(logger, text);
+        }
+
+        return id;
+    }
+
+    /// <summary>The <c>uid://</c> text a <c>.uid</c> file holds (its first non-blank line), or "".</summary>
+    private static string ReadUidFile(string uidFile) =>
+        File.ReadLines(uidFile).Select(line => line.Trim()).FirstOrDefault(line => line.Length > 0) ?? string.Empty;
+
+    /// <summary>The <c>uid="…"</c> of a text scene's or resource's header (its first line only), or "" when it has none.</summary>
+    private static string ReadHeaderUid(string resource)
+    {
+        string? header = File.ReadLines(resource).FirstOrDefault();
+        Match match = header is null ? Match.Empty : HeaderUid().Match(header);
+        return match.Success ? match.Groups[1].Value : string.Empty;
     }
 
     /// <summary>
@@ -266,6 +417,16 @@ internal static partial class PrepScan
 
     [GeneratedRegex("\"res://([^\"]*)\"")]
     private static partial Regex ResourcePath();
+
+    // The header of a text scene or resource and the uid it carries, e.g. [gd_scene format=3 uid="uid://b1234"].
+    [GeneratedRegex("^\\[gd_(?:scene|resource)\\b[^\\]]*\\suid=\"([^\"]*)\"")]
+    private static partial Regex HeaderUid();
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "{Cache} does not parse as a uid cache, so the prep imports to rewrite it.")]
+    private static partial void UidCacheUnreadable(ILogger logger, Exception exception, string cache);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "'{Text}' is not uid:// text Godot decodes, so the uid cache check skips it.")]
+    private static partial void UidUndecodable(ILogger logger, string text);
 
     // class_name at the start of a line, after any annotations (@tool, @icon("res://x.svg")) or an extends clause on the same line.
     [GeneratedRegex(@"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:extends\s+\S+\s+)?class_name\s+[A-Za-z_]")]

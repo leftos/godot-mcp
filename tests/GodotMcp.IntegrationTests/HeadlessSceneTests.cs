@@ -662,6 +662,39 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnAppendKeepsTheUidsTheImportRecorded()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        const string importedUid = "uid://bimported1";
+        File.WriteAllText(
+            Path.Combine(probe.Directory, "imported.tscn"),
+            $"[gd_scene format=3 uid=\"{importedUid}\"]\n\n[node name=\"Imported\" type=\"Node2D\"]\n"
+        );
+        await RunGodotAsync(probe.Directory, ["--import"], cancellation);
+        string cache = Path.Combine(probe.Directory, ".godot", "uid_cache.bin");
+        List<(long Id, string Path)> before = ReadUidCache(cache);
+
+        await _tools.CreateSceneAsync(probe.Directory, "fresh.tscn", cancellationToken: cancellation);
+
+        List<(long Id, string Path)> after = ReadUidCache(cache);
+        string freshUid = HeaderUid(Path.Combine(probe.Directory, "fresh.tscn"));
+        Assert.Contains((PrepScan.TextToId(importedUid)!.Value, "res://imported.tscn"), after);
+        Assert.Contains((PrepScan.TextToId(freshUid)!.Value, "res://fresh.tscn"), after);
+        Assert.Equal(before, after.Take(before.Count));
+        File.WriteAllText(
+            Path.Combine(probe.Directory, "holder.tscn"),
+            $"[gd_scene load_steps=3 format=3]\n\n[ext_resource type=\"PackedScene\" uid=\"{importedUid}\" path=\"res://imported.tscn\" id=\"1\"]\n"
+                + $"[ext_resource type=\"PackedScene\" uid=\"{freshUid}\" path=\"res://fresh.tscn\" id=\"2\"]\n\n"
+                + "[node name=\"Holder\" type=\"Node2D\"]\n\n[node name=\"Imported\" parent=\".\" instance=ExtResource(\"1\")]\n\n"
+                + "[node name=\"Fresh\" parent=\".\" instance=ExtResource(\"2\")]\n"
+        );
+
+        string log = await RunGodotAsync(probe.Directory, ["--quit-after", "3", "res://holder.tscn"], cancellation);
+        Assert.DoesNotContain("invalid UID", log, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AttachScriptInAProjectNeverImportedWritesNoUidCache()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1680,6 +1713,34 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         File.WriteAllText(Path.Combine(directory, "enemy.tscn"), EnemyScene);
         File.WriteAllText(Path.Combine(directory, "level.tscn"), LevelScene);
         File.WriteAllText(Path.Combine(directory, "elite.tscn"), EliteScene);
+    }
+
+    /// <summary>
+    /// The entries of a uid cache in the engine's layout (a little-endian 32-bit count, then per entry a 64-bit id, a 32-bit
+    /// byte length and the UTF-8 path), asserting the count equals the entries the file holds, with nothing after them.
+    /// </summary>
+    private static List<(long Id, string Path)> ReadUidCache(string cache)
+    {
+        using BinaryReader reader = new(File.OpenRead(cache));
+        uint count = reader.ReadUInt32();
+        List<(long Id, string Path)> entries = [];
+        while (reader.BaseStream.Position < reader.BaseStream.Length)
+        {
+            long id = reader.ReadInt64();
+            int length = reader.ReadInt32();
+            entries.Add((id, System.Text.Encoding.UTF8.GetString(reader.ReadBytes(length))));
+        }
+
+        Assert.Equal(count, (uint)entries.Count);
+        return entries;
+    }
+
+    /// <summary>The uid="…" of a text scene's header line.</summary>
+    private static string HeaderUid(string scene)
+    {
+        string header = File.ReadLines(scene).First();
+        int start = header.IndexOf(" uid=\"", StringComparison.Ordinal) + " uid=\"".Length;
+        return header[start..header.IndexOf('"', start)];
     }
 
     /// <summary>Runs Godot headless on project with arguments, outside the server, and returns its log.</summary>

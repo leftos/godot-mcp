@@ -11,9 +11,9 @@ The first version replaced godot-mcp-runtime at parity and went further: every p
 
 Waves run in order; bug reports sit ahead of the backlog inside each. The singles' order is not a ranking.
 
-### Issue reports
+### Found in review
 
-- [ ] Headless scene tools stop writing `layout_mode = 0` on nodes of a new scene, and `attach_script` leaves no uid the next headless run calls invalid ([#34](https://github.com/leftos/godot-mcp/issues/34), recurs after #33)
+- [ ] `load_sprite` refuses a texture inside a nested project (a subfolder holding its own `project.godot`), which Godot's scan skips as it does a `.gdignore` folder, so an import never reaches it (found fixing #34; the prep's uid check already skips such folders)
 
 ### Singles
 

@@ -11,6 +11,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- Scene tools record the uids they create in Godot's uid cache, so a run started outside the server no longer logs `invalid UID`.
 - `inspect_node`, `set_property`, `wait_for` and `monitor_property` read a named non-exported C# field instead of refusing it as missing.
 
 ## 0.6.0 - 2026-09-28
