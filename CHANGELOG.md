@@ -4,8 +4,13 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Changed
+
+- `crop` on `take_screenshot`, `capture_frames` and the screenshot baselines is in viewport coordinates, so a window launched at 2x crops at 2x.
+
 ### Fixed
 
+- `run_project` gives a `--resolution` larger than the screen exactly, and its result and `attach_project`'s report the window's size.
 - In a recorded run, `wait_for` timeouts and drag, hover and gamepad durations count clip time, and a wait adds `clipMs`.
 - `hover` reads and waits for the tooltip Godot shows when it belongs to an ancestor of the hovered Control, naming it in `tooltip.owner`.
 

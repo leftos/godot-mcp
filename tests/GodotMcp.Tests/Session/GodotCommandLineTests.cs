@@ -247,4 +247,77 @@ public sealed class GodotCommandLineTests
         Assert.Equal("1", shutOut.Environment[GodotCommandLine.ShutOutRealGamepadsVariable]);
         Assert.False(byDefault.Environment.ContainsKey(GodotCommandLine.ShutOutRealGamepadsVariable));
     }
+
+    [Fact]
+    public void PassesTheLastResolutionToTheBridgeAsTheWindowSize()
+    {
+        // A profile's resolution goes ahead of the call's engine arguments, so the call's --resolution is the last.
+        LaunchRequest request = new(
+            Project,
+            null,
+            ["--resolution", "320x240", "--verbose", "--resolution", "7680x4320"],
+            [],
+            false,
+            false,
+            Prepare: true
+        );
+
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", request, new BridgeEndpoint(4321, "t0k3n"), moviePath: null);
+
+        Assert.Equal(new WindowSize(7680, 4320), GodotCommandLine.RequestedWindowSize(request.EngineArgs));
+        Assert.Equal("7680x4320", startInfo.Environment[GodotCommandLine.WindowSizeVariable]);
+    }
+
+    [Fact]
+    public void LeavesTheWindowSizeUnsetWithoutAResolution()
+    {
+        LaunchRequest request = new(Project, null, ["--verbose"], ["--resolution", "640x360"], false, false, Prepare: true);
+
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", request, new BridgeEndpoint(4321, "t0k3n"), moviePath: null);
+
+        Assert.Null(GodotCommandLine.RequestedWindowSize(request.EngineArgs));
+        Assert.False(startInfo.Environment.ContainsKey(GodotCommandLine.WindowSizeVariable));
+    }
+
+    [Theory]
+    [InlineData("16385x720", "outside 1 to 16384")]
+    [InlineData("720x16385", "outside 1 to 16384")]
+    [InlineData("0x720", "outside 1 to 16384")]
+    [InlineData("99999999999x720", "outside 1 to 16384")]
+    [InlineData("1280X720", "must be WIDTHxHEIGHT")]
+    [InlineData("1280x", "must be WIDTHxHEIGHT")]
+    public void RefusesAResolutionItCannotGiveTheWindow(string value, string reason)
+    {
+        // Every --resolution is checked, the earlier ones too: Godot aborts on any it cannot read.
+        SessionException last = Assert.Throws<SessionException>(() => GodotCommandLine.RequestedWindowSize(["--resolution", value]));
+        SessionException earlier = Assert.Throws<SessionException>(() =>
+            GodotCommandLine.RequestedWindowSize(["--resolution", value, "--resolution", "640x360"])
+        );
+
+        Assert.Contains(reason, last.Message, StringComparison.Ordinal);
+        Assert.Equal(last.Message, earlier.Message);
+    }
+
+    [Fact]
+    public void RefusesAResolutionWithNoValueAndAcceptsTheLargestSide()
+    {
+        SessionException refused = Assert.Throws<SessionException>(() => GodotCommandLine.RequestedWindowSize(["--resolution"]));
+
+        Assert.Contains("has no WIDTHxHEIGHT", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(new WindowSize(16384, 1), GodotCommandLine.RequestedWindowSize(["--resolution", "16384x1"]));
+    }
+
+    [Fact]
+    public void DescribesAWindowThatIsNotTheSizeAskedFor()
+    {
+        string? warning = GodotCommandLine.DescribeWindowMismatch(new WindowSize(3840, 2160), new WindowSize(3840, 1421));
+
+        Assert.Equal(
+            "--resolution asked for a 3840x2160 window and the game's window is 3840x1421: the system did not give it the size asked for, "
+                + "so screenshots and input work in the window it has.",
+            warning
+        );
+        Assert.Null(GodotCommandLine.DescribeWindowMismatch(new WindowSize(3840, 2160), new WindowSize(3840, 2160)));
+        Assert.Null(GodotCommandLine.DescribeWindowMismatch(null, new WindowSize(3840, 1421)));
+    }
 }

@@ -134,6 +134,7 @@ func _ready() -> void:
 		return
 	_token = _endpoint["token"]
 	var port: int = _endpoint["port"]
+	_apply_window_size()
 	if _endpoint["quiet"]:
 		_park_window()
 		if Engine.max_fps == 0:
@@ -241,12 +242,14 @@ func _process(_delta: float) -> void:
 	if not _hello_sent:
 		_hello_sent = true
 		_stream.set_no_delay(true)
+		var window_size: Vector2i = DisplayServer.window_get_size()
 		_send(
 			{
 				"type": "hello",
 				"token": _token,
 				"projectPath": ProjectSettings.globalize_path("res://"),
 				"pid": OS.get_process_id(),
+				"window": {"width": window_size.x, "height": window_size.y},
 			}
 		)
 	_flush_errors()
@@ -306,6 +309,21 @@ func _is_real_pointer_event(event: InputEvent) -> bool:
 	if event is InputEventScreenTouch or event is InputEventScreenDrag:
 		return event.device == InputEvent.DEVICE_ID_EMULATION and not _dispatching
 	return false
+
+
+## Gives the window run_project's --resolution (GODOT_MCP_WINDOW_SIZE, "WIDTHxHEIGHT") exactly.
+## Windows holds a window created larger than the desktop to the desktop's size
+## (platform/windows/display_server_windows.cpp _create_window L7175-7257 in 4.7.2), and a resize
+## after start is not held (window_set_size's MoveWindow, L2492-2520). The root Window's size is
+## set rather than the display server's, so the root's viewport follows in the same call.
+func _apply_window_size() -> void:
+	var wanted: String = OS.get_environment("GODOT_MCP_WINDOW_SIZE")
+	if wanted.get_slice_count("x") != 2:
+		return
+	var size := Vector2i(wanted.get_slice("x", 0).to_int(), wanted.get_slice("x", 1).to_int())
+	if size.x < 1 or size.y < 1 or DisplayServer.window_get_size() == size:
+		return
+	get_tree().root.size = size
 
 
 ## A quiet session's window: its override.cfg created it unfocused, and asked for an off-screen
@@ -619,19 +637,31 @@ func _native_window_images() -> Array[Dictionary]:
 	return found
 
 
-## A window's screen rect in frame pixels (the render target's pixels: the window less its
-## letterbox bars under canvas_items, the base size under viewport): its offset from the root
-## window, through the viewport's final transform with the inverse of its screen transform on
-## the right, which divides the window transform back out.
+## A window's screen rect in frame pixels: its offset from the root window, through the
+## viewport-to-frame transform with the inverse of the viewport's screen transform on the right,
+## which divides the window transform back out.
 func _window_rect_in_frame(window: Window) -> Rect2i:
-	var viewport := get_viewport()
 	var to_frame: Transform2D = (
-		viewport.get_stretch_transform() * viewport.get_global_canvas_transform()
+		_viewport_to_frame() * get_viewport().get_screen_transform().affine_inverse()
 	)
-	to_frame = to_frame * viewport.get_screen_transform().affine_inverse()
 	var origin := Vector2(window.position - get_tree().root.position)
-	var top_left: Vector2 = to_frame * origin
-	var bottom_right: Vector2 = to_frame * (origin + Vector2(window.size))
+	return _rect_through(to_frame, Rect2(origin, Vector2(window.size)))
+
+
+## The transform from viewport coordinates (the ones get_ui_elements, hover and the input tools
+## use) to frame pixels (the render target's pixels: the window less its letterbox bars under
+## canvas_items, the base size under viewport): the root's stretch transform and global canvas
+## transform, without the window transform that places the frame between the bars
+## (scene/main/window.cpp L1400-1426, L3233-3236 in 4.7.2).
+func _viewport_to_frame() -> Transform2D:
+	var viewport := get_viewport()
+	return viewport.get_stretch_transform() * viewport.get_global_canvas_transform()
+
+
+## rect through transform, its corners rounded to whole pixels.
+static func _rect_through(transform: Transform2D, rect: Rect2) -> Rect2i:
+	var top_left: Vector2 = transform * rect.position
+	var bottom_right: Vector2 = transform * rect.end
 	return Rect2i(Vector2i(top_left.round()), Vector2i((bottom_right - top_left).round()))
 
 
@@ -674,7 +704,10 @@ func _save_screenshot(image: Image, params: Dictionary) -> Variant:
 	return result
 
 
-## The part of image inside crop {x, y, width, height}, or a String when none of it is.
+## The part of image, a frame of the root viewport, inside crop {x, y, width, height}, or a String
+## when none of it is. The crop is in viewport coordinates and is mapped to the frame's pixels
+## through _viewport_to_frame, never less than a pixel a side, so a stretched window's crop keeps
+## the same content at the frame's scale.
 func _crop(image: Image, crop: Dictionary) -> Variant:
 	var wanted := Rect2i(
 		int(crop.get("x", 0)),
@@ -682,9 +715,12 @@ func _crop(image: Image, crop: Dictionary) -> Variant:
 		int(crop.get("width", 0)),
 		int(crop.get("height", 0))
 	)
-	var inside: Rect2i = wanted.intersection(Rect2i(Vector2i.ZERO, image.get_size()))
+	var mapped: Rect2i = _rect_through(_viewport_to_frame(), Rect2(wanted))
+	mapped.size = mapped.size.maxi(1)
+	var inside: Rect2i = mapped.intersection(Rect2i(Vector2i.ZERO, image.get_size()))
 	if not inside.has_area():
-		return "the crop %s lies outside the %s screenshot" % [wanted, image.get_size()]
+		var viewport_size := Vector2i(get_viewport().get_visible_rect().size)
+		return "the crop %s lies outside the %s viewport" % [wanted, viewport_size]
 	return image.get_region(inside)
 
 

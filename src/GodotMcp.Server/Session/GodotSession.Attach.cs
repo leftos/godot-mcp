@@ -56,7 +56,7 @@ internal sealed partial class GodotSession
         }
 
         Log.Attached(_logger, ProjectDir);
-        return new AttachResult(Name, ProjectDir, Quiet);
+        return new AttachResult(Name, ProjectDir, Quiet) { Window = _attached?.Window };
     }
 
     /// <summary>Closes the attached game's connection, drops the session and releases the override file; the game keeps running.</summary>

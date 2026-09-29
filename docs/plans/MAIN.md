@@ -15,11 +15,13 @@ Waves run in order; bug reports sit ahead of the backlog inside each. The single
 
 Shared: `RuntimeTools.Capture.cs`, `RuntimeTools.Input.cs`, `RuntimeTools.Time.cs`, `RuntimeTools.cs` and their bridge modules (`godot_mcp_capture.gd`, `godot_mcp_input.gd`, `godot_mcp_time.gd`). Gate: `pwsh run.ps1 test` and the touched `itest` groups; the evidence is a driven run against a fixture.
 
-- [ ] #39 `run_project` with `--resolution` larger than the screen: the window is clamped without a warning. Decided (user, 2026-09-29): the server passes the last `--resolution` to the bridge, which sets that exact size after start; the bridge's hello carries the window's size, the launch result reports `window {width, height}` and warns when it still differs
-- [ ] #37 `take_screenshot` with `crop`: no way to take the crop above 1x. Decided (user, 2026-09-29): launch at 2x (#39) and crop in viewport coordinates, mapped by the bridge through the stretch transform, so `hover`'s rect crops as-is; `crop` means viewport coordinates everywhere (`take_screenshot`, `capture_frames`, the baselines), replacing screenshot pixels; builds on #39
 - [ ] #41 `wait_for` used as a timed pause (`expression: "false"`) in a plain session stretches with load (2000 ms ran 10016 ms), so a shot meant to land mid-effect lands after it; wanted: a pause in game time or frames that load does not stretch. Decided (user, 2026-09-29): two new `wait_for` conditions, `{gameMs: N}` (met once N ms of game time, summed delta with `time_scale` applied, have passed) and `{frames: N}` (met after N process frames), each taking `options.screenshot` as any wait does. Its other half, `capture_frames` missing from the implementer agent, is fixed: the user-level agents' tool lists now carry every tool
 
 ### Singles
+
+- [ ] `restart_project`'s result (`RestartResult`) carries no `window` or size `warning`, though the relaunch is resized as `run_project`'s is
+- [ ] Integration tests that launch their own game with a 45 s timeout (`ProfileTests.APresetSetsTheSessionAndTheWindowSize`, the own-launch cases in `RuntimeReadTests`) against the DEVELOPMENT.md footgun's 180 s
+- [ ] `TempDirectory.Dispose` (`tests/GodotMcp.IntegrationTests/TempDirectory.cs` L32) throws `IOException` ("being used by another process") under machine load: seen twice on `TakeScreenshotPlacesANonEmbeddedPopupWhereTheWindowShowsIt(canvas_items, 1280, 720)`; it does not retry
 
 - [ ] `stress_input` in a recording: its reply timeout (`RuntimeTools.Stress.cs` L177, `InputTimeout` + events + `GapMs` of real time) skips `SendInputAsync`'s recorded allowance, so a gapped run in a slow recorded game can be cut short
 - [ ] `simulate_input`'s `wait {ms}` events (and `stress_input`'s gaps and replays) run on a `SceneTreeTimer` (`godot_mcp_input.gd` ~L629, `ignore_time_scale`): measure whether it counts clip time under Movie Maker (4.7.2's SceneTree.xml says real elapsed time) before the docs claim either

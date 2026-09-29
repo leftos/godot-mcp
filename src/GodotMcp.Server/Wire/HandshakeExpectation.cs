@@ -7,7 +7,8 @@ namespace GodotMcp.Server.Wire;
 
 /// <summary>
 /// What the bridge's first frame must carry for the run the server launched: <c>{type: "hello", token, projectPath}</c>.
-/// The hello's <c>pid</c>, the game's own process id, is read by <see cref="ReadProcessId"/> and checked by nothing.
+/// The hello's <c>pid</c>, the game's own process id, is read by <see cref="ReadProcessId"/>, and its <c>window</c>, the game
+/// window's size, by <see cref="ReadWindow"/>; neither is checked.
 /// </summary>
 internal sealed record HandshakeExpectation(string Token, string ProjectPath)
 {
@@ -41,9 +42,28 @@ internal sealed record HandshakeExpectation(string Token, string ProjectPath)
     /// The game's own process id, which the hello carries as <c>pid</c>; null when it carries none (a bridge older than the
     /// field) or one that is not a positive whole number. GDScript's JSON may write it as a float.
     /// </summary>
-    internal static int? ReadProcessId(JsonObject hello)
+    internal static int? ReadProcessId(JsonObject hello) => ReadPositiveInt(hello["pid"]);
+
+    /// <summary>
+    /// The game window's size, which the hello carries as <c>window: {width, height}</c>; null when it carries none (a bridge
+    /// older than the field) or either side is not a positive whole number.
+    /// </summary>
+    internal static WindowSize? ReadWindow(JsonObject hello)
     {
-        if (hello["pid"] is not JsonValue value)
+        if (hello["window"] is not JsonObject window)
+        {
+            return null;
+        }
+
+        return ReadPositiveInt(window["width"]) is { } width && ReadPositiveInt(window["height"]) is { } height
+            ? new WindowSize(width, height)
+            : null;
+    }
+
+    /// <summary>A positive whole number, which GDScript's JSON may write as a float; null for anything else.</summary>
+    private static int? ReadPositiveInt(JsonNode? node)
+    {
+        if (node is not JsonValue value)
         {
             return null;
         }

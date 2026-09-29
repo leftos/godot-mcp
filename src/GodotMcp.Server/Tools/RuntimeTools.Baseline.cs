@@ -27,8 +27,7 @@ internal sealed partial class RuntimeTools
     public async Task<string> SaveScreenshotBaselineAsync(
         [Description("The baseline's name: 1-64 letters, digits, '.', '_' or '-', starting with a letter or digit.")] string name,
         [Description(
-            "A rectangle to keep, in the screenshot's pixels from its top-left corner, as take_screenshot takes it; "
-                + "compare_screenshot then compares the same rectangle."
+            "A rectangle to keep, in viewport coordinates, as take_screenshot takes it; " + "compare_screenshot then compares the same rectangle."
         )]
             ScreenshotCrop? crop = null,
         [Description("{overwrite}: replace a baseline of the same name.")] BaselineOptions? options = null,

@@ -12,7 +12,7 @@ internal sealed record CaptureFramesOptions(
             + "every, 2 x every and so on, up to and including for."
     )]
         double? For = null,
-    [property: Description("A rectangle of each frame to keep, as take_screenshot takes it.")] ScreenshotCrop? Crop = null,
+    [property: Description("A rectangle of each frame to keep, in viewport coordinates, as take_screenshot takes it.")] ScreenshotCrop? Crop = null,
     [property: Description(
         "How long the call may run, in milliseconds, 1 to 600000, load-adjusted; by default the last point's seconds x 1000 + "
             + "10000 + 100 per point. When it passes, the call answers the frames taken so far with stopped and missed."

@@ -57,6 +57,9 @@ internal sealed class BridgeConnection : IAsyncDisposable
     /// <summary>The game's own process id, as its hello reported it; null when the bridge predates the field.</summary>
     public int? GameProcessId { get; }
 
+    /// <summary>The game window's size, as its hello reported it; null when the hello carried none.</summary>
+    public WindowSize? Window { get; init; }
+
     /// <summary>
     /// Sends one command and waits for its reply's <c>result</c> for <paramref name="timeout"/> of load-adjusted time, bounded by
     /// <see cref="LoadClock.BackstopFactor"/> times it in wall time. With <paramref name="release"/>, the request carries

@@ -13,6 +13,20 @@ internal sealed record LaunchResult(string Session, string ProjectPath, int Proc
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? Recording { get; init; }
+
+    /// <summary>The game window's size in pixels, as the bridge's hello reported it; left out when the hello carried none.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public WindowSize? Window { get; init; }
+
+    /// <summary>Set when the window's size differs from the one --resolution asked for.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Warning { get; init; }
+}
+
+/// <summary>A game window's size in pixels: the client area, without the title bar and borders.</summary>
+internal sealed record WindowSize(int Width, int Height)
+{
+    public override string ToString() => $"{Width}x{Height}";
 }
 
 /// <summary>
@@ -157,6 +171,10 @@ internal sealed record AttachResult(string Session, string ProjectPath, bool Qui
 {
     /// <summary>The server's version, to quote when filing an issue.</summary>
     public string Version { get; init; } = ServerVersion.Value;
+
+    /// <summary>The game window's size in pixels, as the bridge's hello reported it; left out when the hello carried none.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public WindowSize? Window { get; init; }
 }
 
 /// <summary>How detach_project left the project: the game still runs; whether the server's override.cfg was deleted.</summary>

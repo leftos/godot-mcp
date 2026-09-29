@@ -18,6 +18,9 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
     private const int TestTimeoutMs = 45_000;
     private const int ScriptTimeoutMs = 10_000;
 
+    // A test that launches its own game: the launch handshake is load-adjusted and may take 75 s of wall time.
+    private const int LaunchTestTimeoutMs = 180_000;
+
     // The machine's real pads take devices 0-3 (see DEVELOPMENT's footguns), so the injected pad keeps clear of them.
     private const int PadDevice = 7;
 
@@ -211,6 +214,30 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         ];
 
         Assert.Equal((120.0, 80.0), PngSize(Image(blocks)));
+    }
+
+    [Theory(Timeout = LaunchTestTimeoutMs)]
+    // canvas_items at twice the fixture's 640 x 360 base: a viewport unit is two frame pixels.
+    [InlineData(1280, 720)]
+    // 1280 x 900 letterboxes the same 2x content between 90 px bars, which the frame leaves out.
+    [InlineData(1280, 900)]
+    public async Task ACropAt2xIsTwiceTheCropsSize(int width, int height)
+    {
+        // The crop is in viewport coordinates, so it keeps the red square at the frame's scale.
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using ProbeProject probe = new();
+        await using SessionHarness harness = new();
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
+        string[] engineArgs = ["--resolution", $"{width}x{height}"];
+        await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, engineArgs, [], true, false, Prepare: true), null, cancellation);
+
+        List<ContentBlock> blocks = [.. await tools.TakeScreenshotAsync("full", RedSquare, 960, cancellationToken: cancellation)];
+        string path = JsonNode.Parse(Text(blocks))!["path"]!.GetValue<string>();
+        JsonNode corners = (await RunForResultAsync(tools, CornerColoursScript(path), cancellation))["value"]!;
+        await harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.Equal((240.0, 160.0), PngSize(Image(blocks)));
+        Assert.All(corners.AsArray(), corner => Assert.Equal([255, 0, 0], corner!.AsArray().Select(channel => channel!.GetValue<int>())));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -481,6 +508,16 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         };
 
     // The bounds of the pure magenta pixels in the PNG at path: {found, width, height}.
+    // The colour of each corner pixel of the PNG at path, as [r8, g8, b8]: top-left, top-right, bottom-left, bottom-right.
+    private static string CornerColoursScript(string path) =>
+        $"var image := Image.load_from_file(\"{path.Replace('\\', '/')}\")\n\t"
+        + "var last := Vector2i(image.get_width() - 1, image.get_height() - 1)\n\t"
+        + "var found := []\n\t"
+        + "for corner: Vector2i in [Vector2i.ZERO, Vector2i(last.x, 0), Vector2i(0, last.y), last]:\n\t\t"
+        + "var c := image.get_pixel(corner.x, corner.y)\n\t\t"
+        + "found.append([c.r8, c.g8, c.b8])\n\t"
+        + "return found";
+
     private static string MagentaBoundsScript(string path) =>
         $"var image := Image.load_from_file(\"{path.Replace('\\', '/')}\")\n\t"
         + "var low := Vector2i(image.get_width(), image.get_height())\n\t"

@@ -48,8 +48,9 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     public async Task<IEnumerable<ContentBlock>> TakeScreenshotAsync(
         [Description(ResponseModeDescription)] string responseMode = "preview",
         [Description(
-            "A rectangle to keep, in the screenshot's pixels from its top-left corner (the viewport's pixels when the project does not "
-                + "stretch); any part outside the screenshot is dropped."
+            "A rectangle to keep, in viewport coordinates (the ones get_ui_elements and hover report and the input tools take), "
+                + "mapped to the screenshot's pixels: in a window stretched to twice the project's size the PNG is twice the "
+                + "rectangle's size. Any part outside the viewport is dropped."
         )]
             ScreenshotCrop? crop = null,
         [Description(PreviewMaxWidthDescription)] int previewMaxWidth = 480,

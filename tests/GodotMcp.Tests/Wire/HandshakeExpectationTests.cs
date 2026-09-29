@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using GodotMcp.Server.Session;
 using GodotMcp.Server.Wire;
 
 namespace GodotMcp.Tests.Wire;
@@ -91,6 +92,21 @@ public sealed class HandshakeExpectationTests
         Assert.Null(HandshakeExpectation.ReadProcessId(fraction));
         Assert.Null(HandshakeExpectation.ReadProcessId(zero));
         Assert.Null(_expected.FindMismatch(without));
+    }
+
+    [Fact]
+    public void ReadsTheWindowSizeFromTheHelloOrNone()
+    {
+        JsonObject hello = Hello(Token, BridgeProjectPath);
+        JsonObject without = Hello(Token, BridgeProjectPath);
+        JsonObject zero = Hello(Token, BridgeProjectPath);
+        hello["window"] = new JsonObject { ["width"] = 7680.0, ["height"] = 4320 };
+        zero["window"] = new JsonObject { ["width"] = 0, ["height"] = 4320 };
+
+        Assert.Equal(new WindowSize(7680, 4320), HandshakeExpectation.ReadWindow(hello));
+        Assert.Null(HandshakeExpectation.ReadWindow(without));
+        Assert.Null(HandshakeExpectation.ReadWindow(zero));
+        Assert.Null(_expected.FindMismatch(hello));
     }
 
     private static JsonObject Hello(string token, string projectPath) =>

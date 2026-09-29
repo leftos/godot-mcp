@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.Versioning;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace GodotMcp.Server.Session;
 
@@ -39,13 +40,29 @@ internal sealed record LaunchRequest(
 internal sealed record BridgeEndpoint(int Port, string Token);
 
 /// <summary>Builds the Godot process for a run: <c>--path &lt;p&gt; [scene] &lt;engineArgs&gt; [-- &lt;userArgs&gt;]</c>.</summary>
-internal static class GodotCommandLine
+internal static partial class GodotCommandLine
 {
     public const string PortVariable = "GODOT_MCP_PORT";
     public const string TokenVariable = "GODOT_MCP_TOKEN";
     public const string QuietVariable = "GODOT_MCP_QUIET";
     public const string ShutOutRealGamepadsVariable = "GODOT_MCP_SHUT_OUT_REAL_GAMEPADS";
     public const string PreviewVariable = "GODOT_MCP_PREVIEW";
+
+    /// <summary>
+    /// The window size the engine arguments' --resolution asks for, as <c>WIDTHxHEIGHT</c>. Windows holds a window created larger
+    /// than the desktop to the desktop's size (4.7.2 <c>display_server_windows.cpp</c> <c>_create_window</c> L7175-7257), and a
+    /// resize after start is not held (<c>window_set_size</c>'s <c>MoveWindow</c>, L2492-2520), so the bridge resizes the window
+    /// to it once the game has started.
+    /// </summary>
+    public const string WindowSizeVariable = "GODOT_MCP_WINDOW_SIZE";
+
+    /// <summary>
+    /// The largest --resolution side: 16384 pixels, the largest 2D texture D3D12 and common Vulkan GPUs allow, whose square is
+    /// Godot's <c>Image::MAX_PIXELS</c> (4.7.2 <c>core/io/image.h</c> L71), the most a screenshot of the window can hold.
+    /// </summary>
+    public const int MaxWindowSide = 16384;
+
+    private const string ResolutionFlag = "--resolution";
 
     /// <summary>Set for a run started on the server's hidden desktop, where the bridge leaves a quiet window at (0, 0).</summary>
     public const string HiddenDesktopVariable = "GODOT_MCP_HIDDEN_DESKTOP";
@@ -181,6 +198,69 @@ internal static class GodotCommandLine
     }
 
     /// <summary>
+    /// The window size the engine arguments ask for: the last --resolution's, since Godot reads each one and keeps the last
+    /// (4.7.2 main.cpp L1438-1461); null when there is none. Every --resolution is checked, since Godot aborts on any it cannot read.
+    /// </summary>
+    /// <exception cref="SessionException">
+    /// A --resolution has no value, its value is not WIDTHxHEIGHT, or a side is outside 1 to <see cref="MaxWindowSide"/>.
+    /// </exception>
+    public static WindowSize? RequestedWindowSize(IReadOnlyList<string> engineArgs)
+    {
+        WindowSize? size = null;
+        for (int index = 0; index < engineArgs.Count; index++)
+        {
+            if (engineArgs[index] == ResolutionFlag)
+            {
+                size = ParseResolution(engineArgs.ElementAtOrDefault(index + 1));
+            }
+        }
+
+        return size;
+    }
+
+    /// <summary>What a launch result says when the game's window is not the size --resolution asked for; null when it is.</summary>
+    public static string? DescribeWindowMismatch(WindowSize? asked, WindowSize? window) =>
+        asked is null || window is null || asked == window
+            ? null
+            : $"--resolution asked for a {asked} window and the game's window is {window}: the system did not give it the size asked for, "
+                + "so screenshots and input work in the window it has.";
+
+    private static WindowSize ParseResolution(string? value)
+    {
+        if (value is null)
+        {
+            throw new SessionException("--resolution is the last engine argument and has no WIDTHxHEIGHT after it, e.g. 1280x720.");
+        }
+
+        Match match = ResolutionValue().Match(value);
+        if (!match.Success)
+        {
+            throw new SessionException(
+                $"--resolution is \"{value}\"; it must be WIDTHxHEIGHT in pixels, with a lowercase x and no spaces, e.g. 1280x720."
+            );
+        }
+
+        int width = ReadSide(match.Groups[1].Value);
+        int height = ReadSide(match.Groups[2].Value);
+        if (width is < 1 or > MaxWindowSide || height is < 1 or > MaxWindowSide)
+        {
+            throw new SessionException(
+                $"--resolution {value} has a side outside 1 to {MaxWindowSide} pixels, the largest window Godot can draw and screenshot; "
+                    + "pick a size within it."
+            );
+        }
+
+        return new WindowSize(width, height);
+    }
+
+    /// <summary>A side's digits as a number; one too large for an int reads as <see cref="int.MaxValue"/>, which is out of range.</summary>
+    private static int ReadSide(string digits) =>
+        int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out int side) ? side : int.MaxValue;
+
+    [GeneratedRegex(@"\A([0-9]+)x([0-9]+)\z")]
+    private static partial Regex ResolutionValue();
+
+    /// <summary>
     /// Movie Maker from launch: --write-movie picks the writer by the file's extension and forces --fixed-fps 60 unless one
     /// is given (4.7.2 main.cpp L1953-1971), which is passed anyway so the rate is explicit; --quit-after caps the frames.
     /// </summary>
@@ -231,6 +311,15 @@ internal static class GodotCommandLine
         else
         {
             startInfo.Environment.Remove(MovieFpsVariable);
+        }
+
+        if (RequestedWindowSize(request.EngineArgs) is { } size)
+        {
+            startInfo.Environment[WindowSizeVariable] = size.ToString();
+        }
+        else
+        {
+            startInfo.Environment.Remove(WindowSizeVariable);
         }
 
         return startInfo;

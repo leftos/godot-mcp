@@ -54,7 +54,9 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     [Description(
         "Runs a Godot project with the godot-mcp bridge injected through a temporary override.cfg (never project.godot), "
             + "and returns once the bridge has connected; stop_project ends the session. A godot-mcp.json beside project.godot "
-            + "supplies launch defaults and presets (see options.preset)."
+            + "supplies launch defaults and presets (see options.preset). The result's window {width, height} is the game window's "
+            + "size in pixels; a --resolution is given exactly, even one larger than the screen, and a window that still differs "
+            + "from it adds a warning."
             + SessionsNote
             + " "
             + RealPadsNote
@@ -63,7 +65,11 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         [Description("The folder that holds the project's project.godot.")] string projectPath,
         [Description("A scene to run instead of the main scene, e.g. res://levels/test.tscn.")] string? scene = null,
         [Description("Arguments for the game, passed after --; the game reads them with OS.get_cmdline_user_args().")] string[]? userArgs = null,
-        [Description("Arguments for the engine, placed before --, e.g. [\"--resolution\", \"1280x720\"].")] string[]? engineArgs = null,
+        [Description(
+            "Arguments for the engine, placed before --, e.g. [\"--resolution\", \"1280x720\"]. The last --resolution (after "
+                + "godot-mcp.json's resolution) sets the window's exact size, 1 to 16384 pixels a side."
+        )]
+            string[]? engineArgs = null,
         [Description(
             "{quiet, shutOutRealGamepads, session, prepare, preset, record, dropIdle}; when left out, quiet is true unless godot-mcp.json "
                 + "sets it, shutOutRealGamepads is false, prepare is auto (a stale C# assembly is built and missing imports are run "
@@ -91,7 +97,8 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "that starts after the files are written attaches, so start the launch in the background, delayed a second or "
             + "two (e.g. Start-Sleep 2; godot --path <project>), just before this call, or launch within waitSeconds after it. "
             + "The runtime tools then work as with run_project; get_debug_output does not (the game's own console has its "
-            + "output), and detach_project, not stop_project, ends the session, leaving the game running."
+            + "output), and detach_project, not stop_project, ends the session, leaving the game running. The result's window "
+            + "{width, height} is the game window's size in pixels."
             + SessionsNote
             + " "
             + RealPadsNote

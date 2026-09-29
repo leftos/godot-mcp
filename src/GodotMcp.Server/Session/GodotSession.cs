@@ -101,6 +101,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         try
         {
             GodotCommandLine.RefuseUnrecordable(request);
+            _ = GodotCommandLine.RequestedWindowSize(request.EngineArgs);
             await _gate.WaitAsync(cancellationToken);
             try
             {
@@ -462,6 +463,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         LaunchResult started = new(Name, run.ProjectDir, processId, request.Quiet, prep, godot)
         {
             Recording = _recording is { } recording ? new RecordingResult { Path = recording.Path } : null,
+            Window = connection.Window,
+            Warning = GodotCommandLine.DescribeWindowMismatch(GodotCommandLine.RequestedWindowSize(request.EngineArgs), connection.Window),
         };
         return (started, previousEnd);
     }
