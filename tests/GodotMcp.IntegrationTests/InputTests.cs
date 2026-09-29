@@ -83,6 +83,38 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         + "await scene_tree.process_frame\n\t"
         + "return Vector2(popup.position) + button.get_global_rect().get_center()";
 
+    // Opens a PopupMenu holding one item, "Alpha" with the tooltip "Alpha tip", and returns item 0's centre in viewport
+    // coordinates: with one item the menu sizes itself to it, the panel's margins around the items control, whose first
+    // band is one v_separation plus one item height tall, so the window's centre lies inside that band.
+    private const string PopupMenuScript =
+        "var menu := PopupMenu.new()\n\t"
+        + "menu.add_item(\"Alpha\")\n\t"
+        + "menu.set_item_tooltip(0, \"Alpha tip\")\n\t"
+        + "scene_tree.root.add_child(menu)\n\t"
+        + "menu.popup(Rect2i(200, 100, 160, 0))\n\t"
+        + "for frame in 3:\n\t\t"
+        + "await scene_tree.process_frame\n\t"
+        + "return Vector2(menu.position) + Vector2(menu.size) / 2.0";
+
+    // Adds a drawn MenuBar to the root, holding one PopupMenu whose node name is its title, with that title's tooltip
+    // set, and returns the first title's centre in viewport coordinates: titles sit at the bar's top-left, left to right,
+    // so the first spans the bar's minimum-size rect, while the bar itself is stretched across the window.
+    // prefer_global_menu is off, or on a platform with a global menu the bar would hand its titles to the OS and draw
+    // nothing to hover.
+    private const string MenuBarScript =
+        "var bar := MenuBar.new()\n\t"
+        + "bar.name = \"TooltipMenuBar\"\n\t"
+        + "bar.prefer_global_menu = false\n\t"
+        + "scene_tree.root.add_child(bar)\n\t"
+        + "var menu := PopupMenu.new()\n\t"
+        + "menu.name = \"File\"\n\t"
+        + "bar.add_child(menu)\n\t"
+        + "await scene_tree.process_frame\n\t"
+        + "bar.set_menu_tooltip(0, \"File tip\")\n\t"
+        + "for frame in 3:\n\t\t"
+        + "await scene_tree.process_frame\n\t"
+        + "return bar.get_global_transform_with_canvas() * (bar.get_minimum_size() / 2.0)";
+
     // Whether probe_jump is held, and how many presses of it PadProbe's _input has counted.
     private const string ReadJump = "return [Input.is_action_pressed(\"probe_jump\"), scene_tree.root.get_node(\"Main/PadProbe\").jump_count]";
 
@@ -400,6 +432,62 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         Assert.Equal("Reshuffle", tooltip["text"]!.GetValue<string>());
         AssertHit(tooltip, "owner", "Chip", "PanelContainer");
         Assert.True(shownAfter, "the TooltipPanel popup is not visible after the hover");
+    }
+
+    // A run of its own, as ClickReportsAControlInsideAPopup: the shared run is shut out of the real pads, and shut-out
+    // mode's re-sent application focus-out closes a Popup as it opens (popup.cpp L114-120 in 4.7.2), a PopupMenu included.
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task HoverReportsAPopupMenuItemsTooltip()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using ProbeProject probe = new();
+        await using SessionHarness harness = new();
+        await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
+        JsonNode centre = await RunAsync(tools, PopupMenuScript);
+
+        JsonNode hovered = JsonNode.Parse(
+            await tools.HoverAsync(
+                new InputTarget(null, centre["x"]!.GetValue<double>(), centre["y"]!.GetValue<double>()),
+                cancellationToken: cancellation
+            )
+        )!;
+
+        Assert.True(hovered["hoveredOn"] is JsonObject, hovered.ToJsonString());
+        Assert.Equal("PopupMenuItems", hovered["hoveredOn"]!["class"]!.GetValue<string>());
+        Assert.False(hovered.AsObject().ContainsKey("warning"), hovered.ToJsonString());
+        Assert.True(hovered["tooltip"] is JsonObject, hovered.ToJsonString());
+        Assert.Equal("Alpha tip", hovered["tooltip"]!["text"]!.GetValue<string>());
+        Assert.True(hovered["tooltip"]!["owner"] is JsonObject, hovered.ToJsonString());
+        Assert.Equal("PopupMenuItems", hovered["tooltip"]!["owner"]!["class"]!.GetValue<string>());
+        await StopAndCheckCleanAsync(harness, probe);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverReportsAMenuBarMenusTooltip()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonNode point = await RunAsync(MenuBarScript);
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(
+                new InputTarget(null, point["x"]!.GetValue<double>(), point["y"]!.GetValue<double>()),
+                cancellationToken: cancellation
+            )
+        )!;
+
+        try
+        {
+            AssertHit(hovered, "hoveredOn", "TooltipMenuBar", "MenuBar");
+            Assert.True(hovered["tooltip"] is JsonObject, hovered.ToJsonString());
+            Assert.Equal("File tip", hovered["tooltip"]!["text"]!.GetValue<string>());
+            Assert.True(hovered["tooltip"]!["owner"] is JsonObject, hovered.ToJsonString());
+            Assert.Equal("MenuBar", hovered["tooltip"]!["owner"]!["class"]!.GetValue<string>());
+        }
+        finally
+        {
+            await RunAsync("scene_tree.root.get_node(\"TooltipMenuBar\").queue_free()\n\treturn true");
+        }
     }
 
     [Fact(Timeout = TestTimeoutMs)]

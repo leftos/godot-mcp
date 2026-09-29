@@ -464,13 +464,17 @@ func _play_hover(params: Dictionary) -> String:
 ## The Control whose tooltip Godot shows at a viewport point over the hovered control, or null
 ## when none has one, picked as the viewport's _gui_get_tooltip does (scene/main/viewport.cpp
 ## L1566-1596 in 4.7.2): from the hovered Control up through its parent Controls, the first
-## whose get_tooltip answers text at the point (its tooltip_text, or a script's _get_tooltip);
-## the climb ends after a Control whose mouse filter, mouse_behavior_recursive applied, is Stop,
-## or which is top-level.
+## whose get_tooltip answers text at the point (its tooltip_text, or a script's _get_tooltip).
+## That virtual is how a MenuBar answers a title's tooltip (scene/gui/menu_bar.cpp L989-995)
+## and a PopupMenu an item's, its items drawn by its internal PopupMenuItems Control
+## (scene/gui/popup_menu.cpp L3845-3851). The point is mapped into each Control through its own
+## transform, an embedded window's included, as _point_of maps a target's centre. The climb ends
+## after a Control whose mouse filter, mouse_behavior_recursive applied, is Stop, or which is
+## top-level.
 func _tooltip_owner(control: Control, point: Vector2) -> Control:
 	var current: Control = control
 	while current != null:
-		var local: Vector2 = current.get_global_transform_with_canvas().affine_inverse() * point
+		var local: Vector2 = _viewport_transform(current).affine_inverse() * point
 		if not current.get_tooltip(local).is_empty():
 			return current
 		if (

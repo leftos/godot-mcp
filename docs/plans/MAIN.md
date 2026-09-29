@@ -21,7 +21,6 @@ Shared: `RuntimeTools.Capture.cs`, `RuntimeTools.Input.cs`, `RuntimeTools.Time.c
 
 The user's cut list (2026-09-29): 0.8.0 is cut once #41's `options.call`, the `stress_input` recorded allowance and the two lines below have landed.
 
-- [ ] `hover` over an embedded `PopupMenu` item reads its tooltip as null: `_tooltip_owner` (`bridge/godot_mcp_input.gd` ~L473) maps the point through `get_global_transform_with_canvas()`, which lacks the popup window's offset, where `_viewport_transform` has it. 4.7.2 `_gui_get_tooltip` (`viewport.cpp` L1566-1596) has no menu branch: `MenuBar::get_tooltip` (`menu_bar.cpp` L989-995) and `PopupMenuItems::get_tooltip` (`popup_menu.cpp` L3845-3851) answer through the `get_tooltip` virtual the bridge already calls. `MenuBar` is untested; a native (non-embedded) `PopupMenu` stays out of reach
 - [ ] `simulate_input`'s `wait` and `stress_input`'s gaps count clip time in a recording (measured: a `SceneTreeTimer` ran 120 frames for 2000 ms at 240 and 20 fps; DEVELOPMENT.md's recorded-run footgun). Left: after the popup-tooltip item lands (it holds `godot_mcp_input.gd`), correct `_play_wait`'s "real time" doc comment (`godot_mcp_input.gd` ~L626) and `gapMs`'s "real time" descriptions (`RuntimeTools.Stress.cs` ~L38, ~L367), and pin it with `RecordingTests.ARawWaitInARecordingLastsItsLengthInMovieFrames` (slowed game, `simulate_input wait 1000`, 60 to 80 process frames between reads)
 - [ ] Cut and install 0.8.0
 
