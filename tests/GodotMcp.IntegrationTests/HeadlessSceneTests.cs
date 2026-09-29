@@ -1,7 +1,9 @@
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
+using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
+using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol;
 
 namespace GodotMcp.IntegrationTests;
@@ -626,6 +628,51 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(uid, attached["script"]!["uid"]!.GetValue<string>());
         AssertExtUid(probe.Directory, "plain2d.tscn", uid, "res://c.gd");
         Assert.Equal("""["res://c.gd.uid"]""", attached["uidFilesWritten"]!.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AttachScriptLeavesAUidAPlainRunKnows()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        // Imported first so .godot/uid_cache.bin exists; c.gd is written after it, so it has no .uid.
+        await RunGodotAsync(probe.Directory, ["--import"], cancellation);
+        File.WriteAllText(Path.Combine(probe.Directory, "c.gd"), "extends Node2D\n");
+        File.WriteAllText(Path.Combine(probe.Directory, "plain2d.tscn"), "[gd_scene format=3]\n\n[node name=\"Plain\" type=\"Node2D\"]\n");
+
+        await _tools.AttachScriptAsync(probe.Directory, "plain2d.tscn", ".", "c.gd", cancellation);
+
+        // Started outside the server, as a game repo's own scripts start Godot: no prep, no import.
+        string log = await RunGodotAsync(probe.Directory, ["--quit-after", "3", "res://plain2d.tscn"], cancellation);
+        Assert.DoesNotContain("invalid UID", log, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ASceneCreatedHereIsKnownByUidToAPlainRun()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        await RunGodotAsync(probe.Directory, ["--import"], cancellation);
+        await _tools.CreateSceneAsync(probe.Directory, "child.tscn", cancellationToken: cancellation);
+        await _tools.CreateSceneAsync(probe.Directory, "parent.tscn", cancellationToken: cancellation);
+        await _tools.AddNodeAsync(probe.Directory, "parent.tscn", "res://child.tscn", "Child", null, cancellation);
+
+        string log = await RunGodotAsync(probe.Directory, ["--quit-after", "3", "res://parent.tscn"], cancellation);
+        Assert.DoesNotContain("invalid UID", log, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AttachScriptInAProjectNeverImportedWritesNoUidCache()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "c.gd"), "extends Node2D\n");
+        File.WriteAllText(Path.Combine(probe.Directory, "plain2d.tscn"), "[gd_scene format=3]\n\n[node name=\"Plain\" type=\"Node2D\"]\n");
+
+        JsonNode attached = JsonNode.Parse(await _tools.AttachScriptAsync(probe.Directory, "plain2d.tscn", ".", "c.gd", cancellation))!;
+
+        Assert.StartsWith("uid://", attached["script"]!["uid"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(probe.Directory, ".godot", "uid_cache.bin")));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -1633,6 +1680,24 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         File.WriteAllText(Path.Combine(directory, "enemy.tscn"), EnemyScene);
         File.WriteAllText(Path.Combine(directory, "level.tscn"), LevelScene);
         File.WriteAllText(Path.Combine(directory, "elite.tscn"), EliteScene);
+    }
+
+    /// <summary>Runs Godot headless on project with arguments, outside the server, and returns its log.</summary>
+    private static async Task<string> RunGodotAsync(string project, IReadOnlyList<string> arguments, CancellationToken cancellation)
+    {
+        string log = Path.Combine(Path.GetTempPath(), "godot-mcp-tests", $"run-{Guid.NewGuid():N}.log");
+        ToolProcessRequest request = new(
+            Installation.FindGodot(),
+            ["--headless", "--path", project, .. arguments],
+            project,
+            log,
+            TimeSpan.FromSeconds(60)
+        );
+        ToolProcessResult result = await ToolProcess.RunAsync(request, NullLogger.Instance, cancellation);
+        string text = File.ReadAllText(log);
+        File.Delete(log);
+        Assert.Equal(0, result.ExitCode);
+        return text;
     }
 
     private async Task<JsonNode> TreeAsync(string projectDir, string scenePath, CancellationToken cancellation) =>
