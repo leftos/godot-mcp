@@ -397,7 +397,7 @@ These run a headless Godot on the project's files with no game started. All are 
 ### `load_sprite`
 
 - **Does:** sets the `texture` of `nodePath` (Sprite2D, Sprite3D, TextureRect, NinePatchRect, Polygon2D, or any node with a Texture2D `texture`) to `texturePath` and saves: `{path, texture}`.
-- **Edges:** an image never imported is imported first by the editor's full scan, which writes `.import` and `.uid` files across the project: expect those in the diff. An image in a folder Godot does not scan (a name starting with `.`, or holding `.gdignore`) is refused.
+- **Edges:** an image never imported is imported first by the editor's full scan, which writes `.import` and `.uid` files across the project: expect those in the diff. An image in a folder Godot does not scan (a name starting with `.`, or holding `.gdignore` or a nested project's own `project.godot`) is refused.
 
 ### `set_node_properties`
 

@@ -11,6 +11,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- `load_sprite` refuses a texture inside a nested project folder, which Godot never scans, instead of importing on every request.
 - Scene tools record the uids they create in Godot's uid cache, so a run started outside the server no longer logs `invalid UID`.
 - `inspect_node`, `set_property`, `wait_for` and `monitor_property` read a named non-exported C# field instead of refusing it as missing.
 

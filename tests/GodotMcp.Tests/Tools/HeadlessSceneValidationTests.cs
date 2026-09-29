@@ -212,6 +212,18 @@ public sealed class HeadlessSceneValidationTests : IDisposable
     }
 
     [Fact]
+    public void LoadSpriteRefusesATextureInANestedProjectFolder()
+    {
+        Directory.CreateDirectory(Path.Combine(_project, "nested", "art"));
+        File.WriteAllText(Path.Combine(_project, "nested", "project.godot"), "config_version=5\n");
+        File.WriteAllText(Path.Combine(_project, "nested", "art", "t.png"), string.Empty);
+
+        McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckTexturePath(_project, "nested/art/t.png"));
+
+        Assert.Equal("res://nested/art/t.png is in res://nested, which Godot does not scan; move the asset out of it.", refused.Message);
+    }
+
+    [Fact]
     public void ACaseVariantOfAFileOnDiskIsRefused()
     {
         McpException script = Assert.Throws<McpException>(() => HeadlessTools.CheckScriptPath(_project, "res://MAIN.gd"));

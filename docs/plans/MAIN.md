@@ -11,10 +11,6 @@ The first version replaced godot-mcp-runtime at parity and went further: every p
 
 Waves run in order; bug reports sit ahead of the backlog inside each. The singles' order is not a ranking.
 
-### Found in review
-
-- [ ] `load_sprite` refuses a texture inside a nested project (a subfolder holding its own `project.godot`), which Godot's scan skips as it does a `.gdignore` folder, so an import never reaches it (found fixing #34; the prep's uid check already skips such folders)
-
 ### Singles
 
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see [DECISIONS.md](../DECISIONS.md#gamepad-input-from-godot-472s-source))

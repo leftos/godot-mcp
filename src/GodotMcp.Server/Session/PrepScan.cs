@@ -177,20 +177,22 @@ internal static partial class PrepScan
     /// <summary>
     /// The full path of the outermost folder between <paramref name="projectDir"/> and <paramref name="file"/> that Godot's
     /// scan skips for its name starting with "." or for holding a <c>.gdignore</c> (4.7.2
-    /// <c>editor/file_system/editor_file_system.cpp</c> L1179-1185 and L3502-3505), or null.
+    /// <c>editor/file_system/editor_file_system.cpp</c> L1179-1185 and L3502-3505) or for holding a
+    /// <c>project.godot</c> of its own, a nested project (L3494-3500), or null.
     /// </summary>
     internal static string? UnscannedFolder(string projectDir, string file) =>
         FoldersBetween(projectDir, file)
-            .FirstOrDefault(folder => Path.GetFileName(folder).StartsWith('.') || File.Exists(Path.Combine(folder, ".gdignore")));
+            .FirstOrDefault(folder =>
+                Path.GetFileName(folder).StartsWith('.')
+                || File.Exists(Path.Combine(folder, ".gdignore"))
+                || File.Exists(Path.Combine(folder, "project.godot"))
+            );
 
     /// <summary>
     /// Whether Godot's scan, and so an import, reaches <paramref name="file"/>: no folder on its way skips it
-    /// (<see cref="UnscannedFolder"/>) or holds a <c>project.godot</c> of its own, a nested project the scan skips
-    /// (<c>editor_file_system.cpp</c> L3494-3500).
+    /// (<see cref="UnscannedFolder"/>).
     /// </summary>
-    private static bool IsScanned(string projectDir, string file) =>
-        UnscannedFolder(projectDir, file) is null
-        && !FoldersBetween(projectDir, file).Any(folder => File.Exists(Path.Combine(folder, "project.godot")));
+    private static bool IsScanned(string projectDir, string file) => UnscannedFolder(projectDir, file) is null;
 
     /// <summary>The folders from <paramref name="projectDir"/>'s child down to the one holding <paramref name="file"/>, outermost first.</summary>
     private static IEnumerable<string> FoldersBetween(string projectDir, string file)
