@@ -2,17 +2,22 @@
 
 <#
 .SYNOPSIS
-Installs a published godot-mcp: mirrors bin/publish into an install folder and links the agent skill.
+Installs a published godot-mcp: mirrors bin/publish into an install folder, links the agent skills and sweeps the agent files.
 
 .DESCRIPTION
 Run by `pwsh run.ps1 install` after its publish. Stops every godot-mcp.exe running from -InstallDir, printing one line for
 each that names the Claude session it served (tools/InstalledServers.psm1), so the session can be reconnected with /mcp.
 Then mirrors <Root>\bin\publish into -InstallDir with robocopy /MIR (no retries), writes -InstallDir\VERSION holding
 the published godot-mcp.dll's product version (the mirror leaves that file alone, so a failed mirror keeps the old one
-beside the old exe), then links <SkillsDir>\godot-mcp to <Root>\skills\godot-mcp as a directory junction: created when
-missing, left alone when it already points there, replaced when it is a junction pointing elsewhere, and refused when it is
-anything else (a real folder is never deleted). Warns when <Root> is a linked worktree, since the junction then points
-into it. Stops at the first failure with status 1.
+beside the old exe), then links <SkillsDir>\godot-mcp to <Root>\skills\godot-mcp and <SkillsDir>\godot-agent-sweep to
+<Root>\skills\godot-agent-sweep as directory junctions: each created when missing, left alone when it already points
+there, replaced when it is a junction pointing elsewhere, and refused when it is anything else (a real folder is never
+deleted). Warns when <Root> is a linked worktree, since the junctions then point into it. Stops at the first failure with
+status 1.
+
+Last, runs the installed godot-mcp.exe --sweep-agents, which brings the godot tools of their marked classes into the
+Claude Code agent files, and prints its lines. A sweep that cannot start is reported and the install still succeeds; a
+sweep that exits non-zero is reported and the install exits 1, though nothing it installed is undone.
 
 .PARAMETER Root
 The checkout to install from.
@@ -21,7 +26,7 @@ The checkout to install from.
 The folder bin/publish is mirrored into; files in it that bin/publish lacks are removed, VERSION aside.
 
 .PARAMETER SkillsDir
-The folder the skill junction godot-mcp is created in.
+The folder the skill junctions godot-mcp and godot-agent-sweep are created in.
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
     'PSAvoidUsingWriteHost', '', Justification = 'A console install script: its lines are for the person running it.')]
@@ -108,7 +113,7 @@ function Set-SkillJunction {
         [Parameter(Mandatory)] [string]$Link
     )
     if (-not (Test-Path -LiteralPath (Join-Path $Source 'SKILL.md') -PathType Leaf)) {
-        Exit-Install 'install: skills/godot-mcp/SKILL.md is missing.'
+        Exit-Install "install: skills/$(Split-Path -Leaf $Source)/SKILL.md is missing."
     }
     $info = [System.IO.DirectoryInfo]::new($Link)
     if ([int]$info.Attributes -eq -1) {
@@ -125,10 +130,26 @@ function Set-SkillJunction {
     New-SkillJunction -Source $Source -Link $Link
 }
 
+# Runs the installed server's agent sweep and prints its lines. Returns its exit status, or 0 when it could not start.
+function Invoke-AgentSweep {
+    param([Parameter(Mandatory)] [string]$Exe)
+    # Each line is printed as it comes, so a long sweep shows its progress and a killed install keeps the lines so far.
+    try {
+        & $Exe --sweep-agents | ForEach-Object { Write-Host $_ }
+        return $LASTEXITCODE
+    }
+    catch {
+        Write-Host "install: agent sweep could not run: $($_.Exception.Message)"
+        return 0
+    }
+}
+
 $publish = Get-FullPath (Join-Path $Root 'bin/publish')
 $destination = Get-FullPath $InstallDir
 $skill = Get-FullPath (Join-Path $Root 'skills/godot-mcp')
 $link = Join-Path (Get-FullPath $SkillsDir) 'godot-mcp'
+$sweepSkill = Get-FullPath (Join-Path $Root 'skills/godot-agent-sweep')
+$sweepLink = Join-Path (Get-FullPath $SkillsDir) 'godot-agent-sweep'
 
 Write-WorktreeWarning
 $version = Get-PublishVersion -Publish $publish
@@ -137,5 +158,13 @@ Copy-Publish -Source $publish -Destination $destination
 # One line, LF, no BOM (WriteAllText's default encoding is UTF-8 without one).
 [System.IO.File]::WriteAllText((Join-Path $destination 'VERSION'), "$version`n")
 Set-SkillJunction -Source $skill -Link $link
-Write-Host "install: server at $(Join-Path $destination 'godot-mcp.exe') (version $version), skill linked at $link"
+Set-SkillJunction -Source $sweepSkill -Link $sweepLink
+$exe = Join-Path $destination 'godot-mcp.exe'
+Write-Host "install: server at $exe (version $version), skill linked at $link"
+Write-Host "install: agent sweep skill linked at $sweepLink"
+$sweep = Invoke-AgentSweep -Exe $exe
+if ($sweep -ne 0) {
+    Exit-Install ("install: the agent sweep exited with status $sweep; the server and skills are installed. " +
+        "Fix what its lines name, then run `"$exe`" --sweep-agents.")
+}
 exit 0

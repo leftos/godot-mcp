@@ -15,6 +15,8 @@ from fake_installed_server import PROJECT, SESSION_ID, start_fake_server, write_
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "tools" / "install.ps1"
 # Any PE file with a version resource stands in for the published server dll, whose ProductVersion install.ps1 records.
 VERSIONED_DLL = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "kernel32.dll"
+# A real exe that exits non-zero on --sweep-agents, standing in for a sweep that failed.
+WHERE_EXE = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "where.exe"
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="junctions and robocopy are Windows-only")
 
@@ -37,8 +39,16 @@ class Layout:
     def link(self) -> Path:
         return self.skills_dir / "godot-mcp"
 
+    @property
+    def sweep_skill_source(self) -> Path:
+        return self.root / "skills" / "godot-agent-sweep"
 
-def _layout(tmp_path: Path, *, with_skill: bool = True) -> Layout:
+    @property
+    def sweep_link(self) -> Path:
+        return self.skills_dir / "godot-agent-sweep"
+
+
+def _layout(tmp_path: Path, *, with_skill: bool = True, with_sweep_skill: bool = True) -> Layout:
     layout = Layout(root=tmp_path / "repo", install_dir=tmp_path / "installed", skills_dir=tmp_path / "home" / "skills")
     publish = layout.root / "bin" / "publish"
     publish.mkdir(parents=True)
@@ -47,6 +57,9 @@ def _layout(tmp_path: Path, *, with_skill: bool = True) -> Layout:
     if with_skill:
         layout.skill_source.mkdir(parents=True)
         (layout.skill_source / "SKILL.md").write_text("# godot-mcp\n", encoding="utf-8")
+    if with_sweep_skill:
+        layout.sweep_skill_source.mkdir(parents=True)
+        (layout.sweep_skill_source / "SKILL.md").write_text("# godot-agent-sweep\n", encoding="utf-8")
     layout.skills_dir.mkdir(parents=True)
     return layout
 
@@ -95,9 +108,25 @@ def test_install_mirrors_publish_and_links_skill(tmp_path: Path) -> None:
     assert result.returncode == 0, _output(result)
     assert (layout.install_dir / "godot-mcp.exe").read_text(encoding="utf-8") == "not really an exe"
     assert _points_at(layout.link, layout.skill_source)
+    assert _points_at(layout.sweep_link, layout.sweep_skill_source)
     version = _product_version(layout.publish_dll)
     expected = f"install: server at {layout.install_dir / 'godot-mcp.exe'} (version {version}), skill linked at {layout.link}"
     assert expected in result.stdout
+    assert f"install: agent sweep skill linked at {layout.sweep_link}" in result.stdout
+    # The stand-in exe is a text file, so the sweep cannot start: that is reported and the install still succeeds.
+    assert "install: agent sweep could not run: " in result.stdout
+
+
+def test_install_fails_when_the_sweep_exits_non_zero_but_undoes_nothing(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    # where.exe refuses the --sweep-agents option with a non-zero status, standing in for a sweep that failed.
+    shutil.copyfile(WHERE_EXE, layout.root / "bin" / "publish" / "godot-mcp.exe")
+    result = _install(layout)
+    assert result.returncode == 1
+    assert "install: the agent sweep exited with status " in _output(result)
+    assert (layout.install_dir / "VERSION").is_file()
+    assert _points_at(layout.link, layout.skill_source)
+    assert _points_at(layout.sweep_link, layout.sweep_skill_source)
 
 
 def test_install_writes_the_version_file(tmp_path: Path) -> None:
@@ -121,6 +150,7 @@ def test_install_is_idempotent(tmp_path: Path) -> None:
     second = _install(layout)
     assert second.returncode == 0, _output(second)
     assert _points_at(layout.link, layout.skill_source)
+    assert _points_at(layout.sweep_link, layout.sweep_skill_source)
     assert (layout.install_dir / "godot-mcp.exe").is_file()
 
 
@@ -211,3 +241,11 @@ def test_install_fails_without_the_skill(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "install: skills/godot-mcp/SKILL.md is missing." in _output(result)
     assert not layout.link.exists()
+
+
+def test_install_fails_without_the_agent_sweep_skill(tmp_path: Path) -> None:
+    layout = _layout(tmp_path, with_sweep_skill=False)
+    result = _install(layout)
+    assert result.returncode == 1
+    assert "install: skills/godot-agent-sweep/SKILL.md is missing." in _output(result)
+    assert not layout.sweep_link.exists()

@@ -19,9 +19,13 @@ the module from beside it.
 3. Stops every godot-mcp.exe running from the install folder, printing one line for each that names the Claude
    session it served and that session's project, so the session can be reconnected with /mcp. Then replaces the
    folder's contents with the zip's, and
-   replaces <SkillsDir>\godot-mcp with the zip's skill/ folder. A link there (the junction a from-source install
-   makes) is removed as a link: the folder it points to is never touched.
-4. Prints where the server and the skill are, and the command that registers the server with Claude Code.
+   replaces <SkillsDir>\godot-mcp with the zip's skill/ folder and <SkillsDir>\godot-agent-sweep with its
+   agent-sweep-skill/ folder. A link there (the junction a from-source install makes) is removed as a link: the folder
+   it points to is never touched.
+4. Prints where the server and the skills are, and the command that registers the server with Claude Code.
+5. Runs the installed godot-mcp.exe --sweep-agents, which brings the godot tools of their marked classes into the
+   Claude Code agent files, and prints its lines. A sweep that cannot start is reported and the install still succeeds;
+   a sweep that exits non-zero stops the installer with a message, though nothing it installed is undone.
 
 Every failure stops the installer with a message naming what failed and what to do.
 
@@ -39,7 +43,7 @@ The folder the server is installed into. GODOT_MCP_INSTALL_DIR when omitted, els
 that holds files but no godot-mcp.exe or VERSION is refused, never emptied.
 
 .PARAMETER SkillsDir
-The folder the godot-mcp skill folder is installed into. GODOT_MCP_SKILLS_DIR when omitted, else ~/.claude/skills.
+The folder the godot-mcp and godot-agent-sweep skill folders are installed into. GODOT_MCP_SKILLS_DIR when omitted, else ~/.claude/skills.
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
     'PSAvoidUsingWriteHost', '', Justification = 'A console install script: its lines are for the person running it.')]
@@ -228,7 +232,7 @@ function Expand-ReleaseZip {
     catch {
         throw "install: $Zip could not be unpacked: $($_.Exception.Message) Download the release again."
     }
-    foreach ($entry in @('godot-mcp.exe', 'godot-mcp.dll', 'VERSION', 'bridge', 'skill\SKILL.md')) {
+    foreach ($entry in @('godot-mcp.exe', 'godot-mcp.dll', 'VERSION', 'bridge', 'skill\SKILL.md', 'agent-sweep-skill\SKILL.md')) {
         if (-not (Test-Path -LiteralPath (Join-Path $Destination $entry))) {
             throw "install: $Zip is not a godot-mcp release: it has no $($entry -replace '\\', '/')."
         }
@@ -264,7 +268,7 @@ function Remove-Entry {
 Import-Module -Name (Join-Path $PSScriptRoot 'InstalledServers.psm1') -Force
 #endregion
 
-# Replaces the install folder's contents with the unpacked release, the skill folder aside.
+# Replaces the install folder's contents with the unpacked release, the skill folders aside.
 function Install-Server {
     param(
         [Parameter(Mandatory)] [string]$Unpacked,
@@ -290,22 +294,38 @@ function Install-Server {
         throw "install: emptying $Folder failed: $($_.Exception.Message) A godot-mcp.exe still running from it holds its files: " +
             'stop the Claude sessions that use it, then run the installer again.'
     }
-    foreach ($item in @(Get-ChildItem -LiteralPath $Unpacked -Force | Where-Object { $_.Name -ne 'skill' })) {
+    foreach ($item in @(Get-ChildItem -LiteralPath $Unpacked -Force | Where-Object { $_.Name -notin @('skill', 'agent-sweep-skill') })) {
         Copy-Item -LiteralPath $item.FullName -Destination $Folder -Recurse
     }
 }
 
-# Replaces <Folder>\godot-mcp with the unpacked skill folder and returns its path.
+# Replaces <Folder>\<Name> with the unpacked release's <Source> folder and returns its path.
 function Install-Skill {
     param(
         [Parameter(Mandatory)] [string]$Unpacked,
-        [Parameter(Mandatory)] [string]$Folder
+        [Parameter(Mandatory)] [string]$Source,
+        [Parameter(Mandatory)] [string]$Folder,
+        [Parameter(Mandatory)] [string]$Name
     )
-    $skill = Join-Path $Folder 'godot-mcp'
+    $skill = Join-Path $Folder $Name
     New-Item -ItemType Directory -Force -Path $Folder | Out-Null
     Remove-Entry -Path $skill
-    Copy-Item -LiteralPath (Join-Path $Unpacked 'skill') -Destination $skill -Recurse
+    Copy-Item -LiteralPath (Join-Path $Unpacked $Source) -Destination $skill -Recurse
     return $skill
+}
+
+# Runs the installed server's agent sweep and prints its lines. Returns its exit status, or 0 when it could not start.
+function Invoke-AgentSweep {
+    param([Parameter(Mandatory)] [string]$Exe)
+    # Each line is printed as it comes, so a long sweep shows its progress and a stopped installer keeps the lines so far.
+    try {
+        & $Exe --sweep-agents | ForEach-Object { Write-Host $_ }
+        return $LASTEXITCODE
+    }
+    catch {
+        Write-Host "install: agent sweep could not run: $($_.Exception.Message)"
+        return 0
+    }
 }
 
 function Remove-WorkFolder {
@@ -337,15 +357,22 @@ function Invoke-ReleaseInstall {
         Expand-ReleaseZip -Zip $zip -Destination $unpacked
         $installed = (Get-Content -LiteralPath (Join-Path $unpacked 'VERSION') -Raw).Trim()
         Install-Server -Unpacked $unpacked -Folder $serverFolder
-        $skill = Install-Skill -Unpacked $unpacked -Folder $skillsFolder
+        $skill = Install-Skill -Unpacked $unpacked -Source 'skill' -Folder $skillsFolder -Name 'godot-mcp'
+        $sweepSkill = Install-Skill -Unpacked $unpacked -Source 'agent-sweep-skill' -Folder $skillsFolder -Name 'godot-agent-sweep'
     }
     finally {
         Remove-WorkFolder -Folder $work
     }
     $exe = Join-Path $serverFolder 'godot-mcp.exe'
     Write-Host "install: server at $exe (version $installed), skill at $skill"
+    Write-Host "install: agent sweep skill at $sweepSkill"
     Write-Host 'install: to use it in a Godot project, register it from that project''s folder:'
     Write-Host "  claude mcp add godot -s local -e GODOT_PATH=<your Godot console exe> -- `"$exe`""
+    $sweep = Invoke-AgentSweep -Exe $exe
+    if ($sweep -ne 0) {
+        throw "install: the agent sweep exited with status $sweep; the server and skills are installed. " +
+            "Fix what its lines name, then run `"$exe`" --sweep-agents."
+    }
 }
 
 $request = @{

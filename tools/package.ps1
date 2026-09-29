@@ -6,14 +6,15 @@ Zips a published godot-mcp into the download a release carries.
 
 .DESCRIPTION
 Run by `pwsh run.ps1 package` after its publish. Empties -OutputDir, then zips <Root>\bin\publish (the exe, bridge/,
-headless/, dotnet/) with <Root>\skills\godot-mcp as skill/ and a VERSION file holding the published godot-mcp.dll's
+headless/, dotnet/) with <Root>\skills\godot-mcp as skill/, <Root>\skills\godot-agent-sweep as agent-sweep-skill/ and a
+VERSION file holding the published godot-mcp.dll's
 product version (the value tools/install.ps1 writes beside an installed exe) into
 <OutputDir>\godot-mcp-<X.Y.Z>-win-x64.zip, X.Y.Z being that version without its +<sha>. Beside it, writes the release's
 <OutputDir>\install.ps1: tools/install-release.ps1 with tools/InstalledServers.psm1 inlined. Prints the zip's path last.
 Stops at the first failure with status 1.
 
 .PARAMETER Root
-The checkout whose bin/publish and skill are zipped.
+The checkout whose bin/publish and skills are zipped.
 
 .PARAMETER OutputDir
 The folder the zip is written to; everything already in it is removed first.
@@ -80,9 +81,12 @@ function Write-Installer {
 
 $publish = Join-Path $Root 'bin/publish'
 $skill = Join-Path $Root 'skills/godot-mcp'
+$sweepSkill = Join-Path $Root 'skills/godot-agent-sweep'
 Assert-PublishLayout -Publish $publish
-if (-not (Test-Path -LiteralPath (Join-Path $skill 'SKILL.md') -PathType Leaf)) {
-    Exit-Package 'package: skills/godot-mcp/SKILL.md is missing.'
+foreach ($folder in @($skill, $sweepSkill)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $folder 'SKILL.md') -PathType Leaf)) {
+        Exit-Package "package: skills/$(Split-Path -Leaf $folder)/SKILL.md is missing."
+    }
 }
 $version = Get-PublishVersion -Publish $publish
 
@@ -93,6 +97,7 @@ $stage = Join-Path $OutputDir 'stage'
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 Copy-Item -Path (Join-Path $publish '*') -Destination $stage -Recurse
 Copy-Item -LiteralPath $skill -Destination (Join-Path $stage 'skill') -Recurse
+Copy-Item -LiteralPath $sweepSkill -Destination (Join-Path $stage 'agent-sweep-skill') -Recurse
 # One line, LF, no BOM (WriteAllText's default encoding is UTF-8 without one), as tools/install.ps1 writes it.
 [System.IO.File]::WriteAllText((Join-Path $stage 'VERSION'), "$version`n")
 

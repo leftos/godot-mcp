@@ -1,4 +1,5 @@
 using GodotMcp.Server;
+using GodotMcp.Server.Agents;
 using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
@@ -7,6 +8,17 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
+
+// --list-tools and --sweep-agents print to stdout and exit; with no command the exe is the MCP server.
+CommandEnvironment commandEnvironment = new(
+    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+    Environment.GetEnvironmentVariable(AgentSweep.RootsVariable)
+);
+if (ServerCommands.Run(args, Console.Out, Console.Error, commandEnvironment) is { } commandStatus)
+{
+    Environment.ExitCode = commandStatus;
+    return;
+}
 
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 

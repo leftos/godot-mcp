@@ -24,12 +24,43 @@ public sealed class GitRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task AGitRunWithNoCeilingOutlivesTheCeilingAndReturnsItsStatusAndStreams()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string pidFile = _temp.Combine("pid.txt");
+        string go = _temp.Combine("go.txt");
+        string script =
+            $"Set-Content -LiteralPath '{pidFile}' -Value $PID; while (-not (Test-Path -LiteralPath '{go}')) {{ Start-Sleep -Milliseconds 100 }}; "
+            + "[Console]::Out.Write('out'); [Console]::Error.Write('boom'); exit 3";
+        Task<GitResult> run = Task.Run(() =>
+            GitRunner.Run("pwsh", _temp.Path, NullLogger.Instance, _clock, ceiling: null, ["-NoProfile", "-Command", script])
+        );
+        await WaitForFileAsync(pidFile, cancellation);
+
+        // Far past the ceiling a run with one would have had, the commit-style run is still left alone.
+        AdvanceSeconds(120);
+        await Task.Delay(TimeSpan.FromSeconds(1), cancellation);
+        bool runningPastTheCeiling = !run.IsCompleted;
+        await File.WriteAllTextAsync(go, "go", cancellation);
+        GitResult result = await run.WaitAsync(RealBound, cancellation);
+
+        Assert.True(runningPastTheCeiling);
+        Assert.Equal(new GitResult(3, "out", "boom", OutputRead: true), result);
+        Assert.False(result.Succeeded);
+        Assert.Equal("boom", result.Message);
+    }
+
+    [Fact]
     public async Task AHungGitIsKilledAtItsCeiling()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string pidFile = _temp.Combine("pid.txt");
         string script = $"Set-Content -LiteralPath '{pidFile}' -Value $PID; Write-Output 'started'; Start-Sleep 60";
-        Task<string?> run = Task.Run(() => GitRunner.Run("pwsh", _temp.Path, NullLogger.Instance, _clock, ["-NoProfile", "-Command", script]));
+        Task<string?> run = Task.Run(() =>
+        {
+            GitResult result = GitRunner.Run("pwsh", _temp.Path, NullLogger.Instance, _clock, GitRunner.Ceiling, ["-NoProfile", "-Command", script]);
+            return result.Succeeded ? result.Output : null;
+        });
         await WaitForFileAsync(pidFile, cancellation);
 
         // The fake clock, not real time, carries the stand-in to its 30 s ceiling: one second short of it, it still runs.

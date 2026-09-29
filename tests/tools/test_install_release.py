@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 import zipfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +20,8 @@ SCRIPT_PATH = TOOLS / "install-release.ps1"
 VERSION = "9.8.7+abc1234"
 # Any PE file with a version resource stands in for the published server dll, whose ProductVersion package.ps1 records.
 VERSIONED_DLL = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "kernel32.dll"
+# A real exe that exits non-zero on --sweep-agents, standing in for a sweep that failed.
+WHERE_EXE = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "where.exe"
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="the installer, junctions and winget are Windows-only")
 
@@ -42,8 +45,12 @@ class Layout:
     def skill(self) -> Path:
         return self.skills_dir / "godot-mcp"
 
+    @property
+    def sweep_skill(self) -> Path:
+        return self.skills_dir / "godot-agent-sweep"
 
-def _write_zip(path: Path, entries: dict[str, str]) -> Path:
+
+def _write_zip(path: Path, entries: Mapping[str, str | bytes]) -> Path:
     with zipfile.ZipFile(path, "w") as archive:
         for name, text in entries.items():
             archive.writestr(name, text)
@@ -57,6 +64,7 @@ def _release_entries() -> dict[str, str]:
         "VERSION": f"{VERSION}\n",
         "bridge/godot_mcp_bridge.gd": "extends Node\n",
         "skill/SKILL.md": "# godot-mcp\n",
+        "agent-sweep-skill/SKILL.md": "# godot-agent-sweep\n",
     }
 
 
@@ -91,9 +99,10 @@ def published_installer(tmp_path_factory: pytest.TempPathFactory) -> Path:
         (publish / folder).mkdir(parents=True)
     (publish / "godot-mcp.exe").write_text("not really an exe", encoding="utf-8")
     shutil.copyfile(VERSIONED_DLL, publish / "godot-mcp.dll")
-    skill = root / "skills" / "godot-mcp"
-    skill.mkdir(parents=True)
-    (skill / "SKILL.md").write_text("# godot-mcp\n", encoding="utf-8")
+    for name in ("godot-mcp", "godot-agent-sweep"):
+        skill = root / "skills" / name
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
     output = root / "package"
     command = ["pwsh", "-NoProfile", "-File", str(TOOLS / "package.ps1"), "-Root", str(root), "-OutputDir", str(output)]
     result = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
@@ -160,12 +169,34 @@ def test_installs_the_server_and_copies_the_skill(tmp_path: Path, shell: str) ->
     assert (layout.install_dir / "bridge" / "godot_mcp_bridge.gd").is_file()
     assert (layout.install_dir / "VERSION").read_text(encoding="utf-8").strip() == VERSION
     assert not (layout.install_dir / "skill").exists()
+    assert not (layout.install_dir / "agent-sweep-skill").exists()
     assert (layout.skill / "SKILL.md").is_file()
     assert not _is_link(layout.skill)
+    assert (layout.sweep_skill / "SKILL.md").read_text(encoding="utf-8") == "# godot-agent-sweep\n"
+    assert not _is_link(layout.sweep_skill)
     exe = layout.install_dir / "godot-mcp.exe"
     output = _output(result)
     assert f"install: server at {exe} (version {VERSION}), skill at {layout.skill}" in output
+    assert f"install: agent sweep skill at {layout.sweep_skill}" in output
     assert f'claude mcp add godot -s local -e GODOT_PATH=<your Godot console exe> -- "{exe}"' in output
+    # The stand-in exe is a text file, so the sweep cannot start: that is reported and the install still succeeds.
+    assert "install: agent sweep could not run: " in output
+
+
+def test_a_sweep_that_exits_non_zero_fails_the_install_but_undoes_nothing(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    entries: dict[str, str | bytes] = {**_release_entries()}
+    # where.exe refuses the --sweep-agents option with a non-zero status, standing in for a sweep that failed.
+    entries["godot-mcp.exe"] = WHERE_EXE.read_bytes()
+    failing = _write_zip(tmp_path / "failing.zip", entries)
+
+    result = _run("pwsh", layout, zip_path=failing)
+
+    assert result.returncode != 0
+    assert "install: the agent sweep exited with status " in _output(result)
+    assert (layout.install_dir / "VERSION").read_text(encoding="utf-8").strip() == VERSION
+    assert (layout.skill / "SKILL.md").is_file()
+    assert (layout.sweep_skill / "SKILL.md").is_file()
 
 
 @pytest.mark.parametrize("shell", SHELLS)
@@ -356,6 +387,19 @@ def test_a_zip_without_the_skill_is_refused(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "is not a godot-mcp release: it has no skill/SKILL.md" in _output(result)
+    assert not layout.install_dir.exists()
+
+
+def test_a_zip_without_the_agent_sweep_skill_is_refused(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    entries = _release_entries()
+    del entries["agent-sweep-skill/SKILL.md"]
+    partial = _write_zip(tmp_path / "partial.zip", entries)
+
+    result = _run("pwsh", layout, zip_path=partial)
+
+    assert result.returncode != 0
+    assert "is not a godot-mcp release: it has no agent-sweep-skill/SKILL.md" in _output(result)
     assert not layout.install_dir.exists()
 
 

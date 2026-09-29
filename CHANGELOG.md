@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- The install brings the server's tools to every agent file marked with its godot tool classes, through `godot-mcp --sweep-agents`; `--list-tools` prints each tool's class.
+
 ### Changed
 
 - `crop` on `take_screenshot`, `capture_frames` and the screenshot baselines is in viewport coordinates, so a window launched at 2x crops at 2x.

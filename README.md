@@ -55,7 +55,7 @@ Paste this into Claude Code, in the folder of the Godot game you want it to driv
 
 ```text
 Install the godot-mcp server for this project:
-1. Run this in PowerShell (it downloads the latest release into %LOCALAPPDATA%\godot-mcp, installs the .NET 10 runtime through winget if it is missing, and copies the godot-mcp skill into ~/.claude/skills):
+1. Run this in PowerShell (it downloads the latest release into %LOCALAPPDATA%\godot-mcp, installs the .NET 10 runtime through winget if it is missing, copies the godot-mcp and godot-agent-sweep skills into ~/.claude/skills, and brings the server's tools to every agent marked for them):
    & ([scriptblock]::Create((irm https://github.com/leftos/godot-mcp/releases/latest/download/install.ps1))) -InstallDotNet
    It must end with "install: server at ... (version ...)" and print a `claude mcp add` line.
 2. Run that `claude mcp add` line from this project's folder, with GODOT_PATH set to <path to Godot_v4.7.2-stable_win64_console.exe>.

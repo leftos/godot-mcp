@@ -46,15 +46,20 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            by bare name.
   publish  a framework-dependent win-x64 server at bin/publish/godot-mcp.exe, with bridge/ beside it, then the dotnet
            command (as above), whose bin/dotnet is copied to bin/publish/dotnet; ceiling 300 s
-  install  publish (as above), then mirror bin/publish into $env:LOCALAPPDATA\godot-mcp (robocopy /MIR, no retries), and
-           link ~/.claude/skills/godot-mcp to skills/godot-mcp as a directory junction; ceiling 300 s for the publish,
-           60 s for the copy. The copy and the link are tools/install.ps1, logged to .tmp/install.log. A junction
-           that points elsewhere is replaced; anything else at the link path is refused, never deleted.
-           GODOT_MCP_INSTALL_DIR overrides the install folder, GODOT_MCP_SKILLS_DIR the folder the link is made in.
+  install  publish (as above), then mirror bin/publish into $env:LOCALAPPDATA\godot-mcp (robocopy /MIR, no retries),
+           link ~/.claude/skills/godot-mcp to skills/godot-mcp and ~/.claude/skills/godot-agent-sweep to
+           skills/godot-agent-sweep as directory junctions, and run the installed godot-mcp.exe --sweep-agents, printing
+           its lines as they come; ceiling 300 s for the publish, then 900 s in a heavy slot for the copy, the links and the
+           sweep, whose commits run the swept repositories' hooks (which can build). They are tools/install.ps1, logged
+           to .tmp/install.log. A junction that points
+           elsewhere is replaced; anything else at a link path is refused, never deleted. A sweep that cannot start is
+           reported and the install succeeds; one that exits non-zero makes the install exit 1, undoing nothing.
+           GODOT_MCP_INSTALL_DIR overrides the install folder, GODOT_MCP_SKILLS_DIR the folder the links are made in.
            Before the mirror it stops every godot-mcp.exe running from the install folder, printing one line each
            that names the Claude session and project it served, to reconnect there with /mcp.
   package  the release download: bin/publish removed, publish (as above), then tools/package.ps1 zips bin/publish with
-           skills/godot-mcp as skill/ and a VERSION file (the published product version) into
+           skills/godot-mcp as skill/, skills/godot-agent-sweep as agent-sweep-skill/ and a VERSION file (the published
+           product version) into
            .tmp/package/godot-mcp-<X.Y.Z>-win-x64.zip, writes .tmp/package/install.ps1 (tools/install-release.ps1
            with tools/InstalledServers.psm1 inlined, the release's installer), and prints both paths; .tmp/package.log, ceiling 300 s for the
            publish, 60 s for the zip. The release workflow runs this command, so a local zip is built as CI builds it.
@@ -717,7 +722,8 @@ function Invoke-Publish {
     return 0
 }
 
-# Publishes, then runs tools/install.ps1 under its own gate: the mirror into the install folder and the skill junction.
+# Publishes, then runs tools/install.ps1 under its own gate: the mirror into the install folder, the skill junctions and
+# the agent sweep, whose commits run each swept repository's hooks.
 function Invoke-Install {
     $status = Invoke-Publish
     if ($status -ne 0) {
@@ -729,7 +735,7 @@ function Invoke-Install {
         '-NoProfile', '-File', (Join-Path $root 'tools/install.ps1'),
         '-Root', $root, '-InstallDir', $installDir, '-SkillsDir', $skillsDir
     )
-    return Invoke-Gated -Name 'install' -TimeoutSeconds 60 -Program 'pwsh' -Arguments $arguments -Slot light
+    return Invoke-Gated -Name 'install' -TimeoutSeconds 900 -Program 'pwsh' -Arguments $arguments -Slot heavy
 }
 
 # Publishes into an emptied bin/publish, so no file of an earlier publish reaches the zip, then runs tools/package.ps1
