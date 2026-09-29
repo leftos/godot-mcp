@@ -11,7 +11,7 @@
 
   <!-- The version agents quote: 0.1.0+<7-char commit sha>, or 0.1.0 alone outside a git checkout. -->
   <PropertyGroup>
-    <VersionPrefix>0.8.0</VersionPrefix>
+    <VersionPrefix>0.8.1</VersionPrefix>
   </PropertyGroup>
 
   <!--
