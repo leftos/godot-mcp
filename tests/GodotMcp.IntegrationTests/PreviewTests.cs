@@ -106,7 +106,7 @@ public sealed class PreviewTests : IAsyncDisposable
         Assert.True(boxPixels > 500, $"{boxPixels} magenta pixels");
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task APreviewBesideALiveRunSucceedsAndLeavesTheRunRunning()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

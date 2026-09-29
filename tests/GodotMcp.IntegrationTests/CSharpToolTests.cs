@@ -71,7 +71,7 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
         Assert.Single(Helpers(extensions));
     }
 
-    [Fact(Timeout = CSharpTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AGDScriptProjectIsRefusedBeforeTheBridgeIsAsked()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

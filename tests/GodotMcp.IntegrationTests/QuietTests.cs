@@ -12,7 +12,6 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class QuietTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 45_000;
     private const int ScriptTimeoutMs = 10_000;
 
     // How long the window watch goes on once the game answers: its window is created and shown before the bridge's _ready.
@@ -51,7 +50,7 @@ public sealed class QuietTests : IAsyncDisposable
         _probe.Dispose();
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ADefaultRunIsQuiet()
     {
         string launched = await _project.RunProjectAsync(_probe.Directory, cancellationToken: TestContext.Current.CancellationToken);
@@ -74,7 +73,7 @@ public sealed class QuietTests : IAsyncDisposable
         Assert.Equal("Dummy", state["driver"]!.GetValue<string>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ANotQuietRunIsOnScreenAndAudible()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -92,7 +91,7 @@ public sealed class QuietTests : IAsyncDisposable
         }
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AQuietRunShowsNoWindowOnTheCallersDesktop()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "Desktops are a Windows feature; elsewhere a quiet window is parked off-screen.");
@@ -113,7 +112,7 @@ public sealed class QuietTests : IAsyncDisposable
         Assert.Empty(WindowOwners(visibleOnly: false).Intersect(godot));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task InjectedKeysReachTheGuiInAQuietRun()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -129,7 +128,7 @@ public sealed class QuietTests : IAsyncDisposable
         Assert.Equal("abc", (await RunAsync(ReadText)).GetValue<string>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AQuietRunCapsItsFrameRateAt60()
     {
         await _project.RunProjectAsync(_probe.Directory, cancellationToken: TestContext.Current.CancellationToken);
@@ -137,7 +136,7 @@ public sealed class QuietTests : IAsyncDisposable
         Assert.Equal(60, (await RunAsync(ReadMaxFps)).GetValue<int>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ANotQuietRunKeepsTheEngineFrameRate()
     {
         await LaunchAsync(false, TestContext.Current.CancellationToken);
@@ -145,7 +144,7 @@ public sealed class QuietTests : IAsyncDisposable
         Assert.Equal(0, (await RunAsync(ReadMaxFps)).GetValue<int>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AQuietRunKeepsTheProjectsOwnFrameRate()
     {
         string settings = File.ReadAllText(_probe.ProjectFile);

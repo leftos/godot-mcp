@@ -128,7 +128,7 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         Assert.Equal(("drop here", 0), await ReadDropAsync(_tools));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DragDropsInALetterboxedWindow()
     {
         using ProbeProject probe = new();
@@ -141,7 +141,7 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         await StopAndCheckCleanAsync(harness, probe);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ClickHitsTheSmallButtonInALetterboxedWindowByElementAndByPoint()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -304,7 +304,7 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
 
     // A run of its own with the real pads live: the shared run is shut out of them, and shut-out mode's re-sent application
     // focus-out closes a Popup as it opens (popup.cpp L114-120 in 4.7.2).
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ClickReportsAControlInsideAPopup()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

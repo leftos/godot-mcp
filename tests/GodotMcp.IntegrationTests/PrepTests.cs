@@ -17,7 +17,6 @@ namespace GodotMcp.IntegrationTests;
 public sealed partial class PrepTests : IAsyncDisposable
 {
     private const int BuildTestTimeoutMs = 240_000;
-    private const int TestTimeoutMs = 90_000;
 
     // A 1 x 1 PNG, so an import has something to import.
     private const string OnePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -57,7 +56,7 @@ public sealed partial class PrepTests : IAsyncDisposable
         Assert.Equal(string.Empty, Git.Status(csProbe.Directory));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task NeverLaunchesAnUnbuiltCopyAsItIs()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -88,7 +87,7 @@ public sealed partial class PrepTests : IAsyncDisposable
         Assert.False(File.Exists(Path.Combine(csProbe.Directory, "override.cfg")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnInputProbeRunNeedsNoImport()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -101,7 +100,7 @@ public sealed partial class PrepTests : IAsyncDisposable
         Assert.Equal(string.Empty, Git.Status(probe.Directory));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task MissingImportedFilesAreImported()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -115,7 +114,7 @@ public sealed partial class PrepTests : IAsyncDisposable
         Assert.True(File.Exists(target), $"{target} was not imported");
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnImportWhileAnotherSessionIsLiveIsRefused()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -135,7 +134,7 @@ public sealed partial class PrepTests : IAsyncDisposable
         Assert.Equal(["first"], _harness.Sessions.List(includeStopped: true).Select(session => session.Name));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task TwoLaunchesAtOnceOnAFolderNeedingAnImportImportOnce()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

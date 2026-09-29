@@ -43,7 +43,7 @@ public sealed class AttachTests : IAsyncDisposable
         _probe.Dispose();
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachedGameAnswersRefusesStopAndOutputAndKeepsRunningAfterDetach()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -80,7 +80,7 @@ public sealed class AttachTests : IAsyncDisposable
         Assert.Equal(string.Empty, Git.Status(_probe.Directory));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AQuietAttachParksTheWindow()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -115,7 +115,7 @@ public sealed class AttachTests : IAsyncDisposable
         Assert.Equal(string.Empty, Git.Status(_probe.Directory));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnAttachedGameReportsErrors()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -132,7 +132,7 @@ public sealed class AttachTests : IAsyncDisposable
         Assert.Equal(5, error["line"]!.GetValue<int>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnAttachedGameThatQuitsTakesItsSnapshotsWithIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

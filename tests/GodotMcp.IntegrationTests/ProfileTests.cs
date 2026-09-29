@@ -7,7 +7,6 @@ namespace GodotMcp.IntegrationTests;
 /// <summary>run_project with a godot-mcp.json preset: the preset's session name and resolution reach the real game.</summary>
 public sealed class ProfileTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 45_000;
     private const int ScriptTimeoutMs = 10_000;
     private const string PresetSession = "profiled";
     private const string Profile = """{ "presets": { "small": { "session": "profiled", "resolution": "320x240" } } }""";
@@ -24,9 +23,6 @@ public sealed class ProfileTests : IAsyncDisposable
         + "\tfor screen: int in DisplayServer.get_screen_count():\n"
         + "\t\tlargest = largest.max(DisplayServer.screen_get_size(screen))\n"
         + "\treturn [largest.x, largest.y]\n";
-
-    // An itest that launches its own game: the launch handshake is load-adjusted and may take 75 s of wall time.
-    private const int LaunchTestTimeoutMs = 180_000;
 
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
@@ -45,7 +41,7 @@ public sealed class ProfileTests : IAsyncDisposable
         _probe.Dispose();
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task APresetSetsTheSessionAndTheWindowSize()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -61,7 +57,7 @@ public sealed class ProfileTests : IAsyncDisposable
         Assert.Equal([320, 240], [size[0]!.GetValue<int>(), size[1]!.GetValue<int>()]);
     }
 
-    [Fact(Timeout = LaunchTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AResolutionLargerThanTheScreenIsGivenExactly()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

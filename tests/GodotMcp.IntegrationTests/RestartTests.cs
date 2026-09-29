@@ -17,7 +17,6 @@ namespace GodotMcp.IntegrationTests;
 public sealed class RestartTests : IAsyncDisposable
 {
     private const int BuildTestTimeoutMs = 240_000;
-    private const int TestTimeoutMs = 90_000;
     private const int AttachWaitSeconds = 30;
     private static readonly TimeSpan PingTimeout = TimeSpan.FromSeconds(5);
 
@@ -100,7 +99,7 @@ public sealed class RestartTests : IAsyncDisposable
         Assert.True(OverrideFile.IsOurs(OverrideFile.PathIn(csProbe.Directory)));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ARestartsImportIsRefusedOnlyForAnotherSessionsGame()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -127,7 +126,7 @@ public sealed class RestartTests : IAsyncDisposable
         Assert.True(File.Exists(target), $"{target} was not imported");
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ARestartKeepsTheSceneAndArgumentsAndMarksTheOutput()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -157,7 +156,7 @@ public sealed class RestartTests : IAsyncDisposable
         Assert.Contains(marker, stderr);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task TheOverrideSurvivesTheRestartAndGoesWithTheStop()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -181,7 +180,7 @@ public sealed class RestartTests : IAsyncDisposable
         Assert.Equal(string.Empty, Git.Status(probe.Directory));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AGameThatQuitItselfIsStartedAgain()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -209,7 +208,7 @@ public sealed class RestartTests : IAsyncDisposable
         Assert.True(File.Exists(probe.OverrideFile));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnAttachedSessionIsNotRestarted()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

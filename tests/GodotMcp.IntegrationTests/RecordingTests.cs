@@ -15,7 +15,6 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class RecordingTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 120_000;
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
     private readonly RuntimeTools _tools;
@@ -28,7 +27,7 @@ public sealed class RecordingTests : IAsyncDisposable
         _probe.Dispose();
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ARecordedRunLeavesAPlayableAvi()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -50,7 +49,7 @@ public sealed class RecordingTests : IAsyncDisposable
         Assert.Single(streams, stream => stream.Type == "audio");
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task MarksCutClipsOfTheMarkedLength()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -85,7 +84,7 @@ public sealed class RecordingTests : IAsyncDisposable
         }
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DropIdleCutsTheIdleOut()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -127,7 +126,7 @@ public sealed class RecordingTests : IAsyncDisposable
         Assert.InRange(video.Packets, 10, 12);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AGameThatQuitsItselfIsCut()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -151,7 +150,7 @@ public sealed class RecordingTests : IAsyncDisposable
         Assert.False(File.Exists(launched.Recording.Path), "the full movie was not deleted");
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task RestartFinishesTheOldRecording()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -170,7 +169,7 @@ public sealed class RecordingTests : IAsyncDisposable
         Assert.True(File.Exists(movie));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task WithoutFfmpegTheFullFileIsKept()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -208,7 +207,7 @@ public sealed class RecordingTests : IAsyncDisposable
         Assert.False(File.Exists(RecordingCut.ClipPath(movie, 1)));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task RecordMarkRefusesANonRecordingSession()
     {
         await LaunchAsync(record: false);
@@ -220,7 +219,7 @@ public sealed class RecordingTests : IAsyncDisposable
         Assert.Equal("session 'InputProbe' is not recording; launch it with options.record.", refused.Message);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AWaitTimeoutInARecordingRunsItsLengthInMovieFrames()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -235,7 +234,7 @@ public sealed class RecordingTests : IAsyncDisposable
         Assert.Equal(1500, reply["clipMs"]!.GetValue<int>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ADragInARecordingLastsItsDurationInMovieFrames()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

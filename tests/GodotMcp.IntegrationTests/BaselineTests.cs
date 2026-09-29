@@ -18,7 +18,6 @@ namespace GodotMcp.IntegrationTests;
 public sealed class BaselineTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
     private const int TestTimeoutMs = 45_000;
-    private const int RelaunchTestTimeoutMs = 90_000;
     private const int ScriptTimeoutMs = 10_000;
     private const string Full = "probe_full";
 
@@ -139,7 +138,7 @@ public sealed class BaselineTests(SharedProbeSession shared) : IAsyncLifetime, I
         Assert.Equal(Full, replaced["name"]!.GetValue<string>());
     }
 
-    [Fact(Timeout = RelaunchTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ABaselineOutlivesItsRunAndAnotherSizeFails()
     {
         // The test stops its game and launches another at another size, so it has runs of its own.

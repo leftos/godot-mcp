@@ -155,7 +155,7 @@ public sealed class GamepadTests(SharedProbeSession shared) : IAsyncLifetime, IC
 
     // The default leaves the real pads live: the fixture turns ignore_joypad_on_unfocused_application on, override.cfg
     // turns it off, and the bridge sends no focus-out.
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ADefaultRunSendsNoFocusOutAndTakesTheInjectedPad()
     {
         // The shared run shuts the real pads out, so the default run is a run of its own.

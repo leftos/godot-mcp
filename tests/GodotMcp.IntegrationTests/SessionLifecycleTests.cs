@@ -11,7 +11,6 @@ namespace GodotMcp.IntegrationTests;
 /// <summary>Launching the real Godot on the InputProbe with the bridge injected, several sessions at once, and leaving no trace after.</summary>
 public sealed class SessionLifecycleTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 45_000;
     private static readonly TimeSpan PingTimeout = TimeSpan.FromSeconds(5);
 
     // Quits a moment after returning, so the reply goes out before the game ends.
@@ -56,7 +55,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         _probe.Dispose();
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task LaunchHandshakesPassesUserArgsAndStopsWithoutATrace()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -82,7 +81,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.Equal(string.Empty, Git.Status(_probe.Directory));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task RefusesTheProjectsOwnOverrideAndLeavesItByteIdentical()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -97,7 +96,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.Empty(_harness.Sessions.List(includeStopped: true));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ReplacesAStaleMarkedOverrideAndRemovesItAfter()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -112,7 +111,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.False(File.Exists(_probe.OverrideFile));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ASecondLaunchUnderALiveNameIsRefused()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -130,7 +129,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.True(answered);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task TwoSessionsOnOneProjectRunTogether()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -163,7 +162,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
     }
 
     // A live run is needed on the folder, so this refusal is tested here rather than in SessionRegistryTests.
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnAttachOnAFolderWithAQuietRunIsRefused()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -183,7 +182,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.Equal(["server"], _harness.Sessions.List(includeStopped: true).Select(session => session.Name));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ADifferentGamepadShutOutOnTheSameProjectIsRefused()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -203,7 +202,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.Equal(["server"], _harness.Sessions.List(includeStopped: true).Select(session => session.Name));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ARuntimeToolWithoutANameRefusesWhileSeveralSessionsAreLive()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -220,7 +219,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ANameIsReusedAfterItsSessionStops()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -239,7 +238,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
 
     // The debugger is a fake that answers yes for every pid: the game itself runs and answers, so the restart and the stop each
     // end it gracefully and warn with the pid of the game they ended.
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task StopWithADebuggerAttachedWarns()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -258,7 +257,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.True(stopped.OverrideRemoved);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AGameThatQuitsLeavesTheOverrideForTheOtherSession()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -286,7 +285,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.False(File.Exists(_probe.OverrideFile));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task StopAfterTheGameWasKilledOutsideSaysSo()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -310,7 +309,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.NotEqual(0, gameExitCode);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AQuietRunStillHandshakes()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -323,7 +322,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.False(stopped.Killed);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AGameThatQuitsWithAChildStillRunningIsNotKilled()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -347,7 +346,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.True(pingGone, $"ping (pid {pingId}) was still running after the stop");
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AGameSlowToQuitIsKilledAndSaysWhy()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -366,7 +365,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.True(stopped.OverrideRemoved);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStopSaysHowLongTheQuitTook()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -382,7 +381,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.True(stopped.OverrideRemoved);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ARestartReportsWhatTheOldGameLeftRunning()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -402,7 +401,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.True(pingGone, $"ping (pid {pingId}) was still running after the restart");
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ARestartSaysWhyItKilledTheOldGame()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -419,7 +418,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.Null(restarted.PreviousQuitMs);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ARestartSaysHowLongTheOldGameTookToQuit()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

@@ -18,9 +18,6 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
     private const int TestTimeoutMs = 45_000;
     private const int ScriptTimeoutMs = 10_000;
 
-    // A test that launches its own game: the launch handshake is load-adjusted and may take 75 s of wall time.
-    private const int LaunchTestTimeoutMs = 180_000;
-
     // The machine's real pads take devices 0-3 (see DEVELOPMENT's footguns), so the injected pad keeps clear of them.
     private const int PadDevice = 7;
 
@@ -66,7 +63,7 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task FullScreenshotIsTheViewportSizeShowsTheRedSquareAndStaysOutOfGit()
     {
         // The test stops its game to check the tree after the run, so it has a run of its own.
@@ -98,7 +95,7 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         Assert.Equal(string.Empty, Git.Status(probe.Directory));
     }
 
-    [Theory(Timeout = TestTimeoutMs)]
+    [Theory(Timeout = TestTimeouts.OwnLaunchMs)]
     // At the fixture's 640 x 360 base a frame pixel is a viewport unit.
     [InlineData("canvas_items", 640, 360, "100,60,90,50")]
     // canvas_items renders the root at the window's resolution less the letterbox bars, so the screenshot is in window
@@ -171,7 +168,7 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         Assert.Empty(errors["errors"]!.AsArray());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AResetRelaunchesAStoppedGame()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -216,7 +213,7 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         Assert.Equal((120.0, 80.0), PngSize(Image(blocks)));
     }
 
-    [Theory(Timeout = LaunchTestTimeoutMs)]
+    [Theory(Timeout = TestTimeouts.OwnLaunchMs)]
     // canvas_items at twice the fixture's 640 x 360 base: a viewport unit is two frame pixels.
     [InlineData(1280, 720)]
     // 1280 x 900 letterboxes the same 2x content between 90 px bars, which the frame leaves out.

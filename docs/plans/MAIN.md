@@ -19,7 +19,6 @@ Shared: `RuntimeTools.Capture.cs`, `RuntimeTools.Input.cs`, `RuntimeTools.Time.c
 
 ### Singles
 
-- [ ] Integration tests that launch their own game with a 45 s timeout (`ProfileTests.APresetSetsTheSessionAndTheWindowSize`, the own-launch cases in `RuntimeReadTests`) against the DEVELOPMENT.md footgun's 180 s
 
 - [ ] `stress_input` in a recording: its reply timeout (`RuntimeTools.Stress.cs` L177, `InputTimeout` + events + `GapMs` of real time) skips `SendInputAsync`'s recorded allowance, so a gapped run in a slow recorded game can be cut short
 - [ ] `simulate_input`'s `wait {ms}` events (and `stress_input`'s gaps and replays) run on a `SceneTreeTimer` (`godot_mcp_input.gd` ~L629, `ignore_time_scale`): measure whether it counts clip time under Movie Maker (4.7.2's SceneTree.xml says real elapsed time) before the docs claim either

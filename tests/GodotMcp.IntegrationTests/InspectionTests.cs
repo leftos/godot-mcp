@@ -20,7 +20,6 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
         IClassFixture<SharedProbeSession>
 {
     private const int TestTimeoutMs = 45_000;
-    private const int LaunchTestTimeoutMs = 180_000;
     private const int ScriptTimeoutMs = 10_000;
     private const string Probe = "/root/InspectProbe";
 
@@ -40,7 +39,7 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task TreeFiltersByClassAndGroup()
     {
         // The test stops its game to check the tree after the run, so it has a run of its own.
@@ -493,7 +492,7 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
         Assert.Equal(RuntimeTools.MaxPropertyValueLength, called["valuePreview"]!.GetValue<string>().Length);
     }
 
-    [Fact(Timeout = LaunchTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task CallCSharpPublicMethod()
     {
         await using SessionHarness harness = new();
@@ -509,7 +508,7 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
         Assert.Equal(5, called["value"]!.GetValue<int>());
     }
 
-    [Fact(Timeout = LaunchTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task CallCSharpInternalMethod()
     {
         await using SessionHarness harness = new();
@@ -637,7 +636,7 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
         Assert.True(described["methodCount"]!.GetValue<int>() > 0);
     }
 
-    [Fact(Timeout = LaunchTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DescribeClassFindsAScriptClassOfTheRunningGame()
     {
         // A class_name script in the tracked fixture would make every InputProbe launch import first, so this copy gets its own.

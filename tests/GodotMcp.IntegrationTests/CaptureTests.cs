@@ -70,7 +70,7 @@ public sealed class CaptureTests(SharedProbeSession shared) : IAsyncLifetime, IC
         Assert.False(stopped["truncated"]!.GetValue<bool>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task RealInputIsCapturedBesideSentInput()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -110,7 +110,7 @@ public sealed class CaptureTests(SharedProbeSession shared) : IAsyncLifetime, IC
         Assert.True(started["capturing"]!.GetValue<bool>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ACaptureSurvivesARestart()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -154,7 +154,7 @@ public sealed class CaptureTests(SharedProbeSession shared) : IAsyncLifetime, IC
         Assert.All(masks, mask => Assert.Equal(1.0, mask));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SentPadInputIsCaptured()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
