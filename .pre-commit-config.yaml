@@ -1,8 +1,8 @@
 # prek hooks (prek install; prek run --all-files). The format check runs first, cs-line-length then catches the C# lines
-# over 150 characters that CSharpier does not wrap (comments), the warnings-as-errors build gates the result, then the
-# unit tests; gdlint checks the GDScript the server ships, gdcomplexity holds it to the same
-# complexity and length limits as the C#, and gdtest runs the bridge's GDScript unit tests in headless Godot. Ruff
-# (ruff.toml) and pytest check the Python tools and their tests.
+# over 150 characters that CSharpier does not wrap (comments), and the warnings-as-errors build gates the result;
+# gdlint checks the GDScript the server ships, and gdcomplexity holds it to the same complexity and length limits as
+# the C#. Ruff (ruff.toml) checks the Python tools. No hook runs a test suite: `run.ps1 test`, `gdtest` and `pytest`
+# run by hand.
 repos:
   - repo: local
     hooks:
@@ -23,12 +23,6 @@ repos:
         language: system
         pass_filenames: false
         files: \.(cs|csproj|props|slnx|editorconfig)$|^global\.json$
-      - id: unit-tests
-        name: unit tests
-        entry: pwsh -NoProfile -File run.ps1 test
-        language: system
-        pass_filenames: false
-        files: \.(cs|csproj|props|slnx)$|^(bridge|headless)/
       - id: gdformat
         name: gdformat check
         entry: gdformat --check
@@ -44,12 +38,6 @@ repos:
         entry: uv run --quiet --with "gdtoolkit>=4,<5" tools/gdcomplexity.py
         language: system
         files: ^(bridge|headless)/.*\.gd$
-      - id: gdtest
-        name: GDScript unit tests
-        entry: pwsh -NoProfile -File run.ps1 gdtest
-        language: system
-        pass_filenames: false
-        files: ^(bridge|headless|tests/bridge)/
       - id: ruff-format
         name: ruff format check
         entry: uvx ruff@0.16.9 format --check
@@ -60,9 +48,3 @@ repos:
         entry: uvx ruff@0.16.9 check
         language: system
         files: ^(tools|tests/tools)/.*\.py$
-      - id: pytest-tools
-        name: pytest tests/tools
-        entry: pwsh -NoProfile -File run.ps1 pytest
-        language: system
-        pass_filenames: false
-        files: ^(tools/.*\.(py|ps1|psm1)|tests/tools/)
