@@ -379,7 +379,45 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         Assert.True(x >= pointer["x"]!.GetValue<double>() && y >= pointer["y"]!.GetValue<double>(), hovered.ToJsonString());
         // The probe's viewport is 640 x 360.
         Assert.True(width > 0 && height > 0 && x + width <= 640 && y + height <= 360, hovered.ToJsonString());
+        AssertHit(tooltip, "owner", "ProbeButton", "Button");
         Assert.True(shownAfter, "the TooltipPanel popup is not visible after the hover");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverReportsAnAncestorsTooltip()
+    {
+        await AddChipAsync("HBoxContainer", "Row", "PASS");
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("Chip"), cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+        bool shownAfter = (await RunAsync(TooltipShownNow)).GetValue<bool>();
+
+        AssertHit(hovered, "hoveredOn", "Chip/Row", "HBoxContainer");
+        Assert.False(hovered.AsObject().ContainsKey("warning"), hovered.ToJsonString());
+        Assert.True(hovered["tooltip"] is JsonObject, hovered.ToJsonString());
+        JsonNode tooltip = hovered["tooltip"]!;
+        Assert.Equal("Reshuffle", tooltip["text"]!.GetValue<string>());
+        AssertHit(tooltip, "owner", "Chip", "PanelContainer");
+        Assert.True(shownAfter, "the TooltipPanel popup is not visible after the hover");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverStopsAtAStopFilterChild()
+    {
+        await AddChipAsync("Control", "Blocker", "STOP");
+
+        var clock = Stopwatch.StartNew();
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("Chip"), cancellationToken: TestContext.Current.CancellationToken)
+        )!;
+        clock.Stop();
+
+        AssertHit(hovered, "hoveredOn", "Chip/Blocker", "Control");
+        AssertNoHit(hovered, "tooltip");
+        Assert.False(hovered.AsObject().ContainsKey("warning"), hovered.ToJsonString());
+        // Under the probe's 0.5 s tooltip delay: a wait would last until a tooltip showed or 1.5 s ran out.
+        Assert.True(clock.ElapsedMilliseconds < 450, $"the hover took {clock.ElapsedMilliseconds} ms");
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -753,6 +791,25 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         await RunAsync("var hand: Node = load(\"res://hand_probe.tscn\").instantiate()\n\tscene_tree.root.add_child(hand)\n\treturn true");
 
     // The names of the Controls HandProbe saw a mouse press reach, in order.
+    // Adds under Main a PanelContainer Chip (filter Stop, tooltip "Reshuffle") spanning (160, 300) to (260, 340), an empty
+    // spot of the probe, filled by one child of the given class, name and mouse filter with no tooltip of its own.
+    private async Task AddChipAsync(string childClass, string childName, string childFilter) =>
+        await RunAsync(
+            "var chip := PanelContainer.new()\n\t"
+                + "chip.name = \"Chip\"\n\t"
+                + "chip.mouse_filter = Control.MOUSE_FILTER_STOP\n\t"
+                + "chip.tooltip_text = \"Reshuffle\"\n\t"
+                + $"var child: Control = {childClass}.new()\n\t"
+                + $"child.name = \"{childName}\"\n\t"
+                + $"child.mouse_filter = Control.MOUSE_FILTER_{childFilter}\n\t"
+                + "chip.add_child(child)\n\t"
+                + "scene_tree.root.get_node(\"Main\").add_child(chip)\n\t"
+                + "chip.position = Vector2(160, 300)\n\t"
+                + "chip.size = Vector2(100, 40)\n\t"
+                + "await scene_tree.process_frame\n\t"
+                + "return true"
+        );
+
     private Task<JsonNode> HandPressesAsync() => RunAsync("return scene_tree.root.get_node(\"HandProbe\").presses");
 
     private async Task<int> PressCountAsync() => (await RunAsync(ReadSmallButtonPresses)).GetValue<int>();

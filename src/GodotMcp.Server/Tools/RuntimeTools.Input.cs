@@ -185,11 +185,13 @@ internal sealed partial class RuntimeTools
     [McpServerTool(Name = "hover", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "The hover gesture: moves the pointer to the target without pressing (carrying any buttons already held), then, when "
-            + "the Control under it has a tooltip, waits for the tooltip to show, up to options.timeoutMs "
-            + "(gui/timers/tooltip_delay_sec plus 1 s when left out). Points are viewport coordinates, as get_ui_elements "
-            + "reports them. Returns {pointer, heldButtonMask, hoveredOn, tooltip, warning?}: hoveredOn the Control ({path, "
-            + "class}) under the pointer, null over none; tooltip {text, x, y, width, height} in viewport coordinates (text "
-            + "null for a custom tooltip without a Label), null when none showed, with a warning when one was due. Godot "
+            + "Godot has a tooltip to show for the pointer, waits for it to show, up to options.timeoutMs "
+            + "(gui/timers/tooltip_delay_sec plus 1 s when left out). That tooltip is the hovered Control's, or else the "
+            + "nearest ancestor's, climbing no further than a Control whose mouse filter is Stop or which is top-level. "
+            + "Points are viewport coordinates, as get_ui_elements reports them. Returns {pointer, heldButtonMask, hoveredOn, "
+            + "tooltip, warning?}: hoveredOn the Control ({path, class}) under the pointer, null over none; tooltip {text, x, "
+            + "y, width, height, owner} in viewport coordinates (text null for a custom tooltip without a Label; owner the "
+            + "Control ({path, class}) whose tooltip it is), null when none showed, with a warning when one was due. Godot "
             + "starts a tooltip's timer only while the hovered Control can process, so over a pausable Control in a paused "
             + "game hover answers at once with a warning: resume, hover, then pause."
             + ErrorNote

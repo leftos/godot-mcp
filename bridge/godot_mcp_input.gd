@@ -400,15 +400,19 @@ func _settle_hover(point: Vector2) -> Control:
 
 
 ## Moves to the target as mouse_button's move does; then, when params.tooltip is not false and
-## the hovered Control has a tooltip, waits for it to show. Records tooltip ({text, x, y, width,
-## height}, or null) and a warning when a tooltip was due and none showed.
+## a Control has a tooltip for the pointer (the hovered one or an ancestor, as _tooltip_owner
+## finds it), waits for it to show. Records tooltip ({text, x, y, width, height, owner}, or
+## null) and a warning when a tooltip was due and none showed.
 func _play_hover(params: Dictionary) -> String:
 	var point: Variant = _aim(params.get("target"), true)
 	if point is String:
 		return point
 	var control: Control = await _settle_hover(point)
 	_hits["tooltip"] = null
-	if control == null or not bool(params.get("tooltip", true)) or not _has_tooltip(control, point):
+	if control == null or not bool(params.get("tooltip", true)):
+		return ""
+	var tooltip_owner: Control = _tooltip_owner(control, point)
+	if tooltip_owner == null:
 		return ""
 	# The tooltip timer starts only from a motion over a Control that can process
 	# (scene/main/viewport.cpp L2117, L2136 in 4.7.2), so a pausable one in a paused tree
@@ -417,21 +421,35 @@ func _play_hover(params: Dictionary) -> String:
 		_hits["warning"] = PAUSED_TOOLTIP_WARNING % str(control.get_path())
 		return ""
 	var timeout_ms: int = _tooltip_timeout_ms(params)
-	var popup: Window = await _await_tooltip(control, timeout_ms)
+	var popup: Window = await _await_tooltip(tooltip_owner, timeout_ms)
 	if popup == null:
 		_hits["warning"] = "no tooltip showed within %d ms" % timeout_ms
 	else:
-		_hits["tooltip"] = _describe_tooltip(popup)
+		var tooltip: Dictionary = _describe_tooltip(popup)
+		tooltip["owner"] = _describe(tooltip_owner)
+		_hits["tooltip"] = tooltip
 	return ""
 
 
-## Whether the Control shows a tooltip at a viewport point: its tooltip_text, or what its
-## get_tooltip answers there (a script's _get_tooltip).
-func _has_tooltip(control: Control, point: Vector2) -> bool:
-	if not control.tooltip_text.is_empty():
-		return true
-	var local: Vector2 = control.get_global_transform_with_canvas().affine_inverse() * point
-	return not control.get_tooltip(local).is_empty()
+## The Control whose tooltip Godot shows at a viewport point over the hovered control, or null
+## when none has one, picked as the viewport's _gui_get_tooltip does (scene/main/viewport.cpp
+## L1566-1596 in 4.7.2): from the hovered Control up through its parent Controls, the first
+## whose get_tooltip answers text at the point (its tooltip_text, or a script's _get_tooltip);
+## the climb ends after a Control whose mouse filter, mouse_behavior_recursive applied, is Stop,
+## or which is top-level.
+func _tooltip_owner(control: Control, point: Vector2) -> Control:
+	var current: Control = control
+	while current != null:
+		var local: Vector2 = current.get_global_transform_with_canvas().affine_inverse() * point
+		if not current.get_tooltip(local).is_empty():
+			return current
+		if (
+			current.get_mouse_filter_with_override() == Control.MOUSE_FILTER_STOP
+			or current.is_set_as_top_level()
+		):
+			return null
+		current = current.get_parent_control()
+	return null
 
 
 ## params.timeoutMs, else gui/timers/tooltip_delay_sec plus a second, at most
@@ -443,27 +461,28 @@ func _tooltip_timeout_ms(params: Dictionary) -> int:
 	return mini(int(delay * 1000.0) + 1000, HOVER_TIMEOUT_CAP_MS)
 
 
-## The tooltip popup showing for control, checked now and then on each process_frame, which
-## fires paused or not (scene/main/scene_tree.cpp L649, L713 in 4.7.2), until one shows or
+## The tooltip popup showing for tooltip_owner, checked now and then on each process_frame,
+## which fires paused or not (scene/main/scene_tree.cpp L649, L713 in 4.7.2), until one shows or
 ## timeout_ms of real time passes: the tooltip timer, once started, ignores pause and the time
 ## scale (viewport.cpp L2144-2146). Null when none showed.
-func _await_tooltip(control: Control, timeout_ms: int) -> Window:
+func _await_tooltip(tooltip_owner: Control, timeout_ms: int) -> Window:
 	var until: int = Time.get_ticks_msec() + timeout_ms
-	var popup: Window = _showing_tooltip(control)
+	var popup: Window = _showing_tooltip(tooltip_owner)
 	while popup == null and Time.get_ticks_msec() < until:
 		await get_tree().process_frame
-		if not is_instance_valid(control):
+		if not is_instance_valid(tooltip_owner):
 			return null
-		popup = _showing_tooltip(control)
+		popup = _showing_tooltip(tooltip_owner)
 	return popup
 
 
-## A visible tooltip popup: an embedded subwindow of the root, or a Window under control when
-## subwindows are not embedded; null when none shows.
-func _showing_tooltip(control: Control) -> Window:
+## A visible tooltip popup: an embedded subwindow of the root, or a Window under tooltip_owner
+## when subwindows are not embedded, since Godot parents the popup to the Control whose tooltip
+## it shows (scene/main/viewport.cpp L1687 in 4.7.2); null when none shows.
+func _showing_tooltip(tooltip_owner: Control) -> Window:
 	var candidates: Array = []
 	candidates.append_array(get_tree().root.get_embedded_subwindows())
-	candidates.append_array(control.get_children(true))
+	candidates.append_array(tooltip_owner.get_children(true))
 	for node: Node in candidates:
 		if node is Window and (node as Window).visible and bridge._ui_snapshot.is_tooltip(node):
 			return node as Window
