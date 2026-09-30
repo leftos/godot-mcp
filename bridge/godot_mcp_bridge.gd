@@ -4,9 +4,9 @@ extends Node
 ## It dials the server at 127.0.0.1:GODOT_MCP_PORT, says hello with GODOT_MCP_TOKEN, the
 ## project path and its own process id, then answers the server's requests. A game run_project
 ## did not launch finds the port and token in the attach file attach_project writes instead;
-## with neither, a game in an armed folder waits dormant for a join (godot_mcp_dormant.gd), and
-## any other game's bridge stays off. Frames are a 4-byte big-endian length
-## followed by UTF-8 JSON. Requests are {id, command, params}; replies are
+## with neither, a game with a window in an armed folder waits dormant for a join
+## (godot_mcp_dormant.gd), and any other game's bridge stays off. Frames are a 4-byte
+## big-endian length followed by UTF-8 JSON. Requests are {id, command, params}; replies are
 ## {id, ok: true, result} or {id, ok: false, error}. The errors and warnings the game logs
 ## (godot_mcp_logger.gd) go out as {type: "errors", entries, dropped} frames without an id,
 ## each frame, and before every reply, so a command's errors reach the server before its reply.
@@ -167,7 +167,7 @@ func _ready() -> void:
 		_go_dormant()
 		return
 	if _endpoint.is_empty():
-		if _dormant_script.is_switched_off():
+		if _dormant_script.frees_silently(_state_dir):
 			queue_free()
 			return
 		push_warning(
@@ -281,10 +281,11 @@ func _on_disarmed() -> void:
 
 
 ## Goes dormant again when the endpoint came from attach.json or a join file and the folder is
-## still armed; a run's game, or one in a disarmed folder, stays idle.
+## still armed; a run's game, a headless one, or one in a disarmed folder stays idle.
 func _dormant_if_armed() -> void:
 	var armed: bool = FileAccess.file_exists(_dormant_script.armed_path(_state_dir))
-	if _dormant_script.goes_dormant_again(_endpoint_source, armed):
+	var headless: bool = _dormant_script.is_headless()
+	if _dormant_script.goes_dormant_again(_endpoint_source, armed, headless):
 		_go_dormant_again()
 
 

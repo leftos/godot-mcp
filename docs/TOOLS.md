@@ -75,7 +75,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `arm_project`
 
-- **Does:** writes the injection `override.cfg` and `.godot/godot-mcp/armed.json`, so every game started on the folder from now on (by a script, a launcher, by hand) carries a dormant bridge that `attach_project` can join while it runs: `{projectPath, quiet, shutOutRealGamepads, dormant: [{pid, startedAt}]}`.
+- **Does:** writes the injection `override.cfg` and `.godot/godot-mcp/armed.json`, so every game with a window started on the folder from now on (by a script, a launcher, by hand) carries a dormant bridge that `attach_project` can join while it runs; a `--headless` game (a smoke, a test runner) is left alone, so it is never joined by mistake: `{projectPath, quiet, shutOutRealGamepads, dormant: [{pid, startedAt}]}`.
 - **Use:** before launching games you may want to look at later (a smoke, `dtd.ps1 launch`, a player reaching a state), instead of a delayed launcher. `options {quiet, shutOutRealGamepads}`, both false by default; every session on the folder must agree with them.
 - **Edges:** a game already running at the call has no bridge and is never listed. Arming again with the same options returns the state; with different ones it is refused (disarm first). The arm lasts until `disarm_project` or the server exits. A quiet arm starts every game's window unfocused and parks it off-screen, a hand-launched one included. A dormant game checks for a join twice a second, even while paused, and registers no error logger until it is joined.
 

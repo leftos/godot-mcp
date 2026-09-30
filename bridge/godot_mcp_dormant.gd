@@ -20,7 +20,7 @@ const DORMANT_DIR := "dormant"
 const JOIN_FILE := "join-%d.json"
 const POLL_MS := 500
 ## How the bridge runs, decided once in its _init (decide_mode): a run_project game, one
-## attach_project waited for (attach.json), one waiting in an armed folder, or none.
+## attach_project waited for (attach.json), one with a window waiting in an armed folder, or none.
 const MODE_RUN := "run"
 const MODE_ATTACH := "attach"
 const MODE_DORMANT := "dormant"
@@ -49,19 +49,36 @@ var _written: String = ""
 
 
 ## How the bridge runs and whom it serves, {mode, endpoint, source}: the MODE_* decide_mode picks
-## from what dir (the globalised STATE_DIR) and the environment hold, and for a run or an attach
-## the endpoint found and its SOURCE_*; endpoint and source are empty otherwise.
+## from what dir (the globalised STATE_DIR), the environment and whether the game is headless hold,
+## and for a run or an attach the endpoint found and its SOURCE_*; endpoint and source are empty
+## otherwise.
 static func choose(dir: String) -> Dictionary:
 	var off: bool = is_switched_off()
 	var from_env: Dictionary = {} if off else env_endpoint()
 	var from_attach: Dictionary = {} if off or not from_env.is_empty() else attach_endpoint(dir)
 	var armed: bool = FileAccess.file_exists(armed_path(dir))
-	var mode: String = decide_mode(not from_env.is_empty(), not from_attach.is_empty(), armed, off)
+	var mode: String = decide_mode(
+		not from_env.is_empty(), not from_attach.is_empty(), armed, off, is_headless()
+	)
 	if mode == MODE_RUN:
 		return {"mode": mode, "endpoint": from_env, "source": SOURCE_ENV}
 	if mode == MODE_ATTACH:
 		return {"mode": mode, "endpoint": from_attach, "source": SOURCE_ATTACH}
 	return {"mode": mode, "endpoint": {}, "source": ""}
+
+
+## Whether this game runs without a window (a `--headless` run: a smoke or a test runner): such a
+## game is never dormant, so an armed folder's bridge leaves it off rather than waiting for an
+## attach_project that found no pid.
+static func is_headless() -> bool:
+	return DisplayServer.get_name() == "headless"
+
+
+## Whether a bridge with no endpoint frees itself silently instead of warning that no server was
+## found: the server switched it off (OFF_VARIABLE), or it is a headless game in an armed folder,
+## which would have waited dormant had it a window.
+static func frees_silently(dir: String) -> bool:
+	return is_switched_off() or (is_headless() and FileAccess.file_exists(armed_path(dir)))
 
 
 ## Whether the server switched the bridge off for a headless run (OFF_VARIABLE).
@@ -108,15 +125,18 @@ static func attach_endpoint(dir: String) -> Dictionary:
 
 
 ## How the bridge runs: off when the server switched it off, else a run's environment, then
-## attach.json, then an armed folder, each found (a malformed attach.json is not found).
-static func decide_mode(env_found: bool, attach_found: bool, armed: bool, off: bool) -> String:
+## attach.json, then an armed folder for a game with a window, each found (a malformed attach.json
+## is not found). A headless game is never dormant, so an armed folder alone leaves it off.
+static func decide_mode(
+	env_found: bool, attach_found: bool, armed: bool, off: bool, headless: bool
+) -> String:
 	if off:
 		return MODE_OFF
 	if env_found:
 		return MODE_RUN
 	if attach_found:
 		return MODE_ATTACH
-	if armed:
+	if armed and not headless:
 		return MODE_DORMANT
 	return MODE_OFF
 
@@ -140,9 +160,10 @@ static func parse_endpoint(text: String, quiet_variable: bool) -> Dictionary:
 
 
 ## Whether a connection that ended leaves the game dormant again: only an endpoint from attach.json
-## or a join file, and only while the folder is still armed. A run's game never goes dormant.
-static func goes_dormant_again(source: String, armed: bool) -> bool:
-	return armed and (source == SOURCE_ATTACH or source == SOURCE_JOIN)
+## or a join file, only while the folder is still armed, and never for a headless game, which is
+## never dormant. A run's game never goes dormant.
+static func goes_dormant_again(source: String, armed: bool, headless: bool) -> bool:
+	return armed and not headless and (source == SOURCE_ATTACH or source == SOURCE_JOIN)
 
 
 static func armed_path(dir: String) -> String:

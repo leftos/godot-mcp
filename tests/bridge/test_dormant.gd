@@ -11,12 +11,29 @@ var _pads_script: GDScript = load_bridge_script("godot_mcp_gamepad.gd")
 
 func test_decide_mode_takes_off_then_environment_then_attach_then_armed() -> void:
 	var decide: Callable = _dormant_script.decide_mode
-	assert_eq(decide.call(true, true, true, true), "off", "switched off wins over everything")
-	assert_eq(decide.call(true, true, true, false), "run", "the environment wins over the files")
-	assert_eq(decide.call(false, true, true, false), "attach", "attach.json wins over armed.json")
-	assert_eq(decide.call(false, false, true, false), "dormant", "armed.json alone is dormant")
-	assert_eq(decide.call(false, false, false, false), "off", "nothing found is off")
-	assert_eq(decide.call(false, false, true, true), "off", "switched off is never dormant")
+	assert_eq(
+		decide.call(true, true, true, true, false), "off", "switched off wins over everything"
+	)
+	assert_eq(
+		decide.call(true, true, true, false, false), "run", "the environment wins over the files"
+	)
+	assert_eq(
+		decide.call(false, true, true, false, false), "attach", "attach.json wins over armed.json"
+	)
+	assert_eq(
+		decide.call(false, false, true, false, false), "dormant", "armed.json alone is dormant"
+	)
+	assert_eq(decide.call(false, false, false, false, false), "off", "nothing found is off")
+	assert_eq(decide.call(false, false, true, true, false), "off", "switched off is never dormant")
+
+
+func test_decide_mode_never_makes_a_headless_game_dormant() -> void:
+	var decide: Callable = _dormant_script.decide_mode
+	assert_eq(decide.call(false, false, true, false, true), "off", "an armed folder alone")
+	assert_eq(decide.call(true, false, true, false, true), "run", "the environment still runs it")
+	assert_eq(
+		decide.call(false, true, true, false, true), "attach", "attach.json still attaches it"
+	)
 
 
 func test_parse_endpoint_reads_a_join_file() -> void:
@@ -49,12 +66,18 @@ func test_parse_endpoint_refuses_malformed_text_and_missing_keys() -> void:
 
 func test_goes_dormant_again_only_for_a_file_endpoint_in_an_armed_folder() -> void:
 	var again: Callable = _dormant_script.goes_dormant_again
-	assert_true(again.call("attach", true), "an attach.json endpoint, armed")
-	assert_true(again.call("join", true), "a join file endpoint, armed")
-	assert_true(not again.call("env", true), "a run's endpoint never goes dormant")
-	assert_true(not again.call("attach", false), "a disarmed folder stays idle")
-	assert_true(not again.call("join", false), "a disarmed folder stays idle after a join")
-	assert_true(not again.call("", true), "no endpoint at all")
+	assert_true(again.call("attach", true, false), "an attach.json endpoint, armed")
+	assert_true(again.call("join", true, false), "a join file endpoint, armed")
+	assert_true(not again.call("env", true, false), "a run's endpoint never goes dormant")
+	assert_true(not again.call("attach", false, false), "a disarmed folder stays idle")
+	assert_true(not again.call("join", false, false), "a disarmed folder stays idle after a join")
+	assert_true(not again.call("", true, false), "no endpoint at all")
+
+
+func test_goes_dormant_again_never_for_a_headless_game() -> void:
+	var again: Callable = _dormant_script.goes_dormant_again
+	assert_true(not again.call("attach", true, true), "a headless attach.json game")
+	assert_true(not again.call("join", true, true), "a headless joined game")
 
 
 func test_the_file_paths_sit_under_the_folder() -> void:
@@ -95,10 +118,23 @@ func test_armed_quiet_reads_armed_json() -> void:
 	_remove_tree(dir)
 
 
-func test_choose_is_dormant_with_only_armed_json_and_runs_with_the_environment() -> void:
+func test_frees_silently_is_a_switched_off_or_headless_armed_game() -> void:
+	var dir: String = _fresh_dir("silent")
+	assert_true(not _dormant_script.frees_silently(dir), "no armed.json, not switched off")
+	_write(dir.path_join("armed.json"), "{}")
+	assert_true(_dormant_script.frees_silently(dir), "an armed folder in a headless game")
+	OS.set_environment("GODOT_MCP_OFF", "1")
+	DirAccess.remove_absolute(dir.path_join("armed.json"))
+	assert_true(_dormant_script.frees_silently(dir), "switched off")
+	OS.unset_environment("GODOT_MCP_OFF")
+	assert_true(not _dormant_script.frees_silently(dir), "switched back on, unarmed")
+	_remove_tree(dir)
+
+
+func test_choose_leaves_a_headless_armed_game_off_and_still_follows_the_environment() -> void:
 	var dir: String = _fresh_dir("choose")
 	_write(dir.path_join("armed.json"), '{"quiet": false}')
-	var dormant: Dictionary = _dormant_script.choose(dir)
+	var armed_only: Dictionary = _dormant_script.choose(dir)
 	OS.set_environment("GODOT_MCP_PORT", "5")
 	OS.set_environment("GODOT_MCP_TOKEN", "env")
 	var run: Dictionary = _dormant_script.choose(dir)
@@ -110,7 +146,9 @@ func test_choose_is_dormant_with_only_armed_json_and_runs_with_the_environment()
 	_write(dir.path_join("attach.json"), '{"port": 6, "token": "file"}')
 	var attach: Dictionary = _dormant_script.choose(dir)
 	_remove_tree(dir)
-	assert_eq(dormant, {"mode": "dormant", "endpoint": {}, "source": ""}, "armed.json alone")
+	assert_eq(
+		armed_only, {"mode": "off", "endpoint": {}, "source": ""}, "armed.json alone, headless"
+	)
 	assert_eq(run.get("mode"), "run", "the environment runs")
 	assert_eq(run.get("source"), "env", "from the environment")
 	assert_eq(run["endpoint"].get("port"), 5, "the environment's port")

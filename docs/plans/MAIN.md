@@ -14,7 +14,6 @@ Waves run in order; bug reports sit ahead of the backlog inside each. The single
 ### Singles
 
 - [ ] #49 `detach_project` leaves the joined game running and `stop_project` refuses an attached session: no way to end a joined game through the server. Decided (user, 2026-09-29): `stop_project` accepts an attached session and quits its game (ask, then kill after the grace, by the joined pid); `detach_project` keeps leaving it running
-- [ ] #52 an arm gives `--headless` games (smokes, test runners) a dormant bridge too (`decide_mode`, `bridge/godot_mcp_dormant.gd` L112-121), so `attach_project` with no pid can join a smoke's client. Decided (user, 2026-09-29): a headless game never goes dormant, no option
 - [ ] #50 silence comes only with `quiet`: a watched run, or a game joined on an armed folder, plays sound; wants a `mute` option independent of `quiet`. Decided (user, 2026-09-29): `options.mute` on `run_project`, `attach_project` and `arm_project`, the bridge muting the Master bus; `quiet` still implies it
 - [ ] In a recording, the Time module's step, monitor and capture deadline (`_begin`, `bridge/godot_mcp_time.gd` ~L168-172, a `SceneTreeTimer` its comment says "runs in real time") runs in clip time, so at 240 fps its `backstopMs` fires after a quarter of its length in wall time: measure whether it can beat the server's cancel, and correct the comment
 
