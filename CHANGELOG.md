@@ -2,7 +2,7 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
-## Unreleased
+## 0.11.1 - 2026-09-30
 
 ### Changed
 
@@ -14,7 +14,6 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - Two servers ending sessions on one folder at once no longer lose an owner of its `override.cfg`, leaving the other's game without a bridge.
 - A headless tool call on a folder this server armed no longer deletes its `override.cfg`, so games started later still get the bridge.
-
 - A game going dormant again after `detach_project` now lets go of keys and input actions a drive left pressed, as it already did mouse and pad buttons.
 
 ## 0.11.0 - 2026-09-29
