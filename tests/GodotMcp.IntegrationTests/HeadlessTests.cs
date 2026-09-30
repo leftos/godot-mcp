@@ -387,8 +387,9 @@ public sealed class HeadlessTests : IAsyncDisposable
         await TreeAsync(probe.Directory, "main.tscn", null, cancellation);
 
         string folder = Path.Combine(ProjectPrep.LogFolder(probe.Directory), "headless");
-        Assert.Empty(Directory.EnumerateFileSystemEntries(folder));
-        Assert.True(File.Exists(Path.Combine(ProjectPrep.LogFolder(probe.Directory), "headless.log")));
+        // A GDScript project's warm host never creates the folder; a cold run empties the one it wrote its files in.
+        Assert.Empty(Directory.Exists(folder) ? Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories) : []);
+        Assert.True(File.Exists(HeadlessHost.LogPathOf(probe.Directory, Environment.ProcessId)));
         Assert.False(File.Exists(probe.OverrideFile));
     }
 

@@ -362,6 +362,8 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 These run a headless Godot on the project's files with no game started, beside any live session on the folder. The write tools always run the prep, open the scene as the editor does and save it with its uids kept; each edit is all or nothing. The scene edit tools write `.tscn` only; a binary `.scn` can be read but not edited. A node inside an instanced scene is refused (edit that scene's own file), except where a tool below says an editable instance or an instance's root is allowed.
 
+On a GDScript-only project the headless Godot stays up between calls (a warm host, one per folder and server), so consecutive calls skip Godot's start: its first call on a folder costs a start, the next ones a few milliseconds. Any change to the folder's files the host did not make (your own edit, the editor's, another server's), an import, a crash or a ceiling restarts it on the next call, which then costs a start again; nothing is retried. While it lives it holds the folder as its working directory, so renaming or deleting the folder (removing a worktree) is refused until the server exits. A C# project starts a fresh Godot for every call. The host's log is `.godot/godot-mcp/headless-host-<server pid>.log`; a C# project's is `.godot/godot-mcp/headless.log`.
+
 ### `describe_class`
 
 - **Does:** lists a class's properties, methods with typed arguments, signals, constants and enums: `{className, inherits, inheritsChain, canInstantiate, isScript, scriptPath?, language?, properties: [{name, type, default?}], methods: [{name, args: [{name, type, default?}], returnType, isVirtual, isStatic}], signals: [{name, args: [{name, type}]}], constants, enums, methodCount, offset, limit, warning?}`.
@@ -457,7 +459,7 @@ These run a headless Godot on the project's files with no game started, beside a
 
 - **Does:** builds a GridMap MeshLibrary from a 3D scene by the editor's Import from Scene rule and writes it to `outputPath` (`.tres` or `.res`); the scene is only read: `{outputPath, items: [{id, name, shapes, navigation}], replaced?}`.
 - **Use:** `meshItemNames` to keep only some items; `options {overwrite}`.
-- **Edges:** every MeshInstance3D with a mesh below the root is an item named after its node; two nodes of one name make one item (`replaced`). No previews are made. A file the scene uses is refused as `outputPath`, whether directly, through an instanced scene or a resource file, or by a node an earlier `batch_scene_operations` step changed; the refusal names the file or node (`through res://cell.tscn`, `through node Grid`). A replaced `.res` gets a new uid (a `.tres` keeps its own).
+- **Edges:** every MeshInstance3D with a mesh below the root is an item named after its node; two nodes of one name make one item (`replaced`). No previews are made. A file the scene uses is refused as `outputPath`, whether directly, through an instanced scene or a resource file, or by a node an earlier `batch_scene_operations` step changed; the refusal names the file or node (`through res://cell.tscn`, `through node Grid`). A replaced `.res` keeps its uid when the project has an import cache (`.godot/uid_cache.bin`) and gets a new one in a never-imported project (a `.tres` keeps its own).
 
 ### `batch_scene_operations`
 

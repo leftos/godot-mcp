@@ -40,11 +40,12 @@ internal sealed record HeadlessResult(JsonNode? Result, JsonArray EngineErrors, 
 }
 
 /// <summary>
-/// Runs <c>headless/operations.gd</c> in <c>godot --headless --script</c> on a project folder, under the folder's prep lock
-/// through the prep and the run. The request and the result cross as JSON files under <c>.godot/godot-mcp/headless/</c>.
-/// A <c>--script</c> run reads <c>override.cfg</c> (4.7.2 <c>main.cpp</c> L2107), so beside a live session on the folder it
-/// loads the bridge, which <see cref="GodotCommandLine.OffVariable"/> keeps off; a marked file no live server owns, a
-/// killed server's, is removed first. The operation's parameters reach the script
+/// Runs a headless operation on a project folder, under the folder's prep lock through the prep and the run: on the folder's
+/// warm host (<c>headless/host.gd</c>, <see cref="HeadlessHosts"/>) for a GDScript-only project, and for a C# project in a
+/// <c>godot --headless --script headless/operations.gd</c> of its own, the request and the result crossing as JSON files
+/// under <c>.godot/godot-mcp/headless/</c>. A <c>--script</c> run reads <c>override.cfg</c> (4.7.2 <c>main.cpp</c> L2107),
+/// so beside a live session on the folder it loads the bridge, which <see cref="GodotCommandLine.OffVariable"/> keeps off;
+/// a marked file no live server owns, a killed server's, is removed first. The operation's parameters reach the script
 /// with the prep's C# build state added as <c>build</c>, the configuration it builds as <c>buildConfiguration</c>, and a
 /// failed build's quoted compiler errors (<see cref="CompilerErrorList.Quote"/>) as <c>buildErrors</c>.
 /// </summary>
@@ -67,7 +68,12 @@ internal static class HeadlessRunner
             ClearFolder(registry, projectDir);
             string godot = Installation.FindGodot();
             string script = Installation.FindHeadlessScript();
-            PrepContext context = new(projectDir, registry.Logger, () => registry.RunningSessionNames(projectDir, except: null))
+            PrepContext context = new(
+                projectDir,
+                registry.Logger,
+                () => registry.RunningSessionNames(projectDir, except: null),
+                () => registry.HeadlessHosts.StopFolder(projectDir, "import")
+            )
             {
                 ImportAssets = request.ImportAssets,
                 ImportSkipHint = request.ImportSkipHint,
@@ -99,7 +105,39 @@ internal static class HeadlessRunner
     /// </summary>
     internal static void ClearFolder(SessionRegistry registry, string projectDir) => registry.OverrideFolders.RemoveStaleOverride(projectDir);
 
+    /// <summary>
+    /// Runs the request on the folder's warm host (<see cref="HeadlessHosts"/>), or, for a C# project, in a Godot of its own
+    /// that reads the request file and writes the result file.
+    /// </summary>
     private static async Task<JsonObject> RunGodotAsync(GodotCall call, CancellationToken cancellationToken)
+    {
+        JsonObject parameters = call.Request.Parameters.DeepClone().AsObject();
+        parameters["build"] = call.Build;
+        parameters["buildConfiguration"] = ProjectPrep.Configuration;
+        if (call.BuildErrors is not null)
+        {
+            parameters["buildErrors"] = call.BuildErrors.Quote();
+        }
+
+        HeadlessHosts hosts = call.Registry.HeadlessHosts;
+        string what = What(call.Request);
+        HeadlessHost? host = await hosts.AcquireAsync(call.Request.ProjectDir, what, cancellationToken);
+        if (host is null)
+        {
+            return await RunColdAsync(call, parameters, cancellationToken);
+        }
+
+        JsonObject reply = await hosts.RunAsync(
+            host,
+            new HostRequest(what, call.Request.Operation, parameters, call.Request.Ceiling),
+            cancellationToken
+        );
+        return Answered(call.Request, reply);
+    }
+
+    private static string What(HeadlessRequest request) => $"The headless {request.Operation} run on {request.ProjectDir}";
+
+    private static async Task<JsonObject> RunColdAsync(GodotCall call, JsonObject parameters, CancellationToken cancellationToken)
     {
         string projectDir = call.Request.ProjectDir;
         string folder = Path.Combine(ProjectPrep.LogFolder(projectDir), "headless");
@@ -110,14 +148,6 @@ internal static class HeadlessRunner
         string log = Path.Combine(ProjectPrep.LogFolder(projectDir), "headless.log");
         try
         {
-            JsonObject parameters = call.Request.Parameters.DeepClone().AsObject();
-            parameters["build"] = call.Build;
-            parameters["buildConfiguration"] = ProjectPrep.Configuration;
-            if (call.BuildErrors is not null)
-            {
-                parameters["buildErrors"] = call.BuildErrors.Quote();
-            }
-
             JsonObject body = new()
             {
                 ["op"] = call.Request.Operation,
@@ -172,7 +202,7 @@ internal static class HeadlessRunner
     /// <exception cref="SessionException">The run passed its ceiling, wrote no result or an unreadable one, or the operation refused.</exception>
     private static JsonObject ReadResult(HeadlessRequest request, ToolProcessResult ran, string resultPath, string log)
     {
-        string what = $"The headless {request.Operation} run on {request.ProjectDir}";
+        string what = What(request);
         if (ran.WasKilled)
         {
             throw new SessionException($"{what} did not finish {ran.KillPhrase}, so it was stopped with its whole process tree. Its log: {log}");
@@ -184,14 +214,12 @@ internal static class HeadlessRunner
             throw new SessionException($"{what} wrote no result (Godot exited {ran.ExitCode}). The last lines of its log, {log}:\n{tail}");
         }
 
-        JsonObject reply = ParseResult(File.ReadAllText(resultPath), what);
-        if (reply["ok"]?.GetValueKind() == JsonValueKind.True)
-        {
-            return reply;
-        }
-
-        throw new SessionException(FailureMessage(request.Operation, reply));
+        return Answered(request, ParseResult(File.ReadAllText(resultPath), what));
     }
+
+    /// <exception cref="SessionException">The operation refused: the reply's <c>ok</c> is not true.</exception>
+    private static JsonObject Answered(HeadlessRequest request, JsonObject reply) =>
+        reply["ok"]?.GetValueKind() == JsonValueKind.True ? reply : throw new SessionException(FailureMessage(request.Operation, reply));
 
     /// <summary>
     /// The message of an operation that refused: its error, then under "Godot logged:" one line for each error (not warning)

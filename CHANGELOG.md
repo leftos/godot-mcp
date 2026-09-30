@@ -12,6 +12,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - Input tools aim `element` at 2D and 3D world nodes through their camera, with an optional `offset`, and report the point as `aimedAt`.
 - `list_game_tools` lists a C# game's own methods marked `[GodotMcpTool]`, with each one's owner, argument schema and whether it can be called now.
 
+### Changed
+
+- Consecutive headless tool calls on a GDScript-only project answer from one Godot kept running per folder, without starting Godot each time.
+
 ### Fixed
 
 - An `element` inside a `SubViewportContainer`, or in a window opened from one, is now aimed where the root viewport shows it.

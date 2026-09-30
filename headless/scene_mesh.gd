@@ -17,6 +17,8 @@ extends RefCounted
 ## previews are made: they need EditorInterface.make_mesh_previews.
 
 const SceneFiles := preload("scene_files.gd")
+## ResourceUID's cache file (4.7.2 core/io/resource_uid.cpp, get_cache_file).
+const UID_CACHE := "res://.godot/uid_cache.bin"
 
 
 ## Builds the library from the scene rooted at root (context.scene) and saves it to params.output:
@@ -65,13 +67,32 @@ static func write_pending(pending: Array) -> Dictionary:
 	return {}
 
 
-## Saves write's library to its output with the uid the output has now (a new one for a new file)
-## and the scene's ext_resource uids: {uid} or {error} naming the output.
+## Saves write's library to its output with the scene's ext_resource uids: {uid} or {error} naming
+## the output. A .tres keeps the uid its header holds (a new one for a new file); a .res keeps the
+## one the project's uid cache maps it to, and gets a new one when the project has no cache
+## (_fresh_uid), whether or not an earlier request of this process wrote it.
 static func _write(write: Dictionary) -> Dictionary:
 	var output: String = write["output"]
-	return SceneFiles.save_resource(
-		write["library"], output, SceneFiles.uid_for(output), write["ext_uids"], false
+	var uid: int = (
+		_fresh_uid(output) if output.get_extension() == "res" else SceneFiles.uid_for(output)
 	)
+	return SceneFiles.save_resource(write["library"], output, uid, write["ext_uids"], false)
+
+
+## The uid for a binary resource about to be replaced, as a cold run finds it. A binary file carries
+## no uid a fresh process can read outside the editor: ResourceLoader.get_resource_uid only looks
+## the path up in ResourceUID's map (4.7.2 core/io/resource_loader.cpp L1412-1416), which a process
+## builds from .godot/uid_cache.bin (core/io/resource_uid.cpp L222-228, L332-333). With the cache,
+## that lookup is SceneFiles.uid_for's. Without it a cold run gets a new id; a warm host may still
+## hold the id an earlier request registered for the path, so that one is removed first
+## (ResourceUID.remove_id, 4.7.2 doc/classes/ResourceUID.xml) and the path maps to the new id alone.
+static func _fresh_uid(output: String) -> int:
+	if FileAccess.file_exists(UID_CACHE):
+		return SceneFiles.uid_for(output)
+	var held: int = ResourceLoader.get_resource_uid(output)
+	if held != ResourceUID.INVALID_ID and ResourceUID.has_id(held):
+		ResourceUID.remove_id(held)
+	return ResourceUID.create_id()
 
 
 ## Adds found's items (all, or those wanted names) to library: {items, replaced?}, replaced the

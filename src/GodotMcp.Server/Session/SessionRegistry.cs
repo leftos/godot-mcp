@@ -24,6 +24,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     private int _previews;
     private readonly Dictionary<string, GodotSession> _sessions = new(StringComparer.OrdinalIgnoreCase);
     private readonly LoadClock? _launchClock;
+    private HeadlessHosts? _headlessHosts;
 
     // One per folder a prep has run on, kept for the server's lifetime. Never disposed: a prep still in flight at shutdown
     // releases its lock after the registry is gone, and a SemaphoreSlim whose wait handle is never asked for holds no handle.
@@ -53,6 +54,18 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     internal ILogger Logger => logger;
+
+    /// <summary>Starts a warm headless host's process: <see cref="GodotHostProcess.Launch"/> unless set, as a test sets a fake one.</summary>
+    internal Func<HostLaunch, IHostProcess> HostLauncher { get; init; } = launch => GodotHostProcess.Launch(launch, logger);
+
+    /// <summary>
+    /// The server's process id, which names its warm hosts' logs (<see cref="HeadlessHost.LogPathOf"/>): this process's unless
+    /// set, as a test sets one per registry to stand in for two servers.
+    /// </summary>
+    internal int ServerProcessId { get; init; } = Environment.ProcessId;
+
+    /// <summary>The warm headless hosts, one per GDScript-only project folder a headless tool has run on.</summary>
+    internal HeadlessHosts HeadlessHosts => LazyInitializer.EnsureInitialized(ref _headlessHosts, () => new HeadlessHosts(this));
 
     /// <summary>
     /// The machine-wide list every folder is recorded in before its override.cfg is written: <see cref="OverrideFolders.Default"/>
@@ -281,7 +294,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
-    /// The last-resort cleanup for the server's own exit: every session's own cleanup, every armed folder disarmed, then this
+    /// The last-resort cleanup for the server's own exit: every session's own cleanup, every warm headless host stopped and
+    /// waited for, every armed folder disarmed, then this
     /// server's release of the override file of every folder a session used or was armed, since none of them outlives the server.
     /// </summary>
     public void Shutdown()
@@ -300,6 +314,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             session.Shutdown();
         }
 
+        Volatile.Read(ref _headlessHosts)?.Shutdown();
         OverrideFolders.Hold("the shutdown cleanup", () => ReleaseAtShutdown(sessions, armed));
     }
 
@@ -902,7 +917,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             await folderLock.WaitAsync(limit.Token);
             try
             {
-                PrepContext context = new(projectDir, logger, () => RunningSessionNames(projectDir, session));
+                PrepContext context = new(
+                    projectDir,
+                    logger,
+                    () => RunningSessionNames(projectDir, session),
+                    () => HeadlessHosts.StopFolder(projectDir, "import")
+                );
                 return await ProjectPrep.RunAsync(context, limit.Token);
             }
             finally

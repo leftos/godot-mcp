@@ -7,10 +7,12 @@ using Microsoft.Extensions.Logging;
 namespace GodotMcp.Server.Session;
 
 /// <summary>
-/// What the prep needs from its caller: the project folder, where to log, and the names of the sessions whose game runs on
-/// the folder, asked only when an import is due (a launch leaves itself out; a restart can leave its own old game out too).
+/// What the prep needs from its caller: the project folder, where to log, the names of the sessions whose game runs on
+/// the folder, asked only when an import is due (a launch leaves itself out; a restart can leave its own old game out too),
+/// and what to do just before an import runs, once no running session refuses it: stop the folder's warm headless host,
+/// whose UID cache and class list the import rewrites.
 /// </summary>
-internal sealed record PrepContext(string ProjectDir, ILogger Logger, Func<IReadOnlyList<string>> RunningSessions)
+internal sealed record PrepContext(string ProjectDir, ILogger Logger, Func<IReadOnlyList<string>> RunningSessions, Action BeforeImport)
 {
     /// <summary>The full paths of files the request loads; one that <see cref="PrepScan.AssetNeedsImport"/> makes the import due.</summary>
     public IReadOnlyList<string> ImportAssets { get; init; } = [];
@@ -362,6 +364,7 @@ internal static class ProjectPrep
             );
         }
 
+        context.BeforeImport();
         string godot = Installation.FindGodot();
         PrepWrapper? wrap = wrapper.Value;
         string log = Path.Combine(LogFolder(context.ProjectDir), "import.log");

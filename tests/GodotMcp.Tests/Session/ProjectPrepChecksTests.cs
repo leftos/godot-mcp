@@ -16,6 +16,15 @@ public sealed class ProjectPrepChecksTests : IDisposable
 
     public void Dispose() => _temp.Dispose();
 
+    /// <summary>A GDScript game with a .uid file and no UID cache, so an import is due.</summary>
+    private string ImportDueGame()
+    {
+        string game = ProjectPrepFixtures.CreateGame(_temp, null);
+        File.WriteAllText(Path.Combine(game, "main.gd"), "extends Node\n");
+        File.WriteAllText(Path.Combine(game, "main.gd.uid"), "uid://bq3lfv6wdnbx8\n");
+        return game;
+    }
+
     [Fact]
     public void FindsTheCsprojNamedByAssemblyName()
     {
@@ -189,13 +198,60 @@ public sealed class ProjectPrepChecksTests : IDisposable
     {
         string game = ProjectPrepFixtures.CreateGame(_temp, "Missing", "Other.csproj");
 
-        PrepResult result = await ProjectPrep.RunAsync(new PrepContext(game, NullLogger.Instance, () => []), TestContext.Current.CancellationToken);
+        PrepResult result = await ProjectPrep.RunAsync(
+            new PrepContext(game, NullLogger.Instance, () => [], () => { }),
+            TestContext.Current.CancellationToken
+        );
 
         Assert.Equal("no-csproj", result.Build);
         Assert.Null(result.BuildMs);
         Assert.Equal("not-needed", result.Import);
         Assert.Contains("assembly_name is \"Missing\"", result.Note, StringComparison.Ordinal);
         Assert.Contains(Path.Combine(game, "Missing.csproj"), result.Note, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheImportHookRunsOnceNoSessionRefusesTheImportAndBeforeItStarts()
+    {
+        string game = ImportDueGame();
+        List<string> calls = [];
+        PrepContext context = new(
+            game,
+            NullLogger.Instance,
+            () =>
+            {
+                calls.Add("sessions");
+                return [];
+            },
+            () =>
+            {
+                calls.Add("hook");
+                // Thrown so the import after it never runs: the prep ends with this, not with a Godot run.
+                throw new InvalidOperationException("the hook ran");
+            }
+        );
+
+        InvalidOperationException stopped = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            ProjectPrep.RunAsync(context, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("the hook ran", stopped.Message);
+        Assert.Equal(["sessions", "hook"], calls);
+    }
+
+    [Fact]
+    public async Task TheImportHookDoesNotRunWhenRunningSessionsRefuseTheImport()
+    {
+        string game = ImportDueGame();
+        bool hooked = false;
+        PrepContext context = new(game, NullLogger.Instance, () => ["game"], () => hooked = true);
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            ProjectPrep.RunAsync(context, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Contains("session(s) game are running on it", refused.Message, StringComparison.Ordinal);
+        Assert.False(hooked);
     }
 
     [Fact]

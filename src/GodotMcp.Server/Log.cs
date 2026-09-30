@@ -192,4 +192,37 @@ internal static partial class Log
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "The game on {Project} (pid {ProcessId}) had already exited when its recording was finished.")]
     public static partial void GameAlreadyExited(ILogger logger, Exception exception, string project, int processId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Started the warm headless host for {Project} (pid {ProcessId}).")]
+    public static partial void HeadlessHostStarted(ILogger logger, string project, int processId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Stopped the warm headless host for {Project} (pid {ProcessId}): {Reason}.")]
+    public static partial void HeadlessHostStopped(ILogger logger, string project, int processId, string reason);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "The warm headless host for {Project} (pid {ProcessId}) ended while idle (its connection closed or it exited); it is dropped."
+    )]
+    public static partial void HeadlessHostDropped(ILogger logger, string project, int processId);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "The warm headless host for {Project} did not answer its shutdown: {Reason}; it is killed.")]
+    public static partial void HeadlessHostShutdownUnanswered(ILogger logger, string project, string reason);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The previous warm headless host for {Project} was still being let go of after {Seconds} s; the next one starts anyway."
+    )]
+    public static partial void HeadlessHostReleaseSlow(ILogger logger, string project, double seconds);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The warm headless host for {Project} was still being let go of {Seconds} s into the server's exit; the server exits anyway."
+    )]
+    public static partial void HeadlessHostReleaseUnfinishedAtExit(ILogger logger, string project, double seconds);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Opening the warm headless host's own Godot process {Pid} for {Project} failed; its kill waits for the console wrapper only."
+    )]
+    public static partial void HeadlessHostGameHandleFailed(ILogger logger, Exception exception, int pid, string project);
 }

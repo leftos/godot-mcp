@@ -389,7 +389,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
-    private static string CreateToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+    internal static string CreateToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
 
     /// <summary>Adds a captured frame from this session's bridge to its capture in the registry's store.</summary>
     private void ReceiveCaptured(JsonObject frame) => registry.Captures.Receive(Name, frame);
@@ -417,7 +417,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         try
         {
             string godotPath = Installation.FindGodot();
-            PrepContext context = new(ProjectDir, _logger, () => registry.RunningSessionNames(ProjectDir, this));
+            PrepContext context = new(
+                ProjectDir,
+                _logger,
+                () => registry.RunningSessionNames(ProjectDir, this),
+                () => registry.HeadlessHosts.StopFolder(ProjectDir, "import")
+            );
             PrepResult prep = request.Prepare ? await ProjectPrep.RunAsync(context, cancellationToken) : PrepResult.Skipped;
             string bridgeScript = Installation.FindBridgeScript();
             RunEnd? previousEnd = null;

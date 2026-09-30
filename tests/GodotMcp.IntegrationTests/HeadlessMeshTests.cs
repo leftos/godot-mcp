@@ -2,15 +2,18 @@ using System.Buffers.Binary;
 using System.Text;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
+using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
+using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol;
 
 namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// export_mesh_library against the real Godot, on 3D scenes the tests write into InputProbe copies (never into the tracked
-/// fixtures), the library read back as text. The copies are never imported, so every uid comes from the files themselves.
+/// fixtures), the library read back as text. Only the test of a .res overwrite's uid imports its copy, so the project's uid
+/// cache holds the library's uid; in every other copy each uid comes from the files themselves.
 /// </summary>
 public sealed class HeadlessMeshTests : IAsyncDisposable
 {
@@ -456,6 +459,34 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.NotEqual(uid, BinaryUid(File.ReadAllBytes(output)));
     }
 
+    [Theory(Timeout = TestTimeoutMs)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExportMeshLibraryOverwriteOfAResKeepsTheUidTheProjectsUidCacheHolds(bool cold)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        // A GDScript copy is served by a warm host; a C# one runs one process per call.
+        IDisposable project = cold ? Track(CsProbeProject.Unbuilt()) : Track(new ProbeProject());
+        string directory = cold ? ((CsProbeProject)project).Directory : ((ProbeProject)project).Directory;
+        File.WriteAllText(Path.Combine(directory, "tiles.tscn"), TilesScene);
+        string output = Path.Combine(directory, "tiles.res");
+        await _tools.ExportMeshLibraryAsync(directory, "tiles.tscn", "tiles.res", cancellationToken: cancellation);
+        long first = BinaryUid(File.ReadAllBytes(output));
+        // The import writes .godot/uid_cache.bin with the library's uid.
+        await ImportAsync(directory, cancellation);
+
+        await _tools.ExportMeshLibraryAsync(
+            directory,
+            "tiles.tscn",
+            "tiles.res",
+            options: new SceneWriteOptions(Overwrite: true),
+            cancellationToken: cancellation
+        );
+
+        Assert.True(File.Exists(Path.Combine(directory, ".godot", "uid_cache.bin")));
+        Assert.Equal(first, BinaryUid(File.ReadAllBytes(output)));
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ExportMeshLibraryRefusesAFileTheSceneUses()
     {
@@ -562,6 +593,22 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
 
     private static long BinaryUid(byte[] file) =>
         BinaryPrimitives.ReadInt64LittleEndian(file.AsSpan(28 + BinaryPrimitives.ReadInt32LittleEndian(file.AsSpan(24)) + 12));
+
+    /// <summary>Runs Godot's <c>--import</c> on the project, outside the server.</summary>
+    private static async Task ImportAsync(string project, CancellationToken cancellation)
+    {
+        string log = Path.Combine(Path.GetTempPath(), "godot-mcp-tests", $"import-{Guid.NewGuid():N}.log");
+        ToolProcessRequest request = new(
+            Installation.FindGodot(),
+            ["--headless", "--path", project, "--import"],
+            project,
+            log,
+            TimeSpan.FromSeconds(60)
+        );
+        ToolProcessResult result = await ToolProcess.RunAsync(request, NullLogger.Instance, cancellation);
+        File.Delete(log);
+        Assert.Equal(0, result.ExitCode);
+    }
 
     private static ProbeProject WriteShed(ProbeProject probe)
     {
