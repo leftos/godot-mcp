@@ -126,9 +126,10 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <summary>
     /// Pings the game first: one silent for 2 s is stuck and is killed at once, without the shutdown command. One that answers
     /// is asked to quit and killed if it has not within 3 s, or 30 s while it records. Either way the override file is
-    /// released, after a recording's clips are cut.
+    /// released, after a recording's clips are cut. An attached game is ended the same way (see <see cref="StopAttachedAsync"/>),
+    /// and its session is dropped.
     /// </summary>
-    /// <exception cref="SessionException">No run was ever launched, or the session is attached.</exception>
+    /// <exception cref="SessionException">No run was ever launched, or the attached session has no game.</exception>
     public async Task<StopResult> StopAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
@@ -136,10 +137,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         {
             if (Kind == SessionKind.Attach)
             {
-                throw new SessionException(
-                    $"The session for {ProjectDir} is attached to a game godot-mcp did not start: use detach_project; "
-                        + "stop_project only stops games run_project started."
-                );
+                return await StopAttachedAsync();
             }
 
             GodotRun run =
@@ -296,6 +294,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 _attached = null;
             }
 
+            DisposeAttachedGame();
             if (_run is not null)
             {
                 await _run.DisposeAsync();
@@ -333,9 +332,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// </summary>
     private readonly record struct RunEnd(bool Killed, string? Warning, string? KillReason, IReadOnlyList<string> LeftRunning, int? QuitMs);
 
-    /// <summary>The warning stop_project and restart_project carry when they end a running game a debugger is attached to; null otherwise.</summary>
-    private string? WarnIfDebugged(GodotRun run) =>
-        run.IsRunning && DebuggedProcessId is int debugged
+    /// <summary>
+    /// The warning stop_project and restart_project carry when they end a game still <paramref name="running"/> that a debugger
+    /// is attached to; null otherwise.
+    /// </summary>
+    private string? WarnIfDebugged(bool running) =>
+        running && DebuggedProcessId is int debugged
             ? $"A debugger was attached to the game (pid {debugged}); its debug session ended with the game."
             : null;
 
@@ -557,13 +559,13 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     }
 
     /// <summary>
-    /// Whether the run's bridge left a ping unanswered for <see cref="HangProbe.PingTimeout"/>: its main thread is stuck, so a
-    /// shutdown command would go unread too. A run without a connection, or whose connection ends meanwhile, is not silent:
+    /// Whether the game's bridge left a ping unanswered for <see cref="HangProbe.PingTimeout"/>: its main thread is stuck, so a
+    /// shutdown command would go unread too. A game without a connection, or whose connection ends meanwhile, is not silent:
     /// it gets the usual shutdown and grace.
     /// </summary>
-    private async Task<bool> IsSilentAsync(GodotRun run)
+    private async Task<bool> IsSilentAsync(BridgeConnection? bridge)
     {
-        if (run.Connection is not { IsOpen: true } connection)
+        if (bridge is not { IsOpen: true } connection)
         {
             return false;
         }
@@ -575,19 +577,19 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
         catch (TimeoutException)
         {
-            Log.StopFoundGameStuck(_logger, run.ProjectDir, HangProbe.PingTimeout.TotalSeconds);
+            Log.StopFoundGameStuck(_logger, ProjectDir, HangProbe.PingTimeout.TotalSeconds);
             return true;
         }
         catch (Exception e) when (e is IOException or InvalidOperationException)
         {
-            Log.StopPingFailed(_logger, e, run.ProjectDir);
+            Log.StopPingFailed(_logger, e, ProjectDir);
             return false;
         }
     }
 
-    private async Task<QuitRequest> AskToQuitAsync(GodotRun run)
+    private async Task<QuitRequest> AskToQuitAsync(BridgeConnection? bridge)
     {
-        if (run.Connection is not { IsOpen: true } connection)
+        if (bridge is not { IsOpen: true } connection)
         {
             return QuitRequest.NotSent;
         }
@@ -610,26 +612,39 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// the console wrapper also waits for every process the game started; a game that quit is then followed by
     /// <see cref="EndWrapperAsync"/>.
     /// </summary>
-    private async Task<RunEnd> StopRunningAsync(GodotRun run)
+    private Task<RunEnd> StopRunningAsync(GodotRun run) =>
+        StopGameAsync(run.Connection, run.Game ?? run.Process, () => KillAsync(run), () => EndWrapperAsync(run));
+
+    /// <summary>
+    /// Stops a game through its bridge <paramref name="connection"/>: a silent one is ended with <paramref name="kill"/> at once;
+    /// one that answers is asked to quit, and killed if <paramref name="watched"/> has not exited within the grace. After a quit,
+    /// <paramref name="afterQuit"/> ends what the game left behind and returns it, as leftRunning lists it.
+    /// </summary>
+    private async Task<RunEnd> StopGameAsync(
+        BridgeConnection? connection,
+        Process watched,
+        Func<Task> kill,
+        Func<Task<IReadOnlyList<string>>> afterQuit
+    )
     {
-        if (await IsSilentAsync(run))
+        if (await IsSilentAsync(connection))
         {
-            await KillAsync(run);
+            await kill();
             return new RunEnd(Killed: true, Warning: null, GameKillReason.Silent, LeftRunning: [], QuitMs: null);
         }
 
         long askedAt = Stopwatch.GetTimestamp();
-        QuitRequest request = await AskToQuitAsync(run);
+        QuitRequest request = await AskToQuitAsync(connection);
         TimeSpan exitGrace = CurrentExitGrace;
-        if (!await ProcessExit.WaitUntilGoneAsync(run.Game ?? run.Process, exitGrace))
+        if (!await ProcessExit.WaitUntilGoneAsync(watched, exitGrace))
         {
-            Log.ExitGraceExpired(_logger, run.ProjectDir, exitGrace.TotalSeconds);
-            await KillAsync(run);
+            Log.ExitGraceExpired(_logger, ProjectDir, exitGrace.TotalSeconds);
+            await kill();
             return new RunEnd(Killed: true, Warning: null, GameKillReason.AfterGrace(request, exitGrace), LeftRunning: [], QuitMs: null);
         }
 
         int quitMs = (int)Math.Round(Stopwatch.GetElapsedTime(askedAt).TotalMilliseconds);
-        return new RunEnd(Killed: false, Warning: null, KillReason: null, await EndWrapperAsync(run), quitMs);
+        return new RunEnd(Killed: false, Warning: null, KillReason: null, await afterQuit(), quitMs);
     }
 
     /// <summary>
@@ -646,7 +661,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
         IReadOnlyList<string> leftRunning = LeftBehind.Find(game, _logger);
         Log.GameLeftProcessesRunning(_logger, run.ProjectDir, leftRunning.Count == 0 ? "no process it could list" : string.Join(", ", leftRunning));
-        await TerminateAsync(run);
+        await TerminateAsync(run.Process);
         return leftRunning;
     }
 
@@ -660,7 +675,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// </returns>
     private async Task<RunEnd> EndRunAsync(GodotRun run)
     {
-        string? warning = WarnIfDebugged(run);
+        string? warning = WarnIfDebugged(run.IsRunning);
         RunEnd ended = run.IsRunning
             ? await StopRunningAsync(run)
             : new RunEnd(Killed: false, Warning: null, KillReason: null, LeftRunning: [], QuitMs: null);
@@ -700,24 +715,27 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
 
         run.MarkKilled();
-        await TerminateAsync(run);
+        await TerminateAsync(run.Process);
     }
 
-    /// <summary>Kills the run's process and everything it started, and waits up to <see cref="KillWait"/> for it to exit.</summary>
-    private async Task TerminateAsync(GodotRun run)
+    /// <summary>
+    /// Kills <paramref name="process"/> (a run's process, or an attached game's own) and everything it started, and waits up
+    /// to <see cref="KillWait"/> for it to exit.
+    /// </summary>
+    private async Task TerminateAsync(Process process)
     {
         try
         {
-            run.Process.Kill(entireProcessTree: true);
+            process.Kill(entireProcessTree: true);
         }
         catch (Exception e) when (e is Win32Exception or InvalidOperationException)
         {
-            Log.KillFailed(_logger, e, run.ProjectDir);
+            Log.KillFailed(_logger, e, ProjectDir);
         }
 
-        if (!await ProcessExit.WaitUntilGoneAsync(run.Process, KillWait))
+        if (!await ProcessExit.WaitUntilGoneAsync(process, KillWait))
         {
-            Log.StillRunningAfterKill(_logger, run.ProjectDir, KillWait.TotalSeconds);
+            Log.StillRunningAfterKill(_logger, ProjectDir, KillWait.TotalSeconds);
         }
     }
 

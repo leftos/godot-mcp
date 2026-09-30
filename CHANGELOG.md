@@ -6,6 +6,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Changed
 
+- `stop_project` ends a session `attach_project` joined and quits its game, killing it after 3 s; `detach_project` still leaves the game running.
 - `arm_project` leaves `--headless` games alone, so `attach_project` never joins a smoke or test runner started on the armed folder.
 
 ## 0.10.0 - 2026-09-29

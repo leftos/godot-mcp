@@ -99,6 +99,24 @@ public sealed class ArmTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task StopProjectQuitsAJoinedDormantGame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        await _project.ArmProjectAsync(_probe.Directory, cancellationToken: cancellation);
+        int pid = await StartDormantGameAsync(cancellation);
+        await _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, cancellationToken: cancellation);
+        JsonNode stopped = JsonNode.Parse(await _project.StopProjectAsync(cancellationToken: cancellation))!;
+        bool exited = _games[^1].HasExited;
+        JsonNode listed = JsonNode.Parse(_project.ListSessions())!;
+
+        Assert.False(stopped["killed"]!.GetValue<bool>(), stopped.ToJsonString());
+        Assert.True(exited);
+        Assert.True(File.Exists(_probe.OverrideFile));
+        Assert.DoesNotContain(pid, DormantPidsIn(Assert.Single(listed["armed"]!.AsArray())!));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SeveralDormantGamesArePickedByPid()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

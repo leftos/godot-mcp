@@ -16,7 +16,7 @@ A drive is always the same five moves: **start → look → act → wait → che
 3. **Act.** Aim at a Control by path: `click {target: {element: "Main/Menu/Play"}}`. Use `{x, y}` only where no Control exists, and then in **viewport** coordinates, never pixels read off a screenshot (a stretched or letterboxed window's screenshot is not the viewport).
 4. **Wait.** `wait_for` a condition after every act instead of sleeping: `{node, exists}`, `{node, property, equals}`, `{node, signal}` or `{expression}` (`options.screenshot: true` captures the very frame it was met on, when the scene moves on faster than a following `take_screenshot`); when you cannot name what the input will change (a menu, a dialog), `{uiChanged: true}` reports which Controls appeared or disappeared and whether focus or the top popup moved. A timeout is a result (`met: false` with `last`), not an error, and never a pause: `timeoutMs` is load-adjusted, so an `expression: "false"` wait stretches under load. To hold for game time (a shot mid-effect), wait `{gameMs: N}` or `{frames: N}`, which count the game's own scaled delta or unpaused frames.
 5. **Check.** Every runtime result carries `errors` the game raised during the call, with file and line. The key is absent when there were none. Read them before the next step: a handler that threw still "succeeds".
-6. **Stop.** `stop_project` at the end of every `run_project` session. A game joined with `attach_project` ends with `detach_project` instead.
+6. **Stop.** `stop_project` at the end of every `run_project` session. For a game joined with `attach_project`, `detach_project` leaves it running and `stop_project` quits it.
 
 ## Every tool, by job
 

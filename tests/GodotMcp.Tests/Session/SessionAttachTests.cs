@@ -104,6 +104,56 @@ public sealed class SessionAttachTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task StoppingAnAttachedGameWithNoPidAsksItToQuitAndWarnsItCouldNotBeKilled()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = _harness.Project("alpha");
+        FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", null);
+        Task<StopResult> stop = _harness.Sessions.StopAsync("server", cancellation);
+        string? command;
+        using (game)
+        {
+            command = await game.AnswerOneAsync("quit", cancellation);
+        }
+
+        StopResult stopped = await stop;
+
+        Assert.Equal("shutdown", command);
+        Assert.False(stopped.Killed);
+        Assert.False(stopped.AlreadyExited);
+        Assert.Null(stopped.ExitCode);
+        Assert.Null(stopped.GameExitCode);
+        Assert.Null(stopped.KillReason);
+        Assert.Null(stopped.QuitMs);
+        Assert.Equal(
+            "The game's bridge sent no process id, so the game could not be killed if it did not quit; it may still be running.",
+            stopped.Warning
+        );
+        Assert.True(stopped.OverrideRemoved);
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
+        Assert.False(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
+    [Fact]
+    public async Task StoppingAnAttachedGameThatHasGoneSaysItHadAlreadyExited()
+    {
+        string alpha = _harness.Project("alpha");
+        await _harness.EndAttachedGameAsync(alpha, "server");
+
+        StopResult stopped = await _harness.Sessions.StopAsync("server", TestContext.Current.CancellationToken);
+
+        Assert.True(stopped.AlreadyExited);
+        Assert.False(stopped.Killed);
+        Assert.Null(stopped.ExitCode);
+        Assert.Null(stopped.GameExitCode);
+        Assert.Null(stopped.KillReason);
+        Assert.Null(stopped.QuitMs);
+        Assert.Null(stopped.Warning);
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
+        Assert.False(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
+    [Fact]
     public async Task RestartingAnAttachedSessionIsRefused()
     {
         string alpha = _harness.Project("alpha");

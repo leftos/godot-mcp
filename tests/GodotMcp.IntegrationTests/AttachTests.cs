@@ -44,7 +44,7 @@ public sealed class AttachTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
-    public async Task AttachedGameAnswersRefusesStopAndOutputAndKeepsRunningAfterDetach()
+    public async Task AttachedGameAnswersRefusesOutputAndKeepsRunningAfterDetach()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
 
@@ -59,7 +59,6 @@ public sealed class AttachTests : IAsyncDisposable
         _games.Add(Process.GetProcessById(gameProcessId));
         int? listedGameProcessId = Assert.Single(_harness.Sessions.List(includeStopped: true)).GameProcessId;
         McpException output = Assert.Throws<McpException>(() => _project.GetDebugOutput(10));
-        McpException stop = await Assert.ThrowsAsync<McpException>(() => _project.StopProjectAsync(cancellationToken: cancellation));
         JsonNode detached = JsonNode.Parse(await _project.DetachProjectAsync(cancellationToken: cancellation))!;
         await Task.Delay(TimeSpan.FromSeconds(1), cancellation);
 
@@ -71,13 +70,34 @@ public sealed class AttachTests : IAsyncDisposable
         Assert.True(pong?["pong"]?.GetValue<bool>());
         Assert.Equal(gameProcessId, listedGameProcessId);
         Assert.Contains("attached sessions have no captured output", output.Message, StringComparison.Ordinal);
-        Assert.Contains("use detach_project", stop.Message, StringComparison.Ordinal);
         Assert.True(detached["overrideRemoved"]!.GetValue<bool>());
         Assert.Empty(_harness.Sessions.List(includeStopped: true));
         Assert.False(_games[^1].HasExited);
         Assert.False(File.Exists(_probe.OverrideFile));
         Assert.False(File.Exists(AttachFilePath));
         Assert.Equal(string.Empty, Git.Status(_probe.Directory));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task StopProjectQuitsAnAttachedGame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        Task<string> attach = _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, cancellationToken: cancellation);
+        Assert.True(await Poll.UntilAsync(() => File.Exists(AttachFilePath), TimeSpan.FromSeconds(10), cancellation));
+        StartGame();
+        await attach;
+        var game = Process.GetProcessById((await RunAsync("return OS.get_process_id()")).GetValue<int>());
+        _games.Add(game);
+        JsonNode stopped = JsonNode.Parse(await _project.StopProjectAsync(cancellationToken: cancellation))!;
+
+        Assert.False(stopped["killed"]!.GetValue<bool>(), stopped.ToJsonString());
+        Assert.False(stopped["alreadyExited"]!.GetValue<bool>(), stopped.ToJsonString());
+        Assert.Null(stopped["exitCode"]);
+        Assert.NotNull(stopped["quitMs"]);
+        Assert.True(game.HasExited);
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
+        Assert.False(File.Exists(_probe.OverrideFile));
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

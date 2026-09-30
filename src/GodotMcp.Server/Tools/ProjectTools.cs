@@ -109,7 +109,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "two (e.g. Start-Sleep 2; godot --path <project>), just before this call, or launch within waitSeconds after it; "
             + "or arm the folder before the game starts. "
             + "The runtime tools then work as with run_project; get_debug_output does not (the game's own console has its "
-            + "output), and detach_project, not stop_project, ends the session, leaving the game running. The result's window "
+            + "output). detach_project ends the session leaving the game running; stop_project ends it and quits the game. The result's window "
             + "{width, height} is the game window's size in pixels."
             + SessionsNote
             + " "
@@ -201,7 +201,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
 
     [McpServerTool(Name = "stop_project", ReadOnly = false, Destructive = true, OpenWorld = false)]
     [Description(
-        "Stops a session run_project started (asks the game to quit, kills it after 3 s, or after 30 s for a recording run, "
+        "Stops a session run_project or attach_project started (asks the game to quit, kills it after 3 s, or after 30 s for a recording run, "
             + "whose quit finalises its movie) and removes the injected override.cfg, unless another live session uses the "
             + "project folder or it is armed. exitCode is the process the server started (on Windows the console wrapper); gameExitCode is the "
             + "game's own, null when unreadable or when the game had to be killed; alreadyExited is true when the run had ended "
@@ -213,7 +213,9 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "in leftRunning as \"name (pid N)\". For a recording run the result's recording is {path} (the full movie, kept when there were no "
             + "marks), or {clips} (one file per record_mark start-stop pair, cut with ffmpeg; the full movie is then deleted), "
             + "plus error with path when the cut could not be made. A game a debugger is attached to is stopped all the same, and "
-            + "the result's warning says its debug session ended with it. An attached session is ended with detach_project instead."
+            + "the result's warning says its debug session ended with it. An attached session's game is asked to quit and killed "
+            + "after 3 s in the same way; its exitCode is null, gameExitCode is the game's own, and the session is gone afterwards. "
+            + "detach_project leaves an attached game running instead."
     )]
     public async Task<string> StopProjectAsync(
         [Description(SessionDescription)] string? session = null,
@@ -295,7 +297,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "ends; null for an attached game) and its gameProcessId (the game's own process, the one a debugger attaches to; "
             + "null until the game's bridge has connected), plus for a recording run its recording: {path} while it runs, and "
             + "once it has ended, stopped or quit, what stop_project returns for it. A session whose run has ended is kept, "
-            + "until its name is reused (detach_project removes an attached one), and is listed only with includeStopped. armed "
+            + "until its name is reused (detach_project and stop_project remove an attached one), and is listed only with includeStopped. armed "
             + "lists the folders this server has armed (arm_project), ordered by path: each one's projectPath, quiet, "
             + "shutOutRealGamepads and dormant, the games waiting there to be joined, each {pid, startedAt}."
     )]

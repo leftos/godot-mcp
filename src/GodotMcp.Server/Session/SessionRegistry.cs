@@ -207,7 +207,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
     }
 
-    /// <exception cref="SessionException">No session answers to the name, or the session is attached.</exception>
+    /// <exception cref="SessionException">No session answers to the name, or it never reached a game.</exception>
     public Task<StopResult> StopAsync(string? session, CancellationToken cancellationToken)
     {
         GodotSession target =

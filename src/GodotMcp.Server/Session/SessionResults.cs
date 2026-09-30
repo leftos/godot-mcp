@@ -133,8 +133,9 @@ internal sealed record RestartResult(
 }
 
 /// <summary>
-/// How a run ended: its exit code (the wrapper's on Windows), whether it had to be killed, whether the server's override.cfg
-/// was deleted, and for a recording run its full file or its clips.
+/// How a run or an attached game ended: its exit code (the process the server started, the wrapper's on Windows; null for an
+/// attached game, which the server did not start), whether it had to be killed, whether the server's override.cfg was deleted,
+/// and for a recording run its full file or its clips.
 /// </summary>
 internal sealed record StopResult(string Session, string ProjectPath, int? ExitCode, bool Killed, bool OverrideRemoved)
 {
@@ -168,7 +169,10 @@ internal sealed record StopResult(string Session, string ProjectPath, int? ExitC
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? Recording { get; init; }
 
-    /// <summary>Set when a debugger was attached to the game, whose debug session ended with it.</summary>
+    /// <summary>
+    /// Set when a debugger was attached to the game, whose debug session ended with it, or when the server held no handle on an
+    /// attached game's process, so it could not have killed a game that did not quit.
+    /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Warning { get; init; }
 }

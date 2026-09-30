@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using GodotMcp.Server.Wire;
 
 namespace GodotMcp.Server.Session;
@@ -5,12 +7,19 @@ namespace GodotMcp.Server.Session;
 /// <summary>
 /// Attaching to a game the server did not launch (a second client, a server run, a script, the editor's Play button):
 /// the bridge is injected the same way, but the game is found through the attach file instead of the environment, and
-/// the session has no process, no captured output and never stops the game.
+/// the session has no process of its own and no captured output. A detach leaves the game running; a stop quits it as it
+/// quits a run, killing the game's own process when it does not quit.
 /// </summary>
 internal sealed partial class GodotSession
 {
-    /// <summary>The attached game's bridge connection; the server holds no process for it.</summary>
+    /// <summary>The attached game's bridge connection; the server started no process for it.</summary>
     private BridgeConnection? _attached;
+
+    /// <summary>
+    /// The attached game's own process, opened from its hello's pid so its exit code stays readable once it exits; null
+    /// without a pid, when it could not be opened, and once the session ends.
+    /// </summary>
+    private Process? _attachedGame;
 
     /// <summary>The dormant game this attach joins, by its process id; null for an attach that waits for a launch.</summary>
     private int? _joinPid;
@@ -37,6 +46,8 @@ internal sealed partial class GodotSession
                 _attached = await InjectAndAwaitBridgeAsync(bridgeScript, wait, cancellationToken);
                 GameProcessId = _attached.GameProcessId;
                 _ = ClearSnapshotsWhenClosedAsync(_attached);
+                // Last, since it cannot fail: an attach that fails after it would leave the handle open.
+                KeepAttachedGameHandle();
             }
             finally
             {
@@ -73,10 +84,7 @@ internal sealed partial class GodotSession
         try
         {
             BridgeConnection attached = _attached ?? throw new SessionException(DescribeNothingToDetach());
-            _attached = null;
-            registry.Captures.End(Name, CaptureStore.EndedByStop);
-            await attached.DisposeAsync();
-            registry.Forget(this);
+            await EndAttachmentAsync(attached);
             bool removed = registry.ReleaseFolder(this);
             Log.Detached(_logger, ProjectDir);
             return new DetachResult(Name, ProjectDir, removed);
@@ -85,6 +93,110 @@ internal sealed partial class GodotSession
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Ends the attached game as a run's stop ends a run: one silent for <see cref="HangProbe.PingTimeout"/> is killed at once,
+    /// one that answers is asked to quit and its own process killed if it has not exited within the grace. Then the session
+    /// ends as a detach ends it. The caller holds the gate.
+    /// </summary>
+    /// <exception cref="SessionException">The attach never reached a game.</exception>
+    private async Task<StopResult> StopAttachedAsync()
+    {
+        BridgeConnection attached =
+            _attached ?? throw new SessionException("No game is attached, so there is nothing to stop. attach_project starts one.");
+        Process? game = _attachedGame;
+        bool alreadyExited = !attached.IsOpen || HasExited(game);
+        string? debugged = WarnIfDebugged(!alreadyExited);
+        RunEnd ended = alreadyExited
+            ? new RunEnd(Killed: false, Warning: null, KillReason: null, LeftRunning: [], QuitMs: null)
+            : await QuitAttachedGameAsync(attached, game);
+        // Read before the handle goes with the session; the code read after a kill is not the game's own.
+        int? gameExitCode = ended.Killed ? null : ExitCodeOf(game);
+        await EndAttachmentAsync(attached);
+        bool removed = registry.ReleaseFolder(this);
+        return new StopResult(Name, ProjectDir, ExitCode: null, ended.Killed, removed)
+        {
+            AlreadyExited = alreadyExited,
+            GameExitCode = gameExitCode,
+            KillReason = ended.KillReason,
+            QuitMs = ended.QuitMs,
+            Warning = debugged ?? ended.Warning,
+        };
+    }
+
+    /// <summary>
+    /// Quits a connected attached game. Without a handle on its process it is only asked to quit, and the stop waits up to the
+    /// grace for its connection to close: it cannot be killed, so the warning says it may still be running.
+    /// </summary>
+    private async Task<RunEnd> QuitAttachedGameAsync(BridgeConnection attached, Process? game)
+    {
+        if (game is not null)
+        {
+            return await StopGameAsync(attached, game, () => TerminateAsync(game), () => Task.FromResult<IReadOnlyList<string>>([]));
+        }
+
+        await AskToQuitAsync(attached);
+        await attached.Closed.WaitAsync(CurrentExitGrace).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        return new RunEnd(Killed: false, DescribeUnkillable(), KillReason: null, LeftRunning: [], QuitMs: null);
+    }
+
+    private static bool HasExited(Process? game) => game is { HasExited: true };
+
+    /// <summary>The exit code of a game that has exited; null while it runs or without a handle on it.</summary>
+    private static int? ExitCodeOf(Process? game) => game is { HasExited: true } exited ? exited.ExitCode : null;
+
+    /// <summary>What a stop warns when it held no handle on the attached game's process, so it could not have killed it.</summary>
+    private string DescribeUnkillable() =>
+        GameProcessId is int pid
+            ? $"The game's process (pid {pid}) could not be opened when it was attached, so the game could not be killed if it did "
+                + "not quit; it may still be running."
+            : "The game's bridge sent no process id, so the game could not be killed if it did not quit; it may still be running.";
+
+    /// <summary>
+    /// Lets go of the attached game, as a detach and a stop both do: its connection, its snapshots, its capture and the handle
+    /// on its process, and drops the session from the registry. The caller releases the folder.
+    /// </summary>
+    private async Task EndAttachmentAsync(BridgeConnection attached)
+    {
+        _attached = null;
+        Snapshots.Clear();
+        registry.Captures.End(Name, CaptureStore.EndedByStop);
+        await attached.DisposeAsync();
+        DisposeAttachedGame();
+        registry.Forget(this);
+    }
+
+    /// <summary>
+    /// Opens and keeps a handle on the attached game's own process, from its hello's pid, so a stop can wait for it, kill it and
+    /// read its exit code. A game gone already, or one the server cannot open, is logged and gets no handle.
+    /// </summary>
+    private void KeepAttachedGameHandle()
+    {
+        if (GameProcessId is not int pid)
+        {
+            return;
+        }
+
+        Process? game = null;
+        try
+        {
+            game = Process.GetProcessById(pid);
+            // Reading Handle opens the process handle and keeps it on the object, which keeps the exit code readable.
+            _ = game.Handle;
+            _attachedGame = game;
+        }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException or Win32Exception)
+        {
+            game?.Dispose();
+            Log.GameHandleFailed(_logger, e, pid, ProjectDir);
+        }
+    }
+
+    private void DisposeAttachedGame()
+    {
+        _attachedGame?.Dispose();
+        _attachedGame = null;
     }
 
     /// <summary>

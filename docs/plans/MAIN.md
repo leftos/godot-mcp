@@ -13,7 +13,15 @@ Waves run in order; bug reports sit ahead of the backlog inside each. The single
 
 ### Singles
 
-- [ ] #49 `detach_project` leaves the joined game running and `stop_project` refuses an attached session: no way to end a joined game through the server. Decided (user, 2026-09-29): `stop_project` accepts an attached session and quits its game (ask, then kill after the grace, by the joined pid); `detach_project` keeps leaving it running
+- [ ] Ideas from the Godot MCP survey ([2026-09-29-godot-mcp-survey.md](../research/2026-09-29-godot-mcp-survey.md), which names the source servers and the open engine questions), chosen by the user 2026-09-29; each needs its own design pass before a brief:
+  - [ ] Debug channel: host Godot's `--remote-debug` listener for a script profiler and GDScript breakpoints, stack, locals and stepping (survey idea 1; absorbs the profiler half of the "profiler, autoload-editing and file-parsing tools" line below)
+  - [ ] Performance monitors over a frame window with spike and budget verdicts, and one timeline watch over several properties and signals (ideas 2, 3)
+  - [ ] State digest: game nodes opt in (`_mcp_state()` or a group) for a compact read in place of a screenshot (idea 4)
+  - [ ] Audio observation: which players play, bus levels; check first whether levels read under the Dummy driver (idea 9; pairs with #50)
+  - [ ] Input aimed at 2D/3D world nodes through the camera, UI targets by visible text, and Tree/ItemList/TabBar/PopupMenu item targets (ideas 7, 8)
+  - [ ] Step until a condition with input inside a paused step, checked against `batch_drive` first (idea 5); render diagnosis, starting with documenting the `--debug-collisions` family through `engineArgs` (idea 6)
+  - [ ] godot-mcp-runtime's dropped tools: autoload and project-settings tools, `validate`'s signal-wiring and structure checks, a click that reports the signals it fired (absorbs the autoload half of the line below)
+  - [ ] Run GUT or gdUnit4 suites headless with parsed results (idea 10)
 - [ ] #50 silence comes only with `quiet`: a watched run, or a game joined on an armed folder, plays sound; wants a `mute` option independent of `quiet`. Decided (user, 2026-09-29): `options.mute` on `run_project`, `attach_project` and `arm_project`, the bridge muting the Master bus; `quiet` still implies it
 - [ ] In a recording, the Time module's step, monitor and capture deadline (`_begin`, `bridge/godot_mcp_time.gd` ~L168-172, a `SceneTreeTimer` its comment says "runs in real time") runs in clip time, so at 240 fps its `backstopMs` fires after a quarter of its length in wall time: measure whether it can beat the server's cancel, and correct the comment
 
@@ -30,3 +38,5 @@ Waves run in order; bug reports sit ahead of the backlog inside each. The single
 - [ ] A green `pwsh run.ps1 gdtest` prints a GDScript stack trace from `test_a_poll_deletes_a_malformed_join_file_and_stays_dormant` (`tests/bridge/test_dormant.gd:156`), the expected `push_warning`, which reads as a failure at a glance
 - [ ] `bridge/godot_mcp_bridge.gd` is at 989 of gdlint's 1000 max-file-lines after #48 moved endpoint finding to `godot_mcp_dormant.gd` and window handling to `godot_mcp_window.gd`; its next addition needs another split
 - [ ] No itest covers `GODOT_MCP_OFF` where it matters: a headless run beside an attach session whose `attach.json` is present (`bridge/godot_mcp_dormant.gd` `is_switched_off`); the gdtest covers the branch only
+- [ ] No test covers an attached game's kill paths in `stop_project` (silent at the ping, still running after the grace: `StopAttachedAsync`, `GodotSession.Attach.cs`), only its quit; and the unit harness's fake hellos carry made-up pids (4242, 4101, 4102 in `tests/GodotMcp.Tests/Session/`), so an attach opens a handle on whatever real process holds that pid and a future unit stop of such a session could kill it: fake games should carry null or a pid the test owns
+- [ ] `FindLiveConnection`'s closed-connection message (`GodotSession.cs`) still names only `detach_project, then attach_project again`; `stop_project` now ends an attached session too
