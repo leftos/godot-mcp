@@ -20,7 +20,7 @@ Shared: `run.ps1` (`$itestLanes`), `tests/GodotMcp.IntegrationTests/`. Review: c
   - [ ] Seven Arm/Attach teardowns wait a fixed 10 s for a game still running before killing it (`SessionHarness.cs:93`, `AttachTests.cs:219`), about 70-85 s of lifecycle: kill first, as `ArmTests.StopGamesAsync` does. Ruled (user, 2026-09-29): lands first
   - [ ] A third lane. Ruled (user, 2026-09-29): lifecycle's classes that assert no wall-clock timing (Arm, McpServerSmoke, Attach, Quiet, Profile: 219 s) leave it for a new group, and the third lane holds that group plus `nodes` and `headless`; SessionLifecycle (`:340`, `:380`, `:434`) and Watchdog (`:50`, `:88`) assert timing and stay. Estimated longest lane about 575 s against 843 s, unmeasured with three lanes loading the machine at once
   - [ ] Landings run only the itest groups their changed files touch; the full suite at release. Ruled (user, 2026-09-29): by folder, and any change under `bridge/` runs every runtime group, since `godot_mcp_bridge.gd` preloads every module
-  - [ ] A warm headless Godot serving many headless requests instead of one process per call. Measured saving in the suite about 40 s (264 ops over 210 project folders, one process per `--path`); about 0.7 s per consecutive op for agents in the game repos. Kept in this wave by the user (2026-09-29); needs a design pass
+  - [ ] A warm headless Godot serving many headless requests instead of one process per call. Measured saving in the suite about 40 s (264 ops over 210 project folders, one process per `--path`); about 0.7 s per consecutive op for agents in the game repos. Kept in this wave by the user (2026-09-29); its design pass is done together with the track's headless scratch-step runner, since both keep a headless Godot serving several requests (user, 2026-09-29)
   - [ ] The headless itests spend 255 s in C# prep builds and imports (24 imports at 4.2 s median, 39 dotnet builds at 3.3 s median), much of it tests asking for an unbuilt CsProbe: the larger lever in the build lane, unexplored
 
 ### Wave 2: sessions sharing a folder, attach and stop
@@ -39,13 +39,8 @@ Shared: `src/GodotMcp.Server/Session/` (`SessionRegistry`, `OverrideFile`, `ArmF
 
 Shared: `bridge/*.gd` (input, raw events, gamepad, bridge, time, dormant), `tests/bridge/`. Review: code-review. Verify: `pwsh run.ps1 gdtest`, gdlint's file-length limit, and the itest named in the item.
 
-- [ ] `bridge/godot_mcp_gamepad.gd:300` calls `bridge._gestures._dispatch(event)`, another module's private method; the input module now has a public `dispatch` for the raw event player
-- [ ] `bridge/godot_mcp_input.gd` is at 998 of gdlint's 1000 max-file-lines, so its next addition needs another split (the raw event player moved to `godot_mcp_raw_events.gd` for `scroll`); the input module's public wrappers (`send_button`, `to_window`, …) twin private methods that could simply be renamed public
 - [ ] `bridge/godot_mcp_bridge.gd` is at exactly 1000 of gdlint's 1000 max-file-lines after #50 added the `Audio` module's wiring; its next addition must first move a block out
-- [ ] A game going dormant again after a detach releases the injected mouse buttons, pad buttons and axes it held (`release_all`, `bridge/godot_mcp_raw_events.gd`) but not keys a raw `simulate_input` key press left down: the input module does not record held keys
 - [ ] In a recording, the Time module's step, monitor and capture deadline (`_begin`, `bridge/godot_mcp_time.gd` ~L168-172, a `SceneTreeTimer` its comment says "runs in real time") runs in clip time, so at 240 fps its `backstopMs` fires after a quarter of its length in wall time. Ruled (user, 2026-09-29): correct the "real time" wording (time.gd, `BridgeConnection.cs`, `RuntimeTools.Time.cs`, the glossary) with no measurement, since a healthy step, monitor or capture counts the same 1/60 s steps as the timer and an early backstop gives the answer the cancel would
-- [ ] A green `pwsh run.ps1 gdtest` prints a GDScript stack trace from `test_a_poll_deletes_a_malformed_join_file_and_stays_dormant` (`tests/bridge/test_dormant.gd:156`), the expected `push_warning`, which reads as a failure at a glance
-- [ ] `GODOT_MCP_OFF` beside a present `attach.json` (`bridge/godot_mcp_dormant.gd` `is_switched_off`) has no test that can fail: an itest could not, since `headless/operations.gd` frees the bridge before `_ready`. Ruled (user, 2026-09-29): a gdtest case only, OFF beside a valid and a malformed `attach.json` giving mode off with no warning
 
 ### Track: ideas from the survey and the projects
 

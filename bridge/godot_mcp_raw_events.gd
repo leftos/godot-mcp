@@ -11,6 +11,8 @@ var bridge: Node
 ## constants name the buttons and keys.
 var _gestures: Node
 var _gestures_script: GDScript
+## The actions a played raw action event left pressed, so a connection that ends can release them.
+var _held_actions: Dictionary = {}
 
 
 func _ready() -> void:
@@ -28,13 +30,29 @@ static func held_buttons(mask: int) -> Array[int]:
 	return buttons
 
 
-## Lets go of the injected input still held when a connection ends: each mouse button in the
-## bridge's held mask released at the pointer, through the input player's sender, so Input sees
-## it up, and the injected pads' buttons and axes (the gamepad's release_all).
+## Lets go of the injected input still held when a connection ends: each held key and each held
+## action released, each mouse button in the bridge's held mask released at the pointer, through
+## the input player's senders, so Input sees them up, and the injected pads' buttons and axes (the
+## gamepad's release_all).
 func release_all() -> void:
+	for keycode: int in _gestures.held_keys():
+		_gestures.send_key(keycode, false, 0, PackedStringArray())
+	_release_actions()
 	for button in held_buttons(bridge._held_mask):
 		_gestures.send_button(bridge._pointer, button, false, false)
 	bridge._pads.release_all()
+
+
+## Releases every action a raw action event left pressed, through the same dispatch path its press
+## took.
+func _release_actions() -> void:
+	for action: StringName in _held_actions.keys():
+		var event := InputEventAction.new()
+		event.action = action
+		event.pressed = false
+		event.strength = 0.0
+		_held_actions.erase(action)
+		_gestures.dispatch(event)
 
 
 ## Plays a raw event list, one frame apart, stopping at the first event that fails.
@@ -205,6 +223,10 @@ func _play_action(spec: Dictionary) -> String:
 	event.action = action
 	event.pressed = bool(spec.get("pressed", true))
 	event.strength = float(spec.get("strength", 1.0))
+	if event.pressed:
+		_held_actions[action] = true
+	else:
+		_held_actions.erase(action)
 	_gestures.dispatch(event)
 	return ""
 

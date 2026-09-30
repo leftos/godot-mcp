@@ -62,7 +62,7 @@ var _held_mask: int = 0
 var _pointer: Vector2 = Vector2.ZERO
 ## Whether an input gesture is playing, including the frames that settle it.
 var _gesture_playing: bool = false
-## Whether _dispatch is delivering an injected event, so the touch twins Input makes of it pass.
+## Whether dispatch is delivering an injected event, so the touch twins Input makes of it pass.
 var _dispatching: bool = false
 ## The gamepad (godot_mcp_gamepad.gd beside this script), a child once the bridge is on.
 var _pads: Node
@@ -386,7 +386,7 @@ func _flush_errors() -> void:
 ## sees it; hover still follows the real pointer, since push_input updates it before _input.
 ## With emulate_touch_from_mouse on, Input sends each left-button event's touch twin (device
 ## DEVICE_ID_EMULATION) just before the event itself, the injected ones' included
-## (input.cpp L850-861, L876-891 in 4.7.2); a twin that arrives outside _dispatch is a real one's.
+## (input.cpp L850-861, L876-891 in 4.7.2); a twin that arrives outside dispatch is a real one's.
 func _input(event: InputEvent) -> void:
 	if not (_gesture_playing or _held_mask != 0):
 		return
@@ -395,7 +395,7 @@ func _input(event: InputEvent) -> void:
 
 
 ## Whether event is a mouse button (a wheel notch included) or motion or a pan gesture without the
-## injected mark, or a touch twin raised outside _dispatch: the real input _input swallows while
+## injected mark, or a touch twin raised outside dispatch: the real input _input swallows while
 ## injected input is in play.
 func _is_real_pointer_event(event: InputEvent) -> bool:
 	if (

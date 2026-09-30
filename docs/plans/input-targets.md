@@ -34,7 +34,7 @@ The server (`InputTarget.ToBridge`) checks the shape before anything is sent: on
 
 ### Resolution to viewport coordinates
 
-Every target resolves in the bridge to one point in the **root viewport's coordinates**, and the existing path takes it from there: `_to_window` maps it through the root's screen transform to the window point the injected events carry, so the non-negotiable (input tools take viewport coordinates and map them to the window) holds, and no new code touches window pixels.
+Every target resolves in the bridge to one point in the **root viewport's coordinates**, and the existing path takes it from there: `to_window` maps it through the root's screen transform to the window point the injected events carry, so the non-negotiable (input tools take viewport coordinates and map them to the window) holds, and no new code touches window pixels.
 
 - **A Control** (as today): the centre of its rect through `_viewport_transform` (`get_global_transform_with_canvas()`, then an embedded window's position and final transform).
 - **A 2D world node** (`CanvasItem`, not a Control): `get_global_transform_with_canvas() * offset` in its own viewport's coordinates, which include a `Camera2D` (it sets the viewport's `canvas_transform`) and a `CanvasLayer`.
@@ -74,7 +74,7 @@ Cited from the `4.7-stable` tag of `godotengine/godot` (class reference XML and 
 |---|---|---|
 | Viewport coordinates | `CanvasItem.get_global_transform_with_canvas()` maps local to the viewport's coordinates: `canvas_layer->get_final_transform() * get_global_transform()` on a CanvasLayer, else `viewport->get_canvas_transform() * get_global_transform()`; it includes Camera2D and CanvasLayer, not the stretch | `scene/main/canvas_item.cpp`; the bridge already cites 4.7.2 L183-192 (`_viewport_transform`) |
 | Camera2D | The camera sets the viewport's `canvas_transform`, so nodes off any CanvasLayer move with it and a HUD layer does not | `scene/2d/camera_2d.cpp`; class reference `Camera2D`, `CanvasLayer.get_final_transform` |
-| Window mapping | `Viewport.get_final_transform()` is `stretch_transform * global_canvas_transform`; the root's `get_screen_transform()` is what `_to_window` already uses | `scene/main/viewport.cpp`; `bridge/godot_mcp_input.gd` `_to_window` |
+| Window mapping | `Viewport.get_final_transform()` is `stretch_transform * global_canvas_transform`; the root's `get_screen_transform()` is what `to_window` already uses | `scene/main/viewport.cpp`; `bridge/godot_mcp_input.gd` `to_window` |
 | 3D projection | `Camera3D.unproject_position(p)` returns a point "in the Viewport rectangle", scaled by `get_viewport()->get_visible_rect().size`, so viewport (or SubViewport) coordinates; it does not check behind the camera and mirrors a point behind it | `scene/3d/camera_3d.cpp`; class reference `Camera3D.unproject_position` |
 | Behind the camera | `Camera3D.is_position_behind(p)` is `eyedir.dot(p - origin) < near`, so a point nearer than the near plane counts as behind; `is_position_in_frustum(p)` tests the frustum planes | `scene/3d/camera_3d.cpp` |
 | Active camera | `Viewport.get_camera_3d()` returns null when no camera is active | class reference `Viewport.get_camera_3d` |

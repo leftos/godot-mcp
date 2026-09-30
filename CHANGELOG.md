@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- A game going dormant again after `detach_project` now lets go of keys and input actions a drive left pressed, as it already did mouse and pad buttons.
+
 ## 0.11.0 - 2026-09-29
 
 ### Added

@@ -6,8 +6,8 @@ extends Node
 ## Real input comes from the root Window's window_input signal, which Window::_window_input emits
 ## for every event the window receives (any but DEVICE_ID_INTERNAL), before push_input hands it
 ## to the viewport and so before any node's _input (scene/main/window.cpp L2004-2030 in 4.7.2).
-## Events injected through Input reach it too, so one arriving while the bridge's _dispatch runs
-## is skipped there: the bridge's input player records it as sent instead, from _dispatch.
+## Events injected through Input reach it too, so one arriving while the input player's dispatch
+## runs is skipped there: the bridge's input player records it as sent instead, from dispatch.
 ## Positions are viewport coordinates, the inverse of the mapping the input tools play through.
 ## Before an event 20 ms or more after the previous recorded one, a {type: "wait", ms} step goes
 ## in; the capture stops at MAX_EVENTS items, waits included, and is then marked truncated.
@@ -117,7 +117,7 @@ func flush() -> void:
 		send_frame.call(frame)
 
 
-## Records an event the bridge sends, called by the input player's _dispatch.
+## Records an event the bridge sends, called by the input player's dispatch.
 func sent(event: InputEvent) -> void:
 	if _capturing and _sent:
 		record_sent(event, Time.get_ticks_msec(), _screen())

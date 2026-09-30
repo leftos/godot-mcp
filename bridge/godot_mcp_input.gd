@@ -72,6 +72,9 @@ var _hits: Dictionary = {}
 var _ui_baseline: Dictionary = {}
 ## The instance ids of the drag previews seen entering the tree, which the snapshot leaves out.
 var _drag_previews: Dictionary = {}
+## The keycodes a drive pressed and has not released; never a scan of Input, which a person's
+## held key would answer too.
+var _held_keys: Dictionary = {}
 
 
 func _ready() -> void:
@@ -201,7 +204,7 @@ func _play_pointer_gesture(gesture: String, params: Dictionary) -> String:
 	var error: String = ""
 	match gesture:
 		"click":
-			error = await _play_click(params)
+			error = await click(params)
 		"drag":
 			error = await _play_drag(params)
 		"mouse_button":
@@ -215,18 +218,18 @@ func _play_pointer_gesture(gesture: String, params: Dictionary) -> String:
 
 ## Refuses a target that cannot be clicked before anything is sent, then dismisses tooltips and
 ## aims (resolving the target again, since the dismiss can take a frame) before the click.
-func _play_click(params: Dictionary) -> String:
+func click(params: Dictionary) -> String:
 	var refusal: String = _refusal_of(params.get("target"))
 	if not refusal.is_empty():
 		return refusal
-	var button: int = _parse_button(params.get("button", "left"))
+	var button: int = parse_button(params.get("button", "left"))
 	if button == 0:
 		return _unknown_button(params.get("button"))
 	await _dismiss_tooltips()
 	var point: Variant = _aim(params.get("target"), true)
 	if point is String:
 		return point
-	await _click_at(_to_window(point), button, bool(params.get("doubleClick", false)))
+	await _click_at(to_window(point), button, bool(params.get("doubleClick", false)))
 	return ""
 
 
@@ -255,7 +258,7 @@ func _send_and_record(
 		not pressed and button == MOUSE_BUTTON_LEFT and get_tree().root.gui_is_dragging()
 	)
 	var before_drop: Variant = _control_under(point) if drops else null
-	_send_button(window_point, button, pressed, double_click)
+	send_button(window_point, button, pressed, double_click)
 	_hits["pressedOn" if pressed else "releasedOn"] = (
 		before_drop if drops else _control_under(point)
 	)
@@ -320,7 +323,7 @@ func _play_drag(params: Dictionary) -> String:
 	refusal = _refusal_of(params.get("to"))
 	if not refusal.is_empty():
 		return "to: %s" % refusal
-	var button: int = _parse_button(params.get("button", "left"))
+	var button: int = parse_button(params.get("button", "left"))
 	if button == 0:
 		return _unknown_button(params.get("button"))
 	var duration_ms: int = maxi(0, int(params.get("durationMs", 300)))
@@ -331,7 +334,7 @@ func _play_drag(params: Dictionary) -> String:
 	var start: Variant = _aim(params.get("from"), true)
 	if start is String:
 		return "from: %s" % start
-	await _drag(_to_window(start), _to_window(end), duration_ms, button)
+	await _drag(to_window(start), to_window(end), duration_ms, button)
 	return ""
 
 
@@ -392,26 +395,26 @@ func _type_character(code: int) -> void:
 		keycode = character.to_upper().unicode_at(0)
 		if character != character.to_lower():
 			modifiers.append("shift")
-	_send_key(keycode, true, unicode, modifiers)
-	_send_key(keycode, false, unicode, modifiers)
+	send_key(keycode, true, unicode, modifiers)
+	send_key(keycode, false, unicode, modifiers)
 
 
 func _play_key(params: Dictionary) -> String:
 	var key_name: String = str(params.get("key", ""))
-	var keycode: int = _parse_key(key_name)
+	var keycode: int = parse_key(key_name)
 	if keycode == KEY_NONE:
 		return "unknown key '%s'. %s" % [key_name, UNKNOWN_KEY_HINT]
 	var action: String = str(params.get("action", "tap"))
 	if not action in ["tap", "press", "release"]:
 		return "unknown key action '%s'; use tap, press or release" % action
 	var modifiers := PackedStringArray(params.get("modifiers", []))
-	var unicode: int = _key_unicode(keycode, modifiers)
+	var unicode: int = key_unicode(keycode, modifiers)
 	if action != "release":
-		_send_key(keycode, true, unicode, modifiers)
+		send_key(keycode, true, unicode, modifiers)
 	if action == "tap":
 		await get_tree().process_frame
 	if action != "press":
-		_send_key(keycode, false, unicode, modifiers)
+		send_key(keycode, false, unicode, modifiers)
 	return ""
 
 
@@ -421,7 +424,7 @@ func _play_mouse_button(params: Dictionary) -> String:
 	var refusal: String = _refusal_of(params.get("target"))
 	if not refusal.is_empty():
 		return refusal
-	var button: int = _parse_button(params.get("button", "left"))
+	var button: int = parse_button(params.get("button", "left"))
 	if button == 0:
 		return _unknown_button(params.get("button"))
 	var action: String = str(params.get("action", "press"))
@@ -435,7 +438,7 @@ func _play_mouse_button(params: Dictionary) -> String:
 	if action == "move":
 		await _settle_hover(point)
 		return ""
-	_send_and_record(_to_window(point), button, action == "press", false)
+	_send_and_record(to_window(point), button, action == "press", false)
 	await get_tree().process_frame
 	return ""
 
@@ -454,7 +457,7 @@ func _play_scroll(params: Dictionary) -> String:
 	if point is String:
 		return point
 	_hits["scrolledOn"] = _control_under(point)
-	var window_point: Vector2 = _to_window(point)
+	var window_point: Vector2 = to_window(point)
 	var direction: String = str(params.get("direction", "down"))
 	var factor: float = float(params.get("factor", 1.0))
 	var unit: Vector2 = SCROLL_DIRECTIONS[direction]
@@ -641,7 +644,7 @@ func _aim(target: Variant, checks_hit: bool) -> Variant:
 	if resolved is String:
 		return resolved
 	var point: Vector2 = _point_of(resolved)
-	_move_to(_to_window(point))
+	_move_to(to_window(point))
 	if checks_hit and resolved is Control:
 		var refusal: String = _hit_refusal(resolved as Control, point)
 		if not refusal.is_empty():
@@ -821,47 +824,10 @@ func _num(value: float) -> String:
 	return str(rounded)
 
 
-## The senders and parsers the raw event player (godot_mcp_raw_events.gd) plays its events with.
-func click(params: Dictionary) -> String:
-	return await _play_click(params)
-
-
-func to_window(point: Vector2) -> Vector2:
-	return _to_window(point)
-
-
-func send_button(window_point: Vector2, button: int, pressed: bool, double_click: bool) -> void:
-	_send_button(window_point, button, pressed, double_click)
-
-
-func send_motion(window_point: Vector2, relative: Vector2, button_mask: int) -> void:
-	_send_motion(window_point, relative, button_mask)
-
-
-func send_key(keycode: int, pressed: bool, unicode: int, modifiers: PackedStringArray) -> void:
-	_send_key(keycode, pressed, unicode, modifiers)
-
-
-func dispatch(event: InputEvent) -> void:
-	_dispatch(event)
-
-
-func parse_button(value: Variant) -> int:
-	return _parse_button(value)
-
-
-func parse_key(key_name: String) -> int:
-	return _parse_key(key_name)
-
-
-func key_unicode(keycode: int, modifiers: PackedStringArray) -> int:
-	return _key_unicode(keycode, modifiers)
-
-
 ## The one place a viewport (canvas) point becomes the window point the display server's own
 ## events carry: the root window's screen transform holds the stretch scale and the letterbox
 ## offset.
-func _to_window(point: Vector2) -> Vector2:
+func to_window(point: Vector2) -> Vector2:
 	return get_viewport().get_screen_transform() * point
 
 
@@ -870,10 +836,11 @@ func _to_viewport(point: Vector2) -> Vector2:
 
 
 func _move_to(window_point: Vector2) -> void:
-	_send_motion(window_point, window_point - bridge._pointer, bridge._held_mask)
+	send_motion(window_point, window_point - bridge._pointer, bridge._held_mask)
 
 
-func _send_motion(window_point: Vector2, relative: Vector2, button_mask: int) -> void:
+## A mouse motion at a window point, carrying relative and button_mask, moving the pointer.
+func send_motion(window_point: Vector2, relative: Vector2, button_mask: int) -> void:
 	var motion := InputEventMouseMotion.new()
 	motion.device = bridge.INJECTED_DEVICE
 	motion.position = window_point
@@ -882,10 +849,11 @@ func _send_motion(window_point: Vector2, relative: Vector2, button_mask: int) ->
 	motion.screen_relative = relative
 	motion.button_mask = button_mask
 	bridge._pointer = window_point
-	_dispatch(motion)
+	dispatch(motion)
 
 
-func _send_button(window_point: Vector2, button: int, pressed: bool, double_click: bool) -> void:
+## A mouse button press or release at a window point, kept in the bridge's held mask.
+func send_button(window_point: Vector2, button: int, pressed: bool, double_click: bool) -> void:
 	var bit: int = 1 << (button - 1)
 	bridge._held_mask = (bridge._held_mask | bit) if pressed else (bridge._held_mask & ~bit)
 	var event := InputEventMouseButton.new()
@@ -897,7 +865,7 @@ func _send_button(window_point: Vector2, button: int, pressed: bool, double_clic
 	event.position = window_point
 	event.global_position = window_point
 	bridge._pointer = window_point
-	_dispatch(event)
+	dispatch(event)
 
 
 ## One wheel notch as Godot's Windows display server sends one for WM_MOUSEWHEEL or
@@ -921,7 +889,7 @@ func send_wheel(window_point: Vector2, button: int, pressed: bool, factor: float
 	event.position = window_point
 	event.global_position = window_point
 	bridge._pointer = window_point
-	_dispatch(event)
+	dispatch(event)
 
 
 ## A pan gesture, as a trackpad sends one, at a window point; it moves no pointer, since Input
@@ -931,10 +899,15 @@ func send_pan(window_point: Vector2, delta: Vector2) -> void:
 	event.device = bridge.INJECTED_DEVICE
 	event.position = window_point
 	event.delta = delta
-	_dispatch(event)
+	dispatch(event)
 
 
-func _send_key(keycode: int, pressed: bool, unicode: int, modifiers: PackedStringArray) -> void:
+## A key press or release carrying the character it types and the modifiers held.
+func send_key(keycode: int, pressed: bool, unicode: int, modifiers: PackedStringArray) -> void:
+	if pressed:
+		_held_keys[keycode] = true
+	else:
+		_held_keys.erase(keycode)
 	var event := InputEventKey.new()
 	event.keycode = keycode as Key
 	event.physical_keycode = keycode as Key
@@ -948,13 +921,18 @@ func _send_key(keycode: int, pressed: bool, unicode: int, modifiers: PackedStrin
 	event.ctrl_pressed = held.has("ctrl")
 	event.alt_pressed = held.has("alt")
 	event.meta_pressed = held.has("meta")
-	_dispatch(event)
+	dispatch(event)
+
+
+## The keycodes a drive pressed and has not released yet.
+func held_keys() -> Array:
+	return _held_keys.keys()
 
 
 ## Sends a new event object through Input, as the display server's own events go, and
 ## flushes it at once so accumulated input neither merges nor delays it. A running capture
 ## records it as sent first.
-func _dispatch(event: InputEvent) -> void:
+func dispatch(event: InputEvent) -> void:
 	bridge._capture.sent(event)
 	bridge._dispatching = true
 	Input.parse_input_event(event)
@@ -962,7 +940,8 @@ func _dispatch(event: InputEvent) -> void:
 	bridge._dispatching = false
 
 
-func _parse_button(value: Variant) -> int:
+## The button a name like left, right or middle stands for, or a number 1 to 3; 0 for none.
+func parse_button(value: Variant) -> int:
 	if value is String and MOUSE_BUTTONS.has((value as String).to_lower()):
 		return MOUSE_BUTTONS[(value as String).to_lower()]
 	if (value is int or value is float) and int(value) >= 1 and int(value) <= 3:
@@ -976,7 +955,7 @@ func _unknown_button(value: Variant) -> String:
 
 ## The Key a name like Enter, A or F1 stands for; KEY_NONE for an unknown name or a combination
 ## such as Ctrl+A, whose modifiers go in modifiers instead.
-func _parse_key(key_name: String) -> int:
+func parse_key(key_name: String) -> int:
 	if key_name.is_empty() or key_name.contains("+"):
 		return KEY_NONE
 	return OS.find_keycode_from_string(key_name)
@@ -984,7 +963,7 @@ func _parse_key(key_name: String) -> int:
 
 ## The character a printable key types with these modifiers; 0 for a key that types none, or
 ## when ctrl, alt or meta is held.
-func _key_unicode(keycode: int, modifiers: PackedStringArray) -> int:
+func key_unicode(keycode: int, modifiers: PackedStringArray) -> int:
 	if keycode < 32 or keycode >= 127:
 		return 0
 	if modifiers.has("ctrl") or modifiers.has("alt") or modifiers.has("meta"):

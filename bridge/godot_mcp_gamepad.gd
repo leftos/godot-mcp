@@ -292,7 +292,7 @@ func _send_button_event(device: int, button: int, pressed: bool) -> void:
 	event.button_index = button as JoyButton
 	event.pressed = pressed
 	event.pressure = 1.0 if pressed else 0.0
-	_dispatch(event)
+	bridge._gestures.dispatch(event)
 
 
 func _send_motion_event(device: int, axis: int, value: float) -> void:
@@ -300,14 +300,7 @@ func _send_motion_event(device: int, axis: int, value: float) -> void:
 	event.device = device
 	event.axis = axis as JoyAxis
 	event.axis_value = value
-	_dispatch(event)
-
-
-## A new event object through the input player's _dispatch, the one path all the bridge's input
-## takes: Input, flushed at once, with the bridge's _dispatching set and a running capture
-## recording it as sent.
-func _dispatch(event: InputEvent) -> void:
-	bridge._gestures._dispatch(event)
+	bridge._gestures.dispatch(event)
 
 
 ## The JoyButton a name like A or DPAD_DOWN stands for, in any case; -1 for an unknown name.

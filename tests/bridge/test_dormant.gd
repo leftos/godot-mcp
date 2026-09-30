@@ -1,3 +1,4 @@
+# gdlint: disable=max-public-methods, private-method-call
 extends "res://gd_test.gd"
 ## The dormant mode (bridge/godot_mcp_dormant.gd): how the bridge decides to run, the attach and
 ## join file parse, the dormant file, when an ended connection goes dormant again, and one poll's
@@ -7,6 +8,8 @@ extends "res://gd_test.gd"
 var _dormant_script: GDScript = load_bridge_script("godot_mcp_dormant.gd")
 var _raw_events_script: GDScript = load_bridge_script("godot_mcp_raw_events.gd")
 var _pads_script: GDScript = load_bridge_script("godot_mcp_gamepad.gd")
+var _input_script: GDScript = load_bridge_script("godot_mcp_input.gd")
+var _bridge_script: GDScript = load_bridge_script("godot_mcp_bridge.gd")
 
 
 func test_decide_mode_takes_off_then_environment_then_attach_then_armed() -> void:
@@ -181,6 +184,23 @@ func test_choose_leaves_a_headless_armed_game_off_and_still_follows_the_environm
 	assert_eq(attach["endpoint"].get("token"), "file", "attach.json's token")
 
 
+func test_an_off_run_ignores_attach_json_and_warns_about_nothing() -> void:
+	var dir: String = _fresh_dir("off_attach")
+	_write(dir.path_join("armed.json"), "{}")
+	_write(dir.path_join("attach.json"), '{"port": 6, "token": "file"}')
+	var attached: Dictionary = _dormant_script.choose(dir)
+	OS.set_environment("GODOT_MCP_OFF", "1")
+	var valid: Dictionary = _dormant_script.choose(dir)
+	# OFF short-circuits attach_endpoint, so a malformed file is never parsed and warns nothing.
+	_write(dir.path_join("attach.json"), "{broken")
+	var malformed: Dictionary = _dormant_script.choose(dir)
+	OS.unset_environment("GODOT_MCP_OFF")
+	_remove_tree(dir)
+	assert_eq(attached.get("mode"), "attach", "a valid attach.json attaches a headless game")
+	assert_eq(valid, {"mode": "off", "endpoint": {}, "source": ""}, "GODOT_MCP_OFF=1 wins")
+	assert_eq(malformed, {"mode": "off", "endpoint": {}, "source": ""}, "a malformed one too")
+
+
 func test_a_poll_joins_on_a_valid_join_file_and_deletes_both_files() -> void:
 	var dir: String = _fresh_dir("join")
 	_write(dir.path_join("armed.json"), "{}")
@@ -218,6 +238,12 @@ func test_a_poll_deletes_a_malformed_join_file_and_stays_dormant() -> void:
 	assert_true(joined.is_empty(), "a join file with no token joins nothing")
 	assert_true(not FileAccess.file_exists(join_file), "it is deleted")
 	assert_true(waiter.is_polling(), "the wait goes on")
+	assert_eq(waiter.warnings.size(), 1, "the malformed join file is warned about once")
+	var message: String = str(waiter.warnings[0]) if not waiter.warnings.is_empty() else ""
+	assert_true(
+		message.contains("holds no {port, token}"), "it says what the file holds: %s" % message
+	)
+	assert_true(message.contains("still dormant"), "and that the wait goes on: %s" % message)
 	var dormant_file: String = _dormant_script.dormant_path(dir, 4242)
 	assert_true(FileAccess.file_exists(dormant_file), "the dormant file stays")
 	waiter.leave()
@@ -282,6 +308,47 @@ func test_the_gamepad_release_all_lets_go_of_buttons_and_centres_moved_axes() ->
 	pads.free()
 
 
+func test_going_dormant_again_releases_the_keys_and_actions_a_drive_held() -> void:
+	var bridge: Node = _bridge_script.new()
+	var gestures: Node = _input_script.new()
+	var pads: Node = _recording_pads()
+	var raw_events: Node = _raw_events_script.new()
+	var capture: Node = _stub_capture()
+	gestures.bridge = bridge
+	pads.bridge = bridge
+	bridge._gestures = gestures
+	bridge._pads = pads
+	bridge._capture = capture
+	raw_events.bridge = bridge
+	raw_events._gestures = gestures
+	raw_events._gestures_script = _input_script
+	gestures.send_key(KEY_SHIFT, true, 0, PackedStringArray())
+	gestures.send_key(KEY_A, true, 97, PackedStringArray())
+	gestures.send_key(KEY_A, false, 97, PackedStringArray())
+	raw_events._play_action({"action": "ui_accept", "pressed": true})
+	assert_true(Input.is_key_pressed(KEY_SHIFT), "the shift a drive held reaches Input")
+	assert_true(not Input.is_key_pressed(KEY_A), "the A it released does not")
+	assert_true(Input.is_action_pressed("ui_accept"), "the action it held reaches Input")
+	assert_eq(gestures.held_keys().size(), 1, "only the shift is still held")
+	raw_events.release_all()
+	assert_true(not Input.is_key_pressed(KEY_SHIFT), "the held shift is let go")
+	assert_true(not Input.is_action_pressed("ui_accept"), "the held action is let go")
+	assert_true(gestures.held_keys().is_empty(), "no key is left held")
+	capture.free()
+	raw_events.free()
+	pads.free()
+	gestures.free()
+	bridge.free()
+
+
+## A capture that records nothing: what the input player's dispatch reports every sent event to.
+func _stub_capture() -> Node:
+	var script := GDScript.new()
+	script.source_code = "extends Node\n\n\nfunc sent(_event: InputEvent) -> void:\n\tpass\n"
+	script.reload()
+	return script.new()
+
+
 ## The gamepad with its two event senders recording [kind, device, index, value] in sent rather
 ## than dispatching, so no bridge is needed.
 func _recording_pads() -> Node:
@@ -308,9 +375,26 @@ func _recording_pads() -> Node:
 	return script.new()
 
 
-## A dormant waiter on dir for pid 4242, never added to the tree, so only poll() looks.
+## A dormant waiter on dir for pid 4242 that records what _warn would print, never added to the
+## tree, so only poll() looks.
 func _waiter(dir: String) -> Node:
-	var waiter: Node = _dormant_script.new()
+	var script := GDScript.new()
+	script.source_code = (
+		"\n"
+		. join(
+			[
+				'extends "%s"' % _dormant_script.resource_path,
+				"",
+				"var warnings: Array = []",
+				"",
+				"",
+				"func _warn(message: String) -> void:",
+				"\twarnings.append(message)",
+			]
+		)
+	)
+	script.reload()
+	var waiter: Node = script.new()
 	waiter.state_dir = dir
 	waiter.pid = 4242
 	waiter.started_unix_ms = 1700000000000

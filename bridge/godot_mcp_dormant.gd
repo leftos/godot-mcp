@@ -268,13 +268,18 @@ func poll() -> void:
 		)
 		remove_file(join_file)
 		if endpoint.is_empty():
-			push_warning("godot-mcp bridge: %s holds no {port, token}; still dormant." % join_file)
+			_warn("godot-mcp bridge: %s holds no {port, token}; still dormant." % join_file)
 			return
 		leave()
 		joined.emit(endpoint)
 	elif not FileAccess.file_exists(armed_path(state_dir)):
 		leave()
 		disarmed.emit()
+
+
+## Warns about a join file that cannot be used; overridable, so a test reads the message instead.
+func _warn(message: String) -> void:
+	push_warning(message)
 
 
 func _exit_tree() -> void:

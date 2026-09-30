@@ -70,7 +70,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `detach_project`
 
-- **Does:** ends an attached session and closes the connection; removes the injected `override.cfg` unless another live session uses the folder or it is armed. The game keeps running: on an armed folder it goes dormant again, so a later `attach_project` joins it again (a window a quiet join parked comes back on screen); otherwise its bridge goes idle.
+- **Does:** ends an attached session and closes the connection; removes the injected `override.cfg` unless another live session uses the folder or it is armed. The game keeps running: on an armed folder it goes dormant again, letting go of any key, button or action the drive left held, so a later `attach_project` joins it again (a window a quiet join parked comes back on screen); otherwise its bridge goes idle.
 - **Use:** to finish with a game `attach_project` joined and leave it running; `stop_project` quits it instead.
 
 ### `arm_project`
