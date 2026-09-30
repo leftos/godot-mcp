@@ -10,8 +10,7 @@ internal sealed class ProbeProject : IDisposable
     public ProbeProject()
     {
         Directory = _temp.Combine("InputProbe");
-        CopyFixture(RepoPaths.InputProbe, Directory);
-        Git.InitAndCommitAll(Directory);
+        CommittedFixture.CopyTo(RepoPaths.InputProbe, Directory);
     }
 
     public string Directory { get; }
@@ -21,13 +20,4 @@ internal sealed class ProbeProject : IDisposable
     public string OverrideFile => Path.Combine(Directory, "override.cfg");
 
     public void Dispose() => _temp.Dispose();
-
-    private static void CopyFixture(string source, string destination)
-    {
-        System.IO.Directory.CreateDirectory(destination);
-        foreach (string file in System.IO.Directory.EnumerateFiles(source))
-        {
-            File.Copy(file, Path.Combine(destination, Path.GetFileName(file)));
-        }
-    }
 }

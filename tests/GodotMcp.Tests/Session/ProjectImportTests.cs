@@ -139,13 +139,7 @@ public sealed class ProjectImportTests : IDisposable
     public void AnInputProbeCopyNeedsNoImport()
     {
         string probe = _temp.Combine("InputProbe");
-        Directory.CreateDirectory(probe);
-        foreach (string file in Directory.EnumerateFiles(RepoPaths.InputProbe))
-        {
-            File.Copy(file, Path.Combine(probe, Path.GetFileName(file)));
-        }
-
-        Git.InitAndCommitAll(probe);
+        CommittedFixture.CopyTo(RepoPaths.InputProbe, probe);
 
         Assert.False(PrepAssertions.IsImportNeeded(probe));
     }

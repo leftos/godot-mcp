@@ -82,12 +82,14 @@ public sealed class CsProbeProject : IDisposable
 
     public void Dispose() => _temp.Dispose();
 
-    /// <summary>Copies the fixture's files into a CsProbe folder under <paramref name="temp"/>, git-inits it and commits them.</summary>
+    /// <summary>The CsProbe fixture this class copies.</summary>
+    private static string FixtureDirectory => Path.Combine(RepoPaths.Root, "tests", "fixtures", ProjectName);
+
+    /// <summary>Copies the fixture's files and a committed repository into a CsProbe folder under <paramref name="temp"/>.</summary>
     private static string CommittedCopy(TempDirectory temp)
     {
         string directory = temp.Combine(ProjectName);
-        CopyFixture(directory);
-        Git.InitAndCommitAll(directory);
+        CommittedFixture.CopyTo(FixtureDirectory, directory);
         return directory;
     }
 
@@ -95,7 +97,7 @@ public sealed class CsProbeProject : IDisposable
     private static void CopyFixture(string directory)
     {
         System.IO.Directory.CreateDirectory(directory);
-        foreach (string file in System.IO.Directory.EnumerateFiles(Path.Combine(RepoPaths.Root, "tests", "fixtures", ProjectName)))
+        foreach (string file in System.IO.Directory.EnumerateFiles(FixtureDirectory))
         {
             File.Copy(file, Path.Combine(directory, Path.GetFileName(file)));
         }
