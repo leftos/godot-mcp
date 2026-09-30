@@ -43,11 +43,11 @@ The helper finds every method carrying an attribute whose type is named `GodotMc
 
 ### Which objects carry tools (question 2)
 
-An instance method on the script type of an autoload (found as a child of `/root` whose C# type declares the method: delve's `Net`), an instance method on the current scene's root (opening-hand's scratch root), or a static method anywhere in the game's assemblies. A tool on a type that is neither is listed with `available: false` and why, never called.
+An instance method on the script type of an autoload (named by the `autoload/*` project settings, section 8, since a child of `/root` also matches the current scene: delve's `Net`), an instance method on the current scene's root (opening-hand's scratch root), or a static method anywhere in the game's assemblies. A tool on a type that is neither is listed with `available: false` and why, never called.
 
 ### How the server discovers them (question 4)
 
-Per call, from the live game, through the helper: a new helper op `tools` walks the game's loaded assemblies once per game process and answers the list; the server keeps it per session keyed by the game's pid (the hello's), so `restart_project` or a new attach reads it again. Nothing is read at launch, so a game no agent asks about never loads the helper for it. The listing is the running build's, so it can never offer a tool the running game lacks.
+Per call, from the live game, through the helper: a new helper op `tools` walks the game's own load context once per game process, keeps the marked methods in a static for the process's life, and answers the list with each tool's owner and availability recomputed per call (section 8), so the server keeps no cache and `restart_project` or a new attach reads a fresh process. Nothing is read at launch, so a game no agent asks about never loads the helper for it. The listing is the running build's, so it can never offer a tool the running game lacks.
 
 ### How an agent lists and calls them (question 3)
 
