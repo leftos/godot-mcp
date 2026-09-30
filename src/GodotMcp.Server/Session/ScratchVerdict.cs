@@ -125,6 +125,16 @@ internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchS
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Known { get; init; }
+
+    /// <summary>
+    /// Whether the scene, red or killed beside others, passed when played again alone; null when it played once.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Alone { get; init; }
+
+    /// <summary>The step the replay alone failed at, when it failed again and named one.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ScratchFailure? AloneFailedAt { get; init; }
 }
 
 /// <summary>
@@ -194,6 +204,39 @@ internal static partial class ScratchVerdict
         int red = Count(Red, KnownNowGreen);
         int killed = Count(Killed);
         return new ScratchRunResult(red == 0 && killed == 0, Count(Green), red, Count(KnownRed), Count(NoSteps), killed, scenes);
+    }
+
+    /// <summary>
+    /// Whether a scene is played once more alone: it ran beside others (<paramref name="parallel"/> above 1) and came out red
+    /// or killed, and it is not known. A red scene refused before any step (none played, failed at index -1: it did not start,
+    /// has no current scene or lacks the scratch protocol) is not played again, since no game beside it explains that; a
+    /// killed one is, before its first step or in the pace after its last alike, since load can kill either.
+    /// </summary>
+    public static bool PlaysAgainAlone(ScratchSceneResult first, int parallel) =>
+        parallel > 1 && first.Verdict is Red or Killed && !RefusedBeforeAnyStep(first);
+
+    private static bool RefusedBeforeAnyStep(ScratchSceneResult scene) =>
+        scene.Verdict == Red && scene.Steps.Played == 0 && scene.FailedAt is { Index: -1 };
+
+    /// <summary>
+    /// A scene's entry after its replay alone: the replay's, marked alone, when it played green; else the first run's, marked
+    /// not alone, with the step the replay failed at. The seconds are both runs'.
+    /// </summary>
+    public static ScratchSceneResult Alone(ScratchSceneResult first, ScratchSceneResult replay)
+    {
+        double seconds = Math.Round(first.Seconds + replay.Seconds, 1);
+        return replay.Verdict == Green
+            ? replay with
+            {
+                Seconds = seconds,
+                Alone = true,
+            }
+            : first with
+            {
+                Seconds = seconds,
+                Alone = false,
+                AloneFailedAt = replay.FailedAt,
+            };
     }
 
     /// <summary>

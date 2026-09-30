@@ -32,33 +32,78 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         _probe.Dispose();
     }
 
+    private const int ParallelTestTimeoutMs = 300_000;
+
+    private static readonly string[] FolderScenes =
+    [
+        "ScratchBeside",
+        "ScratchBusy",
+        "ScratchGreen",
+        "ScratchLateError",
+        "ScratchLateLine",
+        "ScratchLaunchNoise",
+        "ScratchLeak",
+        "ScratchMarker",
+        "ScratchNoProtocol",
+        "ScratchNoSteps",
+        "ScratchPushError",
+    ];
+
+    private static readonly string[] FolderVerdicts = ["green", "killed", "green", "red", "red", "green", "known", "green", "red", "no-steps", "red"];
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task TheScratchFolderPlaysEachSceneToItsVerdict()
     {
         JsonObject result = await RunAsync(_probe.Directory, scenes: null, options: null, TestContext.Current.CancellationToken);
 
+        AssertFolderVerdicts(result);
         JsonArray scenes = result["scenes"]!.AsArray();
-        string[] names =
-        [
-            "ScratchBusy",
-            "ScratchGreen",
-            "ScratchLateError",
-            "ScratchLateLine",
-            "ScratchLaunchNoise",
-            "ScratchLeak",
-            "ScratchNoProtocol",
-            "ScratchNoSteps",
-            "ScratchPushError",
-        ];
-        Assert.Equal(names, scenes.Select(scene => scene!["scene"]!.GetValue<string>()));
-        Assert.Equal(
-            ["killed", "green", "red", "red", "green", "known", "red", "no-steps", "red"],
-            scenes.Select(scene => scene!["verdict"]!.GetValue<string>())
+        Assert.All(scenes, scene => Assert.Null(scene!["alone"]));
+        Assert.Equal([1, 0.1, 0.5, 2, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5], scenes.Select(scene => scene!["pace"]!.GetValue<double>()));
+    }
+
+    [Fact(Timeout = ParallelTestTimeoutMs)]
+    public async Task ThreeAtOnceTheFolderPlaysToTheSameVerdictsInTheListedOrder()
+    {
+        JsonObject result = await RunAsync(_probe.Directory, scenes: null, new ScratchOptions(Parallel: 3), TestContext.Current.CancellationToken);
+
+        AssertFolderVerdicts(result);
+        JsonArray scenes = result["scenes"]!.AsArray();
+        Assert.False(scenes[1]!["alone"]!.GetValue<bool>());
+        Assert.Null(scenes[8]!["alone"]);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ASceneRedOnlyBesideAnotherIsPlayedAgainAloneAndPasses()
+    {
+        JsonObject result = await RunAsync(
+            _probe.Directory,
+            ["ScratchMarker", "ScratchBeside"],
+            new ScratchOptions(Parallel: 2),
+            TestContext.Current.CancellationToken
         );
-        Assert.Equal(names.Select(name => "InputProbe.scratch-" + name), scenes.Select(scene => scene!["session"]!.GetValue<string>()));
+
+        JsonArray scenes = result["scenes"]!.AsArray();
+        Assert.Equal(["ScratchMarker", "ScratchBeside"], scenes.Select(scene => scene!["scene"]!.GetValue<string>()));
+        Assert.True(result["passed"]!.GetValue<bool>(), result.ToJsonString());
+        Assert.Equal("green", scenes[0]!["verdict"]!.GetValue<string>());
+        Assert.Null(scenes[0]!["alone"]);
+        JsonNode beside = scenes[1]!;
+        Assert.Equal("green", beside["verdict"]!.GetValue<string>());
+        Assert.True(beside["alone"]!.GetValue<bool>(), beside.ToJsonString());
+        Assert.Null(beside["aloneFailedAt"]);
+        Assert.Equal("InputProbe.scratch-ScratchBeside", beside["session"]!.GetValue<string>());
+        Assert.Equal(2, result["green"]!.GetValue<int>());
+    }
+
+    private static void AssertFolderVerdicts(JsonObject result)
+    {
+        JsonArray scenes = result["scenes"]!.AsArray();
+        Assert.Equal(FolderScenes, scenes.Select(scene => scene!["scene"]!.GetValue<string>()));
+        Assert.Equal(FolderVerdicts, scenes.Select(scene => scene!["verdict"]!.GetValue<string>()));
+        Assert.Equal(FolderScenes.Select(name => "InputProbe.scratch-" + name), scenes.Select(scene => scene!["session"]!.GetValue<string>()));
         Assert.False(result["passed"]!.GetValue<bool>());
-        Assert.Equal((2, 4, 1, 1, 1), Counts(result));
-        Assert.Equal([0.1, 0.5, 2, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5], scenes.Select(scene => scene!["pace"]!.GetValue<double>()));
+        Assert.Equal((4, 4, 1, 1, 1), Counts(result));
     }
 
     [Fact(Timeout = TestTimeoutMs)]

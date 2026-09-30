@@ -160,6 +160,28 @@ public sealed class ScratchValidationTests : IDisposable
         Assert.True(given.Details);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(5)]
+    [InlineData(-1)]
+    public void AParallelOutsideOneToFourIsRefused(int parallel)
+    {
+        string message = Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Parallel: parallel)));
+
+        Assert.Equal($"options.parallel is {parallel}; it must be a whole number from 1 to 4.", message);
+    }
+
+    [Fact]
+    public void ParallelIsTheOptionsElseTheProfilesElseOne()
+    {
+        ScratchPlan none = Plan(["res://Other.tscn"]);
+        WriteProfile("""{ "scratch": { "folder": "Scratch", "parallel": 3 } }""");
+        ScratchPlan profiled = Plan(null);
+        ScratchPlan given = Plan(null, new ScratchOptions(Parallel: 2));
+
+        Assert.Equal((1, 3, 2), (none.Parallel, profiled.Parallel, given.Parallel));
+    }
+
     [Fact]
     public void ScratchUserArgsReplaceTheTopLevelOnesAndOptionsAppend()
     {

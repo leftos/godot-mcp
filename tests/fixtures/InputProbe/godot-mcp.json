@@ -2,8 +2,10 @@
   "scratch": {
     "folder": "scratch",
     "pace": {
+      "ScratchBeside": 1,
       "ScratchBusy": 0.1,
-      "ScratchLateError": 2
+      "ScratchLateError": 2,
+      "ScratchMarker": 2
     },
     "known": {
       "ScratchLeak": "leaks a node at exit on purpose, so the runner's leak check has a scene to find"

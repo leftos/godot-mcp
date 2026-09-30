@@ -287,6 +287,90 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
+    public void ARedOrKilledScenePlaysAgainAloneOnlyWhenItRanBesideOthers()
+    {
+        ScratchSceneResult red = ScratchVerdict.Judge(Seen(Step(0) with { CallError = "x" }), Plain);
+        ScratchSceneResult killed = ScratchVerdict.Judge(Seen(Step(0)) with { Kill = new ScratchFailure(0, "step0", "ceiling", "") }, Plain);
+        ScratchSceneResult exitRed = ScratchVerdict.Judge(Seen(Step(0)) with { ExitCode = 1 }, Plain);
+
+        Assert.True(ScratchVerdict.PlaysAgainAlone(red, parallel: 2));
+        Assert.True(ScratchVerdict.PlaysAgainAlone(killed, parallel: 4));
+        Assert.True(ScratchVerdict.PlaysAgainAlone(exitRed, parallel: 2));
+        Assert.False(ScratchVerdict.PlaysAgainAlone(red, parallel: 1));
+        Assert.False(ScratchVerdict.PlaysAgainAlone(killed, parallel: 1));
+    }
+
+    [Fact]
+    public void GreenKnownNoStepsAndARefusalBeforeAnyStepNeverPlayAgain()
+    {
+        ScratchSceneResult green = ScratchVerdict.Judge(Seen(Step(0)), Plain);
+        ScratchSceneResult known = ScratchVerdict.Judge(Seen(Step(0) with { CallError = "x" }), Plain with { Known = "why" });
+        ScratchSceneResult empty = ScratchVerdict.Judge(Seen(), Plain);
+        ScratchSceneResult refused = ScratchVerdict.Judge(Seen() with { Refusal = "the scene root lacks GetStatus", Total = 2 }, Plain);
+
+        Assert.Equal((ScratchVerdict.Red, 0, -1), (refused.Verdict, refused.Steps.Played, refused.FailedAt!.Index));
+        Assert.All([green, known, empty, refused], scene => Assert.False(ScratchVerdict.PlaysAgainAlone(scene, parallel: 4), scene.Verdict));
+    }
+
+    [Fact]
+    public void AKilledScenePlaysAgainAloneBeforeItsFirstStepOrInThePaceAfterItsLast()
+    {
+        ScratchSceneResult inPace = ScratchVerdict.Judge(Seen(Step(0)) with { Kill = new ScratchFailure(-1, "", "ceiling", "") }, Plain);
+        ScratchSceneResult atLaunch = ScratchVerdict.Judge(Seen() with { Kill = new ScratchFailure(-1, "", "timed out", ""), Total = 2 }, Plain);
+
+        Assert.Equal((ScratchVerdict.Killed, 1, 1, -1), (inPace.Verdict, inPace.Steps.Played, inPace.Steps.Total, inPace.FailedAt!.Index));
+        Assert.Equal((ScratchVerdict.Killed, 0, -1), (atLaunch.Verdict, atLaunch.Steps.Played, atLaunch.FailedAt!.Index));
+        Assert.True(ScratchVerdict.PlaysAgainAlone(inPace, parallel: 2));
+        Assert.True(ScratchVerdict.PlaysAgainAlone(atLaunch, parallel: 2));
+        Assert.False(ScratchVerdict.PlaysAgainAlone(inPace, parallel: 1));
+    }
+
+    [Fact]
+    public void AReplayThatPassesAloneIsTheEntryMarkedAloneAndCountsAsGreen()
+    {
+        ScratchSceneResult first = ScratchVerdict.Judge(Seen(Step(0) with { CallError = "x" }) with { Seconds = 2.0 }, Plain);
+        ScratchSceneResult replay = ScratchVerdict.Judge(Seen(Step(0)) with { Seconds = 1.5 }, Plain);
+
+        ScratchSceneResult entry = ScratchVerdict.Alone(first, replay);
+        ScratchRunResult run = ScratchVerdict.Summarise([entry]);
+
+        Assert.Equal(ScratchVerdict.Green, entry.Verdict);
+        Assert.True(entry.Alone);
+        Assert.Null(entry.FailedAt);
+        Assert.Null(entry.AloneFailedAt);
+        Assert.Equal(3.5, entry.Seconds);
+        Assert.Equal((true, 1, 0), (run.Passed, run.Green, run.Red));
+    }
+
+    [Fact]
+    public void AReplayThatFailsAgainKeepsTheFirstEntryWithTheReplaysFailure()
+    {
+        ScratchSceneResult first = ScratchVerdict.Judge(Seen(Step(0) with { CallError = "beside" }) with { Seconds = 2.0 }, Plain);
+        ScratchSceneResult replay = ScratchVerdict.Judge(Seen(Step(0), Step(1) with { CallError = "alone" }) with { Seconds = 1.0 }, Plain);
+
+        ScratchSceneResult entry = ScratchVerdict.Alone(first, replay);
+        JsonObject json = JsonNode.Parse(JsonSerializer.Serialize(entry, ToolJson.Options))!.AsObject();
+
+        Assert.Equal(ScratchVerdict.Red, entry.Verdict);
+        Assert.False(entry.Alone);
+        Assert.Equal("beside", entry.FailedAt!.Error);
+        Assert.Equal(new ScratchFailure(1, "step1", "alone", ""), entry.AloneFailedAt);
+        Assert.Equal(3.0, entry.Seconds);
+        Assert.False(json["alone"]!.GetValue<bool>());
+        Assert.Equal(1, json["aloneFailedAt"]!["index"]!.GetValue<int>());
+        Assert.Equal(1, ScratchVerdict.Summarise([entry]).Red);
+    }
+
+    [Fact]
+    public void AScenePlayedOnceHasNoAloneFields()
+    {
+        JsonObject json = JsonNode.Parse(JsonSerializer.Serialize(ScratchVerdict.Judge(Seen(Step(0)), Plain), ToolJson.Options))!.AsObject();
+
+        Assert.False(json.ContainsKey("alone"), json.ToJsonString());
+        Assert.False(json.ContainsKey("aloneFailedAt"), json.ToJsonString());
+    }
+
+    [Fact]
     public void AStepListsAtMostTwentyLinesAndCountsTheRest()
     {
         ScratchStep noisy = Step(0) with { Lines = [.. Enumerable.Range(0, 25).Select(n => $"ERROR: {n}")] };

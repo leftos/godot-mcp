@@ -29,11 +29,15 @@ internal sealed class ScratchTools(SessionRegistry sessions)
             + "PlayStep(i), a wait of the pace in game time, GetStatus), and the run stops at a scene's first failed step. A step fails "
             + "on an error the game logs (push_error, an engine error, a C# exception) or a stdout or stderr line matching the "
             + "profile's scratch.patterns; after the steps the game is stopped and a non-zero exit or an ObjectDB leak turns the "
-            + "scene red. Settings live in godot-mcp.json's scratch section {folder, userArgs, pace, known, patterns}. Returns "
+            + "scene red. Settings live in godot-mcp.json's scratch section {folder, userArgs, pace, known, patterns, parallel}. Scenes "
+            + "start in order, parallel at a time; with more than one, a red or killed scene (not known, not refused before its first "
+            + "step) is played once more alone after the others: green alone, its entry is the replay's with alone: true and counts "
+            + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
             + "{passed, green, red, known, noSteps, killed, scenes: [{scene, verdict, steps: {played, total}, pace, seconds, session, "
-            + "failedAt?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?}]}; exit.error is an "
-            + "error in the pace after the last step, killed a game the stop had to kill; details lists each step for a red or killed scene, or "
-            + "with options.details. The project is prepared once for the whole run."
+            + "failedAt?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?, alone?, "
+            + "aloneFailedAt?}]}, scenes in the order given; exit.error is an error in the pace after the last step, killed a game the "
+            + "stop had to kill; details lists each step for a red or killed scene, or with options.details; seconds covers both "
+            + "plays of a scene played again. The project is prepared once for the whole run."
     )]
     public async Task<string> RunScratchesAsync(
         [Description("The folder that holds the project's project.godot.")] string projectPath,
@@ -43,8 +47,9 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         )]
             string[]? scenes = null,
         [Description(
-            "{pace, userArgs, prepare, details}: pace in seconds a step (else scratch.pace's for the scene, else 0.5); userArgs "
-                + "appended after the profile's; prepare as run_project's; details true lists every scene's steps."
+            "{pace, userArgs, prepare, details, parallel}: pace in seconds a step (else scratch.pace's for the scene, else 0.5); "
+                + "userArgs appended after the profile's; prepare as run_project's; details true lists every scene's steps; parallel "
+                + "the scenes at once, 1 to 4 (else scratch.parallel, else 1)."
         )]
             ScratchOptions? options = null,
         CancellationToken cancellationToken = default
@@ -76,16 +81,9 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         var profile = ProjectProfile.Load(projectDir);
         ScratchProfile scratch = profile.Scratch ?? ScratchProfile.None;
         CheckPace(options.Pace);
+        CheckParallel(options.Parallel);
         bool prepare = RunOptions.ParsePrepare(options.Prepare);
-        List<string> userArgs = [.. scratch.UserArgs ?? profile.UserArgs, .. options.UserArgs ?? []];
-        if (userArgs.Contains(ScratchAuto, StringComparer.Ordinal))
-        {
-            throw new McpException(
-                $"The user arguments hold {ScratchAuto}, which starts the scene's own step clock beside run_scratches' walk. Remove it "
-                    + $"from options.userArgs or from {profile.FilePath}."
-            );
-        }
-
+        List<string> userArgs = UserArgs(profile, scratch, options);
         List<ScratchScenePlan> plans = [];
         foreach (string resPath in ResolveScenes(profile, scratch, scenes))
         {
@@ -94,7 +92,10 @@ internal sealed class ScratchTools(SessionRegistry sessions)
             plans.Add(new ScratchScenePlan(name, resPath, pace, userArgs) { Known = scratch.Known.GetValueOrDefault(name) });
         }
 
-        return new ScratchPlan(projectDir, plans, scratch.Patterns, prepare, options.Details ?? false);
+        return new ScratchPlan(projectDir, plans, scratch.Patterns, prepare, options.Details ?? false)
+        {
+            Parallel = options.Parallel ?? scratch.Parallel,
+        };
     }
 
     /// <summary>The scenes as res:// paths: those given, each checked, or every .tscn directly in scratch.folder by ordinal name.</summary>
@@ -195,6 +196,28 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         }
     }
 
+    /// <summary>The profile's scratch.userArgs, else its top-level userArgs, then options.userArgs.</summary>
+    /// <exception cref="McpException">The user arguments hold --scratch-auto.</exception>
+    private static List<string> UserArgs(ProjectProfile profile, ScratchProfile scratch, ScratchOptions options)
+    {
+        List<string> userArgs = [.. scratch.UserArgs ?? profile.UserArgs, .. options.UserArgs ?? []];
+        return userArgs.Contains(ScratchAuto, StringComparer.Ordinal)
+            ? throw new McpException(
+                $"The user arguments hold {ScratchAuto}, which starts the scene's own step clock beside run_scratches' walk. Remove it "
+                    + $"from options.userArgs or from {profile.FilePath}."
+            )
+            : userArgs;
+    }
+
+    /// <exception cref="McpException">The number of scenes at once is not from 1 to the most.</exception>
+    private static void CheckParallel(int? parallel)
+    {
+        if (parallel is { } count && !ScratchProfile.IsParallel(count))
+        {
+            throw new McpException($"options.parallel is {count}; it must be a whole number from 1 to {ScratchProfile.MaxParallel}.");
+        }
+    }
+
     private static string ResPath(string folder, string name)
     {
         string relative = StripRes(folder).Replace('\\', '/').Trim('/');
@@ -219,7 +242,7 @@ internal sealed class ScratchTools(SessionRegistry sessions)
     }
 }
 
-/// <summary>run_scratches' pace, user arguments, prepare and whether every scene lists its steps.</summary>
+/// <summary>run_scratches' pace, user arguments, prepare, whether every scene lists its steps, and how many scenes play at once.</summary>
 internal sealed record ScratchOptions(
     [property: Description(
         "Seconds of game time each step plays before the next, above 0 and at most 120; else the profile's scratch.pace for the " + "scene, else 0.5."
@@ -228,5 +251,10 @@ internal sealed record ScratchOptions(
     [property: Description("User arguments appended after the profile's scratch.userArgs (else its top-level userArgs); --scratch-auto is refused.")]
         string[]? UserArgs = null,
     [property: Description(RunOptions.PrepareDescription)] string? Prepare = null,
-    [property: Description("true lists every scene's steps; a red or killed scene lists them anyway.")] bool? Details = null
+    [property: Description("true lists every scene's steps; a red or killed scene lists them anyway.")] bool? Details = null,
+    [property: Description(
+        "How many scenes play at once, 1 to 4; else the profile's scratch.parallel, else 1. Above 1, a red or killed scene is "
+            + "played once more alone after the others."
+    )]
+        int? Parallel = null
 );

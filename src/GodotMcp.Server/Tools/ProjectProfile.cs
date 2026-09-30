@@ -40,7 +40,7 @@ internal sealed partial class ProjectProfile
     private const string ScratchKey = "scratch";
     private static readonly string[] TopLevelKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "presets", PrepWrapperKey, ScratchKey];
     private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "session"];
-    private static readonly string[] ScratchKeys = ["folder", "userArgs", "pace", "known", "patterns"];
+    private static readonly string[] ScratchKeys = ["folder", "userArgs", "pace", "known", "patterns", "parallel"];
 
     private readonly ProfileValues _defaults;
     private readonly IReadOnlyDictionary<string, ProfileValues> _presets;
@@ -339,7 +339,27 @@ internal sealed partial class ProjectProfile
             ReadMap(scratch, "pace", place, (scene, pace) => ReadPace(scene, pace, place)),
             ReadMap(scratch, "known", place, (scene, reason) => ReadReason(scene, reason, place)),
             scratch.ContainsKey("patterns") ? ReadPatterns(scratch, place) : ScratchProfile.DefaultPatterns
-        );
+        )
+        {
+            Parallel = ReadParallel(scratch, place),
+        };
+    }
+
+    /// <summary>The section's <c>parallel</c>, a whole number of scenes at once from 1 to 4; 1 when the key is absent.</summary>
+    private static int ReadParallel(Dictionary<string, JsonElement> keys, Place place)
+    {
+        if (!keys.TryGetValue("parallel", out JsonElement value))
+        {
+            return ScratchProfile.DefaultParallel;
+        }
+
+        return value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int parallel) && ScratchProfile.IsParallel(parallel)
+            ? parallel
+            : throw Refused(
+                place,
+                $"\"parallel\" must be a whole number from 1 to {ScratchProfile.MaxParallel}, not "
+                    + (value.ValueKind == JsonValueKind.Number ? value.GetRawText() : Describe(value.ValueKind))
+            );
     }
 
     /// <summary>An object of scene names to values, each read by <paramref name="read"/>; empty when the key is absent.</summary>
@@ -450,7 +470,7 @@ internal sealed partial class ProjectProfile
 /// <summary>
 /// godot-mcp.json's <c>scratch</c> section: the folder whose scenes run_scratches plays when given none, the user arguments a
 /// scratch run starts with in place of the top-level ones (null when the section sets none), each scene's pace in seconds, the
-/// scenes known to fail with the reason, and the patterns a step's output lines fail it by.
+/// scenes known to fail with the reason, the patterns a step's output lines fail it by, and how many scenes play at once.
 /// </summary>
 internal sealed record ScratchProfile(
     string? Folder,
@@ -463,6 +483,15 @@ internal sealed record ScratchProfile(
     /// <summary>The longest pace, in seconds: a step's wait is a gameMs wait_for, at most 120000 ms.</summary>
     public const int MaxPaceSeconds = RuntimeTools.MaxWaitGameMs / 1000;
 
+    /// <summary>How many scenes play at once when neither options.parallel nor the section sets it.</summary>
+    public const int DefaultParallel = 1;
+
+    /// <summary>The most scenes that play at once.</summary>
+    public const int MaxParallel = 4;
+
+    /// <summary>How many scenes play at once, from 1 to <see cref="MaxParallel"/>.</summary>
+    public int Parallel { get; init; } = DefaultParallel;
+
     /// <summary>The patterns of a project that sets none: Godot's own error lines and its leak warning at exit.</summary>
     public static readonly IReadOnlyList<Regex> DefaultPatterns = [Compile(@"^SCRIPT ERROR|^ERROR:|ObjectDB instances? (was|were) leaked")];
 
@@ -471,6 +500,9 @@ internal sealed record ScratchProfile(
 
     /// <summary>Whether <paramref name="seconds"/> is a pace: above 0 and at most <see cref="MaxPaceSeconds"/>.</summary>
     public static bool IsPace(double seconds) => seconds is > 0 and <= MaxPaceSeconds;
+
+    /// <summary>Whether <paramref name="parallel"/> is a number of scenes at once: from 1 to <see cref="MaxParallel"/>.</summary>
+    public static bool IsParallel(int parallel) => parallel is >= 1 and <= MaxParallel;
 
     /// <summary>A pattern as the section takes it: case-sensitive, culture-invariant, with a one-second match timeout.</summary>
     /// <exception cref="ArgumentException">The pattern is not a valid regular expression.</exception>

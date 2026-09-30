@@ -14,14 +14,20 @@ internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace
     public string? Known { get; init; }
 }
 
-/// <summary>A checked run_scratches call: the project, its scenes in order, the patterns, and whether to prepare and list every step.</summary>
+/// <summary>
+/// A checked run_scratches call: the project, its scenes in order, the patterns, whether to prepare and list every step, and
+/// how many scenes play at once.
+/// </summary>
 internal sealed record ScratchPlan(
     string ProjectDir,
     IReadOnlyList<ScratchScenePlan> Scenes,
     IReadOnlyList<Regex> Patterns,
     bool Prepare,
     bool Details
-);
+)
+{
+    public required int Parallel { get; init; }
+}
 
 /// <summary>A line number in each of a session's stdout and stderr: the edge of a step's window.</summary>
 internal readonly record struct LineMark(long Stdout, long Stderr);
@@ -76,7 +82,11 @@ internal sealed class ScratchRun
         _scene = scene;
     }
 
-    /// <summary>Prepares the project once when the plan says so, then plays each scene in order and judges it.</summary>
+    /// <summary>
+    /// Prepares the project once when the plan says so, then plays the scenes, starting them in order at most the plan's
+    /// parallel at once, and judges each; a scene red or killed beside others is then played once more alone, one at a time in
+    /// order. The result lists the scenes in the plan's order, whatever finished first.
+    /// </summary>
     /// <exception cref="SessionException">The prep failed.</exception>
     public static async Task<ScratchRunResult> RunAsync(SessionRegistry registry, ScratchPlan plan, CancellationToken cancellationToken)
     {
@@ -85,14 +95,66 @@ internal sealed class ScratchRun
             await registry.PrepareFolderAsync(plan.ProjectDir, cancellationToken);
         }
 
-        List<ScratchSceneResult> scenes = [];
-        foreach (ScratchScenePlan scene in plan.Scenes)
+        ScratchSceneResult[] scenes = await PlayBesideAsync(registry, plan, cancellationToken);
+        for (int index = 0; index < scenes.Length; index++)
         {
-            ScratchObservation seen = await new ScratchRun(registry, plan, scene).PlayAsync(cancellationToken);
-            scenes.Add(ScratchVerdict.Judge(seen, new ScratchRules(plan.Patterns, scene.Known, plan.Details)));
+            if (ScratchVerdict.PlaysAgainAlone(scenes[index], plan.Parallel))
+            {
+                ScratchSceneResult replay = await PlayOneAsync(registry, plan, plan.Scenes[index], cancellationToken);
+                scenes[index] = ScratchVerdict.Alone(scenes[index], replay);
+            }
         }
 
         return ScratchVerdict.Summarise(scenes);
+    }
+
+    /// <summary>
+    /// Plays every scene, each started once a slot is free, in the plan's order; waits for every scene started, even when a
+    /// scene throws or the call is cancelled, so no game outlives the call.
+    /// </summary>
+    private static async Task<ScratchSceneResult[]> PlayBesideAsync(SessionRegistry registry, ScratchPlan plan, CancellationToken cancellationToken)
+    {
+        var results = new ScratchSceneResult[plan.Scenes.Count];
+        using SemaphoreSlim slots = new(plan.Parallel, plan.Parallel);
+        List<Task> playing = [];
+        try
+        {
+            for (int index = 0; index < plan.Scenes.Count; index++)
+            {
+                await slots.WaitAsync(cancellationToken);
+                playing.Add(PlayInSlotAsync(index));
+            }
+        }
+        finally
+        {
+            await Task.WhenAll(playing).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+
+        await Task.WhenAll(playing);
+        return results;
+
+        async Task PlayInSlotAsync(int index)
+        {
+            try
+            {
+                results[index] = await PlayOneAsync(registry, plan, plan.Scenes[index], cancellationToken);
+            }
+            finally
+            {
+                slots.Release();
+            }
+        }
+    }
+
+    private static async Task<ScratchSceneResult> PlayOneAsync(
+        SessionRegistry registry,
+        ScratchPlan plan,
+        ScratchScenePlan scene,
+        CancellationToken cancellationToken
+    )
+    {
+        ScratchObservation seen = await new ScratchRun(registry, plan, scene).PlayAsync(cancellationToken);
+        return ScratchVerdict.Judge(seen, new ScratchRules(plan.Patterns, scene.Known, plan.Details));
     }
 
     /// <summary>

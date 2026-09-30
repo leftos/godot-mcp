@@ -382,10 +382,35 @@ public sealed class ProjectProfileTests : IDisposable
     }
 
     [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public void ScratchParallelFromOneToFourIsRead(int parallel)
+    {
+        Write($$"""{ "scratch": { "parallel": {{parallel}} } }""");
+
+        Assert.Equal(parallel, ProjectProfile.Load(_temp.Path).Scratch!.Parallel);
+    }
+
+    [Fact]
+    public void ScratchParallelDefaultsToOne()
+    {
+        Write("""{ "scratch": {} }""");
+
+        Assert.Equal(1, ProjectProfile.Load(_temp.Path).Scratch!.Parallel);
+        Assert.Equal(1, ScratchProfile.None.Parallel);
+    }
+
+    [Theory]
     [InlineData(
-        """{ "scratch": { "parallel": 2 } }""",
-        "(scratch): unknown key \"parallel\"; the allowed keys are folder, userArgs, pace, known, patterns. Remove or rename it."
+        """{ "scratch": { "threads": 2 } }""",
+        "(scratch): unknown key \"threads\"; the allowed keys are folder, userArgs, pace, known, patterns, parallel. Remove or rename it."
     )]
+    [InlineData("""{ "scratch": { "parallel": 0 } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not 0.")]
+    [InlineData("""{ "scratch": { "parallel": 5 } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not 5.")]
+    [InlineData("""{ "scratch": { "parallel": 2.5 } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not 2.5.")]
+    [InlineData("""{ "scratch": { "parallel": "2" } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not a string.")]
     [InlineData("""{ "scratch": { "folder": "A", "folder": "B" } }""", "(scratch): the key \"folder\" appears twice; keep one.")]
     [InlineData("""{ "scratch": [] }""", "(scratch): expected a JSON object ({ ... }), not an array.")]
     [InlineData("""{ "scratch": { "folder": 3 } }""", "(scratch): \"folder\" must be a string, not a number.")]
