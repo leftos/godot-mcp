@@ -31,8 +31,10 @@ internal sealed partial class RuntimeTools
             + "game time from the call's start, the sum of each process frame's delta, so they follow Engine.time_scale as the "
             + "game's timers do. Each point is taken in the first frame at or after it; a late frame is still taken, and late says "
             + "by how much. Points due in the same frame share one file. At most 1000 points and 120 s. Each frame is saved as "
-            + "take_screenshot saves it, path only, no image. Returns {frames: [{at, frame, gameSeconds, late, path, width, "
-            + "height}]}. When options.timeoutMs (by default the last point's seconds + 10 s + 100 ms per point, load-adjusted) "
+            + "take_screenshot saves it, path only, no image. Returns {folder, files, width, height, points: [{at, frame, file, "
+            + "gameSeconds, late}], shared}: folder is the directory of the PNGs, files names each distinct one once in the "
+            + "order first taken, a point's file indexes files, and shared is how many points took a file an earlier point "
+            + "took. When options.timeoutMs (by default the last point's seconds + 10 s + 100 ms per point, load-adjusted) "
             + "passes first, for example under a small time_scale, it answers the frames taken with stopped: true and missed, "
             + "the points not reached. Refused while the game is paused, since its game time does not advance (frame_control "
             + "step with options.screenshot captures a paused game), and while a frame_control step or a monitor_property runs; "
@@ -58,9 +60,8 @@ internal sealed partial class RuntimeTools
         JsonObject reply =
             result.Reply?.DeepClone() as JsonObject
             ?? throw new McpException($"The bridge's capture_frames reply is not an object: {result.Reply?.ToJsonString() ?? "null"}.");
-        NativeFramePaths(reply);
         CutMethodValue(reply["call"] as JsonObject);
-        return ErrorReport.AddTo(reply, result.Errors).ToJsonString();
+        return ErrorReport.AddTo(CompactFrames(reply), result.Errors).ToJsonString();
     }
 
     /// <summary>The points capture_frames takes: at as given, or every, 2 x every and so on up to and including for.</summary>
@@ -156,21 +157,70 @@ internal sealed partial class RuntimeTools
         return [.. Enumerable.Range(1, (int)count).Select(step => step * every)];
     }
 
-    /// <summary>Each frame's path as a native path, as take_screenshot returns it.</summary>
-    private static void NativeFramePaths(JsonObject reply)
+    /// <summary>
+    /// The bridge's frames as the compact result: the folder and the distinct file names once, a point per frame point
+    /// naming its file by index, and shared, the points that took a file an earlier point took.
+    /// </summary>
+    internal static JsonObject CompactFrames(JsonObject reply)
     {
-        if (reply["frames"] is not JsonArray frames)
-        {
-            return;
-        }
+        List<JsonObject> frames = [.. (reply["frames"] as JsonArray ?? []).OfType<JsonObject>()];
+        List<string> paths = [];
+        Dictionary<string, int> taken = new(StringComparer.Ordinal);
+        JsonArray points = [.. frames.Select(frame => CompactPoint(frame, paths, taken))];
 
-        foreach (JsonObject frame in frames.OfType<JsonObject>())
+        JsonObject result = [];
+        AddCapture(result, frames, paths);
+        result["points"] = points;
+        result["shared"] = points.Count - paths.Count;
+        foreach (string key in (string[])["stopped", "missed", "call"])
         {
-            if (frame["path"] is JsonValue path && path.TryGetValue(out string? text))
+            if (reply[key] is { } carried)
             {
-                frame["path"] = Path.GetFullPath(text);
+                result[key] = carried.DeepClone();
             }
         }
+
+        return result;
+    }
+
+    /// <summary>
+    /// The capture's own fields: the folder its frames sit in, their size, and the distinct file names in first-taken
+    /// order. A capture stopped before its first point took no frame, so it has none of these.
+    /// </summary>
+    private static void AddCapture(JsonObject result, List<JsonObject> frames, List<string> paths)
+    {
+        if (frames.Count > 0)
+        {
+            result["folder"] = Path.GetDirectoryName(paths[0]);
+            result["width"] = frames[0]["width"]?.DeepClone();
+            result["height"] = frames[0]["height"]?.DeepClone();
+        }
+
+        result["files"] = new JsonArray([.. paths.Select(path => JsonValue.Create(Path.GetFileName(path)))]);
+    }
+
+    /// <summary>
+    /// One point of the result: its seconds and engine frame, the index of the file its path names, and how late it was.
+    /// A path no earlier point took adds the next file.
+    /// </summary>
+    private static JsonObject CompactPoint(JsonObject frame, List<string> paths, Dictionary<string, int> taken)
+    {
+        string path = Path.GetFullPath(frame["path"]!.GetValue<string>());
+        if (!taken.TryGetValue(path, out int file))
+        {
+            file = paths.Count;
+            paths.Add(path);
+            taken[path] = file;
+        }
+
+        return new JsonObject
+        {
+            ["at"] = frame["at"]?.DeepClone(),
+            ["frame"] = frame["frame"]?.DeepClone(),
+            ["file"] = file,
+            ["gameSeconds"] = frame["gameSeconds"]?.DeepClone(),
+            ["late"] = frame["late"]?.DeepClone(),
+        };
     }
 
     private static string Invariant(FormattableString message) => message.ToString(CultureInfo.InvariantCulture);

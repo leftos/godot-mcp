@@ -22,6 +22,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - Consecutive headless tool calls on a GDScript-only project answer from one Godot kept running per folder, stopped after 5 minutes idle, at most 4 per server.
 - `get_ui_elements` reports each Control's shown text: translated, a LineEdit's placeholder while empty, a RichTextLabel without BBCode, and a LinkButton's too.
+- `capture_frames` returns a folder, each distinct file once and points indexing them, with `shared` counting points that shared a frame.
 
 ### Fixed
 

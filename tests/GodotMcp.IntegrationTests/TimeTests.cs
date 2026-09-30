@@ -679,16 +679,20 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     {
         JsonObject captured = await CaptureFramesAsync([0.1, 0.3, 0.3], null, TestContext.Current.CancellationToken);
 
-        JsonArray frames = captured["frames"]!.AsArray();
-        Assert.Equal(3, frames.Count);
-        Assert.Equal([0.1, 0.3, 0.3], frames.Select(frame => frame!["at"]!.GetValue<double>()));
-        Assert.Equal(frames[1]!["path"]!.GetValue<string>(), frames[2]!["path"]!.GetValue<string>());
-        Assert.All(frames, frame => Assert.True(File.Exists(frame!["path"]!.GetValue<string>()), captured.ToJsonString()));
+        JsonArray points = captured["points"]!.AsArray();
+        Assert.Equal(3, points.Count);
+        Assert.Equal([0.1, 0.3, 0.3], points.Select(point => point!["at"]!.GetValue<double>()));
+        Assert.Equal(points[1]!["file"]!.GetValue<int>(), points[2]!["file"]!.GetValue<int>());
+        Assert.Equal(2, captured["files"]!.AsArray().Count);
+        Assert.Equal(1, captured["shared"]!.GetValue<int>());
+        Assert.True(captured["width"]!.GetValue<int>() > 0, captured.ToJsonString());
+        Assert.True(captured["height"]!.GetValue<int>() > 0, captured.ToJsonString());
+        Assert.All(FramePaths(captured), path => Assert.True(File.Exists(path), captured.ToJsonString()));
         Assert.All(
-            frames,
-            frame => Assert.True(frame!["gameSeconds"]!.GetValue<double>() >= frame["at"]!.GetValue<double>(), captured.ToJsonString())
+            points,
+            point => Assert.True(point!["gameSeconds"]!.GetValue<double>() >= point["at"]!.GetValue<double>(), captured.ToJsonString())
         );
-        long[] numbers = [.. frames.Select(frame => frame!["frame"]!.GetValue<long>())];
+        long[] numbers = [.. points.Select(point => point!["frame"]!.GetValue<long>())];
         Assert.True(numbers.Zip(numbers.Skip(1)).All(pair => pair.First <= pair.Second), captured.ToJsonString());
         Assert.False(captured.ContainsKey("stopped"), captured.ToJsonString());
         Assert.False(captured.ContainsKey("missed"), captured.ToJsonString());
@@ -699,9 +703,9 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     {
         JsonObject captured = await CaptureFramesAsync(null, new CaptureFramesOptions(0.1, 0.3), TestContext.Current.CancellationToken);
 
-        JsonArray frames = captured["frames"]!.AsArray();
-        Assert.Equal(3, frames.Count);
-        Assert.All(frames, frame => Assert.True(File.Exists(frame!["path"]!.GetValue<string>()), captured.ToJsonString()));
+        JsonArray points = captured["points"]!.AsArray();
+        Assert.Equal(3, points.Count);
+        Assert.All(FramePaths(captured), path => Assert.True(File.Exists(path), captured.ToJsonString()));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -714,8 +718,8 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
             JsonObject captured = await CaptureFramesAsync([8.0], null, TestContext.Current.CancellationToken);
             watch.Stop();
 
-            JsonNode frame = Assert.Single(captured["frames"]!.AsArray())!;
-            Assert.True(frame["gameSeconds"]!.GetValue<double>() >= 8.0, captured.ToJsonString());
+            JsonNode point = Assert.Single(captured["points"]!.AsArray())!;
+            Assert.True(point["gameSeconds"]!.GetValue<double>() >= 8.0, captured.ToJsonString());
             Assert.True(
                 watch.Elapsed < TimeSpan.FromSeconds(8),
                 $"8 s of game time at time_scale 8 took {watch.Elapsed}; ignoring time_scale takes at least 8 s"
@@ -815,8 +819,8 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
                 TestContext.Current.CancellationToken
             );
 
-            JsonNode frame = Assert.Single(captured["frames"]!.AsArray())!;
-            Assert.Equal(0.05, frame["at"]!.GetValue<double>());
+            JsonNode point = Assert.Single(captured["points"]!.AsArray())!;
+            Assert.Equal(0.05, point["at"]!.GetValue<double>());
             Assert.True(captured["stopped"]!.GetValue<bool>(), captured.ToJsonString());
             Assert.Equal([5.0], captured["missed"]!.AsArray().Select(point => point!.GetValue<double>()));
         }
@@ -837,13 +841,13 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         // start_clock sums the probe's own delta from the frame it is called in. A capture whose clock starts in that same
         // frame has summed the same deltas at the frame it grabbed; a call a round trip ahead of the clock puts the probe's
         // sum ahead by those frames' delta, and a call after the clock's first frame puts it behind.
-        JsonNode frame = Assert.Single(captured["frames"]!.AsArray())!;
-        long grabbed = frame["frame"]!.GetValue<long>();
+        JsonNode point = Assert.Single(captured["points"]!.AsArray())!;
+        long grabbed = point["frame"]!.GetValue<long>();
         long started = captured["call"]!["value"]!.GetValue<long>();
         JsonNode? probeSeconds = await RunAsync($"return {Probe}.clock_at({grabbed})");
         Assert.True(started <= grabbed, captured.ToJsonString());
         Assert.NotNull(probeSeconds);
-        Assert.Equal(frame["gameSeconds"]!.GetValue<double>(), probeSeconds.GetValue<double>(), 6);
+        Assert.Equal(point["gameSeconds"]!.GetValue<double>(), probeSeconds.GetValue<double>(), 6);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -912,6 +916,10 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         ).GetValue<string>();
 
     private static IEnumerable<string> Paths(JsonNode? list) => list!.AsArray().Select(path => path!.GetValue<string>());
+
+    /// <summary>The files a capture took: its folder joined with each distinct name, as the compact result names them.</summary>
+    private static IEnumerable<string> FramePaths(JsonObject captured) =>
+        captured["files"]!.AsArray().Select(name => Path.Combine(captured["folder"]!.GetValue<string>(), name!.GetValue<string>()));
 
     /// <summary>Adds time_probe.tscn under the shared run's root as TimeProbe; InitializeAsync has already reset the run.</summary>
     private Task<string> AddTimeProbeAsync(CancellationToken cancellationToken) =>
