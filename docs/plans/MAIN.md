@@ -9,7 +9,7 @@ The first version replaced godot-mcp-runtime at parity and went further: every p
 
 ## Next
 
-Waves run in order; bug reports sit ahead of the backlog inside each. Each wave shares its files, so one implementer reads them once.
+Waves run in order; bug reports sit ahead of the backlog inside each. Each wave shares its files, so one implementer reads them once. A design subplan's rulings move into `docs/` (ARCHITECTURE.md, DECISIONS.md) in the commit that lands its last step, and the subplan is deleted then (user, 2026-09-30).
 
 ### Wave 1: itest speed
 
