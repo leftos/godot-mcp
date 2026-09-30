@@ -1,5 +1,8 @@
 using System.Collections.Immutable;
 using System.ComponentModel;
+using System.Globalization;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using GodotMcp.Dotnet.Core;
 
@@ -346,4 +349,209 @@ public class Banner(int width)
 public sealed class Pennant(string label) : Banner(label.Length)
 {
     public string Label { get; } = label;
+}
+
+/// <summary>
+/// The mark a game declares itself, matched by name from any namespace: the description an agent reads, and the name,
+/// the note on when the tool is taken and whether it changes the game.
+/// </summary>
+[AttributeUsage(AttributeTargets.Method)]
+public sealed class GodotMcpToolAttribute(string description) : Attribute
+{
+    public string Description { get; } = description;
+
+    public string? Name { get; init; }
+
+    public string? When { get; init; }
+
+    public bool ReadOnly { get; init; }
+}
+
+/// <summary>Every method the project-tool tests describe: one per scalar, collection, record and refused parameter kind.</summary>
+[System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Performance",
+    "CA1822:Mark members as static",
+    Justification = "The samples exist to be described by their signatures, not run; whether one touches instance state is beside the point."
+)]
+public sealed class ToolBench
+{
+    public bool Flagged(bool value) => value;
+
+    public string Text(string value) => value;
+
+    public bool Lettered(char value) => value == 'x';
+
+    public string Identified(Guid id) => id.ToString("D", CultureInfo.InvariantCulture);
+
+    public int Stamped(DateTime at) => at.Year;
+
+    public int Shifted(DateTimeOffset offset) => offset.Year;
+
+    public long Ticked(TimeSpan span) => span.Ticks;
+
+    public double Fraction(double value) => value;
+
+    public float Small(float value) => value;
+
+    public decimal Money(decimal value) => value;
+
+    public int Bounded(byte small, sbyte tiny, short medium, ushort plus, int whole, uint count, long large, ulong big) =>
+        small + tiny + medium + plus + whole + (int)count + (int)large + (int)(big % 10);
+
+    public int Colored(Color color, Access access) => (int)color + (int)access;
+
+    public int Tinted(Color tint = Color.Green, Access access = Access.Read | Access.Write) => (int)tint + (int)access;
+
+    public int Supplied(int count = 3, string label = "hi", int? nothing = null, string? maybe = null) =>
+        count + label.Length + (nothing ?? 0) + (maybe?.Length ?? 0);
+
+    public int Rest(params string[] names) => names.Length;
+
+    public int Listed(
+        int[] numbers,
+        List<Color> colors,
+        IList<int> ordered,
+        IReadOnlyList<string> labels,
+        IEnumerable<int> sequence,
+        ICollection<int> bag,
+        ImmutableArray<int> frozen,
+        ImmutableList<Color> chained
+    ) => numbers.Length + colors.Count + ordered.Count + labels.Count + sequence.Count() + bag.Count + frozen.Length + chained.Count;
+
+    public int Unique(HashSet<int> ids) => ids.Count;
+
+    public int Mapped(Dictionary<string, int> counts, IReadOnlyDictionary<string, List<string?>> tags) => counts.Count + tags.Count;
+
+    public int Powered([Description("How hard to hit")] int power) => power;
+
+    public int Assigned(Choice choice) => choice.Cost;
+
+    public int Offered(Offer offer) => offer.Options.Length;
+
+    public int Chosen(Pair pair) => pair.A;
+
+    public int Configured(Settings settings) => settings.Volume;
+
+    public int Attached(Mentor mentor, Tutor tutor) => mentor.Teach(1) + tutor.Teach(2);
+
+    public int Abstracted(IShield shield, Weapon weapon) => shield.Absorb(1) + weapon.Damage;
+
+    public string Anything(object value) => value.GetType().Name;
+
+    public int Waited(int amount, CancellationToken token) => token.IsCancellationRequested ? -amount : amount;
+
+    public int Inlined(in int code) => code;
+
+    public string Handled(Action<int> handler) => handler.Method.Name;
+
+    public Task<string> Fetched() => Task.FromResult("done");
+
+    public void Quiet() { }
+
+    public bool Ping() => true;
+
+    public int Needed(int amount, string label) => amount + label.Length;
+
+    public int Arranged(int amount, string? label, Color tint = Color.Green) => amount + (label?.Length ?? 0) + (int)tint;
+
+    public int Freed(int? amount, string? label) => (amount ?? 0) + (label?.Length ?? 0);
+
+    public int Warded(Shield shield, Plain? plain = null) => shield.Absorb(1) + (plain?.Weight ?? 0);
+
+    public bool Counted(int amount, out int count)
+    {
+        count = amount;
+        return true;
+    }
+
+    public int Grown(ref int value) => value;
+
+    public int Summed(Span<int> values) => values.Length;
+
+    public int Collected(IReadOnlyCollection<int> items) => items.Count;
+
+    public int Setted(ISet<int> items) => items.Count;
+
+    public int Keyed(Dictionary<int, string> map) => map.Count;
+
+    public int Sized(nint size, nuint limit) => (int)size + (int)limit;
+
+    public int Sourced(Func<int> source) => source();
+
+    public Span<int> Returned() => default;
+
+    public T Echoed<T>(T value) => value;
+
+    public int Printed(Ticket ticket) => ticket.Label.Length + Ticket.Built;
+
+    public int Limited(nuint limit) => (int)limit;
+
+    public int Native(nint? size) => (int)(size ?? 0);
+
+    public int ListedDeep(List<Dictionary<int, string>> maps) => maps.Count;
+
+    public int Nullables(int?[] numbers) => numbers.Length;
+
+    public int Pursed(Purse? purse) => purse?.Coins ?? 0;
+
+    public int KeyedReadOnly(IReadOnlyDictionary<int, string> map) => map.Count;
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Naming",
+        "CA1708:Identifiers should differ by more than case",
+        Justification = "The two names are the case hint's whole point: a key matching both is reported with both."
+    )]
+    public int Cased(int value, string Value) => value + Value.Length;
+
+    public int Defaulted(Guid id = default, Purse purse = default) => purse.Coins + (id == Guid.Empty ? 0 : 1);
+
+    public int Noted(Note note) => note.Title.Length + (note.Remark?.Length ?? 0);
+
+    public int Timed([Optional, DateTimeConstant(630822816000000000)] DateTime at) => at.Year;
+
+    public int Guarded([Description("The shield to ward with")] IShield shield) => shield.Absorb(1);
+
+    /// <summary>A marked tool with every optional note unset.</summary>
+    [GodotMcpTool("Marks nothing in particular.")]
+    public void Marked() { }
+
+    /// <summary>A marked tool that renames itself and says it changes nothing.</summary>
+    [GodotMcpTool("Reads a party member's hit points.", Name = "get_hp", ReadOnly = true)]
+    public int GotHp(bool enemy, int index) => index;
+
+    /// <summary>A marked tool with a <c>When</c> and a parameter description.</summary>
+    [GodotMcpTool("Jumps the party into the first uncleared room of a kind.", When = "from the map")]
+    public bool JumpToRoomOfKind([Description("Enemy, Elite or Boss")] string kind) => kind.Length > 0;
+}
+
+/// <summary>A class whose one constructor counts itself, so a test can tell a refusal came before any building.</summary>
+public sealed class Ticket
+{
+    public Ticket(string label)
+    {
+        Label = label;
+        Built++;
+    }
+
+    /// <summary>How many tickets have been constructed.</summary>
+    public static int Built { get; private set; }
+
+    public string Label { get; }
+}
+
+/// <summary>A struct a tool takes as a nullable, whose members one level of schema describes.</summary>
+public readonly record struct Purse(int Coins);
+
+/// <summary>A record whose two members differ in nullability.</summary>
+public sealed record Note(string Title, string? Remark);
+
+/// <summary>A static class on an open generic type, whose methods no game tool can be built from.</summary>
+[System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Design",
+    "CA1000:Do not declare static members on generic types",
+    Justification = "The sample exists to be the open generic type a game tool is refused for."
+)]
+public static class Pool<T>
+{
+    public static bool Add(T item) => item is not null;
 }

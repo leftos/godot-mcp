@@ -9,7 +9,8 @@ namespace GodotMcp.Dotnet.Core;
 /// </summary>
 internal static class ObjectReader
 {
-    private const string MarkerHint = "pass {\"$handle\": id} or {\"$node\": path}";
+    /// <summary>What a refusal says an interface, abstract or delegate argument takes instead.</summary>
+    internal const string MarkerHint = "pass {\"$handle\": id} or {\"$node\": path}";
 
     public static object Read(JsonNode json, Type type, IValueResolver resolver)
     {

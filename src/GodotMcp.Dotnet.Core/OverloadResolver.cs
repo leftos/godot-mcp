@@ -89,7 +89,7 @@ public static class OverloadResolver
 
     private static string? CountFailure(ParameterInfo[] parameters, int given)
     {
-        int required = parameters.Count(parameter => !parameter.IsOptional && !parameter.HasDefaultValue && !IsParams(parameter));
+        int required = parameters.Count(parameter => !parameter.IsOptional && !parameter.HasDefaultValue && !Passability.IsParams(parameter));
         if (given >= required && given <= parameters.Length)
         {
             return null;
@@ -104,11 +104,11 @@ public static class OverloadResolver
         foreach (ParameterInfo parameter in candidate.GetParameters())
         {
             Type type = Defaults.ValueType(parameter);
-            if (type.IsPointer || type.IsFunctionPointer)
+            if (Passability.IsPointer(type))
             {
                 return $"parameter '{parameter.Name}' is a pointer ({TypeNames.Format(type)}), which cs_call cannot pass";
             }
-            if (type.IsByRefLike)
+            if (Passability.IsByRefLike(type))
             {
                 return $"parameter '{parameter.Name}' is {TypeNames.WithArticle(type)}, a by-ref-like type cs_call cannot pass";
             }
@@ -186,9 +186,7 @@ public static class OverloadResolver
     }
 
     private static object? Omitted(ParameterInfo parameter) =>
-        IsParams(parameter) ? Array.CreateInstance(parameter.ParameterType.GetElementType()!, 0) : Defaults.Of(parameter);
-
-    private static bool IsParams(ParameterInfo parameter) => parameter.IsDefined(typeof(ParamArrayAttribute), inherit: false);
+        Passability.IsParams(parameter) ? Array.CreateInstance(parameter.ParameterType.GetElementType()!, 0) : Defaults.Of(parameter);
 
     private sealed record Attempt(MethodBase Method, OverloadChoice? Choice, string? Failure);
 }

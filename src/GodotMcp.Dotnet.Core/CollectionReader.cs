@@ -24,6 +24,19 @@ internal static class CollectionReader
 
     private static readonly HashSet<Type> Dictionaries = [typeof(Dictionary<,>), typeof(IReadOnlyDictionary<,>)];
 
+    /// <summary>Whether <paramref name="type"/> is an array, a list or a set this reader builds.</summary>
+    public static bool Builds(Type type) => type.IsSZArray || (type.IsGenericType && ListBuilders.ContainsKey(type.GetGenericTypeDefinition()));
+
+    /// <summary>Whether <paramref name="type"/> is the hash set this reader builds duplicate-free.</summary>
+    public static bool IsSet(Type type) => type.IsGenericType && type.GetGenericTypeDefinition() == typeof(HashSet<>);
+
+    /// <summary>Whether <paramref name="type"/> is a dictionary this reader builds, keyed by string.</summary>
+    public static bool IsDictionary(Type type) =>
+        type.IsGenericType && Dictionaries.Contains(type.GetGenericTypeDefinition()) && type.GetGenericArguments()[0] == typeof(string);
+
+    /// <summary>The element type of an array, list or set, or the value type of a string-keyed dictionary.</summary>
+    public static Type ElementOf(Type type) => type.IsSZArray ? type.GetElementType()! : type.GetGenericArguments()[IsDictionary(type) ? 1 : 0];
+
     /// <summary>True when <paramref name="type"/> is a collection this reader builds; throws for any other collection.</summary>
     public static bool TryRead(JsonNode json, Type type, IValueResolver resolver, out object? value)
     {

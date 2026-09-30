@@ -9,7 +9,8 @@ internal static class ScalarReader
 {
     private delegate bool ElementReader<T>(JsonElement element, out T value);
 
-    private static readonly Dictionary<Type, (decimal Min, decimal Max)> Integers = new()
+    /// <summary>Each integral type with the range a JSON number must fall in to be read as it.</summary>
+    internal static readonly Dictionary<Type, (decimal Min, decimal Max)> Integers = new()
     {
         [typeof(sbyte)] = (sbyte.MinValue, sbyte.MaxValue),
         [typeof(byte)] = (byte.MinValue, byte.MaxValue),
