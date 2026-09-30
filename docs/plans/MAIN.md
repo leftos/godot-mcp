@@ -1,5 +1,5 @@
 # Main Plan
-<!-- plan-doc-hygiene: 2026-09-29 cba7923 -->
+<!-- plan-doc-hygiene: 2026-09-30 2e71253 -->
 
 Open work only, in working order: the next item is the first line from the top; a finished line is deleted (git keeps the history). The user's decisions are in [DECISIONS.md](../DECISIONS.md).
 

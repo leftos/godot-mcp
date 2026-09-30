@@ -138,9 +138,9 @@ Godot facts are cited from the `4.7.2-stable` tag of `godotengine/godot` (commit
 
 Each step lands on its own with its tests, docs and changelog bullet, and passes the build, the unit tests and its itest class.
 
-1. **Spike** (throwaway, `.tmp/`): from the helper in a CsProbe game, read a name-matched attribute through `CustomAttributeData` across the game's load context, and time the assembly walk; if question 3 picks (b) or (c), also measure whether Claude Code re-lists tools on `list_changed` and whether a subagent sees a tool added after its spawn. Results into section 3.
-2. **Core schema and named arguments**: `ToolSchema`, `NamedArguments` and their unit tests; no tool yet, no changelog bullet.
-3. **`list_game_tools`**: the helper's `tools` op, the owner rules of question 2, the session cache, the fixture's marked methods, `GameToolTests` for the listing and its unavailable reasons, TOOLS.md, SKILL.md, ARCHITECTURE.md, glossary, README, changelog.
+1. **Done: spike** (throwaway, `.tmp/`, results in section 8): from the helper in a CsProbe game, read a name-matched attribute through `CustomAttributeData` across the game's load context, and time the assembly walk; if question 3 picks (b) or (c), also measure whether Claude Code re-lists tools on `list_changed` and whether a subagent sees a tool added after its spawn. Results into section 3.
+2. **Landed: Core schema and named arguments**: `ToolSchema`, `NamedArguments` and their unit tests; no tool yet, no changelog bullet.
+3. **Landed: `list_game_tools`**: the helper's `tools` op, the owner rules of question 2, the session cache, the fixture's marked methods, `GameToolTests` for the listing and its unavailable reasons, TOOLS.md, SKILL.md, ARCHITECTURE.md, glossary, README, changelog.
 4. **`call_game_tool`**: the helper's `tool_call` op on the factored invoke path, named arguments, `Task` awaiting, refusals before the game is asked, `batch_drive` coverage in the itest.
 5. **After the release that carries them**: delve and opening-hand adopt the attribute through their own plans (the delve suggestion includes returning what the server answered, per question 6), and their DEVELOPMENT.md cheat prose is rewritten through `godot-mcp-docs-sync`.
 
