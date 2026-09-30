@@ -49,7 +49,7 @@ internal sealed record RecordingResult
 /// <summary>
 /// What run_project's prep did: <see cref="Build"/> is up-to-date, built, no-csproj or skipped, or failed for a headless run's
 /// prep, which reports a red build instead of refusing (<see cref="ProjectPrep.RunReportingBuildAsync"/>); <see cref="Import"/> is
-/// not-needed, done or skipped (both skipped under prepare "never"); the times are set for a step that ran.
+/// not-needed, done or skipped (both skipped under prepare "never"); the times and log paths are set for a step that ran.
 /// </summary>
 internal sealed record PrepResult
 {
@@ -61,10 +61,24 @@ internal sealed record PrepResult
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? BuildMs { get; init; }
 
+    /// <summary>
+    /// The build's log, <c>.godot/godot-mcp/build.log</c> in the project; left out when no build ran, and the next build
+    /// overwrites it.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? BuildLog { get; init; }
+
     public required string Import { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public long? ImportMs { get; init; }
+
+    /// <summary>
+    /// The import's log, <c>.godot/godot-mcp/import.log</c> in the project; left out when no import ran, and the next import
+    /// overwrites it.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ImportLog { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Note { get; init; }

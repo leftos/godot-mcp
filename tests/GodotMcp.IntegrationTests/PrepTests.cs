@@ -50,9 +50,13 @@ public sealed partial class PrepTests : IAsyncDisposable
         Assert.Equal("built", first.Prep.Build);
         Assert.True(first.Prep.BuildMs > 0);
         Assert.Equal("not-needed", first.Prep.Import);
+        Assert.StartsWith(Path.Combine(csProbe.Directory, ".godot", "godot-mcp"), first.Prep.BuildLog, StringComparison.Ordinal);
+        Assert.EndsWith("build.log", first.Prep.BuildLog, StringComparison.Ordinal);
+        Assert.True(File.Exists(first.Prep.BuildLog), $"{first.Prep.BuildLog} does not exist");
         Assert.Equal(5, called["value"]!.GetValue<int>());
         Assert.Equal("up-to-date", second.Prep.Build);
         Assert.Null(second.Prep.BuildMs);
+        Assert.Null(second.Prep.BuildLog);
         Assert.Equal(string.Empty, Git.Status(csProbe.Directory));
     }
 
@@ -111,6 +115,8 @@ public sealed partial class PrepTests : IAsyncDisposable
 
         Assert.Equal("done", launched.Prep.Import);
         Assert.True(launched.Prep.ImportMs > 0);
+        Assert.EndsWith("import.log", launched.Prep.ImportLog, StringComparison.Ordinal);
+        Assert.True(File.Exists(launched.Prep.ImportLog), $"{launched.Prep.ImportLog} does not exist");
         Assert.True(File.Exists(target), $"{target} was not imported");
     }
 

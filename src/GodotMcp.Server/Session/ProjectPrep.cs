@@ -68,8 +68,10 @@ internal static class ProjectPrep
             {
                 Build = build.State,
                 BuildMs = build.Milliseconds,
+                BuildLog = build.Log,
                 Import = import.State,
                 ImportMs = import.Milliseconds,
+                ImportLog = import.Log,
                 Note = notes.Length == 0 ? null : string.Join(' ', notes),
             };
             Log.PrepFinished(context.Logger, context.ProjectDir, result.Build, result.Import);
@@ -115,12 +117,12 @@ internal static class ProjectPrep
         if (reportRedBuild && StateOf(built) == "failed")
         {
             string note = $"The C# build of {csproj} failed (dotnet exited {built.ExitCode}); its log: {log}";
-            return new PrepStep("failed", milliseconds, note) { Errors = CompilerErrors.Errors(diagnostics) };
+            return new PrepStep("failed", milliseconds, note) { Errors = CompilerErrors.Errors(diagnostics), Log = log };
         }
 
         CheckBuild(built, csproj, log, diagnostics);
         File.WriteAllText(PrepScan.StampPath(projectDir), string.Empty);
-        return new PrepStep("built", milliseconds, null);
+        return new PrepStep("built", milliseconds, null) { Log = log };
     }
 
     /// <summary>
@@ -317,7 +319,7 @@ internal static class ProjectPrep
         ToolProcessResult first = await RunImportAsync(godot, context, log, append: false, cancellationToken);
         if (!File.ReadLines(log).Any(line => line.StartsWith("ERROR:", StringComparison.Ordinal)))
         {
-            return new PrepStep("done", (long)first.Elapsed.TotalMilliseconds, null);
+            return new PrepStep("done", (long)first.Elapsed.TotalMilliseconds, null) { Log = log };
         }
 
         // A cold first pass logs errors for resources it meets before their own import, and still exits 0.
@@ -325,7 +327,7 @@ internal static class ProjectPrep
         long firstMs = (long)first.Elapsed.TotalMilliseconds;
         long secondMs = (long)second.Elapsed.TotalMilliseconds;
         string note = $"The import ran twice, because its first pass logged errors: {firstMs} ms, then {secondMs} ms; both are in {log}.";
-        return new PrepStep("done", firstMs + secondMs, note);
+        return new PrepStep("done", firstMs + secondMs, note) { Log = log };
     }
 
     /// <exception cref="SessionException">The import hit its ceiling or exited with an error code.</exception>
@@ -380,10 +382,16 @@ internal static class ProjectPrep
         Rebuild,
     }
 
-    /// <summary>One prep step's outcome: its state for the result, how long it ran when it ran, a note, and a failed build's errors.</summary>
+    /// <summary>
+    /// One prep step's outcome: its state for the result, how long it ran when it ran, the log the process it ran wrote, a
+    /// note, and a failed build's errors.
+    /// </summary>
     private sealed record PrepStep(string State, long? Milliseconds, string? Note)
     {
         public CompilerErrorList? Errors { get; init; }
+
+        /// <summary>The step's log file; left out when the step ran no process.</summary>
+        public string? Log { get; init; }
     }
 }
 
