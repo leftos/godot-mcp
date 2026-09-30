@@ -16,10 +16,12 @@ Waves run in order; bug reports sit ahead of the backlog inside each. Each wave 
 Shared: `run.ps1` (`$itestLanes`), `tests/GodotMcp.IntegrationTests/`. Review: code-review. Verify: `pwsh run.ps1 itest`, its wall and load-adjusted times against the run quoted below.
 
 - [ ] The itest suite takes too long (user, 2026-09-29). The last full run (`.tmp/itest-full-out.log`): 9m 42s wall, timing lane ≈ 512 s wall / 226 s load-adjusted (lifecycle 281 s alone, ArmTests 3 min for 9 own-launch tests), build lane ≈ 570 s / 284 s (scene 187 s, prep 123 s, headless and nodes 120 s each). Chosen by the user, in this order:
-  - [ ] Measure first (the next `/nextup` starts here, user 2026-09-29): one full run with per-test durations (trx) and Godot's startup timed per launch and per headless op, to size the rest
-  - [ ] A third lane: lifecycle's classes that assert no wall-clock timing leave the timing lane (`$itestLanes`, `run.ps1` L135)
-  - [ ] Landings run only the itest groups their changed files touch (bridge, headless scripts, session code, tools); the full suite at release
-  - [ ] A warm headless Godot serving many headless requests instead of one process per call: faster headless tools for the games too; needs a design pass
+  - Measured on a busy machine (about 20% free, so the shares hold better than the seconds): 14m 18s wall, timing lane 729 s / 170 s load-adjusted, build lane 843 s / 226 s, so the build lane is the long pole. A server launch takes 1.63 s median to its hello, nearly all engine init; a headless op's process 0.72 s median around a 21 ms body; the headless groups' ops spend 255 s in C# prep builds and imports and 242 s in Godot processes. The per-class table and the source-to-group map are in the measuring agent's report, summarised in the rulings below
+  - [ ] Seven Arm/Attach teardowns wait a fixed 10 s for a game still running before killing it (`SessionHarness.cs:93`, `AttachTests.cs:219`), about 70-85 s of lifecycle: kill first, as `ArmTests.StopGamesAsync` does. Ruled (user, 2026-09-29): lands first
+  - [ ] A third lane. Ruled (user, 2026-09-29): lifecycle's classes that assert no wall-clock timing (Arm, McpServerSmoke, Attach, Quiet, Profile: 219 s) leave it for a new group, and the third lane holds that group plus `nodes` and `headless`; SessionLifecycle (`:340`, `:380`, `:434`) and Watchdog (`:50`, `:88`) assert timing and stay. Estimated longest lane about 575 s against 843 s, unmeasured with three lanes loading the machine at once
+  - [ ] Landings run only the itest groups their changed files touch; the full suite at release. Ruled (user, 2026-09-29): by folder, and any change under `bridge/` runs every runtime group, since `godot_mcp_bridge.gd` preloads every module
+  - [ ] A warm headless Godot serving many headless requests instead of one process per call. Measured saving in the suite about 40 s (264 ops over 210 project folders, one process per `--path`); about 0.7 s per consecutive op for agents in the game repos. Kept in this wave by the user (2026-09-29); needs a design pass
+  - [ ] The headless itests spend 255 s in C# prep builds and imports (24 imports at 4.2 s median, 39 dotnet builds at 3.3 s median), much of it tests asking for an unbuilt CsProbe: the larger lever in the build lane, unexplored
 
 ### Wave 2: sessions sharing a folder, attach and stop
 
