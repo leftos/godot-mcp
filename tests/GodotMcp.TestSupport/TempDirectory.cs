@@ -19,6 +19,12 @@ public sealed class TempDirectory : IDisposable
 
     public string Path { get; }
 
+    /// <summary>
+    /// Run after a delete attempt a holder refused and before the next one: a test holding a file releases it here, so
+    /// the retry it proves is the folder's own and not whatever the thread pool does with a scheduled release.
+    /// </summary>
+    public Action AfterRefusedAttempt { get; set; } = static () => { };
+
     public string Combine(params string[] parts) => System.IO.Path.Combine([Path, .. parts]);
 
     /// <summary>Deletes the folder, retrying for up to 2 s one that another process still holds.</summary>
@@ -39,6 +45,7 @@ public sealed class TempDirectory : IDisposable
                     return;
                 }
 
+                AfterRefusedAttempt();
                 Thread.Sleep(RetryIntervalMs);
             }
         }

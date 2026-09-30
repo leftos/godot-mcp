@@ -15,6 +15,13 @@ public sealed class BridgeListenerTests : IDisposable
 
     /// <summary>The real time one stepped second is given to show the server's close before the next step.</summary>
     private static readonly TimeSpan CloseProbe = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// The ceiling on handing a second bridge over while a silent client holds a connection open. A listener that reads
+    /// each connection as it arrives hands it over in milliseconds whatever the machine's load, and one that reads the
+    /// silent client's hello first never gets there: a pending waiter holds that read open past its hello timeout.
+    /// </summary>
+    private static readonly TimeSpan SilentClientCeiling = TimeSpan.FromSeconds(30);
     private static readonly string ProjectDir = Path.Combine(Path.GetTempPath(), "godot-mcp-listener", "game");
     private readonly BridgeListener _listener = new(NullLogger<BridgeListener>.Instance);
 
@@ -87,7 +94,7 @@ public sealed class BridgeListenerTests : IDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        timeout.CancelAfter(TimeSpan.FromSeconds(2));
+        timeout.CancelAfter(SilentClientCeiling);
         Task<BridgeConnection> waiter = _listener.AcceptBridgeAsync(new HandshakeExpectation("AAAA", ProjectDir), timeout.Token);
 
         using TcpClient silent = new();

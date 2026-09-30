@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 RUN_PS1 = Path(__file__).resolve().parents[2] / "run.ps1"
-ALL_GROUPS = ["lifecycle", "sessions", "input", "reads", "time", "prep", "recording", "headless", "scene", "nodes", "csharp"]
+ALL_GROUPS = ["lifecycle", "sessions", "input", "reads", "time", "prep", "recording", "headless", "scene", "nodes", "csharp", "scratch"]
 GROUP_LINE = re.compile(r"^itest-groups: (\w+) \(from (.+)\)$", re.MULTILINE)
 # The files the repo holds at its first commit; each test changes some of them, or adds a file, after it.
 STUBS = [
@@ -64,7 +64,7 @@ def test_a_bridge_file_selects_every_group(repo: Path) -> None:
     result = _itest_groups(repo)
     assert _selected(result) == ALL_GROUPS
     assert "itest-groups: csharp (from bridge/godot_mcp_bridge.gd)" in result.stdout
-    assert "itest-groups: 11 of 11 groups from 1 changed files" in result.stdout
+    assert f"itest-groups: {len(ALL_GROUPS)} of {len(ALL_GROUPS)} groups from 1 changed files" in result.stdout
 
 
 def test_a_headless_file_selects_the_headless_groups_and_reads(repo: Path) -> None:
@@ -74,7 +74,12 @@ def test_a_headless_file_selects_the_headless_groups_and_reads(repo: Path) -> No
 
 def test_a_runtime_tools_part_selects_its_group(repo: Path) -> None:
     _change(repo, "src/GodotMcp.Server/Tools/RuntimeTools.Time.cs")
-    assert _selected(_itest_groups(repo)) == ["time"]
+    assert _selected(_itest_groups(repo)) == ["time", "scratch"]
+
+
+def test_a_scratch_tools_part_selects_the_scratch_group(repo: Path) -> None:
+    _change(repo, "src/GodotMcp.Server/Tools/ScratchTools.cs")
+    assert _selected(_itest_groups(repo)) == ["scratch"]
 
 
 def test_a_state_file_beside_the_runtime_tools_selects_reads(repo: Path) -> None:
@@ -86,7 +91,7 @@ def test_docs_alone_select_no_group(repo: Path) -> None:
     _change(repo, "docs/x.md")
     result = _itest_groups(repo)
     assert _selected(result) == []
-    assert "itest-groups: 0 of 11 groups from 1 changed files" in result.stdout
+    assert f"itest-groups: 0 of {len(ALL_GROUPS)} groups from 1 changed files" in result.stdout
 
 
 def test_a_dev_only_tool_alone_selects_no_group(repo: Path) -> None:

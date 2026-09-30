@@ -6,27 +6,19 @@ namespace GodotMcp.Tests.TestSupport;
 public sealed class TempDirectoryTests
 {
     [Fact]
-    public async Task DisposeRetriesAFileHeldBriefly()
+    public void DisposeRetriesAFileHeldBriefly()
     {
         TempDirectory temp = new();
         string held = temp.Combine("held.txt");
         File.WriteAllText(held, "held");
 
-        CancellationToken cancellation = TestContext.Current.CancellationToken;
         var handle = new FileStream(held, FileMode.Open, FileAccess.Read, FileShare.None);
+        // The hold is released the moment the first delete attempt is refused, so the retry is proven whatever the
+        // machine is doing: a release scheduled on the thread pool can run after Dispose's budget has run out.
+        temp.AfterRefusedAttempt = handle.Dispose;
         try
         {
-            var release = Task.Run(
-                async () =>
-                {
-                    await Task.Delay(150, cancellation);
-                    handle.Dispose();
-                },
-                cancellation
-            );
-
             temp.Dispose();
-            await release;
         }
         finally
         {
