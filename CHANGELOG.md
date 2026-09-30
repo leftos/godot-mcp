@@ -2,7 +2,7 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
-## Unreleased
+## 0.11.0 - 2026-09-29
 
 ### Added
 
@@ -11,9 +11,12 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Changed
 
 - A quiet `attach_project` or `arm_project` now mutes the game too, as a quiet run always has.
-
 - `stop_project` ends a session `attach_project` joined and quits its game, killing it after 3 s; `detach_project` still leaves the game running.
 - `arm_project` leaves `--headless` games alone, so `attach_project` never joins a smoke or test runner started on the armed folder.
+
+### Fixed
+
+- `duplicate_node` gives the copy and its children fresh `unique_id`s, so a scene never holds two nodes with one id.
 
 ## 0.10.0 - 2026-09-29
 
@@ -110,10 +113,6 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - Headless scene saves store the engine's value when a C# field shares an engine property's name, such as `scale`, on plain and instanced nodes alike, and warn naming the field.
 
 ## 0.5.1 - 2026-09-28
-
-### Fixed
-
-- `duplicate_node` gives the copy and its children fresh `unique_id`s, so a scene never holds two nodes with one id.
 
 ### Changed
 
