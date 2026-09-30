@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
@@ -7,7 +8,7 @@ namespace GodotMcp.Tests.Tools;
 
 public sealed class ProjectProfileTests : IDisposable
 {
-    private const string TopLevelKeys = "scene, userArgs, engineArgs, resolution, quiet, presets, prepWrapper";
+    private const string TopLevelKeys = "scene, userArgs, engineArgs, resolution, quiet, presets, prepWrapper, scratch";
     private const string PrepWrapperShape =
         "(top level): \"prepWrapper\" must be a non-empty array of non-empty strings, the program and then its arguments";
     private const string PresetKeys = "scene, userArgs, engineArgs, resolution, quiet, session";
@@ -308,6 +309,122 @@ public sealed class ProjectProfileTests : IDisposable
         Assert.Contains(FilePath, message, StringComparison.Ordinal);
         Assert.Contains(PrepWrapperShape, message, StringComparison.Ordinal);
         Assert.EndsWith(problem, message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoFileOrNoKeySetsNoScratchSection()
+    {
+        ScratchProfile? noFile = ProjectProfile.Load(_temp.Path).Scratch;
+        Write("""{ "scene": "res://main.tscn" }""");
+        ScratchProfile? noKey = ProjectProfile.Load(_temp.Path).Scratch;
+
+        Assert.Null(noFile);
+        Assert.Null(noKey);
+    }
+
+    [Fact]
+    public void TheScratchSectionReadsEveryKey()
+    {
+        Write(
+            """
+            {
+              "scratch": {
+                "folder": "res://Scratch",
+                "userArgs": ["--scratch-profile"],
+                "pace": { "TrayScratch": 3, "Fast": 0.25 },
+                "known": { "TrayScratch": "the tray drops a card under load" },
+                "patterns": ["^FAIL", "boom$"]
+              }
+            }
+            """
+        );
+
+        ScratchProfile scratch = ProjectProfile.Load(_temp.Path).Scratch!;
+
+        Assert.Equal("res://Scratch", scratch.Folder);
+        Assert.Equal(["--scratch-profile"], scratch.UserArgs);
+        Assert.Equal(3.0, scratch.Pace["TrayScratch"]);
+        Assert.Equal(0.25, scratch.Pace["Fast"]);
+        Assert.Equal("the tray drops a card under load", scratch.Known["TrayScratch"]);
+        Assert.Equal(["^FAIL", "boom$"], scratch.Patterns.Select(pattern => pattern.ToString()));
+        Assert.Matches(scratch.Patterns[0], "FAIL: x");
+        Assert.DoesNotMatch(scratch.Patterns[0], "fail: x");
+    }
+
+    [Fact]
+    public void AnEmptyScratchSectionTakesTheDefaults()
+    {
+        Write("""{ "userArgs": ["--top"], "scratch": {} }""");
+
+        var profile = ProjectProfile.Load(_temp.Path);
+        ScratchProfile scratch = profile.Scratch!;
+
+        Assert.Null(scratch.Folder);
+        Assert.Null(scratch.UserArgs);
+        Assert.Equal(["--top"], profile.UserArgs);
+        Assert.Empty(scratch.Pace);
+        Assert.Empty(scratch.Known);
+        Regex pattern = Assert.Single(scratch.Patterns);
+        Assert.Equal(ScratchProfile.DefaultPatterns[0].ToString(), pattern.ToString());
+        Assert.Matches(pattern, "SCRIPT ERROR: Invalid call.");
+        Assert.Matches(pattern, "ERROR: late failure");
+        Assert.Matches(pattern, "WARNING: 1 ObjectDB instance was leaked at exit");
+        Assert.Matches(pattern, "WARNING: 2 ObjectDB instances were leaked at exit");
+        Assert.DoesNotMatch(pattern, "[scratch] note: ERROR: in the middle");
+    }
+
+    [Fact]
+    public void AnEmptyPatternListTurnsLineMatchingOff()
+    {
+        Write("""{ "scratch": { "patterns": [] } }""");
+
+        Assert.Empty(ProjectProfile.Load(_temp.Path).Scratch!.Patterns);
+    }
+
+    [Theory]
+    [InlineData(
+        """{ "scratch": { "parallel": 2 } }""",
+        "(scratch): unknown key \"parallel\"; the allowed keys are folder, userArgs, pace, known, patterns. Remove or rename it."
+    )]
+    [InlineData("""{ "scratch": { "folder": "A", "folder": "B" } }""", "(scratch): the key \"folder\" appears twice; keep one.")]
+    [InlineData("""{ "scratch": [] }""", "(scratch): expected a JSON object ({ ... }), not an array.")]
+    [InlineData("""{ "scratch": { "folder": 3 } }""", "(scratch): \"folder\" must be a string, not a number.")]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": 0 } } }""",
+        "(scratch): \"pace\" of \"A\" must be a number of seconds above 0 and at most 120, not 0."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": 121 } } }""",
+        "(scratch): \"pace\" of \"A\" must be a number of seconds above 0 and at most 120, not 121."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": "1" } } }""",
+        "(scratch): \"pace\" of \"A\" must be a number of seconds above 0 and at most 120, not a string."
+    )]
+    [InlineData("""{ "scratch": { "pace": { "A": 1, "A": 2 } } }""", "(scratch): the scene \"A\" appears twice in \"pace\"; keep one.")]
+    [InlineData(
+        """{ "scratch": { "known": { "A": "" } } }""",
+        "(scratch): \"known\" of \"A\" must be a non-empty string, the reason the scene is known to fail."
+    )]
+    [InlineData("""{ "scratch": { "patterns": "ERROR" } }""", "(scratch): \"patterns\" must be an array, not a string.")]
+    public void AMalformedScratchSectionIsRefusedNamingTheFile(string json, string problem)
+    {
+        Write(json);
+
+        string message = Refused(() => ProjectProfile.Load(_temp.Path));
+
+        Assert.Equal($"{FilePath} {problem}", message);
+    }
+
+    [Fact]
+    public void AnInvalidPatternIsRefusedAtLoadNamingIt()
+    {
+        Write("""{ "scratch": { "patterns": ["^ok", "(unclosed"] } }""");
+
+        string message = Refused(() => ProjectProfile.Load(_temp.Path));
+
+        Assert.StartsWith($"{FilePath} (scratch): the pattern \"(unclosed\" in \"patterns\" is not a valid .NET regular expression: ", message);
+        Assert.EndsWith(" Fix or remove it.", message, StringComparison.Ordinal);
     }
 
     private static string Refused(Func<object> action) => Assert.Throws<McpException>(action).Message;

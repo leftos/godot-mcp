@@ -23,6 +23,9 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     // The number of the last preview session named, under _lock; each preview's name carries the next.
     private int _previews;
     private readonly Dictionary<string, GodotSession> _sessions = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The scene each scratch session name was last taken for (its folder and res:// path), and the session that took it.</summary>
+    private readonly Dictionary<string, (string Owner, GodotSession Session)> _scratchScenes = new(StringComparer.OrdinalIgnoreCase);
     private readonly LoadClock? _launchClock;
     private HeadlessHosts? _headlessHosts;
 
@@ -404,6 +407,105 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// </summary>
     internal static string PreviewName(string folderName, int number) =>
         WithSuffix(folderName, string.Create(CultureInfo.InvariantCulture, $".preview-{number}"));
+
+    /// <summary>
+    /// The name of the session a scratch scene plays in: <c>&lt;folder name&gt;.scratch-&lt;scene&gt;</c>, the scene's characters
+    /// outside <see cref="NameRule"/>'s set replaced by '_', the folder part cut so the whole name fits and the scene part cut
+    /// only when it alone would not.
+    /// </summary>
+    internal static string ScratchName(string folderName, string scene)
+    {
+        string suffix = ".scratch-" + SanitiseFolderName(scene);
+        return WithSuffix(folderName, suffix.Length > 64 ? suffix[..64] : suffix);
+    }
+
+    /// <summary>
+    /// Whether a scratch scene may take a name: no session holds it, or a stopped session of the same scene (folder and res://
+    /// path, <paramref name="holderScene"/>) does, which it replaces. <paramref name="holderLive"/> is null when no session
+    /// holds the name.
+    /// </summary>
+    internal static bool MayTakeScratchName(bool? holderLive, string? holderScene, string scene) =>
+        holderLive is null || (holderLive == false && string.Equals(holderScene, scene, StringComparison.Ordinal));
+
+    /// <summary>
+    /// Registers a pending session for a scratch scene under <see cref="ScratchName"/>, or, when a live session or another
+    /// scene's session holds that, under the first of its <see cref="NumberedName"/>s from 2 that the scene may take
+    /// (<see cref="MayTakeScratchName"/>): two runs of one scene, two worktrees with one folder name, and scene names that
+    /// clean to the same text or share their first 55 characters each get a session of their own. It takes the folder's live
+    /// settings as a preview does (<see cref="FolderSettingsForPreview"/>), so it is never refused for differing from the
+    /// sessions it shares the override.cfg with.
+    /// </summary>
+    internal async Task<GodotSession> ReserveScratchAsync(string projectDir, string scene, string resPath)
+    {
+        string owner = ProjectPaths.Normalise(projectDir) + "|" + resPath;
+        string baseName = ScratchName(NameFor(null, projectDir), scene);
+        SessionSpec spec = new(baseName, projectDir, SessionKind.Run, ShutOutRealGamepads: false, Quiet: true);
+        GodotSession created = await ReserveAsync(
+            spec,
+            defaultName: false,
+            completeUnderLock: ready =>
+            {
+                string name = FreeScratchName(baseName, owner);
+                ArmSettings settings = FolderSettingsForPreview(projectDir);
+                return ready with { Name = name, Quiet = settings.Quiet, ShutOutRealGamepads = settings.ShutOutRealGamepads, Mute = settings.Mute };
+            }
+        );
+        lock (_lock)
+        {
+            _scratchScenes[created.Name] = (owner, created);
+        }
+
+        return created;
+    }
+
+    /// <summary>
+    /// The scratch name the scene takes: the base name, else its first numbered name it may take. A name's scene counts only
+    /// while the session that took it for that scene still holds it, so a session started under it since is never replaced.
+    /// The caller holds the lock.
+    /// </summary>
+    private string FreeScratchName(string baseName, string owner)
+    {
+        string name = baseName;
+        for (int number = 2; ; number++)
+        {
+            GodotSession? holder = _sessions.GetValueOrDefault(name);
+            string? holderScene =
+                _scratchScenes.TryGetValue(name, out (string Owner, GodotSession Session) taken) && ReferenceEquals(taken.Session, holder)
+                    ? taken.Owner
+                    : null;
+            if (MayTakeScratchName(holder?.IsLive, holderScene, owner))
+            {
+                return name;
+            }
+
+            name = NumberedName(baseName, number);
+        }
+    }
+
+    /// <summary>
+    /// A run_scratches prep, once for its scenes, under the folder's prep lock as a launch's is; the scenes then launch with
+    /// prepare off.
+    /// </summary>
+    /// <exception cref="SessionException">The prep failed: a red build, or an import refused while a game runs on the folder.</exception>
+    internal async Task<PrepResult> PrepareFolderAsync(string projectDir, CancellationToken cancellationToken)
+    {
+        SemaphoreSlim folderLock = PrepLock(projectDir);
+        await folderLock.WaitAsync(cancellationToken);
+        try
+        {
+            PrepContext context = new(
+                projectDir,
+                logger,
+                () => RunningSessionNames(projectDir, except: null),
+                () => HeadlessHosts.StopFolder(projectDir, "import")
+            );
+            return await ProjectPrep.RunAsync(context, cancellationToken);
+        }
+        finally
+        {
+            folderLock.Release();
+        }
+    }
 
     /// <summary>
     /// A folder's <paramref name="number"/>th default name, <c>&lt;folder name&gt;-&lt;n&gt;</c>, with the folder part cut so

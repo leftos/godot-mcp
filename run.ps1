@@ -152,19 +152,20 @@ $itestGroups = [ordered]@{
     scene     = @('HeadlessSceneTests', 'HeadlessBatchTests')
     nodes     = @('HeadlessPropertyTests', 'HeadlessSignalTests')
     csharp    = @('CSharpToolTests', 'GameToolTests', 'CSharpStateTests')
+    scratch   = @('ScratchRunnerTests')
 }
 # The lanes the groups run in: each lane's groups one at a time in this order, the lanes at once. The timing lane keeps
 # the groups that assert wall-clock times apart from each other; the build and untimed lanes hold the rest, the C#
 # builds and headless runs split between them beside the session tests. Every group is in exactly one lane; itest
 # refuses to run while one is not.
 $itestLanes = [ordered]@{
-    timing  = @('lifecycle', 'input', 'time', 'recording', 'reads')
+    timing  = @('lifecycle', 'input', 'time', 'recording', 'reads', 'scratch')
     build   = @('prep', 'scene', 'csharp')
     untimed = @('sessions', 'headless', 'nodes')
 }
 # The groups whose tests run dotnet builds of the CsProbe project on top of their Godot runs: each takes a heavy gate
 # slot, in whichever lane it runs, and every other group a light one.
-$itestHeavyGroups = @('prep', 'headless', 'scene', 'nodes', 'csharp')
+$itestHeavyGroups = @('prep', 'headless', 'scene', 'nodes', 'csharp', 'scratch')
 # Which groups a changed file touches, for itest-groups and itest -Since: ordered pairs of a path pattern, '/'-separated
 # from the repo root ('*' matches within one folder, '**' across folders), and what a match selects: 'all', 'none',
 # 'class' (the group listing the class a test file is named for), or a list of groups. The first pattern a file matches
@@ -176,6 +177,7 @@ $itestRules = @(
     @('run.ps1', 'all'),
     @('tools/gate.ps1', 'all'),
     @('tools/hidden-desktop.ps1', 'all'),
+    @('src/GodotMcp.Server/Session/Scratch*.cs', 'scratch'),
     @('src/GodotMcp.Server/Session/**', 'all'),
     @('src/GodotMcp.Server/Wire/**', 'all'),
     @('src/GodotMcp.Server/*.cs', 'all'),
@@ -196,26 +198,28 @@ $itestRules = @(
     @('src/GodotMcp.Server/Tools/HeadlessTools.Batch*.cs', 'scene'),
     @('src/GodotMcp.Server/Tools/HeadlessTools.Properties*.cs', 'nodes'),
     @('src/GodotMcp.Server/Tools/HeadlessTools.Signals*.cs', 'nodes'),
+    @('src/GodotMcp.Server/Tools/HeadlessTools.cs', @('headless', 'scratch')),
     @('src/GodotMcp.Server/Tools/HeadlessTools*.cs', 'headless'),
     @('src/GodotMcp.Server/Tools/InputTarget.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Input*.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Gamepad*.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Stress*.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Capture*.cs', 'input'),
-    @('src/GodotMcp.Server/Tools/RuntimeTools.Time*.cs', 'time'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Time*.cs', @('time', 'scratch')),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Frames*.cs', 'time'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Batch*.cs', 'time'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Record*.cs', 'recording'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Inspect*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Snapshot*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Baseline*.cs', 'reads'),
-    @('src/GodotMcp.Server/Tools/RuntimeTools.Preview*.cs', 'reads'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Preview*.cs', @('reads', 'scratch')),
     @('src/GodotMcp.Server/Tools/RuntimeTools.State*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/State*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.CSharp*.cs', 'csharp'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.RunCSharp*.cs', 'csharp'),
     @('src/GodotMcp.Server/Tools/RuntimeTools*.cs', $itestRuntimeGroups),
     @('src/GodotMcp.Server/Tools/ProjectTools*.cs', @('lifecycle', 'sessions', 'prep')),
+    @('src/GodotMcp.Server/Tools/ScratchTools*.cs', 'scratch'),
     @('src/GodotMcp.Server/Tools/**', 'all'),
     @('src/GodotMcp.Server/CSharp/**', 'csharp'),
     @('src/GodotMcp.Dotnet*/**', 'csharp'),

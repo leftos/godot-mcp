@@ -37,8 +37,10 @@ internal sealed partial class ProjectProfile
 
     private const string TopLevel = "top level";
     private const string PrepWrapperKey = "prepWrapper";
-    private static readonly string[] TopLevelKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "presets", PrepWrapperKey];
+    private const string ScratchKey = "scratch";
+    private static readonly string[] TopLevelKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "presets", PrepWrapperKey, ScratchKey];
     private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "session"];
+    private static readonly string[] ScratchKeys = ["folder", "userArgs", "pace", "known", "patterns"];
 
     private readonly ProfileValues _defaults;
     private readonly IReadOnlyDictionary<string, ProfileValues> _presets;
@@ -74,6 +76,12 @@ internal sealed partial class ProjectProfile
     /// </summary>
     public IReadOnlyList<string>? PrepWrapper { get; }
 
+    /// <summary>The top-level <c>userArgs</c>: the user arguments every run_project on the folder starts with.</summary>
+    public IReadOnlyList<string> UserArgs => _defaults.UserArgs;
+
+    /// <summary>The <c>scratch</c> section, how run_scratches finds and judges the project's scratch scenes; null when the file has none.</summary>
+    public ScratchProfile? Scratch { get; private init; }
+
     /// <summary>The profile of a folder with no godot-mcp.json: it sets nothing and has no presets.</summary>
     public static ProjectProfile Empty(string projectDir) =>
         new(projectDir, false, ProfileValues.None, new Dictionary<string, ProfileValues>(), prepWrapper: null);
@@ -94,7 +102,10 @@ internal sealed partial class ProjectProfile
         Place top = new(path, TopLevel);
         Dictionary<string, JsonElement> keys = Keys(document.RootElement, TopLevelKeys, top);
         ProfileValues defaults = ReadValues(keys, top, session: null);
-        return new ProjectProfile(projectDir, true, defaults, ReadPresets(keys, top), ReadPrepWrapper(keys, top));
+        return new ProjectProfile(projectDir, true, defaults, ReadPresets(keys, top), ReadPrepWrapper(keys, top))
+        {
+            Scratch = ReadScratch(keys, top),
+        };
     }
 
     /// <summary>
@@ -312,6 +323,81 @@ internal sealed partial class ProjectProfile
         return command.Count > 0 ? command : throw Refused(place, $"{Shape}; it is empty");
     }
 
+    /// <summary>The <c>scratch</c> section, checked key by key; null when the key is absent.</summary>
+    private static ScratchProfile? ReadScratch(Dictionary<string, JsonElement> keys, Place top)
+    {
+        if (!keys.TryGetValue(ScratchKey, out JsonElement value))
+        {
+            return null;
+        }
+
+        Place place = new(top.Path, ScratchKey);
+        Dictionary<string, JsonElement> scratch = Keys(value, ScratchKeys, place);
+        return new ScratchProfile(
+            ReadString(scratch, "folder", place),
+            scratch.ContainsKey("userArgs") ? ReadStrings(scratch, "userArgs", place) : null,
+            ReadMap(scratch, "pace", place, (scene, pace) => ReadPace(scene, pace, place)),
+            ReadMap(scratch, "known", place, (scene, reason) => ReadReason(scene, reason, place)),
+            scratch.ContainsKey("patterns") ? ReadPatterns(scratch, place) : ScratchProfile.DefaultPatterns
+        );
+    }
+
+    /// <summary>An object of scene names to values, each read by <paramref name="read"/>; empty when the key is absent.</summary>
+    private static Dictionary<string, T> ReadMap<T>(Dictionary<string, JsonElement> keys, string key, Place place, Func<string, JsonElement, T> read)
+    {
+        Dictionary<string, T> map = new(StringComparer.Ordinal);
+        if (!keys.TryGetValue(key, out JsonElement value))
+        {
+            return map;
+        }
+
+        foreach (JsonProperty entry in Expect(value, JsonValueKind.Object, key, place).EnumerateObject())
+        {
+            if (!map.TryAdd(entry.Name, read(entry.Name, entry.Value)))
+            {
+                throw Refused(place, $"the scene \"{entry.Name}\" appears twice in \"{key}\"; keep one");
+            }
+        }
+
+        return map;
+    }
+
+    private static double ReadPace(string scene, JsonElement value, Place place) =>
+        value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out double pace) && ScratchProfile.IsPace(pace)
+            ? pace
+            : throw Refused(
+                place,
+                $"\"pace\" of \"{scene}\" must be a number of seconds above 0 and at most {ScratchProfile.MaxPaceSeconds}, not "
+                    + (value.ValueKind == JsonValueKind.Number ? value.GetRawText() : Describe(value.ValueKind))
+            );
+
+    private static string ReadReason(string scene, JsonElement value, Place place) =>
+        value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } reason
+            ? reason
+            : throw Refused(place, $"\"known\" of \"{scene}\" must be a non-empty string, the reason the scene is known to fail");
+
+    /// <summary>The section's <c>patterns</c>, each compiled as written: case-sensitive, anchored only where it anchors itself.</summary>
+    private static List<Regex> ReadPatterns(Dictionary<string, JsonElement> keys, Place place)
+    {
+        List<Regex> patterns = [];
+        foreach (string pattern in ReadStrings(keys, "patterns", place))
+        {
+            try
+            {
+                patterns.Add(ScratchProfile.Compile(pattern));
+            }
+            catch (ArgumentException e)
+            {
+                throw Refused(
+                    place,
+                    $"the pattern \"{pattern}\" in \"patterns\" is not a valid .NET regular expression: {e.Message} Fix or remove it"
+                );
+            }
+        }
+
+        return patterns;
+    }
+
     private static string? ReadResolution(Dictionary<string, JsonElement> keys, Place place)
     {
         string? resolution = ReadString(keys, "resolution", place);
@@ -357,6 +443,36 @@ internal sealed partial class ProjectProfile
     [GeneratedRegex(@"\A[1-9][0-9]*x[1-9][0-9]*\z")]
     internal static partial Regex ResolutionPattern();
 
-    /// <summary>Where in the file a value is: the file's path, and "top level" or "preset \"name\"".</summary>
+    /// <summary>Where in the file a value is: the file's path, and "top level", "preset \"name\"" or "scratch".</summary>
     private sealed record Place(string Path, string Where);
+}
+
+/// <summary>
+/// godot-mcp.json's <c>scratch</c> section: the folder whose scenes run_scratches plays when given none, the user arguments a
+/// scratch run starts with in place of the top-level ones (null when the section sets none), each scene's pace in seconds, the
+/// scenes known to fail with the reason, and the patterns a step's output lines fail it by.
+/// </summary>
+internal sealed record ScratchProfile(
+    string? Folder,
+    IReadOnlyList<string>? UserArgs,
+    IReadOnlyDictionary<string, double> Pace,
+    IReadOnlyDictionary<string, string> Known,
+    IReadOnlyList<Regex> Patterns
+)
+{
+    /// <summary>The longest pace, in seconds: a step's wait is a gameMs wait_for, at most 120000 ms.</summary>
+    public const int MaxPaceSeconds = RuntimeTools.MaxWaitGameMs / 1000;
+
+    /// <summary>The patterns of a project that sets none: Godot's own error lines and its leak warning at exit.</summary>
+    public static readonly IReadOnlyList<Regex> DefaultPatterns = [Compile(@"^SCRIPT ERROR|^ERROR:|ObjectDB instances? (was|were) leaked")];
+
+    /// <summary>The section of a project that has none: no folder, and the default patterns.</summary>
+    public static readonly ScratchProfile None = new(null, null, new Dictionary<string, double>(), new Dictionary<string, string>(), DefaultPatterns);
+
+    /// <summary>Whether <paramref name="seconds"/> is a pace: above 0 and at most <see cref="MaxPaceSeconds"/>.</summary>
+    public static bool IsPace(double seconds) => seconds is > 0 and <= MaxPaceSeconds;
+
+    /// <summary>A pattern as the section takes it: case-sensitive, culture-invariant, with a one-second match timeout.</summary>
+    /// <exception cref="ArgumentException">The pattern is not a valid regular expression.</exception>
+    public static Regex Compile(string pattern) => new(pattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 }

@@ -11,6 +11,7 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 - Launch the game (or one scene), restart it, stop it, or attach to a game you started from the editor, or (once the folder is armed) to one already running; run several sessions side by side.
 - Launch quietly by default: off-screen, unfocused, silent and deaf to your own mouse, keyboard and pads, so the agent can play while you work.
 - Preview a single scene as a picture without playing it, 2D or 3D, framing a 3D scene that has no camera.
+- Play a project's scratch scenes step by step in headless games and get a verdict for each, with the failing step, its errors and its output.
 - Take screenshots, whole or cropped, or a series at set moments of an animation in one call, and save baselines to catch visual regressions.
 - Record a run to video and cut the marked moments into MP4 clips, with the idle time between the agent's steps left out on request.
 - Read the game's errors with file, line and stack on every call, plus its full output log.

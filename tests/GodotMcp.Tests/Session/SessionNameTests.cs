@@ -166,6 +166,60 @@ public sealed class SessionNameTests : IAsyncDisposable
         Assert.Equal("Sky.Client-2", name);
     }
 
+    [Fact]
+    public async Task ScratchNamesThatClashAreNumbered()
+    {
+        string one = _harness.Project(Path.Combine("one", "Sky.Client"));
+        string two = _harness.Project(Path.Combine("two", "Sky.Client"));
+        string longScene = new('s', 55);
+
+        string[] names =
+        [
+            (await _harness.Sessions.ReserveScratchAsync(one, "Tray", "res://s/Tray.tscn")).Name,
+            (await _harness.Sessions.ReserveScratchAsync(one, "Tray", "res://s/Tray.tscn")).Name,
+            (await _harness.Sessions.ReserveScratchAsync(two, "Tray", "res://s/Tray.tscn")).Name,
+            (await _harness.Sessions.ReserveScratchAsync(one, "a b", "res://s/a b.tscn")).Name,
+            (await _harness.Sessions.ReserveScratchAsync(one, "a_b", "res://s/a_b.tscn")).Name,
+            (await _harness.Sessions.ReserveScratchAsync(one, longScene + "x", $"res://s/{longScene}x.tscn")).Name,
+            (await _harness.Sessions.ReserveScratchAsync(one, longScene + "y", $"res://s/{longScene}y.tscn")).Name,
+        ];
+
+        Assert.Equal(
+            [
+                "Sky.Client.scratch-Tray",
+                "Sky.Client.scratch-Tray-2",
+                "Sky.Client.scratch-Tray-3",
+                "Sky.Client.scratch-a_b",
+                "Sky.Client.scratch-a_b-2",
+                ".scratch-" + longScene,
+                ".scratch-" + longScene[..53] + "-2",
+            ],
+            names
+        );
+    }
+
+    [Fact]
+    public async Task AScratchRunNeverReplacesASessionStartedUnderItsNameSince()
+    {
+        string one = _harness.Project(Path.Combine("one", "Sky.Client"));
+        GodotSession scratch = await _harness.Sessions.ReserveScratchAsync(one, "Tray", "res://s/Tray.tscn");
+        _harness.Sessions.Forget(scratch);
+        await _harness.EndAttachedGameAsync(one, "Sky.Client.scratch-Tray");
+
+        GodotSession again = await _harness.Sessions.ReserveScratchAsync(one, "Tray", "res://s/Tray.tscn");
+
+        Assert.Equal("Sky.Client.scratch-Tray-2", again.Name);
+    }
+
+    [Theory]
+    [InlineData(null, null, true)]
+    [InlineData(false, "one|res://s/Tray.tscn", true)]
+    [InlineData(false, "one|res://s/Other.tscn", false)]
+    [InlineData(false, null, false)]
+    [InlineData(true, "one|res://s/Tray.tscn", false)]
+    public void AScratchSceneTakesAFreeNameOrItsOwnStoppedOne(bool? holderLive, string? holderScene, bool takes) =>
+        Assert.Equal(takes, SessionRegistry.MayTakeScratchName(holderLive, holderScene, "one|res://s/Tray.tscn"));
+
     /// <summary>The refusal of a start under 'Sky.Client' while a session on <paramref name="holderDir"/> holds it live.</summary>
     private static string LiveSkyClientRefusal(string holderDir) =>
         $"A session named 'Sky.Client' is live on {ProjectPaths.Normalise(holderDir)}; stop_project or detach_project it, "

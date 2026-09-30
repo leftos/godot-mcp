@@ -245,7 +245,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
     }
 
     /// <summary>The res:// path of a full path inside the project.</summary>
-    private static string ResOf(string projectDir, string full) => "res://" + Path.GetRelativePath(projectDir, full).Replace('\\', '/');
+    internal static string ResOf(string projectDir, string full) => "res://" + Path.GetRelativePath(projectDir, full).Replace('\\', '/');
 
     /// <summary>The full path a res:// or project-relative path names, checked to be inside the project and of the rule's kind.</summary>
     /// <exception cref="McpException">The path is empty, outside the project, or of another kind.</exception>
@@ -277,7 +277,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
     }
 
     /// <summary>full, a path inside the project, with each segment that exists spelled as its directory lists it.</summary>
-    private static string OnDiskCase(string projectDir, string full)
+    internal static string OnDiskCase(string projectDir, string full)
     {
         string current = projectDir;
         foreach (string segment in Path.GetRelativePath(projectDir, full).Split(Path.DirectorySeparatorChar))
@@ -295,7 +295,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
     }
 
     /// <summary>Whether a path relative to the project folder leaves it: up out of it, or onto another drive.</summary>
-    private static bool IsOutside(string inProject) =>
+    internal static bool IsOutside(string inProject) =>
         inProject == ".." || inProject.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) || Path.IsPathRooted(inProject);
 
     /// <summary>The logged errors (not warnings) as <c>{message, file, line}</c>.</summary>

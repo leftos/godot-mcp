@@ -1,0 +1,12 @@
+{
+  "scratch": {
+    "folder": "scratch",
+    "pace": {
+      "ScratchBusy": 0.1,
+      "ScratchLateError": 2
+    },
+    "known": {
+      "ScratchLeak": "leaks a node at exit on purpose, so the runner's leak check has a scene to find"
+    }
+  }
+}

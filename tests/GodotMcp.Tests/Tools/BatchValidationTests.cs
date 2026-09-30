@@ -75,6 +75,7 @@ public sealed class BatchValidationTests : IDisposable
     [InlineData("disarm_project")]
     [InlineData("list_sessions")]
     [InlineData("get_debug_output")]
+    [InlineData("run_scratches")]
     [InlineData("no_such_tool")]
     public async Task ALifecycleToolIsRefused(string tool)
     {

@@ -16,6 +16,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `list_game_tools` lists a C# game's own methods marked `[GodotMcpTool]`, with each one's owner, argument schema and whether it can be called now.
 - `get_game_state` reads, in one frame, what each `mcp_state` group node returns from `_mcp_state()` or, in C#, `_McpState()`, with `keys` to narrow it.
 - `call_game_tool` calls one of those marked methods by name with named arguments, checked against its schema before any game code runs.
+- `run_scratches` plays a project's scratch scenes step by step in fresh headless games, paced from `godot-mcp.json`'s `scratch` section, with a verdict per scene.
 
 ### Changed
 
