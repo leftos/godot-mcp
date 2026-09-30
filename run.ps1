@@ -5,7 +5,7 @@
 Builds, tests, formats and publishes godot-mcp.
 
 .DESCRIPTION
-Every command runs under tools/gate.ps1: its whole output goes to .tmp/<command>.log, the last lines are printed, and it
+Every command but itest-groups runs under tools/gate.ps1: its whole output goes to .tmp/<command>.log, the last lines are printed, and it
 exits with the command's own status, or 124 when the gate's watchdog killed it with every process it started. The
 watchdog kills a run for the first of three reasons, each named by a kill line in the log that this script prints with
 its reading: STALLED (no output and no CPU for 120 s: it hung), TIMED OUT (the ceiling ran out on a clock that runs
@@ -16,23 +16,38 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
   test     the unit tests (tests/GodotMcp.Tests): the project built in Release first (.tmp/test-build.log, ceiling 300 s),
            then its dotnet test -c Release --no-build; ceiling 180 s
   itest    the integration tests against the real Godot (GODOT_PATH, else a Godot*console*.exe on PATH), in the class
-           groups of the table at the top of this script, which run in the two lanes of the table below it: timing
-           (lifecycle, input, time, recording, reads: the wall-clock-sensitive groups) and build (prep, headless,
-           scene, nodes, csharp: the C# builds and headless runs). It
+           groups of the table at the top of this script, which run in the three lanes of the table below it: timing
+           (lifecycle, input, time, recording, reads: the groups that assert wall-clock times), build (prep, scene,
+           csharp) and untimed (sessions, headless, nodes). It
            first checks that every `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly
-           one group, every listed class exists, and every group is in exactly one lane that names only groups, and
-           stops with status 1 before running anything when not. It then runs the dotnet command (as below; a -Filter
-           run does so only when the filter matches a class of the csharp group), builds the project once in Release
+           one group, every listed class exists, every group is in exactly one lane that names only groups, and the
+           heavy groups and rules tables name only groups, and stops with status 1 before running anything when not.
+           It then runs the dotnet command (as below) when the csharp group runs (a -Filter run: when the filter matches
+           a class of the csharp group), builds the project once in Release
            (.tmp/itest-build.log, ceiling 300 s) and runs each group as its own gate in a process of its own
            (.tmp/itest-<group>.log, ceiling 300 s, dotnet test -c Release --no-build): each lane's groups one at a time
-           in the table's order, the two lanes at once. A group's console output, the gate's tail and verdict, goes to
+           in the table's order, the three lanes at once. A group's console output, the gate's tail and verdict, goes to
            .tmp/itest-<group>.console (errors to .tmp/itest-<group>.console.err) and is printed under
            "== itest <group> (lane <lane>)" when the group ends.
            Every group runs even when an earlier one fails; a summary line per group follows in the groups table's order,
            then "itest: <n> groups in <m> lanes, wall <time>", and the exit status is the first non-zero group's in
-           that order. Each gate takes one of the machine's gate slots, so the two lanes take two. On Windows every
-           test run (a group's or a -Filter one) goes through tools/hidden-desktop.ps1, on a desktop of its own, so no
-           Godot window shows.
+           that order. Each gate takes one of the machine's gate slots, so the three lanes take three: a heavy slot for
+           the groups of the heavy groups table (prep, headless, scene, nodes, csharp, whose tests build C#), a light
+           one for the rest, whichever lane a group is in. On Windows every test run (a group's or a -Filter one) goes
+           through tools/hidden-desktop.ps1, on a desktop of its own, so no Godot window shows.
+           With -Since <ref> it runs only the groups itest-groups (below) selects, in their lanes as above, after
+           printing itest-groups' lines; with none selected it prints "itest: no group touched by the changes since
+           <ref>" and exits 0. -Since with -Filter is refused with status 2.
+  itest-groups  names the itest groups the changes since -Since <ref> touch, running nothing and taking no gate: the
+           changed files are the tracked files that differ from the ref (git diff --name-only <ref>, the working tree
+           included) and the untracked files git does not ignore. Each file goes through the rules table at the top of
+           this script, the first matching pattern deciding (anything under bridge/ selects every group, since
+           godot_mcp_bridge.gd preloads every module), and a file no rule maps selects every group. It prints
+           "itest-groups: <file> is unmapped: no rule maps it, so it runs every group" for each such file,
+           "itest-groups: <group> (from <file>)" for each selected group in the groups table's order with the first
+           file that selected it, then "itest-groups: <n> of <m> groups from <k> changed files". -Since is required
+           (status 2 without it); a ref git cannot resolve stops with status 2 and git's message; heavy groups or rules
+           naming no group stop it with status 1. It reads only the tables and git, not the test project.
   format   dotnet format style (info severity), then CSharpier, on the whole solution; ceiling 180 s each
   format-check  dotnet csharpier check on the repo, changing nothing; ceiling 180 s
   dotnet   the C# helper into bin/dotnet: the NativeAOT shim godot_mcp_dotnet.dll (win-x64, no pdb) and
@@ -97,6 +112,9 @@ back when it ends; a relative -Calls path is read against the caller's location.
 pwsh run.ps1 itest -Filter "*McpServerSmokeTests"
 
 .EXAMPLE
+pwsh run.ps1 itest -Since origin/main
+
+.EXAMPLE
 pwsh run.ps1 drive -Calls .tmp/calls.json
 #>
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
@@ -104,10 +122,15 @@ pwsh run.ps1 drive -Calls .tmp/calls.json
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('build', 'test', 'itest', 'format', 'format-check', 'dotnet', 'publish', 'install', 'package', 'gdtest', 'pytest', 'drive', 'help')]
+    [ValidateSet(
+        'build', 'test', 'itest', 'itest-groups', 'format', 'format-check', 'dotnet', 'publish', 'install', 'package', 'gdtest', 'pytest',
+        'drive', 'help'
+    )]
     [string]$Command = 'help',
 
     [string]$Filter = '',
+
+    [string]$Since = '',
 
     [string]$Calls = ''
 )
@@ -118,7 +141,8 @@ $ErrorActionPreference = 'Stop'
 # The integration test classes, one gate per group, run in this order. A new test class goes into one group; itest
 # refuses to run while a class is in no group or a listed class no longer exists.
 $itestGroups = [ordered]@{
-    lifecycle = @('SessionLifecycleTests', 'AttachTests', 'ArmTests', 'QuietTests', 'WatchdogTests', 'McpServerSmokeTests', 'ProfileTests')
+    lifecycle = @('SessionLifecycleTests', 'WatchdogTests')
+    sessions  = @('McpServerSmokeTests', 'AttachTests', 'ArmTests', 'QuietTests', 'ProfileTests')
     input     = @('InputTests', 'GamepadTests', 'CaptureTests', 'StressTests')
     reads     = @('RuntimeReadTests', 'InspectionTests', 'BaselineTests', 'PreviewTests')
     time      = @('TimeTests', 'BatchTests')
@@ -130,12 +154,94 @@ $itestGroups = [ordered]@{
     csharp    = @('CSharpToolTests')
 }
 # The lanes the groups run in: each lane's groups one at a time in this order, the lanes at once. The timing lane keeps
-# the wall-clock-sensitive groups apart from each other, the build lane holds the C# builds and the headless runs. Every
-# group is in exactly one lane; itest refuses to run while one is not.
+# the groups that assert wall-clock times apart from each other; the build and untimed lanes hold the rest, the C#
+# builds and headless runs split between them beside the session tests. Every group is in exactly one lane; itest
+# refuses to run while one is not.
 $itestLanes = [ordered]@{
-    timing = @('lifecycle', 'input', 'time', 'recording', 'reads')
-    build  = @('prep', 'headless', 'scene', 'nodes', 'csharp')
+    timing  = @('lifecycle', 'input', 'time', 'recording', 'reads')
+    build   = @('prep', 'scene', 'csharp')
+    untimed = @('sessions', 'headless', 'nodes')
 }
+# The groups whose tests run dotnet builds of the CsProbe project on top of their Godot runs: each takes a heavy gate
+# slot, in whichever lane it runs, and every other group a light one.
+$itestHeavyGroups = @('prep', 'headless', 'scene', 'nodes', 'csharp')
+# Which groups a changed file touches, for itest-groups and itest -Since: ordered pairs of a path pattern, '/'-separated
+# from the repo root ('*' matches within one folder, '**' across folders), and what a match selects: 'all', 'none',
+# 'class' (the group listing the class a test file is named for), or a list of groups. The first pattern a file matches
+# decides; a file no pattern matches, or a test file whose class no group lists, selects every group and is named as
+# unmapped. Anything under bridge/ selects every group, since godot_mcp_bridge.gd preloads every module.
+$itestRuntimeGroups = @('lifecycle', 'sessions', 'input', 'reads', 'time', 'prep', 'recording', 'csharp')
+$itestRules = @(
+    @('bridge/**', 'all'),
+    @('run.ps1', 'all'),
+    @('tools/gate.ps1', 'all'),
+    @('tools/hidden-desktop.ps1', 'all'),
+    @('src/GodotMcp.Server/Session/**', 'all'),
+    @('src/GodotMcp.Server/Wire/**', 'all'),
+    @('src/GodotMcp.Server/*.cs', 'all'),
+    @('src/GodotMcp.Server/*.csproj', 'all'),
+    @('Directory.*.props', 'all'),
+    @('tests/GodotMcp.TestSupport/**', 'all'),
+    @('tests/GodotMcp.IntegrationTests/Fixtures/**', 'all'),
+    @('tests/GodotMcp.IntegrationTests/GodotMcp.IntegrationTests.csproj', 'all'),
+    @('tests/fixtures/**', 'all'),
+    @('tests/GodotMcp.IntegrationTests/xunit.runner.json', 'all'),
+    @('.gitignore', 'all'),
+    @('.editorconfig', 'all'),
+    @('global.json', 'all'),
+    @('GodotMcp.slnx', 'all'),
+    @('.config/**', 'all'),
+    @('headless/**', @('headless', 'scene', 'nodes', 'reads')),
+    @('src/GodotMcp.Server/Tools/HeadlessTools.Scene*.cs', 'scene'),
+    @('src/GodotMcp.Server/Tools/HeadlessTools.Batch*.cs', 'scene'),
+    @('src/GodotMcp.Server/Tools/HeadlessTools.Properties*.cs', 'nodes'),
+    @('src/GodotMcp.Server/Tools/HeadlessTools.Signals*.cs', 'nodes'),
+    @('src/GodotMcp.Server/Tools/HeadlessTools*.cs', 'headless'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Input*.cs', 'input'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Gamepad*.cs', 'input'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Stress*.cs', 'input'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Capture*.cs', 'input'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Time*.cs', 'time'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Frames*.cs', 'time'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Batch*.cs', 'time'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Record*.cs', 'recording'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Inspect*.cs', 'reads'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Snapshot*.cs', 'reads'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Baseline*.cs', 'reads'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Preview*.cs', 'reads'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.CSharp*.cs', 'csharp'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.RunCSharp*.cs', 'csharp'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools*.cs', $itestRuntimeGroups),
+    @('src/GodotMcp.Server/Tools/ProjectTools*.cs', @('lifecycle', 'sessions', 'prep')),
+    @('src/GodotMcp.Server/Tools/**', 'all'),
+    @('src/GodotMcp.Server/CSharp/**', 'csharp'),
+    @('src/GodotMcp.Dotnet*/**', 'csharp'),
+    @('dotnet/**', 'csharp'),
+    @('src/GodotMcp.Server/Agents/**', 'none'),
+    @('tests/GodotMcp.IntegrationTests/*.cs', 'class'),
+    @('docs/**', 'none'),
+    @('**/*.md', 'none'),
+    @('skills/**', 'none'),
+    @('tests/GodotMcp.Tests/**', 'none'),
+    @('tests/bridge/**', 'none'),
+    @('tests/tools/**', 'none'),
+    @('tools/*.py', 'none'),
+    @('.github/**', 'none'),
+    @('CodeMetricsConfig.txt', 'none'),
+    @('LICENSE', 'none'),
+    @('.gitattributes', 'none'),
+    @('.pre-commit-config.yaml', 'none'),
+    @('ruff.toml', 'none'),
+    @('.csharpierrc', 'none'),
+    @('.csharpierignore', 'none'),
+    @('tools/install.ps1', 'none'),
+    @('tools/install-release.ps1', 'none'),
+    @('tools/package.ps1', 'none'),
+    @('tools/release-check.ps1', 'none'),
+    @('tools/InstalledServers.psm1', 'none'),
+    @('tools/gate.selftest.ps1', 'none'),
+    @('tools/gdcomplexity-baseline.txt', 'none')
+)
 $itestNamespace = 'GodotMcp.IntegrationTests'
 $itestProject = 'tests/GodotMcp.IntegrationTests/GodotMcp.IntegrationTests.csproj'
 $unitTestProject = 'tests/GodotMcp.Tests/GodotMcp.Tests.csproj'
@@ -387,14 +493,156 @@ function Get-ItestLaneDrift {
     return $parts
 }
 
-# How the groups and lanes tables have drifted from the project, as one message, or '' when every declared class is in
-# exactly one group, every listed class is declared, and every group is in exactly one lane that names only groups.
+# The group names the heavy groups and rules tables give that name no group, as one phrase; empty when there is none.
+function Get-ItestRuleDrift {
+    $keywords = @('all', 'none', 'class')
+    $groups = @($itestGroups.Keys)
+    $named = @($itestRules | ForEach-Object { $_[1] } | Where-Object { $keywords -cnotcontains $_ }) + $itestHeavyGroups
+    $unknown = @($named | Where-Object { $groups -cnotcontains $_ } | Sort-Object -Unique)
+    if ($unknown.Count -eq 0) {
+        return @()
+    }
+    return @("$($unknown.Count) name(s) in the heavy groups or rules naming no group: $($unknown -join ', ')")
+}
+
+# How the groups, lanes, heavy groups and rules tables have drifted from the project, as one message, or '' when every
+# declared class is in exactly one group, every listed class is declared, every group is in exactly one lane that names
+# only groups, and the heavy groups and rules name only groups.
 function Get-ItestGroupDrift {
-    $parts = @(Get-ItestClassDrift) + @(Get-ItestLaneDrift)
+    $parts = @(Get-ItestClassDrift) + @(Get-ItestLaneDrift) + @(Get-ItestRuleDrift)
     if ($parts.Count -eq 0) {
         return ''
     }
-    return "itest groups are out of date: $($parts -join '; '). Edit the groups and lanes tables in run.ps1."
+    return "itest groups are out of date: $($parts -join '; '). Edit the groups, lanes, heavy groups and rules tables in run.ps1."
+}
+
+# A rule's path pattern as an anchored regex: '**/' matches any folders or none, a trailing '/**' anything below the
+# folder, '*' anything within one folder name; every other character matches itself.
+function ConvertTo-ItestRuleRegex {
+    param([Parameter(Mandatory)] [string]$Pattern)
+    $regex = [regex]::Escape($Pattern) -replace '\\\*\\\*/', '(?:.*/)?' -replace '/\\\*\\\*$', '/.*' -replace '\\\*', '[^/]*'
+    return "^$regex$"
+}
+
+# The group listing a class, or '' when no group does.
+function Get-ItestClassGroup {
+    param([Parameter(Mandatory)] [string]$Class)
+    foreach ($group in $itestGroups.Keys) {
+        if ($itestGroups[$group] -ccontains $Class) {
+            return $group
+        }
+    }
+    return ''
+}
+
+# What a rule's selection gives a file: @{ Groups; Unmapped }, every group for 'all', none for 'none', the group listing
+# the class the file is named for for 'class' (every group, unmapped, when no group lists it), else the rule's groups.
+function Resolve-ItestRuleSelection {
+    param(
+        [Parameter(Mandatory)] [object]$Selects,
+        [Parameter(Mandatory)] [string]$File
+    )
+    $every = @{ Groups = @($itestGroups.Keys); Unmapped = $false }
+    if ($Selects -isnot [string]) {
+        return @{ Groups = @($Selects); Unmapped = $false }
+    }
+    switch -CaseSensitive ($Selects) {
+        'all' { return $every }
+        'none' { return @{ Groups = @(); Unmapped = $false } }
+        'class' {
+            $group = Get-ItestClassGroup -Class ([IO.Path]::GetFileNameWithoutExtension($File))
+            if ($group) {
+                return @{ Groups = @($group); Unmapped = $false }
+            }
+            return @{ Groups = $every.Groups; Unmapped = $true }
+        }
+    }
+    return @{ Groups = @($Selects); Unmapped = $false }
+}
+
+# What a changed file selects, @{ Groups; Unmapped }: the first rule its path matches decides, and a file no rule
+# matches selects every group and is unmapped.
+function Get-ItestFileGroup {
+    param([Parameter(Mandatory)] [string]$File)
+    foreach ($rule in $itestRules) {
+        if ($File -cmatch (ConvertTo-ItestRuleRegex -Pattern $rule[0])) {
+            return Resolve-ItestRuleSelection -Selects $rule[1] -File $File
+        }
+    }
+    return @{ Groups = @($itestGroups.Keys); Unmapped = $true }
+}
+
+# The files changed since a ref, @{ Status; Files }: the tracked files that differ from it, the working tree included,
+# and the untracked files git does not ignore, each once, '/'-separated from the repo root. Status 2, with git's message
+# on stderr, when git cannot resolve the ref.
+function Get-ChangedFile {
+    param([Parameter(Mandatory)] [string]$Since)
+    $tracked = @(& git -C $root -c core.quotepath=off diff --name-only $Since -- 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        $tracked | ForEach-Object { [Console]::Error.WriteLine("$_") }
+        return @{ Status = 2; Files = @() }
+    }
+    $untracked = @(& git -C $root -c core.quotepath=off ls-files --others --exclude-standard --full-name 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        $untracked | ForEach-Object { [Console]::Error.WriteLine("$_") }
+        return @{ Status = 2; Files = @() }
+    }
+    # git's warnings (a line ending it would convert, say) come back as error records beside the names.
+    $files = @($tracked + $untracked | Where-Object { $_ -is [string] -and $_ } | Sort-Object -Unique -CaseSensitive)
+    return @{ Status = 0; Files = $files }
+}
+
+# The groups some changed files touch, @{ Groups; Unmapped }: Groups ordered as the groups table, each with the first
+# file (in path order) that selected it; Unmapped the files no rule maps.
+function Get-ItestSelection {
+    param([Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Files)
+    $firstFile = @{}
+    $unmapped = [System.Collections.Generic.List[string]]::new()
+    foreach ($file in $Files) {
+        $selection = Get-ItestFileGroup -File $file
+        if ($selection.Unmapped) {
+            $unmapped.Add($file)
+        }
+        foreach ($group in $selection.Groups) {
+            if (-not $firstFile.ContainsKey($group)) {
+                $firstFile[$group] = $file
+            }
+        }
+    }
+    $groups = [ordered]@{}
+    foreach ($group in @($itestGroups.Keys | Where-Object { $firstFile.ContainsKey($_) })) {
+        $groups[$group] = $firstFile[$group]
+    }
+    return @{ Groups = $groups; Unmapped = $unmapped.ToArray() }
+}
+
+# Chooses and prints the groups the changes since a ref touch: a line per unmapped file, a line per selected group with
+# the file that first selected it, then the count. Returns @{ Status; Groups }: 2 when -Since is missing or git cannot
+# resolve the ref, 1 when the heavy groups or rules name no group, else 0 with the groups in table order.
+function Invoke-ItestGroupSelection {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string]$Since)
+    if ([string]::IsNullOrWhiteSpace($Since)) {
+        [Console]::Error.WriteLine('itest-groups needs -Since <ref>: the git ref whose changes, the working tree and untracked files included, choose the groups.')
+        return @{ Status = 2; Groups = @() }
+    }
+    $drift = @(Get-ItestRuleDrift)
+    if ($drift.Count -gt 0) {
+        [Console]::Error.WriteLine("itest rules are out of date: $($drift -join '; '). Edit the heavy groups and rules tables in run.ps1.")
+        return @{ Status = 1; Groups = @() }
+    }
+    $changed = Get-ChangedFile -Since $Since
+    if ($changed.Status -ne 0) {
+        return @{ Status = $changed.Status; Groups = @() }
+    }
+    $selection = Get-ItestSelection -Files $changed.Files
+    foreach ($file in $selection.Unmapped) {
+        Write-Host "itest-groups: $file is unmapped: no rule maps it, so it runs every group"
+    }
+    foreach ($group in $selection.Groups.Keys) {
+        Write-Host "itest-groups: $group (from $($selection.Groups[$group]))"
+    }
+    Write-Host "itest-groups: $($selection.Groups.Count) of $($itestGroups.Count) groups from $($changed.Files.Count) changed files"
+    return @{ Status = 0; Groups = @($selection.Groups.Keys) }
 }
 
 # Whether a -Filter selects a class of the csharp group, whose tests need bin/dotnet: each filter is matched against the
@@ -454,22 +702,23 @@ function ConvertTo-CommandLineWord {
     return $Word
 }
 
-# The gate slot kind of an itest group: heavy for the build lane's groups, whose tests run dotnet builds of the CsProbe
-# project on top of their Godot runs; light for the timing lane's, which run Godot and at most one small fixture build.
+# The gate slot kind of an itest group: heavy for the heavy groups table's, whose tests run dotnet builds of the CsProbe
+# project on top of their Godot runs; light for the rest, which run Godot and at most one small fixture build. A group's
+# lane never changes its slot.
 function Get-ItestGroupSlot {
     param([Parameter(Mandatory)] [string]$Group)
-    if ($itestLanes['build'] -contains $Group) {
+    if ($itestHeavyGroups -contains $Group) {
         return 'heavy'
     }
     return 'light'
 }
 
-# The gate slot kind of a filtered itest: heavy when a filter selects a class of a build lane group, as
-# Get-ItestGroupSlot gives that group in a full run; light otherwise. Each filter is matched against the class's full
-# name, as the runner's --filter-class matches it.
+# The gate slot kind of a filtered itest: heavy when a filter selects a class of a heavy group, as Get-ItestGroupSlot
+# gives that group in a full run; light otherwise. Each filter is matched against the class's full name, as the
+# runner's --filter-class matches it.
 function Get-ItestFilterSlot {
     param([Parameter(Mandatory)] [string[]]$Filters)
-    $classes = @($itestLanes['build'] | ForEach-Object { $itestGroups[$_] } | ForEach-Object { "$itestNamespace.$_" })
+    $classes = @($itestHeavyGroups | ForEach-Object { $itestGroups[$_] } | ForEach-Object { "$itestNamespace.$_" })
     foreach ($filter in $Filters) {
         if (@($classes | Where-Object { $_ -like $filter }).Count -gt 0) {
             return 'heavy'
@@ -543,14 +792,16 @@ function Invoke-ItestStopTree {
     }
 }
 
-# Runs every group in its lane: each lane's groups one at a time in order, the lanes at once, every group whatever the
-# one before it did. Returns each group's exit status by group name.
+# Runs the given groups in their lanes: each lane's groups one at a time in order, the lanes at once, every group
+# whatever the one before it did. Returns each group's exit status by group name.
 function Invoke-ItestLane {
+    param([Parameter(Mandatory)] [string[]]$Groups)
     $queues = @{}
     $running = @{}
     $statuses = @{}
     foreach ($lane in $itestLanes.Keys) {
-        $queues[$lane] = [System.Collections.Generic.Queue[string]]::new([string[]]$itestLanes[$lane])
+        $laneGroups = [string[]]@($itestLanes[$lane] | Where-Object { $Groups -contains $_ })
+        $queues[$lane] = [System.Collections.Generic.Queue[string]]::new($laneGroups)
     }
     try {
         foreach ($lane in $itestLanes.Keys) {
@@ -580,36 +831,100 @@ function Format-WallTime {
     return '{0}m {1:D2}s' -f [int][Math]::Floor($Elapsed.TotalMinutes), $Elapsed.Seconds
 }
 
-# The whole integration suite: the groups and lanes tables checked, the project built once, then every group under its
-# own gate in its lane, each run whatever the one before it did, and a summary line per group in table order with the
-# run's wall time. Returns the first non-zero status in table order, else 0.
+# How many lanes hold at least one of the given groups.
+function Get-ItestLaneCount {
+    param([Parameter(Mandatory)] [string[]]$Groups)
+    $lanes = @($itestLanes.Keys | Where-Object { @($itestLanes[$_] | Where-Object { $Groups -contains $_ }).Count -gt 0 })
+    return $lanes.Count
+}
+
+# The given groups of the integration suite: the C# helper published when the csharp group is among them, the project
+# built once, then each group under its own gate in its lane, each run whatever the one before it did, and a summary
+# line per group in table order with the run's wall time. Returns the first non-zero status in table order, else 0.
 function Invoke-ItestByGroup {
-    $drift = Get-ItestGroupDrift
-    if ($drift) {
-        [Console]::Error.WriteLine($drift)
-        return 1
-    }
+    param([Parameter(Mandatory)] [string[]]$Groups)
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    $dotnet = Invoke-DotnetPublish
-    if ($dotnet -ne 0) {
-        return $dotnet
+    if ($Groups -contains 'csharp') {
+        $dotnet = Invoke-DotnetPublish
+        if ($dotnet -ne 0) {
+            return $dotnet
+        }
     }
     $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject
     if ($build -ne 0) {
         return $build
     }
-    $statuses = Invoke-ItestLane
+    $statuses = Invoke-ItestLane -Groups $Groups
     $results = [ordered]@{}
-    foreach ($group in $itestGroups.Keys) {
+    foreach ($group in @($itestGroups.Keys | Where-Object { $Groups -contains $_ })) {
         $results[$group] = $statuses[$group]
     }
     Write-ItestSummary -Results $results
-    Write-Host "itest: $($results.Count) groups in $($itestLanes.Count) lanes, wall $(Format-WallTime -Elapsed $clock.Elapsed)"
+    Write-Host "itest: $($results.Count) groups in $(Get-ItestLaneCount -Groups $Groups) lanes, wall $(Format-WallTime -Elapsed $clock.Elapsed)"
     $failed = @($results.Values | Where-Object { $_ -ne 0 })
     if ($failed.Count -gt 0) {
         return $failed[0]
     }
     return 0
+}
+
+# The groups an unfiltered itest runs: every group, or with -Since only those the changes since that ref touch. Returns
+# @{ Status; Groups }: 1 when the tables have drifted from the project, 2 when git cannot resolve the ref, else 0.
+function Get-ItestRunGroup {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string]$Since)
+    $drift = Get-ItestGroupDrift
+    if ($drift) {
+        [Console]::Error.WriteLine($drift)
+        return @{ Status = 1; Groups = @() }
+    }
+    if (-not $Since) {
+        return @{ Status = 0; Groups = @($itestGroups.Keys) }
+    }
+    return Invoke-ItestGroupSelection -Since $Since
+}
+
+# One integration test class or more, by -Filter: the C# helper published when a filter selects a csharp class, the
+# project built, then one gate.
+function Invoke-ItestFiltered {
+    param([Parameter(Mandatory)] [string[]]$Filters)
+    if (Test-ItestFilterNeedsDotnet -Filters $Filters) {
+        $dotnet = Invoke-DotnetPublish
+        if ($dotnet -ne 0) {
+            return $dotnet
+        }
+    }
+    $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject
+    if ($build -ne 0) {
+        return $build
+    }
+    $arguments = Get-TestArgumentList -Project $itestProject -Classes $Filters -NoBuild
+    $slot = Get-ItestFilterSlot -Filters $Filters
+    return Invoke-ItestGated -Name (Get-ItestFilterLogName -Filter $Filters[0]) -Arguments $arguments -Slot $slot
+}
+
+# The itest command: -Filter's classes, or the groups (all of them, or those -Since's changes touch) in their lanes.
+# -Filter with -Since is refused with status 2; no group touched by the changes is status 0 with nothing run.
+function Invoke-Itest {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Filters,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Since
+    )
+    if ($Filters.Count -gt 0 -and $Since) {
+        [Console]::Error.WriteLine('itest takes -Filter or -Since, not both: -Filter runs the classes it names, -Since the groups a diff touches.')
+        return 2
+    }
+    if ($Filters.Count -gt 0) {
+        return Invoke-ItestFiltered -Filters $Filters
+    }
+    $run = Get-ItestRunGroup -Since $Since
+    if ($run.Status -ne 0) {
+        return $run.Status
+    }
+    if ($run.Groups.Count -eq 0) {
+        Write-Host "itest: no group touched by the changes since $Since"
+        return 0
+    }
+    return Invoke-ItestByGroup -Groups $run.Groups
 }
 
 # The dotnet arguments of the publish, shared by publish and install.
@@ -805,22 +1120,10 @@ try {
             exit (Invoke-Logged -Name 'test' -TimeoutSeconds 180 -Arguments $arguments -Slot $slot)
         }
         'itest' {
-            if ($filterClasses.Count -eq 0) {
-                exit (Invoke-ItestByGroup)
-            }
-            if (Test-ItestFilterNeedsDotnet -Filters $filterClasses) {
-                $dotnet = Invoke-DotnetPublish
-                if ($dotnet -ne 0) {
-                    exit $dotnet
-                }
-            }
-            $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject
-            if ($build -ne 0) {
-                exit $build
-            }
-            $arguments = Get-TestArgumentList -Project $itestProject -Classes $filterClasses -NoBuild
-            $slot = Get-ItestFilterSlot -Filters $filterClasses
-            exit (Invoke-ItestGated -Name (Get-ItestFilterLogName -Filter $Filter) -Arguments $arguments -Slot $slot)
+            exit (Invoke-Itest -Filters $filterClasses -Since $Since)
+        }
+        'itest-groups' {
+            exit (Invoke-ItestGroupSelection -Since $Since).Status
         }
         'format' {
             $status = Invoke-Logged -Name 'format-style' -TimeoutSeconds 180 -Arguments @('format', 'style', $solution, '--severity', 'info') -Slot heavy
