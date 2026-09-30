@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Wire;
@@ -9,7 +10,7 @@ namespace GodotMcp.Tests.Session;
 
 /// <summary>
 /// A real listener, its registry and the fake games dialled into it. A session that exists and is live is an attach still
-/// waiting for its game, which the harness cancels on dispose.
+/// waiting for its game, which the harness cancels on dispose, or one whose game has dialled in.
 /// </summary>
 internal sealed class RegistryHarness : IAsyncDisposable
 {
@@ -17,6 +18,7 @@ internal sealed class RegistryHarness : IAsyncDisposable
 
     private readonly TempDirectory _temp = new();
     private readonly List<(Task Attach, CancellationTokenSource Cancel)> _waiting = [];
+    private readonly List<Process> _games = [];
 
     public RegistryHarness()
     {
@@ -44,13 +46,57 @@ internal sealed class RegistryHarness : IAsyncDisposable
         foreach ((Task attach, CancellationTokenSource cancel) in _waiting)
         {
             await cancel.CancelAsync();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => attach);
+            // A waiting join the test dialled has ended with its game connected; the rest end cancelled.
+            if (!attach.IsCompletedSuccessfully)
+            {
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => attach);
+            }
+
             cancel.Dispose();
         }
 
         Sessions.Dispose();
         Listener.Dispose();
+        foreach (Process game in _games)
+        {
+            EndStandInGame(game);
+        }
+
         _temp.Dispose();
+    }
+
+    /// <summary>
+    /// A child process that runs for about a minute unless killed, standing in for a game's own process, so a pid a fake game's
+    /// hello carries is one the test owns and a stop may kill.
+    /// </summary>
+    public static Process StartStandInGame() =>
+        Process.Start(
+            new ProcessStartInfo("cmd.exe", "/c ping -n 60 127.0.0.1 >nul")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+            }
+        )!;
+
+    /// <summary>Kills a stand-in game that still runs, with what it started, and disposes it.</summary>
+    public static void EndStandInGame(Process game)
+    {
+        if (!game.HasExited)
+        {
+            game.Kill(entireProcessTree: true);
+        }
+
+        game.WaitForExit(10_000);
+        game.Dispose();
+    }
+
+    /// <summary>A stand-in game (<see cref="StartStandInGame"/>) ended with the harness.</summary>
+    public Process StartOwnedGame()
+    {
+        Process game = StartStandInGame();
+        _games.Add(game);
+        return game;
     }
 
     /// <summary>A project folder with a project.godot.</summary>
@@ -115,6 +161,27 @@ internal sealed class RegistryHarness : IAsyncDisposable
         string token = JsonNode.Parse(File.ReadAllText(joinFile))!["token"]!.GetValue<string>();
         FakeBridge game = await FakeBridge.DialAsync(Listener.Port, token, projectDir, joinedPid, cancellation);
         return (await attach, game);
+    }
+
+    /// <summary>
+    /// Starts a join of the dormant game <paramref name="pid"/> that stays waiting, cancelled with the harness unless a game has
+    /// dialled it; returns the join, once its join file is written, and the token that file carries.
+    /// </summary>
+    public async Task<(Task<AttachResult> Join, string Token)> StartWaitingJoinAsync(string projectDir, string name, int pid)
+    {
+        CancellationTokenSource cancel = new();
+        string joinFile = DormantGames.JoinPathIn(projectDir, pid);
+        Task<AttachResult> join = Sessions.AttachAsync(new AttachRequest(projectDir, name, LongWait, false, false, pid), cancel.Token);
+        await WaitUntilAsync(() => File.Exists(joinFile) || join.IsCompleted);
+        if (join.IsCompleted)
+        {
+            cancel.Dispose();
+            await join;
+            Assert.Fail("the join ended before it wrote its join file");
+        }
+
+        _waiting.Add((join, cancel));
+        return (join, JsonNode.Parse(File.ReadAllText(joinFile))!["token"]!.GetValue<string>());
     }
 
     /// <summary>Attaches a session to a fake game, then ends the game, leaving the session stopped.</summary>

@@ -200,10 +200,11 @@ public sealed class SessionResolutionTests : IAsyncDisposable
     public async Task ListSessionsReportsTheGamesOwnPid()
     {
         string alpha = _harness.Project("alpha");
-        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", 4242);
+        int pid = _harness.StartOwnedGame().Id;
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", pid);
 
         SessionInfo listed = Assert.Single(_harness.Sessions.List(includeStopped: true));
 
-        Assert.Equal(new SessionInfo("server", alpha, "attach", true, null, 4242), listed);
+        Assert.Equal(new SessionInfo("server", alpha, "attach", true, null, pid), listed);
     }
 }

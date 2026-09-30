@@ -77,17 +77,37 @@ internal sealed class DormantGames(Func<int, ProcessStart> probe, TextWriter err
         File.Move(temporary, path, overwrite: true);
     }
 
-    /// <summary>Deletes the join file of <paramref name="pid"/>; returns whether there was one.</summary>
-    public static bool RemoveJoinFile(string projectDir, int pid)
+    /// <summary>
+    /// Deletes the join file of <paramref name="pid"/> when it carries <paramref name="token"/>, the join's own; returns whether
+    /// it did. A missing file, or one another join has written since, is left alone.
+    /// </summary>
+    public static bool RemoveJoinFile(string projectDir, int pid, string token)
     {
         string path = JoinPathIn(projectDir, pid);
-        if (!File.Exists(path))
+        if (JoinTokenIn(path) != token)
         {
             return false;
         }
 
         File.Delete(path);
         return true;
+    }
+
+    /// <summary>
+    /// The token the join file at <paramref name="path"/> carries; null when there is none, or when the file is not one a server
+    /// wrote (it is written whole, so it is never read half-written).
+    /// </summary>
+    private static string? JoinTokenIn(string path)
+    {
+        try
+        {
+            return JsonNode.Parse(File.ReadAllText(path))?["token"] is JsonValue value && value.TryGetValue(out string? token) ? token : null;
+        }
+        catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException or JsonException)
+        {
+            // Gone (the game read it, or it was never written) or not a join file: either way not this join's to delete.
+            return null;
+        }
     }
 
     /// <summary>Whether a process has the id, and its start time when it can be read.</summary>

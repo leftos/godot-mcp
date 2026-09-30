@@ -21,23 +21,30 @@ internal sealed partial class GodotSession
     /// </summary>
     private Process? _attachedGame;
 
-    /// <summary>The dormant game this attach joins, by its process id; null for an attach that waits for a launch.</summary>
-    private int? _joinPid;
+    /// <summary>
+    /// The token of the attach or join file this attach wrote, the one a game told by that file dials with; null before it
+    /// wrote one.
+    /// </summary>
+    private string? _handoffToken;
+
+    /// <summary>
+    /// The dormant game this attach joins, by its process id, chosen when the session was reserved; null for an attach that
+    /// waits for a launch, and for a run.
+    /// </summary>
+    public int? JoinPid { get; } = spec.JoinPid;
 
     /// <summary>
     /// Injects the bridge into the project and writes the one-use attach file, or the join file of the dormant game
-    /// <paramref name="joinPid"/>, then waits up to <paramref name="wait"/> for the game to dial in. That file is gone whatever
+    /// <see cref="JoinPid"/>, then waits up to <paramref name="wait"/> for the game to dial in. That file is gone whatever
     /// the outcome; the override file stays for the session, or is released when no game connected, and a failed attach leaves
     /// the registry without this session.
     /// </summary>
     /// <param name="bridgeScript">The bridge script the override's autoload names.</param>
-    /// <param name="joinPid">The dormant game to join; null to wait for a game started on the project after the call.</param>
     /// <param name="wait">How long to wait for the game's bridge.</param>
     /// <param name="cancellationToken">Cancels the wait.</param>
     /// <exception cref="SessionException">The project has its own override.cfg, or no game connected in time.</exception>
-    public async Task<AttachResult> AttachAsync(string bridgeScript, int? joinPid, TimeSpan wait, CancellationToken cancellationToken)
+    public async Task<AttachResult> AttachAsync(string bridgeScript, TimeSpan wait, CancellationToken cancellationToken)
     {
-        _joinPid = joinPid;
         try
         {
             await _gate.WaitAsync(cancellationToken);
@@ -73,7 +80,7 @@ internal sealed partial class GodotSession
         }
 
         Log.Attached(_logger, ProjectDir);
-        return new AttachResult(Name, ProjectDir, Quiet) { Window = _attached?.Window, JoinedPid = joinPid };
+        return new AttachResult(Name, ProjectDir, Quiet) { Window = _attached?.Window, JoinedPid = JoinPid };
     }
 
     /// <summary>Closes the attached game's connection, drops the session and releases the override file; the game keeps running.</summary>
@@ -237,10 +244,11 @@ internal sealed partial class GodotSession
     private async Task<BridgeConnection> InjectAndAwaitBridgeAsync(string bridgeScript, TimeSpan wait, CancellationToken cancellationToken)
     {
         BridgeEndpoint endpoint = new(registry.Listener.Port, CreateToken());
+        _handoffToken = endpoint.Token;
         BridgeConnection connection;
         try
         {
-            if (_joinPid is int pid)
+            if (JoinPid is int pid)
             {
                 // The override goes through the prep lock as an attach's does, before the join file wakes the game.
                 await WriteOverrideUnderPrepLockAsync(bridgeScript, cancellationToken);
@@ -307,16 +315,19 @@ internal sealed partial class GodotSession
         return await accepted;
     }
 
-    /// <summary>Deletes the file that told the game where to dial: the join file of a join, else the attach file.</summary>
+    /// <summary>
+    /// Deletes the file that told the game where to dial: the attach file, or a join's join file while it still carries this
+    /// join's token, since another join of the same game may have written its own since.
+    /// </summary>
     private void RemoveHandoffFile()
     {
-        if (_joinPid is int pid)
-        {
-            DormantGames.RemoveJoinFile(ProjectDir, pid);
-        }
-        else
+        if (JoinPid is not int pid)
         {
             AttachFile.Remove(ProjectDir);
+        }
+        else if (_handoffToken is { } token)
+        {
+            DormantGames.RemoveJoinFile(ProjectDir, pid, token);
         }
     }
 
@@ -345,14 +356,14 @@ internal sealed partial class GodotSession
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            Log.CleanupFailed(_logger, e, _joinPid is null ? "attach file" : "join file", ProjectDir);
+            Log.CleanupFailed(_logger, e, JoinPid is null ? "attach file" : "join file", ProjectDir);
         }
     }
 
     private string DescribeAttachTimeout(TimeSpan wait, LoadDeadline? deadline, bool overrideRemoved)
     {
         string backstop = deadline is { Reason: DeadlineReason.Backstop } ? deadline.BackstopClause() : string.Empty;
-        if (_joinPid is int pid)
+        if (JoinPid is int pid)
         {
             return $"The dormant game (pid {pid}) on {ProjectDir} did not answer within {wait.TotalSeconds:0} s{backstop}, so the join is "
                 + "abandoned and its join file is removed. It may be paused under a debugger or frozen; resume it, then call "

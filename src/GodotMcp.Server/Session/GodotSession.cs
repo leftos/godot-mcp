@@ -22,6 +22,9 @@ internal sealed record SessionSpec(string Name, string ProjectDir, SessionKind K
 {
     /// <summary>Whether the session asked the bridge to mute the game's Master bus; a quiet game is silent either way.</summary>
     public bool Mute { get; init; }
+
+    /// <summary>The dormant game an attach joins, by its process id; null for an attach that waits for a launch, and for a run.</summary>
+    public int? JoinPid { get; init; }
 }
 
 /// <summary>
@@ -358,7 +361,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             return attached.IsOpen
                 ? attached
                 : throw new SessionException(
-                    $"The attached game on {ProjectDir} has closed its connection (it may have quit). " + "detach_project, then attach_project again."
+                    $"The attached game on {ProjectDir} has closed its connection (it may have quit). stop_project or detach_project ends "
+                        + "the session; then attach_project again, which joins the game if it is still running on an armed folder."
                 );
         }
 

@@ -204,14 +204,14 @@ public sealed class ArmTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
-    public async Task AMutedArmMutesTheJoinedGameWhileItWaitsAndDisarmingUnmutesIt()
+    public async Task AGameJoinedUnmutedOnAMutedArmIsMutedAgainWhenDormant()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string muteFile = Path.Combine(_probe.Directory, "master-mute.txt");
 
         await _project.ArmProjectAsync(_probe.Directory, new ArmOptions(Mute: true), cancellation);
         int pid = await StartDormantGameAsync(cancellation);
-        await _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, cancellationToken: cancellation);
+        await _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, new AttachOptions(Mute: false), cancellation);
         bool mutedWhenJoined = (await RunAsync(WatchMasterMute(muteFile))).GetValue<bool>();
         await _project.DetachProjectAsync(cancellationToken: cancellation);
         bool dormantAgain = await Poll.UntilAsync(() => File.Exists(DormantFilePath(pid)), FileWait, cancellation);
@@ -220,7 +220,7 @@ public sealed class ArmTests : IAsyncDisposable
         bool idle = await Poll.UntilAsync(() => !File.Exists(DormantFilePath(pid)), FileWait, cancellation);
         bool? mutedWhenIdle = await ReadMasterMuteAsync(muteFile, cancellation);
 
-        Assert.True(mutedWhenJoined);
+        Assert.False(mutedWhenJoined);
         Assert.True(dormantAgain);
         Assert.True(mutedWhileDormant);
         Assert.True(idle);

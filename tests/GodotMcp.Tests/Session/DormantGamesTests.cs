@@ -140,8 +140,8 @@ public sealed class DormantGamesTests : IDisposable
             )
         );
         Assert.Equal(path, DormantGames.JoinPathIn(_project.Path, 4101));
-        Assert.True(DormantGames.RemoveJoinFile(_project.Path, 4101));
-        Assert.False(DormantGames.RemoveJoinFile(_project.Path, 4101));
+        Assert.True(DormantGames.RemoveJoinFile(_project.Path, 4101, "ABCDEF"));
+        Assert.False(DormantGames.RemoveJoinFile(_project.Path, 4101, "ABCDEF"));
     }
 
     [Fact]

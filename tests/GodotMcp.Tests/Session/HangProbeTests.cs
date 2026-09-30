@@ -14,8 +14,8 @@ namespace GodotMcp.Tests.Session;
 
 /// <summary>
 /// A timed-out request told apart as a busy or a stuck main thread, and a game paused under a debugger failing a call at
-/// once, through an attached session whose game is a <see cref="FakeBridge"/>. The stuck game's hello names this test process,
-/// so the probe has a real process to sample; whether a debugger is attached is a fake the test sets.
+/// once, through an attached session whose game is a <see cref="FakeBridge"/>. The stuck game's hello names a child process the
+/// test owns, so the probe has a real process to sample; whether a debugger is attached is a fake the test sets.
 /// </summary>
 public sealed partial class HangProbeTests : IAsyncDisposable
 {
@@ -31,6 +31,7 @@ public sealed partial class HangProbeTests : IAsyncDisposable
     private readonly BridgeListener _listener;
     private readonly SessionRegistry _sessions;
     private FakeBridge? _game;
+    private Process? _gameProcess;
     private bool _debuggerAttached;
 
     public HangProbeTests()
@@ -48,16 +49,24 @@ public sealed partial class HangProbeTests : IAsyncDisposable
         _game?.Dispose();
         _sessions.Dispose();
         _listener.Dispose();
+        if (_gameProcess is not null)
+        {
+            RegistryHarness.EndStandInGame(_gameProcess);
+        }
+
         _wallClock.Dispose();
         _temp.Dispose();
         return ValueTask.CompletedTask;
     }
 
+    /// <summary>The pid of the fake game's own process: a stand-in child the test starts on first use and ends on dispose.</summary>
+    private int OwnedGamePid => (_gameProcess ??= RegistryHarness.StartStandInGame()).Id;
+
     [Fact]
     public async Task AGameThatAnswersPingsButNotTheCommandIsBusy()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        FakeBridge game = await AttachAsync(Environment.ProcessId, cancellation);
+        FakeBridge game = await AttachAsync(OwnedGamePid, cancellation);
         using var stopAnswering = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         Task answering = game.AnswerPingsOnlyAsync(stopAnswering.Token);
 
@@ -76,7 +85,7 @@ public sealed partial class HangProbeTests : IAsyncDisposable
     public async Task AGameThatAnswersNothingIsStuckAndItsHellosProcessIsDescribed()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await AttachAsync(Environment.ProcessId, cancellation);
+        await AttachAsync(OwnedGamePid, cancellation);
 
         McpException timedOut = await Assert.ThrowsAsync<McpException>(() => RunScriptAsync(cancellation));
 
@@ -84,7 +93,7 @@ public sealed partial class HangProbeTests : IAsyncDisposable
         Assert.Equal(2, lines.Length);
         Assert.Equal("'run_script' timed out after 300 ms and the game did not answer a ping within 2 s: its main thread is stuck.", lines[0]);
         Assert.Matches(ProcessLine(), lines[1]);
-        Assert.StartsWith($"Process {Environment.ProcessId}: ", lines[1], StringComparison.Ordinal);
+        Assert.StartsWith($"Process {OwnedGamePid}: ", lines[1], StringComparison.Ordinal);
     }
 
     [Fact]
@@ -106,7 +115,7 @@ public sealed partial class HangProbeTests : IAsyncDisposable
     public async Task ACallToAGamePausedUnderADebuggerFailsFast()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await AttachAsync(Environment.ProcessId, cancellation);
+        await AttachAsync(OwnedGamePid, cancellation);
         _debuggerAttached = true;
         var elapsed = Stopwatch.StartNew();
 
@@ -115,18 +124,18 @@ public sealed partial class HangProbeTests : IAsyncDisposable
         // The message pins the path: only the 0.5 s debugger ping words it so; the call's own 10 s timeout and the hang probe word it otherwise.
         Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(10), $"the call failed after {elapsed.Elapsed}, at or past its own 10 s timeout");
         Assert.Equal(
-            $"The game (pid {Environment.ProcessId}) did not answer within 0.5 s while a debugger is attached: it is most likely paused at "
+            $"The game (pid {OwnedGamePid}) did not answer within 0.5 s while a debugger is attached: it is most likely paused at "
                 + "a breakpoint. Continue it in the debugger, or retry if it was only busy.",
             refused.Message
         );
     }
 
-    // The hello's pid is this test process, which still runs after the game's connection ends, as a pid another process reuses would.
+    // The hello's pid is a stand-in child, which still runs after the game's connection ends, as a pid another process reuses would.
     [Fact]
     public async Task AnExitedGameIsNeverReportedPaused()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        FakeBridge game = await AttachAsync(Environment.ProcessId, cancellation);
+        FakeBridge game = await AttachAsync(OwnedGamePid, cancellation);
         _debuggerAttached = true;
         GodotSession session = _sessions.Resolve(null);
         game.Dispose();
@@ -148,7 +157,7 @@ public sealed partial class HangProbeTests : IAsyncDisposable
     public async Task ACallWithADebuggerAttachedButRunningGoesThrough()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        FakeBridge game = await AttachAsync(Environment.ProcessId, cancellation);
+        FakeBridge game = await AttachAsync(OwnedGamePid, cancellation);
         _debuggerAttached = true;
 
         Task<JsonNode?> sent = _sessions.Resolve(null).SendAsync(Command, null, TimeSpan.FromSeconds(5), cancellation);
@@ -164,7 +173,7 @@ public sealed partial class HangProbeTests : IAsyncDisposable
     public async Task NoDebuggerMeansNoExtraPing()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        FakeBridge game = await AttachAsync(Environment.ProcessId, cancellation);
+        FakeBridge game = await AttachAsync(OwnedGamePid, cancellation);
 
         Task<JsonNode?> sent = _sessions.Resolve(null).SendAsync(Command, null, TimeSpan.FromSeconds(5), cancellation);
         string? first = await AnswerAsync(game, "only", cancellation);
@@ -180,7 +189,7 @@ public sealed partial class HangProbeTests : IAsyncDisposable
     public async Task TheHangProbeReportsAPausedGameUnderADebugger()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        FakeBridge game = await AttachAsync(Environment.ProcessId, cancellation);
+        FakeBridge game = await AttachAsync(OwnedGamePid, cancellation);
         _debuggerAttached = true;
 
         Task<string> call = RunScriptAsync(TimeoutMs, cancellation);
@@ -189,7 +198,7 @@ public sealed partial class HangProbeTests : IAsyncDisposable
 
         Assert.Equal("ping", first);
         Assert.Equal(
-            $"'run_script' timed out after 300 ms. The game (pid {Environment.ProcessId}) is paused under a debugger: continue it in the "
+            $"'run_script' timed out after 300 ms. The game (pid {OwnedGamePid}) is paused under a debugger: continue it in the "
                 + "debugger before driving the game.",
             timedOut.Message
         );

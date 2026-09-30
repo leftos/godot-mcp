@@ -84,7 +84,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         {
             Mute = request.Mute,
         };
-        GodotSession created = await ReserveAsync(spec, defaultName: session is null);
+        GodotSession created = await ReserveAsync(spec, defaultName: session is null, completeUnderLock: static ready => ready);
         return await created.LaunchAsync(request with { ProjectPath = projectDir }, cancellationToken);
     }
 
@@ -92,24 +92,28 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// Attaches under the request's session, or when it is null under the project folder's name, numbered as a launch's
     /// is (<see cref="DefaultName"/>). A quiet attach writes the quiet override and tells the bridge to park its window, and
     /// shares the folder rules of a quiet run. The game is a dormant one on the folder when one is chosen
-    /// (<see cref="ChooseDormantGame"/>), else one launched after the call.
+    /// (<see cref="ChooseDormantGame"/>, under the registry's lock, so two joins at once never choose one game), else one
+    /// launched after the call.
     /// </summary>
     /// <exception cref="SessionException">
-    /// The name is invalid or live, the project is missing, the dormant game asked for is not there or several could be
-    /// meant, or no game connected in time.
+    /// The name is invalid or live, the project is missing, the dormant game asked for is not there, several could be meant or
+    /// another join already waits for it, or no game connected in time.
     /// </exception>
     public async Task<AttachResult> AttachAsync(AttachRequest request, CancellationToken cancellationToken)
     {
         string projectDir = NormaliseProjectDir(request.ProjectPath);
         string bridgeScript = Installation.FindBridgeScript();
-        int? joinPid = ChooseDormantGame(projectDir, request.Pid);
         ArmSettings settings = AttachSettings(projectDir, request);
         SessionSpec spec = new(NameFor(request.Session, projectDir), projectDir, SessionKind.Attach, settings.ShutOutRealGamepads, settings.Quiet)
         {
             Mute = settings.Mute,
         };
-        GodotSession created = await ReserveAsync(spec, defaultName: request.Session is null);
-        return await created.AttachAsync(bridgeScript, joinPid, request.Wait, cancellationToken);
+        GodotSession created = await ReserveAsync(
+            spec,
+            defaultName: request.Session is null,
+            completeUnderLock: attach => attach with { JoinPid = ChooseDormantGame(projectDir, request.Pid) }
+        );
+        return await created.AttachAsync(bridgeScript, request.Wait, cancellationToken);
     }
 
     /// <summary>
@@ -532,13 +536,21 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// Registers a new pending session under the spec's name, or under <see cref="DefaultName"/> when
     /// <paramref name="defaultName"/> says the spec's name is the folder's, then lets go of the ended session it replaces.
     /// </summary>
-    /// <exception cref="SessionException">The name is live, or the folder's live sessions rule the new one out.</exception>
-    private async Task<GodotSession> ReserveAsync(SessionSpec spec, bool defaultName)
+    /// <param name="spec">The session to reserve.</param>
+    /// <param name="defaultName">Whether the spec's name is the folder's, to be numbered when another folder's session holds it.</param>
+    /// <param name="completeUnderLock">
+    /// Completes the spec under the registry's lock, before the checks, as an attach chooses its dormant game there.
+    /// </param>
+    /// <exception cref="SessionException">
+    /// The name is live, <paramref name="completeUnderLock"/> refused, or the folder's live sessions rule the new one out.
+    /// </exception>
+    private async Task<GodotSession> ReserveAsync(SessionSpec spec, bool defaultName, Func<SessionSpec, SessionSpec> completeUnderLock)
     {
         GodotSession created;
         GodotSession? replaced;
         lock (_lock)
         {
+            spec = completeUnderLock(spec);
             if (defaultName)
             {
                 spec = spec with { Name = DefaultName(spec.Name, spec.ProjectDir) };
@@ -611,11 +623,21 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
 
         GodotSession[] onFolder = CheckFolder(spec, except: null);
-        if (spec.Kind == SessionKind.Attach && onFolder.Any(other => other.IsWaitingForGame))
+        if (spec.Kind == SessionKind.Attach && onFolder.FirstOrDefault(other => other.IsWaitingForGame && other.JoinPid == spec.JoinPid) is { } rival)
         {
-            throw new SessionException($"Another attach on {spec.ProjectDir} is still waiting for its game; wait for it or let it time out first.");
+            throw new SessionException(DescribeWaitingRival(spec, rival));
         }
     }
+
+    /// <summary>
+    /// Why an attach cannot wait beside <paramref name="rival"/>, which waits for the same game: a join of the same dormant game,
+    /// or a second attach waiting for a launch, since the attach file is one per folder.
+    /// </summary>
+    private static string DescribeWaitingRival(SessionSpec spec, GodotSession rival) =>
+        spec.JoinPid is int pid
+            ? $"A join of the game (pid {pid}) on {spec.ProjectDir} is already waiting in session '{rival.Name}'; wait for it or let it time "
+                + "out first."
+            : $"Another attach on {spec.ProjectDir} is still waiting for its game; wait for it or let it time out first.";
 
     /// <summary>Refuses an attached session, one still starting or never launched, and one the folder's live sessions rule out.</summary>
     private void CheckCanRestart(GodotSession target)

@@ -6,6 +6,8 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Changed
 
+- `attach_project` joins of different dormant games on one folder now wait at once; a second join of the same pid is refused, naming the waiting session.
+- A call to an attached game that closed its connection now names `stop_project` or `detach_project` to end the session.
 - A session or arm on a folder another godot-mcp server uses with other `quiet`, `shutOutRealGamepads`, `mute` or bridge is refused, naming that server's pid.
 
 ### Fixed
