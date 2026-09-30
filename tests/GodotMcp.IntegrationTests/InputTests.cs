@@ -786,7 +786,7 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         );
 
         Assert.Contains(
-            "/root/HandProbe/ViewerMonsters/CardSlot/CardFace is hidden; get_ui_elements lists the visible Controls.",
+            "/root/HandProbe/ViewerMonsters/CardSlot/CardFace is hidden; get_ui_elements lists the visible Controls, get_scene_tree every node.",
             refused.Message,
             StringComparison.Ordinal
         );
@@ -841,7 +841,11 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
             refused.Message,
             StringComparison.Ordinal
         );
-        Assert.Contains("get_ui_elements lists the Controls' paths and names.", refused.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            "get_ui_elements lists the Controls' paths and names, get_scene_tree every node's.",
+            refused.Message,
+            StringComparison.Ordinal
+        );
     }
 
     [Fact(Timeout = TestTimeoutMs)]

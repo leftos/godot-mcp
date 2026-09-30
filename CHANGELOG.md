@@ -9,9 +9,11 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `prep` in `run_project`, `restart_project`, preview and headless tool results names `buildLog` and `importLog`, the full log of a build or import that ran.
 - `godot-mcp.json`'s `prepWrapper` runs the prep's build and import through the project's own wrapper, such as its gate script, with `{log}` and `{ceiling}` tokens.
 - Live node paths take `%UniqueName`, alone (looked up in every scene, refused when several hold it) or after its owner's path, in every node-taking tool.
+- Input tools aim `element` at 2D and 3D world nodes through their camera, with an optional `offset`, and report the point as `aimedAt`.
 
 ### Fixed
 
+- An `element` inside a `SubViewportContainer`, or in a window opened from one, is now aimed where the root viewport shows it.
 - A plain `attach_project` ending on a folder no longer deletes an attach file another server's waiting attach wrote since.
 
 ## 0.11.1 - 2026-09-30

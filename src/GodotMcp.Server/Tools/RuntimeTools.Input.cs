@@ -18,6 +18,15 @@ internal sealed partial class RuntimeTools
     private const string ErrorNote =
         " Errors the game's handlers raise while the input plays come back in the result's errors, with file, line and stack; "
         + "the call still succeeds.";
+    private const string ElementAim =
+        " An element target aims at a Control's centre, or at a 2D or 3D world node's origin (plus offset) through its camera, "
+        + "refused off-screen, behind the camera, or where a Control would take the press before physics picking";
+    private const string TargetNote =
+        ElementAim
+        + "; it adds aimedAt {x, y, kind (control, node2d or node3d), path, class, viewport?}: the point in viewport "
+        + "coordinates, and the node's viewport when it is not the root.";
+    private const string DragTargetNote =
+        ElementAim + "; an element at either end adds aimedAt {from, to}, each as click's aimedAt, a point end null.";
     private const int MaxHoverTimeoutMs = 10_000;
     private const int MaxScrollNotches = 100;
     private const double MaxScrollFactor = 10;
@@ -48,6 +57,7 @@ internal sealed partial class RuntimeTools
             + "viewport coordinates, as get_ui_elements reports them; the bridge maps them to the window, stretched or letterboxed. "
             + "Returns {pointer, heldButtonMask, pressedOn, releasedOn}: the Controls ({path, class}) under the press and the "
             + "release, a popup's included, null over none; with doubleClick, the second click's."
+            + TargetNote
             + ErrorNote
     )]
     public Task<string> ClickAsync(
@@ -77,6 +87,7 @@ internal sealed partial class RuntimeTools
             + "Returns {pointer, heldButtonMask, pressedOn, releasedOn, guiDragStarted, dropAccepted}: the Controls ({path, "
             + "class}) under the press and under the release point, null over none; whether Godot's GUI started a drag; and "
             + "whether a Control accepted its drop."
+            + DragTargetNote
             + ErrorNote
     )]
     public Task<string> DragAsync(
@@ -165,7 +176,9 @@ internal sealed partial class RuntimeTools
             + "and release make a drag by hand. While a button is held, the real mouse's buttons and motions are kept from the "
             + "game's GUI. move only moves the pointer, pressing and releasing nothing (button is ignored). Returns {pointer, "
             + "heldButtonMask} and pressedOn (a press), releasedOn (a release) or hoveredOn (a move): the Control ({path, "
-            + "class}) under the point, null over none."
+            + "class}) under the point, null over none. A press or release into a SubViewport whose gui_disable_input is on is "
+            + "refused; a move is not."
+            + TargetNote
             + ErrorNote
     )]
     public Task<string> MouseButtonAsync(
@@ -203,6 +216,7 @@ internal sealed partial class RuntimeTools
             + "Control ({path, class}) whose tooltip it is), null when none showed, with a warning when one was due. Godot "
             + "starts a tooltip's timer only while the hovered Control can process, so over a pausable Control in a paused "
             + "game hover answers at once with a warning: resume, hover, then pause."
+            + TargetNote
             + ErrorNote
     )]
     public Task<string> HoverAsync(
@@ -243,6 +257,7 @@ internal sealed partial class RuntimeTools
             + "the direction times factor (down and right positive). A ScrollContainer moves an eighth of its page per notch or "
             + "per delta of 1. Points are viewport coordinates, as get_ui_elements reports them. Returns {pointer, "
             + "heldButtonMask, scrolledOn}: the Control ({path, class}) under the point, null over none."
+            + TargetNote
             + ErrorNote
     )]
     public Task<string> ScrollAsync(

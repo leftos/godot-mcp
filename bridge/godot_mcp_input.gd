@@ -228,14 +228,14 @@ func _play_pointer_gesture(gesture: String, params: Dictionary) -> String:
 ## Refuses a target that cannot be clicked before anything is sent, then dismisses tooltips and
 ## aims (resolving the target again, since the dismiss can take a frame) before the click.
 func click(params: Dictionary) -> String:
-	var refusal: String = _targets.refusal_of(params.get("target"))
+	var refusal: String = _targets.press_refusal_of(params.get("target"))
 	if not refusal.is_empty():
 		return refusal
 	var button: int = parse_button(params.get("button", "left"))
 	if button == 0:
 		return _unknown_button(params.get("button"))
 	await _dismiss_tooltips()
-	var point: Variant = _aim(params.get("target"), true)
+	var point: Variant = _aim(params.get("target"), true, false)
 	if point is String:
 		return point
 	await _click_at(to_window(point), button, bool(params.get("doubleClick", false)))
@@ -324,12 +324,13 @@ func _hovered_control(point: Vector2) -> Control:
 
 
 ## Refuses either end before anything is sent; after the tooltip dismiss, resolves the end and
-## aims at the start, the only end hit-tested: what is dragged may cover the drop point.
+## aims at the start, the only end hit-tested: what is dragged may cover the drop point. An
+## element at either end makes aimedAt {from, to}, the point end null.
 func _play_drag(params: Dictionary) -> String:
-	var refusal: String = _targets.refusal_of(params.get("from"))
+	var refusal: String = _targets.press_refusal_of(params.get("from"))
 	if not refusal.is_empty():
 		return "from: %s" % refusal
-	refusal = _targets.refusal_of(params.get("to"))
+	refusal = _targets.press_refusal_of(params.get("to"))
 	if not refusal.is_empty():
 		return "to: %s" % refusal
 	var button: int = parse_button(params.get("button", "left"))
@@ -337,14 +338,25 @@ func _play_drag(params: Dictionary) -> String:
 		return _unknown_button(params.get("button"))
 	var duration_ms: int = maxi(0, int(params.get("durationMs", 300)))
 	await _dismiss_tooltips()
-	var end: Variant = _targets.resolve_point(params.get("to"))
+	var end: Variant = _targets.resolve_target(params.get("to"))
 	if end is String:
 		return "to: %s" % end
-	var start: Variant = _aim(params.get("from"), true)
+	var start: Variant = _aim(params.get("from"), true, false)
 	if start is String:
 		return "from: %s" % start
-	await _drag(to_window(start), to_window(end), duration_ms, button)
+	_note_drag_aims(end)
+	await _drag(to_window(start), to_window(_targets.point_of(end)), duration_ms, button)
 	return ""
+
+
+## Replaces the start's aimedAt, which _aim recorded, with {from, to} when either end is an
+## element; end is the resolved end.
+func _note_drag_aims(end: Variant) -> void:
+	var from_aim: Variant = _hits.get("aimedAt")
+	var to_aim: Variant = _targets.aimed_at(end) if end is Dictionary else null
+	_hits.erase("aimedAt")
+	if from_aim != null or to_aim != null:
+		_hits["aimedAt"] = {"from": from_aim, "to": to_aim}
 
 
 ## Presses at start, where the pointer already is, then sends one motion a frame along the
@@ -428,20 +440,24 @@ func _play_key(params: Dictionary) -> String:
 
 
 ## A press or a move is hit-tested; a release is not, since Godot sends it to the Control that
-## took the press wherever the pointer is (scene/main/viewport.cpp L2019-2025 in 4.7.2).
+## took the press wherever the pointer is (scene/main/viewport.cpp L2019-2025 in 4.7.2). A move
+## presses nothing, so it may aim into a SubViewport whose input is disabled.
 func _play_mouse_button(params: Dictionary) -> String:
-	var refusal: String = _targets.refusal_of(params.get("target"))
+	var action: String = str(params.get("action", "press"))
+	if not action in ["press", "release", "move"]:
+		return "unknown mouse_button action '%s'; use press, release or move" % action
+	var target: Variant = params.get("target")
+	var refusal: String = (
+		_targets.refusal_of(target) if action == "move" else _targets.press_refusal_of(target)
+	)
 	if not refusal.is_empty():
 		return refusal
 	var button: int = parse_button(params.get("button", "left"))
 	if button == 0:
 		return _unknown_button(params.get("button"))
-	var action: String = str(params.get("action", "press"))
-	if not action in ["press", "release", "move"]:
-		return "unknown mouse_button action '%s'; use press, release or move" % action
 	if action == "press":
 		await _dismiss_tooltips()
-	var point: Variant = _aim(params.get("target"), action != "release")
+	var point: Variant = _aim(target, action != "release", false)
 	if point is String:
 		return point
 	if action == "move":
@@ -462,7 +478,7 @@ func _play_scroll(params: Dictionary) -> String:
 	if not refusal.is_empty():
 		return refusal
 	await _dismiss_tooltips()
-	var point: Variant = _aim(params.get("target"), true)
+	var point: Variant = _aim(params.get("target"), true, true)
 	if point is String:
 		return point
 	_hits["scrolledOn"] = _control_under(point)
@@ -485,7 +501,7 @@ func _play_scroll(params: Dictionary) -> String:
 
 ## Why a scroll cannot play, or "" when it can: its target, direction and via; nothing is sent.
 func _scroll_refusal(params: Dictionary) -> String:
-	var refusal: String = _targets.refusal_of(params.get("target"))
+	var refusal: String = _targets.press_refusal_of(params.get("target"))
 	if not refusal.is_empty():
 		return refusal
 	var direction: String = str(params.get("direction", "down"))
@@ -512,7 +528,7 @@ func _settle_hover(point: Vector2) -> Control:
 ## finds it), waits for it to show. Records tooltip ({text, x, y, width, height, owner}, or
 ## null) and a warning when a tooltip was due and none showed.
 func _play_hover(params: Dictionary) -> String:
-	var point: Variant = _aim(params.get("target"), true)
+	var point: Variant = _aim(params.get("target"), true, false)
 	if point is String:
 		return point
 	var control: Control = await _settle_hover(point)
@@ -645,61 +661,72 @@ func _find_label(node: Node) -> Label:
 
 
 ## Resolves a target and moves the pointer to its viewport point: the motion the gesture sends
-## anyway, which also makes Godot hit-test that point. With checks_hit, an {element} target is
-## then refused unless the Control Godot hovers there is one that takes its press (lands_on).
-## Returns the viewport point, or a String saying why the target was refused.
-func _aim(target: Variant, checks_hit: bool) -> Variant:
+## anyway, which also makes Godot hit-test that point. An {element} target is recorded as
+## aimedAt; with checks_hit it is then refused when the GUI would keep the press from it
+## (_aim_refusal; scroll says the gesture is a wheel or pan, which a Stop Control with
+## force_pass_scroll_events lets through). Returns the viewport point, or a String saying why the
+## target was refused.
+func _aim(target: Variant, checks_hit: bool, scroll: bool) -> Variant:
 	var resolved: Variant = _targets.resolve_target(target)
 	if resolved is String:
 		return resolved
 	var point: Vector2 = _targets.point_of(resolved)
 	_move_to(to_window(point))
-	if checks_hit and resolved is Control:
-		var refusal: String = _hit_refusal(resolved as Control, point)
-		if not refusal.is_empty():
-			return refusal
+	if resolved is Dictionary:
+		_hits["aimedAt"] = _targets.aimed_at(resolved)
+		if checks_hit:
+			var refusal: String = _aim_refusal(resolved, point, scroll)
+			if not refusal.is_empty():
+				return refusal
 	return point
 
 
-## Why a press at point would miss target, or "" when it would not: Godot hovers, on a mouse
-## event, the Control gui_find_control picks, the same pick a press makes when no other button
-## is held (scene/main/viewport.cpp L3522-3524, L3331 and L1941 in 4.7.2), and the aim's motion
-## has just been flushed there. A target that takes no clicks, itself or through an ancestor,
-## may land on nothing.
-func _hit_refusal(target: Control, point: Vector2) -> String:
-	var hit: Control = _hovered_control(point)
+## Why a press at an aim's point would not reach its node, or "" when it would. A Control in a
+## SubViewport whose input is disabled is refused even for a hover, since no event reaches it. A
+## world node is refused under an embedded window, which takes the event
+## (covering_window_refusal). Then the pointer must pass each SubViewportContainer on the way in
+## (inner_hit); a Control target must be the Control hovered in its own viewport (_hit_refusal),
+## and a world node must have no Control there that takes the event before physics picking
+## (world_hit_refusal).
+func _aim_refusal(aim: Dictionary, point: Vector2, scroll: bool) -> String:
+	var refusal: String = ""
+	if aim["kind"] == "control":
+		refusal = _targets.disabled_refusal(aim)
+	else:
+		refusal = _targets.covering_window_refusal(aim)
+	if not refusal.is_empty():
+		return refusal
+	var hit: Variant = _targets.inner_hit(aim, _hovered_control(point))
+	if hit is String:
+		return hit
+	if aim["kind"] == "control":
+		return _hit_refusal(aim["node"], point, hit)
+	return _targets.world_hit_refusal(aim, hit, scroll)
+
+
+## Why a press at point would miss target, or "" when it would not: hit is the Control Godot
+## hovers in the target's viewport after the aim's motion, the Control gui_find_control picks, the
+## same pick a press makes when no other button is held (scene/main/viewport.cpp L3522-3524, L3331
+## and L1941 in 4.7.2). A target that takes no clicks, itself or through an ancestor, may land on
+## nothing.
+func _hit_refusal(target: Control, point: Vector2, hit: Control) -> String:
 	if _targets.lands_on(hit, target) or (hit == null and _targets.receiver(target) == null):
 		return ""
 	var hit_path: String = "<nothing>"
 	var hit_rect: String = ""
 	if hit != null:
 		hit_path = str(hit.get_path())
-		hit_rect = ", hit rect %s" % _rect_text(_targets.viewport_rect(hit))
+		hit_rect = ", hit rect %s" % _targets.rect_text(_targets.viewport_rect(hit))
 	return (
 		COVERED_TARGET
 		% [
 			str(target.get_path()),
-			"%s, %s" % [_num(point.x), _num(point.y)],
+			_targets.point_text(point),
 			hit_path,
-			_rect_text(_targets.viewport_rect(target)),
+			_targets.rect_text(_targets.viewport_rect(target)),
 			hit_rect,
 		]
 	)
-
-
-func _rect_text(rect: Rect2) -> String:
-	return (
-		"%s,%s,%s,%s"
-		% [_num(rect.position.x), _num(rect.position.y), _num(rect.size.x), _num(rect.size.y)]
-	)
-
-
-## A coordinate with at most one decimal, and none when it is whole.
-func _num(value: float) -> String:
-	var rounded: float = snappedf(value, 0.1)
-	if rounded == roundf(rounded):
-		return str(int(rounded))
-	return str(rounded)
 
 
 ## The one place a viewport (canvas) point becomes the window point the display server's own
