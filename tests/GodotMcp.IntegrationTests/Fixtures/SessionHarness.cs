@@ -85,24 +85,21 @@ internal sealed class SessionHarness : IAsyncDisposable
         return games;
     }
 
-    /// <summary>Kills a game and waits for it to let go of the folder; one that outlives the wait is a leak, not a slow exit.</summary>
+    /// <summary>
+    /// Kills a game with its tree at once, since a stopped or detached game that is still running never exits on its own, then
+    /// waits for it to let go of the folder; one that outlives the wait is a leak, not a slow exit.
+    /// </summary>
     private static async Task KillAsync(Process game)
     {
         using (game)
         {
-            if (await ProcessExit.WaitUntilGoneAsync(game, GameExitWait))
-            {
-                return;
-            }
-
             try
             {
                 game.Kill(entireProcessTree: true);
             }
             catch (InvalidOperationException)
             {
-                // The game exited between the wait and the kill.
-                return;
+                // The game exited between the handle's opening and the kill; the wait below still waits for its signal.
             }
 
             if (!await ProcessExit.WaitUntilGoneAsync(game, GameExitWait))
