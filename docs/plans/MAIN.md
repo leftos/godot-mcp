@@ -39,6 +39,9 @@ Each idea needs its own design pass (an interview) before a brief; the next slic
 
 Share nothing with the waves above; their order is not a ranking.
 
+- [ ] Resolve `%UniqueName` in live node paths, alone or as a segment after an owner (`Glossary/%Rows`), as `Node.GetNode("%Name")` does, in `run_csharp`'s `Node(path)`, the `cs_*` `{node}` target, `call_method`/`wait_for`'s `node` and the input tools' `{element}` (#55; resolvers at `src/GodotMcp.Dotnet/Targets.cs` L53-72 and `bridge/godot_mcp_bridge.gd` L804-815)
+- [ ] Launch prep's build and import run outside any project wrapper and keep no log: let a project name the command they run through (a gate script with a log path), or at least write the prep's output to a log the result names (#56; `run_project`, `restart_project`; delve pre-builds by hand today)
+
 - [ ] The splice can still leave two nodes with one `unique_id` when the engine renumbers an existing node during a save (it checks a new id only against nodes saved before it, 4.7.2 `packed_scene.cpp` L1099-1123, so a copy saved early that draws a later node's id, odds about n in 2^31, renumbers that node), since `headless/scene_splice.gd` compares sections without `unique_id` and keeps the old text: `self_check` could fall back to the full save when two node sections share a `unique_id`
 - [ ] `TempDirectoryTests.DisposeRetriesAFileHeldBriefly` (`tests/GodotMcp.Tests/TestSupport/TempDirectoryTests.cs:19`, a 2 s wall-clock bound) fails under the full unit suite with an IOException on held.txt and passes alone: seen twice on 2026-09-29
 - [ ] `TimeTests.AGamePausingItselfMidMonitorEndsItWithTheSamplesSoFar` (`tests/GodotMcp.IntegrationTests/TimeTests.cs`) failed once under a filtered run on a loaded machine and passed on the re-run: `monitor_property failed: The bridge refused 'monitor': The game is paused, so only a signal wait or a check-once wait (timeoutMs 0) can be met` (2026-09-29): the pause may land before the monitor starts
