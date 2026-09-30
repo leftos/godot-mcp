@@ -10,7 +10,9 @@ extends RefCounted
 ## connections: 4.7.2 scene/main/node.cpp L2789-2798). The holder is outside the scene, where a
 ## connection from the copied nodes to a node outside them has no common parent to be packed with
 ## (scene/resources/packed_scene.cpp L1200-1202): such a connection is taken off for the pack, put
-## back, and made again from the copy, as the editor's duplicate keeps it.
+## back, and made again from the copy, as the editor's duplicate keeps it. The pack's unique_ids
+## are cleared before the copy is made, so the save gives the copy's nodes fresh ones
+## (_clear_unique_ids).
 
 const SceneEdit := preload("scene_edit.gd")
 const SceneFiles := preload("scene_files.gd")
@@ -391,6 +393,7 @@ static func _copy_of(source: Node, root: Node) -> Dictionary:
 	if packing.has("error"):
 		return {"error": "%s could not be copied: %s" % [path, packing["error"]]}
 	var packed: PackedScene = packing["packed"]
+	_clear_unique_ids(packed)
 	var copy_holder: Node = SceneEdit.instantiate_native(packed, PackedScene.GEN_EDIT_STATE_MAIN)
 	if copy_holder == null:
 		return {"error": "%s was packed, but its copy could not be instantiated." % path}
@@ -399,6 +402,23 @@ static func _copy_of(source: Node, root: Node) -> Dictionary:
 	_move(copy, null, copy_owned, null)
 	copy_holder.free()
 	return {"node": copy, "owned": copy_owned, "outbound": outbound}
+
+
+## Sets every unique_id packed stores to unassigned (0, 4.7.2 scene/main/node.h L144), so the
+## nodes instantiated from it carry none, as the editor's Duplicate leaves its copy: Node._duplicate
+## (scene/main/node.cpp L2777) never copies the id, which only set_unique_scene_id (L2117) sets and
+## script cannot reach. Instantiating sets each node the stored id (packed_scene.cpp L357-360), and
+## the next save gives each node without one a fresh id (ResourceUID.create_id, kept positive) that
+## no node saved before it has (packed_scene.cpp L1099-1123). A node inside an instance keeps its
+## own scene's id: instantiating takes that node's id over the stored one (L301-307).
+static func _clear_unique_ids(packed: PackedScene) -> void:
+	var bundled: Dictionary = packed.get("_bundled")
+	if not bundled.has("node_ids"):
+		return
+	var ids: PackedInt32Array = bundled["node_ids"]
+	ids.fill(0)
+	bundled["node_ids"] = ids
+	packed.set("_bundled", bundled)
 
 
 ## node and the nodes below it whose owner is owner.

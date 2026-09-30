@@ -398,7 +398,7 @@ These run a headless Godot on the project's files with no game started, beside a
 
 ### `duplicate_node`
 
-- **Does:** copies `nodePath` and its subtree right after it, or last under `options.parent`, and saves: `{originalPath, newPath}`.
+- **Does:** copies `nodePath` and its subtree right after it, or last under `options.parent`, and saves: `{originalPath, newPath}`. The copy and every node it owns get fresh `unique_id`s, as the editor's Duplicate gives them; every other node keeps its own.
 - **Use:** `newName`, else the node's name or the editor's serial name (`Sprite` gives `Sprite2`).
 - **Edges:** instances stay instances; connections within the copy and out of it are kept, connections into it are not. The root is refused.
 

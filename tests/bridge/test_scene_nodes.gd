@@ -1,7 +1,8 @@
 extends "res://gd_test.gd"
 ## SceneNodes.resolve_position (headless/scene_nodes.gd): the index a position ({index}, {before}
 ## or {after}) gives a node among a parent's children, for a new node and for one already there.
-## The tree is Root, holding Holder, holding A, B and C.
+## The tree is Root, holding Holder, holding A, B and C. And SceneNodes.apply_duplicate_node's
+## copies saving with unique_ids of their own, on Combat (_combat).
 
 const SCENE_NODES_SCRIPT := "../../headless/scene_nodes.gd"
 
@@ -128,8 +129,65 @@ func test_a_position_takes_exactly_one_key() -> void:
 	tree.free()
 
 
+func test_a_copy_gets_fresh_unique_ids() -> void:
+	var root: Node = _combat()
+	var before: PackedInt32Array = _saved_ids(root)
+	var context: Dictionary = {"scene": "res://combat.tscn"}
+	var under_layer: Dictionary = {"nodePath": "Ties", "newName": "Lines", "parent": "Layer"}
+
+	assert_eq(
+		_nodes.apply_duplicate_node(root, under_layer, context),
+		{"result": {"originalPath": "Ties", "newPath": "Layer/Lines"}},
+		"a copy saved before its original"
+	)
+	assert_eq(
+		_nodes.apply_duplicate_node(root, {"nodePath": "Ties"}, context),
+		{"result": {"originalPath": "Ties", "newPath": "Ties2"}},
+		"a copy saved after its original"
+	)
+	# Saved order: Combat, Layer, Layer/Lines, Layer/Lines/Tie, Ties, Ties/Tie, Ties2, Ties2/Tie, Hud.
+	var after: PackedInt32Array = _saved_ids(root)
+	assert_eq(
+		[after[0], after[1], after[4], after[5], after[8]],
+		Array(before),
+		"every node already there keeps its id"
+	)
+	var distinct: Dictionary = {}
+	for id: int in after:
+		distinct[id] = true
+	assert_eq(distinct.size(), 9, "no two nodes, the copies' children among them, share an id")
+	assert_true(not distinct.has(0), "every node is saved with an id")
+	root.free()
+
+
 func _resolve(parent: Node, node: Node, position: Dictionary) -> Dictionary:
 	return _nodes.resolve_position(parent, node, position)
+
+
+## Combat, holding Layer, Ties with a Tie of its own, and Hud, each owned by Combat and given its
+## unique_id by a first save (_saved_ids).
+func _combat() -> Node:
+	var root := Node2D.new()
+	root.name = "Combat"
+	for child_name: String in ["Layer", "Ties", "Hud"]:
+		var child := Node2D.new()
+		child.name = child_name
+		root.add_child(child)
+		child.owner = root
+	var tie := Line2D.new()
+	tie.name = "Tie"
+	root.get_node("Ties").add_child(tie)
+	tie.owner = root
+	return root
+
+
+## The unique_ids a save of the scene at root writes, in the save's order. Packing gives a node
+## without one, or with one an earlier node has, a fresh id (4.7.2
+## scene/resources/packed_scene.cpp L1099-1123).
+func _saved_ids(root: Node) -> PackedInt32Array:
+	var packed := PackedScene.new()
+	assert_eq(packed.pack(root), OK, "the scene packs")
+	return packed.get("_bundled")["node_ids"]
 
 
 ## Root, holding Holder, holding A, B and C.

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
@@ -73,6 +74,14 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         + "[node name=\"Btn\" type=\"Button\" parent=\".\"]\n\n"
         + "[connection signal=\"pressed\" from=\"Group/B\" to=\"Group/Grunt\" method=\"hide\"]\n"
         + "[connection signal=\"pressed\" from=\"Btn\" to=\"Group/Grunt\" method=\"hide\"]\n";
+
+    // combat.tscn as Godot 4.7 writes it, a unique_id on every node: Combat holding Layer, Ties with a Tie of its own, and Hud.
+    private const string CombatScene =
+        "[gd_scene format=3]\n\n[node name=\"Combat\" type=\"Node2D\" unique_id=100]\n\n"
+        + "[node name=\"Layer\" type=\"CanvasLayer\" parent=\".\" unique_id=150]\n\n"
+        + "[node name=\"Ties\" type=\"Node2D\" parent=\".\" unique_id=442001752]\n\n"
+        + "[node name=\"Tie\" type=\"Line2D\" parent=\"Ties\" unique_id=200]\n\n"
+        + "[node name=\"Hud\" type=\"Node2D\" parent=\".\" unique_id=300]\n";
 
     // stage.tscn, in parts: Stage holding A, B and C.
     private const string StageHeader = "[gd_scene format=3 uid=\"uid://bqstage00000a\"]\n\n";
@@ -887,6 +896,43 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task DuplicateNodeGivesTheCopyFreshUniqueIds()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "combat.tscn"), CombatScene);
+
+        // Under Layer the copy comes before Ties, so the save meets the copy's nodes first.
+        await _tools.DuplicateNodeAsync(probe.Directory, "combat.tscn", "Ties", "Lines", new DuplicateNodeOptions("Layer"), cancellation);
+
+        AssertCopiesHaveFreshIds(probe.Directory, ["Layer/Lines", "Layer/Lines/Tie"]);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task DuplicateNodeTwiceInOneBatchGivesEachCopyFreshUniqueIds()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "combat.tscn"), CombatScene);
+        SceneBatchStep[] steps =
+        [
+            new("duplicate_node", new JsonObject { ["nodePath"] = "Ties" }),
+            new(
+                "duplicate_node",
+                new JsonObject
+                {
+                    ["nodePath"] = "Ties",
+                    ["options"] = new JsonObject { ["parent"] = "Layer" },
+                }
+            ),
+        ];
+
+        await _tools.BatchSceneOperationsAsync(probe.Directory, "combat.tscn", steps, cancellation);
+
+        AssertCopiesHaveFreshIds(probe.Directory, ["Ties2", "Ties2/Tie", "Layer/Ties", "Layer/Ties/Tie"]);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task DuplicateNodeDefaultNameCountsUp()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1580,6 +1626,53 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
                 .Where(line => line.StartsWith("[node name=\"", StringComparison.Ordinal))
                 .Select(line => line.Split('"')[1]),
         ];
+
+    /// <summary>
+    /// Asserts combat.tscn holds CombatScene's nodes with their own unique_ids and the copies, and that no two nodes share an id.
+    /// </summary>
+    private static void AssertCopiesHaveFreshIds(string directory, string[] copies)
+    {
+        (string Path, long Id)[] originals = [(".", 100), ("Layer", 150), ("Ties", 442001752), ("Ties/Tie", 200), ("Hud", 300)];
+        List<(string Path, long Id)> saved = UniqueIds(directory, "combat.tscn");
+        Assert.Equal(
+            originals.Select(node => node.Path).Concat(copies).Order(StringComparer.Ordinal),
+            saved.Select(node => node.Path).Order(StringComparer.Ordinal)
+        );
+        Assert.All(originals, node => Assert.Contains(node, saved));
+        Assert.Equal(saved.Count, saved.Select(node => node.Id).Distinct().Count());
+    }
+
+    /// <summary>Each node section's path (the root as ".") and unique_id, in file order.</summary>
+    private static List<(string Path, long Id)> UniqueIds(string directory, string scene) =>
+        [
+            .. File.ReadLines(Path.Combine(directory, scene))
+                .Where(line => line.StartsWith("[node name=\"", StringComparison.Ordinal))
+                .Select(line => (NodeSectionPath(line), long.Parse(TagValue(line, "unique_id="), CultureInfo.InvariantCulture))),
+        ];
+
+    /// <summary>The path from the root of the node a [node] tag line opens, the root as ".".</summary>
+    private static string NodeSectionPath(string line)
+    {
+        string name = line.Split('"')[1];
+        string parent = TagValue(line, "parent=").Trim('"');
+        if (parent.Length == 0)
+        {
+            return ".";
+        }
+        return parent == "." ? name : parent + "/" + name;
+    }
+
+    /// <summary>The value of a tag line's attribute (key given with its "="), up to the next space or "]"; "" when absent.</summary>
+    private static string TagValue(string line, string key)
+    {
+        int start = line.IndexOf(" " + key, StringComparison.Ordinal);
+        if (start < 0)
+        {
+            return string.Empty;
+        }
+        start += key.Length + 1;
+        return line[start..line.IndexOfAny([' ', ']'], start)];
+    }
 
     /// <summary>
     /// stage.tscn: Stage holding A, B and C. nest.tscn: Nest holding From at (100, 0) with Mover at (10, 0), To at the origin with

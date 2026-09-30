@@ -111,6 +111,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## 0.5.1 - 2026-09-28
 
+### Fixed
+
+- `duplicate_node` gives the copy and its children fresh `unique_id`s, so a scene never holds two nodes with one id.
+
 ### Changed
 
 - `stop_project` gives `quitMs`, how long a game that quit took after the quit request, and `restart_project` gives `previousQuitMs`.
