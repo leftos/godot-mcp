@@ -55,6 +55,30 @@ public sealed class SessionAttachTests : IAsyncDisposable
         Assert.True(File.Exists(OverrideFile.PathIn(alpha)));
     }
 
+    // Another server holding the folder list stands for its read-modify-write of the same override.cfg: the detach must wait
+    // for it, not delete the file under it. The hold stays well inside the list's 2 s retry budget.
+    [Fact]
+    public async Task ADetachWaitsForTheFolderListBeforeReleasingTheOverride()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = _harness.Project("alpha");
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", null);
+        Task<DetachResult> detach;
+
+        using (new FileStream(_harness.Combine("override-folders.txt"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            detach = Task.Run(() => _harness.Sessions.DetachAsync("server", cancellation), cancellation);
+            await Task.Delay(300, cancellation);
+
+            Assert.True(File.Exists(OverrideFile.PathIn(alpha)));
+            Assert.False(detach.IsCompleted);
+        }
+
+        DetachResult detached = await detach;
+        Assert.True(detached.OverrideRemoved);
+        Assert.False(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
     // An attached session has no run, so any run's exit is the exit of a run that is not its current one, as the old run's is
     // once a restart has replaced it. A guard of "_run is null" would pass this too: the real case, an old run exiting while
     // the session's current run is a newer one, needs a launched Godot to make that newer run, so it is covered by the
@@ -215,7 +239,11 @@ public sealed class SessionAttachTests : IAsyncDisposable
     public void AHeadlessRunRemovesAMarkedOverrideNoLiveSessionHolds()
     {
         string alpha = _harness.Project("alpha");
-        OverrideFile.Write(alpha, Path.Combine(alpha, "bridge.gd"), shutOutRealGamepads: false, quiet: false);
+        OverrideOwner dead = new(Environment.ProcessId, OverrideOwner.Current.StartTicks - 1);
+        File.WriteAllText(
+            OverrideFile.PathIn(alpha),
+            $"{OverrideFile.Marker}\n{OverrideFile.OwnersPrefix}{dead}\n[autoload]\n\nGodotMcpBridge=\"*D:/tools/bridge.gd\"\n"
+        );
 
         HeadlessRunner.ClearFolder(_harness.Sessions, alpha);
 

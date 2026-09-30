@@ -50,12 +50,85 @@ public sealed class OverrideOwnersTests : IDisposable
     {
         string project = Project("alpha");
         OverrideOwner foreign = StartForeignOwner();
-        WriteMarked(project, $"{OverrideFile.OwnersPrefix}{foreign},{Dead}\n{Body}");
+        WriteMarked(project, $"{OverrideFile.OwnersPrefix}{foreign},{Dead}\n{BodyFor(shutOutRealGamepads: false, quiet: false)}");
 
         OverrideFile.Write(project, _temp.Combine("bridge.gd"), false, false);
 
         Assert.Equal([foreign, OverrideOwner.Current], OverrideFile.LiveOwners(project));
         Assert.Equal($"{OverrideFile.OwnersPrefix}{foreign},{OverrideOwner.Current}", File.ReadAllLines(OverrideFile.PathIn(project))[1]);
+    }
+
+    [Fact]
+    public void AnOverrideAnotherLiveServerWroteWithTheSameSettingsIsShared()
+    {
+        string project = Project("alpha");
+        OverrideOwner foreign = StartForeignOwner();
+        string body = BodyFor(shutOutRealGamepads: true, quiet: true);
+        WriteMarked(project, $"{OverrideFile.OwnersPrefix}{foreign}\n{body}");
+
+        OverrideFile.Write(project, _temp.Combine("bridge.gd"), shutOutRealGamepads: true, quiet: true);
+
+        Assert.Equal([foreign, OverrideOwner.Current], OverrideFile.LiveOwners(project));
+        Assert.Equal(
+            $"{OverrideFile.Marker}\n{OverrideFile.OwnersPrefix}{foreign},{OverrideOwner.Current}\n{body}",
+            File.ReadAllText(OverrideFile.PathIn(project))
+        );
+    }
+
+    // A body without the [input_devices] section, as an older server wrote it, reads as the real pads left live.
+    [Fact]
+    public void AnOverrideAnotherLiveServerWroteInAnotherFormatWithTheSameSettingsIsShared()
+    {
+        string project = Project("alpha");
+        OverrideOwner foreign = StartForeignOwner();
+        WriteMarked(project, $"{OverrideFile.OwnersPrefix}{foreign}\n[autoload]\n\nGodotMcpBridge=\"*{OurBridge()}\"\n");
+
+        OverrideFile.Write(project, _temp.Combine("bridge.gd"), shutOutRealGamepads: false, quiet: false);
+
+        Assert.Equal([foreign, OverrideOwner.Current], OverrideFile.LiveOwners(project));
+        string body = BodyFor(shutOutRealGamepads: false, quiet: false);
+        Assert.Equal(
+            $"{OverrideFile.Marker}\n{OverrideFile.OwnersPrefix}{foreign},{OverrideOwner.Current}\n{body}",
+            File.ReadAllText(OverrideFile.PathIn(project))
+        );
+    }
+
+    [Fact]
+    public void AnOverrideAnotherLiveServerWroteWithOtherSettingsRefusesTheWrite()
+    {
+        string project = Project("alpha");
+        OverrideOwner foreign = StartForeignOwner();
+        WriteMarked(project, $"{OverrideFile.OwnersPrefix}{foreign}\n{BodyFor(shutOutRealGamepads: true, quiet: false)}");
+        string before = File.ReadAllText(OverrideFile.PathIn(project));
+
+        SessionException refused = Assert.Throws<SessionException>(() =>
+            OverrideFile.Write(project, _temp.Combine("bridge.gd"), shutOutRealGamepads: false, quiet: true)
+        );
+
+        Assert.Equal(
+            $"{project}'s override.cfg is in use by another godot-mcp server (pid {foreign.ProcessId}) with quiet=false and "
+                + "shutOutRealGamepads=true; start this session with the same values, or end that server's sessions on the folder first.",
+            refused.Message
+        );
+        Assert.Equal(before, File.ReadAllText(OverrideFile.PathIn(project)));
+    }
+
+    [Fact]
+    public void AnOverrideAnotherLiveServerWroteWithAnotherBridgeRefusesTheWrite()
+    {
+        string project = Project("alpha");
+        OverrideOwner foreign = StartForeignOwner();
+        WriteMarked(project, $"{OverrideFile.OwnersPrefix}{foreign}\n{Body}");
+        string before = File.ReadAllText(OverrideFile.PathIn(project));
+
+        SessionException refused = Assert.Throws<SessionException>(() => OverrideFile.Write(project, _temp.Combine("bridge.gd"), false, false));
+
+        Assert.Equal(
+            $"{project}'s override.cfg injects the bridge from D:/tools/bridge.gd for another godot-mcp server (pid {foreign.ProcessId}); "
+                + $"this server's is {OurBridge()}: two godot-mcp installs cannot share a folder at once.",
+            refused.Message
+        );
+        Assert.Equal(before, File.ReadAllText(OverrideFile.PathIn(project)));
     }
 
     [Fact]
@@ -191,6 +264,22 @@ public sealed class OverrideOwnersTests : IDisposable
         string project = _temp.Combine(name);
         Directory.CreateDirectory(project);
         return project;
+    }
+
+    /// <summary>The bridge path <see cref="OverrideFile.Write"/> writes for the test's bridge.gd.</summary>
+    private string OurBridge() => Path.GetFullPath(_temp.Combine("bridge.gd")).Replace('\\', '/');
+
+    /// <summary>The body <see cref="OverrideFile.Write"/> writes for the test's bridge.gd with these settings.</summary>
+    private string BodyFor(bool shutOutRealGamepads, bool quiet)
+    {
+        string body =
+            $"[autoload]\n\nGodotMcpBridge=\"*{OurBridge()}\"\n\n[input_devices]\n\n"
+            + $"{OverrideFile.IgnoreJoypadOnUnfocusedSetting}={(shutOutRealGamepads ? "true" : "false")}\n";
+        return quiet
+            ? body
+                + $"\n[display]\n\n{OverrideFile.NoFocusSetting}=true\n{OverrideFile.InitialPositionTypeSetting}=0\n"
+                + $"{OverrideFile.InitialPositionSetting}={OverrideFile.OffScreenPosition}\n"
+            : body;
     }
 
     private static void WriteMarked(string project, string afterMarker) =>

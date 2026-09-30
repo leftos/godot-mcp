@@ -93,16 +93,11 @@ internal static class HeadlessRunner
     }
 
     /// <summary>
-    /// Removes the marked override.cfg when no live server owns it: a killed server's leftover. A file a live session of this
-    /// server or another holds stays.
+    /// Removes the marked override.cfg when no live server owns it: a killed server's leftover. A file a live server owns
+    /// stays, this server's own included, for a live session or an arm on the folder; the call never takes this server off
+    /// its owners.
     /// </summary>
-    internal static void ClearFolder(SessionRegistry registry, string projectDir)
-    {
-        if (registry.LiveSessionNames(projectDir).Count == 0)
-        {
-            OverrideFile.Release(projectDir);
-        }
-    }
+    internal static void ClearFolder(SessionRegistry registry, string projectDir) => registry.OverrideFolders.RemoveStaleOverride(projectDir);
 
     private static async Task<JsonObject> RunGodotAsync(GodotCall call, CancellationToken cancellationToken)
     {

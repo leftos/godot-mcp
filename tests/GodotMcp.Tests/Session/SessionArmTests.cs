@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
 using GodotMcp.Tests.Wire;
@@ -12,8 +13,42 @@ public sealed class SessionArmTests : IAsyncDisposable
     private static readonly ArmSettings Muted = new(Quiet: false, ShutOutRealGamepads: false, Mute: true);
 
     private readonly RegistryHarness _harness = new();
+    private Process? _foreign;
 
-    public ValueTask DisposeAsync() => _harness.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        if (_foreign is not null)
+        {
+            _foreign.Kill(entireProcessTree: true);
+            _foreign.WaitForExit(10_000);
+            _foreign.Dispose();
+        }
+
+        await _harness.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task ArmingAFolderAnotherServerArmedWithOtherSettingsIsRefused()
+    {
+        string alpha = _harness.Project("alpha");
+        OverrideOwner foreign = StartForeignOwner();
+        string armFile = ArmFile.PathIn(alpha);
+        Directory.CreateDirectory(Path.GetDirectoryName(armFile)!);
+        File.WriteAllText(armFile, $"{{\"quiet\":false,\"shutOutRealGamepads\":false,\"mute\":true,\"owners\":[\"{foreign}\"]}}");
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _harness.Sessions.ArmAsync(alpha, Loud, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(
+            $"{alpha} is armed by another godot-mcp server (pid {foreign.ProcessId}) with quiet=false, shutOutRealGamepads=false and "
+                + "mute=true; arm it with the same values, or disarm it in that server first.",
+            refused.Message
+        );
+        Assert.False(File.Exists(OverrideFile.PathIn(alpha)));
+        Assert.Equal([foreign], ArmFile.Read(alpha)!.Owners);
+        Assert.Empty(_harness.Sessions.ListArmed());
+    }
 
     [Fact]
     public async Task ArmWritesTheOverrideAndTheArmFileAndListsTheDormantGames()
@@ -60,6 +95,18 @@ public sealed class SessionArmTests : IAsyncDisposable
 
         Assert.False(removed);
         Assert.True(File.Exists(OverrideFile.PathIn(alpha)));
+    }
+
+    [Fact]
+    public async Task AHeadlessCallOnAnArmedFolderKeepsItsOverride()
+    {
+        string alpha = _harness.Project("alpha");
+        await _harness.Sessions.ArmAsync(alpha, Loud, TestContext.Current.CancellationToken);
+
+        HeadlessRunner.ClearFolder(_harness.Sessions, alpha);
+
+        Assert.True(File.Exists(OverrideFile.PathIn(alpha)));
+        Assert.Contains(OverrideOwner.Current, OverrideFile.LiveOwners(alpha));
     }
 
     [Fact]
@@ -249,6 +296,20 @@ public sealed class SessionArmTests : IAsyncDisposable
         Assert.All([alpha, beta], folder => Assert.False(File.Exists(ArmFile.PathIn(folder))));
         Assert.All([alpha, beta], folder => Assert.False(File.Exists(OverrideFile.PathIn(folder))));
         Assert.Empty(_harness.Sessions.ListArmed());
+    }
+
+    /// <summary>A child process that runs until the test ends, as the owner another live server would be.</summary>
+    private OverrideOwner StartForeignOwner()
+    {
+        _foreign = Process.Start(
+            new ProcessStartInfo("cmd.exe", "/c ping -n 60 127.0.0.1 >nul")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+            }
+        )!;
+        return new OverrideOwner(_foreign.Id, _foreign.StartTime.ToUniversalTime().Ticks);
     }
 
     /// <summary>Attaches as <paramref name="request"/> asks, dialling in as the game once the attach file is written; returns its content.</summary>

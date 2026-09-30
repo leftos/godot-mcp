@@ -43,6 +43,39 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
     }
 
     /// <summary>
+    /// Runs <paramref name="action"/> while the list is held alone, recording nothing, so a release of a folder's
+    /// override.cfg or a write of its armed.json never interleaves with another server's read-modify-write of them. A list that
+    /// cannot be opened is reported and <paramref name="action"/> runs all the same. Never call it while this thread already
+    /// holds the list: the open would be refused until the retry budget runs out.
+    /// </summary>
+    /// <param name="purpose">What the hold is for, as a failure to open the list reports it.</param>
+    /// <param name="action">The work done under the hold.</param>
+    public T Hold<T>(string purpose, Func<T> action)
+    {
+        using (TryOpen(purpose))
+        {
+            return action();
+        }
+    }
+
+    /// <inheritdoc cref="Hold{T}(string, Func{T})"/>
+    public void Hold(string purpose, Action action) =>
+        Hold(
+            purpose,
+            () =>
+            {
+                action();
+                return true;
+            }
+        );
+
+    /// <summary>
+    /// Deletes the folder's marked override.cfg when no live server owns it, under the list's hold; a file a live server owns
+    /// stays, this server's own included.
+    /// </summary>
+    public void RemoveStaleOverride(string projectDir) => Hold($"clearing {projectDir}", () => SweepOverride(projectDir));
+
+    /// <summary>
     /// Deletes the marked override.cfg and the armed.json of every listed folder whose owners have all exited, and drops from
     /// the list every folder that no longer holds either (an unmarked override.cfg is never touched). Never throws: a failure
     /// is reported with its folder, and a folder whose file could not be removed stays listed for the next sweep.

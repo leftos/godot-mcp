@@ -27,16 +27,31 @@ internal static class ArmFile
 
     /// <summary>
     /// Writes the file with <paramref name="settings"/> and this server among its owners, keeping the live owners of the file it
-    /// replaces and dropping the ones that have exited; creates <c>.godot/godot-mcp/</c> when it is missing.
+    /// replaces and dropping the ones that have exited; creates <c>.godot/godot-mcp/</c> when it is missing. A file another
+    /// live server armed is shared only when its settings are <paramref name="settings"/>.
     /// </summary>
+    /// <exception cref="SessionException">Another live server armed the folder with other settings.</exception>
     public static void Write(string projectDir, ArmSettings settings)
     {
         string path = PathIn(projectDir);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        List<OverrideOwner> owners = LiveOthers(Read(projectDir)?.Owners ?? []);
+        ArmedFile? existing = Read(projectDir);
+        List<OverrideOwner> owners = LiveOthers(existing?.Owners ?? []);
+        if (owners.Count > 0 && existing!.Settings != settings)
+        {
+            ArmSettings theirs = existing.Settings;
+            throw new SessionException(
+                $"{projectDir} is armed by another godot-mcp server (pid {owners[0].ProcessId}) with quiet={Flag(theirs.Quiet)}, "
+                    + $"shutOutRealGamepads={Flag(theirs.ShutOutRealGamepads)} and mute={Flag(theirs.Mute)}; arm it with the same values, "
+                    + "or disarm it in that server first."
+            );
+        }
+
         owners.Add(OverrideOwner.Current);
         WriteFile(path, settings, owners);
     }
+
+    private static string Flag(bool value) => value ? "true" : "false";
 
     /// <summary>
     /// Takes this server off the file's owners: deletes the file when no live owner is left, else rewrites it with the live

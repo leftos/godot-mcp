@@ -4,7 +4,14 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Changed
+
+- A session or arm on a folder another godot-mcp server uses with other `quiet`, `shutOutRealGamepads`, `mute` or bridge is refused, naming that server's pid.
+
 ### Fixed
+
+- Two servers ending sessions on one folder at once no longer lose an owner of its `override.cfg`, leaving the other's game without a bridge.
+- A headless tool call on a folder this server armed no longer deletes its `override.cfg`, so games started later still get the bridge.
 
 - A game going dormant again after `detach_project` now lets go of keys and input actions a drive left pressed, as it already did mouse and pad buttons.
 

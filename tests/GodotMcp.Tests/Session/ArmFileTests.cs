@@ -55,7 +55,7 @@ public sealed class ArmFileTests : IDisposable
     public void WriteKeepsALiveOwnerAndDropsADeadOne()
     {
         OverrideOwner foreign = StartForeignOwner();
-        WriteRaw($"{{\"quiet\":false,\"shutOutRealGamepads\":false,\"owners\":[\"{foreign}\",\"{Dead}\"]}}");
+        WriteRaw($"{{\"quiet\":true,\"shutOutRealGamepads\":true,\"mute\":false,\"owners\":[\"{foreign}\",\"{Dead}\"]}}");
 
         ArmFile.Write(_project.Path, QuietShutOut);
 

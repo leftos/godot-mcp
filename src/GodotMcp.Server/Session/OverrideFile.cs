@@ -46,13 +46,16 @@ internal static class OverrideFile
 
     /// <summary>
     /// Writes the marked file with this server among its owners, keeping the live owners of the marked file it replaces and
-    /// dropping the ones that have exited.
+    /// dropping the ones that have exited. A marked file another live server owns is shared only when it sets the same bridge,
+    /// pad and quiet settings as this write, and is then rewritten in this write's form.
     /// </summary>
     /// <param name="projectDir">The project folder.</param>
     /// <param name="bridgeScriptPath">The bridge script the autoload names.</param>
     /// <param name="shutOutRealGamepads">Whether the bridge shuts the machine's real pads out; the setting is written to match.</param>
     /// <param name="quiet">Whether the window is created unfocused and off-screen.</param>
-    /// <exception cref="SessionException">The project has its own override.cfg.</exception>
+    /// <exception cref="SessionException">
+    /// The project has its own override.cfg, or another live server's marked file injects another bridge or holds other settings.
+    /// </exception>
     public static void Write(string projectDir, string bridgeScriptPath, bool shutOutRealGamepads, bool quiet)
     {
         string path = PathIn(projectDir);
@@ -65,20 +68,10 @@ internal static class OverrideFile
             );
         }
 
-        List<OverrideOwner> owners = exists ? LiveOthers(Read(path).Owners) : [];
-        owners.Add(OverrideOwner.Current);
-
         string script = Path.GetFullPath(bridgeScriptPath).Replace('\\', '/');
-        string body =
-            $"[autoload]\n\n{AutoloadName}=\"*{script}\"\n\n[input_devices]\n\n"
-            + $"{IgnoreJoypadOnUnfocusedSetting}={(shutOutRealGamepads ? "true" : "false")}\n";
-        if (quiet)
-        {
-            body +=
-                $"\n[display]\n\n{NoFocusSetting}=true\n{InitialPositionTypeSetting}={AbsolutePositionType}\n"
-                + $"{InitialPositionSetting}={OffScreenPosition}\n";
-        }
-
+        string body = BodyFor(script, shutOutRealGamepads, quiet);
+        List<OverrideOwner> owners = exists ? SharersOf(projectDir, Read(path), new OverrideValues(script, quiet, shutOutRealGamepads)) : [];
+        owners.Add(OverrideOwner.Current);
         File.WriteAllText(path, Header(owners) + body, Utf8NoBom);
     }
 
@@ -133,6 +126,79 @@ internal static class OverrideFile
         return firstLine is not null && firstLine.TrimEnd() == Marker;
     }
 
+    private static string BodyFor(string script, bool shutOutRealGamepads, bool quiet)
+    {
+        string body =
+            $"[autoload]\n\n{AutoloadName}=\"*{script}\"\n\n[input_devices]\n\n" + $"{IgnoreJoypadOnUnfocusedSetting}={Flag(shutOutRealGamepads)}\n";
+        if (quiet)
+        {
+            body +=
+                $"\n[display]\n\n{NoFocusSetting}=true\n{InitialPositionTypeSetting}={AbsolutePositionType}\n"
+                + $"{InitialPositionSetting}={OffScreenPosition}\n";
+        }
+
+        return body;
+    }
+
+    /// <summary>
+    /// The live other owners of the marked file, which the write keeps as owners. Their file is compared by what it sets, not
+    /// by its text, so a file another version of the server wrote with the same bridge and settings is shared.
+    /// </summary>
+    /// <exception cref="SessionException">A live other owner's file injects another bridge or holds other settings.</exception>
+    private static List<OverrideOwner> SharersOf(string projectDir, ParsedFile existing, OverrideValues ours)
+    {
+        List<OverrideOwner> others = LiveOthers(existing.Owners);
+        OverrideValues theirs = ValuesIn(existing.Body);
+        if (others.Count > 0 && theirs != ours)
+        {
+            throw new SessionException(DescribeConflict(projectDir, theirs, ours, others[0]));
+        }
+
+        return others;
+    }
+
+    /// <summary>
+    /// What a body sets: the bridge its autoload line names (<c>an unreadable path</c> without one), whether it has the quiet
+    /// <c>[display]</c> section, and whether it shuts the real pads out.
+    /// </summary>
+    private static OverrideValues ValuesIn(string body) =>
+        new(
+            BridgeIn(body) ?? "an unreadable path",
+            body.Contains("[display]", StringComparison.Ordinal),
+            body.Contains($"{IgnoreJoypadOnUnfocusedSetting}=true", StringComparison.Ordinal)
+        );
+
+    /// <summary>Why a live other owner's file cannot be shared: its bridge path when it differs, else its settings.</summary>
+    private static string DescribeConflict(string projectDir, OverrideValues theirs, OverrideValues ours, OverrideOwner other)
+    {
+        if (theirs.Bridge != ours.Bridge)
+        {
+            return $"{projectDir}'s override.cfg injects the bridge from {theirs.Bridge} for another godot-mcp server (pid {other.ProcessId}); "
+                + $"this server's is {ours.Bridge}: two godot-mcp installs cannot share a folder at once.";
+        }
+
+        return $"{projectDir}'s override.cfg is in use by another godot-mcp server (pid {other.ProcessId}) with quiet={Flag(theirs.Quiet)} and "
+            + $"shutOutRealGamepads={Flag(theirs.ShutOutRealGamepads)}; start this session with the same values, or end that server's sessions "
+            + "on the folder first.";
+    }
+
+    /// <summary>The bridge script the body's autoload line names; null when it has none.</summary>
+    private static string? BridgeIn(string body)
+    {
+        string prefix = $"{AutoloadName}=\"*";
+        foreach (string line in body.Split('\n'))
+        {
+            if (line.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return line[prefix.Length..].TrimEnd().TrimEnd('"');
+            }
+        }
+
+        return null;
+    }
+
+    private static string Flag(bool value) => value ? "true" : "false";
+
     /// <summary>The owners that still run, leaving this server out.</summary>
     private static List<OverrideOwner> LiveOthers(IEnumerable<OverrideOwner> owners) =>
         [.. owners.Where(owner => owner != OverrideOwner.Current && owner.IsAlive()).Distinct()];
@@ -174,4 +240,7 @@ internal static class OverrideFile
     }
 
     private sealed record ParsedFile(IReadOnlyList<OverrideOwner> Owners, string Body);
+
+    /// <summary>What a marked file sets: the bridge script path as written, and the quiet and pad settings.</summary>
+    private sealed record OverrideValues(string Bridge, bool Quiet, bool ShutOutRealGamepads);
 }

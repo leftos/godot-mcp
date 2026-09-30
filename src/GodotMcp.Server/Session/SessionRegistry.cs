@@ -118,8 +118,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// server's exit carries a dormant bridge. Arming a folder again with the same settings changes nothing.
     /// </summary>
     /// <exception cref="SessionException">
-    /// The project is missing or has its own override.cfg, the folder is armed with other settings, or its live sessions run
-    /// with other settings.
+    /// The project is missing or has its own override.cfg, the folder is armed with other settings, its live sessions run
+    /// with other settings, or another live server's override.cfg or armed.json on it holds another bridge or other settings.
     /// </exception>
     public async Task<ArmState> ArmAsync(string projectPath, ArmSettings settings, CancellationToken cancellationToken)
     {
@@ -150,17 +150,23 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     public DisarmResult Disarm(string projectPath)
     {
         string projectDir = NormaliseProjectDir(projectPath);
-        lock (_lock)
-        {
-            if (!_armed.Remove(projectDir))
+        return OverrideFolders.Hold(
+            $"disarming {projectDir}",
+            () =>
             {
-                throw new SessionException($"{projectDir} is not armed; arm_project arms it.");
-            }
+                lock (_lock)
+                {
+                    if (!_armed.Remove(projectDir))
+                    {
+                        throw new SessionException($"{projectDir} is not armed; arm_project arms it.");
+                    }
 
-            ArmFile.Release(projectDir);
-            bool removed = !HasLiveSessionOn(projectDir, except: null) && OverrideFile.Release(projectDir);
-            return new DisarmResult(projectDir, removed);
-        }
+                    ArmFile.Release(projectDir);
+                    bool removed = !HasLiveSessionOn(projectDir, except: null) && OverrideFile.Release(projectDir);
+                    return new DisarmResult(projectDir, removed);
+                }
+            }
+        );
     }
 
     /// <summary>The folders this server has armed, ordered by path, each with its settings and its dormant games.</summary>
@@ -290,6 +296,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             session.Shutdown();
         }
 
+        OverrideFolders.Hold("the shutdown cleanup", () => ReleaseAtShutdown(sessions, armed));
+    }
+
+    /// <summary>Takes this server off the armed.json of every armed folder, then off the override.cfg of every folder it used.</summary>
+    private static void ReleaseAtShutdown(GodotSession[] sessions, string[] armed)
+    {
         foreach (string projectDir in armed)
         {
             AtShutdown(projectDir, () => ArmFile.Release(projectDir));
@@ -399,7 +411,9 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// Writes the marked override.cfg for a starting session, with this server among its owners, unless the folder is held
     /// (another live session uses it, or it is armed) and already has it; the folder is recorded in <see cref="OverrideFolders"/> first.
     /// </summary>
-    /// <exception cref="SessionException">The project has its own override.cfg.</exception>
+    /// <exception cref="SessionException">
+    /// The project has its own override.cfg, or another live server's marked one injects another bridge or holds other settings.
+    /// </exception>
     internal void WriteOverride(GodotSession session, string bridgeScript) =>
         WriteOverrideUnlessHeld(
             session.ProjectDir,
@@ -412,13 +426,17 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// Takes this server off the owners of the session's override.cfg unless the folder is held: another of its live sessions
     /// uses it, or it is armed. The file is deleted once no live server owns it. Returns whether it deleted the file.
     /// </summary>
-    internal bool ReleaseFolder(GodotSession session)
-    {
-        lock (_lock)
-        {
-            return !IsHeldByOther(session) && OverrideFile.Release(session.ProjectDir);
-        }
-    }
+    internal bool ReleaseFolder(GodotSession session) =>
+        OverrideFolders.Hold(
+            $"releasing {session.ProjectDir}",
+            () =>
+            {
+                lock (_lock)
+                {
+                    return !IsHeldByOther(session) && OverrideFile.Release(session.ProjectDir);
+                }
+            }
+        );
 
     /// <summary>The lock that lets one prep at a time build or import in a project folder.</summary>
     internal SemaphoreSlim PrepLock(string projectDir)
@@ -726,7 +744,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         {
             WriteOverrideUnlessHeld(projectDir, bridgeScript, settings, () => HasLiveSessionOn(projectDir, except: null));
             GitExclude.Ensure(projectDir, OverrideFile.FileName, logger);
-            ArmFile.Write(projectDir, settings);
+            OverrideFolders.Hold($"arming {projectDir}", () => ArmFile.Write(projectDir, settings));
         }
         catch
         {
@@ -745,13 +763,19 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     {
         try
         {
-            lock (_lock)
-            {
-                if (!HasLiveSessionOn(projectDir, except: null))
+            OverrideFolders.Hold(
+                $"releasing {projectDir}",
+                () =>
                 {
-                    OverrideFile.Release(projectDir);
+                    lock (_lock)
+                    {
+                        if (!HasLiveSessionOn(projectDir, except: null))
+                        {
+                            OverrideFile.Release(projectDir);
+                        }
+                    }
                 }
-            }
+            );
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -821,7 +845,9 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// Writes the marked override.cfg with this server among its owners, unless <paramref name="held"/> says this server
     /// already holds the folder and the file is there; the folder is recorded in <see cref="OverrideFolders"/> first.
     /// </summary>
-    /// <exception cref="SessionException">The project has its own override.cfg.</exception>
+    /// <exception cref="SessionException">
+    /// The project has its own override.cfg, or another live server's marked one injects another bridge or holds other settings.
+    /// </exception>
     private void WriteOverrideUnlessHeld(string projectDir, string bridgeScript, ArmSettings settings, Func<bool> held) =>
         OverrideFolders.RecordWhile(
             projectDir,
