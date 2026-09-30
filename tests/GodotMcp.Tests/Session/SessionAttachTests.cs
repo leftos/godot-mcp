@@ -533,6 +533,68 @@ public sealed class SessionAttachTests : IAsyncDisposable
         Assert.Equal("ANOTHER", JsonNode.Parse(File.ReadAllText(joinFile))!["token"]!.GetValue<string>());
     }
 
+    // Another server's plain attach on the folder rewrote the attach file with its own token while this one waited.
+    [Fact]
+    public async Task ATimedOutAttachLeavesAnAttachFileWithAnotherToken()
+    {
+        string alpha = _harness.Project("alpha");
+        string attachFile = AttachFile.PathIn(alpha);
+        Task<AttachResult> attach = _harness.Sessions.AttachAsync(
+            new AttachRequest(alpha, null, TimeSpan.FromSeconds(2), false, false, null),
+            TestContext.Current.CancellationToken
+        );
+        await RegistryHarness.WaitUntilAsync(() => File.Exists(attachFile) || attach.IsCompleted);
+        ArmSettings plain = new(Quiet: false, ShutOutRealGamepads: false, Mute: false);
+        AttachFile.Write(alpha, new BridgeEndpoint(51234, "ANOTHER"), plain);
+
+        await Assert.ThrowsAsync<SessionException>(() => attach);
+
+        Assert.True(File.Exists(attachFile));
+        Assert.Equal("ANOTHER", JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>());
+    }
+
+    // Another server holding the folder list stands for its write of an attach file between this one's token read and delete:
+    // the removal must wait for it. The hold stays well inside the list's 2 s retry budget.
+    [Fact]
+    public async Task AConnectedAttachWaitsForTheFolderListBeforeRemovingItsFile()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = _harness.Project("alpha");
+        string attachFile = AttachFile.PathIn(alpha);
+        Task<AttachResult> attach = _harness.Sessions.AttachAsync(
+            new AttachRequest(alpha, "server", RegistryHarness.LongWait, false, false, null),
+            cancellation
+        );
+        // The override is written after the attach file and takes the list too, so the hold starts once both are in place.
+        await RegistryHarness.WaitUntilAsync(() => File.Exists(attachFile) && File.Exists(OverrideFile.PathIn(alpha)));
+        string token = JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>();
+        using ManualResetEventSlim held = new();
+        using ManualResetEventSlim release = new();
+        var holder = Task.Run(
+            () =>
+                _harness.Sessions.OverrideFolders.Hold(
+                    "the test's hold",
+                    () =>
+                    {
+                        held.Set();
+                        release.Wait(cancellation);
+                    }
+                ),
+            cancellation
+        );
+        held.Wait(cancellation);
+
+        using FakeBridge game = await FakeBridge.DialAsync(_harness.Listener.Port, token, alpha, cancellation);
+        await Task.Delay(300, cancellation);
+        bool keptWhileHeld = File.Exists(attachFile) && !attach.IsCompleted;
+        release.Set();
+        await holder;
+        await attach;
+
+        Assert.True(keptWhileHeld);
+        Assert.False(File.Exists(attachFile));
+    }
+
     [Fact]
     public async Task ACallToAnAttachedGameThatClosedItsConnectionNamesStopAndDetach()
     {

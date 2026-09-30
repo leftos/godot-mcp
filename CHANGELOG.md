@@ -10,6 +10,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `godot-mcp.json`'s `prepWrapper` runs the prep's build and import through the project's own wrapper, such as its gate script, with `{log}` and `{ceiling}` tokens.
 - Live node paths take `%UniqueName`, alone (looked up in every scene, refused when several hold it) or after its owner's path, in every node-taking tool.
 
+### Fixed
+
+- A plain `attach_project` ending on a folder no longer deletes an attach file another server's waiting attach wrote since.
+
 ## 0.11.1 - 2026-09-30
 
 ### Changed

@@ -288,7 +288,11 @@ internal sealed partial class GodotSession
     )
     {
         // The attach file goes first: a game that starts between the two writes then finds it once override.cfg loads the bridge.
-        AttachFile.Write(ProjectDir, endpoint, new ArmSettings(Quiet, ShutOutRealGamepads, Mute));
+        // Under the folder list's hold, so it never lands between another server's read of the file's token and its delete.
+        registry.OverrideFolders.Hold(
+            $"writing the attach file in {ProjectDir}",
+            () => AttachFile.Write(ProjectDir, endpoint, new ArmSettings(Quiet, ShutOutRealGamepads, Mute))
+        );
         await WriteOverrideUnderPrepLockAsync(bridgeScript, cancellationToken);
         return await AcceptAttachedBridgeAsync(new HandshakeExpectation(endpoint.Token, ProjectDir), wait, cancellationToken);
     }
@@ -303,7 +307,10 @@ internal sealed partial class GodotSession
         Task<BridgeConnection> accepted = AcceptAttachedBridgeAsync(new HandshakeExpectation(endpoint.Token, ProjectDir), wait, abandon.Token);
         try
         {
-            DormantGames.WriteJoinFile(ProjectDir, pid, endpoint, new ArmSettings(Quiet, ShutOutRealGamepads, Mute));
+            registry.OverrideFolders.Hold(
+                $"writing the join file in {ProjectDir}",
+                () => DormantGames.WriteJoinFile(ProjectDir, pid, endpoint, new ArmSettings(Quiet, ShutOutRealGamepads, Mute))
+            );
         }
         catch
         {
@@ -316,19 +323,31 @@ internal sealed partial class GodotSession
     }
 
     /// <summary>
-    /// Deletes the file that told the game where to dial: the attach file, or a join's join file while it still carries this
-    /// join's token, since another join of the same game may have written its own since.
+    /// Deletes the file that told the game where to dial, the attach file or a join's join file, while it still carries this
+    /// attach's token, since another server's attach, or another join of the same game, may have written its own since. The
+    /// token is read and the file deleted under the folder list's hold, so no other server's write lands between the two.
     /// </summary>
     private void RemoveHandoffFile()
     {
-        if (JoinPid is not int pid)
+        if (_handoffToken is not { } token)
         {
-            AttachFile.Remove(ProjectDir);
+            return;
         }
-        else if (_handoffToken is { } token)
-        {
-            DormantGames.RemoveJoinFile(ProjectDir, pid, token);
-        }
+
+        registry.OverrideFolders.Hold(
+            $"removing the handoff file in {ProjectDir}",
+            () =>
+            {
+                if (JoinPid is int pid)
+                {
+                    DormantGames.RemoveJoinFile(ProjectDir, pid, token);
+                }
+                else
+                {
+                    AttachFile.Remove(ProjectDir, token);
+                }
+            }
+        );
     }
 
     private async Task<BridgeConnection> AcceptAttachedBridgeAsync(HandshakeExpectation expected, TimeSpan wait, CancellationToken cancellationToken)

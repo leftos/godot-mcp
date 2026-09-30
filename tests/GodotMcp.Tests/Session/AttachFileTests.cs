@@ -65,16 +65,40 @@ public sealed class AttachFileTests : IDisposable
     }
 
     [Fact]
-    public void RemoveDeletesTheFile()
+    public void RemoveWithItsTokenDeletesTheFile()
     {
         AttachFile.Write(_project.Path, new BridgeEndpoint(51234, "ABCDEF"), Plain);
 
-        Assert.True(AttachFile.Remove(_project.Path));
+        Assert.True(AttachFile.Remove(_project.Path, "ABCDEF"));
         Assert.False(File.Exists(AttachFile.PathIn(_project.Path)));
     }
 
     [Fact]
-    public void RemoveWithoutAFileDoesNothing() => Assert.False(AttachFile.Remove(_project.Path));
+    public void RemoveWithAnotherTokenLeavesTheFile()
+    {
+        AttachFile.Write(_project.Path, new BridgeEndpoint(51234, "ANOTHER"), Plain);
+
+        Assert.False(AttachFile.Remove(_project.Path, "ABCDEF"));
+        Assert.Equal("ANOTHER", JsonNode.Parse(File.ReadAllText(AttachFile.PathIn(_project.Path)))!["token"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void RemoveWithoutAFileDoesNothing() => Assert.False(AttachFile.Remove(_project.Path, "ABCDEF"));
+
+    [Theory]
+    [InlineData("{not json")]
+    [InlineData("{\"port\":51234}")]
+    [InlineData("{\"token\":42}")]
+    [InlineData("[\"ABCDEF\"]")]
+    public void RemoveLeavesAFileThatIsNotAnAttachFile(string content)
+    {
+        string path = AttachFile.PathIn(_project.Path);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, content);
+
+        Assert.False(AttachFile.Remove(_project.Path, "ABCDEF"));
+        Assert.Equal(content, File.ReadAllText(path));
+    }
 
     private bool WrittenMute(ArmSettings settings)
     {
