@@ -224,14 +224,27 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "plus error with path when the cut could not be made. A game a debugger is attached to is stopped all the same, and "
             + "the result's warning says its debug session ended with it. An attached session's game is asked to quit and killed "
             + "after 3 s in the same way; its exitCode is null, gameExitCode is the game's own, and the session is gone afterwards. "
-            + "detach_project leaves an attached game running instead."
+            + "detach_project leaves an attached game running instead. Stopping a session also stops the warm headless host "
+            + "on its folder (the Godot the headless tools keep running on a GDScript project) if it is idle, and "
+            + "headlessHostStopped says whether one was stopped; a warm host busy with a headless call is left running. With "
+            + "projectPath it stops that folder's warm headless host, waiting for a headless call running on it, and the session "
+            + "running there, if one does (with session too, both must name the same folder); when only a host ran there the "
+            + "result is {projectPath, headlessHostStopped}. A warm host holds its folder, so stop it this way before renaming "
+            + "or deleting the folder, as when removing a worktree."
     )]
     public async Task<string> StopProjectAsync(
         [Description(SessionDescription)] string? session = null,
+        [Description(
+            "The project folder to free: stops its warm headless host and the session running there, if one does. Leave it "
+                + "out to stop a session by name."
+        )]
+            string? projectPath = null,
         CancellationToken cancellationToken = default
     )
     {
-        StopResult result = await RunAsync(() => sessions.StopAsync(session, cancellationToken));
+        object result = projectPath is null
+            ? await RunAsync(() => sessions.StopAsync(session, cancellationToken))
+            : await RunAsync(() => sessions.StopFolderAsync(projectPath, session, cancellationToken));
         return JsonSerializer.Serialize(result, Json);
     }
 
@@ -308,11 +321,16 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "once it has ended, stopped or quit, what stop_project returns for it. A session whose run has ended is kept, "
             + "until its name is reused (detach_project and stop_project remove an attached one), and is listed only with includeStopped. armed "
             + "lists the folders this server has armed (arm_project), ordered by path: each one's projectPath, quiet, "
-            + "shutOutRealGamepads, mute and dormant, the games waiting there to be joined, each {pid, startedAt}."
+            + "shutOutRealGamepads, mute and dormant, the games waiting there to be joined, each {pid, startedAt}. "
+            + "headlessHosts lists the warm headless hosts, the Godot processes the headless tools keep running, one per "
+            + "GDScript project folder, ordered by path: each one's projectPath, pid, startedAt (UTC), requests (the headless "
+            + "calls it has taken) and idleSeconds since its last reply (0 while it runs one). A host idle for 5 minutes stops, "
+            + "at most 4 run at once (a fifth folder stops the least recently used idle one), and stop_project with "
+            + "projectPath stops one."
     )]
     public string ListSessions(
         [Description("Also list sessions whose run has stopped; they stay until their name is reused.")] bool includeStopped = false
-    ) => JsonSerializer.Serialize(new SessionList(sessions.List(includeStopped), sessions.ListArmed()), Json);
+    ) => JsonSerializer.Serialize(new SessionList(sessions.List(includeStopped), sessions.ListArmed(), sessions.ListHeadlessHosts()), Json);
 
     /// <summary>
     /// The project's godot-mcp.json, loaded from the normalised folder. An empty path gets an empty profile, so the launch

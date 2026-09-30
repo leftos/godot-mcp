@@ -189,7 +189,13 @@ internal sealed record StopResult(string Session, string ProjectPath, int? ExitC
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Warning { get; init; }
+
+    /// <summary>Whether the stop also stopped the warm headless host on the session's folder.</summary>
+    public bool HeadlessHostStopped { get; init; }
 }
+
+/// <summary>What stop_project returns when its projectPath had a warm headless host and no session running there.</summary>
+internal sealed record HostStopResult(string ProjectPath, bool HeadlessHostStopped);
 
 /// <summary>A game attach_project reached: its bridge said hello, and whether it was told to park its window.</summary>
 internal sealed record AttachResult(string Session, string ProjectPath, bool Quiet)
@@ -215,8 +221,17 @@ internal sealed record ArmState(string ProjectPath, bool Quiet, bool ShutOutReal
 /// <summary>How disarm_project left the project: whether the server's override.cfg was deleted.</summary>
 internal sealed record DisarmResult(string ProjectPath, bool OverrideRemoved);
 
-/// <summary>What list_sessions returns: the sessions it was asked for, ordered by name, and this server's armed folders.</summary>
-internal sealed record SessionList(IReadOnlyList<SessionInfo> Sessions, IReadOnlyList<ArmState> Armed);
+/// <summary>
+/// A warm headless host, as list_sessions reports it: its folder, its process, when it started (UTC), how many headless
+/// requests it has taken, and the whole seconds since its last reply (0 while it runs one).
+/// </summary>
+internal sealed record HeadlessHostInfo(string ProjectPath, int Pid, DateTimeOffset StartedAt, int Requests, int IdleSeconds);
+
+/// <summary>
+/// What list_sessions returns: the sessions it was asked for, ordered by name, this server's armed folders, and its warm
+/// headless hosts, ordered by folder.
+/// </summary>
+internal sealed record SessionList(IReadOnlyList<SessionInfo> Sessions, IReadOnlyList<ArmState> Armed, IReadOnlyList<HeadlessHostInfo> HeadlessHosts);
 
 /// <summary>
 /// The latest run's state and a page of each stream: its lines, and the number of the first of them (null when there are

@@ -226,6 +226,10 @@ internal sealed class HeadlessHost
     private readonly Lazy<Task> _release;
     private bool _busy;
     private bool _ended;
+    private int _requests;
+    private DateTimeOffset _lastReply;
+    private ITimer? _idleTimer;
+    private TimeSpan _idleLimit;
 
     private HeadlessHost(HostLaunch launch, IHostProcess process, BridgeConnection connection, LoadClock clock, ILogger logger)
     {
@@ -236,6 +240,8 @@ internal sealed class HeadlessHost
         _connection = connection;
         _clock = clock;
         _logger = logger;
+        StartedAt = clock.Time.GetUtcNow();
+        _lastReply = StartedAt;
         _release = new Lazy<Task>(() => Task.Run(ReleaseOnceAsync));
         Gone = Task.WhenAny(connection.Closed, process.WaitForExitAsync(CancellationToken.None));
     }
@@ -252,6 +258,21 @@ internal sealed class HeadlessHost
     public string LogPath { get; }
 
     public int ProcessId { get; }
+
+    /// <summary>When the host said hello, in UTC on the registry's clock.</summary>
+    public DateTimeOffset StartedAt { get; }
+
+    /// <summary>When the host last answered a request, in UTC on the registry's clock; <see cref="StartedAt"/> before its first.</summary>
+    public DateTimeOffset LastReply
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _lastReply;
+            }
+        }
+    }
 
     /// <summary>The folder's fingerprint taken after the host's last reply; null before its first.</summary>
     public ProjectFingerprint? Fingerprint { get; set; }
@@ -338,18 +359,114 @@ internal sealed class HeadlessHost
             }
 
             _busy = true;
+            _requests++;
             return true;
         }
     }
 
-    /// <summary>Marks the host idle after its request.</summary>
+    /// <summary>Marks the host idle after its request, notes the reply's time and re-arms the idle timer from it.</summary>
     public void EndRequest()
     {
         lock (_lock)
         {
             _busy = false;
+            _lastReply = _clock.Time.GetUtcNow();
+            _idleTimer?.Change(_idleLimit, Timeout.InfiniteTimeSpan);
         }
     }
+
+    /// <summary>
+    /// Calls <paramref name="onIdle"/> once <paramref name="limit"/> has passed on the registry's clock since the host's last
+    /// reply (its start before its first), re-armed by each reply. It may fire while a request runs; the callback decides.
+    /// Nothing for a host that has ended; the release disposes the timer.
+    /// </summary>
+    public void WatchIdle(TimeSpan limit, Action onIdle)
+    {
+        lock (_lock)
+        {
+            if (_ended)
+            {
+                return;
+            }
+
+            _idleLimit = limit;
+            _idleTimer = _clock.Time.CreateTimer(_ => onIdle(), null, limit, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    /// <summary>What list_sessions shows of the host at <paramref name="now"/>: idle seconds since its last reply, 0 while busy.</summary>
+    public HeadlessHostInfo Describe(DateTimeOffset now)
+    {
+        lock (_lock)
+        {
+            int idleSeconds = _busy ? 0 : (int)Math.Max(0, (now - _lastReply).TotalSeconds);
+            return new HeadlessHostInfo(ProjectDir, ProcessId, StartedAt, _requests, idleSeconds);
+        }
+    }
+
+    /// <summary>
+    /// Marks an idle host ended, so no request can begin on it, for the caller to stop with <see cref="StopClaimed"/>; false
+    /// when a request runs on it or it has already ended.
+    /// </summary>
+    public bool TryClaimIdle()
+    {
+        lock (_lock)
+        {
+            if (_busy || _ended)
+            {
+                return false;
+            }
+
+            _ended = true;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// <see cref="TryClaimIdle"/> for the idle timer: only a host idle for its whole idle limit since its last reply is claimed.
+    /// One that answered since the timer fired (or whose timer ran early) is kept, its timer re-armed for the rest of the limit.
+    /// </summary>
+    public bool TryClaimExpired()
+    {
+        lock (_lock)
+        {
+            if (_busy || _ended)
+            {
+                return false;
+            }
+
+            TimeSpan idle = _clock.Time.GetUtcNow() - _lastReply;
+            if (idle < _idleLimit)
+            {
+                _idleTimer?.Change(_idleLimit - idle, Timeout.InfiniteTimeSpan);
+                return false;
+            }
+
+            _ended = true;
+            return true;
+        }
+    }
+
+    /// <summary>Marks the host ended, whether or not a request runs on it; false when it had already ended.</summary>
+    public bool TryMarkEnded()
+    {
+        lock (_lock)
+        {
+            if (_ended)
+            {
+                return false;
+            }
+
+            _ended = true;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Stops a host the caller has marked ended (<see cref="TryClaimIdle"/>, <see cref="TryClaimExpired"/>,
+    /// <see cref="TryMarkEnded"/>) as <see cref="Stop"/> does, and completes once it is released, blocking no thread meanwhile.
+    /// </summary>
+    public Task StopClaimedAsync(string reason) => QuitAsync(reason, CancellationToken.None);
 
     /// <summary>Ends an idle host; false when a request is running on it or it has already ended.</summary>
     public bool TryEndIdle()
@@ -410,20 +527,22 @@ internal sealed class HeadlessHost
     /// <exception cref="OperationCanceledException">The caller stopped waiting; the host is still killed and let go of, without it.</exception>
     public void Stop(string reason, CancellationToken cancellationToken)
     {
-        lock (_lock)
+        if (TryMarkEnded())
         {
-            if (_ended)
-            {
-                return;
-            }
-
-            _ended = true;
+            QuitAsync(reason, cancellationToken).GetAwaiter().GetResult();
         }
+    }
 
+    /// <summary>
+    /// Ends the host once it is marked ended: <c>shutdown</c>, then the release, which kills whatever is left and is waited for.
+    /// </summary>
+    /// <exception cref="OperationCanceledException">The caller stopped waiting; the release runs on without it.</exception>
+    private async Task QuitAsync(string reason, CancellationToken cancellationToken)
+    {
         Task release;
         try
         {
-            AskToQuit(cancellationToken);
+            await AskToQuitAsync(cancellationToken);
         }
         finally
         {
@@ -432,7 +551,7 @@ internal sealed class HeadlessHost
             Log.HeadlessHostStopped(_logger, ProjectDir, ProcessId, reason);
         }
 
-        release.WaitAsync(cancellationToken).GetAwaiter().GetResult();
+        await release.WaitAsync(cancellationToken);
     }
 
     /// <summary>
@@ -579,6 +698,18 @@ internal sealed class HeadlessHost
 
     private async Task ReleaseOnceAsync()
     {
+        ITimer? idleTimer;
+        lock (_lock)
+        {
+            idleTimer = _idleTimer;
+            _idleTimer = null;
+        }
+
+        if (idleTimer is not null)
+        {
+            await idleTimer.DisposeAsync();
+        }
+
         _process.Kill();
         await _connection.DisposeAsync();
         await _process.FinishOutputAsync();
@@ -587,15 +718,17 @@ internal sealed class HeadlessHost
 
     /// <summary>Sends <c>shutdown</c> and waits for the exit, <see cref="ShutdownWait"/> in all; an unanswered one is logged.</summary>
     /// <exception cref="OperationCanceledException">The caller stopped waiting.</exception>
-    private void AskToQuit(CancellationToken cancellationToken)
+    private async Task AskToQuitAsync(CancellationToken cancellationToken)
     {
         var waited = Stopwatch.StartNew();
         try
         {
-            Task.Run(() => _connection.SendRawAsync("shutdown", null, ShutdownWait, cancellationToken), cancellationToken).GetAwaiter().GetResult();
+            cancellationToken.ThrowIfCancellationRequested();
+            await _connection.SendRawAsync("shutdown", null, ShutdownWait, cancellationToken);
             TimeSpan left = ShutdownWait - waited.Elapsed;
             TimeSpan wait = left > TimeSpan.Zero ? left : TimeSpan.Zero;
-            Task.Run(() => _process.WaitForExit(wait), CancellationToken.None).WaitAsync(cancellationToken).GetAwaiter().GetResult();
+            // The synchronous wait returns only once Windows lets go of the process (DEVELOPMENT.md footgun), so it runs off-thread.
+            await Task.Run(() => _process.WaitForExit(wait), CancellationToken.None).WaitAsync(cancellationToken);
         }
         catch (Exception e) when (e is TimeoutException or IOException or InvalidOperationException or ObjectDisposedException)
         {

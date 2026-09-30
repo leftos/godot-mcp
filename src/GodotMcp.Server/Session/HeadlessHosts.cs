@@ -8,10 +8,22 @@ namespace GodotMcp.Server.Session;
 /// which the caller holds; a host found stale (the folder's fingerprint changed since its last reply) or gone is replaced.
 /// A host that ends while idle is dropped at once, so it holds its folder no longer. A host taken out of the pool leaves its
 /// release behind as the folder's pending one, and no new host starts on the folder until it has finished, since the new
-/// host writes the same log.
+/// host writes the same log. A host idle for <see cref="IdleLimit"/> is stopped, and a new host that would make more than
+/// <see cref="MaxHosts"/> live ones (starts under way included) first stops the idle one whose last reply is oldest; a
+/// busy host is never stopped for either. A reply that says a resource its request named stayed cached (<c>stale</c>)
+/// stops its host. Those three stops, and a session stop's, run in the background as the folder's pending release.
 /// </summary>
 internal sealed class HeadlessHosts(SessionRegistry registry)
 {
+    /// <summary>The most live hosts the pool keeps; a new one beyond it stops the least recently used idle one.</summary>
+    public const int MaxHosts = 4;
+
+    /// <summary>How long a host is kept after its last reply, in wall time on the registry's clock.</summary>
+    public static readonly TimeSpan IdleLimit = TimeSpan.FromMinutes(5);
+
+    /// <summary>The key a host adds to its result object when a resource its request named stayed cached after the request.</summary>
+    private const string StaleKey = "stale";
+
     /// <summary>How two normalised folders compare as keys: without case on Windows, whose file system ignores it.</summary>
     private static readonly StringComparer FolderComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
@@ -20,6 +32,15 @@ internal sealed class HeadlessHosts(SessionRegistry registry)
 
     // The release of each folder's last host taken out of the pool, under _lock; a finished one stays until replaced.
     private readonly Dictionary<string, Task> _releases = new(FolderComparer);
+
+    // Hosts being started and not yet in _hosts, under _lock: each holds a place under the cap.
+    private int _starting;
+
+    /// <summary>
+    /// How an idle timer's check runs: on the thread pool, off the timer's thread. A test sets it to hold the check back, as a
+    /// busy pool would.
+    /// </summary>
+    internal Action<Action> IdleDispatch { get; set; } = check => _ = Task.Run(check);
 
     /// <summary>The process id of the folder's host; null when it has none.</summary>
     public int? ProcessIdOf(string projectDir)
@@ -64,7 +85,8 @@ internal sealed class HeadlessHosts(SessionRegistry registry)
             }
             finally
             {
-                _ = Retire(folder, current);
+                // A host a claimer took out of the pool (an idle or cap stop under way) is its to let go of, after its shutdown.
+                RetireIfHeld(folder, current);
             }
         }
 
@@ -73,31 +95,66 @@ internal sealed class HeadlessHosts(SessionRegistry registry)
 
     /// <summary>
     /// Runs one request on a host <see cref="AcquireAsync"/> gave; after the reply the folder's fingerprint is retaken, so the
-    /// host's own writes never count as a change. A host the request ended is dropped.
+    /// host's own writes never count as a change. A host the request ended is dropped; one whose reply says it is stale is
+    /// stopped, so the folder's next request starts a new one, and the flag is taken out of the result.
     /// </summary>
     /// <exception cref="SessionException">The request failed; see <see cref="HeadlessHost.RequestAsync"/>.</exception>
     public async Task<JsonObject> RunAsync(HeadlessHost host, HostRequest request, CancellationToken cancellationToken)
     {
+        bool stale = false;
         try
         {
-            return await host.RequestAsync(request, cancellationToken);
+            JsonObject result = await host.RequestAsync(request, cancellationToken);
+            stale = TakeStale(result);
+            return result;
         }
         finally
         {
-            if (host.HasEnded)
-            {
-                _ = Retire(host.ProjectDir, host);
-            }
-            else
-            {
-                host.Fingerprint = ProjectFingerprint.Take(host.ProjectDir);
-                host.EndRequest();
-            }
+            AfterRequest(host, stale);
         }
     }
 
-    /// <summary>Stops the folder's host, if it has one; the caller holds the folder's prep lock, so none of its requests runs.</summary>
-    public void StopFolder(string projectDir, string reason) => StopHost(ProjectPaths.Normalise(projectDir), reason, CancellationToken.None);
+    /// <summary>
+    /// Stops the folder's host, if it has one; the caller holds the folder's prep lock, so none of its requests runs.
+    /// </summary>
+    /// <returns>Whether the folder had a host.</returns>
+    public bool StopFolder(string projectDir, string reason) => StopHost(ProjectPaths.Normalise(projectDir), reason, CancellationToken.None);
+
+    /// <summary>
+    /// Stops the folder's host if it is idle now, without the folder's prep lock, and waits for the stop; a host running a
+    /// request is left running.
+    /// </summary>
+    /// <returns>Whether a host was stopped.</returns>
+    public async Task<bool> StopIfIdleAsync(string projectDir, string reason)
+    {
+        string folder = ProjectPaths.Normalise(projectDir);
+        Task stop;
+        lock (_lock)
+        {
+            if (!_hosts.TryGetValue(folder, out HeadlessHost? host) || !host.TryClaimIdle())
+            {
+                return false;
+            }
+
+            stop = QueueStopLocked(folder, host, reason);
+        }
+
+        await stop;
+        return true;
+    }
+
+    /// <summary>The hosts in the pool, ordered by folder, each as list_sessions shows it.</summary>
+    public IReadOnlyList<HeadlessHostInfo> List()
+    {
+        HeadlessHost[] hosts;
+        lock (_lock)
+        {
+            hosts = [.. _hosts.Values];
+        }
+
+        DateTimeOffset now = registry.Clock.Time.GetUtcNow();
+        return [.. hosts.Select(host => host.Describe(now)).OrderBy(info => info.ProjectPath, StringComparer.OrdinalIgnoreCase)];
+    }
 
     /// <summary>
     /// Stops every host and waits for each process to be gone, then for every release still under way, at most
@@ -120,7 +177,12 @@ internal sealed class HeadlessHosts(SessionRegistry registry)
         KeyValuePair<string, Task>[] pending;
         lock (_lock)
         {
-            pending = [.. _releases.Where(release => !release.Value.IsCompleted)];
+            // A host that had already ended when it was taken (a request failing it) is joined through its own release.
+            pending =
+            [
+                .. _releases.Where(release => !release.Value.IsCompleted),
+                .. hosts.Select(host => KeyValuePair.Create(host.ProjectDir, host.ReleaseAsync())).Where(release => !release.Value.IsCompleted),
+            ];
         }
 
         // A release that failed does not hold up the exit; one still running past the limit is logged and left behind.
@@ -138,6 +200,36 @@ internal sealed class HeadlessHosts(SessionRegistry registry)
     private static bool IsFresh(HeadlessHost host) =>
         host.IsAlive && host.Fingerprint is { } fingerprint && fingerprint.Equals(ProjectFingerprint.Take(host.ProjectDir));
 
+    /// <summary>Takes the host's <c>stale</c> flag out of its result object; true when it was there and true.</summary>
+    private static bool TakeStale(JsonObject result) =>
+        result.Remove(StaleKey, out JsonNode? flag) && flag is JsonValue value && value.TryGetValue(out bool stale) && stale;
+
+    /// <summary>
+    /// Settles a host after its request: a stale one is stopped, an ended one dropped, and a live one has the folder's
+    /// fingerprint retaken and is marked idle, which re-arms its idle timer.
+    /// </summary>
+    private void AfterRequest(HeadlessHost host, bool stale)
+    {
+        if (stale && host.TryMarkEnded())
+        {
+            lock (_lock)
+            {
+                _ = QueueStopLocked(host.ProjectDir, host, "a resource its request named stayed cached after its reply");
+            }
+
+            return;
+        }
+
+        if (host.HasEnded)
+        {
+            _ = Retire(host.ProjectDir, host);
+            return;
+        }
+
+        host.Fingerprint = ProjectFingerprint.Take(host.ProjectDir);
+        host.EndRequest();
+    }
+
     private HeadlessHost? Find(string folder)
     {
         lock (_lock)
@@ -147,15 +239,16 @@ internal sealed class HeadlessHosts(SessionRegistry registry)
     }
 
     /// <summary>Takes the folder's host out of the pool, if it has one, stops it and releases it.</summary>
+    /// <returns>Whether the folder had a host.</returns>
     /// <exception cref="OperationCanceledException">The caller stopped waiting for the stop; the host is still released.</exception>
-    private void StopHost(string folder, string reason, CancellationToken cancellationToken)
+    private bool StopHost(string folder, string reason, CancellationToken cancellationToken)
     {
         HeadlessHost? host;
         lock (_lock)
         {
             if (!_hosts.Remove(folder, out host))
             {
-                return;
+                return false;
             }
         }
 
@@ -167,31 +260,92 @@ internal sealed class HeadlessHosts(SessionRegistry registry)
         {
             _ = Retire(folder, host);
         }
+
+        return true;
     }
 
     /// <summary>
-    /// Starts the folder's new host once its last release has finished, and marks it busy; one that is gone before its first
-    /// request is a start failure.
+    /// Holds a place under the cap for a host about to start, counting the live hosts and the starts under way together, so
+    /// starts on several folders at once never pass <see cref="MaxHosts"/>. Over it, the idle host whose last reply is oldest
+    /// is claimed and stopped in the background; one that turns busy or ends first is passed over for the next. A busy host
+    /// is never stopped, so with every host busy the pool grows past the cap. It takes no prep lock: the host it stops is
+    /// idle, and a request on its folder then finds none and starts one after its release.
+    /// </summary>
+    private void ReserveSlot()
+    {
+        lock (_lock)
+        {
+            int live = _hosts.Values.Count(host => host.IsAlive && !host.HasEnded);
+            if (live + _starting + 1 > MaxHosts)
+            {
+                HeadlessHost[] oldestFirst = [.. _hosts.Values.Where(host => host.IsAlive).OrderBy(host => host.LastReply)];
+                if (oldestFirst.FirstOrDefault(host => host.TryClaimIdle()) is { } evicted)
+                {
+                    _ = QueueStopLocked(evicted.ProjectDir, evicted, "cap");
+                }
+            }
+
+            // Counted last, so a throw above holds no place.
+            _starting++;
+        }
+    }
+
+    /// <summary>
+    /// Claims and stops, in the background, a host whose idle timer fired, if it is still idle and has been for the whole idle
+    /// limit; outside the folder's prep lock, so a request arriving meanwhile finds no host and starts one after the release.
+    /// </summary>
+    private void StopIdle(string folder, HeadlessHost host)
+    {
+        lock (_lock)
+        {
+            if (host.TryClaimExpired())
+            {
+                _ = QueueStopLocked(folder, host, "idle");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Starts the folder's new host once its last release has finished, holding a place under the cap while it starts, and
+    /// marks it busy; one that is gone before its first request is a start failure.
     /// </summary>
     /// <exception cref="SessionException">The host could not be started, or ended before its first request.</exception>
     private async Task<HeadlessHost> StartAsync(string folder, string what, CancellationToken cancellationToken)
     {
         await AwaitReleaseAsync(folder, cancellationToken);
-        HeadlessHost started = await HeadlessHost.StartAsync(registry, folder, what, cancellationToken);
-        if (!started.TryBeginRequest())
+        ReserveSlot();
+        bool placed = false;
+        try
         {
-            SessionException failed = await started.EndAtStartAsync(what);
-            _ = Retire(folder, started);
-            throw failed;
-        }
+            HeadlessHost started = await HeadlessHost.StartAsync(registry, folder, what, cancellationToken);
+            if (!started.TryBeginRequest())
+            {
+                SessionException failed = await started.EndAtStartAsync(what);
+                _ = Retire(folder, started);
+                throw failed;
+            }
 
-        lock (_lock)
+            lock (_lock)
+            {
+                _hosts[folder] = started;
+                _starting--;
+                placed = true;
+            }
+
+            _ = DropWhenGoneAsync(folder, started);
+            started.WatchIdle(IdleLimit, () => IdleDispatch(() => StopIdle(folder, started)));
+            return started;
+        }
+        finally
         {
-            _hosts[folder] = started;
+            if (!placed)
+            {
+                lock (_lock)
+                {
+                    _starting--;
+                }
+            }
         }
-
-        _ = DropWhenGoneAsync(folder, started);
-        return started;
     }
 
     /// <summary>
@@ -203,16 +357,53 @@ internal sealed class HeadlessHosts(SessionRegistry registry)
     {
         lock (_lock)
         {
-            if (_hosts.TryGetValue(folder, out HeadlessHost? held) && ReferenceEquals(held, host))
-            {
-                _hosts.Remove(folder);
-            }
-
             Task release = host.ReleaseAsync();
-            bool pending = _releases.TryGetValue(folder, out Task? earlier) && !earlier.IsCompleted;
-            _releases[folder] = pending ? Task.WhenAll(earlier!, release) : release;
+            TrackLocked(folder, host, release);
             return release;
         }
+    }
+
+    /// <summary>
+    /// <see cref="Retire"/> for a host still in the pool; nothing for one another caller has already taken out, whose release
+    /// that caller records.
+    /// </summary>
+    private void RetireIfHeld(string folder, HeadlessHost host)
+    {
+        lock (_lock)
+        {
+            if (_hosts.TryGetValue(folder, out HeadlessHost? held) && ReferenceEquals(held, host))
+            {
+                TrackLocked(folder, host, host.ReleaseAsync());
+            }
+        }
+    }
+
+    /// <summary>
+    /// Takes a host the caller has claimed out of the pool and stops it on the thread pool (<c>shutdown</c>, then its release),
+    /// recording the stop as the folder's pending release, so the folder's next host and the server's exit wait for it. The
+    /// caller holds <c>_lock</c>.
+    /// </summary>
+    /// <returns>The stop.</returns>
+    private Task QueueStopLocked(string folder, HeadlessHost host, string reason)
+    {
+        var stop = Task.Run(() => host.StopClaimedAsync(reason));
+        TrackLocked(folder, host, stop);
+        return stop;
+    }
+
+    /// <summary>
+    /// Takes the host out of the pool, unless another has replaced it there, and records <paramref name="release"/> as the
+    /// folder's pending release, joined with any still under way. The caller holds <c>_lock</c>.
+    /// </summary>
+    private void TrackLocked(string folder, HeadlessHost host, Task release)
+    {
+        if (_hosts.TryGetValue(folder, out HeadlessHost? held) && ReferenceEquals(held, host))
+        {
+            _hosts.Remove(folder);
+        }
+
+        bool pending = _releases.TryGetValue(folder, out Task? earlier) && !earlier.IsCompleted;
+        _releases[folder] = pending ? Task.WhenAll(earlier!, release) : release;
     }
 
     /// <summary>

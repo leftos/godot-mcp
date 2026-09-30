@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using GodotMcp.IntegrationTests.Fixtures;
@@ -11,8 +12,8 @@ namespace GodotMcp.IntegrationTests;
 /// <summary>
 /// Warm headless hosts against the real Godot: consecutive headless calls on an InputProbe copy answered by one host, a
 /// file written outside, an import or a host killed between calls answered by a new one, a host killed during a request
-/// failing it with the log from its marker, the folder free once the registry is disposed, and a CsProbe copy's call run
-/// cold.
+/// failing it with the log from its marker, the folder free once the registry is disposed or stop_project names it, the
+/// host listed by list_sessions, and a CsProbe copy's call run cold.
 /// </summary>
 public sealed class WarmHeadlessTests : IAsyncDisposable
 {
@@ -119,6 +120,44 @@ public sealed class WarmHeadlessTests : IAsyncDisposable
         string moved = probe.Directory + "-moved";
         await MoveAsync(probe.Directory, moved, cancellation);
 
+        Assert.True(Directory.Exists(moved));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ListSessionsListsAWarmHost()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScene(probe.Directory, "First");
+        await TreeAsync(probe.Directory, cancellation);
+
+        JsonNode listed = JsonNode.Parse(new ProjectTools(_harness.Sessions).ListSessions())!;
+
+        JsonNode host = Assert.Single(listed["headlessHosts"]!.AsArray())!;
+        Assert.Equal(ProjectPaths.Normalise(probe.Directory), host["projectPath"]!.GetValue<string>());
+        Assert.Equal(Hosts.ProcessIdOf(probe.Directory), host["pid"]!.GetValue<int>());
+        Assert.True(host["requests"]!.GetValue<int>() >= 1, $"requests: {host["requests"]}");
+        Assert.True(host["idleSeconds"]!.GetValue<int>() >= 0, $"idleSeconds: {host["idleSeconds"]}");
+        Assert.Equal(TimeSpan.Zero, DateTimeOffset.Parse(host["startedAt"]!.GetValue<string>(), CultureInfo.InvariantCulture).Offset);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task StopProjectOnAFolderReleasesIt()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScene(probe.Directory, "First");
+        await TreeAsync(probe.Directory, cancellation);
+        Assert.NotNull(Hosts.ProcessIdOf(probe.Directory));
+
+        string stopped = await new ProjectTools(_harness.Sessions).StopProjectAsync(projectPath: probe.Directory, cancellationToken: cancellation);
+        string moved = probe.Directory + "-moved";
+        await MoveAsync(probe.Directory, moved, cancellation);
+
+        JsonNode result = JsonNode.Parse(stopped)!;
+        Assert.Equal(ProjectPaths.Normalise(probe.Directory), result["projectPath"]!.GetValue<string>());
+        Assert.True(result["headlessHostStopped"]!.GetValue<bool>(), stopped);
+        Assert.Null(Hosts.ProcessIdOf(probe.Directory));
         Assert.True(Directory.Exists(moved));
     }
 

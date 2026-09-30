@@ -10,11 +10,21 @@ extends SceneTree
 ## headless {op, params} runs operations.gd's run_request and answers {id, ok: true, result}, the
 ## result being what a cold run writes to its result file; ping answers {id, ok: true}; shutdown
 ## answers {id, ok: true} and quits. Before each headless request it prints
-## "[godot-mcp] request <id> <op>", so a failure can quote the log from its own request on. The
-## host quits once the connection is gone, or when it cannot dial.
+## "[godot-mcp] request <id> <op>", so a failure can quote the log from its own request on. A
+## headless reply whose request named a res:// resource the cache still holds afterwards carries
+## stale: true in its result, and the server then stops the host. The host runs at the engine's
+## headless floor (~145 iterations/s) for BUSY_LINGER_MS after answering, then at IDLE_MAX_FPS.
+## The host quits once the connection is gone, or when it cannot dial.
 
 const OperationsScript := preload("operations.gd")
 const SceneEdit := preload("scene_edit.gd")
+## The frame rate between requests, which keeps an idle host's CPU low.
+const IDLE_MAX_FPS := 30
+## How long after it last answered frames the host lifts its cap (max_fps 0), in wall
+## milliseconds. Headless, max_fps 0 is not uncapped: a window that cannot draw floors each
+## iteration's delay at low_processor_usage_mode_sleep_usec (6900 us, ~145 iterations/s). Godot
+## applies the cap at the end of each iteration, so the lift must outlast the frame it is set in.
+const BUSY_LINGER_MS := 1000
 const HOST := "127.0.0.1"
 const HEADER_BYTES := 4
 const MAX_FRAME_BYTES := 16 * 1024 * 1024
@@ -28,6 +38,7 @@ var _buffer: PackedByteArray = PackedByteArray()
 var _token: String = ""
 var _hello_sent := false
 var _quitting := false
+var _last_frames_ms: int = -BUSY_LINGER_MS
 
 
 ## The logger goes in first, before Godot creates the project's autoloads, as in operations.gd.
@@ -37,6 +48,7 @@ func _init() -> void:
 
 
 func _initialize() -> void:
+	Engine.max_fps = IDLE_MAX_FPS
 	for autoload in root.get_children():
 		autoload.free()
 	_start = _log.count()
@@ -123,7 +135,32 @@ static func _headless(
 	var op: String = str(params.get("op", ""))
 	print("[godot-mcp] request %d %s" % [id, op])
 	var op_params: Dictionary = params["params"] if params.get("params") is Dictionary else {}
-	return {"id": id, "ok": true, "result": OperationsScript.run_request(op, op_params, log, start)}
+	var result: Dictionary = OperationsScript.run_request(op, op_params, log, start)
+	if not cached_paths(op_params).is_empty():
+		result["stale"] = true
+	return {"id": id, "ok": true, "result": result}
+
+
+## The res:// paths among value's strings, walked through dictionaries' values and arrays, that
+## the resource cache still holds: something kept what a request loaded, so a later request could
+## read it stale. Scripts (.gd, .cs) are left out, since the script caches keep every script loaded.
+static func cached_paths(value: Variant) -> Array:
+	var found: Array = []
+	if value is Dictionary:
+		for item: Variant in (value as Dictionary).values():
+			found.append_array(cached_paths(item))
+	elif value is Array:
+		for item: Variant in value:
+			found.append_array(cached_paths(item))
+	elif value is String and _is_cached_resource(value):
+		found.append(value)
+	return found
+
+
+static func _is_cached_resource(path: String) -> bool:
+	if not path.begins_with("res://") or path.ends_with(".gd") or path.ends_with(".cs"):
+		return false
+	return ResourceLoader.has_cached(path)
 
 
 ## Reads what has arrived and answers every whole frame; a frame over the limit closes the host.
@@ -135,17 +172,42 @@ func _serve() -> void:
 			_buffer.append_array(chunk[1])
 	var taken: Dictionary = take_frames(_buffer)
 	_buffer = taken["rest"]
-	for text: String in taken["frames"]:
+	_answer_frames(taken["frames"])
+	if _quitting:
+		return
+	apply_pace(Time.get_ticks_msec(), _last_frames_ms)
+	if not (taken["error"] as String).is_empty():
+		push_error("godot-mcp host: %s; closing." % taken["error"])
+		_stream.disconnect_from_host()
+		_quitting = true
+
+
+## The frame cap for now_ms: 0 (the headless floor, ~145/s) while less than BUSY_LINGER_MS have
+## passed since the host last answered frames at last_frames_ms, IDLE_MAX_FPS after.
+static func fps_for(now_ms: int, last_frames_ms: int) -> int:
+	return 0 if now_ms - last_frames_ms < BUSY_LINGER_MS else IDLE_MAX_FPS
+
+
+## Sets Engine.max_fps to fps_for's cap, which Godot reads at the end of this iteration.
+static func apply_pace(now_ms: int, last_frames_ms: int) -> void:
+	var fps: int = fps_for(now_ms, last_frames_ms)
+	if Engine.max_fps != fps:
+		Engine.max_fps = fps
+
+
+## Answers each frame in order and notes when it finished; a shutdown stops the answering and
+## marks the host quitting.
+func _answer_frames(frames: Array) -> void:
+	if frames.is_empty():
+		return
+	for text: String in frames:
 		var answered: Dictionary = answer(text, _log, _start)
 		if not (answered["reply"] as Dictionary).is_empty():
 			_send(answered["reply"])
 		if answered["quit"]:
 			_quitting = true
-			return
-	if not (taken["error"] as String).is_empty():
-		push_error("godot-mcp host: %s; closing." % taken["error"])
-		_stream.disconnect_from_host()
-		_quitting = true
+			break
+	_last_frames_ms = Time.get_ticks_msec()
 
 
 ## Writes one frame; keys stay in the order they were set, as the cold run's result file keeps them.

@@ -112,7 +112,7 @@ public sealed class RestartTests : IAsyncDisposable
         McpException refused = await Assert.ThrowsAsync<McpException>(() => RestartAsync("first", cancellation));
         bool firstAnswered = await PingAsync("first", cancellation);
         int? firstProcessId = _harness.Sessions.List(includeStopped: true).Single(session => session.Name == "first").ProcessId;
-        await _project.StopProjectAsync("second", cancellation);
+        await _project.StopProjectAsync("second", cancellationToken: cancellation);
         JsonNode restarted = await RestartAsync("first", cancellation);
 
         Assert.Equal(

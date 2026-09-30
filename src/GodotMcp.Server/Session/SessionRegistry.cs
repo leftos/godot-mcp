@@ -198,6 +198,9 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         return [.. armed.Select(folder => DescribeArm(folder.Key, folder.Value))];
     }
 
+    /// <summary>The warm headless hosts, ordered by folder; empty, without making the pool, when no headless tool has run.</summary>
+    public IReadOnlyList<HeadlessHostInfo> ListHeadlessHosts() => Volatile.Read(ref _headlessHosts)?.List() ?? [];
+
     /// <summary>
     /// Runs <paramref name="capture"/> on a preview: the project started on the request's scene under a session of its own
     /// (<see cref="PreviewName"/>), which is stopped and forgotten however the call ends. The session takes the settings of
@@ -236,13 +239,44 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
     }
 
+    /// <summary>
+    /// Stops the named or only session, then the warm headless host on its folder if it is idle; a host running a request is
+    /// left running, without waiting for it.
+    /// </summary>
     /// <exception cref="SessionException">No session answers to the name, or it never reached a game.</exception>
-    public Task<StopResult> StopAsync(string? session, CancellationToken cancellationToken)
+    public async Task<StopResult> StopAsync(string? session, CancellationToken cancellationToken)
     {
         GodotSession target =
             TryResolve(session)
             ?? throw new SessionException("No Godot session has been started, so there is nothing to stop. Start one with run_project.");
-        return target.StopAsync(cancellationToken);
+        StopResult stopped = await target.StopAsync(cancellationToken);
+        bool hostStopped = Volatile.Read(ref _headlessHosts) is { } hosts && await hosts.StopIfIdleAsync(target.ProjectDir, "stop_project");
+        return stopped with { HeadlessHostStopped = hostStopped };
+    }
+
+    /// <summary>
+    /// stop_project on a folder: stops the session running there (the one <paramref name="session"/> names, else the only
+    /// live one on the folder) and the folder's warm headless host, waiting for a request running on it under the folder's
+    /// prep lock, so the folder can be renamed or deleted.
+    /// </summary>
+    /// <returns>The session's <see cref="StopResult"/>, or a <see cref="HostStopResult"/> when only a host ran there.</returns>
+    /// <exception cref="SessionException">
+    /// The folder holds no project, the named session runs another folder, several live sessions run there, the session never
+    /// reached a game, or neither a session nor a host runs there.
+    /// </exception>
+    public async Task<object> StopFolderAsync(string projectPath, string? session, CancellationToken cancellationToken)
+    {
+        string projectDir = NormaliseProjectDir(projectPath);
+        GodotSession? target = FindSessionIn(projectDir, session);
+        if (target is not null)
+        {
+            StopResult stopped = await target.StopAsync(cancellationToken);
+            return stopped with { HeadlessHostStopped = await StopHeadlessHostAsync(projectDir, cancellationToken) };
+        }
+
+        return await StopHeadlessHostAsync(projectDir, cancellationToken)
+            ? new HostStopResult(projectDir, HeadlessHostStopped: true)
+            : throw new SessionException($"No Godot session or warm headless host runs in {projectDir}.");
     }
 
     /// <summary>
@@ -520,6 +554,55 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         lock (_lock)
         {
             return FindSession(session);
+        }
+    }
+
+    /// <summary>
+    /// The session stop_project stops on the folder: the named one, which must run there, else the only live one there;
+    /// null when none is live there.
+    /// </summary>
+    /// <exception cref="SessionException">No session answers to the name, it runs another folder, or several live ones run there.</exception>
+    private GodotSession? FindSessionIn(string projectDir, string? session)
+    {
+        lock (_lock)
+        {
+            if (session is not null)
+            {
+                GodotSession named = FindSession(session)!;
+                return ProjectPaths.AreSame(named.ProjectDir, projectDir)
+                    ? named
+                    : throw new SessionException($"session '{named.Name}' runs {named.ProjectDir}, not projectPath {projectDir}; pass one of them.");
+            }
+
+            GodotSession[] live = [.. Ordered().Where(other => other.IsLive && ProjectPaths.AreSame(other.ProjectDir, projectDir))];
+            return live.Length <= 1
+                ? live.FirstOrDefault()
+                : throw new SessionException(
+                    $"Several sessions run in {projectDir}: {string.Join(", ", live.Select(other => other.Name))}; pass session to choose one."
+                );
+        }
+    }
+
+    /// <summary>
+    /// Stops the folder's warm headless host under the folder's prep lock, so it waits for a request running there; false,
+    /// without making the pool, when the folder has none.
+    /// </summary>
+    private async Task<bool> StopHeadlessHostAsync(string projectDir, CancellationToken cancellationToken)
+    {
+        if (Volatile.Read(ref _headlessHosts) is not { } hosts)
+        {
+            return false;
+        }
+
+        SemaphoreSlim folderLock = PrepLock(projectDir);
+        await folderLock.WaitAsync(cancellationToken);
+        try
+        {
+            return hosts.StopFolder(projectDir, "stop_project");
+        }
+        finally
+        {
+            folderLock.Release();
         }
     }
 

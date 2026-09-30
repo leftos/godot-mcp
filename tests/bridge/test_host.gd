@@ -89,6 +89,74 @@ func test_a_headless_request_answers_what_the_operation_returned() -> void:
 	assert_eq(reply["result"]["ok"], true, "the operation's ok")
 	assert_eq(reply["result"]["result"]["checked"], 0, "validate's result")
 	assert_eq(reply["result"]["engineErrors"], [], "nothing logged")
+	assert_true(
+		not reply["result"].has("stale"), "no stale flag when nothing it named stayed cached"
+	)
+
+
+func test_an_idle_host_runs_at_30_fps() -> void:
+	assert_eq(_host.IDLE_MAX_FPS, 30, "the idle frame rate")
+
+
+func test_the_host_runs_uncapped_for_a_second_after_it_answered() -> void:
+	assert_eq(_host.BUSY_LINGER_MS, 1000, "the linger")
+	assert_eq(_host.fps_for(5000, 5000), 0, "just after answering")
+	assert_eq(_host.fps_for(5000, 4001), 0, "999 ms after")
+	assert_eq(_host.fps_for(5000, 4000), 30, "a whole second after")
+	assert_eq(_host.fps_for(0, -_host.BUSY_LINGER_MS), 30, "before any request")
+
+
+func test_apply_pace_sets_the_engine_frame_cap() -> void:
+	var before: int = Engine.max_fps
+	Engine.max_fps = 30
+	_host.apply_pace(5000, 4500)
+	var busy: int = Engine.max_fps
+	_host.apply_pace(5000, 3000)
+	var idle: int = Engine.max_fps
+	Engine.max_fps = before
+	assert_eq(busy, 0, "uncapped within the linger")
+	assert_eq(idle, 30, "capped after it")
+
+
+func test_a_cached_resource_a_request_named_is_found_however_deep() -> void:
+	var held := Resource.new()
+	held.take_over_path("res://held_by_test_host.tres")
+	var params: Dictionary = {
+		"scene": "res://nowhere_cached.tscn",
+		"steps": [{"texture": "res://held_by_test_host.tres"}, 3, null],
+	}
+	assert_eq(_host.cached_paths(params), ["res://held_by_test_host.tres"], "the held path")
+
+
+func test_cached_scripts_are_not_counted() -> void:
+	var gd := Resource.new()
+	gd.take_over_path("res://held_by_test_host.gd")
+	var cs := Resource.new()
+	cs.take_over_path("res://held_by_test_host.cs")
+	assert_true(ResourceLoader.has_cached("res://held_by_test_host.gd"), "the .gd path is cached")
+	assert_true(ResourceLoader.has_cached("res://held_by_test_host.cs"), "the .cs path is cached")
+	var params: Dictionary = {
+		"script": "res://held_by_test_host.gd", "more": ["res://held_by_test_host.cs"]
+	}
+	assert_eq(_host.cached_paths(params), [], "scripts left out")
+
+
+func test_an_uncached_path_is_not_counted() -> void:
+	assert_eq(_host.cached_paths({"scene": "res://nowhere_cached.tscn"}), [], "nothing held")
+	assert_eq(_host.cached_paths({"note": "held_by_test_host.tres"}), [], "not a res:// path")
+
+
+func test_a_headless_reply_naming_a_held_resource_is_marked_stale() -> void:
+	var held := Resource.new()
+	held.take_over_path("res://held_by_test_reply.tres")
+	var request: Dictionary = {
+		"id": 13,
+		"command": "headless",
+		"params":
+		{"op": "validate", "params": {"targets": [], "also": "res://held_by_test_reply.tres"}},
+	}
+	var reply: Dictionary = _host.answer(JSON.stringify(request), _error_log.new(), 0)["reply"]
+	assert_eq(reply["result"]["stale"], true, "the stale flag")
 
 
 func test_each_headless_reply_carries_the_start_slice_and_no_earlier_request_s_errors() -> void:

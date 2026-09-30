@@ -27,6 +27,48 @@ public sealed class SessionResolutionTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task StopWithNeitherFoundIsRefused()
+    {
+        string alpha = ProjectPaths.Normalise(_harness.Project("alpha"));
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _harness.Sessions.StopFolderAsync(alpha, null, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal($"No Godot session or warm headless host runs in {alpha}.", refused.Message);
+    }
+
+    [Fact]
+    public async Task StopWithBothNamingDifferentFoldersIsRefused()
+    {
+        string alpha = ProjectPaths.Normalise(_harness.Project("alpha"));
+        string beta = ProjectPaths.Normalise(_harness.Project("beta"));
+        await _harness.StartWaitingAttachAsync(alpha, "server");
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _harness.Sessions.StopFolderAsync(beta, "server", TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal($"session 'server' runs {alpha}, not projectPath {beta}; pass one of them.", refused.Message);
+        Assert.Equal(["server"], _harness.Sessions.List(includeStopped: false).Select(session => session.Name));
+    }
+
+    [Fact]
+    public async Task StopWithProjectPathAndSeveralLiveSessionsThereIsRefused()
+    {
+        string alpha = ProjectPaths.Normalise(_harness.Project("alpha"));
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", null);
+        await _harness.StartWaitingAttachAsync(alpha, "client");
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _harness.Sessions.StopFolderAsync(alpha, null, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal($"Several sessions run in {alpha}: client, server; pass session to choose one.", refused.Message);
+        Assert.Equal(["client", "server"], _harness.Sessions.List(includeStopped: false).Select(session => session.Name));
+    }
+
+    [Fact]
     public async Task ResolvingAnUnknownNameListsTheSessions()
     {
         SessionException withNone = Assert.Throws<SessionException>(() => _harness.Sessions.Resolve("client"));
