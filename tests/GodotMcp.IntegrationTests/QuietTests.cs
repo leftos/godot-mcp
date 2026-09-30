@@ -33,6 +33,9 @@ public sealed class QuietTests : IAsyncDisposable
         + "\"driver\": AudioServer.get_driver_name()}";
     private const string ReadText = "return scene_tree.root.get_node(\"Main/TextInput\").text";
     private const string ReadMaxFps = "return Engine.max_fps";
+
+    // Whether the Master bus, index 0, is muted: what run_project's mute sets through the bridge.
+    private const string ReadMasterMute = "return AudioServer.is_bus_mute(0)";
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
     private readonly ProjectTools _project;
@@ -80,15 +83,33 @@ public sealed class QuietTests : IAsyncDisposable
         await LaunchAsync(false, cancellation);
 
         JsonNode state = await RunAsync(ReadWindowAndAudio);
+        bool muted = (await RunAsync(ReadMasterMute)).GetValue<bool>();
 
         Assert.True(state["onScreen"]!.GetValue<bool>(), state.ToJsonString());
         Assert.NotEqual("Dummy", state["driver"]!.GetValue<string>());
+        Assert.False(muted);
         if (OperatingSystem.IsWindows())
         {
             // The window check of the quiet test below can see a Godot window: a not-quiet one is on the caller's desktop.
             int game = _harness.Sessions.Resolve(null).GameProcessId!.Value;
             Assert.True(await Poll.UntilAsync(() => WindowOwners(visibleOnly: true).Contains(game), TimeSpan.FromSeconds(5), cancellation));
         }
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AMutedWatchedRunHasItsMasterBusMuted()
+    {
+        await _project.RunProjectAsync(
+            _probe.Directory,
+            options: new RunOptions(Quiet: false, Mute: true),
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        JsonNode state = await RunAsync(ReadWindowAndAudio);
+        bool muted = (await RunAsync(ReadMasterMute)).GetValue<bool>();
+
+        Assert.NotEqual("Dummy", state["driver"]!.GetValue<string>());
+        Assert.True(muted);
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

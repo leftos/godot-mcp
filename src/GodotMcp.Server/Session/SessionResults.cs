@@ -196,7 +196,7 @@ internal sealed record AttachResult(string Session, string ProjectPath, bool Qui
 internal sealed record DetachResult(string Session, string ProjectPath, bool OverrideRemoved);
 
 /// <summary>An armed folder, as arm_project and list_sessions report it: its settings and the dormant games waiting on it.</summary>
-internal sealed record ArmState(string ProjectPath, bool Quiet, bool ShutOutRealGamepads, IReadOnlyList<DormantGame> Dormant);
+internal sealed record ArmState(string ProjectPath, bool Quiet, bool ShutOutRealGamepads, bool Mute, IReadOnlyList<DormantGame> Dormant);
 
 /// <summary>How disarm_project left the project: whether the server's override.cfg was deleted.</summary>
 internal sealed record DisarmResult(string ProjectPath, bool OverrideRemoved);

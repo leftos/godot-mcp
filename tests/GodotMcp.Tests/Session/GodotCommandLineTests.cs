@@ -198,6 +198,28 @@ public sealed class GodotCommandLineTests
     }
 
     [Fact]
+    public void AsksTheBridgeToMuteOnlyAMutedRunThatIsNotQuiet()
+    {
+        BridgeEndpoint bridge = new(4321, "t0k3n");
+        var profile = ProjectProfile.Empty(Project);
+        LaunchRequest watchedMuted = profile.Merge(null, [], [], new RunOptions(Quiet: false, Mute: true)).Request;
+        LaunchRequest quietMuted = profile.Merge(null, [], [], new RunOptions(Quiet: true, Mute: true)).Request;
+        LaunchRequest watched = profile.Merge(null, [], [], new RunOptions(Quiet: false)).Request;
+
+        ProcessStartInfo muted = GodotCommandLine.CreateStartInfo("godot.exe", watchedMuted, bridge, moviePath: null);
+        // A restart relaunches the session's last request with only its prepare replaced.
+        ProcessStartInfo restarted = GodotCommandLine.CreateStartInfo("godot.exe", watchedMuted with { Prepare = false }, bridge, moviePath: null);
+        ProcessStartInfo quiet = GodotCommandLine.CreateStartInfo("godot.exe", quietMuted, bridge, moviePath: null);
+        ProcessStartInfo audible = GodotCommandLine.CreateStartInfo("godot.exe", watched, bridge, moviePath: null);
+
+        Assert.Equal("1", muted.Environment[GodotCommandLine.MuteVariable]);
+        Assert.Equal("1", restarted.Environment[GodotCommandLine.MuteVariable]);
+        Assert.False(quiet.Environment.ContainsKey(GodotCommandLine.MuteVariable));
+        Assert.Contains("Dummy", GodotCommandLine.BuildArguments(quietMuted, moviePath: null));
+        Assert.False(audible.Environment.ContainsKey(GodotCommandLine.MuteVariable));
+    }
+
+    [Fact]
     public void TellsTheBridgeItIsOnTheHiddenDesktopOnlyForAQuietWindowsRun()
     {
         BridgeEndpoint bridge = new(4321, "t0k3n");

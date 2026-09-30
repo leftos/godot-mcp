@@ -240,6 +240,35 @@ public sealed class ProjectProfileTests : IDisposable
         Assert.True(preset.Request.Quiet);
     }
 
+    [Fact]
+    public void AnExplicitMuteFalseOnAQuietRunIsRefused()
+    {
+        Write(Layered);
+        const string refusal = "options.mute: false cannot unmute a quiet run, which is always silent; pass options.quiet: false to hear the game.";
+
+        string byDefault = Refused(() => ProjectProfile.Empty(_temp.Path).Merge(null, [], [], new RunOptions(Mute: false)));
+        string byPreset = Refused(() => Merge(new RunOptions(Mute: false, Preset: "client")));
+        string byOption = Refused(() => Merge(new RunOptions(Quiet: true, Mute: false)));
+
+        Assert.Equal((refusal, refusal, refusal), (byDefault, byPreset, byOption));
+    }
+
+    [Fact]
+    public void MuteIsTakenOnAWatchedRunAndDefaultsToFalse()
+    {
+        Write(Layered);
+
+        ProfileLaunch watchedByProfile = Merge(new RunOptions(Mute: false));
+        ProfileLaunch muted = Merge(new RunOptions(Mute: true));
+        ProfileLaunch quietMuted = Merge(new RunOptions(Quiet: true, Mute: true));
+        ProfileLaunch leftOut = Merge(new RunOptions(Preset: "client"));
+
+        Assert.Equal((false, false), (watchedByProfile.Request.Quiet, watchedByProfile.Request.Mute));
+        Assert.Equal((false, true), (muted.Request.Quiet, muted.Request.Mute));
+        Assert.Equal((true, true), (quietMuted.Request.Quiet, quietMuted.Request.Mute));
+        Assert.Equal((true, false), (leftOut.Request.Quiet, leftOut.Request.Mute));
+    }
+
     private static string Refused(Func<object> action) => Assert.Throws<McpException>(action).Message;
 
     private ProfileLaunch Merge(RunOptions options, string? scene = null, string[]? userArgs = null, string[]? engineArgs = null) =>

@@ -80,7 +80,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     public async Task<LaunchResult> LaunchAsync(LaunchRequest request, string? session, CancellationToken cancellationToken)
     {
         string projectDir = NormaliseProjectDir(request.ProjectPath);
-        SessionSpec spec = new(NameFor(session, projectDir), projectDir, SessionKind.Run, request.ShutOutRealGamepads, request.Quiet);
+        SessionSpec spec = new(NameFor(session, projectDir), projectDir, SessionKind.Run, request.ShutOutRealGamepads, request.Quiet)
+        {
+            Mute = request.Mute,
+        };
         GodotSession created = await ReserveAsync(spec, defaultName: session is null);
         return await created.LaunchAsync(request with { ProjectPath = projectDir }, cancellationToken);
     }
@@ -101,7 +104,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         string bridgeScript = Installation.FindBridgeScript();
         int? joinPid = ChooseDormantGame(projectDir, request.Pid);
         ArmSettings settings = AttachSettings(projectDir, request);
-        SessionSpec spec = new(NameFor(request.Session, projectDir), projectDir, SessionKind.Attach, settings.ShutOutRealGamepads, settings.Quiet);
+        SessionSpec spec = new(NameFor(request.Session, projectDir), projectDir, SessionKind.Attach, settings.ShutOutRealGamepads, settings.Quiet)
+        {
+            Mute = settings.Mute,
+        };
         GodotSession created = await ReserveAsync(spec, defaultName: request.Session is null);
         return await created.AttachAsync(bridgeScript, joinPid, request.Wait, cancellationToken);
     }
@@ -398,7 +404,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         WriteOverrideUnlessHeld(
             session.ProjectDir,
             bridgeScript,
-            new ArmSettings(session.Quiet, session.ShutOutRealGamepads),
+            new ArmSettings(session.Quiet, session.ShutOutRealGamepads, session.Mute),
             () => IsHeldByOther(session)
         );
 
@@ -663,8 +669,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                 return armed == wanted
                     ? true
                     : throw new SessionException(
-                        $"{projectDir} is already armed with quiet={Flag(armed.Quiet)} and shutOutRealGamepads={Flag(armed.ShutOutRealGamepads)}; "
-                            + "disarm_project first to arm it with other settings."
+                        $"{projectDir} is already armed with quiet={Flag(armed.Quiet)}, shutOutRealGamepads={Flag(armed.ShutOutRealGamepads)} "
+                            + $"and mute={Flag(armed.Mute)}; disarm_project first to arm it with other settings."
                     );
             }
 
@@ -679,20 +685,21 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
-    /// An attach's pad and quiet settings: each the request's when given, else the value of this server's arm on the folder,
-    /// else false.
+    /// An attach's pad, quiet and mute settings: each the request's when given, else the value of this server's arm on the
+    /// folder, else false.
     /// </summary>
     private ArmSettings AttachSettings(string projectDir, AttachRequest request)
     {
-        ArmSettings? arm;
+        ArmSettings arm;
         lock (_lock)
         {
-            arm = _armed.GetValueOrDefault(projectDir);
+            arm = _armed.GetValueOrDefault(projectDir) ?? new ArmSettings(Quiet: false, ShutOutRealGamepads: false, Mute: false);
         }
 
         return new ArmSettings(
-            Quiet: request.Quiet ?? arm?.Quiet ?? false,
-            ShutOutRealGamepads: request.ShutOutRealGamepads ?? arm?.ShutOutRealGamepads ?? false
+            Quiet: request.Quiet ?? arm.Quiet,
+            ShutOutRealGamepads: request.ShutOutRealGamepads ?? arm.ShutOutRealGamepads,
+            Mute: request.Mute ?? arm.Mute
         );
     }
 
@@ -753,7 +760,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     private ArmState DescribeArm(string projectDir, ArmSettings settings) =>
-        new(projectDir, settings.Quiet, settings.ShutOutRealGamepads, Dormant.List(projectDir));
+        new(projectDir, settings.Quiet, settings.ShutOutRealGamepads, settings.Mute, Dormant.List(projectDir));
 
     /// <summary>
     /// The dormant game an attach joins: <paramref name="pid"/> when given, which must be one of the folder's; else the only
@@ -804,10 +811,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         GodotSession? onFolder = _sessions.Values.FirstOrDefault(other => other.IsLive && ProjectPaths.AreSame(other.ProjectDir, projectDir));
         if (onFolder is not null)
         {
-            return new ArmSettings(onFolder.Quiet, onFolder.ShutOutRealGamepads);
+            return new ArmSettings(onFolder.Quiet, onFolder.ShutOutRealGamepads, onFolder.Mute);
         }
 
-        return _armed.GetValueOrDefault(projectDir) ?? new ArmSettings(Quiet: true, ShutOutRealGamepads: false);
+        return _armed.GetValueOrDefault(projectDir) ?? new ArmSettings(Quiet: true, ShutOutRealGamepads: false, Mute: false);
     }
 
     /// <summary>
@@ -999,4 +1006,11 @@ internal sealed record SessionInfo(string Name, string ProjectPath, string Kind,
 /// its pad and quiet settings (the arm's when null on a folder this server armed, else false), and the dormant game to join
 /// (the only one when null, if any).
 /// </summary>
-internal sealed record AttachRequest(string ProjectPath, string? Session, TimeSpan Wait, bool? ShutOutRealGamepads, bool? Quiet, int? Pid);
+internal sealed record AttachRequest(string ProjectPath, string? Session, TimeSpan Wait, bool? ShutOutRealGamepads, bool? Quiet, int? Pid)
+{
+    /// <summary>
+    /// Whether the bridge mutes the game's Master bus: the arm's when null on a folder this server armed, else false. Unlike
+    /// quiet it may differ from the arm's and from the folder's other sessions: it is the game's alone.
+    /// </summary>
+    public bool? Mute { get; init; }
+}

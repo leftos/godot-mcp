@@ -5,11 +5,12 @@ extends Node
 ##
 ## Its files sit in the folder attach.json does, res://.godot/godot-mcp/, globalised: armed.json
 ## while arm_project keeps the folder armed, dormant/<pid>.json while this game waits, and
-## join-<pid>.json when the server joins it, holding {port, token, shutOutRealGamepads, quiet} as
-## attach.json does. While dormant it looks every POLL_MS: a join file is read and deleted, and a
-## valid one ends the wait with joined; armed.json gone ends it for good with disarmed.
+## join-<pid>.json when the server joins it, holding {port, token, shutOutRealGamepads, quiet,
+## mute} as attach.json does. While dormant it looks every POLL_MS: a join file is read and
+## deleted, and a valid one ends the wait with joined; armed.json gone ends it for good with
+## disarmed.
 
-## A join file held a valid endpoint, {port, token, shutOutRealGamepads, quiet}, to dial.
+## A join file held a valid endpoint, {port, token, shutOutRealGamepads, quiet, mute}, to dial.
 signal joined(endpoint: Dictionary)
 ## The folder was disarmed while this game waited: nothing will join it now.
 signal disarmed
@@ -31,6 +32,8 @@ const SOURCE_ENV := "env"
 const SOURCE_ATTACH := "attach"
 const SOURCE_JOIN := "join"
 const QUIET_VARIABLE := "GODOT_MCP_QUIET"
+## Set to "1" by the server for a run that is muted and not quiet: the bridge mutes its Master bus.
+const MUTE_VARIABLE := "GODOT_MCP_MUTE"
 const ATTACH_FILE := "attach.json"
 ## Set to "1" by the server for its headless runs, which load a live session's override.cfg: the
 ## bridge then stays off without looking for a server, and frees itself without a warning.
@@ -86,17 +89,17 @@ static func is_switched_off() -> bool:
 	return OS.get_environment(OFF_VARIABLE) == "1"
 
 
-## The server to dial, whether to shut the real pads out and whether to park the window, {port,
-## token, shutOutRealGamepads, quiet}: from the environment (env_endpoint), else the attach file
-## under dir (attach_endpoint); empty when there is neither.
+## The server to dial, whether to shut the real pads out, whether to park the window and whether to
+## mute the game, {port, token, shutOutRealGamepads, quiet, mute}: from the environment
+## (env_endpoint), else the attach file under dir (attach_endpoint); empty when there is neither.
 static func find_endpoint(dir: String) -> Dictionary:
 	var found: Dictionary = env_endpoint()
 	return found if not found.is_empty() else attach_endpoint(dir)
 
 
-## GODOT_MCP_PORT, GODOT_MCP_TOKEN, GODOT_MCP_SHUT_OUT_REAL_GAMEPADS and GODOT_MCP_QUIET from
-## run_project, as an endpoint; empty without a port and a token. override.cfg's joypad and window
-## settings are written to match, but the bridge reads only these.
+## GODOT_MCP_PORT, GODOT_MCP_TOKEN, GODOT_MCP_SHUT_OUT_REAL_GAMEPADS, GODOT_MCP_QUIET and
+## GODOT_MCP_MUTE from run_project, as an endpoint; empty without a port and a token.
+## override.cfg's joypad and window settings are written to match, but the bridge reads only these.
 static func env_endpoint() -> Dictionary:
 	var port_text: String = OS.get_environment("GODOT_MCP_PORT")
 	var token: String = OS.get_environment("GODOT_MCP_TOKEN")
@@ -107,6 +110,7 @@ static func env_endpoint() -> Dictionary:
 		"token": token,
 		"shutOutRealGamepads": OS.get_environment("GODOT_MCP_SHUT_OUT_REAL_GAMEPADS") == "1",
 		"quiet": OS.get_environment(QUIET_VARIABLE) == "1",
+		"mute": OS.get_environment(MUTE_VARIABLE) == "1",
 	}
 
 
@@ -141,9 +145,9 @@ static func decide_mode(
 	return MODE_OFF
 
 
-## The endpoint an attach or join file's text holds, {port, token, shutOutRealGamepads, quiet},
-## quiet also when quiet_variable (GODOT_MCP_QUIET=1) is; empty when the text is not a JSON object
-## with a port and a token.
+## The endpoint an attach or join file's text holds, {port, token, shutOutRealGamepads, quiet,
+## mute}, quiet also when quiet_variable (GODOT_MCP_QUIET=1) is, and a missing flag false; empty
+## when the text is not a JSON object with a port and a token.
 static func parse_endpoint(text: String, quiet_variable: bool) -> Dictionary:
 	var json := JSON.new()
 	if json.parse(text) != OK or not json.data is Dictionary:
@@ -156,6 +160,7 @@ static func parse_endpoint(text: String, quiet_variable: bool) -> Dictionary:
 		"token": str(found["token"]),
 		"shutOutRealGamepads": bool(found.get("shutOutRealGamepads", false)),
 		"quiet": quiet_variable or bool(found.get("quiet", false)),
+		"mute": bool(found.get("mute", false)),
 	}
 
 
@@ -207,6 +212,19 @@ static func armed_quiet(dir: String) -> bool:
 	if not FileAccess.file_exists(path) or json.parse(FileAccess.get_file_as_string(path)) != OK:
 		return false
 	return json.data is Dictionary and bool((json.data as Dictionary).get("quiet", false))
+
+
+## Whether a dormant game on an armed dir waits muted: armed.json asks for mute or for quiet, which
+## always silences; false when it is missing or malformed.
+static func armed_mute(dir: String) -> bool:
+	var path: String = armed_path(dir)
+	var json := JSON.new()
+	if not FileAccess.file_exists(path) or json.parse(FileAccess.get_file_as_string(path)) != OK:
+		return false
+	if not json.data is Dictionary:
+		return false
+	var armed: Dictionary = json.data
+	return bool(armed.get("mute", false)) or bool(armed.get("quiet", false))
 
 
 static func remove_file(path: String) -> void:

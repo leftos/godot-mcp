@@ -6,7 +6,7 @@ namespace GodotMcp.Server.Tools;
 /// <summary>
 /// How run_project sets up the game's window and pads, the session's name, whether the project is prepared first, and which
 /// preset of the project's godot-mcp.json it launches, whether it is recorded and whether its clips drop idle frames.
-/// <see cref="Quiet"/> is null when not given.
+/// <see cref="Quiet"/> and <see cref="Mute"/> are null when not given.
 /// </summary>
 internal sealed record RunOptions(
     [property: Description(
@@ -15,6 +15,7 @@ internal sealed record RunOptions(
             + "unless the project's godot-mcp.json sets quiet."
     )]
         bool? Quiet = null,
+    [property: Description(ProjectTools.MuteEffect + " Default false; false is refused on a quiet run, which is always silent.")] bool? Mute = null,
     [property: Description(ProjectTools.ShutOutDescription)] bool ShutOutRealGamepads = false,
     [property: Description(ProjectTools.NewSessionDescription)] string? Session = null,
     [property: Description(RunOptions.PrepareDescription)] string? Prepare = null,
@@ -48,9 +49,18 @@ internal sealed record RunOptions(
         + "(dotnet build; log in .godot/godot-mcp/build.log; a failed build refuses the launch with its compiler errors), then "
         + "run a Godot import when imported files are missing (log in .godot/godot-mcp/import.log). never: launch as it is.";
 
+    /// <summary>What refuses an explicit mute: false on a run whose quiet resolves true.</summary>
+    internal const string UnmuteQuietRefusal =
+        "options.mute: false cannot unmute a quiet run, which is always silent; pass options.quiet: false to hear the game.";
+
     /// <summary>Whether prepare asks for the prep: true for auto or when left out, false for never.</summary>
     /// <exception cref="McpException">prepare is anything else.</exception>
     internal bool ShouldPrepare() => ParsePrepare(Prepare);
+
+    /// <summary>Whether the bridge mutes the run: <see cref="Mute"/> when given, else false.</summary>
+    /// <param name="quiet">Whether the run is quiet, as the options and the project's godot-mcp.json resolve it.</param>
+    /// <exception cref="McpException">mute is false and the run is quiet.</exception>
+    internal bool MuteFor(bool quiet) => Mute == false && quiet ? throw new McpException(UnmuteQuietRefusal) : Mute ?? false;
 
     /// <summary>Whether a prepare value asks for the prep: true for auto or null, false for never.</summary>
     /// <exception cref="McpException">The value is anything else.</exception>

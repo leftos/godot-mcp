@@ -280,7 +280,7 @@ internal sealed partial class GodotSession
     )
     {
         // The attach file goes first: a game that starts between the two writes then finds it once override.cfg loads the bridge.
-        AttachFile.Write(ProjectDir, endpoint, ShutOutRealGamepads, Quiet);
+        AttachFile.Write(ProjectDir, endpoint, new ArmSettings(Quiet, ShutOutRealGamepads, Mute));
         await WriteOverrideUnderPrepLockAsync(bridgeScript, cancellationToken);
         return await AcceptAttachedBridgeAsync(new HandshakeExpectation(endpoint.Token, ProjectDir), wait, cancellationToken);
     }
@@ -295,7 +295,7 @@ internal sealed partial class GodotSession
         Task<BridgeConnection> accepted = AcceptAttachedBridgeAsync(new HandshakeExpectation(endpoint.Token, ProjectDir), wait, abandon.Token);
         try
         {
-            DormantGames.WriteJoinFile(ProjectDir, pid, endpoint, ShutOutRealGamepads, Quiet);
+            DormantGames.WriteJoinFile(ProjectDir, pid, endpoint, new ArmSettings(Quiet, ShutOutRealGamepads, Mute));
         }
         catch
         {

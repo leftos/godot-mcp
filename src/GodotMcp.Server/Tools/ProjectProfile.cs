@@ -88,22 +88,27 @@ internal sealed partial class ProjectProfile
     /// <c>--resolution WxH</c> ahead of every engine argument, so an explicit one wins.
     /// </summary>
     /// <returns>The request to launch, and the session name: options' session, else the preset's, else null for the default.</returns>
-    /// <exception cref="McpException">The preset is not in the file, or there is no file; or options' prepare is invalid.</exception>
+    /// <exception cref="McpException">
+    /// The preset is not in the file, or there is no file; or options' prepare is invalid; or options' mute is false on a quiet
+    /// run.
+    /// </exception>
     public ProfileLaunch Merge(string? scene, IReadOnlyList<string> userArgs, IReadOnlyList<string> engineArgs, RunOptions options)
     {
         ProfileValues preset = PresetFor(options.Preset);
+        bool quiet = QuietFor(preset, options.Quiet);
         LaunchRequest request = new(
             ProjectDir,
             scene ?? preset.Scene ?? _defaults.Scene,
             EngineArgsFor(preset, engineArgs),
             [.. _defaults.UserArgs, .. preset.UserArgs, .. userArgs],
-            QuietFor(preset, options.Quiet),
+            quiet,
             options.ShutOutRealGamepads,
             options.ShouldPrepare()
         )
         {
             Record = options.Record ?? false,
             DropIdle = options.DropIdle ?? false,
+            Mute = options.MuteFor(quiet),
         };
         return new ProfileLaunch(request, options.Session ?? preset.Session);
     }

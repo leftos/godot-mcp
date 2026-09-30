@@ -30,6 +30,7 @@ const CAPTURE_SCRIPT := "godot_mcp_capture.gd"
 const DOTNET_SCRIPT := "godot_mcp_dotnet.gd"
 const DORMANT_SCRIPT := "godot_mcp_dormant.gd"
 const WINDOW_SCRIPT := "godot_mcp_window.gd"
+const AUDIO_SCRIPT := "godot_mcp_audio.gd"
 ## The commands a cancel request can end early, answering the request at once for a run_script it
 ## stops and a call_method it stops awaiting (_cancel); the server cancels one when its
 ## load-adjusted allowance passes before the request's backstopMs.
@@ -122,6 +123,8 @@ var _state_dir: String = ""
 var _script_dir: String = ""
 ## The dormant waiter, a child made the first time the bridge goes dormant.
 var _dormant: Node
+## The mute (godot_mcp_audio.gd beside this script), a child made in _init.
+var _audio: Node
 ## How the bridge runs, one of the dormant script's MODE_* values, decided in _init.
 var _mode: String = ""
 ## Where _endpoint came from, one of the dormant script's SOURCE_* values; empty with no endpoint.
@@ -142,6 +145,8 @@ func _init() -> void:
 	_script_dir = script.resource_path.get_base_dir()
 	_dormant_script = load(_script_dir.path_join(DORMANT_SCRIPT)) as GDScript
 	_window = load(_script_dir.path_join(WINDOW_SCRIPT)) as GDScript
+	_audio = (load(_script_dir.path_join(AUDIO_SCRIPT)) as GDScript).new()
+	add_child(_audio)
 	_state_dir = ProjectSettings.globalize_path(_dormant_script.STATE_DIR)
 	var chosen: Dictionary = _dormant_script.choose(_state_dir)
 	_mode = chosen["mode"]
@@ -234,8 +239,8 @@ func _build_once() -> void:
 
 
 ## Serves endpoint, from source (a SOURCE_*; a join drops the errors logged before it): builds the
-## children once, sizes the window, parks it and caps the frame rate when quiet, shuts the real
-## pads out if asked, and dials; a dial refused at once in an armed folder goes dormant again.
+## children once, sizes the window, parks it and caps the frame rate when quiet, mutes as asked,
+## shuts the real pads out if asked, and dials; a dial refused at once when armed waits dormant.
 func _join(endpoint: Dictionary, source: String) -> void:
 	_build_once()
 	_endpoint = endpoint
@@ -249,6 +254,7 @@ func _join(endpoint: Dictionary, source: String) -> void:
 		_window.park_window()
 		if Engine.max_fps == 0:
 			Engine.max_fps = _window.QUIET_MAX_FPS
+	_audio.set_muted(endpoint["mute"])
 	if endpoint["shutOutRealGamepads"]:
 		_pads.shut_out_real_pads()
 	var port: int = endpoint["port"]
@@ -261,7 +267,7 @@ func _join(endpoint: Dictionary, source: String) -> void:
 		_dormant_if_armed()
 
 
-## Waits for attach_project to join, polling for a join file even while the game is paused.
+## Waits for attach_project to join, muted as the arm asks, polling for a join file even paused.
 func _go_dormant() -> void:
 	if _dormant == null:
 		_dormant = _dormant_script.new()
@@ -271,22 +277,26 @@ func _go_dormant() -> void:
 		_dormant.joined.connect(_join.bind(_dormant_script.SOURCE_JOIN))
 		_dormant.disarmed.connect(_on_disarmed)
 		add_child(_dormant)
+	_audio.set_muted(_dormant_script.armed_mute(_state_dir))
 	_dormant.enter()
 
 
 ## The folder was disarmed while the game waited: the bridge goes, as with no server.
 func _on_disarmed() -> void:
 	_window.restore_window()
+	_audio.set_muted(false)
 	queue_free()
 
 
 ## Goes dormant again when the endpoint came from attach.json or a join file and the folder is
-## still armed; a run's game, a headless one, or one in a disarmed folder stays idle.
+## still armed; a run's game, a headless one, or one in a disarmed folder stays idle, unmuted.
 func _dormant_if_armed() -> void:
 	var armed: bool = FileAccess.file_exists(_dormant_script.armed_path(_state_dir))
 	var headless: bool = _dormant_script.is_headless()
 	if _dormant_script.goes_dormant_again(_endpoint_source, armed, headless):
 		_go_dormant_again()
+	else:
+		_audio.set_muted(false)
 
 
 ## Forgets the connection that ended and a capture it ran, lets go of the injected input still

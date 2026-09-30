@@ -46,11 +46,19 @@ func test_parse_endpoint_reads_a_join_file() -> void:
 	assert_eq(endpoint.get("quiet"), true, "quiet")
 
 
+func test_parse_endpoint_reads_mute() -> void:
+	var text: String = '{"port": 4567, "token": "t0k", "quiet": false, "mute": true}'
+	assert_eq(_dormant_script.parse_endpoint(text, false).get("mute"), true, "mute true")
+	text = '{"port": 4567, "token": "t0k", "mute": false}'
+	assert_eq(_dormant_script.parse_endpoint(text, false).get("mute"), false, "mute false")
+
+
 func test_parse_endpoint_defaults_the_flags_and_lets_the_quiet_variable_force_quiet() -> void:
 	var text: String = '{"port": 1, "token": "t", "quiet": false}'
 	var plain: Dictionary = _dormant_script.parse_endpoint(text, false)
 	assert_eq(plain.get("shutOutRealGamepads"), false, "no shut-out key is no shut-out")
 	assert_eq(plain.get("quiet"), false, "quiet false stays false")
+	assert_eq(plain.get("mute"), false, "no mute key is no mute")
 	var forced: Dictionary = _dormant_script.parse_endpoint(text, true)
 	assert_eq(forced.get("quiet"), true, "GODOT_MCP_QUIET=1 makes it quiet")
 
@@ -115,6 +123,21 @@ func test_armed_quiet_reads_armed_json() -> void:
 	assert_true(_dormant_script.armed_quiet(dir), "quiet true")
 	_write(dir.path_join("armed.json"), "{broken")
 	assert_true(not _dormant_script.armed_quiet(dir), "a malformed armed.json is not quiet")
+	_remove_tree(dir)
+
+
+func test_armed_mute_is_the_arms_mute_or_quiet() -> void:
+	var dir: String = _fresh_dir("mute")
+	var armed: String = dir.path_join("armed.json")
+	assert_true(not _dormant_script.armed_mute(dir), "no armed.json is not muted")
+	_write(armed, '{"quiet": false, "mute": true}')
+	assert_true(_dormant_script.armed_mute(dir), "mute true")
+	_write(armed, '{"quiet": true, "shutOutRealGamepads": false}')
+	assert_true(_dormant_script.armed_mute(dir), "quiet alone, which always silences")
+	_write(armed, '{"quiet": false, "mute": false}')
+	assert_true(not _dormant_script.armed_mute(dir), "neither")
+	_write(armed, "{broken")
+	assert_true(not _dormant_script.armed_mute(dir), "a malformed armed.json is not muted")
 	_remove_tree(dir)
 
 

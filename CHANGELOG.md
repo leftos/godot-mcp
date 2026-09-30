@@ -4,7 +4,13 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `run_project`, `attach_project` and `arm_project` take `options.mute`, muting the game's Master bus so a watched or joined game plays no sound.
+
 ### Changed
+
+- A quiet `attach_project` or `arm_project` now mutes the game too, as a quiet run always has.
 
 - `stop_project` ends a session `attach_project` joined and quits its game, killing it after 3 s; `detach_project` still leaves the game running.
 - `arm_project` leaves `--headless` games alone, so `attach_project` never joins a smoke or test runner started on the armed folder.

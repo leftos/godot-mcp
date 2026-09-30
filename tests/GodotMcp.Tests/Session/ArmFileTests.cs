@@ -12,7 +12,7 @@ namespace GodotMcp.Tests.Session;
 public sealed class ArmFileTests : IDisposable
 {
     private static readonly OverrideOwner Dead = new(Environment.ProcessId, OverrideOwner.Current.StartTicks - 1);
-    private static readonly ArmSettings QuietShutOut = new(Quiet: true, ShutOutRealGamepads: true);
+    private static readonly ArmSettings QuietShutOut = new(Quiet: true, ShutOutRealGamepads: true, Mute: false);
 
     private readonly TempDirectory _project = new();
     private Process? _child;
@@ -37,6 +37,18 @@ public sealed class ArmFileTests : IDisposable
         JsonNode content = JsonNode.Parse(File.ReadAllText(_project.Combine(".godot", "godot-mcp", "armed.json")))!;
         Assert.Equal((true, true), (content["quiet"]!.GetValue<bool>(), content["shutOutRealGamepads"]!.GetValue<bool>()));
         Assert.Equal([OverrideOwner.Current.ToString()], content["owners"]!.AsArray().Select(owner => owner!.GetValue<string>()));
+    }
+
+    [Fact]
+    public void WriteHoldsTheMuteAndReadGivesItBack()
+    {
+        ArmSettings muted = new(Quiet: false, ShutOutRealGamepads: false, Mute: true);
+
+        ArmFile.Write(_project.Path, muted);
+
+        JsonNode content = JsonNode.Parse(File.ReadAllText(ArmFile.PathIn(_project.Path)))!;
+        Assert.Equal((false, true), (content["quiet"]!.GetValue<bool>(), content["mute"]!.GetValue<bool>()));
+        Assert.Equal(muted, ArmFile.Read(_project.Path)!.Settings);
     }
 
     [Fact]
@@ -74,7 +86,7 @@ public sealed class ArmFileTests : IDisposable
         Assert.False(deleted);
         ArmedFile armed = ArmFile.Read(_project.Path)!;
         Assert.Equal([foreign], armed.Owners);
-        Assert.Equal(new ArmSettings(Quiet: true, ShutOutRealGamepads: false), armed.Settings);
+        Assert.Equal(new ArmSettings(Quiet: true, ShutOutRealGamepads: false, Mute: false), armed.Settings);
     }
 
     [Fact]

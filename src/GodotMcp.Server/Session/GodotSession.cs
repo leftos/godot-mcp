@@ -14,8 +14,15 @@ internal enum SessionKind
     Attach,
 }
 
-/// <summary>What a session is created for: its name, its project folder, its kind, its pad setting and whether it runs quiet.</summary>
-internal sealed record SessionSpec(string Name, string ProjectDir, SessionKind Kind, bool ShutOutRealGamepads, bool Quiet);
+/// <summary>
+/// What a session is created for: its name, its project folder, its kind, its pad setting, whether it runs quiet and whether
+/// the bridge mutes the game.
+/// </summary>
+internal sealed record SessionSpec(string Name, string ProjectDir, SessionKind Kind, bool ShutOutRealGamepads, bool Quiet)
+{
+    /// <summary>Whether the session asked the bridge to mute the game's Master bus; a quiet game is silent either way.</summary>
+    public bool Mute { get; init; }
+}
 
 /// <summary>
 /// One named session in the <see cref="SessionRegistry"/>: a Godot run launched with the bridge injected, or a game
@@ -55,6 +62,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>Whether the session is quiet: a run started quiet, or an attach whose game parks its window.</summary>
     public bool Quiet { get; } = spec.Quiet;
+
+    /// <summary>Whether the session asked the bridge to mute the game's Master bus, apart from quiet.</summary>
+    public bool Mute { get; } = spec.Mute;
 
     /// <summary>
     /// The process the server started, once it has; null for an attached game. On Windows that is the Godot_console.exe

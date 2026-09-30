@@ -4,11 +4,14 @@ using System.Text.Json.Nodes;
 
 namespace GodotMcp.Server.Session;
 
-/// <summary>How an armed folder's games run: whether they park their window and whether they shut the real pads out.</summary>
-internal sealed record ArmSettings(bool Quiet, bool ShutOutRealGamepads);
+/// <summary>
+/// How an armed folder's games run: whether they park their window, whether they shut the real pads out, and whether the
+/// bridge mutes their Master bus.
+/// </summary>
+internal sealed record ArmSettings(bool Quiet, bool ShutOutRealGamepads, bool Mute);
 
 /// <summary>
-/// The file that arms a project folder: <c>{quiet, shutOutRealGamepads, owners}</c> at
+/// The file that arms a project folder: <c>{quiet, shutOutRealGamepads, mute, owners}</c> at
 /// <c>&lt;project&gt;/.godot/godot-mcp/armed.json</c>. While it exists, a game started on the folder with no server to dial
 /// keeps its bridge dormant, waiting for a join file, instead of freeing it. Its owners are the server processes that armed the
 /// folder, each as <see cref="OverrideOwner"/> writes it, so a server disarming it deletes the file only when no other live
@@ -65,7 +68,7 @@ internal static class ArmFile
 
     /// <summary>
     /// The folder's file: its settings and owners; null when there is none. A file that is not the expected JSON reads as one
-    /// with both settings false and no owners, so it counts as stale.
+    /// with every setting false and no owners, so it counts as stale.
     /// </summary>
     public static ArmedFile? Read(string projectDir)
     {
@@ -81,7 +84,7 @@ internal static class ArmFile
         }
         catch (Exception e) when (e is JsonException or InvalidOperationException or FormatException)
         {
-            return new ArmedFile(new ArmSettings(false, false), []);
+            return new ArmedFile(new ArmSettings(false, false, false), []);
         }
     }
 
@@ -93,12 +96,13 @@ internal static class ArmFile
     {
         if (content is null)
         {
-            return new ArmedFile(new ArmSettings(false, false), []);
+            return new ArmedFile(new ArmSettings(false, false, false), []);
         }
 
         bool quiet = content["quiet"]?.GetValue<bool>() ?? false;
         bool shutOut = content["shutOutRealGamepads"]?.GetValue<bool>() ?? false;
-        return new ArmedFile(new ArmSettings(quiet, shutOut), ParseOwners(content["owners"] as JsonArray));
+        bool mute = content["mute"]?.GetValue<bool>() ?? false;
+        return new ArmedFile(new ArmSettings(quiet, shutOut, mute), ParseOwners(content["owners"] as JsonArray));
     }
 
     /// <summary>The listed owners; an entry that is not an owner is skipped.</summary>
@@ -122,6 +126,7 @@ internal static class ArmFile
         {
             ["quiet"] = settings.Quiet,
             ["shutOutRealGamepads"] = settings.ShutOutRealGamepads,
+            ["mute"] = settings.Mute,
             ["owners"] = new JsonArray([.. owners.Select(owner => (JsonNode)JsonValue.Create(owner.ToString()))]),
         };
         File.WriteAllText(path, content.ToJsonString() + "\n", Utf8NoBom);

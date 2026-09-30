@@ -7,8 +7,9 @@ namespace GodotMcp.Tests.Session;
 /// <summary>Arming and disarming a folder: its override.cfg and armed.json, the settings they fix, and shutdown.</summary>
 public sealed class SessionArmTests : IAsyncDisposable
 {
-    private static readonly ArmSettings Loud = new(Quiet: false, ShutOutRealGamepads: false);
-    private static readonly ArmSettings Quiet = new(Quiet: true, ShutOutRealGamepads: false);
+    private static readonly ArmSettings Loud = new(Quiet: false, ShutOutRealGamepads: false, Mute: false);
+    private static readonly ArmSettings Quiet = new(Quiet: true, ShutOutRealGamepads: false, Mute: false);
+    private static readonly ArmSettings Muted = new(Quiet: false, ShutOutRealGamepads: false, Mute: true);
 
     private readonly RegistryHarness _harness = new();
 
@@ -22,7 +23,7 @@ public sealed class SessionArmTests : IAsyncDisposable
 
         ArmState armed = await _harness.Sessions.ArmAsync(alpha, Quiet, TestContext.Current.CancellationToken);
 
-        Assert.Equal((alpha, true, false), (armed.ProjectPath, armed.Quiet, armed.ShutOutRealGamepads));
+        Assert.Equal((alpha, true, false, false), (armed.ProjectPath, armed.Quiet, armed.ShutOutRealGamepads, armed.Mute));
         Assert.Equal(4101, Assert.Single(armed.Dormant).Pid);
         Assert.True(OverrideFile.IsOurs(OverrideFile.PathIn(alpha)));
         Assert.Equal(Quiet, ArmFile.Read(alpha)!.Settings);
@@ -84,6 +85,39 @@ public sealed class SessionArmTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task AnAttachWithoutMuteOnAMutedArmedFolderTakesTheArmsMute()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = _harness.Project("alpha");
+        ArmState armed = await _harness.Sessions.ArmAsync(alpha, Muted, cancellation);
+
+        (JsonNode written, FakeBridge game) = await AttachAndReadTheAttachFileAsync(
+            new AttachRequest(alpha, "server", RegistryHarness.LongWait, null, null, null)
+        );
+        using FakeBridge joined = game;
+
+        Assert.True(armed.Mute);
+        Assert.Equal((false, true), (written["quiet"]!.GetValue<bool>(), written["mute"]!.GetValue<bool>()));
+        Assert.True(_harness.Sessions.Resolve("server").Mute);
+    }
+
+    [Fact]
+    public async Task AnAttachWithAnotherMuteThanTheArmIsAccepted()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = _harness.Project("alpha");
+        await _harness.Sessions.ArmAsync(alpha, Muted, cancellation);
+
+        (JsonNode written, FakeBridge game) = await AttachAndReadTheAttachFileAsync(
+            new AttachRequest(alpha, "server", RegistryHarness.LongWait, null, null, null) { Mute = false }
+        );
+        using FakeBridge joined = game;
+
+        Assert.False(written["mute"]!.GetValue<bool>());
+        Assert.False(_harness.Sessions.Resolve("server").Mute);
+    }
+
+    [Fact]
     public async Task AnExplicitQuietFalseOnAQuietArmedFolderIsRefused()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -136,10 +170,28 @@ public sealed class SessionArmTests : IAsyncDisposable
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() => _harness.Sessions.ArmAsync(alpha, Loud, cancellation));
 
         Assert.Equal(
-            $"{alpha} is already armed with quiet=true and shutOutRealGamepads=false; disarm_project first to arm it with other settings.",
+            $"{alpha} is already armed with quiet=true, shutOutRealGamepads=false and mute=false; disarm_project first to arm it with "
+                + "other settings.",
             refused.Message
         );
         Assert.Equal(Quiet, ArmFile.Read(alpha)!.Settings);
+    }
+
+    [Fact]
+    public async Task ArmingAgainWithAnotherMuteIsRefused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = _harness.Project("alpha");
+        await _harness.Sessions.ArmAsync(alpha, Muted, cancellation);
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() => _harness.Sessions.ArmAsync(alpha, Loud, cancellation));
+
+        Assert.Equal(
+            $"{alpha} is already armed with quiet=false, shutOutRealGamepads=false and mute=true; disarm_project first to arm it with "
+                + "other settings.",
+            refused.Message
+        );
+        Assert.Equal(Muted, ArmFile.Read(alpha)!.Settings);
     }
 
     [Fact]
@@ -197,5 +249,18 @@ public sealed class SessionArmTests : IAsyncDisposable
         Assert.All([alpha, beta], folder => Assert.False(File.Exists(ArmFile.PathIn(folder))));
         Assert.All([alpha, beta], folder => Assert.False(File.Exists(OverrideFile.PathIn(folder))));
         Assert.Empty(_harness.Sessions.ListArmed());
+    }
+
+    /// <summary>Attaches as <paramref name="request"/> asks, dialling in as the game once the attach file is written; returns its content.</summary>
+    private async Task<(JsonNode Written, FakeBridge Game)> AttachAndReadTheAttachFileAsync(AttachRequest request)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string attachFile = AttachFile.PathIn(request.ProjectPath);
+        Task<AttachResult> attach = _harness.Sessions.AttachAsync(request, cancellation);
+        await RegistryHarness.WaitUntilAsync(() => File.Exists(attachFile) || attach.IsCompleted);
+        JsonNode written = JsonNode.Parse(File.ReadAllText(attachFile))!;
+        FakeBridge game = await FakeBridge.DialAsync(_harness.Listener.Port, written["token"]!.GetValue<string>(), request.ProjectPath, cancellation);
+        await attach;
+        return (written, game);
     }
 }

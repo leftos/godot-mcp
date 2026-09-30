@@ -108,8 +108,9 @@ public sealed class DormantGamesTests : IDisposable
     [Fact]
     public void TheJoinFileIsMovedIntoPlaceLeavingNoOtherFile()
     {
-        DormantGames.WriteJoinFile(_project.Path, 4101, new BridgeEndpoint(51234, "ABCDEF"), false, false);
-        DormantGames.WriteJoinFile(_project.Path, 4101, new BridgeEndpoint(51235, "FEDCBA"), false, false);
+        ArmSettings plain = new(Quiet: false, ShutOutRealGamepads: false, Mute: false);
+        DormantGames.WriteJoinFile(_project.Path, 4101, new BridgeEndpoint(51234, "ABCDEF"), plain);
+        DormantGames.WriteJoinFile(_project.Path, 4101, new BridgeEndpoint(51235, "FEDCBA"), plain);
 
         string folder = _project.Combine(".godot", "godot-mcp");
         Assert.Equal([Path.Combine(folder, "join-4101.json")], Directory.GetFiles(folder));
@@ -119,17 +120,23 @@ public sealed class DormantGamesTests : IDisposable
     [Fact]
     public void TheJoinFileHasTheAttachFilesShapeAndIsRemovedOnce()
     {
-        DormantGames.WriteJoinFile(_project.Path, 4101, new BridgeEndpoint(51234, "ABCDEF"), true, false);
+        DormantGames.WriteJoinFile(
+            _project.Path,
+            4101,
+            new BridgeEndpoint(51234, "ABCDEF"),
+            new ArmSettings(Quiet: false, ShutOutRealGamepads: true, Mute: true)
+        );
 
         string path = _project.Combine(".godot", "godot-mcp", "join-4101.json");
         JsonNode content = JsonNode.Parse(File.ReadAllText(path))!;
         Assert.Equal(
-            (51234, "ABCDEF", true, false),
+            (51234, "ABCDEF", true, false, true),
             (
                 content["port"]!.GetValue<int>(),
                 content["token"]!.GetValue<string>(),
                 content["shutOutRealGamepads"]!.GetValue<bool>(),
-                content["quiet"]!.GetValue<bool>()
+                content["quiet"]!.GetValue<bool>(),
+                content["mute"]!.GetValue<bool>()
             )
         );
         Assert.Equal(path, DormantGames.JoinPathIn(_project.Path, 4101));

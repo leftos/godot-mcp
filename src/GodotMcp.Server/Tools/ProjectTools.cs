@@ -31,12 +31,16 @@ internal sealed class ProjectTools(SessionRegistry sessions)
 
     /// <summary>What attach_project's and arm_project's quiet option does, without its default.</summary>
     internal const string AttachQuietEffect =
-        "Park the game's window off-screen and unfocused and cap it at 60 fps, as run_project's quiet does. Only a launcher can "
-        + "hide a window fully, so it still shows for a moment as the game starts; to silence it, launch the game with "
-        + "--audio-driver Dummy.";
+        "Park the game's window off-screen and unfocused and cap it at 60 fps, as run_project's quiet does, and mute it as "
+        + "mute does. Only a launcher can hide a window fully, so it still shows for a moment as the game starts.";
 
     /// <summary>arm_project's quiet option.</summary>
     internal const string AttachQuietDescription = AttachQuietEffect + " Default false.";
+
+    /// <summary>What run_project's, attach_project's and arm_project's mute option does, without its default.</summary>
+    internal const string MuteEffect =
+        "Silence the game by muting its Master audio bus through the bridge, for the whole session: the bus is muted again "
+        + "whenever the game unmutes it. Independent of quiet, which always silences the game.";
 
     /// <summary>What attach_project's quiet and shutOutRealGamepads are when left out.</summary>
     internal const string ArmedDefault = " Left out on an armed folder, the arm's value; else false.";
@@ -80,10 +84,11 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         )]
             string[]? engineArgs = null,
         [Description(
-            "{quiet, shutOutRealGamepads, session, prepare, preset, record, dropIdle}; when left out, quiet is true unless godot-mcp.json "
-                + "sets it, shutOutRealGamepads is false, prepare is auto (a stale C# assembly is built and missing imports are run "
-                + "first; the result's prep says what was done), no preset is used, the session is named by the preset's session, "
-                + "else after the project folder, record is false (with record, the result's recording.path is the movie), and dropIdle is false."
+            "{quiet, mute, shutOutRealGamepads, session, prepare, preset, record, dropIdle}; when left out, quiet is true unless "
+                + "godot-mcp.json sets it, mute and shutOutRealGamepads are false, prepare is auto (a stale C# assembly is built and "
+                + "missing imports are run first; the result's prep says what was done), no preset is used, the session is named by "
+                + "the preset's session, else after the project folder, record is false (with record, the result's recording.path "
+                + "is the movie), and dropIdle is false."
         )]
             RunOptions? options = null,
         CancellationToken cancellationToken = default
@@ -119,8 +124,8 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         [Description("The folder that holds the project's project.godot.")] string projectPath,
         [Description("How long to wait for the game's bridge to connect, 1 to 600 seconds, load-adjusted.")] int waitSeconds = 60,
         [Description(
-            "{quiet, shutOutRealGamepads, session, pid}; when left out, quiet and shutOutRealGamepads take the values the folder "
-                + "was armed with, else false, the session is named after the project folder, and the only dormant game on the "
+            "{quiet, mute, shutOutRealGamepads, session, pid}; when left out, quiet, mute and shutOutRealGamepads take the values the "
+                + "folder was armed with, else false, the session is named after the project folder, and the only dormant game on the "
                 + "folder is joined (with none, the attach waits for a launch)."
         )]
             AttachOptions? options = null,
@@ -140,7 +145,10 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             chosen.ShutOutRealGamepads,
             chosen.Quiet,
             chosen.Pid
-        );
+        )
+        {
+            Mute = chosen.Mute,
+        };
         AttachResult result = await RunAsync(() => sessions.AttachAsync(request, cancellationToken));
         return JsonSerializer.Serialize(result, Json);
     }
@@ -152,14 +160,15 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "attach_project can join. A game already running before this call has no bridge and cannot be joined; relaunch it. "
             + "Writes the bridge's override.cfg and .godot/godot-mcp/armed.json; the override.cfg stays until disarm_project or "
             + "the server exits, through detaches and stops. Arming again with the same options changes nothing; other options "
-            + "are refused until disarm_project, and so are options that differ from the live sessions' on the folder. The "
+            + "are refused until disarm_project, and so are a quiet or shutOutRealGamepads that differ from the live sessions' on "
+            + "the folder. The "
             + "result's dormant lists the games waiting to be joined, each {pid, startedAt}."
     )]
     public async Task<string> ArmProjectAsync(
         [Description("The folder that holds the project's project.godot.")] string projectPath,
         [Description(
-            "{quiet, shutOutRealGamepads}, as attach_project's options take them; both false when left out. An attach on the "
-                + "folder while it is armed must use the same values."
+            "{quiet, mute, shutOutRealGamepads}, as attach_project's options take them; all false when left out. An attach on "
+                + "the folder while it is armed must use the same quiet and shutOutRealGamepads; its mute may differ."
         )]
             ArmOptions? options = null,
         CancellationToken cancellationToken = default
@@ -167,7 +176,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     {
         ArmOptions chosen = options ?? new ArmOptions();
         ArmState result = await RunAsync(() =>
-            sessions.ArmAsync(projectPath, new ArmSettings(chosen.Quiet, chosen.ShutOutRealGamepads), cancellationToken)
+            sessions.ArmAsync(projectPath, new ArmSettings(chosen.Quiet, chosen.ShutOutRealGamepads, chosen.Mute), cancellationToken)
         );
         return JsonSerializer.Serialize(result, Json);
     }
@@ -299,7 +308,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "once it has ended, stopped or quit, what stop_project returns for it. A session whose run has ended is kept, "
             + "until its name is reused (detach_project and stop_project remove an attached one), and is listed only with includeStopped. armed "
             + "lists the folders this server has armed (arm_project), ordered by path: each one's projectPath, quiet, "
-            + "shutOutRealGamepads and dormant, the games waiting there to be joined, each {pid, startedAt}."
+            + "shutOutRealGamepads, mute and dormant, the games waiting there to be joined, each {pid, startedAt}."
     )]
     public string ListSessions(
         [Description("Also list sessions whose run has stopped; they stay until their name is reused.")] bool includeStopped = false

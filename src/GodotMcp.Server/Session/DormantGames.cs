@@ -67,13 +67,13 @@ internal sealed class DormantGames(Func<int, ProcessStart> probe, TextWriter err
     /// Writes the join file that wakes the dormant game <paramref name="pid"/>, replacing an older one, atomically: the game
     /// never finds it half-written.
     /// </summary>
-    public static void WriteJoinFile(string projectDir, int pid, BridgeEndpoint endpoint, bool shutOutRealGamepads, bool quiet)
+    public static void WriteJoinFile(string projectDir, int pid, BridgeEndpoint endpoint, ArmSettings settings)
     {
         string path = JoinPathIn(projectDir, pid);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         // Written whole under another name, then moved into place: the bridge deletes a join file it cannot parse.
         string temporary = path + ".tmp";
-        File.WriteAllText(temporary, AttachFile.EndpointJson(endpoint, shutOutRealGamepads, quiet), Utf8NoBom);
+        File.WriteAllText(temporary, AttachFile.EndpointJson(endpoint, settings), Utf8NoBom);
         File.Move(temporary, path, overwrite: true);
     }
 

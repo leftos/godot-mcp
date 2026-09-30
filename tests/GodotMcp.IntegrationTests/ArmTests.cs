@@ -203,6 +203,31 @@ public sealed class ArmTests : IAsyncDisposable
         Assert.Equal(60, state["maxFps"]!.GetValue<int>());
     }
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AMutedArmMutesTheJoinedGameWhileItWaitsAndDisarmingUnmutesIt()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string muteFile = Path.Combine(_probe.Directory, "master-mute.txt");
+
+        await _project.ArmProjectAsync(_probe.Directory, new ArmOptions(Mute: true), cancellation);
+        int pid = await StartDormantGameAsync(cancellation);
+        await _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, cancellationToken: cancellation);
+        bool mutedWhenJoined = (await RunAsync(WatchMasterMute(muteFile))).GetValue<bool>();
+        await _project.DetachProjectAsync(cancellationToken: cancellation);
+        bool dormantAgain = await Poll.UntilAsync(() => File.Exists(DormantFilePath(pid)), FileWait, cancellation);
+        bool? mutedWhileDormant = await ReadMasterMuteAsync(muteFile, cancellation);
+        await _project.DisarmProjectAsync(_probe.Directory);
+        bool idle = await Poll.UntilAsync(() => !File.Exists(DormantFilePath(pid)), FileWait, cancellation);
+        bool? mutedWhenIdle = await ReadMasterMuteAsync(muteFile, cancellation);
+
+        Assert.True(mutedWhenJoined);
+        Assert.True(dormantAgain);
+        Assert.True(mutedWhileDormant);
+        Assert.True(idle);
+        Assert.False(mutedWhenIdle);
+        Assert.False(_games[^1].HasExited);
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task APidThatIsNotDormantIsRefused()
     {
@@ -313,6 +338,62 @@ public sealed class ArmTests : IAsyncDisposable
             }
 
             game.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// A run_script body that adds a node writing "&lt;frame&gt; &lt;true|false&gt;" to <paramref name="file"/> every frame,
+    /// the Master bus's mute after that many frames, so the game can be watched while no session is attached to it; it
+    /// returns the mute as it is now.
+    /// </summary>
+    private static string WatchMasterMute(string file)
+    {
+        string path = file.Replace('\\', '/');
+        string source =
+            "extends Node\\n\\nvar frames: int = 0\\n\\n\\nfunc _process(_delta: float) -> void:\\n\\tframes += 1\\n"
+            + $"\\tvar file := FileAccess.open(\\\"{path}\\\", FileAccess.WRITE)\\n"
+            + "\\tfile.store_string(\\\"%d %s\\\" % [frames, AudioServer.is_bus_mute(0)])\\n";
+        return $"var script := GDScript.new()\n\tscript.source_code = \"{source}\"\n\tscript.reload()\n\t"
+            + "var watcher := Node.new()\n\twatcher.set_script(script)\n\twatcher.process_mode = Node.PROCESS_MODE_ALWAYS\n\t"
+            + "scene_tree.root.add_child.call_deferred(watcher)\n\treturn AudioServer.is_bus_mute(0)";
+    }
+
+    /// <summary>
+    /// The Master bus's mute as the watcher (<see cref="WatchMasterMute"/>) wrote it in a frame that began after this call: the
+    /// frame it finds written first may have run before, so its next one is read. Null when none comes within the wait.
+    /// </summary>
+    private static async Task<bool?> ReadMasterMuteAsync(string file, CancellationToken cancellationToken)
+    {
+        (int Frame, bool Muted)? first = null;
+        (int Frame, bool Muted)? later = null;
+        await Poll.UntilAsync(
+            () =>
+            {
+                (int Frame, bool Muted)? read = ReadWatcher(file);
+                first ??= read;
+                later = read is { } now && first is { } then && now.Frame > then.Frame ? now : null;
+                return later is not null;
+            },
+            FileWait,
+            cancellationToken
+        );
+        return later?.Muted;
+    }
+
+    /// <summary>The watcher's last line, (frame, muted); null while the file is missing, being written or held by the game.</summary>
+    private static (int Frame, bool Muted)? ReadWatcher(string file)
+    {
+        try
+        {
+            string[] parts = File.ReadAllText(file).Split(' ');
+            return parts.Length == 2 && int.TryParse(parts[0], CultureInfo.InvariantCulture, out int frame) && bool.TryParse(parts[1], out bool muted)
+                ? (frame, muted)
+                : null;
+        }
+        catch (IOException)
+        {
+            // Missing, or open in the game for this frame's write.
+            return null;
         }
     }
 

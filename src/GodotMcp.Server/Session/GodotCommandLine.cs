@@ -30,6 +30,12 @@ internal sealed record LaunchRequest(
     public bool DropIdle { get; init; }
 
     /// <summary>
+    /// Whether the bridge mutes the game's Master bus. A quiet run needs no mute, since its Dummy audio driver plays nothing,
+    /// so only a mute without <see cref="Quiet"/> reaches the bridge (<see cref="GodotCommandLine.MuteVariable"/>).
+    /// </summary>
+    public bool Mute { get; init; }
+
+    /// <summary>
     /// Whether the run is preview_scene's: the bridge pauses the game before its scene's first frame and frames a 3D scene
     /// that has no current camera.
     /// </summary>
@@ -45,6 +51,9 @@ internal static partial class GodotCommandLine
     public const string PortVariable = "GODOT_MCP_PORT";
     public const string TokenVariable = "GODOT_MCP_TOKEN";
     public const string QuietVariable = "GODOT_MCP_QUIET";
+
+    /// <summary>Set to "1" for a run that is muted and not quiet: the bridge mutes the game's Master bus.</summary>
+    public const string MuteVariable = "GODOT_MCP_MUTE";
     public const string ShutOutRealGamepadsVariable = "GODOT_MCP_SHUT_OUT_REAL_GAMEPADS";
     public const string PreviewVariable = "GODOT_MCP_PREVIEW";
 
@@ -307,6 +316,7 @@ internal static partial class GodotCommandLine
         startInfo.Environment[PortVariable] = bridge.Port.ToString(CultureInfo.InvariantCulture);
         startInfo.Environment[TokenVariable] = bridge.Token;
         SetFlag(startInfo, QuietVariable, request.Quiet);
+        SetFlag(startInfo, MuteVariable, request.Mute && !request.Quiet);
         SetFlag(startInfo, ShutOutRealGamepadsVariable, request.ShutOutRealGamepads);
         SetFlag(startInfo, PreviewVariable, request.Preview);
         SetFlag(startInfo, HiddenDesktopVariable, UsesHiddenDesktop(request.Quiet));
