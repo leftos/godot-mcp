@@ -485,13 +485,16 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
             _tools.SaveSceneAsync(csProbe.Directory, "main.tscn", cancellationToken: cancellation)
         );
 
-        // The refusal quotes the build's configuration and its compiler errors; the missing class is what Godot logs while the scene loads.
+        // The refusal quotes the build's configuration and its compiler errors; the missing class, which Godot logs while the
+        // scene loads, is counted rather than quoted.
         Assert.StartsWith(
             "save_scene failed: res://main.tscn uses C# scripts and the project's Debug C# build failed; fix it first:\n",
             refused.Message,
             StringComparison.Ordinal
         );
-        Assert.Contains("CsProbeNode.cs:10: CS1002 ; expected\nGodot logged:\n", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("CsProbeNode.cs:10: CS1002 ; expected\n", refused.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("associated class could not be found", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("a missing C# assembly causes, left out: the build failed)", refused.Message, StringComparison.Ordinal);
         Assert.Equal(before, File.ReadAllText(scene));
     }
 
@@ -586,13 +589,15 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
             _tools.SaveSceneAsync(csProbe.Directory, "holder.tscn", cancellationToken: cancellation)
         );
 
-        // The C# script's missing class is what Godot logs while the instanced scene loads.
+        // The C# script's missing class, which Godot logs while the instanced scene loads, is counted rather than quoted.
         Assert.StartsWith(
             "save_scene failed: res://holder.tscn uses C# scripts and the project's Debug C# build failed; fix it first:\n",
             refused.Message,
             StringComparison.Ordinal
         );
-        Assert.Contains("CsProbeNode.cs:10: CS1002 ; expected\nGodot logged:\n", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("CsProbeNode.cs:10: CS1002 ; expected\n", refused.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("associated class could not be found", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("a missing C# assembly causes, left out: the build failed)", refused.Message, StringComparison.Ordinal);
         Assert.Equal(before, File.ReadAllText(scene));
     }
 

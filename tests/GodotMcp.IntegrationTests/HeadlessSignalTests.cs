@@ -222,9 +222,11 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
             _tools.ConnectSignalAsync(csProbe.Directory, "main.tscn", ".", "ready", new ConnectTarget(".", "PlayStep"), cancellation)
         );
 
-        // The C# script's missing class is what Godot logs while the scene loads.
+        // The C# script's missing class, which Godot logs while the scene loads, is counted rather than quoted.
         Assert.StartsWith("connect_signal failed: " + CSharpBuildFailed, refused.Message, StringComparison.Ordinal);
-        Assert.Contains("CsProbeNode.cs:10: CS1002 ; expected\nGodot logged:\n", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("CsProbeNode.cs:10: CS1002 ; expected\n", refused.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("associated class could not be found", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("a missing C# assembly causes, left out: the build failed)", refused.Message, StringComparison.Ordinal);
         Assert.Equal(before, Read(csProbe.Directory, "main.tscn"));
     }
 

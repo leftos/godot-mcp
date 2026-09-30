@@ -34,11 +34,6 @@ internal sealed partial class HeadlessTools
 
     private const string MoveNeedsRefusal = "move_node needs options.parent, options.position or both.";
 
-    // What Godot logs for each C# script and C# autoload while the project assembly is missing (IsMissingAssemblySymptom).
-    private const string CSharpClassMissing = "Cannot instantiate C# script because the associated class could not be found";
-    private const string AutoloadNotInstantiated = "Failed to instantiate an autoload, script '";
-    private const string CSharpAutoloadNotANode = ".cs' does not inherit from 'Node'";
-
     private static readonly string[] ScriptExtensions = [".gd", ".cs"];
 
     private static readonly PathRule TextureRule = new(
@@ -507,7 +502,7 @@ internal sealed partial class HeadlessTools
     /// <summary>
     /// result with <c>csharp</c> (<see cref="ShapeCsharp"/>: the state and the compiler errors) added when the prep's C# build
     /// failed, and <c>errors</c> when Godot logged any. While the build failed, the errors a missing project assembly causes
-    /// (<see cref="IsMissingAssemblySymptom"/>) are left out: <c>csharp</c> reports their cause.
+    /// (<see cref="MissingAssembly.IsSymptom"/>) are left out: <c>csharp</c> reports their cause.
     /// </summary>
     private static JsonObject AddBuildAndErrors(JsonObject result, HeadlessResult run)
     {
@@ -515,7 +510,10 @@ internal sealed partial class HeadlessTools
         if (run.Prep.Build == "failed")
         {
             result["csharp"] = ShapeCsharp(run.Prep.Build, run.BuildErrors, null);
-            engineErrors = [.. engineErrors.OfType<JsonObject>().Where(entry => !IsMissingAssemblySymptom(entry)).Select(entry => entry.DeepClone())];
+            engineErrors =
+            [
+                .. engineErrors.OfType<JsonObject>().Where(entry => !MissingAssembly.IsSymptom(entry)).Select(entry => entry.DeepClone()),
+            ];
         }
 
         JsonArray errors = OnlyErrors(engineErrors);
@@ -525,20 +523,6 @@ internal sealed partial class HeadlessTools
         }
 
         return result;
-    }
-
-    /// <summary>
-    /// Whether Godot logged the entry because the project assembly did not load: a C# autoload that "does not inherit from
-    /// 'Node'" (Godot 4.7.2 <c>main.cpp</c>), or a C# script whose class could not be found (<c>csharp_script.cpp</c>).
-    /// </summary>
-    private static bool IsMissingAssemblySymptom(JsonObject entry)
-    {
-        string message = entry["message"] is JsonValue value && value.TryGetValue(out string? text) ? text : string.Empty;
-        return message.Contains(CSharpClassMissing, StringComparison.Ordinal)
-            || (
-                message.Contains(AutoloadNotInstantiated, StringComparison.Ordinal)
-                && message.Contains(CSharpAutoloadNotANode, StringComparison.Ordinal)
-            );
     }
 }
 

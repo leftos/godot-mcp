@@ -132,7 +132,7 @@ internal static class HeadlessRunner
             new HostRequest(what, call.Request.Operation, parameters, call.Request.Ceiling),
             cancellationToken
         );
-        return Answered(call.Request, reply);
+        return Answered(call, reply);
     }
 
     private static string What(HeadlessRequest request) => $"The headless {request.Operation} run on {request.ProjectDir}";
@@ -164,7 +164,7 @@ internal static class HeadlessRunner
                 call,
                 cancellationToken
             );
-            return ReadResult(call.Request, ran, resultPath, log);
+            return ReadResult(call, ran, resultPath, log);
         }
         finally
         {
@@ -200,9 +200,9 @@ internal static class HeadlessRunner
     }
 
     /// <exception cref="SessionException">The run passed its ceiling, wrote no result or an unreadable one, or the operation refused.</exception>
-    private static JsonObject ReadResult(HeadlessRequest request, ToolProcessResult ran, string resultPath, string log)
+    private static JsonObject ReadResult(GodotCall call, ToolProcessResult ran, string resultPath, string log)
     {
-        string what = What(request);
+        string what = What(call.Request);
         if (ran.WasKilled)
         {
             throw new SessionException($"{what} did not finish {ran.KillPhrase}, so it was stopped with its whole process tree. Its log: {log}");
@@ -214,30 +214,47 @@ internal static class HeadlessRunner
             throw new SessionException($"{what} wrote no result (Godot exited {ran.ExitCode}). The last lines of its log, {log}:\n{tail}");
         }
 
-        return Answered(request, ParseResult(File.ReadAllText(resultPath), what));
+        return Answered(call, ParseResult(File.ReadAllText(resultPath), what));
     }
 
     /// <exception cref="SessionException">The operation refused: the reply's <c>ok</c> is not true.</exception>
-    private static JsonObject Answered(HeadlessRequest request, JsonObject reply) =>
-        reply["ok"]?.GetValueKind() == JsonValueKind.True ? reply : throw new SessionException(FailureMessage(request.Operation, reply));
+    private static JsonObject Answered(GodotCall call, JsonObject reply) =>
+        reply["ok"]?.GetValueKind() == JsonValueKind.True
+            ? reply
+            : throw new SessionException(FailureMessage(call.Request.Operation, reply, buildFailed: call.Build == "failed"));
 
     /// <summary>
     /// The message of an operation that refused: its error, then under "Godot logged:" one line for each error (not warning)
     /// Godot logged while it ran, <c>message (file:line)</c>, at most <see cref="ErrorReport.MaxPerResult"/> of them with each
-    /// message cut to <see cref="ErrorReport.MaxMessageLength"/> characters, and "(n more)" for the rest.
+    /// message cut to <see cref="ErrorReport.MaxMessageLength"/> characters, and "(n more)" for the rest. When the prep's C#
+    /// build failed, the errors a missing project assembly causes (<see cref="MissingAssembly.IsSymptom"/>) are left out and
+    /// counted on a line of their own, since the refusal reports the build.
     /// </summary>
-    internal static string FailureMessage(string operation, JsonObject reply)
+    internal static string FailureMessage(string operation, JsonObject reply, bool buildFailed)
     {
         string error = reply["error"]?.GetValueKind() == JsonValueKind.String ? reply["error"]!.GetValue<string>() : "it gave no reason";
-        string message = $"{operation} failed: {error}";
+        StringBuilder text = new($"{operation} failed: {error}");
         JsonArray logged = reply["engineErrors"] as JsonArray ?? [];
         List<JsonObject> errors = [.. logged.OfType<JsonObject>().Where(entry => Text(entry, "type") == "error")];
-        if (errors.Count == 0)
+        int leftOut = buildFailed ? errors.RemoveAll(MissingAssembly.IsSymptom) : 0;
+        AppendLogged(text, errors);
+        if (leftOut > 0)
         {
-            return message;
+            string lines = leftOut == 1 ? "1 line" : leftOut.ToString(CultureInfo.InvariantCulture) + " lines";
+            text.Append(CultureInfo.InvariantCulture, $"\n(and {lines} a missing C# assembly causes, left out: the build failed)");
         }
 
-        StringBuilder text = new(message);
+        return text.ToString();
+    }
+
+    /// <summary>The "Godot logged:" section of <see cref="FailureMessage"/>, when there are errors to quote.</summary>
+    private static void AppendLogged(StringBuilder text, List<JsonObject> errors)
+    {
+        if (errors.Count == 0)
+        {
+            return;
+        }
+
         text.Append("\nGodot logged:");
         foreach (JsonObject entry in errors.Take(ErrorReport.MaxPerResult))
         {
@@ -249,8 +266,6 @@ internal static class HeadlessRunner
         {
             text.Append(CultureInfo.InvariantCulture, $"\n({errors.Count - ErrorReport.MaxPerResult} more)");
         }
-
-        return text.ToString();
     }
 
     private static string Text(JsonObject entry, string name) =>
