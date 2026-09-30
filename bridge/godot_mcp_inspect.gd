@@ -5,7 +5,8 @@ extends Node
 ## as a Dictionary, or a String saying why it failed; the bridge replies with either. It finds
 ## nodes with the bridge's own _find_node, converts values to and from JSON, finds a property,
 ## picks the shown ones and compares a read-back with the JSON module the bridge loads
-## (godot_mcp_json.gd), and never lists or reaches the bridge's own nodes.
+## (godot_mcp_json.gd), and never lists or reaches the bridge's own nodes. A path whose first
+## segment is a unique name (%Rows) is looked up in every scene owner under /root (find_unique).
 ##
 ## JSON goes in by the declared type, and a set is read back, because Godot does not refuse a
 ## wrong type: Object.set gives script no validity flag, a native setter given the wrong type
@@ -14,6 +15,23 @@ extends Node
 ## untyped Array for an Array[int] member is one), and C# converts a Dictionary to Vector2()
 ## silently (core/variant/variant.cpp L1745-1761). Every number arrives as a float, since JSON
 ## numbers always parse to one (core/io/json.cpp L390-396).
+
+## A unique name more than one scene holds: the segment, the count, at most MAX_LISTED_OWNERS
+## owners' paths, and the first owner's path and the segment as the way to name one.
+const UNIQUE_AMBIGUOUS := (
+	"'%s' is a unique name in %d scenes: %s;" + " put its owner's path first, as in %s/%s."
+)
+## A unique name no scene holds: the whole value, then its first segment.
+const UNIQUE_MISSING := (
+	"No node '%s' in the running game: no scene under /root has a node with the unique name '%s'"
+	+ " (a unique name is one saved with unique_name_in_owner)."
+)
+## A unique name later in a path that the node before it cannot see: value, from, where,
+## segment and tail, as the has-no-child text spells them.
+const UNIQUE_SEGMENT_MISSING := (
+	"No node '%s' in the running game: %s%s's scene" + " has no node with the unique name '%s'%s"
+)
+const MAX_LISTED_OWNERS := 10
 
 ## The bridge (godot_mcp_bridge.gd), this node's parent.
 var _bridge: Node
@@ -415,39 +433,140 @@ func _resolve(node_name: String) -> Variant:
 ## The refusal for a path or bare name that names no node: a bare name was searched for
 ## everywhere under /root; a path names the base it is read from, the deepest node on it that
 ## exists, the name that node lacks and up to 10 of its children. hint, the text of the clause
-## after the last '; ' and without its period, says where to look instead. The C# helper's
+## after the last '; ' and without its period, says where to look instead. A unique name first
+## (%Rows) that no scene, or more than one, holds says so instead. The C# helper's
 ## Targets.NotFound spells the same text.
 func not_found(node_name: String, hint: String) -> String:
+	var reads_tree: bool = node_name.begins_with("%") or node_name.contains("/")
+	var root: Node = _bridge.get_tree().root if reads_tree else null
+	return not_found_under(root, node_name, hint)
+
+
+## not_found's text for the tree under root, which a plain bare name does not read.
+func not_found_under(root: Node, node_name: String, hint: String) -> String:
 	var tail: String = "; %s." % hint
+	var unique: String = unique_refusal(root, node_name)
+	if not unique.is_empty():
+		return unique
 	if not node_name.contains("/"):
 		return "No node named '%s' anywhere under /root in the running game%s" % [node_name, tail]
-	var stop: Array = _deepest_ancestor(node_name)
+	return _path_not_found(root, node_name, tail)
+
+
+## A path's not-found text: the deepest node on it that exists and the name it lacks, a child or a
+## unique name its scene does not hold. A path starting at a unique name is read from the node
+## holding it.
+func _path_not_found(root: Node, node_name: String, tail: String) -> String:
+	var stop: Array = _deepest_ancestor(root, node_name)
 	var parent: Node = stop[0]
-	var from: String = "" if node_name.begins_with("/") else "a path is read from /root, and "
+	var segment: String = stop[1]
+	var from_root: bool = not (node_name.begins_with("/") or node_name.begins_with("%"))
+	var from: String = "a path is read from /root, and " if from_root else ""
 	var where: String = "/" if parent == null else str(parent.get_path())
+	if parent != null and segment.begins_with("%"):
+		return UNIQUE_SEGMENT_MISSING % [node_name, from, where, segment, tail]
 	var children: String = "root" if parent == null else _child_list(parent)
 	return (
 		"No node '%s' in the running game: %s%s has no child '%s' (children: %s)%s"
-		% [node_name, from, where, stop[1], children, tail]
+		% [node_name, from, where, segment, children, tail]
 	)
 
 
 ## [the deepest node on the path that exists, null for /; the name it lacks]
-func _deepest_ancestor(node_name: String) -> Array:
-	var root: Window = _bridge.get_tree().root
+func _deepest_ancestor(root: Node, node_name: String) -> Array:
 	var segments: PackedStringArray = node_name.split("/", false)
-	var first: int = 0
-	if node_name.begins_with("/"):
-		if segments.is_empty() or segments[0] != str(root.name):
-			return [null, "" if segments.is_empty() else segments[0]]
-		first = 1
-	var parent: Node = root
-	for i: int in range(first, segments.size() - 1):
+	var start: Array = _walk_start(root, node_name, segments)
+	var parent: Node = start[0]
+	if parent == null:
+		return [null, "" if segments.is_empty() else segments[0]]
+	for i: int in range(start[1], segments.size() - 1):
 		var next: Node = parent.get_node_or_null(NodePath(segments[i]))
 		if next == null:
 			return [parent, segments[i]]
 		parent = next
 	return [parent, segments[segments.size() - 1]]
+
+
+## [the node a path is read from, the index of its first segment read from there]: root for an
+## absolute path (null when its first segment is not the root's name), the one node holding a
+## unique first segment, else root.
+func _walk_start(root: Node, node_name: String, segments: PackedStringArray) -> Array:
+	if node_name.begins_with("/"):
+		var at_root: bool = not segments.is_empty() and segments[0] == str(root.name)
+		return [root, 1] if at_root else [null, 0]
+	if node_name.begins_with("%"):
+		return [unique_matches(root, segments[0])[0][1], 1]
+	return [root, 0]
+
+
+## The node a path starting at a unique name (%Rows or %Rows/Label) names: the first segment is
+## looked up in every scene owner under root, and the rest read from the one node found; null
+## when no owner, or more than one, holds that name (unique_refusal says which).
+func find_unique(root: Node, node_name: String) -> Node:
+	var segment: String = node_name.get_slice("/", 0)
+	var matches: Array = unique_matches(root, segment)
+	if matches.size() != 1:
+		return null
+	var found: Node = matches[0][1]
+	var rest: String = node_name.substr(segment.length() + 1)
+	return found if rest.is_empty() else found.get_node_or_null(NodePath(rest))
+
+
+## [[owner, node]] for each distinct node a unique name reaches from a scene owner under root,
+## breadth first: get_node_or_null looks the name up in the owner's unique nodes, then in its
+## own owner's (scene/main/node.cpp L1942-1951 in 4.7.2), so a sub-scene root also reaches its
+## parent scene's; each node is listed once, with the first owner that reached it.
+func unique_matches(root: Node, segment: String) -> Array:
+	var matches: Array = []
+	var reached: Array[Node] = []
+	var queue: Array[Node] = [root]
+	while not queue.is_empty():
+		var node: Node = queue.pop_front()
+		queue.append_array(node.get_children())
+		if not _is_scene_owner(root, node):
+			continue
+		var found: Node = node.get_node_or_null(NodePath(segment))
+		if found != null and not reached.has(found):
+			reached.append(found)
+			matches.append([node, found])
+	return matches
+
+
+## A scene owner: the root of an instanced scene (the current scene's, an autoload scene's), or
+## a node with no owner (an autoload script's, one added at runtime); the root owns nothing.
+static func _is_scene_owner(root: Node, node: Node) -> bool:
+	return node != root and (not node.scene_file_path.is_empty() or node.owner == null)
+
+
+## Why a path starting at a unique name names no node, or "": no scene holds the name, or more
+## than one does.
+func unique_refusal(root: Node, node_name: String) -> String:
+	if not node_name.begins_with("%"):
+		return ""
+	var segment: String = node_name.get_slice("/", 0)
+	var matches: Array = unique_matches(root, segment)
+	if matches.is_empty():
+		return UNIQUE_MISSING % [node_name, segment]
+	return _ambiguity(segment, matches)
+
+
+## Why a path starting at a unique name more than one scene holds names no node, or "".
+func unique_ambiguity(root: Node, node_name: String) -> String:
+	if not node_name.begins_with("%"):
+		return ""
+	var segment: String = node_name.get_slice("/", 0)
+	return _ambiguity(segment, unique_matches(root, segment))
+
+
+static func _ambiguity(segment: String, matches: Array) -> String:
+	if matches.size() < 2:
+		return ""
+	var owners := PackedStringArray()
+	for match_pair: Array in matches.slice(0, MAX_LISTED_OWNERS):
+		owners.append(str((match_pair[0] as Node).get_path()))
+	if matches.size() > MAX_LISTED_OWNERS:
+		owners.append("…")
+	return UNIQUE_AMBIGUOUS % [segment, matches.size(), ", ".join(owners), owners[0], segment]
 
 
 ## The names of up to 10 of the node's children, the bridge left out, and a count of the rest.

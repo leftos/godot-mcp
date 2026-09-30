@@ -801,10 +801,13 @@ func _handle_input(id: int, params: Dictionary) -> void:
 	_reply_ok(id, outcome["result"])
 
 
-## An absolute path (/root/Main/Button), a path under the root (Main/Button), or else the
-## first node of that name, breadth first from the root.
+## An absolute path (/root/Main/Button), a path under the root (Main/Button), a path starting at a
+## unique name (%Rows, looked up in every scene: the inspector's find_unique), or else the first
+## node of that name, breadth first from the root.
 func _find_node(element: String) -> Node:
 	var root: Window = get_tree().root
+	if element.begins_with("%"):
+		return _inspect.find_unique(root, element)
 	if element.contains("/"):
 		return root.get_node_or_null(NodePath(element))
 	var queue: Array[Node] = [root]

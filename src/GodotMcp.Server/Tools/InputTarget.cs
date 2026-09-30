@@ -7,8 +7,9 @@ namespace GodotMcp.Server.Tools;
 /// <summary>Where an input tool aims: a Control, or a point in viewport coordinates; exactly one of the two.</summary>
 internal sealed record InputTarget(
     [property: Description(
-        "A Control to aim at: an absolute node path (/root/Main/Button), a path under the root (Main/Button), or a node "
-            + "name, found breadth first. Its point is the centre of its global rect. Leave x and y out when this is set."
+        "A Control to aim at: an absolute node path (/root/Main/Button), a path under the root (Main/Button), a node "
+            + "name, found breadth first, or %Name for a node saved with a unique name (alone, looked up in every scene; or after "
+            + "its owner's path). Its point is the centre of its global rect. Leave x and y out when this is set."
     )]
         string? Element = null,
     [property: Description("A point's x in viewport coordinates, as get_ui_elements reports rects; needs y and no element.")] double? X = null,

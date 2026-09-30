@@ -37,6 +37,37 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
         "No node 'CsProbe/Missing' in the running game: a path is read from /root, and /root/CsProbe has no child 'Missing' "
         + "(children: none); get_scene_tree lists the nodes' paths.";
 
+    // Two scene-like owners under the root, UniqueA and UniqueB, each holding a Node Shared saved with a unique name; UniqueA
+    // also holds a CsTargets Solo saved with one.
+    private const string UniqueOwnersScript =
+        "for owner_name in [\"UniqueA\", \"UniqueB\"]:\n\t\t"
+        + "var scene := Node.new()\n\t\t"
+        + "scene.name = owner_name\n\t\t"
+        + "scene_tree.root.add_child(scene)\n\t\t"
+        + "var shared := Node.new()\n\t\t"
+        + "shared.name = \"Shared\"\n\t\t"
+        + "scene.add_child(shared)\n\t\t"
+        + "shared.owner = scene\n\t\t"
+        + "shared.unique_name_in_owner = true\n\t"
+        + "var first: Node = scene_tree.root.get_node(\"UniqueA\")\n\t"
+        + "var solo: Node = load(\"res://CsTargets.cs\").new()\n\t"
+        + "solo.name = \"Solo\"\n\t"
+        + "first.add_child(solo)\n\t"
+        + "solo.owner = first\n\t"
+        + "solo.unique_name_in_owner = true\n\t"
+        + "return true";
+
+    private const string RemoveUniqueOwnersScript =
+        "for owner_name in [\"UniqueA\", \"UniqueB\"]:\n\t\t"
+        + "var scene: Node = scene_tree.root.get_node_or_null(owner_name)\n\t\t"
+        + "if scene != null:\n\t\t\t"
+        + "scene_tree.root.remove_child(scene)\n\t\t\t"
+        + "scene.queue_free()\n\t"
+        + "return true";
+
+    private const string AmbiguousShared =
+        "'%Shared' is a unique name in 2 scenes: /root/UniqueA, /root/UniqueB; put its owner's path first, as in /root/UniqueA/%Shared.";
+
     private readonly SharedCsProbeSession _shared = shared;
     private readonly RuntimeTools _tools = new(shared.Sessions, shared.Bridge);
 
@@ -871,6 +902,29 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
 
         Assert.Contains(MissingUnderProbe, refused.Message, StringComparison.Ordinal);
         Assert.Contains(MissingUnderProbe, inspected.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task AUniqueNameReachesItsNodeInCSharpAndIsRefusedWhenSeveralScenesHoldIt()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(_tools, UniqueOwnersScript, cancellation);
+        try
+        {
+            JsonObject read = await GetAsync(new CSharpTarget(Node: "%Solo"), "_last", null, cancellation);
+            JsonObject ran = await RunCSharpAsync("return Node(\"%Solo\").GetPath().ToString();", null, cancellation);
+            McpException got = await Assert.ThrowsAsync<McpException>(() => GetAsync(new CSharpTarget(Node: "%Shared"), "_last", null, cancellation));
+            McpException snippet = await Assert.ThrowsAsync<McpException>(() => RunCSharpAsync("Node(\"%Shared\")", null, cancellation));
+
+            Assert.Equal("start", read["value"]?["Label"]?.GetValue<string>());
+            Assert.Equal("/root/UniqueA/Solo", ran["value"]?.GetValue<string>());
+            Assert.Contains(AmbiguousShared, got.Message, StringComparison.Ordinal);
+            Assert.Contains("the snippet threw InvalidOperationException: " + AmbiguousShared, snippet.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await RunAsync(_tools, RemoveUniqueOwnersScript, cancellation);
+        }
     }
 
     [Fact(Timeout = CSharpTestTimeoutMs)]

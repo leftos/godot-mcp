@@ -68,12 +68,13 @@ func _resolve_element(element: String) -> Variant:
 	return node
 
 
-## The node an element names: a path through the bridge's _find_node, or the one node of a bare
-## name. A bare name no node has, or more than one node has, is a String saying so. Other tools
-## keep _find_node's first match; an input target must be the node the caller means.
+## The node an element names: a path or a unique name (%Rows) through the bridge's _find_node, or
+## the one node of a bare name. A bare name no node has, or more than one node has, is a String
+## saying so. Other tools keep _find_node's first match; an input target must be the node the
+## caller means.
 func _find_input_node(element: String) -> Variant:
 	var named: Array[Node] = []
-	if element.contains("/"):
+	if element.contains("/") or element.begins_with("%"):
 		var node: Node = bridge._find_node(element)
 		if node != null:
 			named.append(node)

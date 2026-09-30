@@ -23,6 +23,27 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
     private const int ScriptTimeoutMs = 10_000;
     private const string Probe = "/root/InspectProbe";
 
+    // Two scene-like owners under the root, UniqueA and UniqueB, each holding a Label Shared saved with a unique name; UniqueA
+    // also holds a Button Solo saved with one.
+    private const string UniqueOwnersScript =
+        "for owner_name in [\"UniqueA\", \"UniqueB\"]:\n\t\t"
+        + "var scene := Node.new()\n\t\t"
+        + "scene.name = owner_name\n\t\t"
+        + "scene_tree.root.add_child(scene)\n\t\t"
+        + "var shared := Label.new()\n\t\t"
+        + "shared.name = \"Shared\"\n\t\t"
+        + "scene.add_child(shared)\n\t\t"
+        + "shared.owner = scene\n\t\t"
+        + "shared.unique_name_in_owner = true\n\t"
+        + "var first: Node = scene_tree.root.get_node(\"UniqueA\")\n\t"
+        + "var solo := Button.new()\n\t"
+        + "solo.name = \"Solo\"\n\t"
+        + "solo.text = \"Solo\"\n\t"
+        + "first.add_child(solo)\n\t"
+        + "solo.owner = first\n\t"
+        + "solo.unique_name_in_owner = true\n\t"
+        + "return true";
+
     // A script class for describe_class, written into a probe copy of its own.
     private const string ProbeClassScript =
         "class_name ProbeClass\nextends Node\n\nsignal hit(amount: int)\n\n@export var speed: float = 2.5\n\n\n"
@@ -428,6 +449,47 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
         Assert.Contains(
             "No node named 'Nowhere' anywhere under /root in the running game; get_scene_tree lists the nodes' paths.",
             bare.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AUniqueNameIsLookedUpInEverySceneAndRefusedWhenSeveralHoldIt()
+    {
+        await RunAsync(_tools, UniqueOwnersScript, TestContext.Current.CancellationToken);
+
+        JsonNode solo = await InspectAsync("%Solo", ["text"]);
+        JsonNode called = await CallAsync("%Solo", "get_text");
+        JsonNode owned = await InspectAsync("UniqueB/%Shared", null);
+        McpException shared = await Assert.ThrowsAsync<McpException>(() => InspectAsync("%Shared", null));
+        McpException calledShared = await Assert.ThrowsAsync<McpException>(() => CallAsync("%Shared", "get_text"));
+        McpException missing = await Assert.ThrowsAsync<McpException>(() => InspectAsync("%Missing", null));
+        McpException ownerMissing = await Assert.ThrowsAsync<McpException>(() => InspectAsync("UniqueA/%Missing", null));
+        McpException pastSolo = await Assert.ThrowsAsync<McpException>(() => InspectAsync("%Solo/Missing", null));
+
+        const string Ambiguous =
+            "'%Shared' is a unique name in 2 scenes: /root/UniqueA, /root/UniqueB; put its owner's path first, as in " + "/root/UniqueA/%Shared.";
+        Assert.Equal("/root/UniqueA/Solo", solo["path"]!.GetValue<string>());
+        Assert.Equal("Solo", called["value"]!.GetValue<string>());
+        Assert.Equal("/root/UniqueB/Shared", owned["path"]!.GetValue<string>());
+        Assert.Contains(Ambiguous, shared.Message, StringComparison.Ordinal);
+        Assert.Contains(Ambiguous, calledShared.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            "No node '%Missing' in the running game: no scene under /root has a node with the unique name '%Missing' "
+                + "(a unique name is one saved with unique_name_in_owner).",
+            missing.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "No node 'UniqueA/%Missing' in the running game: a path is read from /root, and /root/UniqueA's scene has no node "
+                + "with the unique name '%Missing'; get_scene_tree lists the nodes' paths.",
+            ownerMissing.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "No node '%Solo/Missing' in the running game: /root/UniqueA/Solo has no child 'Missing' (children: none); "
+                + "get_scene_tree lists the nodes' paths.",
+            pastSolo.Message,
             StringComparison.Ordinal
         );
     }

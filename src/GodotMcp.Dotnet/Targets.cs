@@ -34,6 +34,9 @@ internal static class Targets
     /// <summary>How many of a node's children a not-found refusal names.</summary>
     private const int MaxListedChildren = 10;
 
+    /// <summary>How many of the scenes holding a unique name an ambiguity refusal names.</summary>
+    private const int MaxListedOwners = 10;
+
     /// <summary>The kept objects, with a fresh epoch each game process, so a handle from before a restart is refused as one.</summary>
     public static HandleTable Handles { get; } = new(Random.Shared.Next(1, int.MaxValue));
 
@@ -50,10 +53,17 @@ internal static class Targets
         return ByHandle(target["handle"]!.GetValue<string>());
     }
 
-    /// <summary>The node a path or a bare name names, by the bridge's own rule: a path, or the first of that name.</summary>
+    /// <summary>
+    /// The node a path or a bare name names, by the bridge's own rule: a path starting at a unique name (<c>%Rows</c>) read
+    /// from the one node that name reaches in any scene, a path, or the first of that name.
+    /// </summary>
     public static Node? Find(string value)
     {
         Window root = ((SceneTree)Engine.GetMainLoop()).Root;
+        if (value.StartsWith('%'))
+        {
+            return FindUnique(root, value);
+        }
         if (value.Contains('/', StringComparison.Ordinal))
         {
             return root.GetNodeOrNull(value);
@@ -92,37 +102,127 @@ internal static class Targets
     /// <summary>
     /// The refusal for a path or bare name that names no node: a bare name was searched for everywhere under /root; a path
     /// names the base it is read from, the deepest node on it that exists, the name that node lacks and up to
-    /// <see cref="MaxListedChildren"/> of its children. The bridge's <c>not_found</c> (godot_mcp_inspect.gd) spells the same text.
+    /// <see cref="MaxListedChildren"/> of its children. A unique name first (<c>%Rows</c>) that no scene, or more than one,
+    /// holds says so instead. The bridge's <c>not_found</c> (godot_mcp_inspect.gd) spells the same text.
     /// </summary>
     public static string NotFound(string value)
     {
         const string Tail = "; get_scene_tree lists the nodes' paths.";
-        if (!value.Contains('/', StringComparison.Ordinal))
+        if (UniqueRefusal(value) is { } unique)
         {
-            return $"No node named '{value}' anywhere under /root in the running game{Tail}";
+            return unique;
         }
+        return value.Contains('/', StringComparison.Ordinal)
+            ? PathNotFound(value, Tail)
+            : $"No node named '{value}' anywhere under /root in the running game{Tail}";
+    }
+
+    /// <summary>
+    /// A path's not-found text: the deepest node on it that exists and the name it lacks, a child or a unique name its scene
+    /// does not hold. A path starting at a unique name is read from the node holding it.
+    /// </summary>
+    private static string PathNotFound(string value, string tail)
+    {
         (Node? parent, string segment) = DeepestAncestor(value);
-        string from = value.StartsWith('/') ? "" : "a path is read from /root, and ";
+        string from = value.StartsWith('/') || value.StartsWith('%') ? "" : "a path is read from /root, and ";
         string where = parent is null ? "/" : parent.GetPath().ToString();
+        if (parent is not null && segment.StartsWith('%'))
+        {
+            return $"No node '{value}' in the running game: {from}{where}'s scene has no node with the unique name '{segment}'{tail}";
+        }
         string children = parent is null ? "root" : ChildList(parent);
-        return $"No node '{value}' in the running game: {from}{where} has no child '{segment}' (children: {children}){Tail}";
+        return $"No node '{value}' in the running game: {from}{where} has no child '{segment}' (children: {children}){tail}";
+    }
+
+    /// <summary>
+    /// The node a path starting at a unique name names: the first segment looked up in every scene owner, and the rest read
+    /// from the one node found; null when no owner, or more than one, holds that name (<see cref="UniqueRefusal"/> says which).
+    /// </summary>
+    private static Node? FindUnique(Window root, string value)
+    {
+        string segment = FirstSegment(value);
+        List<(Node Owner, Node Found)> matches = UniqueMatches(root, segment);
+        if (matches.Count != 1)
+        {
+            return null;
+        }
+        string rest = value.Length > segment.Length ? value[(segment.Length + 1)..] : "";
+        return rest.Length == 0 ? matches[0].Found : matches[0].Found.GetNodeOrNull(rest);
+    }
+
+    private static string FirstSegment(string value)
+    {
+        int slash = value.IndexOf('/', StringComparison.Ordinal);
+        return slash < 0 ? value : value[..slash];
+    }
+
+    /// <summary>
+    /// Each distinct node the unique name <paramref name="segment"/> reaches from a scene owner under the root, breadth first,
+    /// with the first owner that reached it: GetNodeOrNull looks the name up in the owner's unique nodes, then in its own
+    /// owner's (scene/main/node.cpp L1942-1951 in 4.7.2), so a sub-scene root also reaches its parent scene's.
+    /// </summary>
+    private static List<(Node Owner, Node Found)> UniqueMatches(Window root, string segment)
+    {
+        List<(Node Owner, Node Found)> matches = [];
+        Queue<Node> queue = new();
+        queue.Enqueue(root);
+        while (queue.Count > 0)
+        {
+            Node node = queue.Dequeue();
+            foreach (Node child in node.GetChildren())
+            {
+                queue.Enqueue(child);
+            }
+            if (IsSceneOwner(root, node) && node.GetNodeOrNull(segment) is { } found && !matches.Exists(match => match.Found == found))
+            {
+                matches.Add((node, found));
+            }
+        }
+        return matches;
+    }
+
+    /// <summary>
+    /// A scene owner: the root of an instanced scene (the current scene's, an autoload scene's), or a node with no owner (an
+    /// autoload script's, one added at runtime); the root owns nothing.
+    /// </summary>
+    private static bool IsSceneOwner(Window root, Node node) => node != root && (!string.IsNullOrEmpty(node.SceneFilePath) || node.Owner is null);
+
+    /// <summary>Why a path starting at a unique name names no node, or null: no scene holds the name, or more than one does.</summary>
+    private static string? UniqueRefusal(string value)
+    {
+        if (!value.StartsWith('%'))
+        {
+            return null;
+        }
+        string segment = FirstSegment(value);
+        List<(Node Owner, Node Found)> matches = UniqueMatches(((SceneTree)Engine.GetMainLoop()).Root, segment);
+        if (matches.Count == 0)
+        {
+            return $"No node '{value}' in the running game: no scene under /root has a node with the unique name '{segment}' "
+                + "(a unique name is one saved with unique_name_in_owner).";
+        }
+        if (matches.Count == 1)
+        {
+            return null;
+        }
+        List<string> owners = [.. matches.Take(MaxListedOwners).Select(match => match.Owner.GetPath().ToString())];
+        if (matches.Count > MaxListedOwners)
+        {
+            owners.Add("…");
+        }
+        return $"'{segment}' is a unique name in {matches.Count} scenes: {string.Join(", ", owners)}; put its owner's path first, as in "
+            + $"{owners[0]}/{segment}.";
     }
 
     /// <summary>The deepest node on the path <paramref name="value"/> that exists, null for <c>/</c>, and the name it lacks.</summary>
     private static (Node? Parent, string Segment) DeepestAncestor(string value)
     {
-        Window root = ((SceneTree)Engine.GetMainLoop()).Root;
         string[] segments = value.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        int first = 0;
-        if (value.StartsWith('/'))
+        (Node? start, int first) = WalkStart(value, segments);
+        if (start is not { } parent)
         {
-            if (segments.Length == 0 || segments[0] != root.Name.ToString())
-            {
-                return (null, segments.Length == 0 ? "" : segments[0]);
-            }
-            first = 1;
+            return (null, segments.Length == 0 ? "" : segments[0]);
         }
-        Node parent = root;
         for (int i = first; i < segments.Length - 1; i++)
         {
             Node? next = parent.GetNodeOrNull(segments[i]);
@@ -133,6 +233,20 @@ internal static class Targets
             parent = next;
         }
         return (parent, segments[^1]);
+    }
+
+    /// <summary>
+    /// The node a path is read from and the index of its first segment read from there: the root for an absolute path (null
+    /// when its first segment is not the root's name), the one node holding a unique first segment, else the root.
+    /// </summary>
+    private static (Node? Start, int First) WalkStart(string value, string[] segments)
+    {
+        Window root = ((SceneTree)Engine.GetMainLoop()).Root;
+        if (value.StartsWith('/'))
+        {
+            return segments.Length > 0 && segments[0] == root.Name.ToString() ? (root, 1) : (null, 0);
+        }
+        return value.StartsWith('%') ? (UniqueMatches(root, segments[0])[0].Found, 1) : (root, 0);
     }
 
     /// <summary>The names of up to <see cref="MaxListedChildren"/> children, the bridge left out, and a count of the rest.</summary>

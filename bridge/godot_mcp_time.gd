@@ -801,7 +801,19 @@ func _capture_this_frame() -> Image:
 
 func _check_exists(node_name: String, wanted: bool) -> Array:
 	var present: bool = bridge._find_node(node_name) != null
+	var missing: Array = [] if present else _missing(node_name)
+	if missing.size() > 2:
+		return missing
 	return [present == wanted, present]
+
+
+## A probe's answer while its node is missing: not met, or failed when the name starts with a
+## unique name more than one scene holds, which no wait can settle.
+func _missing(node_name: String) -> Array:
+	if not node_name.begins_with("%"):
+		return [false, null]
+	var ambiguity: String = bridge._inspect.unique_ambiguity(get_tree().root, node_name)
+	return [false, null] if ambiguity.is_empty() else [false, null, ambiguity]
 
 
 ## The property (a path such as position:x) as run_script returns values, compared in JSON
@@ -809,7 +821,7 @@ func _check_exists(node_name: String, wanted: bool) -> Array:
 func _check_property(node_name: String, property: String, wanted: Variant) -> Array:
 	var node: Node = bridge._find_node(node_name)
 	if node == null:
-		return [false, null]
+		return _missing(node_name)
 	var first: String = property.get_slice(":", 0)
 	if not bridge._json.has_property(node, first):
 		return [false, null, "'%s' has no property '%s'." % [node.get_path(), first]]
@@ -840,7 +852,7 @@ func _run_expression(expression: Expression, node_name: String, reported: Dictio
 	if not node_name.is_empty():
 		node = bridge._find_node(node_name)
 		if node == null:
-			return [false, null]
+			return _missing(node_name)
 		inputs.append(node)
 	var value: Variant = expression.execute(inputs, node, false)
 	if expression.has_execute_failed():

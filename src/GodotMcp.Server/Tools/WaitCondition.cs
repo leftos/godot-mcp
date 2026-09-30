@@ -10,8 +10,9 @@ namespace GodotMcp.Server.Tools;
 /// </summary>
 internal sealed record WaitCondition(
     [property: Description(
-        "The node: an absolute path (/root/Main/Player), a path under the root (Main/Player), or else the first node of that "
-            + "name, breadth first from the root."
+        "The node: an absolute path (/root/Main/Player), a path under the root (Main/Player), the first node of that "
+            + "name, breadth first from the root, or %Name for a node saved with a unique name (alone, looked up in every scene; "
+            + "or after its owner's path)."
     )]
         string? Node = null,
     [property: Description("With node: wait until the node is present (true) or absent (false).")] bool? Exists = null,

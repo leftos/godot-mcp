@@ -146,6 +146,32 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         + "return true\n\t"
         + "return false";
     private const string ReadSmallButtonPresses = "return scene_tree.root.get_node(\"Main/SmallButton\").press_count";
+
+    // Two scene-like owners under the root, UniqueA and UniqueB, each holding a Label Shared saved with a unique name; UniqueA
+    // also holds a Button Solo saved with one, over an empty spot of the probe from (160, 300) to (260, 340), that counts its
+    // presses in its "presses" meta.
+    private const string UniqueOwnersScript =
+        "for owner_name in [\"UniqueA\", \"UniqueB\"]:\n\t\t"
+        + "var scene := Node.new()\n\t\t"
+        + "scene.name = owner_name\n\t\t"
+        + "scene_tree.root.add_child(scene)\n\t\t"
+        + "var shared := Label.new()\n\t\t"
+        + "shared.name = \"Shared\"\n\t\t"
+        + "scene.add_child(shared)\n\t\t"
+        + "shared.owner = scene\n\t\t"
+        + "shared.unique_name_in_owner = true\n\t"
+        + "var first: Node = scene_tree.root.get_node(\"UniqueA\")\n\t"
+        + "var solo := Button.new()\n\t"
+        + "solo.name = \"Solo\"\n\t"
+        + "solo.text = \"Solo\"\n\t"
+        + "first.add_child(solo)\n\t"
+        + "solo.owner = first\n\t"
+        + "solo.unique_name_in_owner = true\n\t"
+        + "solo.position = Vector2(160, 300)\n\t"
+        + "solo.size = Vector2(100, 40)\n\t"
+        + "solo.pressed.connect(func() -> void: solo.set_meta(\"presses\", int(solo.get_meta(\"presses\", 0)) + 1))\n\t"
+        + "await scene_tree.process_frame\n\t"
+        + "return true";
     private readonly SharedProbeSession _shared = shared;
     private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());
 
@@ -201,6 +227,26 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
 
         Assert.Equal((1, 2), (afterElement, afterPoint));
         await StopAndCheckCleanAsync(harness, probe);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ClickFindsAUniqueNameInEverySceneAndRefusesOneSeveralHold()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(UniqueOwnersScript);
+
+        await _tools.ClickAsync(new InputTarget("%Solo"), "left", false, cancellationToken: cancellation);
+        int presses = (await RunAsync("return scene_tree.root.get_node(\"UniqueA/Solo\").get_meta(\"presses\", 0)")).GetValue<int>();
+        McpException shared = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.ClickAsync(new InputTarget("%Shared"), "left", false, cancellationToken: cancellation)
+        );
+
+        Assert.Equal(1, presses);
+        Assert.Contains(
+            "'%Shared' is a unique name in 2 scenes: /root/UniqueA, /root/UniqueB; put its owner's path first, as in /root/UniqueA/%Shared.",
+            shared.Message,
+            StringComparison.Ordinal
+        );
     }
 
     [Fact(Timeout = TestTimeoutMs)]

@@ -25,8 +25,9 @@ internal sealed partial class RuntimeTools
     private const string InspectorScript = "godot_mcp_inspect.gd";
     private const string BridgeNote = " The bridge's own nodes (GodotMcpBridge and its children) are out of reach.";
     private const string NodeDescription =
-        "The node: an absolute path (/root/Main/Button), a path under the root (Main/Button), or a name, the first node "
-        + "of that name breadth first from the root.";
+        "The node: an absolute path (/root/Main/Button), a path under the root (Main/Button), a name, the first node "
+        + "of that name breadth first from the root, or %Name for a node saved with a unique name (alone, looked up in every "
+        + "scene; or after its owner's path).";
     private const string ValueNote =
         " Values are JSON as run_script returns them: Vector2/3 as {x, y[, z]}, Color as {r, g, b, a}, Rect2 as "
         + "{x, y, width, height}, a Node as its path, another Object as {class, string}.";
