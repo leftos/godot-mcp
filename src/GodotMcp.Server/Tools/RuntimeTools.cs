@@ -100,7 +100,9 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     [McpServerTool(Name = "get_ui_elements", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
         "Lists the running game's Controls, depth first: path, name, class, rect ({x, y, width, height} in viewport coordinates, "
-            + "from get_global_rect), visible, and where they apply text (Label, Button, LineEdit, RichTextLabel), disabled "
+            + "from get_global_rect), visible, and where they apply text, the text shown, which a text target matches (a "
+            + "Button's, Label's or LinkButton's translated text, a LineEdit's text or its placeholder while empty, a "
+            + "RichTextLabel's without BBCode), disabled "
             + "(buttons) and tooltip. Returns one page, {elements, total, offset}, plus next, the offset of the following page, "
             + "while more remain."
     )]

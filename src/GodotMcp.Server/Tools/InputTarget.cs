@@ -6,8 +6,8 @@ using ModelContextProtocol;
 namespace GodotMcp.Server.Tools;
 
 /// <summary>
-/// Where an input tool aims: a node (a Control, or a 2D or 3D world node with an optional offset inside it), or a point in
-/// viewport coordinates; exactly one of the two.
+/// Where an input tool aims: a node (a Control, or a 2D or 3D world node with an optional offset inside it), a visible
+/// Control by the text it shows (optionally only under a node), or a point in viewport coordinates; exactly one of the three.
 /// </summary>
 internal sealed record InputTarget(
     [property: Description(
@@ -18,25 +18,48 @@ internal sealed record InputTarget(
             + "this is set."
     )]
         string? Element = null,
-    [property: Description("A point's x in viewport coordinates, as get_ui_elements reports rects; needs y and no element.")] double? X = null,
-    [property: Description("A point's y in viewport coordinates, as get_ui_elements reports rects; needs x and no element.")] double? Y = null,
+    [property: Description("A point's x in viewport coordinates, as get_ui_elements reports rects; needs y, and no element or text.")]
+        double? X = null,
+    [property: Description("A point's y in viewport coordinates, as get_ui_elements reports rects; needs x, and no element or text.")]
+        double? Y = null,
     [property: Description(
         "Only with element on a 2D or 3D world node: a point in the node's local space (2D pixels, 3D units) to aim at "
             + "instead of its origin; x and y required, z on a 3D node only. Refused on a Control."
     )]
-        InputOffset? Offset = null
+        InputOffset? Offset = null,
+    [property: Description(
+        "The text a visible Control shows, matched exactly (case kept, surrounding whitespace trimmed), aimed at its centre as "
+            + "an element Control is: a Button's (CheckBox, OptionButton, MenuButton…), Label's or LinkButton's text as "
+            + "drawn, translated, a LineEdit's text or its placeholder while empty, a RichTextLabel's text without BBCode; "
+            + "get_ui_elements reports the same text. A miss lists near misses and nodes of that name; several matches are "
+            + "refused, listed, narrow them with under. Leave element, x and y out when this is set."
+    )]
+        string? Text = null,
+    [property: Description(
+        "Only with text: look for it only at or under this node, named as element names a node (a path, a unique bare name, or %Name)."
+    )]
+        string? Under = null
 )
 {
-    /// <summary>The target as the bridge reads it: <c>{element, offset?}</c> or <c>{x, y}</c>.</summary>
+    /// <summary>The target as the bridge reads it: <c>{element, offset?}</c>, <c>{text, under?}</c> or <c>{x, y}</c>.</summary>
     /// <exception cref="McpException">
-    /// The target is missing, names neither or both of an element and a point, or has an offset without an element or
-    /// without its x or y.
+    /// The target is missing, names none or more than one of an element, a text and a point, has an offset without an
+    /// element or without its x or y, or has under without a text.
     /// </exception>
     public static JsonObject ToBridge(InputTarget? target, string parameter)
     {
         CheckOffset(target, parameter);
+        CheckUnder(target, parameter);
         return target?.ToBridgeOrNull()
-            ?? throw new McpException($"{parameter} needs either element, or both x and y, and not both; got {Show(target)}.");
+            ?? throw new McpException($"{parameter} needs exactly one of element, text, or both x and y; got {Show(target)}.");
+    }
+
+    private static void CheckUnder(InputTarget? target, string parameter)
+    {
+        if (!string.IsNullOrWhiteSpace(target?.Under) && string.IsNullOrWhiteSpace(target.Text))
+        {
+            throw new McpException($"{parameter}.under narrows a text target, so it needs text; got {Show(target)}.");
+        }
     }
 
     private static void CheckOffset(InputTarget? target, string parameter)
@@ -60,12 +83,33 @@ internal sealed record InputTarget(
     private JsonObject? ToBridgeOrNull()
     {
         bool hasElement = !string.IsNullOrWhiteSpace(Element);
-        if (hasElement && X is null && Y is null)
+        bool hasText = !string.IsNullOrWhiteSpace(Text);
+        if (AnchorCount(hasElement, hasText) != 1)
+        {
+            return null;
+        }
+
+        if (hasElement)
         {
             return ElementToBridge();
         }
 
-        return !hasElement && X is double x && Y is double y ? new JsonObject { ["x"] = x, ["y"] = y } : null;
+        return hasText ? TextToBridge() : PointToBridge();
+    }
+
+    private int AnchorCount(bool hasElement, bool hasText) => (hasElement ? 1 : 0) + (hasText ? 1 : 0) + (X is not null || Y is not null ? 1 : 0);
+
+    private JsonObject? PointToBridge() => X is double x && Y is double y ? new JsonObject { ["x"] = x, ["y"] = y } : null;
+
+    private JsonObject TextToBridge()
+    {
+        JsonObject bridge = new() { ["text"] = Text };
+        if (!string.IsNullOrWhiteSpace(Under))
+        {
+            bridge["under"] = Under;
+        }
+
+        return bridge;
     }
 
     private JsonObject ElementToBridge()
@@ -81,11 +125,17 @@ internal sealed record InputTarget(
 
     private static string Show(InputTarget? target)
     {
-        string offset = target?.Offset is InputOffset given ? $", offset: {{x: {Show(given.X)}, y: {Show(given.Y)}, z: {Show(given.Z)}}}" : "";
-        return $"{{element: {target?.Element ?? "null"}, x: {Show(target?.X)}, y: {Show(target?.Y)}{offset}}}";
+        string offset = ShowOffset(target?.Offset);
+        string point = $"x: {Show(target?.X)}, y: {Show(target?.Y)}";
+        return $"{{element: {target?.Element ?? "null"}, {point}{ShowText("text", target?.Text)}{ShowText("under", target?.Under)}{offset}}}";
     }
 
     private static string Show(double? value) => value?.ToString(CultureInfo.InvariantCulture) ?? "null";
+
+    private static string ShowOffset(InputOffset? offset) =>
+        offset is null ? "" : $", offset: {{x: {Show(offset.X)}, y: {Show(offset.Y)}, z: {Show(offset.Z)}}}";
+
+    private static string ShowText(string key, string? value) => value is null ? "" : $", {key}: '{value}'";
 }
 
 /// <summary>

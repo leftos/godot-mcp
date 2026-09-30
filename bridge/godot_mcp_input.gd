@@ -700,17 +700,18 @@ func _aim_refusal(aim: Dictionary, point: Vector2, scroll: bool) -> String:
 	if hit is String:
 		return hit
 	if aim["kind"] == "control":
-		return _hit_refusal(aim["node"], point, hit)
+		return _hit_refusal(aim, point, hit)
 	return _targets.world_hit_refusal(aim, hit, scroll)
 
 
-## Why a press at point would miss target, or "" when it would not: hit is the Control Godot
-## hovers in the target's viewport after the aim's motion, the Control gui_find_control picks, the
-## same pick a press makes when no other button is held (scene/main/viewport.cpp L3522-3524, L3331
-## and L1941 in 4.7.2). A target that takes no clicks, itself or through an ancestor, may land on
-## nothing.
-func _hit_refusal(target: Control, point: Vector2, hit: Control) -> String:
-	if _targets.lands_on(hit, target) or (hit == null and _targets.receiver(target) == null):
+## Why a press at point would miss a Control aim's node, or "" when it would not (lands_on): hit
+## is the Control Godot hovers in the node's viewport after the aim's motion, the Control
+## gui_find_control picks, the same pick a press makes when no other button is held
+## (scene/main/viewport.cpp L3522-3524, L3331 and L1941 in 4.7.2). A node that takes no clicks,
+## itself or through an ancestor, may land on nothing.
+func _hit_refusal(aim: Dictionary, point: Vector2, hit: Control) -> String:
+	var target: Control = aim["node"]
+	if _targets.lands_on(hit, aim) or (hit == null and _targets.receiver(target) == null):
 		return ""
 	var hit_path: String = "<nothing>"
 	var hit_rect: String = ""

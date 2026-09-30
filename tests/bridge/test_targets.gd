@@ -9,6 +9,66 @@ extends "res://gd_test.gd"
 var _targets_script: GDScript = load_bridge_script("godot_mcp_targets.gd")
 
 
+func test_same_instance_hit_takes_a_control_of_the_ignoring_target_scene() -> void:
+	var targets: Node = _targets_script.new()
+	var card := _control("Card", Control.MOUSE_FILTER_IGNORE)
+	var press := _control("Press", Control.MOUSE_FILTER_STOP)
+	var title := _control("Title", Control.MOUSE_FILTER_IGNORE)
+	var stranger := _control("Stranger", Control.MOUSE_FILTER_STOP)
+	card.add_child(press)
+	card.add_child(title)
+	press.owner = card
+	title.owner = card
+	assert_true(targets.same_instance_hit(press, title), "a Control the card owns")
+	assert_true(targets.same_instance_hit(card, title), "the card itself")
+	assert_true(not targets.same_instance_hit(stranger, title), "a Control of no instance")
+	title.mouse_filter = Control.MOUSE_FILTER_STOP
+	assert_true(not targets.same_instance_hit(press, title), "a target that takes clicks")
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title.owner = null
+	assert_true(not targets.same_instance_hit(press, title), "a target with no owner")
+	card.free()
+	stranger.free()
+	targets.free()
+
+
+func test_same_instance_hit_refuses_the_root_of_a_scene_instanced_inside() -> void:
+	var targets: Node = _targets_script.new()
+	var hud := _control("Hud", Control.MOUSE_FILTER_IGNORE)
+	var gold := _control("Gold", Control.MOUSE_FILTER_IGNORE)
+	var backdrop := _control("ConfirmModal", Control.MOUSE_FILTER_STOP)
+	hud.add_child(gold)
+	hud.add_child(backdrop)
+	gold.owner = hud
+	backdrop.owner = hud
+	backdrop.scene_file_path = "res://confirm_modal.tscn"
+	assert_true(
+		not targets.same_instance_hit(backdrop, gold), "another instance's root, owned by the HUD"
+	)
+	backdrop.scene_file_path = ""
+	assert_true(targets.same_instance_hit(backdrop, gold), "the same Control as the HUD's own")
+	hud.free()
+	targets.free()
+
+
+func test_lands_on_widens_to_the_instance_for_a_text_match_only() -> void:
+	var targets: Node = _targets_script.new()
+	var card := _control("Card", Control.MOUSE_FILTER_IGNORE)
+	var press := _control("Press", Control.MOUSE_FILTER_STOP)
+	var title := _control("Title", Control.MOUSE_FILTER_IGNORE)
+	card.add_child(press)
+	card.add_child(title)
+	press.owner = card
+	title.owner = card
+	var element_aim := {"node": title}
+	var text_aim := {"node": title, "matched": {"by": "text", "text": "Strike"}}
+	assert_true(not targets.lands_on(press, element_aim), "an element target keeps the old rule")
+	assert_true(targets.lands_on(press, text_aim), "a text match lands on its instance")
+	assert_true(not targets.lands_on(null, text_aim), "nothing hit")
+	card.free()
+	targets.free()
+
+
 func test_container_transform_scales_by_the_shrink_only_with_stretch() -> void:
 	var targets: Node = _targets_script.new()
 	var at := Transform2D(0.0, Vector2(100, 40))

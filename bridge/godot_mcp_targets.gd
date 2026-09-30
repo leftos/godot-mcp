@@ -1,10 +1,12 @@
 extends Node
 ## The godot-mcp bridge's input target resolver, a child of the input player (godot_mcp_input.gd):
 ## turns a target ({element}, a Control or a 2D or 3D world node by path or unique bare name,
-## with an optional offset inside a world node, or {x, y}, a viewport point) into the point in
-## the root's viewport coordinates a gesture aims at, or a String saying why the target cannot be
-## used. The input player sends the motion and asks this module which Control the GUI hovers on
-## the way in.
+## with an optional offset inside a world node; {text, under?}, the visible Control showing a text
+## (godot_mcp_text_targets.gd); or {x, y}, a viewport point) into the point in the root's viewport
+## coordinates a gesture aims at, or a String saying why the target cannot be used. The input
+## player sends the motion and asks this module which Control the GUI hovers on the way in.
+
+const TextTargets := preload("godot_mcp_text_targets.gd")
 
 ## The refusals of an {element} target, each with the node's path in place of %s.
 const HIDDEN_TARGET := (
@@ -106,21 +108,54 @@ func point_of(resolved: Variant) -> Vector2:
 	return resolved
 
 
-## The aim an {element} target names or the Vector2 viewport point a target {x, y} names; a
-## String instead says why the target cannot be used. An aim is {node, kind ("control",
+## The aim an {element} or {text} target names or the Vector2 viewport point a target {x, y}
+## names; a String instead says why the target cannot be used. An aim is {node, kind ("control",
 ## "node2d" or "node3d"), point (in the root's viewport coordinates), levels (the
 ## SubViewportContainers on the way in, outermost first, each {container, viewport}), window (the
 ## outermost embedded Window the node is drawn in, or null),
-## input_disabled (the path of a SubViewport on the way whose input is disabled, or "")}.
+## input_disabled (the path of a SubViewport on the way whose input is disabled, or ""), and for a
+## text target matched ({by: "text", text: the shown text matched})}. A blank text is no text.
 func resolve_target(target: Variant) -> Variant:
 	if not target is Dictionary:
-		return "a target must be an object {element} or {x, y}"
+		return "a target must be an object {element}, {text} or {x, y}"
 	var spec: Dictionary = target
 	if spec.has("element"):
 		return _resolve_element(str(spec["element"]), spec.get("offset"))
+	if not str(spec.get("text", "")).strip_edges().is_empty():
+		return _resolve_text(str(spec["text"]), spec.get("under"))
 	if spec.has("x") and spec.has("y"):
 		return Vector2(float(spec["x"]), float(spec["y"]))
-	return "a target needs element, or both x and y; got %s" % JSON.stringify(spec)
+	return "a target needs element, text, or both x and y; got %s" % JSON.stringify(spec)
+
+
+## The aim at the one visible Control at or under the node under names (the root when null) that
+## shows text, with matched; or a String saying why there is none. An under no node or several
+## nodes have is refused as an element naming it would be.
+func _resolve_text(text: String, under: Variant) -> Variant:
+	var start: Variant = _text_start(under)
+	if start is String:
+		return start
+	var entry: Variant = TextTargets.find(self, start, text)
+	if entry is String:
+		return entry
+	var aim: Variant = _aim_of(entry["control"], "control", Vector3.ZERO)
+	if aim is Dictionary:
+		aim["matched"] = {"by": "text", "text": entry["shown"]}
+	return aim
+
+
+## The node a text target's scan starts at: the root when under is null, else the node under
+## names, refused as an element naming it would be when it is hidden or being freed; a plain Node
+## (no visibility of its own) is scanned. A String says why there is none.
+func _text_start(under: Variant) -> Variant:
+	if under == null:
+		return get_tree().root
+	var found: Variant = _find_input_node(str(under))
+	if found is String:
+		return found
+	var kind: String = kind_of(found)
+	var refusal: String = "" if kind.is_empty() else _live_refusal(str(under), found, kind)
+	return found if refusal.is_empty() else refusal
 
 
 ## The aim at the live, visible node an element names, or a String saying why there is none.
@@ -397,7 +432,8 @@ func _off_screen(
 
 
 ## An aim as a result reports it: {x, y, kind, path, class}, x and y in the root's viewport
-## coordinates, plus viewport, its viewport's path, when that is not the root.
+## coordinates, plus matched for a text target, and viewport, its viewport's path, when that is not
+## the root.
 func aimed_at(aim: Dictionary) -> Dictionary:
 	var node: Node = aim["node"]
 	var point: Vector2 = aim["point"]
@@ -408,6 +444,8 @@ func aimed_at(aim: Dictionary) -> Dictionary:
 		"path": str(node.get_path()),
 		"class": node.get_class(),
 	}
+	if aim.has("matched"):
+		described["matched"] = aim["matched"]
 	var viewport: Viewport = node.get_viewport()
 	if viewport != get_tree().root:
 		described["viewport"] = str(viewport.get_path())
@@ -570,12 +608,31 @@ func _ambiguous(node_name: String, named: Array[Node]) -> String:
 	return AMBIGUOUS_TARGET % [node_name, named.size(), ", ".join(paths)]
 
 
-## Whether a press on hit reaches target: hit is the target, a descendant of it, or, for a
-## target that ignores the mouse, the nearest ancestor that takes its clicks.
-func lands_on(hit: Control, target: Control) -> bool:
+## Whether a press on hit reaches a Control aim's node: hit is the node, a descendant of it, or,
+## for a node that ignores the mouse, the nearest ancestor that takes its clicks; or, for a text
+## match, a Control of its own scene instance (same_instance_hit).
+func lands_on(hit: Control, aim: Dictionary) -> bool:
 	if hit == null:
 		return false
-	return hit == target or target.is_ancestor_of(hit) or hit == receiver(target)
+	var target: Control = aim["node"]
+	return (
+		hit == target
+		or target.is_ancestor_of(hit)
+		or hit == receiver(target)
+		or (aim.has("matched") and same_instance_hit(hit, target))
+	)
+
+
+## Whether hit, the Control a press lands on, belongs to target's scene instance, for a target
+## that ignores the mouse and has an owner: hit is that owner or has it too, and is not itself the
+## root of another scene instanced inside it (a modal's backdrop in the HUD, whose owner is the HUD
+## too, keeps the click from the HUD's label). A card's title Label beside the Button that takes
+## the card's clicks is pressed through that Button.
+static func same_instance_hit(hit: Control, target: Control) -> bool:
+	var instance: Node = target.owner
+	if instance == null or target.get_mouse_filter_with_override() != Control.MOUSE_FILTER_IGNORE:
+		return false
+	return hit == instance or (hit.owner == instance and hit.scene_file_path.is_empty())
 
 
 ## The target, or its nearest Control ancestor when it ignores the mouse, that takes a click

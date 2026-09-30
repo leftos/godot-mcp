@@ -20,13 +20,16 @@ internal sealed partial class RuntimeTools
         + "the call still succeeds.";
     private const string ElementAim =
         " An element target aims at a Control's centre, or at a 2D or 3D world node's origin (plus offset) through its camera, "
-        + "refused off-screen, behind the camera, or where a Control would take the press before physics picking";
+        + "refused off-screen, behind the camera, or where a Control would take the press before physics picking. A text "
+        + "target aims at the centre of the one visible Control showing that text; a match that takes no clicks (a Label) "
+        + "also lands on a Control of its own scene instance, pressedOn naming it";
     private const string TargetNote =
         ElementAim
-        + "; it adds aimedAt {x, y, kind (control, node2d or node3d), path, class, viewport?}: the point in viewport "
-        + "coordinates, and the node's viewport when it is not the root.";
+        + "; an element or text target adds aimedAt {x, y, kind (control, node2d or node3d), path, class, matched?, "
+        + "viewport?}: the point in viewport coordinates, matched {by: \"text\", text} the shown text a text target matched, "
+        + "and the node's viewport when it is not the root.";
     private const string DragTargetNote =
-        ElementAim + "; an element at either end adds aimedAt {from, to}, each as click's aimedAt, a point end null.";
+        ElementAim + "; an element or text target at either end adds aimedAt {from, to}, each as click's aimedAt, a point end null.";
     private const int MaxHoverTimeoutMs = 10_000;
     private const int MaxScrollNotches = 100;
     private const double MaxScrollFactor = 10;

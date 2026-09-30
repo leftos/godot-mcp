@@ -143,7 +143,7 @@ $ErrorActionPreference = 'Stop'
 $itestGroups = [ordered]@{
     lifecycle = @('SessionLifecycleTests', 'WatchdogTests')
     sessions  = @('McpServerSmokeTests', 'AttachTests', 'ArmTests', 'QuietTests', 'ProfileTests')
-    input     = @('InputTests', 'GamepadTests', 'CaptureTests', 'StressTests', 'WorldTargetTests')
+    input     = @('InputTests', 'GamepadTests', 'CaptureTests', 'StressTests', 'WorldTargetTests', 'TextTargetTests')
     reads     = @('RuntimeReadTests', 'InspectionTests', 'BaselineTests', 'PreviewTests')
     time      = @('TimeTests', 'BatchTests')
     prep      = @('PrepTests', 'RestartTests')
@@ -197,6 +197,7 @@ $itestRules = @(
     @('src/GodotMcp.Server/Tools/HeadlessTools.Properties*.cs', 'nodes'),
     @('src/GodotMcp.Server/Tools/HeadlessTools.Signals*.cs', 'nodes'),
     @('src/GodotMcp.Server/Tools/HeadlessTools*.cs', 'headless'),
+    @('src/GodotMcp.Server/Tools/InputTarget.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Input*.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Gamepad*.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Stress*.cs', 'input'),

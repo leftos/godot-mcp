@@ -75,6 +75,72 @@ public sealed class InputTargetTests
         Assert.Equal("target.offset needs x and y; got {element: Area, x: null, y: null, offset: {x: null, y: 5, z: null}}.", refused.Message);
     }
 
+    [Fact]
+    public void ATextAloneBecomesATextTarget()
+    {
+        JsonObject bridge = InputTarget.ToBridge(new InputTarget(Text: "New Game"), "target");
+
+        Assert.Equal("{\"text\":\"New Game\"}", bridge.ToJsonString());
+    }
+
+    [Fact]
+    public void ATextWithUnderPassesUnderThrough()
+    {
+        JsonObject bridge = InputTarget.ToBridge(new InputTarget(Text: "Strike", Under: "Hand/Row"), "to");
+
+        Assert.Equal("{\"text\":\"Strike\",\"under\":\"Hand/Row\"}", bridge.ToJsonString());
+    }
+
+    [Fact]
+    public void UnderWithoutTextIsRefusedNamingTheKeysGiven()
+    {
+        McpException refused = Assert.Throws<McpException>(() => InputTarget.ToBridge(new InputTarget("Card", Under: "Hand"), "target"));
+
+        Assert.Equal("target.under narrows a text target, so it needs text; got {element: Card, x: null, y: null, under: 'Hand'}.", refused.Message);
+    }
+
+    [Fact]
+    public void UnderWithABlankTextIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() => InputTarget.ToBridge(new InputTarget(Text: " ", Under: "Hand"), "from"));
+
+        Assert.StartsWith("from.under narrows a text target, so it needs text", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ATextWithAnElementIsRefusedNamingTheKeysGiven()
+    {
+        McpException refused = Assert.Throws<McpException>(() => InputTarget.ToBridge(new InputTarget("Card", Text: "Strike"), "to"));
+
+        Assert.Equal(
+            "to needs exactly one of element, text, or both x and y; got {element: Card, x: null, y: null, text: 'Strike'}.",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public void ATextWithAPointIsRefused() => AssertRefused(new InputTarget(null, 1, 2, Text: "Strike"), "target");
+
+    [Fact]
+    public void ATextWithOnlyXIsRefused() => AssertRefused(new InputTarget(null, 1, null, Text: "Strike"), "target");
+
+    [Fact]
+    public void ABlankTextCountsAsNone()
+    {
+        JsonObject element = InputTarget.ToBridge(new InputTarget("Card", Text: "  "), "target");
+
+        Assert.Equal("{\"element\":\"Card\"}", element.ToJsonString());
+        AssertRefused(new InputTarget(Text: " \t"), "target");
+    }
+
+    [Fact]
+    public void AnOffsetWithATextIsRefused() =>
+        AssertOffsetRefused(
+            new InputTarget(Offset: new InputOffset(1, 2), Text: "Strike"),
+            "target",
+            "{element: null, x: null, y: null, text: 'Strike', offset: {x: 1, y: 2, z: null}}"
+        );
+
     private static void AssertOffsetRefused(InputTarget target, string parameter, string given)
     {
         McpException refused = Assert.Throws<McpException>(() => InputTarget.ToBridge(target, parameter));
@@ -86,6 +152,6 @@ public sealed class InputTargetTests
     {
         McpException refused = Assert.Throws<McpException>(() => InputTarget.ToBridge(target, parameter));
 
-        Assert.StartsWith($"{parameter} needs either element, or both x and y", refused.Message, StringComparison.Ordinal);
+        Assert.StartsWith($"{parameter} needs exactly one of element, text, or both x and y; got ", refused.Message, StringComparison.Ordinal);
     }
 }
