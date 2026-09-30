@@ -75,6 +75,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "gamepad_stick",
                 "get_debug_output",
                 "get_errors",
+                "get_game_state",
                 "get_node_properties",
                 "get_node_signals",
                 "get_scene_file_tree",
@@ -182,6 +183,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["gamepad_stick"] = changesTheGame,
             ["get_debug_output"] = readsTheGame,
             ["get_errors"] = readsTheGame,
+            ["get_game_state"] = destructive,
             ["get_node_properties"] = readsTheGame,
             ["get_node_signals"] = readsTheGame,
             ["get_scene_file_tree"] = readsTheGame,
@@ -227,7 +229,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(67, actual.Count);
+        Assert.Equal(68, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

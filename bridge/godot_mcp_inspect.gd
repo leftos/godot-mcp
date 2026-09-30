@@ -319,7 +319,7 @@ func call_method(params: Dictionary) -> Variant:
 	# A GDScript coroutine returns a GDScriptFunctionState at its first await, and awaiting that
 	# waits for its completed signal and gives the function's return value
 	# (modules/gdscript/gdscript_vm.cpp L2586-2598 in 4.7.2).
-	if _is_coroutine(value):
+	if is_coroutine(value):
 		value = await value
 	return {"path": path, "method": method, "value": _bridge._json.to_json(value)}
 
@@ -340,7 +340,7 @@ func call_now(params: Dictionary) -> Variant:
 	var raised: String = _bridge._logger.first_error_since(mark)
 	if not raised.is_empty():
 		return raised
-	return {"value": null if _is_coroutine(value) else _bridge._json.to_json(value)}
+	return {"value": null if is_coroutine(value) else _bridge._json.to_json(value)}
 
 
 ## [node, method, args] for params {node, method, args}: the node found, the method it has, and
@@ -361,7 +361,7 @@ func _prepare_call(params: Dictionary) -> Variant:
 
 
 ## Whether value is the GDScriptFunctionState a GDScript coroutine returns at its first await.
-static func _is_coroutine(value: Variant) -> bool:
+static func is_coroutine(value: Variant) -> bool:
 	return (
 		value is Object
 		and is_instance_valid(value)

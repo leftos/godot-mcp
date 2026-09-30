@@ -80,6 +80,18 @@ func first_error_since(since: int) -> String:
 
 ## The entries logged since the last call and how many were dropped over the cap, as
 ## [entries, dropped]; both start over empty.
+## Whether an entry logged at or after sequence number since is no longer held: dropped over the
+## cap, or already sent by take_pending. Held entries run from the first not yet taken, and an
+## entry logged while the pending list is full is counted and dropped.
+func lost_since(since: int) -> bool:
+	_mutex.lock()
+	var held: int = _pending.size()
+	var first_held: int = _sequence - _dropped - held
+	var logged: int = _sequence - since
+	_mutex.unlock()
+	return logged > maxi(0, first_held + held - maxi(since, first_held))
+
+
 func take_pending() -> Array:
 	_mutex.lock()
 	var taken: Array = [_pending, _dropped]

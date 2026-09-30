@@ -77,6 +77,11 @@ def test_a_runtime_tools_part_selects_its_group(repo: Path) -> None:
     assert _selected(_itest_groups(repo)) == ["time"]
 
 
+def test_a_state_file_beside_the_runtime_tools_selects_reads(repo: Path) -> None:
+    _change(repo, "src/GodotMcp.Server/Tools/StateMerge.cs")
+    assert _selected(_itest_groups(repo)) == ["reads"]
+
+
 def test_docs_alone_select_no_group(repo: Path) -> None:
     _change(repo, "docs/x.md")
     result = _itest_groups(repo)

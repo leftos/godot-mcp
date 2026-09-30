@@ -144,7 +144,7 @@ $itestGroups = [ordered]@{
     lifecycle = @('SessionLifecycleTests', 'WatchdogTests')
     sessions  = @('McpServerSmokeTests', 'AttachTests', 'ArmTests', 'QuietTests', 'ProfileTests')
     input     = @('InputTests', 'GamepadTests', 'CaptureTests', 'StressTests', 'WorldTargetTests', 'TextTargetTests')
-    reads     = @('RuntimeReadTests', 'InspectionTests', 'BaselineTests', 'PreviewTests')
+    reads     = @('RuntimeReadTests', 'InspectionTests', 'BaselineTests', 'PreviewTests', 'StateTests')
     time      = @('TimeTests', 'BatchTests')
     prep      = @('PrepTests', 'RestartTests')
     recording = @('RecordingTests')
@@ -210,6 +210,8 @@ $itestRules = @(
     @('src/GodotMcp.Server/Tools/RuntimeTools.Snapshot*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Baseline*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Preview*.cs', 'reads'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.State*.cs', 'reads'),
+    @('src/GodotMcp.Server/Tools/State*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.CSharp*.cs', 'csharp'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.RunCSharp*.cs', 'csharp'),
     @('src/GodotMcp.Server/Tools/RuntimeTools*.cs', $itestRuntimeGroups),

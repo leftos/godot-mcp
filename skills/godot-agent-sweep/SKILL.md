@@ -17,7 +17,7 @@ Put one line in the agent file's body, after the front matter:
 
 | Class | What its tools do |
 |---|---|
-| `read` | look without changing anything: the scene tree, node properties, screenshots, frame captures, errors, `cs_get` |
+| `read` | look without changing anything: the scene tree, node properties, screenshots, frame captures, errors, `cs_get`, `get_game_state` |
 | `drive` | start, stop and play the game: `run_project`, `stop_project`, input, gamepad, `frame_control`, `wait_for`, baselines |
 | `edit-live` | change the running game's state: `set_property`, `call_method`, `run_script`, `run_csharp`, `cs_set`, `cs_call`, `call_game_tool`, `batch_drive` |
 | `edit-scene` | edit `.tscn` files headless: `add_node`, `set_node_properties`, `save_scene`, and the rest of the scene tools |

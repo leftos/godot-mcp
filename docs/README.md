@@ -68,6 +68,8 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Stall kill (tool processes) | The server's kill of a build, import, headless run or ffmpeg cut that has written no output and used no CPU in its process tree for 120 s, ahead of its ceiling |
 | Release (a bridge request's) | The load-adjusted time after which the server sends `cancel` for a step, monitor, wait or C# call still running in the game; the request carries 5 x it as `backstopMs`, the bridge's own limit, which counts clip time in a recording |
 | Baseline | A stored screenshot (and its crop) a new capture is compared against, giving the changed pixels, their bounding box and a diff image (`save_screenshot_baseline`, `compare_screenshot`) |
+| State digest | What `get_game_state` returns: the state each marked node gives, read in one frame |
+| State method | A node's `_mcp_state()` (GDScript, or a Godot-visible C# method of that name) returning the values an agent reads in place of a screenshot; its node opts in by joining the `mcp_state` group |
 | Snapshot | A capture of a live subtree's nodes with their shown properties and groups, held by the session under an id (`snapshot_subtree`) for `diff_snapshots` to compare; not a screenshot baseline |
 | uiChanged baseline | Not a screenshot baseline: the snapshot of the UI (visible Controls, focus owner, top popup) the bridge takes when the first input gesture since launch, or since the last met `wait_for {uiChanged}`, starts, which that wait compares with |
 | gdtest | The headless GDScript unit-test run (`pwsh run.ps1 gdtest`, `tests/bridge`): many bridge-logic tests in one Godot process, as against an integration test's launch per test |

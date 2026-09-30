@@ -30,6 +30,7 @@ internal static class ToolClasses
         ["restart_project"] = new(Drive, "session lifecycle belongs with run_project and stop_project"),
         ["set_property"] = new(EditLive, "it changes a live node's state"),
         [RuntimeTools.CsGetToolName] = new(Read, "it reads a member's value"),
+        [RuntimeTools.GetGameStateToolName] = new(Read, "it reads the game's own state"),
     };
 
     private static readonly Lazy<IReadOnlyDictionary<string, string>> Catalog = new(Load);

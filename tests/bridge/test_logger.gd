@@ -75,3 +75,26 @@ func test_pending_is_capped_and_counts_the_dropped() -> void:
 	assert_eq((taken[0] as Array).size(), cap, "entries stop at the cap")
 	assert_eq(taken[1], 3, "the rest are counted as dropped")
 	assert_eq(logger.take_pending(), [[], 0], "taking starts both over")
+
+
+func test_lost_since_is_true_only_for_an_entry_dropped_or_sent() -> void:
+	var logger: Logger = _logger_script.new()
+	var none: Array[ScriptBacktrace] = []
+	var cap: int = _logger_script.get_script_constant_map()["MAX_PENDING"]
+	var start: int = logger.sequence()
+	assert_true(not logger.lost_since(start), "nothing logged, nothing lost")
+	var warn: int = Logger.ERROR_TYPE_WARNING
+	logger._log_error("f", "res://a.gd", 1, "a warning", "", false, warn, none)
+	assert_true(not logger.lost_since(start), "a held warning is not lost")
+	for index in cap - 1:
+		logger._log_error("f", "res://a.gd", index, "c", "", false, warn, none)
+	var full: int = logger.sequence()
+	assert_true(not logger.lost_since(start), "the full list still holds every entry")
+	logger._log_error("f", "res://a.gd", 1, "e", "", false, Logger.ERROR_TYPE_ERROR, none)
+	assert_true(logger.lost_since(full), "the entry past the cap was dropped")
+	assert_true(logger.lost_since(start), "and a mark before it sees the drop too")
+	logger.take_pending()
+	var after: int = logger.sequence()
+	logger._log_error("f", "res://a.gd", 1, "w", "", false, warn, none)
+	assert_true(logger.lost_since(start), "entries already sent are no longer held")
+	assert_true(not logger.lost_since(after), "a warning held after the take is not lost")

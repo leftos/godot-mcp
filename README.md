@@ -29,6 +29,7 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 - Set properties, call methods, and run a GDScript snippet in the game.
 - Watch a value over frames, or snapshot a subtree before and after an action and diff the two.
 - Look up any class's methods, properties and signals.
+- Read a game's own state in one call, from the nodes it marks with the `mcp_state` group and a `_mcp_state()` method.
 - In C# games: list a C# object's members (private ones and overloads included), read and set members Godot cannot reach, call any method (generics, records, async `Task`s), and run a C# snippet that uses the game's own types; list the game's own cheat and debug methods it marks with a `[GodotMcpTool]` attribute, and call them by name with named arguments.
 - Run a whole scripted sequence of steps and checks in one call.
 

@@ -29,6 +29,7 @@ const SHOWN_TEXT_SCRIPT := "godot_mcp_shown_text.gd"
 const CLASS_INFO_SCRIPT := "godot_mcp_class_info.gd"
 const CAPTURE_SCRIPT := "godot_mcp_capture.gd"
 const DOTNET_SCRIPT := "godot_mcp_dotnet.gd"
+const STATE_SCRIPT := "godot_mcp_state.gd"
 const DORMANT_SCRIPT := "godot_mcp_dormant.gd"
 const WINDOW_SCRIPT := "godot_mcp_window.gd"
 const AUDIO_SCRIPT := "godot_mcp_audio.gd"
@@ -78,6 +79,9 @@ var _capture: Node
 ## The C# helper module (godot_mcp_dotnet.gd beside this script): the dotnet command, which loads
 ## the helper extension once per process and passes it requests.
 var _dotnet: Node
+## The state reader (godot_mcp_state.gd beside this script): the state command, the marked nodes'
+## own state read in one frame.
+var _state: Node
 ## The inspector (godot_mcp_inspect.gd beside this script), a child once the bridge is on.
 var _inspect: Node
 ## The clock (godot_mcp_time.gd beside this script): pause, step, time scale and waits.
@@ -228,6 +232,10 @@ func _build_once() -> void:
 	_dotnet.name = "Dotnet"
 	_dotnet.bridge = self
 	add_child(_dotnet)
+	_state = (load(_script_dir.path_join(STATE_SCRIPT)) as GDScript).new()
+	_state.name = "State"
+	_state.bridge = self
+	add_child(_state)
 	_inspect = (load(_script_dir.path_join(INSPECT_SCRIPT)) as GDScript).new()
 	_inspect.name = "Inspect"
 	add_child(_inspect)
@@ -568,6 +576,7 @@ func _command_handlers() -> Dictionary:
 		"describe_class": _handle_describe_class,
 		"capture": _handle_capture,
 		"dotnet": _handle_dotnet,
+		"state": _handle_state,
 		"shutdown": _handle_shutdown,
 		"cancel": _handle_cancel,
 	}
@@ -639,6 +648,16 @@ func _handle_capture(id: int, params: Dictionary) -> void:
 ## replies {reply, loadedNow} or the reason the helper could not be reached.
 func _handle_dotnet(id: int, params: Dictionary) -> void:
 	var outcome: Dictionary = await _dotnet.handle(params)
+	if outcome.has("error"):
+		_reply_error(id, str(outcome["error"]))
+		return
+	_reply_ok(id, outcome["result"])
+
+
+## Reads the state of the nodes in the mcp_state group on the State child, all in this frame;
+## replies {frame, nodes, total, omitted?} or why params.node cannot be read from.
+func _handle_state(id: int, params: Dictionary) -> void:
+	var outcome: Dictionary = _state.handle(params)
 	if outcome.has("error"):
 		_reply_error(id, str(outcome["error"]))
 		return
