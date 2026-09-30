@@ -16,13 +16,18 @@ namespace GodotMcp.Tests.Session;
 /// The pool of warm headless hosts on a fake clock, each host a fake process that dials the real listener over loopback:
 /// reuse, invalidation by the fingerprint, C# projects kept cold, a host that exits mid-request, passes its ceiling, stalls,
 /// is cancelled, refuses or answers with no object, one that never says hello, exits before it or right after it, a folder
-/// that became C#, a slow release, the stops, and a host's log current on disk while it runs; the idle limit and its reset,
+/// that became C#, a slow release, the stops, a start that finishes after the server's shutdown, and a host's log current
+/// on disk while it runs; the idle limit and its reset,
 /// the cap's eviction of the least recently used idle host and never a busy one, a stale reply, the listing, and
 /// stop_project on a folder with only a host.
 /// </summary>
 public sealed class HeadlessHostsTests : IDisposable
 {
     private const string Operation = "validate";
+
+    /// <summary>The message a call gets once the server is shutting down.</summary>
+    private const string ShuttingDown = "The server is shutting down, so no headless host starts now.";
+
     private const int ServerPid = 1_001;
     private const int OtherServerPid = 1_002;
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
@@ -407,6 +412,40 @@ public sealed class HeadlessHostsTests : IDisposable
         Assert.All(_launched, host => Assert.True(host.ShutdownAsked && host.Killed && host.Disposed, $"host {host.Id} was stopped and waited for"));
         Assert.Null(Hosts.ProcessIdOf(first));
         Assert.Null(Hosts.ProcessIdOf(second));
+    }
+
+    [Fact]
+    public async Task AStartThatFinishesAfterShutdownStopsItsHost()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string game = Game("game");
+        _dialGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        Task<HeadlessHost?> acquire = Hosts.AcquireAsync(game, What(game), cancellation);
+        // The launch runs synchronously up to the wait for its hello, which the gate holds back.
+        FakeHost host = Assert.Single(_launched);
+        Hosts.Shutdown();
+        _dialGate.SetResult();
+
+        SessionException failed = await Assert.ThrowsAsync<SessionException>(() => acquire.WaitAsync(Wait, cancellation));
+
+        Assert.Equal(ShuttingDown, failed.Message);
+        Assert.Null(Hosts.ProcessIdOf(game));
+        Assert.True(host.ShutdownAsked && host.Disposed, "the host was stopped and let go of");
+    }
+
+    [Fact]
+    public async Task AcquireAfterShutdownIsRefused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string game = Game("game");
+
+        Hosts.Shutdown();
+        SessionException failed = await Assert.ThrowsAsync<SessionException>(() => Hosts.AcquireAsync(game, What(game), cancellation));
+
+        Assert.Equal(ShuttingDown, failed.Message);
+        Assert.Empty(_launched);
+        Assert.Null(Hosts.ProcessIdOf(game));
     }
 
     [Fact]

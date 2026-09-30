@@ -24,11 +24,17 @@ internal sealed class HeadlessHosts(SessionRegistry registry)
     /// <summary>The key a host adds to its result object when a resource its request named stayed cached after the request.</summary>
     private const string StaleKey = "stale";
 
+    /// <summary>What a call gets once the server is shutting down.</summary>
+    private const string ShuttingDown = "The server is shutting down, so no headless host starts now.";
+
     /// <summary>How two normalised folders compare as keys: without case on Windows, whose file system ignores it.</summary>
     private static readonly StringComparer FolderComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
     private readonly Lock _lock = new();
     private readonly Dictionary<string, HeadlessHost> _hosts = new(FolderComparer);
+
+    // Set once the server is shutting down, under _lock: no request acquires a host, and a start under way stops its own.
+    private bool _closed;
 
     // The release of each folder's last host taken out of the pool, under _lock; a finished one stays until replaced.
     private readonly Dictionary<string, Task> _releases = new(FolderComparer);
@@ -60,9 +66,19 @@ internal sealed class HeadlessHosts(SessionRegistry registry)
     /// <param name="projectDir">The project folder.</param>
     /// <param name="what">"The headless &lt;op&gt; run on &lt;project&gt;", which a failure to start begins with.</param>
     /// <param name="cancellationToken">Withdraws the waits for a stop, a release and a host's start.</param>
-    /// <exception cref="SessionException">A new host could not be started, or ended before its first request.</exception>
+    /// <exception cref="SessionException">
+    /// A new host could not be started, or ended before its first request, or the server is shutting down.
+    /// </exception>
     public async Task<HeadlessHost?> AcquireAsync(string projectDir, string what, CancellationToken cancellationToken)
     {
+        lock (_lock)
+        {
+            if (_closed)
+            {
+                throw new SessionException(ShuttingDown);
+            }
+        }
+
         string folder = ProjectPaths.Normalise(projectDir);
         if (PrepScan.FindCsproj(folder).Kind != CsprojKind.None)
         {
@@ -157,6 +173,7 @@ internal sealed class HeadlessHosts(SessionRegistry registry)
     }
 
     /// <summary>
+    /// Closes the pool, so no request acquires a host from here on and a start still under way stops its own host.
     /// Stops every host and waits for each process to be gone, then for every release still under way, at most
     /// <see cref="HeadlessHost.ReleaseLimit"/> of wall time; one that runs past it is logged. For the server's exit.
     /// </summary>
@@ -165,6 +182,7 @@ internal sealed class HeadlessHosts(SessionRegistry registry)
         HeadlessHost[] hosts;
         lock (_lock)
         {
+            _closed = true;
             hosts = [.. _hosts.Values];
             _hosts.Clear();
         }
@@ -325,11 +343,24 @@ internal sealed class HeadlessHosts(SessionRegistry registry)
                 throw failed;
             }
 
+            bool closed;
             lock (_lock)
             {
-                _hosts[folder] = started;
-                _starting--;
-                placed = true;
+                closed = _closed;
+                if (!closed)
+                {
+                    _hosts[folder] = started;
+                    _starting--;
+                    placed = true;
+                }
+            }
+
+            if (closed)
+            {
+                // The shutdown already emptied the pool this host would join, so the host it never took must not outlive it.
+                started.Stop("the server is shutting down", CancellationToken.None);
+                _ = Retire(folder, started);
+                throw new SessionException(ShuttingDown);
             }
 
             _ = DropWhenGoneAsync(folder, started);
