@@ -60,11 +60,7 @@ internal static class Snippets
     /// <summary>The refusal naming each expected assembly the game has loaded from another build, in order; null when none is.</summary>
     private static string? Stale(JsonObject? expect)
     {
-        if (expect is null)
-        {
-            return null;
-        }
-        List<string> stale = [.. expect.Where(entry => IsStale(entry.Key, entry.Value!.GetValue<string>())).Select(entry => entry.Key + ".dll")];
+        List<string> stale = StaleDlls(expect);
         return stale.Count switch
         {
             0 => null,
@@ -72,6 +68,13 @@ internal static class Snippets
             _ => $"the game runs older builds of {string.Join(", ", stale)} than the ones on disk; restart_project loads them",
         };
     }
+
+    /// <summary>
+    /// The file name of each assembly in <paramref name="expect"/> (simple name to MVID, as the server reads the build on disk)
+    /// that the game has loaded from another build, in order; none when <paramref name="expect"/> is null.
+    /// </summary>
+    internal static List<string> StaleDlls(JsonObject? expect) =>
+        expect is null ? [] : [.. expect.Where(entry => IsStale(entry.Key, entry.Value!.GetValue<string>())).Select(entry => entry.Key + ".dll")];
 
     private static bool IsStale(string name, string mvid) =>
         SnippetContext.Loaded(name) is { } loaded && loaded.ManifestModule.ModuleVersionId != Guid.ParseExact(mvid, "D");

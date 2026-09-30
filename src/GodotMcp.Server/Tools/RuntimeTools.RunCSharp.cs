@@ -64,7 +64,7 @@ internal sealed partial class RuntimeTools
         int maxDepth = CheckGetDepth(options?.MaxDepth);
         int timeoutMs = CheckCallTimeout(options?.TimeoutMs);
         GodotSession game = Find(session);
-        string framework = await GameRuntimeDirectoryAsync(game, session, cancellationToken);
+        string framework = await GameRuntimeDirectoryAsync(RunCSharpToolName, game, session, cancellationToken);
         JsonObject request = BuildRunRequest(game.ProjectDir, framework, code, usings);
         request["maxDepth"] = maxDepth;
         request["keep"] = options?.Keep ?? false;
@@ -99,8 +99,8 @@ internal sealed partial class RuntimeTools
     /// The folder of the runtime the session's game runs on, which the helper's ping reports; asked once per game process,
     /// since a running game's runtime cannot change and a restart starts a new process.
     /// </summary>
-    /// <exception cref="McpException">The helper cannot be asked, or its ping names no runtime folder.</exception>
-    private async Task<string> GameRuntimeDirectoryAsync(GodotSession game, string? session, CancellationToken cancellationToken)
+    /// <exception cref="McpException">The helper cannot be asked, or its ping names no runtime folder; <paramref name="tool"/> fails.</exception>
+    private async Task<string> GameRuntimeDirectoryAsync(string tool, GodotSession game, string? session, CancellationToken cancellationToken)
     {
         if (GameRuntimes.TryGetValue(game, out GameRuntime? known) && known.ProcessId == game.GameProcessId)
         {
@@ -108,11 +108,11 @@ internal sealed partial class RuntimeTools
         }
 
         JsonObject ping = new() { ["op"] = "ping" };
-        (CSharpReply reply, _) = await SendCSharpAsync(RunCSharpToolName, ping, null, session, cancellationToken);
+        (CSharpReply reply, _) = await SendCSharpAsync(tool, ping, null, session, cancellationToken);
         string directory =
             reply.Result?["runtimeDirectory"]?.GetValue<string>()
             ?? throw new McpException(
-                $"{RunCSharpToolName} failed: the C# helper in the game does not report its runtime folder; rebuild it with "
+                $"{tool} failed: the C# helper in the game does not report its runtime folder; rebuild it with "
                     + "'pwsh run.ps1 dotnet', then restart_project."
             );
         GameRuntimes.AddOrUpdate(game, new GameRuntime(game.GameProcessId, directory));
@@ -129,7 +129,7 @@ internal sealed partial class RuntimeTools
     /// </exception>
     private JsonObject BuildRunRequest(string projectDir, string framework, string code, string[] usings)
     {
-        SnippetReferences references = FindSnippetReferences(projectDir, framework);
+        SnippetReferences references = FindSnippetReferences(RunCSharpToolName, projectDir, framework);
         List<string> allUsings = [.. usings, "Godot"];
         if (references.RootNamespace is { } root)
         {
@@ -148,15 +148,19 @@ internal sealed partial class RuntimeTools
             ["assembly"] = Convert.ToBase64String(compiled.Assembly),
             ["pdb"] = Convert.ToBase64String(compiled.Pdb!),
             ["game"] = references.Game,
-            ["expect"] = new JsonObject([
-                .. references.Expect.Select(pair => KeyValuePair.Create(pair.Key, (JsonNode?)JsonValue.Create(pair.Value))),
-            ]),
+            ["expect"] = ExpectedMvids(references),
         };
     }
 
+    /// <summary>The helper's <c>expect</c>: each game-folder and helper dll's simple name mapped to its MVID on disk.</summary>
+    private static JsonObject ExpectedMvids(SnippetReferences references) =>
+        new([.. references.Expect.Select(pair => KeyValuePair.Create(pair.Key, (JsonNode?)JsonValue.Create(pair.Value)))]);
+
     /// <summary>What the snippet compiles against: the game's build folder and the helper copy the game loads.</summary>
-    /// <exception cref="McpException">The project cannot be asked, or its build or the helper's copy cannot be read.</exception>
-    private SnippetReferences FindSnippetReferences(string projectDir, string framework)
+    /// <exception cref="McpException">
+    /// The project cannot be asked, or its build or the helper's copy cannot be read; <paramref name="tool"/> fails.
+    /// </exception>
+    private SnippetReferences FindSnippetReferences(string tool, string projectDir, string framework)
     {
         try
         {
@@ -165,7 +169,7 @@ internal sealed partial class RuntimeTools
         catch (Exception e)
             when (e is InvalidOperationException or IOException or UnauthorizedAccessException or BadImageFormatException or XmlException)
         {
-            throw new McpException($"{RunCSharpToolName} failed: {e.Message}", e);
+            throw new McpException($"{tool} failed: {e.Message}", e);
         }
     }
 

@@ -53,8 +53,42 @@ public sealed class ToolMarkTests
         Assert.Equal("clear_room", read.Name);
         Assert.Null(read.When);
         Assert.False(read.ReadOnly);
+        Assert.Null(read.Malformed);
+    }
+
+    [Theory]
+    [InlineData(nameof(MalformedBench.Weighed))]
+    [InlineData(nameof(MalformedBench.Blank))]
+    public void AMarkWithNoDescriptionStringIsMalformedNamingTheMethod(string method)
+    {
+        ToolMark mark = ToolMark.Read(typeof(MalformedBench).GetMethod(method)!)!;
+
+        Assert.Null(mark.Description);
+        Assert.Equal(method, mark.Name);
+        Assert.Equal(
+            $"MalformedBench.{method} is marked GodotMcpTool, but its mark has no description string; give the attribute a "
+                + "constructor taking the description.",
+            mark.Malformed
+        );
     }
 
     private static MethodInfo Method(string name) =>
         typeof(ToolBench).GetMethod(name) ?? throw new InvalidOperationException($"ToolBench has no {name}");
+
+    /// <summary>A mark a game got wrong: its constructor takes something other than the description.</summary>
+    [AttributeUsage(AttributeTargets.Method)]
+    private sealed class GodotMcpToolAttribute(object? weight) : Attribute
+    {
+        public object? Weight { get; } = weight;
+    }
+
+    /// <summary>Methods whose marks carry a number and a null where the description goes.</summary>
+    private static class MalformedBench
+    {
+        [GodotMcpTool(3)]
+        public static void Weighed() { }
+
+        [GodotMcpTool(null)]
+        public static void Blank() { }
+    }
 }

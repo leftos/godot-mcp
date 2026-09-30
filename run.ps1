@@ -151,7 +151,7 @@ $itestGroups = [ordered]@{
     headless  = @('HeadlessTests', 'HeadlessMeshTests')
     scene     = @('HeadlessSceneTests', 'HeadlessBatchTests')
     nodes     = @('HeadlessPropertyTests', 'HeadlessSignalTests')
-    csharp    = @('CSharpToolTests')
+    csharp    = @('CSharpToolTests', 'GameToolTests')
 }
 # The lanes the groups run in: each lane's groups one at a time in this order, the lanes at once. The timing lane keeps
 # the groups that assert wall-clock times apart from each other; the build and untimed lanes hold the rest, the C#

@@ -82,6 +82,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "hover",
                 "inspect_node",
                 "key",
+                "list_game_tools",
                 "list_sessions",
                 "load_sprite",
                 "monitor_property",
@@ -187,6 +188,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["hover"] = changesTheGame,
             ["inspect_node"] = readsTheGame,
             ["key"] = changesTheGame,
+            ["list_game_tools"] = readsTheGame,
             ["list_sessions"] = readsTheGame,
             ["load_sprite"] = changesTheGame,
             ["monitor_property"] = readsTheGame,
@@ -223,7 +225,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(65, actual.Count);
+        Assert.Equal(66, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

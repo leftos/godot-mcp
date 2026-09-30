@@ -10,6 +10,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `godot-mcp.json`'s `prepWrapper` runs the prep's build and import through the project's own wrapper, such as its gate script, with `{log}` and `{ceiling}` tokens.
 - Live node paths take `%UniqueName`, alone (looked up in every scene, refused when several hold it) or after its owner's path, in every node-taking tool.
 - Input tools aim `element` at 2D and 3D world nodes through their camera, with an optional `offset`, and report the point as `aimedAt`.
+- `list_game_tools` lists a C# game's own methods marked `[GodotMcpTool]`, with each one's owner, argument schema and whether it can be called now.
 
 ### Fixed
 
