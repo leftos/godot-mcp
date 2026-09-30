@@ -312,7 +312,8 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
             new ConnectTarget("Boss/Sprite", "hide"),
             cancellation
         );
-        JsonNode read = JsonNode.Parse(await _tools.GetNodeSignalsAsync(directory, "level.tscn", "Btn", null, cancellation))!;
+        // No prep: the connect wrote .uid files, which alone would make it import.
+        JsonNode read = JsonNode.Parse(await _tools.GetNodeSignalsAsync(directory, "level.tscn", "Btn", new HeadlessOptions("never"), cancellation))!;
 
         Assert.Equal(
             """{"from":"Btn","signal":"pressed","target":"Boss/Sprite","method":"hide","uidFilesWritten":"""

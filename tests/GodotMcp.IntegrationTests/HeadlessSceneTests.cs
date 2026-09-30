@@ -99,6 +99,9 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         + "anchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n\n"
         + ScreenBackdrop;
 
+    // ShadowTrail.cs: a Node2D script whose private field scale shadows Node2D.scale.
+    private static readonly Dictionary<string, string> ShadowTrailSources = new() { ["ShadowTrail.cs"] = ShadowTrailSource };
+
     private readonly SessionHarness _harness = new();
     private readonly HeadlessTools _tools;
     private readonly List<IDisposable> _projects = [];
@@ -616,7 +619,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         string text = File.ReadAllText(Path.Combine(probe.Directory, "scripted.tscn"));
         Assert.Contains("path=\"res://b.gd\"", text, StringComparison.Ordinal);
         Assert.DoesNotContain("res://a.gd", text, StringComparison.Ordinal);
-        JsonNode root = (await TreeAsync(probe.Directory, "scripted.tscn", cancellation))["nodes"]![0]!;
+        JsonNode root = (await UnpreparedTreeAsync(probe.Directory, "scripted.tscn", cancellation))["nodes"]![0]!;
         Assert.Equal("res://b.gd", root["script"]!.GetValue<string>());
     }
 
@@ -736,9 +739,15 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
     public async Task AttachScriptKeepsTheCSharpExportsTheNewScriptDeclares()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
-        csProbe.WriteSource("CardHolder.cs", CardHolderSource("CardHolder"));
-        csProbe.WriteSource("OtherCardHolder.cs", CardHolderSource("OtherCardHolder"));
+        CsProbeProject csProbe = Track(
+            CsProbeProject.BuiltWith(
+                new Dictionary<string, string>
+                {
+                    ["CardHolder.cs"] = CardHolderSource("CardHolder"),
+                    ["OtherCardHolder.cs"] = CardHolderSource("OtherCardHolder"),
+                }
+            )
+        );
         File.WriteAllText(Path.Combine(csProbe.Directory, "enemy.tscn"), EnemyScene);
         WriteCardedScene(csProbe.Directory, "res://CardHolder.cs");
 
@@ -747,6 +756,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         )!;
 
         AssertCardKept(csProbe.Directory, attached, "res://OtherCardHolder.cs");
+        Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -821,7 +831,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         // An override names no type: the node comes from the base scene.
         Assert.DoesNotContain("type=", lines[sprite], StringComparison.Ordinal);
         Assert.StartsWith("script = ExtResource(", lines[sprite + 1], StringComparison.Ordinal);
-        JsonNode tree = await TreeAsync(probe.Directory, "elite.tscn", cancellation);
+        JsonNode tree = await UnpreparedTreeAsync(probe.Directory, "elite.tscn", cancellation);
         Assert.Equal([".", "Sprite", "Shield"], Paths(tree));
         Assert.Equal("res://a.gd", tree["nodes"]![1]!["script"]!.GetValue<string>());
     }
@@ -1233,20 +1243,21 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
     public async Task AttachScriptSetsACSharpScriptWhenTheBuildIsGreen()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        CsProbeProject csProbe = Track(new CsProbeProject());
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(CsProbeProject.NoExtraSources));
         File.WriteAllText(Path.Combine(csProbe.Directory, "plain.tscn"), "[gd_scene format=3]\n\n[node name=\"Plain\" type=\"Node\"]\n");
 
         JsonNode attached = JsonNode.Parse(await _tools.AttachScriptAsync(csProbe.Directory, "plain.tscn", ".", "CsProbeNode.cs", cancellation))!;
 
         Assert.Equal("res://CsProbeNode.cs", attached["script"]!["resource"]!.GetValue<string>());
         Assert.Contains("path=\"res://CsProbeNode.cs\"", File.ReadAllText(Path.Combine(csProbe.Directory, "plain.tscn")), StringComparison.Ordinal);
+        Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
     public async Task AddNodeTakesACSharpScriptPath()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        CsProbeProject csProbe = Track(new CsProbeProject());
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(CsProbeProject.NoExtraSources));
         File.WriteAllText(Path.Combine(csProbe.Directory, "plain.tscn"), "[gd_scene format=3]\n\n[node name=\"Plain\" type=\"Node\"]\n");
 
         JsonNode added = JsonNode.Parse(
@@ -1259,13 +1270,14 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Contains("[node name=\"Probe\" type=\"Node\"", text, StringComparison.Ordinal);
         Assert.Contains("script = ExtResource(", text, StringComparison.Ordinal);
         Assert.Contains("path=\"res://CsProbeNode.cs\"", text, StringComparison.Ordinal);
+        Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
     public async Task AddNodeSavesTheNativeValueUnderAScriptFieldOfTheSameName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(ShadowTrailSources));
         WriteShadowScene(csProbe);
         AddNodeOptions options = new(Properties: new() { ["visible"] = System.Text.Json.JsonSerializer.SerializeToElement(false) });
 
@@ -1278,13 +1290,14 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Contains(ShadowScaled, text, StringComparison.Ordinal);
         string section = text[text.IndexOf("[node name=\"Added\"", StringComparison.Ordinal)..];
         Assert.EndsWith("]\nvisible = false\nscript = ExtResource(\"1_shadow\")\n", section, StringComparison.Ordinal);
+        Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
     public async Task DuplicateNodeKeepsTheNativeValueUnderAScriptFieldOfTheSameName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(ShadowTrailSources));
         WriteShadowScene(csProbe);
 
         JsonNode copied = JsonNode.Parse(
@@ -1297,39 +1310,42 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         int end = section.IndexOf("\n[", StringComparison.Ordinal);
         Assert.Contains("\nscale = Vector2(2, 2)\n", end < 0 ? section : section[..(end + 1)], StringComparison.Ordinal);
         Assert.DoesNotContain("scale = 1.0", text, StringComparison.Ordinal);
+        Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
     public async Task SaveSceneKeepsAnInstanceOverrideOfAPropertyAScriptFieldHides()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(ShadowTrailSources));
         WriteShadowInstance(csProbe, "scale = Vector2(2, 2)\n");
 
         await _tools.SaveSceneAsync(csProbe.Directory, "host.tscn", cancellationToken: cancellation);
 
         string text = File.ReadAllText(Path.Combine(csProbe.Directory, "host.tscn"));
         Assert.Contains("instance=ExtResource(\"1_trail\")]\nscale = Vector2(2, 2)\n", text, StringComparison.Ordinal);
+        Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
     public async Task SaveSceneAddsNoOverrideToAnInstanceWhoseScriptFieldHidesAProperty()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(ShadowTrailSources));
         WriteShadowInstance(csProbe, "");
 
         await _tools.SaveSceneAsync(csProbe.Directory, "host.tscn", cancellationToken: cancellation);
 
         string text = File.ReadAllText(Path.Combine(csProbe.Directory, "host.tscn"));
         Assert.EndsWith("instance=ExtResource(\"1_trail\")]\n", text, StringComparison.Ordinal);
+        Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
     public async Task SaveSceneAddsNoOverrideWhereTheBaseSceneSetsAHiddenProperty()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(ShadowTrailSources));
         WriteShadowInstance(csProbe, "");
         File.WriteAllText(Path.Combine(csProbe.Directory, "trail.tscn"), ShadowTrailScene("scale = Vector2(3, 3)\n"));
 
@@ -1337,13 +1353,14 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
 
         string text = File.ReadAllText(Path.Combine(csProbe.Directory, "host.tscn"));
         Assert.DoesNotContain("scale", text, StringComparison.Ordinal);
+        Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
     public async Task SaveSceneKeepsAnInheritedRootOverrideOfAPropertyAScriptFieldHides()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(ShadowTrailSources));
         WriteShadowInstance(csProbe, "");
         File.WriteAllText(
             Path.Combine(csProbe.Directory, "big_trail.tscn"),
@@ -1355,19 +1372,21 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
 
         string text = File.ReadAllText(Path.Combine(csProbe.Directory, "big_trail.tscn"));
         Assert.Contains("instance=ExtResource(\"1_trail\")]\nscale = Vector2(2, 2)\n", text, StringComparison.Ordinal);
+        Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
     public async Task DuplicateNodeKeepsAnInstanceOverrideOfAPropertyAScriptFieldHides()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(ShadowTrailSources));
         WriteShadowInstance(csProbe, "scale = Vector2(2, 2)\n");
 
         await _tools.DuplicateNodeAsync(csProbe.Directory, "host.tscn", "Trail", "Copy", cancellationToken: cancellation);
 
         string text = File.ReadAllText(Path.Combine(csProbe.Directory, "host.tscn"));
         Assert.Equal(2, text.Split("scale = Vector2(2, 2)\n").Length - 1);
+        Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -1704,12 +1723,11 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
     private static IEnumerable<string> Paths(JsonNode page) => page["nodes"]!.AsArray().Select(node => node!["path"]!.GetValue<string>());
 
     /// <summary>
-    /// Writes ShadowTrail.cs, a Node2D script whose private field scale shadows Node2D.scale, and effects.tscn, whose Scaled
-    /// node has that script and an engine scale of (2, 2).
+    /// Writes effects.tscn beside ShadowTrail.cs (<see cref="ShadowTrailSources"/>): its Scaled node has that script and an engine
+    /// scale of (2, 2).
     /// </summary>
     private static void WriteShadowScene(CsProbeProject csProbe)
     {
-        csProbe.WriteSource("ShadowTrail.cs", ShadowTrailSource);
         File.WriteAllText(
             Path.Combine(csProbe.Directory, "effects.tscn"),
             "[gd_scene format=3]\n\n[ext_resource type=\"Script\" path=\"res://ShadowTrail.cs\" id=\"1_shadow\"]\n\n"
@@ -1719,12 +1737,11 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Writes ShadowTrail.cs, trail.tscn (a Node2D root Trail with that script) and host.tscn, whose child Trail instances
-    /// trail.tscn with the property lines overrides.
+    /// Writes trail.tscn (a Node2D root Trail with ShadowTrail.cs, <see cref="ShadowTrailSources"/>) and host.tscn, whose child
+    /// Trail instances trail.tscn with the property lines overrides.
     /// </summary>
     private static void WriteShadowInstance(CsProbeProject csProbe, string overrides)
     {
-        csProbe.WriteSource("ShadowTrail.cs", ShadowTrailSource);
         File.WriteAllText(Path.Combine(csProbe.Directory, "trail.tscn"), ShadowTrailScene(""));
         File.WriteAllText(
             Path.Combine(csProbe.Directory, "host.tscn"),
@@ -1856,6 +1873,13 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
 
     private async Task<JsonNode> TreeAsync(string projectDir, string scenePath, CancellationToken cancellation) =>
         JsonNode.Parse(await _tools.GetSceneFileTreeAsync(projectDir, scenePath, null, null, cancellation))!;
+
+    /// <summary>
+    /// The tree read with no prep, for a read after an edit that wrote .uid files: those alone would make the prep import, which
+    /// the read does not need.
+    /// </summary>
+    private async Task<JsonNode> UnpreparedTreeAsync(string projectDir, string scenePath, CancellationToken cancellation) =>
+        JsonNode.Parse(await _tools.GetSceneFileTreeAsync(projectDir, scenePath, null, new SceneFileTreeOptions(Prepare: "never"), cancellation))!;
 
     private T Track<T>(T project)
         where T : IDisposable

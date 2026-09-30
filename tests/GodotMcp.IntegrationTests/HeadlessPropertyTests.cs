@@ -66,6 +66,12 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         + "anchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n\n"
         + "[node name=\"Backdrop\" type=\"ColorRect\" parent=\".\"]\nlayout_mode = 0\nanchor_right = 1.0\nanchor_bottom = 1.0\nmouse_filter = 2\n";
 
+    // ShadowTrail.cs: a Node2D script whose private field scale shadows Node2D.scale.
+    private static readonly Dictionary<string, string> ShadowTrailSources = new() { ["ShadowTrail.cs"] = ShadowTrailSource };
+
+    // A read after an edit that wrote .uid files: those alone would make the prep import, which the read does not need.
+    private static readonly SceneFileTreeOptions SkipPrep = new(Prepare: "never");
+
     private readonly SessionHarness _harness = new();
     private readonly HeadlessTools _tools;
     private readonly List<IDisposable> _projects = [];
@@ -390,7 +396,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         string header = Section(probe.Directory, "level.tscn", "Minion").Header;
         Assert.Contains("parent=\".\"", header, StringComparison.Ordinal);
         Assert.Contains("instance=ExtResource(", header, StringComparison.Ordinal);
-        Assert.Contains("Minion/Sprite", await PathsAsync(probe.Directory, "level.tscn", cancellation));
+        Assert.Contains("Minion/Sprite", await PathsAsync(probe.Directory, "level.tscn", SkipPrep, cancellation));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -507,7 +513,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
 
         Assert.Equal("""{"path":"Boss/Hat","type":"Node2D","index":1,"uidFilesWritten":["res://holder.gd.uid"]}""", added);
         Assert.Contains("type=\"Node2D\" parent=\"Boss\"", Section(probe.Directory, "level.tscn", "Hat").Header, StringComparison.Ordinal);
-        Assert.Contains("Boss/Hat", await PathsAsync(probe.Directory, "level.tscn", cancellation));
+        Assert.Contains("Boss/Hat", await PathsAsync(probe.Directory, "level.tscn", SkipPrep, cancellation));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -660,7 +666,16 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         JsonNode set = JsonNode.Parse(
             await _tools.SetNodePropertiesAsync(probe.Directory, "tally.tscn", [new PropertyUpdate(".", "counts", Json("[1, 2]"))], cancellation)
         )!;
-        JsonNode read = await PropertiesAsync(probe.Directory, "tally.tscn", [new NodePropertyQuery(".", ["counts"])], cancellation);
+        // No prep: the set wrote tally.gd.uid, which alone would make it import.
+        JsonNode read = JsonNode.Parse(
+            await _tools.GetNodePropertiesAsync(
+                probe.Directory,
+                "tally.tscn",
+                [new NodePropertyQuery(".", ["counts"])],
+                new HeadlessOptions("never"),
+                cancellation
+            )
+        )!;
 
         Assert.Equal("[1,2]", set["results"]![0]!["after"]!.ToJsonString());
         Assert.Equal("[1,2]", read["results"]![0]!["properties"]!["counts"]!.ToJsonString());
@@ -891,7 +906,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal("""{"path":"Boss/Sprite/Hat","type":"Node2D","index":0}""", added);
         Assert.Contains("parent=\"Boss/Sprite\"", Section(probe.Directory, "editable.tscn", "Hat").Header, StringComparison.Ordinal);
         Assert.Contains("[editable path=\"Boss\"]", Read(probe.Directory, "editable.tscn"), StringComparison.Ordinal);
-        Assert.Contains("Boss/Sprite/Hat", await PathsAsync(probe.Directory, "editable.tscn", cancellation));
+        Assert.Contains("Boss/Sprite/Hat", await PathsAsync(probe.Directory, "editable.tscn", null, cancellation));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -1081,20 +1096,20 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
     public async Task GetNodePropertiesReadsTheNativeValueUnderAScriptFieldOfTheSameName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(ShadowTrailSources));
         WriteShadowScene(csProbe);
 
         JsonNode read = await PropertiesAsync(csProbe.Directory, "effects.tscn", [new NodePropertyQuery("Scaled", ["scale"])], cancellation);
 
         AssertVector(read["results"]![0]!["properties"]!["scale"]!, 2, 2);
+        Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
     public async Task GetNodePropertiesReadsAnInstanceOverrideUnderAScriptFieldOfTheSameName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
-        csProbe.WriteSource("ShadowTrail.cs", ShadowTrailSource);
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(ShadowTrailSources));
         File.WriteAllText(
             Path.Combine(csProbe.Directory, "trail.tscn"),
             "[gd_scene format=3]\n\n[ext_resource type=\"Script\" path=\"res://ShadowTrail.cs\" id=\"1_shadow\"]\n\n"
@@ -1110,13 +1125,14 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         JsonNode read = await PropertiesAsync(csProbe.Directory, "host.tscn", [new NodePropertyQuery("Trail", ["scale"])], cancellation);
 
         AssertVector(read["results"]![0]!["properties"]!["scale"]!, 2, 2);
+        Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
     public async Task SetNodePropertiesSetsTheNativeValueUnderAScriptFieldOfTheSameName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(ShadowTrailSources));
         WriteShadowScene(csProbe);
 
         await _tools.SetNodePropertiesAsync(
@@ -1127,6 +1143,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         );
 
         Assert.Equal(["scale = Vector2(3, 3)", "script = ExtResource(\"1_shadow\")"], Section(csProbe.Directory, "effects.tscn", "Scaled").Body);
+        Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
     private static string InstancingScene(string instanced, string rootName) =>
@@ -1159,12 +1176,11 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Writes ShadowTrail.cs, a Node2D script whose private field scale shadows Node2D.scale, and effects.tscn, whose Scaled
-    /// node has that script and an engine scale of (2, 2).
+    /// Writes effects.tscn beside ShadowTrail.cs (<see cref="ShadowTrailSources"/>): its Scaled node has that script and an engine
+    /// scale of (2, 2).
     /// </summary>
     private static void WriteShadowScene(CsProbeProject csProbe)
     {
-        csProbe.WriteSource("ShadowTrail.cs", ShadowTrailSource);
         File.WriteAllText(
             Path.Combine(csProbe.Directory, "effects.tscn"),
             "[gd_scene format=3]\n\n[ext_resource type=\"Script\" path=\"res://ShadowTrail.cs\" id=\"1_shadow\"]\n\n"
@@ -1194,9 +1210,9 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
     private async Task<JsonNode> PropertiesAsync(string projectDir, string scenePath, NodePropertyQuery[] nodes, CancellationToken cancellation) =>
         JsonNode.Parse(await _tools.GetNodePropertiesAsync(projectDir, scenePath, nodes, null, cancellation))!;
 
-    private async Task<string[]> PathsAsync(string projectDir, string scenePath, CancellationToken cancellation)
+    private async Task<string[]> PathsAsync(string projectDir, string scenePath, SceneFileTreeOptions? options, CancellationToken cancellation)
     {
-        JsonNode tree = JsonNode.Parse(await _tools.GetSceneFileTreeAsync(projectDir, scenePath, null, null, cancellation))!;
+        JsonNode tree = JsonNode.Parse(await _tools.GetSceneFileTreeAsync(projectDir, scenePath, null, options, cancellation))!;
         return [.. tree["nodes"]!.AsArray().Select(node => node!["path"]!.GetValue<string>())];
     }
 
