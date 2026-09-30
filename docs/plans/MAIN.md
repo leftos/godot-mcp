@@ -11,13 +11,9 @@ The first version replaced godot-mcp-runtime at parity and went further: every p
 
 Waves run in order; bug reports sit ahead of the backlog inside each. Each wave shares its files, so one implementer reads them once. A design subplan's rulings move into `docs/` (ARCHITECTURE.md, DECISIONS.md) in the commit that lands its last step, and the subplan is deleted then (user, 2026-09-30).
 
-### Wave 1: itest speed
+### Release at this session's checkpoint
 
-Shared: `run.ps1` (`$itestLanes`), `tests/GodotMcp.IntegrationTests/`. Review: code-review. Verify: `pwsh run.ps1 itest`, its wall and load-adjusted times against the run quoted below.
-
-- [ ] The itest suite takes too long (user, 2026-09-29). The last full run (`.tmp/itest-full-out.log`): 9m 42s wall, timing lane ≈ 512 s wall / 226 s load-adjusted (lifecycle 281 s alone, ArmTests 3 min for 9 own-launch tests), build lane ≈ 570 s / 284 s (scene 187 s, prep 123 s, headless and nodes 120 s each). Chosen by the user, in this order:
-  - Measured on a busy machine (about 20% free, so the shares hold better than the seconds): 14m 18s wall, timing lane 729 s / 170 s load-adjusted, build lane 843 s / 226 s, so the build lane is the long pole. A server launch takes 1.63 s median to its hello, nearly all engine init; a headless op's process 0.72 s median around a 21 ms body; the headless groups' ops spend 255 s in C# prep builds and imports and 242 s in Godot processes. The per-class table and the source-to-group map are in the measuring agent's report, summarised in the rulings below
-  - [ ] A warm headless Godot serving many headless requests instead of one process per call. Measured saving in the suite about 40 s (264 ops over 210 project folders, one process per `--path`); about 0.7 s per consecutive op for agents in the game repos. Kept in this wave by the user (2026-09-29); its design pass is done together with the track's headless scratch-step runner, since both keep a headless Godot serving several requests (user, 2026-09-29). Designed in [warm-headless.md](./warm-headless.md), every question ruled (user, 2026-09-30); its section 8 slices it; steps 0 (the spike, section 9: C# projects stay cold, `stop_project` stops a host), 1, 2a (the host for GDScript-only projects) and 2b (idle limit, cap, pacing, self-check, `headlessHosts`, `stop_project {projectPath}`) have landed; step 3, the scratch runner, is the Track's line below. The `itest -Since main` run after 2b (every group, on a busy machine with two other implementers): 7m 16s wall, timing lane 399 s / 129 s load-adjusted, build lane 355 s / 100 s, untimed lane 368 s / 108 s. Open for the user: whether the suite is now fast enough to close this wave
+- [ ] Cut a release once the current slice lands (user, 2026-09-30): it carries `list_game_tools`, `call_game_tool` and `get_game_state`, which unblocks project-tools step 5 and the other designs' adoption steps
 
 ### Track: ideas from the survey and the projects
 
