@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using GodotMcp.Server.Tools;
 using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Session;
@@ -60,10 +61,13 @@ internal static class ProjectPrep
         Log.PrepStarted(context.Logger, context.ProjectDir);
         try
         {
+            // Read only when a step runs a process, so a prep that runs none never reads godot-mcp.json.
+            Lazy<PrepWrapper?> wrapper = new(() => PrepWrapper.Read(context.ProjectDir));
             ProjectFiles files = PrepScan.Scan(context.ProjectDir, context.Logger);
-            PrepStep build = await BuildAsync(context, files, reportRedBuild, cancellationToken);
-            PrepStep import = await ImportAsync(context, files, cancellationToken);
-            string[] notes = [.. new[] { build.Note, import.Note }.OfType<string>()];
+            PrepStep build = await BuildAsync(context, files, wrapper, reportRedBuild, cancellationToken);
+            PrepStep import = await ImportAsync(context, files, wrapper, cancellationToken);
+            string? wrapperNote = wrapper.IsValueCreated ? wrapper.Value?.Note : null;
+            string[] notes = [.. new[] { build.Note, import.Note, wrapperNote }.OfType<string>()];
             PrepResult result = new()
             {
                 Build = build.State,
@@ -89,7 +93,13 @@ internal static class ProjectPrep
         }
     }
 
-    private static async Task<PrepStep> BuildAsync(PrepContext context, ProjectFiles files, bool reportRedBuild, CancellationToken cancellationToken)
+    private static async Task<PrepStep> BuildAsync(
+        PrepContext context,
+        ProjectFiles files,
+        Lazy<PrepWrapper?> wrapper,
+        bool reportRedBuild,
+        CancellationToken cancellationToken
+    )
     {
         string projectDir = context.ProjectDir;
         CsprojLookup lookup = PrepScan.FindCsproj(projectDir);
@@ -106,21 +116,23 @@ internal static class ProjectPrep
 
         string csproj = lookup.ProjectFile!;
         string log = Path.Combine(LogFolder(projectDir), "build.log");
-        ToolProcessResult built = await RunToolAsync(
+        PrepWrapper? wrap = wrapper.Value;
+        ToolProcessResult built = await RunStepAsync(
             BuildRequest(Installation.FindDotnet(), csproj, log, need == BuildNeed.Rebuild),
             "dotnet",
+            wrap,
             context.Logger,
             cancellationToken
         );
-        IReadOnlyList<BuildDiagnostic> diagnostics = SaveDiagnostics(projectDir, built, log);
+        IReadOnlyList<BuildDiagnostic> diagnostics = SaveDiagnostics(projectDir, built, log, wrap);
         long milliseconds = (long)built.Elapsed.TotalMilliseconds;
-        if (reportRedBuild && StateOf(built) == "failed")
+        if (reportRedBuild && StateOf(built, wrap) == "failed")
         {
             string note = $"The C# build of {csproj} failed (dotnet exited {built.ExitCode}); its log: {log}";
             return new PrepStep("failed", milliseconds, note) { Errors = CompilerErrors.Errors(diagnostics), Log = log };
         }
 
-        CheckBuild(built, csproj, log, diagnostics);
+        CheckBuild(built, csproj, log, diagnostics, wrap);
         File.WriteAllText(PrepScan.StampPath(projectDir), string.Empty);
         return new PrepStep("built", milliseconds, null) { Log = log };
     }
@@ -143,16 +155,19 @@ internal static class ProjectPrep
     }
 
     /// <summary>Saves the build's errors and warnings as the project's <see cref="SavedBuild"/>, and returns them.</summary>
-    private static IReadOnlyList<BuildDiagnostic> SaveDiagnostics(string projectDir, ToolProcessResult built, string log)
+    private static IReadOnlyList<BuildDiagnostic> SaveDiagnostics(string projectDir, ToolProcessResult built, string log, PrepWrapper? wrapper)
     {
-        IReadOnlyList<BuildDiagnostic> diagnostics = CompilerErrors.ParseDiagnostics(File.ReadAllText(log));
-        SavedBuild.Save(projectDir, new SavedBuild(DateTime.UtcNow, StateOf(built), diagnostics));
+        IReadOnlyList<BuildDiagnostic> diagnostics = CompilerErrors.ParseDiagnostics(ReadLog(log));
+        SavedBuild.Save(projectDir, new SavedBuild(DateTime.UtcNow, StateOf(built, wrapper), diagnostics));
         return diagnostics;
     }
 
-    private static string StateOf(ToolProcessResult built)
+    /// <summary>A log's text; empty when a wrapper that owns the log never wrote it.</summary>
+    private static string ReadLog(string log) => File.Exists(log) ? File.ReadAllText(log) : string.Empty;
+
+    private static string StateOf(ToolProcessResult built, PrepWrapper? wrapper)
     {
-        if (built.WasKilled)
+        if (built.WasKilled || (wrapper is not null && PrepWrapper.Stopped(built)))
         {
             return "stopped";
         }
@@ -210,27 +225,20 @@ internal static class ProjectPrep
             "-p:GodotTargetPlatform=windows",
             "-nologo",
         ];
-        ToolProcessResult listed = await RunToolAsync(
+        var wrapper = PrepWrapper.Read(projectDir);
+        ToolProcessResult listed = await RunStepAsync(
             DotnetRequest(Installation.FindDotnet(), arguments, csproj, log),
             "dotnet",
+            wrapper,
             logger,
             cancellationToken
         );
         string failure = $"dotnet msbuild -getItem:Compile on {csproj}";
-        if (listed.WasKilled)
-        {
-            throw new SessionException($"{failure} did not finish {listed.KillPhrase}, so the Compile items are unknown. Its log: {log}");
-        }
-
-        if (listed.ExitCode != 0)
-        {
-            throw new SessionException($"{failure} failed (exited {listed.ExitCode}), so the Compile items are unknown. Its log: {log}");
-        }
-
+        CheckListed(listed, failure, log, wrapper);
         IReadOnlyList<string> items;
         try
         {
-            items = ReadCompileItems(File.ReadAllText(log)) ?? throw new SessionException($"{failure} wrote no item list. Its log: {log}");
+            items = ReadCompileItems(ReadLog(log)) ?? throw new SessionException($"{failure} wrote no item list. Its log: {log}");
         }
         catch (JsonException e)
         {
@@ -238,7 +246,31 @@ internal static class ProjectPrep
         }
 
         DeleteLogged(log, logger);
+        if (wrapper is { OwnsLog: true })
+        {
+            DeleteLogged(PrepWrapper.WrapperLog(log), logger);
+        }
+
         return items;
+    }
+
+    /// <exception cref="SessionException">The listing hit its ceiling, was stopped by the prep wrapper, or failed.</exception>
+    private static void CheckListed(ToolProcessResult listed, string failure, string log, PrepWrapper? wrapper)
+    {
+        if (listed.WasKilled)
+        {
+            throw new SessionException($"{failure} did not finish {listed.KillPhrase}, so the Compile items are unknown. Its log: {log}");
+        }
+
+        if (wrapper is not null && PrepWrapper.Stopped(listed))
+        {
+            throw new SessionException(wrapper.StoppedNote("the Compile-items listing", log));
+        }
+
+        if (listed.ExitCode != 0)
+        {
+            throw new SessionException($"{failure} failed (exited {listed.ExitCode}), so the Compile items are unknown. Its log: {log}");
+        }
     }
 
     /// <summary>A log path of its own for one Compile-items evaluation: <c>.godot/godot-mcp/compile-items-&lt;guid&gt;.log</c>.</summary>
@@ -272,8 +304,14 @@ internal static class ProjectPrep
         return items?.OfType<JsonObject>().Select(item => item["FullPath"]?.GetValue<string>()).OfType<string>().ToList();
     }
 
-    /// <exception cref="SessionException">The build hit its ceiling or failed.</exception>
-    private static void CheckBuild(ToolProcessResult built, string csproj, string log, IReadOnlyList<BuildDiagnostic> diagnostics)
+    /// <exception cref="SessionException">The build hit its ceiling, was stopped by the prep wrapper, or failed.</exception>
+    private static void CheckBuild(
+        ToolProcessResult built,
+        string csproj,
+        string log,
+        IReadOnlyList<BuildDiagnostic> diagnostics,
+        PrepWrapper? wrapper
+    )
     {
         if (built.WasKilled)
         {
@@ -281,6 +319,11 @@ internal static class ProjectPrep
                 $"The C# build of {csproj} did not finish {built.KillPhrase}, so it was stopped with its whole process tree "
                     + $"and the game was not started. Its log: {log}"
             );
+        }
+
+        if (wrapper is not null && PrepWrapper.Stopped(built))
+        {
+            throw new SessionException(wrapper.StoppedNote("the build", log));
         }
 
         if (built.ExitCode == 0)
@@ -295,7 +338,12 @@ internal static class ProjectPrep
         );
     }
 
-    private static async Task<PrepStep> ImportAsync(PrepContext context, ProjectFiles files, CancellationToken cancellationToken)
+    private static async Task<PrepStep> ImportAsync(
+        PrepContext context,
+        ProjectFiles files,
+        Lazy<PrepWrapper?> wrapper,
+        CancellationToken cancellationToken
+    )
     {
         if (
             !PrepScan.ImportNeeded(context.ProjectDir, files, context.Logger)
@@ -315,34 +363,62 @@ internal static class ProjectPrep
         }
 
         string godot = Installation.FindGodot();
+        PrepWrapper? wrap = wrapper.Value;
         string log = Path.Combine(LogFolder(context.ProjectDir), "import.log");
-        ToolProcessResult first = await RunImportAsync(godot, context, log, append: false, cancellationToken);
-        if (!File.ReadLines(log).Any(line => line.StartsWith("ERROR:", StringComparison.Ordinal)))
+        ToolProcessResult first = await RunImportAsync(
+            ImportRequest(godot, context.ProjectDir, log, append: false),
+            context,
+            wrap,
+            cancellationToken
+        );
+        if (!File.Exists(log) || !File.ReadLines(log).Any(line => line.StartsWith("ERROR:", StringComparison.Ordinal)))
         {
             return new PrepStep("done", (long)first.Elapsed.TotalMilliseconds, null) { Log = log };
         }
 
-        // A cold first pass logs errors for resources it meets before their own import, and still exits 0.
-        ToolProcessResult second = await RunImportAsync(godot, context, log, append: true, cancellationToken);
+        return await SecondImportAsync(godot, context, wrap, first, cancellationToken);
+    }
+
+    /// <summary>
+    /// A cold first pass logs errors for resources it meets before their own import, and still exits 0, so the import runs
+    /// again: into the first pass's log, or, when the prep wrapper writes the log, into <c>import.2.log</c>.
+    /// </summary>
+    private static async Task<PrepStep> SecondImportAsync(
+        string godot,
+        PrepContext context,
+        PrepWrapper? wrapper,
+        ToolProcessResult first,
+        CancellationToken cancellationToken
+    )
+    {
+        string folder = LogFolder(context.ProjectDir);
+        string log = Path.Combine(folder, "import.log");
+        bool ownLog = wrapper is { OwnsLog: true };
+        string secondLog = ownLog ? Path.Combine(folder, "import.2.log") : log;
+        ToolProcessRequest request = ImportRequest(godot, context.ProjectDir, secondLog, append: !ownLog);
+        ToolProcessResult second = await RunImportAsync(request, context, wrapper, cancellationToken);
         long firstMs = (long)first.Elapsed.TotalMilliseconds;
         long secondMs = (long)second.Elapsed.TotalMilliseconds;
-        string note = $"The import ran twice, because its first pass logged errors: {firstMs} ms, then {secondMs} ms; both are in {log}.";
+        string where = ownLog ? $"their logs are {log} and {secondLog}" : $"both are in {log}";
+        string note = $"The import ran twice, because its first pass logged errors: {firstMs} ms, then {secondMs} ms; {where}.";
         return new PrepStep("done", firstMs + secondMs, note) { Log = log };
     }
 
-    /// <exception cref="SessionException">The import hit its ceiling or exited with an error code.</exception>
+    // --import opens the editor headless, waits for its first scan and quits; it never reads override.cfg.
+    private static ToolProcessRequest ImportRequest(string godot, string projectDir, string log, bool append) =>
+        new(godot, ["--headless", "--path", projectDir, "--import"], projectDir, log, Ceiling) { AppendToLog = append };
+
+    /// <exception cref="SessionException">The import hit its ceiling, was stopped by the prep wrapper, or exited with an error code.</exception>
     private static async Task<ToolProcessResult> RunImportAsync(
-        string godot,
+        ToolProcessRequest request,
         PrepContext context,
-        string log,
-        bool append,
+        PrepWrapper? wrapper,
         CancellationToken cancellationToken
     )
     {
         string projectDir = context.ProjectDir;
-        // --import opens the editor headless, waits for its first scan and quits; it never reads override.cfg.
-        ToolProcessRequest request = new(godot, ["--headless", "--path", projectDir, "--import"], projectDir, log, Ceiling) { AppendToLog = append };
-        ToolProcessResult imported = await RunToolAsync(request, "Godot", context.Logger, cancellationToken);
+        string log = request.LogPath;
+        ToolProcessResult imported = await RunStepAsync(request, "Godot", wrapper, context.Logger, cancellationToken);
         if (imported.WasKilled)
         {
             throw new SessionException(
@@ -351,10 +427,28 @@ internal static class ProjectPrep
             );
         }
 
+        if (wrapper is not null && PrepWrapper.Stopped(imported))
+        {
+            throw new SessionException(wrapper.StoppedNote("the import", log));
+        }
+
         return imported.ExitCode == 0
             ? imported
             : throw new SessionException($"The Godot import of {projectDir} exited {imported.ExitCode}, so the game was not started. Its log: {log}");
     }
+
+    /// <summary>Runs a prep process, through the prep wrapper when the project names one.</summary>
+    /// <exception cref="SessionException">The process, or the wrapper, could not be started.</exception>
+    private static Task<ToolProcessResult> RunStepAsync(
+        ToolProcessRequest request,
+        string tool,
+        PrepWrapper? wrapper,
+        ILogger logger,
+        CancellationToken cancellationToken
+    ) =>
+        wrapper is null
+            ? RunToolAsync(request, tool, logger, cancellationToken)
+            : RunToolAsync(wrapper.Wrap(request), $"The prepWrapper of {ProjectProfile.FileName}", logger, cancellationToken);
 
     /// <exception cref="SessionException">The tool could not be started.</exception>
     private static async Task<ToolProcessResult> RunToolAsync(

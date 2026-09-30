@@ -7,7 +7,9 @@ namespace GodotMcp.Tests.Tools;
 
 public sealed class ProjectProfileTests : IDisposable
 {
-    private const string TopLevelKeys = "scene, userArgs, engineArgs, resolution, quiet, presets";
+    private const string TopLevelKeys = "scene, userArgs, engineArgs, resolution, quiet, presets, prepWrapper";
+    private const string PrepWrapperShape =
+        "(top level): \"prepWrapper\" must be a non-empty array of non-empty strings, the program and then its arguments";
     private const string PresetKeys = "scene, userArgs, engineArgs, resolution, quiet, session";
 
     private const string Layered = """
@@ -267,6 +269,45 @@ public sealed class ProjectProfileTests : IDisposable
         Assert.Equal((false, true), (muted.Request.Quiet, muted.Request.Mute));
         Assert.Equal((true, true), (quietMuted.Request.Quiet, quietMuted.Request.Mute));
         Assert.Equal((true, false), (leftOut.Request.Quiet, leftOut.Request.Mute));
+    }
+
+    [Fact]
+    public void APrepWrapperIsReadAsWritten()
+    {
+        Write("""{ "prepWrapper": ["pwsh", "tools/gate.ps1", "-Log", "{log}", "-TimeoutSeconds", "{ceiling}", "--"] }""");
+
+        IReadOnlyList<string>? wrapper = ProjectProfile.Load(_temp.Path).PrepWrapper;
+
+        Assert.Equal(["pwsh", "tools/gate.ps1", "-Log", "{log}", "-TimeoutSeconds", "{ceiling}", "--"], wrapper);
+    }
+
+    [Fact]
+    public void NoFileOrNoKeySetsNoPrepWrapper()
+    {
+        IReadOnlyList<string>? noFile = ProjectProfile.Load(_temp.Path).PrepWrapper;
+        Write("""{ "scene": "res://main.tscn" }""");
+        IReadOnlyList<string>? noKey = ProjectProfile.Load(_temp.Path).PrepWrapper;
+
+        Assert.Null(noFile);
+        Assert.Null(noKey);
+    }
+
+    [Theory]
+    [InlineData("""{ "prepWrapper": "pwsh" }""", "; it is a string.")]
+    [InlineData("""{ "prepWrapper": { "program": "pwsh" } }""", "; it is an object.")]
+    [InlineData("""{ "prepWrapper": [] }""", "; it is empty.")]
+    [InlineData("""{ "prepWrapper": ["pwsh", 5] }""", "; it holds a number.")]
+    [InlineData("""{ "prepWrapper": ["pwsh", null] }""", "; it holds null.")]
+    [InlineData("""{ "prepWrapper": ["pwsh", ""] }""", "; its item 2 is an empty string.")]
+    public void AMalformedPrepWrapperIsRefusedWithItsShape(string json, string problem)
+    {
+        Write(json);
+
+        string message = Refused(() => ProjectProfile.Load(_temp.Path));
+
+        Assert.Contains(FilePath, message, StringComparison.Ordinal);
+        Assert.Contains(PrepWrapperShape, message, StringComparison.Ordinal);
+        Assert.EndsWith(problem, message, StringComparison.Ordinal);
     }
 
     private static string Refused(Func<object> action) => Assert.Throws<McpException>(action).Message;

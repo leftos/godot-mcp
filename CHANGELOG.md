@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - `prep` in `run_project`, `restart_project`, preview and headless tool results names `buildLog` and `importLog`, the full log of a build or import that ran.
+- `godot-mcp.json`'s `prepWrapper` runs the prep's build and import through the project's own wrapper, such as its gate script, with `{log}` and `{ceiling}` tokens.
 
 ## 0.11.1 - 2026-09-30
 

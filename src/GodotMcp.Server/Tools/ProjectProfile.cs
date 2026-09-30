@@ -36,19 +36,27 @@ internal sealed partial class ProjectProfile
     public const string FileName = "godot-mcp.json";
 
     private const string TopLevel = "top level";
-    private static readonly string[] TopLevelKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "presets"];
+    private const string PrepWrapperKey = "prepWrapper";
+    private static readonly string[] TopLevelKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "presets", PrepWrapperKey];
     private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "session"];
 
     private readonly ProfileValues _defaults;
     private readonly IReadOnlyDictionary<string, ProfileValues> _presets;
 
-    private ProjectProfile(string projectDir, bool exists, ProfileValues defaults, IReadOnlyDictionary<string, ProfileValues> presets)
+    private ProjectProfile(
+        string projectDir,
+        bool exists,
+        ProfileValues defaults,
+        IReadOnlyDictionary<string, ProfileValues> presets,
+        IReadOnlyList<string>? prepWrapper
+    )
     {
         ProjectDir = projectDir;
         FilePath = Path.Combine(projectDir, FileName);
         Exists = exists;
         _defaults = defaults;
         _presets = presets;
+        PrepWrapper = prepWrapper;
     }
 
     /// <summary>The project folder the profile belongs to; merged requests launch it.</summary>
@@ -60,8 +68,15 @@ internal sealed partial class ProjectProfile
     /// <summary>Whether the file exists.</summary>
     public bool Exists { get; }
 
+    /// <summary>
+    /// The top-level <c>prepWrapper</c>: the program and arguments the launch prep runs its build, Compile-items listing and
+    /// import through; null when the file sets none.
+    /// </summary>
+    public IReadOnlyList<string>? PrepWrapper { get; }
+
     /// <summary>The profile of a folder with no godot-mcp.json: it sets nothing and has no presets.</summary>
-    public static ProjectProfile Empty(string projectDir) => new(projectDir, false, ProfileValues.None, new Dictionary<string, ProfileValues>());
+    public static ProjectProfile Empty(string projectDir) =>
+        new(projectDir, false, ProfileValues.None, new Dictionary<string, ProfileValues>(), prepWrapper: null);
 
     /// <summary>Reads and checks the folder's godot-mcp.json.</summary>
     /// <param name="projectDir">The normalised project folder.</param>
@@ -79,7 +94,7 @@ internal sealed partial class ProjectProfile
         Place top = new(path, TopLevel);
         Dictionary<string, JsonElement> keys = Keys(document.RootElement, TopLevelKeys, top);
         ProfileValues defaults = ReadValues(keys, top, session: null);
-        return new ProjectProfile(projectDir, true, defaults, ReadPresets(keys, top));
+        return new ProjectProfile(projectDir, true, defaults, ReadPresets(keys, top), ReadPrepWrapper(keys, top));
     }
 
     /// <summary>
@@ -268,6 +283,33 @@ internal sealed partial class ProjectProfile
         }
 
         return strings;
+    }
+
+    /// <summary>The top-level <c>prepWrapper</c>, a non-empty array of non-empty strings; null when the key is absent.</summary>
+    private static List<string>? ReadPrepWrapper(Dictionary<string, JsonElement> keys, Place place)
+    {
+        if (!keys.TryGetValue(PrepWrapperKey, out JsonElement value))
+        {
+            return null;
+        }
+
+        const string Shape =
+            $"\"{PrepWrapperKey}\" must be a non-empty array of non-empty strings, the program and then its arguments, "
+            + "e.g. [\"pwsh\", \"tools/gate.ps1\", \"-Log\", \"{log}\", \"--\"]";
+        if (value.ValueKind != JsonValueKind.Array)
+        {
+            throw Refused(place, $"{Shape}; it is {Describe(value.ValueKind)}");
+        }
+
+        List<string> command = [];
+        foreach (JsonElement item in value.EnumerateArray())
+        {
+            string element =
+                item.ValueKind == JsonValueKind.String ? item.GetString()! : throw Refused(place, $"{Shape}; it holds {Describe(item.ValueKind)}");
+            command.Add(element.Length > 0 ? element : throw Refused(place, $"{Shape}; its item {command.Count + 1} is an empty string"));
+        }
+
+        return command.Count > 0 ? command : throw Refused(place, $"{Shape}; it is empty");
     }
 
     private static string? ReadResolution(Dictionary<string, JsonElement> keys, Place place)

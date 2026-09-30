@@ -20,6 +20,19 @@ public sealed partial class PrepTests : IAsyncDisposable
 
     // A 1 x 1 PNG, so an import has something to import.
     private const string OnePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+    // A prep wrapper taking {log}, then "--", then the command: it notes the command's program, runs the command with its
+    // output in {log}, and exits with its code.
+    private const string RunningWrapper =
+        "$log = $args[0]\n"
+        + "$command = @($args | Select-Object -Skip 1)\n"
+        + "if ($command.Count -gt 0 -and $command[0] -eq '--') { $command = @($command | Select-Object -Skip 1) }\n"
+        + "Add-Content -LiteralPath (Join-Path $PSScriptRoot 'prep-wrapper-ran.txt') -Value ([IO.Path]::GetFileName($command[0]))\n"
+        + "& $command[0] @($command | Select-Object -Skip 1) *> $log\n"
+        + "exit $LASTEXITCODE\n";
+
+    // A prep wrapper that runs nothing and says it stopped the command.
+    private const string StoppingWrapper = "exit 124\n";
     private readonly SessionHarness _harness = new();
     private readonly RuntimeTools _tools;
     private readonly List<IDisposable> _projects = [];
@@ -154,6 +167,65 @@ public sealed partial class PrepTests : IAsyncDisposable
 
         Assert.Equal(["done", "not-needed"], launched.Select(result => result.Prep.Import).Order(StringComparer.Ordinal));
         Assert.True(File.Exists(target));
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task APrepWrapperRunsTheBuildAndTheImport()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        await ImportIconThenDeleteGodotFolderAsync(csProbe.Directory, cancellation);
+        string marker = WritePrepWrapper(csProbe.Directory, RunningWrapper);
+        string logFolder = Path.Combine(csProbe.Directory, ".godot", "godot-mcp");
+
+        LaunchResult launched = await LaunchAsync(csProbe.Directory, prepare: true, cancellation);
+        await _harness.Sessions.StopAsync(null, cancellation);
+
+        string[] ran = File.ReadAllLines(marker);
+        Assert.Equal("built", launched.Prep.Build);
+        Assert.Equal("done", launched.Prep.Import);
+        Assert.Contains(ran, line => line.StartsWith("dotnet", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(ran, line => line.Contains("godot", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(Path.Combine(logFolder, "build.log"), launched.Prep.BuildLog);
+        Assert.Contains("CsProbe.dll", File.ReadAllText(launched.Prep.BuildLog!), StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(logFolder, "build.wrapper.log")), "build.wrapper.log does not exist");
+        Assert.True(File.Exists(Path.Combine(logFolder, "import.wrapper.log")), "import.wrapper.log does not exist");
+        Assert.Contains("ran through prepWrapper (pwsh)", launched.Prep.Note, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task APrepWrapperExiting124StopsTheBuild()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        string marker = WritePrepWrapper(csProbe.Directory, StoppingWrapper);
+        string logFolder = Path.Combine(csProbe.Directory, ".godot", "godot-mcp");
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() => LaunchAsync(csProbe.Directory, prepare: true, cancellation));
+
+        Assert.Equal(
+            $"the prep wrapper stopped the build (exit 124); its log: {Path.Combine(logFolder, "build.log")}; "
+                + $"the wrapper's output: {Path.Combine(logFolder, "build.wrapper.log")}",
+            refused.Message
+        );
+        Assert.Equal("stopped", SavedBuild.Load(csProbe.Directory)?.State);
+        Assert.False(File.Exists(marker), "the stopping wrapper ran its command");
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
+    }
+
+    /// <summary>
+    /// Writes <paramref name="script"/> as the copy's prep wrapper, run by pwsh from the project folder, and commits it with its
+    /// godot-mcp.json; returns the file the running wrapper notes each command in.
+    /// </summary>
+    private static string WritePrepWrapper(string project, string script)
+    {
+        File.WriteAllText(Path.Combine(project, "prep-wrapper.ps1"), script);
+        File.WriteAllText(
+            Path.Combine(project, ProjectProfile.FileName),
+            """{ "prepWrapper": ["pwsh", "-NoProfile", "-File", "prep-wrapper.ps1", "{log}", "--"] }""" + "\n"
+        );
+        Git.CommitAll(project);
+        return Path.Combine(project, "prep-wrapper-ran.txt");
     }
 
     /// <summary>Adds a PNG, imports it with Godot the way the editor would, then deletes .godot/; returns the import's target.</summary>
