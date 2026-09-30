@@ -1,5 +1,5 @@
 # Main Plan
-<!-- plan-doc-hygiene: 2026-09-29 688b4ab -->
+<!-- plan-doc-hygiene: 2026-09-29 cba7923 -->
 
 Open work only, in working order: the next item is the first line from the top; a finished line is deleted (git keeps the history). The user's decisions are in [DECISIONS.md](../DECISIONS.md).
 
@@ -9,16 +9,45 @@ The first version replaced godot-mcp-runtime at parity and went further: every p
 
 ## Next
 
-Waves run in order; bug reports sit ahead of the backlog inside each. The singles' order is not a ranking.
+Waves run in order; bug reports sit ahead of the backlog inside each. Each wave shares its files, so one implementer reads them once.
 
-### Singles
+### Wave 1: itest speed
+
+Shared: `run.ps1` (`$itestLanes`), `tests/GodotMcp.IntegrationTests/`. Review: code-review. Verify: `pwsh run.ps1 itest`, its wall and load-adjusted times against the run quoted below.
 
 - [ ] The itest suite takes too long (user, 2026-09-29). The last full run (`.tmp/itest-full-out.log`): 9m 42s wall, timing lane ≈ 512 s wall / 226 s load-adjusted (lifecycle 281 s alone, ArmTests 3 min for 9 own-launch tests), build lane ≈ 570 s / 284 s (scene 187 s, prep 123 s, headless and nodes 120 s each). Chosen by the user, in this order:
   - [ ] Measure first (the next `/nextup` starts here, user 2026-09-29): one full run with per-test durations (trx) and Godot's startup timed per launch and per headless op, to size the rest
   - [ ] A third lane: lifecycle's classes that assert no wall-clock timing leave the timing lane (`$itestLanes`, `run.ps1` L135)
   - [ ] Landings run only the itest groups their changed files touch (bridge, headless scripts, session code, tools); the full suite at release
   - [ ] A warm headless Godot serving many headless requests instead of one process per call: faster headless tools for the games too; needs a design pass
-- [ ] The splice can still leave two nodes with one `unique_id` when the engine renumbers an existing node during a save (it checks a new id only against nodes saved before it, 4.7.2 `packed_scene.cpp` L1099-1123, so a copy saved early that draws a later node's id, odds about n in 2^31, renumbers that node), since `headless/scene_splice.gd` compares sections without `unique_id` and keeps the old text: `self_check` could fall back to the full save when two node sections share a `unique_id`
+
+### Wave 2: sessions sharing a folder, attach and stop
+
+Shared: `src/GodotMcp.Server/Session/` (`SessionRegistry`, `OverrideFile`, `ArmFile`, `GodotSession*.cs`), `tests/GodotMcp.Tests/Session/`, `tests/GodotMcp.IntegrationTests/ArmTests.cs`. Review: code-review. Verify: `pwsh run.ps1 test`, `pwsh run.ps1 itest -Filter "*ArmTests"`.
+
+- [ ] Two servers releasing one folder's `override.cfg` at once can lose an owner: `OverrideFile.Release` rewrites the owners line without the `override-folders.txt` lock that `Write` takes through `OverrideFolders.RecordWhile`
+- [ ] Servers sharing a folder with different `quiet`, `shutOutRealGamepads` or bridge path: the last to write the `override.cfg` (or `armed.json`, `ArmFile.Write`) wins its content, since only sessions and arms of one server are checked against each other (`SessionRegistry.CheckSameSetting`, `IsArmedAlready`)
+- [ ] Two joins of different dormant games on one folder cannot wait at once: `SessionRegistry.CheckCanStart` refuses a second attach while one waits, though each join has its own `join-<pid>.json`
+- [ ] No test covers an attached game's kill paths in `stop_project` (silent at the ping, still running after the grace: `StopAttachedAsync`, `GodotSession.Attach.cs`), only its quit; and the unit harness's fake hellos carry made-up pids (4242, 4101, 4102 in `tests/GodotMcp.Tests/Session/`), so an attach opens a handle on whatever real process holds that pid and a future unit stop of such a session could kill it: fake games should carry null or a pid the test owns
+- [ ] The integration check that a detached game on a `mute` arm stays muted (`tests/GodotMcp.IntegrationTests/ArmTests.cs`) passes even if the dormant path failed to re-apply the arm's mute, since the join had muted it already: it needs a join with `mute: false` on a muted arm, then a detach
+- [ ] `FindLiveConnection`'s closed-connection message (`GodotSession.cs`) still names only `detach_project, then attach_project again`; `stop_project` now ends an attached session too
+
+### Wave 3: bridge upkeep
+
+Shared: `bridge/*.gd` (input, raw events, gamepad, bridge, time, dormant), `tests/bridge/`. Review: code-review. Verify: `pwsh run.ps1 gdtest`, gdlint's file-length limit, and the itest named in the item.
+
+- [ ] `bridge/godot_mcp_gamepad.gd:300` calls `bridge._gestures._dispatch(event)`, another module's private method; the input module now has a public `dispatch` for the raw event player
+- [ ] `bridge/godot_mcp_input.gd` is at 998 of gdlint's 1000 max-file-lines, so its next addition needs another split (the raw event player moved to `godot_mcp_raw_events.gd` for `scroll`); the input module's public wrappers (`send_button`, `to_window`, …) twin private methods that could simply be renamed public
+- [ ] `bridge/godot_mcp_bridge.gd` is at exactly 1000 of gdlint's 1000 max-file-lines after #50 added the `Audio` module's wiring; its next addition must first move a block out
+- [ ] A game going dormant again after a detach releases the injected mouse buttons, pad buttons and axes it held (`release_all`, `bridge/godot_mcp_raw_events.gd`) but not keys a raw `simulate_input` key press left down: the input module does not record held keys
+- [ ] In a recording, the Time module's step, monitor and capture deadline (`_begin`, `bridge/godot_mcp_time.gd` ~L168-172, a `SceneTreeTimer` its comment says "runs in real time") runs in clip time, so at 240 fps its `backstopMs` fires after a quarter of its length in wall time: measure whether it can beat the server's cancel, and correct the comment
+- [ ] A green `pwsh run.ps1 gdtest` prints a GDScript stack trace from `test_a_poll_deletes_a_malformed_join_file_and_stays_dormant` (`tests/bridge/test_dormant.gd:156`), the expected `push_warning`, which reads as a failure at a glance
+- [ ] No itest covers `GODOT_MCP_OFF` where it matters: a headless run beside an attach session whose `attach.json` is present (`bridge/godot_mcp_dormant.gd` `is_switched_off`); the gdtest covers the branch only
+
+### Track: ideas from the survey and the projects
+
+Each idea needs its own design pass (an interview) before a brief; the next slice takes the first.
+
 - [ ] Ideas from the Godot MCP survey ([2026-09-29-godot-mcp-survey.md](../research/2026-09-29-godot-mcp-survey.md), which names the source servers and the open engine questions) and from the projects' own workarounds, chosen by the user 2026-09-29 (the GUT/gdUnit4 runner and the GDScript debug channel dropped: no project needs them); each needs its own design pass before a brief. Ordered by what the projects driving Godot through the server need (delve-the-dungeon heavily, opening-hand moderately; in-the-sky not yet; openpax uses another server; all four C#, none GDScript-heavy, none on GUT or gdUnit4), with the evidence found in their repos:
   - [ ] Input aimed at 2D/3D world nodes through the camera, UI targets by visible text, and Tree/ItemList/TabBar/PopupMenu/OptionButton item targets (ideas 7, 8). Delve selects tabs and options by setting the property and emitting the signal by hand, computes grid positions for text-less map buttons, picks hand cards by title and projects 3D dice with `unproject_position` by hand (delve `docs/DEVELOPMENT.md` L67, L77, L99); opening-hand's overworld is a Node2D grid. A Button's text can differ from its name (delve's "Host" reads "New Game"), so a text target must say which it matched
   - [ ] Project-defined tools, so an agent finds and calls a game's own cheat and debug commands (survey idea 13): delve drives most scenarios through `Net` cheats such as `JumpToRoomOfKind`, `SetHp`, `DownPartyMember`, `ForceEnemyAim` (L67-69)
@@ -29,21 +58,13 @@ Waves run in order; bug reports sit ahead of the backlog inside each. The single
   - [ ] Audio observation: which players play, bus levels (idea 9; pairs with #50). Delve checks sound by hand (delve `docs/manual-tests.md` L50-51) and its MusicScratch reads `volume_linear` itself; useful only if it reads anything under the Dummy driver a quiet run uses: check that first
   - [ ] A click that reports the signals it fired, from godot-mcp-runtime's dropped tools; delve emits signals by hand for toggles that ignore `pressed` (L67, L71). Its autoload and project-settings tools and `validate`'s signal-wiring checks showed no need (C# games wire signals in code)
   - [ ] Drives spanning several processes: delve starts its server through `dtd.ps1` and a second headless client in the background, and "a tool call cannot stop a server while a script runs" (L70)
-- [ ] In a recording, the Time module's step, monitor and capture deadline (`_begin`, `bridge/godot_mcp_time.gd` ~L168-172, a `SceneTreeTimer` its comment says "runs in real time") runs in clip time, so at 240 fps its `backstopMs` fires after a quarter of its length in wall time: measure whether it can beat the server's cancel, and correct the comment
 
+### Singles
+
+Share nothing with the waves above; their order is not a ranking.
+
+- [ ] The splice can still leave two nodes with one `unique_id` when the engine renumbers an existing node during a save (it checks a new id only against nodes saved before it, 4.7.2 `packed_scene.cpp` L1099-1123, so a copy saved early that draws a later node's id, odds about n in 2^31, renumbers that node), since `headless/scene_splice.gd` compares sections without `unique_id` and keeps the old text: `self_check` could fall back to the full save when two node sections share a `unique_id`
+- [ ] `TempDirectoryTests.DisposeRetriesAFileHeldBriefly` (`tests/GodotMcp.Tests/TestSupport/TempDirectoryTests.cs:19`, a 2 s wall-clock bound) fails under the full unit suite with an IOException on held.txt and passes alone: seen twice on 2026-09-29
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see [DECISIONS.md](../DECISIONS.md#gamepad-input-from-godot-472s-source))
 - [ ] A patched Godot build for internal development (user, 2026-09-26: patches kept in a repo, rebuilt and reviewed on every upstream update). Agreed order (user, 2026-09-26): solve each need on stock 4.7.2 first; a need stock cannot meet gets a small patch sent upstream as a PR and carried only until it merges; the full patches repo and rebuild pipeline only if a patch upstream will not take. No candidate today: the test window flash, the first one, is gone on stock 4.7.2 (measured 2026-09-26: no window on the user's desktop from gdtest, filtered itests or the import prep, all behind the hidden desktop; see the DEVELOPMENT.md footgun on how Godot shows its window), and the user chose to keep this line idle until a need stock cannot meet appears (user, 2026-09-26). Open for that pipeline: the .NET build's GodotSharp packages, which the C# projects must resolve without a tracked-file change; tests on a patched engine against games shipped on stock export templates
 - [ ] The profiler, autoload-editing and file-parsing tools, if a need shows up
-- [ ] `TempDirectoryTests.DisposeRetriesAFileHeldBriefly` (`tests/GodotMcp.Tests/TestSupport/TempDirectoryTests.cs:19`, a 2 s wall-clock bound) fails under the full unit suite with an IOException on held.txt and passes alone: seen twice on 2026-09-29
-- [ ] Two servers releasing one folder's `override.cfg` at once can lose an owner: `OverrideFile.Release` rewrites the owners line without the `override-folders.txt` lock that `Write` takes through `OverrideFolders.RecordWhile`
-- [ ] Servers sharing a folder with different `quiet`, `shutOutRealGamepads` or bridge path: the last to write the `override.cfg` (or `armed.json`, `ArmFile.Write`) wins its content, since only sessions and arms of one server are checked against each other (`SessionRegistry.CheckSameSetting`, `IsArmedAlready`)
-- [ ] Two joins of different dormant games on one folder cannot wait at once: `SessionRegistry.CheckCanStart` refuses a second attach while one waits, though each join has its own `join-<pid>.json`
-- [ ] `bridge/godot_mcp_gamepad.gd:300` calls `bridge._gestures._dispatch(event)`, another module's private method; the input module now has a public `dispatch` for the raw event player
-- [ ] `bridge/godot_mcp_input.gd` is at 998 of gdlint's 1000 max-file-lines, so its next addition needs another split (the raw event player moved to `godot_mcp_raw_events.gd` for `scroll`); the input module's public wrappers (`send_button`, `to_window`, …) twin private methods that could simply be renamed public
-- [ ] A game going dormant again after a detach releases the injected mouse buttons, pad buttons and axes it held (`release_all`, `bridge/godot_mcp_raw_events.gd`) but not keys a raw `simulate_input` key press left down: the input module does not record held keys
-- [ ] A green `pwsh run.ps1 gdtest` prints a GDScript stack trace from `test_a_poll_deletes_a_malformed_join_file_and_stays_dormant` (`tests/bridge/test_dormant.gd:156`), the expected `push_warning`, which reads as a failure at a glance
-- [ ] `bridge/godot_mcp_bridge.gd` is at exactly 1000 of gdlint's 1000 max-file-lines after #50 added the `Audio` module's wiring; its next addition must first move a block out
-- [ ] No itest covers `GODOT_MCP_OFF` where it matters: a headless run beside an attach session whose `attach.json` is present (`bridge/godot_mcp_dormant.gd` `is_switched_off`); the gdtest covers the branch only
-- [ ] No test covers an attached game's kill paths in `stop_project` (silent at the ping, still running after the grace: `StopAttachedAsync`, `GodotSession.Attach.cs`), only its quit; and the unit harness's fake hellos carry made-up pids (4242, 4101, 4102 in `tests/GodotMcp.Tests/Session/`), so an attach opens a handle on whatever real process holds that pid and a future unit stop of such a session could kill it: fake games should carry null or a pid the test owns
-- [ ] The integration check that a detached game on a `mute` arm stays muted (`tests/GodotMcp.IntegrationTests/ArmTests.cs`) passes even if the dormant path failed to re-apply the arm's mute, since the join had muted it already: it needs a join with `mute: false` on a muted arm, then a detach
-- [ ] `FindLiveConnection`'s closed-connection message (`GodotSession.cs`) still names only `detach_project, then attach_project again`; `stop_project` now ends an attached session too
