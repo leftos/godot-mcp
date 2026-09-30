@@ -47,7 +47,7 @@ func compare_screenshot(params: Dictionary) -> Variant:
 	var baseline_path: String = str(params.get("baselinePath", ""))
 	if not FileAccess.file_exists(baseline_path):
 		return "there is no baseline file at %s" % baseline_path
-	await bridge._wait_for_drawn_frame()
+	await bridge._frame.wait_for_drawn_frame()
 	var capture: Variant = _capture(params.get("crop"))
 	if capture is String:
 		return capture
@@ -57,7 +57,7 @@ func compare_screenshot(params: Dictionary) -> Variant:
 	var compared: Variant = compare(capture, baseline, int(params.get("tolerance", 0)))
 	if compared is String:
 		return compared
-	var saved: Variant = bridge._save_screenshot(capture, {})
+	var saved: Variant = bridge._frame.save_screenshot(capture, {})
 	if saved is String:
 		return saved
 	return _reply(saved, compared, int(params.get("previewMaxWidth", 0)))
@@ -93,11 +93,11 @@ static func _diff(now: Image, then: Image, threshold: float) -> Dictionary:
 ## The root viewport's image, cropped to crop when it is a Dictionary; a String when there is
 ## no image or the crop misses it.
 func _capture(crop: Variant) -> Variant:
-	var image: Image = bridge.grab_frame()
+	var image: Image = bridge._frame.grab_frame()
 	if image == null:
 		return "the viewport returned no image"
 	if crop is Dictionary:
-		return bridge._crop(image, crop)
+		return bridge._frame.crop(image, crop)
 	return image
 
 
@@ -122,7 +122,7 @@ func _reply(saved: Dictionary, compared: Dictionary, preview_max_width: int) -> 
 	reply["diffPath"] = diff_path
 	var preview: Dictionary = {}
 	var preview_path: String = diff_path.get_basename() + "_preview.png"
-	error = bridge._save_preview(diff, preview_path, preview_max_width, preview)
+	error = bridge._frame.save_preview(diff, preview_path, preview_max_width, preview)
 	if error != OK:
 		return "saving %s failed: %s" % [preview_path, error_string(error)]
 	if preview.has("previewPath"):

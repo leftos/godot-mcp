@@ -63,9 +63,10 @@ internal sealed class BridgeConnection : IAsyncDisposable
     /// <summary>
     /// Sends one command and waits for its reply's <c>result</c> for <paramref name="timeout"/> of load-adjusted time, bounded by
     /// <see cref="LoadClock.BackstopFactor"/> times it in wall time. With <paramref name="release"/>, the request carries
-    /// <c>backstopMs</c>, <see cref="LoadClock.BackstopFactor"/> times the release in milliseconds, as the bridge's own real-time
-    /// limit; when the release passes in load-adjusted time first, a <c>cancel</c> for the request goes to the bridge, which ends
-    /// the request with its usual answer, and the wait goes on for that answer.
+    /// <c>backstopMs</c>, <see cref="LoadClock.BackstopFactor"/> times the release in milliseconds, as the bridge's own
+    /// limit, which counts clip time in a recording, where it can fire before this cancel; when the release passes in
+    /// load-adjusted time first, a <c>cancel</c> for the request goes to the bridge, which ends the request with its
+    /// usual answer, and the wait goes on for that answer.
     /// </summary>
     /// <param name="command">The bridge command.</param>
     /// <param name="parameters">

@@ -54,8 +54,8 @@ func capture(params: Dictionary) -> Variant:
 		return "the game has no current scene to show"
 	_add_camera_if_needed(scene)
 	for _frame: int in DRAWN_FRAMES:
-		await bridge._wait_for_drawn_frame()
-	var saved: Variant = bridge._save_screenshot(bridge.grab_frame(), params)
+		await bridge._frame.wait_for_drawn_frame()
+	var saved: Variant = bridge._frame.save_screenshot(bridge._frame.grab_frame(), params)
 	if saved is String:
 		return saved
 	saved["scene"] = scene.scene_file_path

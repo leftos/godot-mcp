@@ -157,22 +157,26 @@ func _guarded_step(params: Dictionary, result: Dictionary) -> String:
 
 
 ## Marks kind ("step", "monitor" or "frames") running for the request holding params, set before
-## the first await so a request read in the same frame is refused, and arms its deadline of real
-## time: params.backstopMs when the server sends one (its allowance measured in load-adjusted
-## time, so the server cancels sooner), else deadline_ms, the server's own allowance; either way a
-## run the server has given up on still frees the mark. Returns the deadline.
+## the first await so a request read in the same frame is refused, and arms its deadline:
+## params.backstopMs when the server sends one (its allowance measured in load-adjusted time, so
+## the server cancels sooner), else deadline_ms, the server's own allowance; either way a run the
+## server has given up on still frees the mark. The timer ignores pause and time scale, and counts
+## clip time in a recording, where it can fire before the server's cancel; that is harmless since
+## a healthy step, monitor or capture counts the same fixed steps the timer does, so only a
+## stalled one reaches it, and it then answers as the server's cancel would (_on_deadline).
+## Returns the deadline.
 func _begin(kind: String, deadline_ms: float, params: Dictionary) -> SceneTreeTimer:
 	_running = kind
 	_running_params = params
 	_deadline_passed = false
-	# process_always and ignore_time_scale: the deadline runs in real time, paused or not.
+	# process_always and ignore_time_scale: the deadline ignores pause and the time scale.
 	var seconds: float = _bound_ms(params, deadline_ms) / 1000.0
 	var deadline: SceneTreeTimer = get_tree().create_timer(seconds, true, false, true)
 	deadline.timeout.connect(_on_deadline)
 	return deadline
 
 
-## The real-time limit a request runs under: params.backstopMs when the server sends one, else
+## The deadline a request runs under: params.backstopMs when the server sends one, else
 ## fallback_ms, the limit an older server's request carries.
 func _bound_ms(params: Dictionary, fallback_ms: float) -> float:
 	return float(params.get("backstopMs", fallback_ms))
@@ -276,8 +280,8 @@ func _save_capture(
 	if physics:
 		if not await _next(RenderingServer.frame_post_draw):
 			return _stalled(count, count)
-		image = bridge.grab_frame()
-	var saved: Variant = bridge._save_screenshot(image, params)
+		image = bridge._frame.grab_frame()
+	var saved: Variant = bridge._frame.save_screenshot(image, params)
 	if saved is String:
 		return saved
 	result["screenshot"] = saved
@@ -305,7 +309,7 @@ func _run_frames(count: int, capture: bool) -> Array:
 		return [counted, null]
 	var image: Image = null
 	if capture:
-		image = bridge.grab_frame()
+		image = bridge._frame.grab_frame()
 	tree.paused = true
 	return [counted, image]
 
@@ -462,7 +466,7 @@ func _capture_points(points: Array, params: Dictionary, called: Dictionary) -> V
 			continue
 		if not await _next(RenderingServer.frame_post_draw):
 			break
-		var saved: Variant = bridge._save_screenshot(bridge.grab_frame(), params)
+		var saved: Variant = bridge._frame.save_screenshot(bridge._frame.grab_frame(), params)
 		if saved is String:
 			return saved
 		entries.append_array(frame_entries(due, saved, Engine.get_process_frames(), elapsed))
@@ -739,7 +743,7 @@ func _check_drawn_frame(drawn: Dictionary) -> void:
 	var seen: Array = _keep(probe.call(), drawn)
 	drawn["seen"] = seen
 	if seen[0]:
-		drawn["image"] = bridge.grab_frame()
+		drawn["image"] = bridge._frame.grab_frame()
 
 
 ## The check of the frame drawn since the last call, or the met or failed one kept; nothing on the
@@ -776,7 +780,7 @@ func _with_capture(image: Image, params: Dictionary, result: Dictionary) -> Dict
 	if image == null:
 		result["warning"] = NOT_DRAWN_WARNING
 		return {"result": result}
-	var saved: Variant = bridge._save_screenshot(image, params)
+	var saved: Variant = bridge._frame.save_screenshot(image, params)
 	if saved is String:
 		return {"error": saved}
 	result["screenshot"] = saved
@@ -787,7 +791,7 @@ func _with_capture(image: Image, params: Dictionary, result: Dictionary) -> Dict
 ## a process_frame is the frame running now, or null when that frame is not drawn.
 func _capture_this_frame() -> Image:
 	var shot: Array[Image] = []
-	var grab := func() -> void: shot.append(bridge.grab_frame())
+	var grab := func() -> void: shot.append(bridge._frame.grab_frame())
 	RenderingServer.frame_post_draw.connect(grab, CONNECT_ONE_SHOT)
 	await get_tree().process_frame
 	if RenderingServer.frame_post_draw.is_connected(grab):

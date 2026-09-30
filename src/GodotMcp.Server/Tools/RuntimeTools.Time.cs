@@ -35,8 +35,8 @@ internal sealed partial class RuntimeTools
 
     // A wait's timeoutMs (in a recording, the StepAllowance of its frames) and a step's or monitor's StepAllowance are its
     // release: once that much load-adjusted time has passed, the server cancels it and the bridge ends it with its own answer
-    // (at its backstopMs, 5 x the release in real time, when the cancel is lost). The send waits this much longer for that
-    // answer.
+    // (at its backstopMs, 5 x the release, counted in clip time while a recording runs, when the cancel is lost). The send
+    // waits this much longer for that answer.
     private static readonly TimeSpan WaitReplyAllowance = TimeSpan.FromSeconds(5);
 
     [McpServerTool(Name = "frame_control", ReadOnly = false, Destructive = false, OpenWorld = false)]

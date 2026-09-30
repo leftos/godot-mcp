@@ -35,13 +35,6 @@ Shared: `src/GodotMcp.Server/Session/` (`SessionRegistry`, `OverrideFile`, `ArmF
 - [ ] The integration check that a detached game on a `mute` arm stays muted (`tests/GodotMcp.IntegrationTests/ArmTests.cs`) passes even if the dormant path failed to re-apply the arm's mute, since the join had muted it already: it needs a join with `mute: false` on a muted arm, then a detach
 - [ ] `FindLiveConnection`'s closed-connection message (`GodotSession.cs`) still names only `detach_project, then attach_project again`; `stop_project` now ends an attached session too
 
-### Wave 3: bridge upkeep
-
-Shared: `bridge/*.gd` (input, raw events, gamepad, bridge, time, dormant), `tests/bridge/`. Review: code-review. Verify: `pwsh run.ps1 gdtest`, gdlint's file-length limit, and the itest named in the item.
-
-- [ ] `bridge/godot_mcp_bridge.gd` is at exactly 1000 of gdlint's 1000 max-file-lines after #50 added the `Audio` module's wiring; its next addition must first move a block out
-- [ ] In a recording, the Time module's step, monitor and capture deadline (`_begin`, `bridge/godot_mcp_time.gd` ~L168-172, a `SceneTreeTimer` its comment says "runs in real time") runs in clip time, so at 240 fps its `backstopMs` fires after a quarter of its length in wall time. Ruled (user, 2026-09-29): correct the "real time" wording (time.gd, `BridgeConnection.cs`, `RuntimeTools.Time.cs`, the glossary) with no measurement, since a healthy step, monitor or capture counts the same 1/60 s steps as the timer and an early backstop gives the answer the cancel would
-
 ### Track: ideas from the survey and the projects
 
 Each idea needs its own design pass (an interview) before a brief; the next slice takes the first.
@@ -63,6 +56,7 @@ Share nothing with the waves above; their order is not a ranking.
 
 - [ ] The splice can still leave two nodes with one `unique_id` when the engine renumbers an existing node during a save (it checks a new id only against nodes saved before it, 4.7.2 `packed_scene.cpp` L1099-1123, so a copy saved early that draws a later node's id, odds about n in 2^31, renumbers that node), since `headless/scene_splice.gd` compares sections without `unique_id` and keeps the old text: `self_check` could fall back to the full save when two node sections share a `unique_id`
 - [ ] `TempDirectoryTests.DisposeRetriesAFileHeldBriefly` (`tests/GodotMcp.Tests/TestSupport/TempDirectoryTests.cs:19`, a 2 s wall-clock bound) fails under the full unit suite with an IOException on held.txt and passes alone: seen twice on 2026-09-29
+- [ ] `TimeTests.AGamePausingItselfMidMonitorEndsItWithTheSamplesSoFar` (`tests/GodotMcp.IntegrationTests/TimeTests.cs`) failed once under a filtered run on a loaded machine and passed on the re-run: `monitor_property failed: The bridge refused 'monitor': The game is paused, so only a signal wait or a check-once wait (timeoutMs 0) can be met` (2026-09-29): the pause may land before the monitor starts
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see [DECISIONS.md](../DECISIONS.md#gamepad-input-from-godot-472s-source))
 - [ ] A patched Godot build for internal development (user, 2026-09-26: patches kept in a repo, rebuilt and reviewed on every upstream update). Agreed order (user, 2026-09-26): solve each need on stock 4.7.2 first; a need stock cannot meet gets a small patch sent upstream as a PR and carried only until it merges; the full patches repo and rebuild pipeline only if a patch upstream will not take. No candidate today: the test window flash, the first one, is gone on stock 4.7.2 (measured 2026-09-26: no window on the user's desktop from gdtest, filtered itests or the import prep, all behind the hidden desktop; see the DEVELOPMENT.md footgun on how Godot shows its window), and the user chose to keep this line idle until a need stock cannot meet appears (user, 2026-09-26). Open for that pipeline: the .NET build's GodotSharp packages, which the C# projects must resolve without a tracked-file change; tests on a patched engine against games shipped on stock export templates
 - [ ] The profiler, autoload-editing and file-parsing tools, if a need shows up
