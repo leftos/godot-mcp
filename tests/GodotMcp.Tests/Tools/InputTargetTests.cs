@@ -141,6 +141,114 @@ public sealed class InputTargetTests
             "{element: null, x: null, y: null, text: 'Strike', offset: {x: 1, y: 2, z: null}}"
         );
 
+    [Fact]
+    public void AnItemPassesThroughWithAnElement()
+    {
+        JsonObject byText = InputTarget.ToBridge(new InputTarget("Tabs", Item: new InputItem(Text: "Alex")), "target");
+        JsonObject byIndex = InputTarget.ToBridge(new InputTarget("Rows", Item: new InputItem(Index: 0)), "from");
+
+        Assert.Equal("{\"element\":\"Tabs\",\"item\":{\"text\":\"Alex\"}}", byText.ToJsonString());
+        Assert.Equal("{\"element\":\"Rows\",\"item\":{\"index\":0}}", byIndex.ToJsonString());
+    }
+
+    [Fact]
+    public void AnItemPassesThroughWithAText()
+    {
+        JsonObject bridge = InputTarget.ToBridge(
+            new InputTarget(Text: "Inventory", Under: "Panel", Item: new InputItem(Path: ["Weapons", "Sword"], Column: 1)),
+            "to"
+        );
+
+        Assert.Equal("{\"text\":\"Inventory\",\"under\":\"Panel\",\"item\":{\"path\":[\"Weapons\",\"Sword\"],\"column\":1}}", bridge.ToJsonString());
+    }
+
+    [Fact]
+    public void AnItemWithAPointIsRefusedNamingTheKeysGiven() =>
+        AssertItemRefused(
+            new InputTarget(null, 1, 2, Item: new InputItem(Text: "Alex")),
+            "target",
+            "target.item takes element or text beside it; got {element: null, x: 1, y: 2, "
+                + "item: {text: 'Alex', index: null, path: null, column: null}}."
+        );
+
+    [Fact]
+    public void AnItemAloneIsRefused() =>
+        AssertItemRefused(
+            new InputTarget(Item: new InputItem(Index: 2)),
+            "to",
+            "to.item takes element or text beside it; got {element: null, x: null, y: null, item: {text: null, index: 2, path: null, column: null}}."
+        );
+
+    [Fact]
+    public void AnItemWithTextAndIndexIsRefused() =>
+        AssertItemRefused(
+            new InputTarget("Rows", Item: new InputItem(Text: "Alex", Index: 1)),
+            "target",
+            "target.item takes exactly one of text, index or path; got {element: Rows, x: null, y: null, "
+                + "item: {text: 'Alex', index: 1, path: null, column: null}}."
+        );
+
+    [Fact]
+    public void AnItemWithOnlyAColumnIsRefused() =>
+        AssertItemRefused(
+            new InputTarget("Inventory", Item: new InputItem(Column: 1)),
+            "target",
+            "target.item takes exactly one of text, index or path; got {element: Inventory, x: null, y: null, "
+                + "item: {text: null, index: null, path: null, column: 1}}."
+        );
+
+    [Fact]
+    public void AnItemWithABlankTextIsRefusedAsBlank() =>
+        AssertItemRefused(
+            new InputTarget("Rows", Item: new InputItem(Text: " ")),
+            "target",
+            "target.item.text is blank; give the item's shown text, or index or path; got {element: Rows, x: null, y: null, "
+                + "item: {text: ' ', index: null, path: null, column: null}}."
+        );
+
+    [Fact]
+    public void AnEmptyItemPathIsRefused() =>
+        AssertItemRefused(
+            new InputTarget("Inventory", Item: new InputItem(Path: [])),
+            "from",
+            "from.item.path needs at least one non-empty text; got {element: Inventory, x: null, y: null, "
+                + "item: {text: null, index: null, path: [], column: null}}."
+        );
+
+    [Fact]
+    public void AnItemPathWithABlankTextIsRefused() =>
+        AssertItemRefused(
+            new InputTarget("Inventory", Item: new InputItem(Path: ["Weapons", " "])),
+            "target",
+            "target.item.path needs at least one non-empty text; got {element: Inventory, x: null, y: null, "
+                + "item: {text: null, index: null, path: ['Weapons', ' '], column: null}}."
+        );
+
+    [Fact]
+    public void ANegativeItemIndexIsRefused() =>
+        AssertItemRefused(
+            new InputTarget("Rows", Item: new InputItem(Index: -1)),
+            "target",
+            "target.item.index and item.column must be 0 or more; got {element: Rows, x: null, y: null, "
+                + "item: {text: null, index: -1, path: null, column: null}}."
+        );
+
+    [Fact]
+    public void ANegativeItemColumnIsRefused() =>
+        AssertItemRefused(
+            new InputTarget(Text: "Inventory", Item: new InputItem(Text: "Sword", Column: -2)),
+            "target",
+            "target.item.index and item.column must be 0 or more; got {element: null, x: null, y: null, text: 'Inventory', "
+                + "item: {text: 'Sword', index: null, path: null, column: -2}}."
+        );
+
+    private static void AssertItemRefused(InputTarget target, string parameter, string expected)
+    {
+        McpException refused = Assert.Throws<McpException>(() => InputTarget.ToBridge(target, parameter));
+
+        Assert.Equal(expected, refused.Message);
+    }
+
     private static void AssertOffsetRefused(InputTarget target, string parameter, string given)
     {
         McpException refused = Assert.Throws<McpException>(() => InputTarget.ToBridge(target, parameter));

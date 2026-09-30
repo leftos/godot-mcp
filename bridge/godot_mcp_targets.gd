@@ -2,11 +2,13 @@ extends Node
 ## The godot-mcp bridge's input target resolver, a child of the input player (godot_mcp_input.gd):
 ## turns a target ({element}, a Control or a 2D or 3D world node by path or unique bare name,
 ## with an optional offset inside a world node; {text, under?}, the visible Control showing a text
-## (godot_mcp_text_targets.gd); or {x, y}, a viewport point) into the point in the root's viewport
+## (godot_mcp_text_targets.gd); either with an item drawn inside a list Control
+## (godot_mcp_item_targets.gd); or {x, y}, a viewport point) into the point in the root's viewport
 ## coordinates a gesture aims at, or a String saying why the target cannot be used. The input
 ## player sends the motion and asks this module which Control the GUI hovers on the way in.
 
 const TextTargets := preload("godot_mcp_text_targets.gd")
+const ItemTargets := preload("godot_mcp_item_targets.gd")
 
 ## The refusals of an {element} target, each with the node's path in place of %s.
 const HIDDEN_TARGET := (
@@ -113,34 +115,57 @@ func point_of(resolved: Variant) -> Vector2:
 ## "node2d" or "node3d"), point (in the root's viewport coordinates), levels (the
 ## SubViewportContainers on the way in, outermost first, each {container, viewport}), window (the
 ## outermost embedded Window the node is drawn in, or null),
-## input_disabled (the path of a SubViewport on the way whose input is disabled, or ""), and for a
-## text target matched ({by: "text", text: the shown text matched})}. A blank text is no text.
+## input_disabled (the path of a SubViewport on the way whose input is disabled, or ""), for a
+## text target matched ({by: "text", text: the shown text matched}), and for an item target item
+## (the item it resolved to, _aim_at_item)}. A blank text is no text.
 func resolve_target(target: Variant) -> Variant:
 	if not target is Dictionary:
 		return "a target must be an object {element}, {text} or {x, y}"
 	var spec: Dictionary = target
 	if spec.has("element"):
-		return _resolve_element(str(spec["element"]), spec.get("offset"))
+		return _resolve_element(str(spec["element"]), spec.get("offset"), spec.get("item"))
 	if not str(spec.get("text", "")).strip_edges().is_empty():
-		return _resolve_text(str(spec["text"]), spec.get("under"))
+		return _resolve_text(str(spec["text"]), spec.get("under"), spec.get("item"))
 	if spec.has("x") and spec.has("y"):
 		return Vector2(float(spec["x"]), float(spec["y"]))
 	return "a target needs element, text, or both x and y; got %s" % JSON.stringify(spec)
 
 
 ## The aim at the one visible Control at or under the node under names (the root when null) that
-## shows text, with matched; or a String saying why there is none. An under no node or several
-## nodes have is refused as an element naming it would be.
-func _resolve_text(text: String, under: Variant) -> Variant:
+## shows text, with matched, or at the item it draws that item names (null for none); or a String
+## saying why there is none. An under no node or several nodes have is refused as an element
+## naming it would be.
+func _resolve_text(text: String, under: Variant, item: Variant) -> Variant:
 	var start: Variant = _text_start(under)
 	if start is String:
 		return start
 	var entry: Variant = TextTargets.find(self, start, text)
 	if entry is String:
 		return entry
-	var aim: Variant = _aim_of(entry["control"], "control", Vector3.ZERO)
+	var control: Control = entry["control"]
+	var aim: Variant = (
+		_aim_of(control, "control", Vector3.ZERO) if item == null else _aim_at_item(control, item)
+	)
 	if aim is Dictionary:
 		aim["matched"] = {"by": "text", "text": entry["shown"]}
+	return aim
+
+
+## The aim at the item a list Control draws: the list's aim at the item's point (its local point
+## through the drawing Control's canvas transform, then carried out as a Control's own point is),
+## with item, the item as aimed_at reports it, and drawer, the Control that draws it, which the
+## hit check requires the press to land on (lands_on). kind stays "control", so the input module
+## checks the hit as a Control's; aimed_at reports "item". A String says why there is none.
+func _aim_at_item(node: Node, item: Variant) -> Variant:
+	var placed: Variant = ItemTargets.resolve(self, node, item)
+	if placed is String:
+		return placed
+	var drawer: Control = placed["drawer"]
+	var own: Vector2 = drawer.get_global_transform_with_canvas() * (placed["local"] as Vector2)
+	var aim: Variant = _aim_from(node, "control", own)
+	if aim is Dictionary:
+		aim["item"] = placed["report"]
+		aim["drawer"] = drawer
 	return aim
 
 
@@ -158,8 +183,9 @@ func _text_start(under: Variant) -> Variant:
 	return found if refusal.is_empty() else refusal
 
 
-## The aim at the live, visible node an element names, or a String saying why there is none.
-func _resolve_element(element: String, offset: Variant) -> Variant:
+## The aim at the live, visible node an element names, or at the item it draws that item names
+## (null for none); or a String saying why there is none.
+func _resolve_element(element: String, offset: Variant, item: Variant) -> Variant:
 	var found: Variant = _find_input_node(element)
 	if found is String:
 		return found
@@ -170,6 +196,8 @@ func _resolve_element(element: String, offset: Variant) -> Variant:
 		refusal = offset_refusal(offset, kind, str(node.get_path()), node.get_class())
 	if not refusal.is_empty():
 		return refusal
+	if item != null:
+		return _aim_at_item(node, item)
 	return _aim_of(node, kind, offset_vector(offset))
 
 
@@ -245,12 +273,18 @@ func _aim_of(node: Node, kind: String, offset: Vector3) -> Variant:
 	var own: Variant = _own_point(node, kind, offset)
 	if own is String:
 		return own
+	return _aim_from(node, kind, own)
+
+
+## The aim at a node whose point in its own viewport is own, carried out to the root's
+## coordinates; a world node's point is refused in a native window and off-screen.
+func _aim_from(node: Node, kind: String, own: Vector2) -> Variant:
 	var carried: Dictionary = _carry_out(node.get_viewport())
 	var refusal: String = _carry_refusal(node, kind, carried)
 	if not refusal.is_empty():
 		return refusal
 	var levels: Array[Dictionary] = carried["levels"]
-	var point: Vector2 = (carried["xform"] as Transform2D) * (own as Vector2)
+	var point: Vector2 = (carried["xform"] as Transform2D) * own
 	if kind != "control":
 		refusal = _off_screen(node, point, levels, carried["windows"])
 		if not refusal.is_empty():
@@ -432,20 +466,22 @@ func _off_screen(
 
 
 ## An aim as a result reports it: {x, y, kind, path, class}, x and y in the root's viewport
-## coordinates, plus matched for a text target, and viewport, its viewport's path, when that is not
-## the root.
+## coordinates, kind "item" for an item target, plus matched for a text target, item for an item
+## target, and viewport, its viewport's path, when that is not the root.
 func aimed_at(aim: Dictionary) -> Dictionary:
 	var node: Node = aim["node"]
 	var point: Vector2 = aim["point"]
 	var described: Dictionary = {
 		"x": snappedf(point.x, 0.01),
 		"y": snappedf(point.y, 0.01),
-		"kind": aim["kind"],
+		"kind": "item" if aim.has("item") else aim["kind"],
 		"path": str(node.get_path()),
 		"class": node.get_class(),
 	}
 	if aim.has("matched"):
 		described["matched"] = aim["matched"]
+	if aim.has("item"):
+		described["item"] = aim["item"]
 	var viewport: Viewport = node.get_viewport()
 	if viewport != get_tree().root:
 		described["viewport"] = str(viewport.get_path())
@@ -610,10 +646,14 @@ func _ambiguous(node_name: String, named: Array[Node]) -> String:
 
 ## Whether a press on hit reaches a Control aim's node: hit is the node, a descendant of it, or,
 ## for a node that ignores the mouse, the nearest ancestor that takes its clicks; or, for a text
-## match, a Control of its own scene instance (same_instance_hit).
+## match, a Control of its own scene instance (same_instance_hit). An item aim lands only on the
+## Control that draws the item: a list's scroll bars are its children, and a press on one selects
+## nothing.
 func lands_on(hit: Control, aim: Dictionary) -> bool:
 	if hit == null:
 		return false
+	if aim.has("item"):
+		return hit == aim["drawer"]
 	var target: Control = aim["node"]
 	return (
 		hit == target

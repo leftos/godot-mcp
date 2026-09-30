@@ -11,6 +11,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - Live node paths take `%UniqueName`, alone (looked up in every scene, refused when several hold it) or after its owner's path, in every node-taking tool.
 - Input tools aim `element` at 2D and 3D world nodes through their camera, with an optional `offset`, and report the point as `aimedAt`.
 - Input tools aim at a Control by the text it shows, `{text}` with an optional `under`, naming near misses when nothing matches.
+- Input targets take `item` to press a row, tab or tree item inside an `ItemList`, `TabBar`, `TabContainer` or `Tree` by text, index or path.
 - `stop_project {projectPath}` frees a folder by stopping its warm headless host, as stopping a session does when idle; `list_sessions` lists hosts as `headlessHosts`.
 - `list_game_tools` lists a C# game's own methods marked `[GodotMcpTool]`, with each one's owner, argument schema and whether it can be called now.
 - `get_game_state` reads, in one frame, what each node in the `mcp_state` group returns from `_mcp_state()`, with `keys` to narrow it.

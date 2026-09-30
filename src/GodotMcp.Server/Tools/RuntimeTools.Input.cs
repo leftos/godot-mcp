@@ -25,9 +25,10 @@ internal sealed partial class RuntimeTools
         + "also lands on a Control of its own scene instance, pressedOn naming it";
     private const string TargetNote =
         ElementAim
-        + "; an element or text target adds aimedAt {x, y, kind (control, node2d or node3d), path, class, matched?, "
-        + "viewport?}: the point in viewport coordinates, matched {by: \"text\", text} the shown text a text target matched, "
-        + "and the node's viewport when it is not the root.";
+        + "; an element or text target adds aimedAt {x, y, kind (control, node2d, node3d or item), path, class, matched?, "
+        + "item?, viewport?}: the point in viewport coordinates, matched {by: \"text\", text} the shown text a text target "
+        + "matched, item {index, text, path?, disabled?} the item an item target resolved to (its drawn text, a Tree's path, "
+        + "disabled when it is), and the node's viewport when it is not the root.";
     private const string DragTargetNote =
         ElementAim + "; an element or text target at either end adds aimedAt {from, to}, each as click's aimedAt, a point end null.";
     private const int MaxHoverTimeoutMs = 10_000;
