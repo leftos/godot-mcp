@@ -13,7 +13,7 @@ Waves run in order; bug reports sit ahead of the backlog inside each. Each wave 
 
 ### Release at this session's checkpoint
 
-- [ ] Cut a release once every open GitHub issue is closed (user, 2026-09-30; none open once #57 and #58 closed): it carries `list_game_tools`, `call_game_tool`, `get_game_state` and `run_scratches`, which unblocks project-tools step 5 and the other designs' adoption steps
+- [ ] Cut v0.12.0 now, from what has landed, once the red `test_itest_groups.py` and the two wall-clock unit flakes below are fixed (user, 2026-09-30, after #57 and #58 closed); kept state reads and popup items go in the next release: it carries `list_game_tools`, `call_game_tool`, `get_game_state` and `run_scratches`, which unblocks project-tools step 5 and the other designs' adoption steps
 
 ### Track: ideas from the survey and the projects
 
