@@ -129,7 +129,7 @@ Cited from the `4.7-stable` tag of `godotengine/godot` (class reference XML and 
 
 Each step lands on its own with its tests, docs and changelog bullet, and passes `gdlint`, `gdcomplexity`, `gdtest`, the unit tests and its itest class.
 
-1. **Move target resolution into `bridge/godot_mcp_targets.gd`**, no behaviour change; re-read the section 3 sources at `4.7.2-stable` with line numbers into this doc. Proof: `test_input.gd` and `InputTests` unchanged and green. No changelog bullet.
+1. **Landed**: target resolution moved into `bridge/godot_mcp_targets.gd` (the `Targets` child of `Gestures`) with no behaviour change; the functions the input module calls lost their underscore (`refusal_of`, `resolve_point`, `point_of`, `resolve_target`, `lands_on`, `receiver`, `viewport_rect`, `viewport_transform`), and `COVERED_TARGET` stayed with the hit check. The re-read of the section 3 sources at `4.7.2-stable` moves to step 2, before its spike.
 2. **World nodes**: `element` (or `node`, question 1) on 2D and 3D nodes in the root viewport and through `SubViewportContainer`s (which also fixes Controls inside one), `offset`, `aimedAt`, the GUI-covers refusal, off-screen, behind-camera and no-camera refusals; a spike first on physics picking under a quiet run (`input_event` from an injected click, with and without `notify_mouse_entered()`).
 3. **Text targets**: `text`, `under`, `shown_text` shared with `get_ui_elements`, `matched`, the near-miss and name-hint refusal, ambiguity per question 4, mouse-ignoring matches per question 5.
 4. **Items in `ItemList`, `TabBar`/`TabContainer` and `Tree`**: `item {text | index | path, column}`, the check-back through each Control's inverse, the unreachable-item handling of question 6 part one.

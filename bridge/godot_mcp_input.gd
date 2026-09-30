@@ -8,6 +8,8 @@ extends Node
 
 const MIN_DRAG_STEPS := 3
 const SETTLE_FRAMES := 2
+## The target resolver (godot_mcp_targets.gd beside this script), this node's child.
+const TARGETS_SCRIPT := "godot_mcp_targets.gd"
 ## The gestures whose result says which Controls they hit, from _hits.
 const HIT_GESTURES := ["click", "drag", "mouse_button", "hover", "scroll"]
 ## The longest a hover waits for a tooltip, the server's own limit on timeoutMs.
@@ -44,12 +46,6 @@ const MODIFIER_KEYS := {KEY_SHIFT: "shift", KEY_CTRL: "ctrl", KEY_ALT: "alt", KE
 ## A US keyboard's shifted symbols, and at the same index the key that types each unshifted.
 const SHIFTED_SYMBOLS := '~!@#$%^&*()_+{}|:"<>?'
 const UNSHIFTED_KEYS := "`1234567890-=[]\\;',./"
-## The refusals of an {element} target, each with the node's path in place of %s.
-const HIDDEN_TARGET := "%s is hidden; get_ui_elements lists the visible Controls."
-const FREED_TARGET := "%s is being freed; get_ui_elements lists the live Controls."
-## A bare name more than one node has: the name, the count and at most MAX_LISTED_NODES paths.
-const AMBIGUOUS_TARGET := "'%s' names %d nodes: %s; pass the full path."
-const MAX_LISTED_NODES := 10
 ## An element whose centre a press would land elsewhere: the target's path, the point, the hit's
 ## path, the target's rect, and ", hit rect <rect>" (empty when nothing is hit).
 const COVERED_TARGET := (
@@ -63,6 +59,8 @@ const UNKNOWN_KEY_HINT := (
 
 ## The bridge (godot_mcp_bridge.gd), set by it before this node enters the tree.
 var bridge: Node
+## The target resolver (godot_mcp_targets.gd), created by _ready as this node's child.
+var _targets: Node
 ## What the playing gesture hit: pressedOn, releasedOn, guiDragStarted, dropAccepted,
 ## scrolledOn.
 var _hits: Dictionary = {}
@@ -79,6 +77,17 @@ var _held_keys: Dictionary = {}
 
 func _ready() -> void:
 	get_tree().node_added.connect(_note_drag_preview)
+	_create_targets()
+
+
+## Creates the target resolver (godot_mcp_targets.gd) as this node's child, loaded from the
+## folder this script itself lives in, so the bridge script gains no line.
+func _create_targets() -> void:
+	var dir: String = (get_script() as Script).resource_path.get_base_dir()
+	_targets = (load(dir.path_join(TARGETS_SCRIPT)) as GDScript).new()
+	_targets.name = "Targets"
+	_targets.bridge = bridge
+	add_child(_targets)
 
 
 ## Plays one gesture over frames, then waits two more frames, so the game's handlers have run
@@ -219,7 +228,7 @@ func _play_pointer_gesture(gesture: String, params: Dictionary) -> String:
 ## Refuses a target that cannot be clicked before anything is sent, then dismisses tooltips and
 ## aims (resolving the target again, since the dismiss can take a frame) before the click.
 func click(params: Dictionary) -> String:
-	var refusal: String = _refusal_of(params.get("target"))
+	var refusal: String = _targets.refusal_of(params.get("target"))
 	if not refusal.is_empty():
 		return refusal
 	var button: int = parse_button(params.get("button", "left"))
@@ -317,10 +326,10 @@ func _hovered_control(point: Vector2) -> Control:
 ## Refuses either end before anything is sent; after the tooltip dismiss, resolves the end and
 ## aims at the start, the only end hit-tested: what is dragged may cover the drop point.
 func _play_drag(params: Dictionary) -> String:
-	var refusal: String = _refusal_of(params.get("from"))
+	var refusal: String = _targets.refusal_of(params.get("from"))
 	if not refusal.is_empty():
 		return "from: %s" % refusal
-	refusal = _refusal_of(params.get("to"))
+	refusal = _targets.refusal_of(params.get("to"))
 	if not refusal.is_empty():
 		return "to: %s" % refusal
 	var button: int = parse_button(params.get("button", "left"))
@@ -328,7 +337,7 @@ func _play_drag(params: Dictionary) -> String:
 		return _unknown_button(params.get("button"))
 	var duration_ms: int = maxi(0, int(params.get("durationMs", 300)))
 	await _dismiss_tooltips()
-	var end: Variant = _resolve_point(params.get("to"))
+	var end: Variant = _targets.resolve_point(params.get("to"))
 	if end is String:
 		return "to: %s" % end
 	var start: Variant = _aim(params.get("from"), true)
@@ -421,7 +430,7 @@ func _play_key(params: Dictionary) -> String:
 ## A press or a move is hit-tested; a release is not, since Godot sends it to the Control that
 ## took the press wherever the pointer is (scene/main/viewport.cpp L2019-2025 in 4.7.2).
 func _play_mouse_button(params: Dictionary) -> String:
-	var refusal: String = _refusal_of(params.get("target"))
+	var refusal: String = _targets.refusal_of(params.get("target"))
 	if not refusal.is_empty():
 		return refusal
 	var button: int = parse_button(params.get("button", "left"))
@@ -476,7 +485,7 @@ func _play_scroll(params: Dictionary) -> String:
 
 ## Why a scroll cannot play, or "" when it can: its target, direction and via; nothing is sent.
 func _scroll_refusal(params: Dictionary) -> String:
-	var refusal: String = _refusal_of(params.get("target"))
+	var refusal: String = _targets.refusal_of(params.get("target"))
 	if not refusal.is_empty():
 		return refusal
 	var direction: String = str(params.get("direction", "down"))
@@ -537,13 +546,13 @@ func _play_hover(params: Dictionary) -> String:
 ## That virtual is how a MenuBar answers a title's tooltip (scene/gui/menu_bar.cpp L989-995)
 ## and a PopupMenu an item's, its items drawn by its internal PopupMenuItems Control
 ## (scene/gui/popup_menu.cpp L3845-3851). The point is mapped into each Control through its own
-## transform, an embedded window's included, as _point_of maps a target's centre. The climb ends
+## transform, an embedded window's included, as point_of maps a target's centre. The climb ends
 ## after a Control whose mouse filter, mouse_behavior_recursive applied, is Stop, or which is
 ## top-level.
 func _tooltip_owner(control: Control, point: Vector2) -> Control:
 	var current: Control = control
 	while current != null:
-		var local: Vector2 = _viewport_transform(current).affine_inverse() * point
+		var local: Vector2 = _targets.viewport_transform(current).affine_inverse() * point
 		if not current.get_tooltip(local).is_empty():
 			return current
 		if (
@@ -637,113 +646,19 @@ func _find_label(node: Node) -> Label:
 
 ## Resolves a target and moves the pointer to its viewport point: the motion the gesture sends
 ## anyway, which also makes Godot hit-test that point. With checks_hit, an {element} target is
-## then refused unless the Control Godot hovers there is one that takes its press (_lands_on).
+## then refused unless the Control Godot hovers there is one that takes its press (lands_on).
 ## Returns the viewport point, or a String saying why the target was refused.
 func _aim(target: Variant, checks_hit: bool) -> Variant:
-	var resolved: Variant = _resolve_target(target)
+	var resolved: Variant = _targets.resolve_target(target)
 	if resolved is String:
 		return resolved
-	var point: Vector2 = _point_of(resolved)
+	var point: Vector2 = _targets.point_of(resolved)
 	_move_to(to_window(point))
 	if checks_hit and resolved is Control:
 		var refusal: String = _hit_refusal(resolved as Control, point)
 		if not refusal.is_empty():
 			return refusal
 	return point
-
-
-## Why a target cannot be used, or "" when it can; nothing is sent.
-func _refusal_of(target: Variant) -> String:
-	var resolved: Variant = _resolve_target(target)
-	return resolved if resolved is String else ""
-
-
-## The viewport point a target names, or a String saying why it cannot be used; nothing is sent.
-func _resolve_point(target: Variant) -> Variant:
-	var resolved: Variant = _resolve_target(target)
-	if resolved is String:
-		return resolved
-	return _point_of(resolved)
-
-
-## An element's point is its centre in the root's viewport coordinates; a point target is its own
-## point.
-func _point_of(resolved: Variant) -> Vector2:
-	if resolved is Control:
-		var control := resolved as Control
-		return _viewport_transform(control) * (control.size / 2.0)
-	return resolved
-
-
-## The Control a target {element} names or the Vector2 viewport point a target {x, y} names; a
-## String instead says why the target cannot be used.
-func _resolve_target(target: Variant) -> Variant:
-	if not target is Dictionary:
-		return "a target must be an object {element} or {x, y}"
-	var spec: Dictionary = target
-	if spec.has("element"):
-		return _resolve_element(str(spec["element"]))
-	if spec.has("x") and spec.has("y"):
-		return Vector2(float(spec["x"]), float(spec["y"]))
-	return "a target needs element, or both x and y; got %s" % JSON.stringify(spec)
-
-
-## The live, visible Control an element names, or a String saying why there is none.
-func _resolve_element(element: String) -> Variant:
-	var found: Variant = _find_input_node(element)
-	if found is String:
-		return found
-	var node: Node = found
-	if not node is Control:
-		return (
-			"'%s' is a %s, not a Control, so it has no rect to aim at" % [element, node.get_class()]
-		)
-	if node.is_queued_for_deletion():
-		return FREED_TARGET % str(node.get_path())
-	if not (node as Control).is_visible_in_tree():
-		return HIDDEN_TARGET % str(node.get_path())
-	return node
-
-
-## The node an element names: a path through the bridge's _find_node, or the one node of a bare
-## name. A bare name no node has, or more than one node has, is a String saying so. Other tools
-## keep _find_node's first match; an input target must be the node the caller means.
-func _find_input_node(element: String) -> Variant:
-	var named: Array[Node] = []
-	if element.contains("/"):
-		var node: Node = bridge._find_node(element)
-		if node != null:
-			named.append(node)
-	else:
-		named = _nodes_named(element)
-	if named.is_empty():
-		return bridge._inspect.not_found(
-			element, "get_ui_elements lists the Controls' paths and names"
-		)
-	if named.size() > 1:
-		return _ambiguous(element, named)
-	return named[0]
-
-
-## Every node of that name, breadth first from the root, in _find_node's order.
-func _nodes_named(node_name: String) -> Array[Node]:
-	var named: Array[Node] = []
-	var queue: Array[Node] = [get_tree().root]
-	while not queue.is_empty():
-		var node: Node = queue.pop_front()
-		if str(node.name) == node_name:
-			named.append(node)
-		queue.append_array(node.get_children())
-	return named
-
-
-func _ambiguous(node_name: String, named: Array[Node]) -> String:
-	var paths := PackedStringArray()
-	for node: Node in named.slice(0, MAX_LISTED_NODES):
-		paths.append(str(node.get_path()))
-	if named.size() > MAX_LISTED_NODES:
-		paths.append("…")
-	return AMBIGUOUS_TARGET % [node_name, named.size(), ", ".join(paths)]
 
 
 ## Why a press at point would miss target, or "" when it would not: Godot hovers, on a mouse
@@ -753,60 +668,23 @@ func _ambiguous(node_name: String, named: Array[Node]) -> String:
 ## may land on nothing.
 func _hit_refusal(target: Control, point: Vector2) -> String:
 	var hit: Control = _hovered_control(point)
-	if _lands_on(hit, target) or (hit == null and _receiver(target) == null):
+	if _targets.lands_on(hit, target) or (hit == null and _targets.receiver(target) == null):
 		return ""
 	var hit_path: String = "<nothing>"
 	var hit_rect: String = ""
 	if hit != null:
 		hit_path = str(hit.get_path())
-		hit_rect = ", hit rect %s" % _rect_text(_viewport_rect(hit))
+		hit_rect = ", hit rect %s" % _rect_text(_targets.viewport_rect(hit))
 	return (
 		COVERED_TARGET
 		% [
 			str(target.get_path()),
 			"%s, %s" % [_num(point.x), _num(point.y)],
 			hit_path,
-			_rect_text(_viewport_rect(target)),
+			_rect_text(_targets.viewport_rect(target)),
 			hit_rect,
 		]
 	)
-
-
-## Whether a press on hit reaches target: hit is the target, a descendant of it, or, for a
-## target that ignores the mouse, the nearest ancestor that takes its clicks.
-func _lands_on(hit: Control, target: Control) -> bool:
-	if hit == null:
-		return false
-	return hit == target or target.is_ancestor_of(hit) or hit == _receiver(target)
-
-
-## The target, or its nearest Control ancestor when it ignores the mouse, that takes a click
-## aimed at it; null when neither it nor any Control above it does.
-func _receiver(target: Control) -> Control:
-	var node: Node = target
-	while node is Control:
-		if (node as Control).mouse_filter != Control.MOUSE_FILTER_IGNORE:
-			return node as Control
-		node = node.get_parent()
-	return null
-
-
-## A Control's rect in the root's viewport coordinates, the bounding box when it is rotated.
-func _viewport_rect(control: Control) -> Rect2:
-	return _viewport_transform(control) * Rect2(Vector2.ZERO, control.size)
-
-
-## A Control's transform into the root's viewport coordinates, the ones input points use: its
-## canvas transform, a CanvasLayer's or the viewport's canvas transform included
-## (scene/main/canvas_item.cpp L183-192 in 4.7.2), then, for a Control inside an embedded window,
-## the window's position and final transform: the inverse of the root's routing of a point into
-## that window (scene/main/viewport.cpp L3311).
-func _viewport_transform(control: Control) -> Transform2D:
-	var xform: Transform2D = control.get_global_transform_with_canvas()
-	var window: Window = control.get_viewport() as Window
-	if window != null and window != get_tree().root and window.is_embedded():
-		xform = Transform2D(0.0, Vector2(window.position)) * window.get_final_transform() * xform
-	return xform
 
 
 func _rect_text(rect: Rect2) -> String:
