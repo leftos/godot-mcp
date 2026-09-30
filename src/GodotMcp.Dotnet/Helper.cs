@@ -16,7 +16,7 @@ namespace GodotMcp.Dotnet;
 /// with <c>"id":"&lt;instance id&gt;"</c>, <c>{"op":"members","target":{...}}</c>, which <see cref="Members"/>
 /// answers, <c>{"op":"get"|"set",...}</c>, which <see cref="MemberAccess"/> answers, <c>{"op":"call",...}</c>, which
 /// <see cref="Calls"/> answers, <c>{"op":"run",...}</c>, which <see cref="Snippets"/> answers, <c>{"op":"tools"|"tool_call",...}</c>,
-/// which <see cref="GameTools"/> answers, or
+/// which <see cref="GameTools"/> answers, <c>{"op":"state",...}</c>, which <see cref="States"/> answers, or
 /// <c>{"op":"poll"|"forget",...}</c>, which <see cref="PendingTasks"/> answers — and returns a JSON reply,
 /// <c>{"ok":true,"result":{...}}</c>, <c>{"ok":true,"pending":"c&lt;n&gt;"}</c> for a call or snippet still awaiting its task, or
 /// <c>{"ok":false,"error":"..."}</c>.
@@ -85,6 +85,7 @@ public static class Helper
             "run" => Snippets.Run(request),
             "tools" => GameTools.List(request),
             "tool_call" => GameTools.Call(request),
+            "state" => States.Read(request),
             "poll" => PendingTasks.Poll(request),
             "forget" => PendingTasks.Forget(request),
             _ => Failure($"Unknown op '{op}'."),

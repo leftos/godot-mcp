@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Server.Wire;
@@ -115,4 +117,27 @@ public sealed class StateValidationTests : IDisposable
 
     [Fact]
     public void TheToolRunsAsABatchStep() => Assert.Contains("get_game_state", RuntimeTools.BatchableTools);
+
+    [Fact]
+    public void WhyTheHelperCannotRunGoesToTheBridgeAsCsharpError()
+    {
+        JsonObject parameters = RuntimeTools.StateParameters(Defaults, new StateHelper(null, "The C# helper is not built."));
+
+        Assert.Equal("""{"node":"","maxNodes":50,"maxDepth":4,"csharpError":"The C# helper is not built."}""", parameters.ToJsonString());
+    }
+
+    [Fact]
+    public void TheHelpersCopyGoesToTheBridgeAsExtension()
+    {
+        JsonObject parameters = RuntimeTools.StateParameters(Defaults, new StateHelper(@"C:\cache\a\godot_mcp_dotnet.gdextension", null));
+
+        Assert.Equal(@"C:\cache\a\godot_mcp_dotnet.gdextension", parameters["extension"]?.GetValue<string>());
+        Assert.False(parameters.ContainsKey("csharpError"), parameters.ToJsonString());
+    }
+
+    [Fact]
+    public void AProjectWithoutCSharpSendsNeither() =>
+        Assert.Equal("""{"node":"","maxNodes":50,"maxDepth":4}""", RuntimeTools.StateParameters(Defaults, StateHelper.None).ToJsonString());
+
+    private static RuntimeTools.StateRequest Defaults => RuntimeTools.CheckStateRequest(null, null);
 }

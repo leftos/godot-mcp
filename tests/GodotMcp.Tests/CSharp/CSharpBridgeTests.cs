@@ -91,6 +91,73 @@ public sealed class CSharpBridgeTests : IDisposable
         Assert.IsAssignableFrom<IOException>(thrown.InnerException);
     }
 
+    [Fact]
+    public void AStateReadInAProjectWithoutCSharpSendsNoHelper() =>
+        Assert.Equal(StateHelper.None, Bridge(Extension).PrepareForState(Project("plain")));
+
+    [Fact]
+    public void AStateReadInAProjectWhoseHelperCannotRunSendsWhy()
+    {
+        string several = Project("several", "One", "Two");
+        string unbuilt = Project("unbuilt", "Probe");
+
+        Assert.Equal(new StateHelper(null, PrepScan.FindCsproj(several).Note), Bridge(Extension).PrepareForState(several));
+        Assert.Contains(PrepScan.AssemblyPath(unbuilt, "Probe"), Bridge(Extension).PrepareForState(unbuilt).Error, StringComparison.Ordinal);
+        Assert.Contains("run.ps1 dotnet", Bridge(null).PrepareForState(Built("probe")).Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AStateReadWhoseHelperCopyFailsSendsTheFailure()
+    {
+        string missingBuild = Path.Combine(_temp.Combine("no-helper-build"), "godot_mcp_dotnet.gdextension");
+
+        StateHelper helper = Bridge(missingBuild).PrepareForState(Built("probe"));
+
+        Assert.Null(helper.Extension);
+        Assert.StartsWith("Preparing the C# helper's copy failed: ", helper.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AStateReadKeepsTheHelpersCopyUntilItsBuildChanges()
+    {
+        string build = _temp.Combine("helper-build");
+        Directory.CreateDirectory(build);
+        string extension = Path.Combine(build, HelperCache.ExtensionFileName);
+        File.WriteAllText(extension, "first");
+        CSharpBridge bridge = Bridge(extension);
+        string project = Built("probe");
+
+        StateHelper first = bridge.PrepareForState(project);
+        StateHelper again = bridge.PrepareForState(project);
+        File.WriteAllText(extension, "second build");
+        StateHelper rebuilt = bridge.PrepareForState(project);
+
+        Assert.NotNull(first.Extension);
+        Assert.Equal(first, again);
+        Assert.NotEqual(first.Extension, rebuilt.Extension);
+        Assert.Equal("second build", File.ReadAllText(rebuilt.Extension!));
+    }
+
+    [Fact]
+    public void AStateReadRemakesAKeptCopyThatIsNoLongerComplete()
+    {
+        string build = _temp.Combine("helper-build");
+        Directory.CreateDirectory(build);
+        string extension = Path.Combine(build, HelperCache.ExtensionFileName);
+        File.WriteAllText(extension, "build");
+        CSharpBridge bridge = Bridge(extension);
+        string project = Built("probe");
+        string copy = Path.GetDirectoryName(bridge.PrepareForState(project).Extension)!;
+        File.Delete(Path.Combine(copy, ".complete"));
+
+        StateHelper again = bridge.PrepareForState(project);
+
+        Assert.Equal(copy, Path.GetDirectoryName(again.Extension));
+        Assert.True(HelperCache.IsComplete(copy), "the copy is made again, marker and all");
+    }
+
+    private CSharpBridge Bridge(string? extension) => new(new HelperCache(_temp.Combine("cache")), () => extension);
+
     /// <summary>A project folder with a project.godot and one csproj per name, or none when no name is given.</summary>
     private string Project(string name, params string[] projects)
     {

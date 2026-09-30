@@ -3,13 +3,15 @@ extends "res://gd_test.gd"
 ## fake load_extension and a stand-in meta host, so no built extension is needed: the argument
 ## checks, a failed load named and remembered, the shim's error variable, an absent callable, one
 ## load per process, the helper's reply passed through as it came, and a pending reply polled a
-## frame at a time until it is final or its deadline passes (a fake frame wait and clock).
+## frame at a time until it is final or its deadline passes (a fake frame wait and clock); and
+## call_now, the state reader's synchronous call, sharing the load and never polling.
 
 const EXTENSION := "C:/cache/dotnet/0123abcd/godot_mcp_dotnet.gdextension"
 const PING := '{"op":"ping"}'
 const CALL := '{"op":"call","target":{"type":"Probe"},"member":"WaitAsync"}'
 const PENDING := '{"ok":true,"pending":"c1"}'
 const POLL := '{"id":"c1","op":"poll"}'
+const STATE := '{"ids":["7"],"maxDepth":4,"op":"state"}'
 const META_NAME := "godot_mcp_dotnet"
 const ERROR_VARIABLE := "GODOT_MCP_DOTNET_ERROR"
 
@@ -263,6 +265,64 @@ func test_a_non_pending_reply_is_not_polled() -> void:
 	)
 	assert_eq(requests, [CALL, CALL], "no poll is sent")
 	assert_eq(frames, [0], "no frame is waited")
+	dotnet.free()
+
+
+func test_call_now_loads_once_and_answers_the_reply_as_it_came() -> void:
+	var loads: Array = [0]
+	var reply := '{"ok":true,"result":{"nodes":[{"id":"7","state":18446744073709551615}]}}'
+	var dotnet: Node = _module(GDExtensionManager.LOAD_STATUS_OK, loads, _host_answering(reply))
+	var first: Dictionary = dotnet.call_now(EXTENSION, STATE)
+	assert_eq(first, {"result": {"reply": reply, "loadedNow": true}}, "the first call loads")
+	assert_true(first["result"]["reply"] == reply, "the reply is byte for byte the helper's")
+	assert_eq(
+		dotnet.call_now(EXTENSION, STATE),
+		{"result": {"reply": reply, "loadedNow": false}},
+		"a later call is answered by the loaded helper"
+	)
+	assert_eq(loads, [1], "the extension is loaded once")
+	dotnet.free()
+
+
+func test_call_now_and_handle_share_a_remembered_load_failure() -> void:
+	var loads: Array = [0]
+	var dotnet: Node = _module(GDExtensionManager.LOAD_STATUS_FAILED, loads, _host_answering("{}"))
+	var failed: Dictionary = {
+		"error": "Godot could not load the C# helper extension at %s (load status 1)." % EXTENSION
+	}
+	assert_eq(dotnet.call_now(EXTENSION, STATE), failed, "the first call fails")
+	assert_eq(dotnet.handle({"extension": EXTENSION, "request": PING}), failed, "handle answers it")
+	assert_eq(dotnet.call_now(EXTENSION, STATE), failed, "and call_now again")
+	assert_eq(loads, [1], "the extension is loaded once")
+	dotnet.free()
+
+
+func test_call_now_never_polls_a_pending_reply() -> void:
+	var requests: Array = []
+	var frames: Array = [0]
+	var dotnet: Node = _module(
+		GDExtensionManager.LOAD_STATUS_OK, [0], _host_replying([PENDING, "{}"], requests)
+	)
+	dotnet.wait_frame = func() -> void: frames[0] += 1
+	assert_eq(
+		dotnet.call_now(EXTENSION, CALL),
+		{"result": {"reply": PENDING, "loadedNow": true}},
+		"the pending reply, as it came"
+	)
+	assert_eq(requests, [CALL], "no poll is sent")
+	assert_eq(frames, [0], "no frame is waited")
+	dotnet.free()
+
+
+func test_call_now_refuses_an_empty_extension() -> void:
+	var loads: Array = [0]
+	var dotnet: Node = _module(GDExtensionManager.LOAD_STATUS_OK, loads, _host_answering("{}"))
+	assert_eq(
+		dotnet.call_now("", STATE),
+		{"error": "dotnet needs 'extension', the path of godot_mcp_dotnet.gdextension."},
+		"no extension"
+	)
+	assert_eq(loads, [0], "nothing is loaded")
 	dotnet.free()
 
 

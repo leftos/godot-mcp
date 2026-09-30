@@ -79,7 +79,8 @@ internal sealed class HelperCache(string cacheRoot)
         return Convert.ToHexStringLower(hasher.GetHashAndReset())[..HashCharacters];
     }
 
-    private static bool IsComplete(string destination) => File.Exists(Path.Combine(destination, CompleteMarker));
+    /// <summary>Whether the copy at <paramref name="destination"/> is whole: its <c>.complete</c> marker is written.</summary>
+    internal static bool IsComplete(string destination) => File.Exists(Path.Combine(destination, CompleteMarker));
 
     /// <summary>Copies the tree into a temp folder beside the destination and moves it in, marker first.</summary>
     internal static void CopyInto(string sourceDir, string destination)

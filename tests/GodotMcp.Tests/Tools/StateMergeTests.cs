@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Tools;
+using ModelContextProtocol;
 
 namespace GodotMcp.Tests.Tools;
 
@@ -165,6 +166,127 @@ public sealed class StateMergeTests
         Assert.Equal("""{"frame":120,"nodes":[],"total":0}""", under.ToJsonString());
     }
 
+    [Fact]
+    public void CSharpEntriesAreFilledByIdInTreeOrderBetweenGdscriptOnes()
+    {
+        string[] entries =
+        [
+            Entry("/root/Main/A", new JsonObject { ["hp"] = 1 }),
+            CSharpEntry("/root/Main/B", "11"),
+            Entry("/root/Main/C", new JsonObject { ["hp"] = 3 }),
+            CSharpEntry("/root/Main/D", "12", Both),
+        ];
+        string csharp = HelperReply("""{"id":"12","state":{"hp":4}}""", """{"id":"11","state":{"hp":2,"big":18446744073709551615}}""");
+
+        JsonObject result = StateMerge.Shape(Reply(entries, total: 4, csharp: csharp), null, true);
+
+        Assert.Equal(
+            "["
+                + """{"path":"/root/Main/A","class":"Node","state":{"hp":1}},"""
+                + """{"path":"/root/Main/B","class":"Node","state":{"hp":2,"big":18446744073709551615}},"""
+                + """{"path":"/root/Main/C","class":"Node","state":{"hp":3}},"""
+                + """{"path":"/root/Main/D","class":"Node","warning":"reads _McpState; its _mcp_state is not read","state":{"hp":4}}"""
+                + "]",
+            result["nodes"]!.ToJsonString()
+        );
+        Assert.False(result.ContainsKey("csharp"), result.ToJsonString());
+    }
+
+    [Fact]
+    public void KeysAndTheCutApplyToMergedEntries()
+    {
+        string log = new('a', 2 * StateMerge.MaxStateLength);
+        string[] entries = [CSharpEntry("/root/Main/B", "11"), CSharpEntry("/root/Main/D", "12")];
+        string csharp = HelperReply("""{"id":"11","state":{"hp":2,"mana":5}}""", $$$"""{"id":"12","state":{"hp":4,"log":"{{{log}}}"}}""");
+
+        JsonArray whole = StateMerge.Shape(Reply(entries, total: 2, csharp: csharp), null, true)["nodes"]!.AsArray();
+        JsonArray kept = StateMerge.Shape(Reply(entries, total: 2, csharp: csharp), ["hp"], true)["nodes"]!.AsArray();
+
+        Assert.Equal("""{"hp":2,"mana":5}""", whole[0]!["state"]!.ToJsonString());
+        Assert.True(whole[1]!["state"]!["valueLength"]!.GetValue<int>() > StateMerge.MaxStateLength, whole[1]!.ToJsonString());
+        Assert.Equal(["""{"hp":2}""", """{"hp":4}"""], kept.Select(node => node!["state"]!.ToJsonString()));
+    }
+
+    [Fact]
+    public void MergedEntriesPastTheBudgetMoveToOmitted()
+    {
+        // Each merged entry is a little over 3000 characters, so the fourteenth crosses 40000 and the fifteenth onward move.
+        string text = new('a', 3000);
+        string[] entries = [.. Enumerable.Range(0, 20).Select(index => CSharpEntry($"/root/Main/N{index}", $"{index}"))];
+        string csharp = HelperReply([.. Enumerable.Range(0, 20).Select(index => $$$"""{"id":"{{{index}}}","state":{"text":"{{{text}}}"}}""")]);
+
+        JsonObject result = StateMerge.Shape(Reply(entries, total: 20, csharp: csharp), null, true);
+
+        Assert.Equal(14, result["nodes"]!.AsArray().Count);
+        Assert.Equal(20, result["total"]!.GetValue<int>());
+        Assert.Equal(6, result["omitted"]!["count"]!.GetValue<int>());
+        Assert.Equal("/root/Main/N14", result["omitted"]!["paths"]![0]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void AnEntryTheBridgeReadItselfKeepsItsStateOverAMissingAnswer()
+    {
+        const string Missing = "CsProbe.Plain has no _McpState() (an instance method with no parameters, any accessibility)";
+        string[] entries = [Entry("/root/Main/B", new JsonObject { ["from"] = "_mcp_state" }), CSharpEntry("/root/Main/D", "12")];
+        string csharp = HelperReply(
+            """{"id":"11","missing":true,"error":"CsProbe.Both has no _McpState()"}""",
+            $$"""{"id":"12","missing":true,"error":"{{Missing}}"}"""
+        );
+
+        JsonArray nodes = StateMerge.Shape(Reply(entries, total: 2, csharp: csharp), null, true)["nodes"]!.AsArray();
+
+        Assert.Equal("""{"path":"/root/Main/B","class":"Node","state":{"from":"_mcp_state"}}""", nodes[0]!.ToJsonString());
+        Assert.Equal($$"""{"path":"/root/Main/D","class":"Node","error":"{{Missing}}"}""", nodes[1]!.ToJsonString());
+    }
+
+    [Fact]
+    public void AnErrorAnswerAndAnUnansweredIdBecomeTheEntrysError()
+    {
+        string[] entries = [CSharpEntry("/root/Main/B", "11"), CSharpEntry("/root/Main/D", "12")];
+        string csharp = HelperReply("""{"id":"11","error":"InvalidOperationException: state broke"}""");
+
+        JsonArray nodes = StateMerge.Shape(Reply(entries, total: 2, csharp: csharp), null, true)["nodes"]!.AsArray();
+
+        Assert.Equal("InvalidOperationException: state broke", nodes[0]!["error"]!.GetValue<string>());
+        Assert.Equal(StateMerge.NoHelperEntry, nodes[1]!["error"]!.GetValue<string>());
+        Assert.All(nodes, node => Assert.False(node!.AsObject().ContainsKey("id"), node.ToJsonString()));
+    }
+
+    [Theory]
+    [InlineData("not json", "The C# helper's reply is not JSON: ")]
+    [InlineData("[1]", "The C# helper's reply is not JSON: it is not a JSON object.")]
+    [InlineData("""{"ok":false,"error":"Unknown op 'state'."}""", "The C# helper refused the request: Unknown op 'state'.")]
+    public void AMalformedOrRefusedCSharpReplyIsAClearError(string csharp, string reason)
+    {
+        JsonNode reply = Reply([CSharpEntry("/root/Main/B", "11")], total: 1, csharp: csharp);
+
+        McpException refused = Assert.Throws<McpException>(() => StateMerge.Shape(reply, null, true));
+
+        Assert.StartsWith("get_game_state could not read the C# helper's state reply: " + reason, refused.Message, StringComparison.Ordinal);
+    }
+
+    private const string Both = "reads _McpState; its _mcp_state is not read";
+
+    /// <summary>A C# node's entry as the bridge leaves it for the server: {path, class, id, warning?}.</summary>
+    private static string CSharpEntry(string path, string id, string? warning = null)
+    {
+        JsonObject entry = new()
+        {
+            ["path"] = path,
+            ["class"] = "Node",
+            ["id"] = id,
+        };
+        if (warning is not null)
+        {
+            entry["warning"] = warning;
+        }
+
+        return entry.ToJsonString();
+    }
+
+    /// <summary>The C# helper's state reply holding the given entries.</summary>
+    private static string HelperReply(params string[] answers) => $$$"""{"ok":true,"result":{"nodes":[{{{string.Join(',', answers)}}}]}}""";
+
     private static string Entry(string path, JsonObject state) =>
         new JsonObject
         {
@@ -173,10 +295,11 @@ public sealed class StateMergeTests
             ["state"] = state,
         }.ToJsonString();
 
-    /// <summary>The bridge's reply at frame 120, parsed from JSON as the wire gives it.</summary>
-    private static JsonNode Reply(string[] entries, int total, JsonObject? omitted = null)
+    /// <summary>The bridge's reply at frame 120, with the C# helper's reply string when given, parsed from JSON as the wire gives it.</summary>
+    private static JsonNode Reply(string[] entries, int total, JsonObject? omitted = null, string? csharp = null)
     {
         string tail = omitted is null ? string.Empty : $",\"omitted\":{omitted.ToJsonString()}";
-        return JsonNode.Parse($"{{\"frame\":120,\"nodes\":[{string.Join(',', entries)}],\"total\":{total}{tail}}}")!;
+        string helper = csharp is null ? string.Empty : $",\"csharp\":{JsonValue.Create(csharp).ToJsonString()}";
+        return JsonNode.Parse($"{{\"frame\":120,\"nodes\":[{string.Join(',', entries)}],\"total\":{total}{tail}{helper}}}")!;
     }
 }

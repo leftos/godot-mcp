@@ -1,9 +1,12 @@
+# gdlint: disable=max-public-methods
 extends "res://gd_test.gd"
 ## The state reader (bridge/godot_mcp_state.gd) over a hand-built tree: /root/Game with marked
 ## nodes, and a stand-in bridge beside it holding the inspector, the JSON module and an
 ## unregistered logger. The runner's tests run before the root enters the tree, so the group and
 ## the paths are stood in for: marked walks the tree in order for nodes in the mcp_state group
 ## (is_in_group works outside a tree), and path_of names a node by its path from the stand-in root.
+## A C# node is stood in for by a node with the csharp meta, and the C# helper by a Dotnet child
+## whose load and callable are fakes.
 
 const NO_METHOD := "in the mcp_state group but has no _mcp_state method"
 const COROUTINE := "_mcp_state returned a coroutine, which is not awaited"
@@ -38,11 +41,21 @@ const WARNING_SOURCE := (
 const CSHARP_NAME_SOURCE := "extends Node\n\n\nfunc _McpState() -> Dictionary:\n\treturn {}\n"
 const BRIDGE_SOURCE := (
 	"extends Node\n\nvar _json: GDScript\nvar _logger: Logger\nvar _inspect: Node\n"
-	+ "var top: Node\n\n\nfunc _find_node(element: String) -> Node:\n"
+	+ "var _dotnet: Node\nvar top: Node\n\n\nfunc _find_node(element: String) -> Node:\n"
 	+ "\treturn top.find_child(element, true, false)\n"
+)
+const EXTENSION := "C:/cache/dotnet/0123abcd/godot_mcp_dotnet.gdextension"
+const BOTH := "reads _McpState; its _mcp_state is not read"
+const CANNOT_RUN := (
+	"Node is a C# script; its _McpState is read by the C# helper, " + "which cannot run: "
+)
+const NO_BUILD := (
+	"Node is a C# script; its _McpState is read by the C# helper, "
+	+ "which this project has no build of"
 )
 
 var _state_script: GDScript = load_bridge_script("godot_mcp_state.gd")
+var _dotnet_script: GDScript = load_bridge_script("godot_mcp_dotnet.gd")
 
 
 func test_a_member_with_the_method_reads_its_state_and_one_without_says_so() -> void:
@@ -306,8 +319,184 @@ func test_max_nodes_reads_the_first_and_lists_the_rest() -> void:
 	_free(rig)
 
 
+func test_csharp_nodes_go_to_the_helper_in_one_call_and_its_reply_passes_through() -> void:
+	var rig: Dictionary = _rig()
+	_add(rig["game"], "First", STATE_SOURCE, true)
+	var one: String = str(_add_csharp(rig["game"], "CsOne", "").get_instance_id())
+	_add(rig["game"], "Middle", STATE_SOURCE, true)
+	var two: String = str(_add_csharp(rig["game"], "CsTwo", "").get_instance_id())
+	var reply: String = (
+		'{"ok":true,"result":{"nodes":[{"id":"%s","state":18446744073709551615},' % one
+		+ '{"id":"%s","state":null}]}}' % two
+	)
+	var calls: Dictionary = _helper(rig, GDExtensionManager.LOAD_STATUS_OK, reply)
+	var params: Dictionary = {"extension": EXTENSION, "maxDepth": 3.0}
+	var result: Dictionary = rig["state"].handle(params).get("result", {})
+	assert_eq(
+		result.get("nodes"),
+		[
+			{"path": "/root/Game/First", "class": "Node", "state": {}},
+			{"path": "/root/Game/CsOne", "class": "Node", "id": one},
+			{"path": "/root/Game/Middle", "class": "Node", "state": {}},
+			{"path": "/root/Game/CsTwo", "class": "Node", "id": two},
+		],
+		"the GDScript nodes read, the C# ones left to the server by id, in tree order"
+	)
+	assert_true(result.get("csharp") == reply, "the helper's reply, byte for byte")
+	assert_eq(
+		calls["requests"],
+		['{"ids":["%s","%s"],"maxDepth":3,"op":"state"}' % [one, two]],
+		"one state call with every C# node's id and maxDepth as an integer"
+	)
+	assert_eq(calls["loads"], [1], "the helper loaded once")
+	_free(rig)
+
+
+func test_a_missing_mcpstate_falls_back_to_mcp_state_and_both_names_warn() -> void:
+	var rig: Dictionary = _rig()
+	var fallback: Node = _add_csharp(rig["game"], "Fallback", STATE_SOURCE)
+	fallback.state = {"from": "_mcp_state"}
+	var bare: String = str(_add_csharp(rig["game"], "Bare", "").get_instance_id())
+	var both: String = str(_add_csharp(rig["game"], "Both", STATE_SOURCE).get_instance_id())
+	var reply: String = (
+		(
+			'{"ok":true,"result":{"nodes":[{"id":"%s","missing":true,"error":"x"},'
+			% fallback.get_instance_id()
+		)
+		+ '{"id":"%s","missing":true,"error":"y"},{"id":"%s","state":1}]}}' % [bare, both]
+	)
+	_helper(rig, GDExtensionManager.LOAD_STATUS_OK, reply)
+	var result: Dictionary = rig["state"].handle({"extension": EXTENSION}).get("result", {})
+	assert_eq(
+		result.get("nodes"),
+		[
+			{"path": "/root/Game/Fallback", "class": "Node", "state": {"from": "_mcp_state"}},
+			{"path": "/root/Game/Bare", "class": "Node", "id": bare},
+			{"path": "/root/Game/Both", "class": "Node", "id": both, "warning": BOTH},
+		],
+		"read through _mcp_state, left for the helper's error, and warned"
+	)
+	assert_true(result.get("csharp") == reply, "the reply still passes through")
+	_free(rig)
+
+
+func test_without_an_extension_a_csharp_node_reads_mcp_state_or_says_there_is_no_build() -> void:
+	var rig: Dictionary = _rig()
+	_add_csharp(rig["game"], "Bare", "")
+	_add_csharp(rig["game"], "Visible", STATE_SOURCE)
+	var result: Dictionary = rig["state"].handle({}).get("result", {})
+	assert_eq(
+		result.get("nodes"),
+		[
+			{"path": "/root/Game/Bare", "class": "Node", "error": NO_BUILD},
+			{"path": "/root/Game/Visible", "class": "Node", "state": {}},
+		],
+		"the no-build error, and the Godot-visible _mcp_state read"
+	)
+	assert_true(not result.has("csharp"), "no helper reply")
+	_free(rig)
+
+
+func test_a_csharp_error_from_the_server_is_each_csharp_nodes_error_without_mcp_state() -> void:
+	var rig: Dictionary = _rig()
+	_add_csharp(rig["game"], "Bare", "")
+	_add_csharp(rig["game"], "Visible", STATE_SOURCE)
+	_add(rig["game"], "Gd", "", true)
+	var params: Dictionary = {"csharpError": "The C# helper is not built."}
+	var result: Dictionary = rig["state"].handle(params).get("result", {})
+	var cannot_run: String = CANNOT_RUN + "The C# helper is not built."
+	assert_eq(
+		result.get("nodes"),
+		[
+			{"path": "/root/Game/Bare", "class": "Node", "error": cannot_run},
+			{"path": "/root/Game/Visible", "class": "Node", "state": {}},
+			{"path": "/root/Game/Gd", "class": "Node", "error": NO_METHOD},
+		],
+		"the server's reason, _mcp_state still read, and a GDScript node untouched"
+	)
+	assert_true(not result.has("csharp"), "no helper reply")
+	_free(rig)
+
+
+func test_a_node_the_helper_could_not_read_is_not_warned_for_its_mcp_state() -> void:
+	var rig: Dictionary = _rig()
+	var both: String = str(_add_csharp(rig["game"], "Both", STATE_SOURCE).get_instance_id())
+	var reply: String = (
+		'{"ok":true,"result":{"nodes":[{"id":"%s","error":"InvalidOperationException: x"}]}}' % both
+	)
+	_helper(rig, GDExtensionManager.LOAD_STATUS_OK, reply)
+	var result: Dictionary = rig["state"].handle({"extension": EXTENSION}).get("result", {})
+	assert_eq(
+		result.get("nodes"),
+		[{"path": "/root/Game/Both", "class": "Node", "id": both}],
+		"left for the helper's error, with no warning"
+	)
+	_free(rig)
+
+
+func test_a_helper_that_cannot_load_gives_each_csharp_node_its_error() -> void:
+	var rig: Dictionary = _rig()
+	_add_csharp(rig["game"], "Bare", "")
+	_add_csharp(rig["game"], "Visible", STATE_SOURCE)
+	var calls: Dictionary = _helper(rig, GDExtensionManager.LOAD_STATUS_FAILED, "{}")
+	var failed: String = (
+		CANNOT_RUN
+		+ "Godot could not load the C# helper extension at %s (load status 1)." % EXTENSION
+	)
+	var expected: Array = [
+		{"path": "/root/Game/Bare", "class": "Node", "error": failed},
+		{"path": "/root/Game/Visible", "class": "Node", "state": {}},
+	]
+	var first: Dictionary = rig["state"].handle({"extension": EXTENSION}).get("result", {})
+	var second: Dictionary = rig["state"].handle({"extension": EXTENSION}).get("result", {})
+	assert_eq(first.get("nodes"), expected, "the load error, and _mcp_state still read")
+	assert_eq(second.get("nodes"), expected, "the remembered error on the next read")
+	assert_true(not first.has("csharp"), "no helper reply")
+	assert_eq(calls["loads"], [1], "the load is tried once")
+	assert_eq(calls["requests"], [], "the helper is never called")
+	_free(rig)
+
+
+func test_a_helper_refusal_is_each_csharp_nodes_error() -> void:
+	var rig: Dictionary = _rig()
+	_add_csharp(rig["game"], "Bare", "")
+	_helper(rig, GDExtensionManager.LOAD_STATUS_OK, '{"ok":false,"error":"Unknown op \'state\'."}')
+	var result: Dictionary = rig["state"].handle({"extension": EXTENSION}).get("result", {})
+	assert_eq(
+		result.get("nodes"),
+		[
+			{
+				"path": "/root/Game/Bare",
+				"class": "Node",
+				"error": CANNOT_RUN + "the C# helper refused the state read: Unknown op 'state'."
+			}
+		],
+		"the helper's refusal"
+	)
+	assert_true(not result.has("csharp"), "no helper reply")
+	_free(rig)
+
+
+func test_the_helper_is_not_called_without_a_csharp_node_to_read() -> void:
+	var rig: Dictionary = _rig()
+	_add(rig["game"], "First", STATE_SOURCE, true)
+	_add_csharp(rig["game"], "Past", "")
+	var calls: Dictionary = _helper(rig, GDExtensionManager.LOAD_STATUS_OK, "{}")
+	var params: Dictionary = {"extension": EXTENSION, "maxNodes": 1}
+	var result: Dictionary = rig["state"].handle(params).get("result", {})
+	assert_eq(_paths(result), ["/root/Game/First"], "the GDScript node read")
+	assert_eq(
+		result.get("omitted"), {"count": 1, "paths": ["/root/Game/Past"]}, "the C# one omitted"
+	)
+	assert_true(not result.has("csharp"), "no helper reply")
+	assert_eq(calls["loads"], [0], "the helper is never loaded")
+	assert_eq(calls["requests"], [], "or called")
+	_free(rig)
+
+
 ## {top, game, bridge, state}: a stand-in root named root holding Game and the stand-in bridge
-## GodotMcpBridge, and a state reader whose marked and path_of read that tree.
+## GodotMcpBridge, and a state reader whose marked and path_of read that tree and whose is_csharp
+## takes a node with the csharp meta for a C# one.
 func _rig() -> Dictionary:
 	var top := Node.new()
 	top.name = "root"
@@ -327,13 +516,44 @@ func _rig() -> Dictionary:
 	state.bridge = bridge
 	state.marked = func() -> Array: return _marked(top, [])
 	state.path_of = func(node: Node) -> String: return "/root/%s" % top.get_path_to(node)
+	state.is_csharp = func(node: Node) -> bool: return node.has_meta("csharp")
 	return {"top": top, "game": game, "bridge": bridge, "state": state}
 
 
 func _free(rig: Dictionary) -> void:
 	rig["state"].free()
 	rig["bridge"]._inspect.free()
+	if rig["bridge"]._dotnet != null:
+		rig["bridge"]._dotnet.free()
 	rig["top"].free()
+
+
+## A marked node under parent that the rig's is_csharp takes for a C# node, with a script compiled
+## from source when it is not empty.
+func _add_csharp(parent: Node, node_name: String, source: String) -> Node:
+	var node: Node = _add(parent, node_name, source, true)
+	node.set_meta("csharp", true)
+	return node
+
+
+## Gives the rig's bridge a Dotnet child whose load answers status and whose helper answers reply;
+## returns {loads: [count], requests: [each request]} as they happen.
+func _helper(rig: Dictionary, status: int, reply: String) -> Dictionary:
+	var calls: Dictionary = {"loads": [0], "requests": []}
+	var dotnet: Node = _dotnet_script.new()
+	dotnet.load_extension = func(_path: String) -> int:
+		calls["loads"][0] += 1
+		return status
+	var host := RefCounted.new()
+	host.set_meta(
+		"godot_mcp_dotnet",
+		func(request: String) -> String:
+			calls["requests"].append(request)
+			return reply
+	)
+	dotnet.meta_host = host
+	rig["bridge"]._dotnet = dotnet
+	return calls
 
 
 ## A node named node_name under parent, with a script compiled from source when it is not empty,

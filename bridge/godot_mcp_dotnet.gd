@@ -3,7 +3,8 @@ extends Node
 ## helper extension (godot_mcp_dotnet.gdextension, at the path the server sends) once per process,
 ## then hands each helper request, a JSON string, to the callable the helper stores as the
 ## SceneTree meta godot_mcp_dotnet, and answers the callable's reply string untouched: GDScript's
-## JSON parser would read every number as a float.
+## JSON parser would read every number as a float. call_now makes one such call synchronously, for
+## the state reader, which reads C# nodes in the frame it reads the rest.
 ##
 ## A failed load is remembered for the life of the process and its error answered on every later
 ## call without loading again, since a second load returns LOAD_STATUS_ALREADY_LOADED with the
@@ -51,20 +52,42 @@ var _failure: String = ""
 ## loadedNow}} or {error}. A coroutine: a pending reply is polled across frames.
 func handle(params: Dictionary) -> Dictionary:
 	var refusal: String = _refusal(params)
-	if refusal.is_empty():
-		refusal = _failure
 	if not refusal.is_empty():
 		return {"error": refusal}
+	var loaded: Dictionary = _loaded_helper(params["extension"])
+	if loaded.has("error"):
+		return loaded
+	return await _call(loaded["helper"] as Callable, params, loaded["loadedNow"])
+
+
+## Calls the helper once with request, a JSON string, loading the extension at extension first as
+## handle does (a failed load remembered and answered alike); answers {result: {reply, loadedNow}}
+## or {error}. Synchronous: a reply saying the call is pending is answered as it came, never polled.
+func call_now(extension: String, request: String) -> Dictionary:
+	if extension.is_empty():
+		return {"error": NO_EXTENSION}
+	var loaded: Dictionary = _loaded_helper(extension)
+	if loaded.has("error"):
+		return loaded
+	var reply: String = str((loaded["helper"] as Callable).call(request))
+	return {"result": {"reply": reply, "loadedNow": loaded["loadedNow"]}}
+
+
+## The helper's callable, loading the extension at extension when no path has loaded yet:
+## {helper, loadedNow}, or {error} for the remembered or a new load failure, or an absent callable.
+func _loaded_helper(extension: String) -> Dictionary:
+	if not _failure.is_empty():
+		return {"error": _failure}
 	var loaded_now: bool = _loaded_path.is_empty()
 	if loaded_now:
-		_failure = _load(params["extension"])
+		_failure = _load(extension)
 		if not _failure.is_empty():
 			return {"error": _failure}
-		_loaded_path = params["extension"]
+		_loaded_path = extension
 	var helper: Variant = _helper()
 	if not helper is Callable:
 		return {"error": NO_CALLABLE}
-	return await _call(helper as Callable, params, loaded_now)
+	return {"helper": helper, "loadedNow": loaded_now}
 
 
 ## Calls the helper with the request and, while it answers that the call is pending, polls it once

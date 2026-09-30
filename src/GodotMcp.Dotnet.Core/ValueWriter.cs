@@ -8,10 +8,20 @@ namespace GodotMcp.Dotnet.Core;
 /// <summary>
 /// Converts a CLR value to JSON: primitives as JSON, enums by name, dates in ISO 8601, collections as arrays, dictionaries
 /// as objects, and other objects as their public instance properties then fields. Cycles and depth are cut with a
-/// marker string; no length is cut here.
+/// marker string; no length is cut here, and a count of values only by <see cref="WriteBounded"/>.
 /// </summary>
 public static class ValueWriter
 {
+    /// <summary>What <see cref="WriteBounded"/> writes for each value past its budget, as the bridge's state reader does.</summary>
+    public const string SizeLimit = "<size limit>";
+
+    /// <summary>
+    /// The budget of the <see cref="WriteBounded"/> in progress on this thread, which every write it makes shares, including
+    /// the ones a formatter starts for the values it holds (a Godot variant's content, a Godot dictionary's entries).
+    /// </summary>
+    [ThreadStatic]
+    private static ValueBudget? _threadBudget;
+
     /// <summary>
     /// Writes <paramref name="value"/>. <paramref name="formatter"/> is asked first on every value. An object or collection
     /// nested deeper than <paramref name="maxDepth"/> levels (the root is level 1) writes <c>"&lt;depth limit: Type&gt;"</c>.
@@ -19,12 +29,51 @@ public static class ValueWriter
     public static JsonNode? Write(object? value, IValueFormatter formatter, int maxDepth = 8)
     {
         ArgumentNullException.ThrowIfNull(formatter);
-        return new ValueWalk(formatter, maxDepth).Write(value, 0);
+        return new ValueWalk(formatter, maxDepth, _threadBudget ?? ValueBudget.Unbounded()).Write(value, 0);
+    }
+
+    /// <summary>
+    /// Writes <paramref name="value"/> as <see cref="Write"/> does, taking one of <paramref name="maxValues"/> for each value
+    /// written, a null, a collection and a marker included; once none is left, each further value is
+    /// <see cref="SizeLimit"/>, so a huge collection writes that marker for its remaining elements.
+    /// </summary>
+    public static JsonNode? WriteBounded(object? value, IValueFormatter formatter, int maxDepth, int maxValues)
+    {
+        ArgumentNullException.ThrowIfNull(formatter);
+        ValueBudget? outer = _threadBudget;
+        _threadBudget = new ValueBudget(maxValues);
+        try
+        {
+            return Write(value, formatter, maxDepth);
+        }
+        finally
+        {
+            _threadBudget = outer;
+        }
     }
 }
 
-/// <summary>One write: the objects on the current path, for cutting cycles.</summary>
-internal sealed class ValueWalk(IValueFormatter formatter, int maxDepth)
+/// <summary>How many more values a bounded write may take.</summary>
+internal sealed class ValueBudget(int left)
+{
+    private int _left = left;
+
+    public static ValueBudget Unbounded() => new(int.MaxValue);
+
+    /// <summary>Takes one value; false when none was left.</summary>
+    public bool Take()
+    {
+        if (_left <= 0)
+        {
+            return false;
+        }
+        _left--;
+        return true;
+    }
+}
+
+/// <summary>One write: the objects on the current path, for cutting cycles, and the budget of values it shares.</summary>
+internal sealed class ValueWalk(IValueFormatter formatter, int maxDepth, ValueBudget budget)
 {
     private static readonly Dictionary<Type, Func<object, JsonNode>> Scalars = new()
     {
@@ -58,6 +107,10 @@ internal sealed class ValueWalk(IValueFormatter formatter, int maxDepth)
 
     public JsonNode? Write(object? value, int depth)
     {
+        if (!budget.Take())
+        {
+            return JsonValue.Create(ValueWriter.SizeLimit);
+        }
         if (value is null)
         {
             return null;

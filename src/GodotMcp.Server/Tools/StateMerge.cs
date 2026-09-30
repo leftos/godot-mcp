@@ -1,13 +1,15 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using GodotMcp.Server.CSharp;
+using ModelContextProtocol;
 
 namespace GodotMcp.Server.Tools;
 
 /// <summary>
-/// Shapes the bridge's state reply into get_game_state's result: keeps the asked keys of each node's state, cuts a long state
-/// to a preview, and moves the nodes past the list's size budget into omitted, beside the nodes the bridge left out past
-/// maxNodes.
+/// Shapes the bridge's state reply into get_game_state's result: fills each C# node's entry from the C# helper's reply the
+/// bridge passed through, keeps the asked keys of each node's state, cuts a long state to a preview, and moves the nodes past
+/// the list's size budget into omitted, beside the nodes the bridge left out past maxNodes.
 /// </summary>
 internal static class StateMerge
 {
@@ -24,15 +26,21 @@ internal static class StateMerge
         "No node is in the mcp_state group. A GDScript node joins it and defines _mcp_state() returning a Dictionary; a C# node "
         + "defines _McpState(). Until a game opts in, snapshot_subtree and get_ui_elements read the tree.";
 
+    /// <summary>What a C# node's entry says when the helper's reply has no entry for its id.</summary>
+    internal const string NoHelperEntry = "the C# helper's reply has no entry for this node";
+
     /// <summary>
-    /// {frame, nodes, total, omitted?, hint?} from the bridge's {frame, nodes, total, omitted?}: each state filtered by
-    /// <paramref name="keys"/> when given and cut past <see cref="MaxStateLength"/>, the list held to
-    /// <see cref="MaxNodesLength"/>, and the hint added when no node is marked and <paramref name="hintWhenEmpty"/>.
+    /// {frame, nodes, total, omitted?, hint?} from the bridge's {frame, nodes, total, omitted?, csharp?}: each {path, class, id}
+    /// entry filled from the helper's reply in csharp, each state filtered by <paramref name="keys"/> when given and cut past
+    /// <see cref="MaxStateLength"/>, the list held to <see cref="MaxNodesLength"/>, and the hint added when no node is marked
+    /// and <paramref name="hintWhenEmpty"/>.
     /// </summary>
+    /// <exception cref="McpException">csharp is not the helper's JSON reply, or the helper refused the read.</exception>
     public static JsonObject Shape(JsonNode? reply, IReadOnlyList<string>? keys, bool hintWhenEmpty)
     {
         JsonObject fields = reply as JsonObject ?? [];
-        (JsonArray nodes, List<string> moved) = Budget(fields["nodes"] as JsonArray ?? [], keys);
+        Dictionary<string, JsonObject> answers = HelperEntries(fields["csharp"]);
+        (JsonArray nodes, List<string> moved) = Budget(fields["nodes"] as JsonArray ?? [], keys, answers);
         int total = ReadCount(fields["total"]);
         JsonObject result = new()
         {
@@ -57,7 +65,11 @@ internal static class StateMerge
     /// The entries shaped, in order, until their JSON crosses <see cref="MaxNodesLength"/> characters, the one crossing it
     /// kept; the paths of the entries after it.
     /// </summary>
-    private static (JsonArray Nodes, List<string> Moved) Budget(JsonArray entries, IReadOnlyList<string>? keys)
+    private static (JsonArray Nodes, List<string> Moved) Budget(
+        JsonArray entries,
+        IReadOnlyList<string>? keys,
+        IReadOnlyDictionary<string, JsonObject> answers
+    )
     {
         JsonArray nodes = [];
         List<string> moved = [];
@@ -70,12 +82,71 @@ internal static class StateMerge
                 continue;
             }
 
-            JsonObject shaped = ShapeEntry(entry, keys);
+            JsonObject shaped = ShapeEntry(Filled(entry, answers), keys);
             length += shaped.ToJsonString().Length;
             nodes.Add(shaped);
         }
 
         return (nodes, moved);
+    }
+
+    /// <summary>
+    /// The C# helper's entries by id, from the reply string the bridge passed through as csharp; none when it sent none.
+    /// </summary>
+    /// <exception cref="McpException">csharp is not the helper's JSON reply, or the helper refused the read.</exception>
+    private static Dictionary<string, JsonObject> HelperEntries(JsonNode? csharp)
+    {
+        Dictionary<string, JsonObject> answers = new(StringComparer.Ordinal);
+        if (csharp is null)
+        {
+            return answers;
+        }
+
+        CSharpReply reply;
+        try
+        {
+            reply = CSharpBridge.ParseReply(new JsonObject { ["reply"] = csharp.DeepClone() });
+        }
+        catch (InvalidOperationException e)
+        {
+            throw new McpException($"get_game_state could not read the C# helper's state reply: {e.Message}", e);
+        }
+
+        foreach (JsonObject answer in (reply.Result?["nodes"] as JsonArray ?? []).OfType<JsonObject>())
+        {
+            answers[answer["id"]?.ToString() ?? string.Empty] = answer;
+        }
+
+        return answers;
+    }
+
+    /// <summary>
+    /// The entry with the C# helper's answer in place of its id: the answer's state, or its error; an entry with no id, which
+    /// the bridge read itself, as it is.
+    /// </summary>
+    internal static JsonObject Filled(JsonObject entry, IReadOnlyDictionary<string, JsonObject> answers)
+    {
+        if (entry["id"] is not JsonValue id)
+        {
+            return entry;
+        }
+
+        JsonObject filled = entry.DeepClone().AsObject();
+        filled.Remove("id");
+        if (!answers.TryGetValue(id.ToString(), out JsonObject? answer))
+        {
+            filled["error"] = NoHelperEntry;
+        }
+        else if (answer.TryGetPropertyValue("error", out JsonNode? error))
+        {
+            filled["error"] = error?.DeepClone();
+        }
+        else
+        {
+            filled["state"] = answer["state"]?.DeepClone();
+        }
+
+        return filled;
     }
 
     /// <summary>A copy of the entry, its state (when it has one) filtered by <paramref name="keys"/> and cut to a preview.</summary>

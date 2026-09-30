@@ -14,7 +14,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - Input targets take `item` to press a row, tab or tree item inside an `ItemList`, `TabBar`, `TabContainer` or `Tree` by text, index or path.
 - `stop_project {projectPath}` frees a folder by stopping its warm headless host, as stopping a session does when idle; `list_sessions` lists hosts as `headlessHosts`.
 - `list_game_tools` lists a C# game's own methods marked `[GodotMcpTool]`, with each one's owner, argument schema and whether it can be called now.
-- `get_game_state` reads, in one frame, what each node in the `mcp_state` group returns from `_mcp_state()`, with `keys` to narrow it.
+- `get_game_state` reads, in one frame, what each `mcp_state` group node returns from `_mcp_state()` or, in C#, `_McpState()`, with `keys` to narrow it.
 - `call_game_tool` calls one of those marked methods by name with named arguments, checked against its schema before any game code runs.
 
 ### Changed

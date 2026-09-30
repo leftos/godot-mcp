@@ -555,3 +555,186 @@ public static class Pool<T>
 {
     public static bool Add(T item) => item is not null;
 }
+
+/// <summary>A private state method, which only reflection calls, as a game's is.</summary>
+public sealed class PrivateState
+{
+    private readonly int _hp = 3;
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "CodeQuality",
+        "IDE0051:Remove unused private members",
+        Justification = "The state method is found and called by reflection."
+    )]
+    private int _McpState() => _hp;
+}
+
+/// <summary>An internal state method.</summary>
+public sealed class InternalState
+{
+    private readonly string _label = "internal";
+
+    internal string _McpState() => _label;
+}
+
+/// <summary>A state method a derived type inherits or overrides.</summary>
+public class BaseState
+{
+    private readonly string _label = "base";
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Naming",
+        "CA1707:Identifiers should not contain underscores",
+        Justification = "_McpState is the state method's name, which a game's type declares."
+    )]
+    protected virtual object _McpState() => _label;
+}
+
+/// <summary>Inherits <see cref="BaseState"/>'s state method.</summary>
+public sealed class InheritedState : BaseState;
+
+/// <summary>Overrides <see cref="BaseState"/>'s state method.</summary>
+public sealed class OverriddenState : BaseState
+{
+    protected override object _McpState() => "overridden";
+}
+
+/// <summary>A private state method on a base, which a walk stopping at that base does not reach.</summary>
+public class StoppedBase
+{
+    private readonly int _level = 1;
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "CodeQuality",
+        "IDE0051:Remove unused private members",
+        Justification = "The state method is found and called by reflection."
+    )]
+    private int _McpState() => _level;
+}
+
+/// <summary>Inherits <see cref="StoppedBase"/>'s private state method.</summary>
+public sealed class PastTheStop : StoppedBase;
+
+/// <summary>A generic _McpState, which is no state method.</summary>
+public sealed class GenericState
+{
+    private readonly int _level = 1;
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "CodeQuality",
+        "IDE0051:Remove unused private members",
+        Justification = "The sample exists to be the method reflection does not take."
+    )]
+    private int _McpState<T>() => _level;
+}
+
+/// <summary>An _McpState with a parameter, which is no state method.</summary>
+public sealed class ParameterState
+{
+    private readonly int _level = 1;
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "CodeQuality",
+        "IDE0051:Remove unused private members",
+        Justification = "The sample exists to be the method reflection does not take."
+    )]
+    private int _McpState(int extra) => _level + extra;
+}
+
+/// <summary>A static _McpState, which is no state method.</summary>
+public sealed class StaticState
+{
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "CodeQuality",
+        "IDE0051:Remove unused private members",
+        Justification = "The sample exists to be the method reflection does not take."
+    )]
+    private static int _McpState() => 1;
+}
+
+/// <summary>A collection whose enumerator throws, as a game's broken collection might.</summary>
+public sealed class BrokenCollection : IEnumerable<int>
+{
+    public IEnumerator<int> GetEnumerator() => throw new InvalidOperationException("enumeration broke");
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+/// <summary>A state method whose value throws when it is written.</summary>
+public sealed class BrokenEnumerationState
+{
+    private readonly BrokenCollection _items = new();
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "CodeQuality",
+        "IDE0051:Remove unused private members",
+        Justification = "The state method is found and called by reflection."
+    )]
+    private BrokenCollection _McpState() => _items;
+}
+
+/// <summary>A state method returning a Span, which reflection cannot call.</summary>
+public sealed class SpanState
+{
+    private readonly int[] _items = [1, 2];
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "CodeQuality",
+        "IDE0051:Remove unused private members",
+        Justification = "The state method is found and called by reflection."
+    )]
+    private Span<int> _McpState() => _items;
+}
+
+/// <summary>A state method returning a task: found, then refused rather than awaited.</summary>
+public sealed class TaskState
+{
+    private readonly int _level = 1;
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "CodeQuality",
+        "IDE0051:Remove unused private members",
+        Justification = "The state method is found by reflection."
+    )]
+    private Task<int> _McpState() => Task.FromResult(_level);
+}
+
+/// <summary>
+/// A state method declared to return object that returns a running async task, whose runtime type is the async builder's
+/// hidden state-machine box.
+/// </summary>
+public sealed class RunningTaskState
+{
+    private readonly TaskCompletionSource _never = new();
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "CodeQuality",
+        "IDE0051:Remove unused private members",
+        Justification = "The state method is found and called by reflection."
+    )]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Performance",
+        "CA1859:Use concrete types when possible for improved performance",
+        Justification = "Declared object on purpose: the task is found only in the value it returns."
+    )]
+    private object _McpState() => RunAsync();
+
+    private async Task<int> RunAsync()
+    {
+        await _never.Task;
+        return 1;
+    }
+}
+
+/// <summary>A state of a million values, past the values one node's state writes.</summary>
+public sealed class HugeState
+{
+    private readonly int[] _items = [.. Enumerable.Range(0, 1_000_000)];
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "CodeQuality",
+        "IDE0051:Remove unused private members",
+        Justification = "The state method is found and called by reflection."
+    )]
+    private int[] _McpState() => _items;
+}
