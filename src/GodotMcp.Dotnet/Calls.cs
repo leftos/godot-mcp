@@ -14,7 +14,7 @@ namespace GodotMcp.Dotnet;
 /// </summary>
 internal static class Calls
 {
-    private const int DefaultDepth = 8;
+    internal const int DefaultDepth = 8;
 
     private const int MaxDepth = 32;
 
@@ -41,7 +41,7 @@ internal static class Calls
         {
             return failure;
         }
-        Shape shape = new(request["member"]!.GetValue<string>(), maxDepth, request["keep"]?.GetValue<bool>() ?? false);
+        Shape shape = new(request["member"]!.GetValue<string>(), maxDepth, request["keep"]?.GetValue<bool>() ?? false, Stale: false);
         try
         {
             return Run(resolution.Found!, shape, request);
@@ -82,12 +82,17 @@ internal static class Calls
 
     private static List<string>? Strings(JsonNode? json) => json?.AsArray().Select(item => item!.GetValue<string>()).ToList();
 
+    /// <summary>
+    /// Runs the chosen method or constructor on <paramref name="instance"/> (ignored for a static) and answers its reply: the
+    /// value, a thrown exception as the failure, or a returned task awaited through <see cref="PendingTasks"/>. The <c>call</c>
+    /// op and <see cref="GameTools"/>' <c>tool_call</c> share it.
+    /// </summary>
     [SuppressMessage(
         "Design",
         "CA1031:Do not catch general exception types",
         Justification = "The method runs game code; whatever it throws is the failure to report."
     )]
-    private static JsonObject Invoke(OverloadChoice choice, object? instance, Shape shape)
+    internal static JsonObject Invoke(OverloadChoice choice, object? instance, Shape shape)
     {
         object?[] arguments = [.. choice.Arguments];
         object? value;
@@ -187,7 +192,17 @@ internal static class Calls
         {
             result["outs"] = outs;
         }
+        MarkStale(result, shape);
         return result;
+    }
+
+    /// <summary>Adds <c>build: "stale"</c> when the shape says the game runs an older build than the one on disk.</summary>
+    private static void MarkStale(JsonObject result, Shape shape)
+    {
+        if (shape.Stale)
+        {
+            result["build"] = "stale";
+        }
     }
 
     private static void Orphan(Node node, bool kept, JsonObject result)
@@ -225,8 +240,11 @@ internal static class Calls
 
     private static JsonObject Success(JsonObject result) => new() { ["ok"] = true, ["result"] = result };
 
-    /// <summary>What the reply to a call needs besides its value: the member's name, the writer's depth and whether to keep the value.</summary>
-    private sealed record Shape(string Member, int MaxDepth, bool Keep);
+    /// <summary>
+    /// What the reply to a call needs besides its value: the member's name (a game tool's name for <c>tool_call</c>), the
+    /// writer's depth, whether to keep the value, and whether the game runs an older build than the one on disk.
+    /// </summary>
+    internal sealed record Shape(string Member, int MaxDepth, bool Keep, bool Stale);
 
     /// <summary>A call's task, what it gives when awaited (<c>void</c> or its <c>T</c>), and the rest of its reply.</summary>
     private sealed record Waiting(Task Task, Type Result, Shape Shape, JsonObject? Outs);

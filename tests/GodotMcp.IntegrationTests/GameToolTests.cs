@@ -1,17 +1,24 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
 
 namespace GodotMcp.IntegrationTests;
 
 /// <summary>
-/// list_game_tools against the CsProbe game with CsTools.cs as its Tools autoload, which marks methods on that autoload and
-/// its base type, on static classes and on a type nothing owns, and whose scene root marks one: each owner's on, the schema of
-/// a method with an enum and defaults, the reasons a tool is unavailable, paging and the name filter; on launches of their
-/// own, owners read again after the tree changes and a game that marks nothing; and a GDScript project refused before the
-/// game is asked.
+/// list_game_tools and call_game_tool against the CsProbe game with CsTools.cs as its Tools autoload, which marks methods on
+/// that autoload and its base type, on static classes and on a type nothing owns, and whose scene root marks one: each owner's
+/// on, the schema of a method with an enum and defaults, the reasons a tool is unavailable, paging and the name filter; a call
+/// on each owner kind, an awaited Task and one past its timeout, a thrown exception, named and defaulted arguments, each
+/// refusal, a stale build and the errors feed, and a call in a batch; on launches of their own, owners read again after the
+/// tree changes (a call being the process's first op) and a game that marks nothing; and a GDScript project refused before
+/// the game is asked.
 /// </summary>
 public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<SharedCsToolsSession>
 {
@@ -24,6 +31,8 @@ public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<S
         "Advance",
         "Blank",
         "Boom",
+        "Complain",
+        "Dawdle",
         "FetchLater",
         "Greet",
         "Heal",
@@ -41,6 +50,9 @@ public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<S
         "The game marks no method as a tool: declare an attribute class named GodotMcpToolAttribute in the game (any "
         + "namespace) whose constructor takes the description, and put [GodotMcpTool(\"what it does\")] on the methods to list. "
         + "A [Conditional(\"DEBUG\")] attribute class leaves the marks out of a Release build.";
+
+    /// <summary>How a refusal of the helper's own reaches the agent: the tool's failure, then the helper's words.</summary>
+    private const string HelperRefused = "call_game_tool failed: The C# helper refused the request: ";
 
     private const string OwnerRule = "a game tool runs on an autoload, on the current scene's root, or as a static method.";
 
@@ -118,6 +130,8 @@ public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<S
         await using SharedCsToolsSession own = new();
         await own.InitializeAsync();
         RuntimeTools tools = new(own.Sessions, own.Bridge);
+        // A call as the game process's first game tool op walks the marks as a first list would.
+        JsonObject firstCall = await CallAsync(tools, "Sum", """{"a": 1, "b": 1}""", null, cancellation);
         JsonObject[] before = Tools(await ListAsync(tools, null, cancellation));
         string script =
             "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\tscene_tree.root.get_node(\"Tools\").free()\n"
@@ -125,6 +139,7 @@ public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<S
         JsonNode freed = JsonNode.Parse(await tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: cancellation))!["value"]!;
         JsonObject[] after = Tools(await ListAsync(tools, null, cancellation));
 
+        Assert.Equal(2, firstCall["value"]!.GetValue<int>());
         Assert.True(freed.GetValue<bool>());
         AssertAvailableOn(Single(before, "Heal"), "Tools");
         AssertAvailableOn(Single(before, "Advance"), "/root/CsProbe");
@@ -271,6 +286,7 @@ public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<S
         RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() => tools.ListGameToolsAsync(cancellationToken: cancellation));
+        McpException refusedCall = await Assert.ThrowsAsync<McpException>(() => tools.CallGameToolAsync("Heal", cancellationToken: cancellation));
         string script =
             "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\treturn scene_tree.has_meta(\"godot_mcp_dotnet\")\n";
         JsonNode loaded = JsonNode.Parse(await tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: cancellation))!["value"]!;
@@ -280,7 +296,217 @@ public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<S
                 + "[GodotMcpTool]; call_method calls a GDScript game's own methods.",
             refused.Message
         );
+        Assert.Equal(
+            "call_game_tool failed: This project has no C# assembly, so it has no game tools, which are C# methods marked "
+                + "[GodotMcpTool]; call_method calls a GDScript game's own methods.",
+            refusedCall.Message
+        );
         Assert.False(loaded.GetValue<bool>());
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task AnAutoloadToolAnswersItsValueAndType()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonObject result = await CallAsync("Heal", """{"amount": 7}""", null, cancellation);
+
+        Assert.Equal("Heal", result["tool"]!.GetValue<string>());
+        Assert.Equal(7, result["value"]!.GetValue<int>());
+        Assert.Equal("System.Int32", result["type"]!.GetValue<string>());
+        Assert.False(result.ContainsKey("build"));
+        Assert.False(result.ContainsKey("errors"));
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task AStaticToolRunsWithNoOwner()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonObject result = await CallAsync("Sum", """{"b": 3, "a": 2}""", null, cancellation);
+
+        Assert.Equal(5, result["value"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task ASceneRootToolRunsOnTheCurrentSceneAndTakesItsDefault()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        int first = (await CallAsync("Advance", """{"steps": 2}""", null, cancellation))["value"]!.GetValue<int>();
+        int second = (await CallAsync("Advance", null, null, cancellation))["value"]!.GetValue<int>();
+
+        Assert.True(first >= 2, $"Advance answered {first} after two steps.");
+        Assert.Equal(first + 1, second);
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task ATaskToolIsAwaited()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonObject result = await CallAsync("FetchLater", """{"label": "soon"}""", null, cancellation);
+
+        Assert.Equal("later soon", result["value"]!.GetValue<string>());
+        Assert.Equal("System.String", result["type"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task AThrowingToolFailsWithItsExceptionsTypeMessageAndStack()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => CallAsync("Boom", null, null, cancellation));
+
+        Assert.StartsWith(HelperRefused + "Boom threw InvalidOperationException: tool failure\n", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("CsProbe.CsTools.Boom()", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task AnEnumTakesItsNameOrNumberAndDefaultsFillTheRest()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonObject byName = await CallAsync("SetMood", """{"mood": "Angry"}""", null, cancellation);
+        JsonObject byNumber = await CallAsync("SetMood", """{"mood": 2, "times": 3, "note": "zz"}""", null, cancellation);
+
+        Assert.Equal("Angry x2 (calm)", byName["value"]!.GetValue<string>());
+        Assert.Equal("Sleepy x3 (zz)", byNumber["value"]!.GetValue<string>());
+    }
+
+    [Theory(Timeout = GameToolTestTimeoutMs)]
+    [InlineData("Nope")]
+    [InlineData("PlayStep")]
+    [InlineData("Mirror")]
+    [InlineData("heal")]
+    public async Task ANameNoMarkGivesIsRefusedNamingCsCall(string name)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => CallAsync(name, null, null, cancellation));
+
+        Assert.Equal(
+            HelperRefused
+                + $"No game tool is named '{name}'; list_game_tools lists the game's tools, and cs_call reaches a "
+                + "member that has no mark.",
+            refused.Message
+        );
+    }
+
+    [Theory(Timeout = GameToolTestTimeoutMs)]
+    [InlineData("""{"amt": 1}""", "Heal has no parameter 'amt'; it takes amount.")]
+    [InlineData("{}", "Heal needs 'amount' (int); list_game_tools shows its schema.")]
+    [InlineData("""{"amount": "six"}""", "parameter 'amount': expected an int, got \"six\"")]
+    public async Task ArgumentsThatDoNotBindAreRefusedBeforeTheToolRuns(string args, string message)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => CallAsync("Heal", args, null, cancellation));
+
+        Assert.StartsWith("call_game_tool failed: ", refused.Message, StringComparison.Ordinal);
+        Assert.Contains(message, refused.Message, StringComparison.Ordinal);
+    }
+
+    [Theory(Timeout = GameToolTestTimeoutMs)]
+    [InlineData("Blank")]
+    [InlineData("TryFind")]
+    [InlineData("Twin")]
+    [InlineData("Wander")]
+    public async Task AnUnavailableToolIsRefusedWithTheListingsReason(string name)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string[] reasons =
+        [
+            .. Tools(await ListAsync(new GameToolsOptions(Name: name), cancellation))
+                .Where(tool => tool["name"]!.GetValue<string>() == name)
+                .Select(tool => HelperRefused + tool["reason"]!.GetValue<string>()),
+        ];
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => CallAsync(name, null, null, cancellation));
+
+        Assert.NotEmpty(reasons);
+        Assert.Contains(refused.Message, reasons);
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task ARebuiltGameStillRunsItsToolsAndSaysItsBuildIsStale()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonObject? heal = null;
+        JsonObject? fetch = null;
+
+        await StaleBuild.WhileStaleAsync(
+            _shared.ProbeDirectory,
+            "CsProbe",
+            async () =>
+            {
+                heal = await CallAsync("Heal", """{"amount": 3}""", null, cancellation);
+                fetch = await CallAsync("FetchLater", """{"label": "old"}""", null, cancellation);
+            },
+            cancellation
+        );
+
+        Assert.Equal(3, heal!["value"]!.GetValue<int>());
+        Assert.Equal("stale", heal["build"]!.GetValue<string>());
+        Assert.Equal("later old", fetch!["value"]!.GetValue<string>());
+        Assert.Equal("stale", fetch["build"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task ATaskPastItsTimeoutFailsAndKeepsRunning()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            CallAsync("Dawdle", """{"ms": 3000}""", new CallGameToolOptions(TimeoutMs: 200), cancellation)
+        );
+
+        Assert.StartsWith("call_game_tool failed: ", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("the call did not complete within 200 ms; its Task is still running in the game", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task AnErrorTheToolLogsIsAttached()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonObject result = await CallAsync("Complain", null, null, cancellation);
+
+        Assert.Equal(1, result["value"]!.GetValue<int>());
+        Assert.Contains("CsTools complained", result["errors"]!.ToJsonString(), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task ABatchCallsAToolThenWaitsFrames()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ServiceCollection services = new();
+        services.AddLogging();
+        services.AddSingleton(_shared.Sessions);
+        services.AddSingleton(_shared.Bridge);
+        services.AddMcpServer().WithToolsFromAssembly(typeof(RuntimeTools).Assembly);
+        await using ServiceProvider provider = services.BuildServiceProvider();
+        McpServerOptions options = provider.GetRequiredService<IOptions<McpServerOptions>>().Value;
+        await using var server = McpServer.Create(new StreamServerTransport(Stream.Null, Stream.Null), options, null, provider);
+        BatchStep[] steps =
+        [
+            new(
+                Tool: "call_game_tool",
+                Args: new JsonObject
+                {
+                    ["name"] = "Heal",
+                    ["args"] = new JsonObject { ["amount"] = 4 },
+                }
+            ),
+            new(Tool: "wait_for", Args: new JsonObject { ["condition"] = new JsonObject { ["frames"] = 2 } }),
+        ];
+
+        JsonObject batch = JsonNode.Parse(await _tools.BatchDriveAsync(steps, server, cancellationToken: cancellation))!.AsObject();
+
+        Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        JsonObject called = batch["steps"]![0]!["result"]!.AsObject();
+        Assert.Equal("Heal", called["tool"]!.GetValue<string>());
+        Assert.Equal(4, called["value"]!.GetValue<int>());
     }
 
     private Task<JsonObject> ListAsync(GameToolsOptions? options, CancellationToken cancellation) => ListAsync(_tools, options, cancellation);
@@ -288,6 +514,22 @@ public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<S
     private static async Task<JsonObject> ListAsync(RuntimeTools tools, GameToolsOptions? options, CancellationToken cancellation)
     {
         string json = await tools.ListGameToolsAsync(options, cancellationToken: cancellation);
+        return JsonNode.Parse(json)!.AsObject();
+    }
+
+    private Task<JsonObject> CallAsync(string name, string? args, CallGameToolOptions? options, CancellationToken cancellation) =>
+        CallAsync(_tools, name, args, options, cancellation);
+
+    private static async Task<JsonObject> CallAsync(
+        RuntimeTools tools,
+        string name,
+        string? args,
+        CallGameToolOptions? options,
+        CancellationToken cancellation
+    )
+    {
+        JsonElement? given = args is null ? null : JsonDocument.Parse(args).RootElement.Clone();
+        string json = await tools.CallGameToolAsync(name, given, options, cancellationToken: cancellation);
         return JsonNode.Parse(json)!.AsObject();
     }
 

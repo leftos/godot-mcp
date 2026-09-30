@@ -188,10 +188,11 @@ public sealed class BatchValidationTests : IDisposable
         Assert.Contains("run_csharp", RuntimeTools.BatchableTools);
         Assert.Contains("capture_frames", RuntimeTools.BatchableTools);
         Assert.Contains("list_game_tools", RuntimeTools.BatchableTools);
+        Assert.Contains("call_game_tool", RuntimeTools.BatchableTools);
         Assert.DoesNotContain("run_project", RuntimeTools.BatchableTools);
         Assert.DoesNotContain("list_sessions", RuntimeTools.BatchableTools);
         Assert.DoesNotContain("batch_drive", RuntimeTools.BatchableTools);
-        Assert.Equal(36, RuntimeTools.BatchableTools.Count);
+        Assert.Equal(37, RuntimeTools.BatchableTools.Count);
     }
 
     [Fact]

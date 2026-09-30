@@ -48,6 +48,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "attach_script",
                 "batch_drive",
                 "batch_scene_operations",
+                "call_game_tool",
                 "call_method",
                 "capture_frames",
                 "capture_input",
@@ -154,6 +155,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["attach_script"] = changesTheGame,
             ["batch_drive"] = destructive,
             ["batch_scene_operations"] = destructive,
+            ["call_game_tool"] = destructive,
             ["call_method"] = destructive,
             ["capture_frames"] = readsTheGame,
             ["capture_input"] = changesTheGame,
@@ -225,7 +227,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(66, actual.Count);
+        Assert.Equal(67, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

@@ -45,8 +45,22 @@ public partial class CsTools : CsToolsBase
         return "later " + label;
     }
 
+    [GodotMcpTool("Answers after waiting a number of milliseconds.")]
+    internal async Task<string> Dawdle(int ms)
+    {
+        await Task.Delay(ms);
+        return "done";
+    }
+
     [GodotMcpTool("Always throws.")]
     internal void Boom() => throw new InvalidOperationException("tool failure");
+
+    [GodotMcpTool("Logs an engine error, then answers one.")]
+    internal int Complain()
+    {
+        GD.PushError("CsTools complained");
+        return 1;
+    }
 
     [GodotMcpTool("Sets the probe's mood a number of times.", When = "any time", ReadOnly = true)]
     internal string SetMood([Description("How the probe feels.")] Mood mood, int times = 2, string note = "calm") => $"{mood} x{times} ({note})";

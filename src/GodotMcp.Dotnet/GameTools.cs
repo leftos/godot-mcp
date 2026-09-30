@@ -8,9 +8,11 @@ using GodotMcp.Dotnet.Core;
 namespace GodotMcp.Dotnet;
 
 /// <summary>
-/// The helper's <c>tools</c> op: every method of the game's own assemblies carrying a <c>GodotMcpToolAttribute</c>, with its
-/// mark, its argument schema and where it runs. The assemblies are walked once per game process; each tool's owner (an
-/// autoload, the current scene's root, or none for a static) and whether it can be called are worked out at every request.
+/// The helper's <c>tools</c> op, every method of the game's own assemblies carrying a <c>GodotMcpToolAttribute</c>, with its
+/// mark, its argument schema and where it runs; and its <c>tool_call</c> op, which calls one of them by its tool name with
+/// named arguments on the invoke path <c>call</c> uses. The assemblies are walked once per game process, by whichever op comes
+/// first; each tool's owner (an autoload, the current scene's root, or none for a static) and whether it can be called are
+/// worked out at every request.
 /// </summary>
 internal static class GameTools
 {
@@ -35,8 +37,13 @@ internal static class GameTools
     /// <summary>A marked method, its mark and its signature, which never change while the game runs.</summary>
     private sealed record Marked(MethodInfo Method, ToolMark Mark, ToolSignature Signature);
 
-    /// <summary>A marked method where it runs now: <see cref="On"/> null when nothing owns it, <see cref="Reason"/> why it cannot run.</summary>
-    private sealed record Placed(Marked Tool, string? On, string? Reason);
+    private static readonly GodotResolver Resolver = new();
+
+    /// <summary>
+    /// A marked method where it runs now: <see cref="On"/> and <see cref="Instance"/> null when nothing owns it,
+    /// <see cref="Instance"/> null for a static too, and <see cref="Reason"/> why it cannot run.
+    /// </summary>
+    private sealed record Placed(Marked Tool, string? On, Node? Instance, string? Reason);
 
     /// <summary>
     /// <c>{tools, build?, hint?}</c>: every marked method whose tool name holds the request's <c>name</c> (case-insensitive; every
@@ -46,19 +53,14 @@ internal static class GameTools
     /// </summary>
     public static JsonObject List(JsonObject request)
     {
-        if (_marked is null)
+        if (Load(request) is not { } marked)
         {
-            string game = request["game"]!.GetValue<string>();
-            if (SnippetContext.Holding(game) is not { } context)
-            {
-                return Helper.Failure($"No loaded assembly is named '{game}', so the game's tools cannot be found.");
-            }
-            _marked = Walk(context);
+            return NoGame(request);
         }
         string? name = request["name"]?.GetValue<string>();
         JsonArray tools =
         [
-            .. Place(_marked)
+            .. Place(marked)
                 .Where(placed => name is null || placed.Tool.Mark.Name.Contains(name, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(placed => placed.Tool.Mark.Name, StringComparer.Ordinal)
                 .ThenBy(placed => placed.On, StringComparer.Ordinal)
@@ -66,9 +68,67 @@ internal static class GameTools
                 .Select(Entry),
         ];
         JsonObject result = new() { ["tools"] = tools };
-        AddBuildAndHint(result, Snippets.StaleDlls(request["expect"]?.AsObject()).Count > 0, _marked.Count == 0);
+        AddBuildAndHint(result, IsStale(request), marked.Count == 0);
         return new JsonObject { ["ok"] = true, ["result"] = result };
     }
+
+    /// <summary>
+    /// <c>{"op":"tool_call","name":"..","args":{..},"maxDepth":int,"game":"..","expect":{..}}</c> → cs_call's reply,
+    /// <c>{value, type, build?}</c> or the pending reply of a returned task, from the marked method whose tool name is
+    /// <c>name</c> (ordinal), run on its owner with <c>args</c> bound by parameter name. A name no mark gives, a tool the
+    /// listing shows unavailable (its reason word for word), and arguments that do not bind are refused before game code runs.
+    /// </summary>
+    public static JsonObject Call(JsonObject request)
+    {
+        if (Load(request) is not { } marked)
+        {
+            return NoGame(request);
+        }
+        string name = request["name"]!.GetValue<string>();
+        Placed? placed = Place(marked).FirstOrDefault(tool => string.Equals(tool.Tool.Mark.Name, name, StringComparison.Ordinal));
+        if (placed is null)
+        {
+            return Helper.Failure(
+                $"No game tool is named '{name}'; list_game_tools lists the game's tools, and cs_call reaches a member that has no mark."
+            );
+        }
+        return placed.Reason is { } reason ? Helper.Failure(reason) : Run(placed, request);
+    }
+
+    /// <summary>Binds the request's named <c>args</c> to the tool's parameters and runs it on its owner.</summary>
+    private static JsonObject Run(Placed placed, JsonObject request)
+    {
+        OverloadChoice choice;
+        try
+        {
+            choice = NamedArguments.Bind(placed.Tool.Method, request["args"]?.AsObject() ?? [], Resolver);
+        }
+        catch (OverloadException e)
+        {
+            return Helper.Failure(e.Message);
+        }
+        int maxDepth = request["maxDepth"]?.GetValue<int>() ?? Calls.DefaultDepth;
+        return Calls.Invoke(choice, placed.Instance, new Calls.Shape(placed.Tool.Mark.Name, maxDepth, Keep: false, IsStale(request)));
+    }
+
+    /// <summary>
+    /// The marked methods, walked on the process's first <c>tools</c> or <c>tool_call</c> request from the load context holding
+    /// the request's <c>game</c> assembly; null when no loaded assembly has that name.
+    /// </summary>
+    private static List<Marked>? Load(JsonObject request)
+    {
+        if (_marked is null && SnippetContext.Holding(request["game"]!.GetValue<string>()) is { } context)
+        {
+            _marked = Walk(context);
+        }
+        return _marked;
+    }
+
+    private static JsonObject NoGame(JsonObject request) =>
+        Helper.Failure($"No loaded assembly is named '{request["game"]!.GetValue<string>()}', so the game's tools cannot be found.");
+
+    /// <summary>Whether an assembly of the request's <c>expect</c> is loaded from another build than the one on disk.</summary>
+    private static bool IsStale(JsonObject request) => Snippets.StaleDlls(request["expect"]?.AsObject()).Count > 0;
 
     /// <summary>
     /// Adds <c>build: "stale"</c> when the game runs an older build than the one on disk, and the hint for that and for a game
@@ -137,7 +197,7 @@ internal static class GameTools
         }
         catch (Exception e) when (IsUnloadable(e))
         {
-            GD.PushWarning($"godot-mcp: list_game_tools skipped {type.FullName}, whose methods cannot be read: {e.Message}");
+            GD.PushWarning($"godot-mcp: the game tool walk skipped {type.FullName}, whose methods cannot be read: {e.Message}");
             return [];
         }
     }
@@ -152,7 +212,7 @@ internal static class GameTools
         catch (Exception e) when (IsUnloadable(e))
         {
             string where = $"{method.DeclaringType?.FullName}.{method.Name}";
-            GD.PushWarning($"godot-mcp: list_game_tools skipped {where}, whose attributes cannot be read: {e.Message}");
+            GD.PushWarning($"godot-mcp: the game tool walk skipped {where}, whose attributes cannot be read: {e.Message}");
             return null;
         }
     }
@@ -225,20 +285,20 @@ internal static class GameTools
         if (tool.Method.IsStatic)
         {
             string shortName = TypeNames.Format(type);
-            return new Placed(tool, $"static {(sharedShortNames.Contains(shortName) ? type.FullName ?? shortName : shortName)}", null);
+            return new Placed(tool, $"static {(sharedShortNames.Contains(shortName) ? type.FullName ?? shortName : shortName)}", null, null);
         }
         foreach ((string name, Node node) in autoloads)
         {
             if (type.IsAssignableFrom(node.GetType()))
             {
-                return new Placed(tool, name, null);
+                return new Placed(tool, name, node, null);
             }
         }
         if (scene is not null && type.IsAssignableFrom(scene.GetType()))
         {
-            return new Placed(tool, scene.GetPath().ToString(), null);
+            return new Placed(tool, scene.GetPath().ToString(), scene, null);
         }
-        return new Placed(tool, null, Unowned(tool.Method, scene));
+        return new Placed(tool, null, null, Unowned(tool.Method, scene));
     }
 
     private static string Unowned(MethodInfo method, Node? scene)
