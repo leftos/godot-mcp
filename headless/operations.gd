@@ -69,6 +69,14 @@ class ErrorLog:
 		_mutex.unlock()
 		return logged
 
+	## Keeps the first count entries and drops every entry from index count on, so the log holds the
+	## entries logged while the process started plus the ones logged since. A count at or past the
+	## log's size keeps every entry, and one below zero drops them all.
+	func reset_to(count: int) -> void:
+		_mutex.lock()
+		_entries.resize(clampi(count, 0, _entries.size()))
+		_mutex.unlock()
+
 
 var _log := ErrorLog.new()
 
@@ -81,9 +89,13 @@ func _init() -> void:
 	SceneEdit.engine_log = _log
 
 
+## The cold entry point: frees the autoloads, notes the log's start slice (what the process logged
+## while it started, an autoload's _init error and the project's settings among it), and runs the
+## one request, whose reply holds that slice plus the request's own entries.
 func _initialize() -> void:
 	for autoload in root.get_children():
 		autoload.free()
+	var start: int = _log.count()
 	var args: PackedStringArray = OS.get_cmdline_user_args()
 	if args.size() != 1:
 		printerr("godot-mcp headless: expected one argument, the request file; got %s" % [args])
@@ -94,8 +106,7 @@ func _initialize() -> void:
 		printerr("godot-mcp headless: %s: %s" % [args[0], request["error"]])
 		quit(2)
 		return
-	var reply: Dictionary = _dispatch(request["op"], request["params"])
-	reply["engineErrors"] = _log.since(0)
+	var reply: Dictionary = run_request(request["op"], request["params"], _log, start)
 	_write_reply(request["result"], reply)
 	quit()
 
@@ -146,10 +157,21 @@ static func results_of(groups: Dictionary) -> Array:
 	return results
 
 
-func _dispatch(op: String, params: Dictionary) -> Dictionary:
+## One request: cuts the log back to its first start entries, so what an earlier request logged is
+## never answered again, dispatches op and answers {ok, result? | error?, engineErrors}, the start
+## slice plus what this request logged. The log must already be registered with OS.add_logger and
+## set as SceneEdit.engine_log, as this script's _init does.
+static func run_request(op: String, params: Dictionary, log: ErrorLog, start: int) -> Dictionary:
+	log.reset_to(start)
+	var reply: Dictionary = _dispatch(op, params, log)
+	reply["engineErrors"] = log.since(0)
+	return reply
+
+
+static func _dispatch(op: String, params: Dictionary, log: ErrorLog) -> Dictionary:
 	match op:
 		"validate":
-			return {"ok": true, "result": _validate(params.get("targets", []))}
+			return {"ok": true, "result": _validate(params.get("targets", []), log)}
 		"get_scene_file_tree":
 			return _scene_file_tree(params)
 		"describe_class":
@@ -179,26 +201,26 @@ func _write_reply(path: String, reply: Dictionary) -> void:
 
 ## Errors logged before the first target (an autoload's _init, the project's settings) are listed
 ## under the res:// file they name, else in the result's engineErrors.
-func _validate(targets: Array) -> Dictionary:
+static func _validate(targets: Array, log: ErrorLog) -> Dictionary:
 	var groups: Dictionary = {}
-	group_errors(_log.since(0), "", groups)
+	group_errors(log.since(0), "", groups)
 	var unattributed: Array = groups.get("", [])
 	groups.erase("")
 	var visited: Dictionary = {}
 	var checked: Dictionary = {}
 	for target: String in targets:
-		_check_file(target, groups, checked, visited)
+		_check_file(target, groups, checked, visited, log)
 	return {"checked": targets.size(), "results": results_of(groups), "engineErrors": unattributed}
 
 
 ## Checks the file at path and every C# script its dependency closure reaches here. checked holds
 ## the scripts loaded so far this run, so a script many targets reach is loaded and checked once.
-func _check_file(
-	path: String, groups: Dictionary, checked: Dictionary, visited: Dictionary
+static func _check_file(
+	path: String, groups: Dictionary, checked: Dictionary, visited: Dictionary, log: ErrorLog
 ) -> void:
-	var start: int = _log.count()
+	var start: int = log.count()
 	var resource: Resource = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
-	var entries: Array = _log.since(start)
+	var entries: Array = log.since(start)
 	if resource == null and entries.is_empty():
 		entries = [{"type": "error", "message": "Godot could not load it", "file": path, "line": 0}]
 	group_errors(entries, path, groups)
@@ -207,20 +229,20 @@ func _check_file(
 	for reached: String in SceneFiles.dependency_closure(path, visited):
 		if reached.ends_with(".cs") and not checked.has(reached):
 			checked[reached] = true
-			_check_script(reached, groups)
+			_check_script(reached, groups, log)
 
 
 ## Loads the C# script at script_path and instantiates its class, so a script whose class the
 ## assembly has none for logs its error; errors are grouped under the script's path.
-func _check_script(script_path: String, groups: Dictionary) -> void:
-	var start: int = _log.count()
+static func _check_script(script_path: String, groups: Dictionary, log: ErrorLog) -> void:
+	var start: int = log.count()
 	var script := load(script_path) as Script
 	if script != null:
 		script.can_instantiate()
-	group_errors(_log.since(start), script_path, groups)
+	group_errors(log.since(start), script_path, groups)
 
 
-func _scene_file_tree(params: Dictionary) -> Dictionary:
+static func _scene_file_tree(params: Dictionary) -> Dictionary:
 	var scene_path: String = params.get("scene", "")
 	var scene := ResourceLoader.load(scene_path) as PackedScene
 	if scene == null:

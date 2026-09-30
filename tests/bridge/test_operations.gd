@@ -2,7 +2,8 @@ extends "res://gd_test.gd"
 ## The headless operations' pure helpers (headless/operations.gd and the scene modules beside it):
 ## the request file's parsing, the grouping of logged errors by the file they name, the C# scripts
 ## among a scene's dependencies, node paths, the node tree get_scene_file_tree builds from scene
-## states, and the uids a save reads and writes back.
+## states, the error log's cut-back, and the uids a save reads and writes back.
+# gdlint: disable=private-method-call
 
 const HEADLESS_SCRIPT := "../../headless/operations.gd"
 const SCENE_EDIT_SCRIPT := "../../headless/scene_edit.gd"
@@ -25,6 +26,8 @@ var _paths: GDScript = load(
 var _files: GDScript = load(
 	ProjectSettings.globalize_path("res://").path_join(SCENE_FILES_SCRIPT).simplify_path()
 )
+## The error log operations.gd keeps its entries in, and a request answers from.
+var _error_log: GDScript = _ops.get_script_constant_map()["ErrorLog"]
 
 
 func test_request_gives_op_params_and_result() -> void:
@@ -94,6 +97,36 @@ func test_results_are_ordered_by_path() -> void:
 		{"path": "res://a.gd", "errors": [2]}, {"path": "res://b.gd", "errors": [1]}
 	]
 	assert_eq(_ops.results_of(groups), expected, "results by path")
+
+
+func test_the_error_log_keeps_the_first_entries_and_drops_the_rest() -> void:
+	var log: Object = _error_log.new()
+	_logged(log, "one")
+	_logged(log, "two")
+	_logged(log, "three")
+	log.reset_to(1)
+	assert_eq(_messages(log.since(0)), ["one"], "the first entry kept, the rest dropped")
+	assert_eq(log.count(), 1, "and the log that long")
+	log.reset_to(2)
+	assert_eq(_messages(log.since(0)), ["one"], "a count past the end keeps every entry")
+
+
+func test_a_request_answers_the_start_slice_and_its_own_errors() -> void:
+	var log: Object = _error_log.new()
+	_logged(log, "an autoload's error at start")
+	var start: int = log.count()
+	var first: Dictionary = _run_request(log, start)
+	assert_eq(_messages(first["engineErrors"]), ["an autoload's error at start"], "the start slice")
+	assert_eq(log.count(), start, "the request logged nothing")
+	_logged(log, "the first request's error")
+	var second: Dictionary = _run_request(log, start)
+	assert_eq(
+		_messages(second["engineErrors"]),
+		["an autoload's error at start"],
+		"the same start slice, the first request's error gone"
+	)
+	assert_eq(log.count(), start, "the log is cut back on every request")
+	assert_eq(second["result"]["checked"], 0, "and the request itself ran")
 
 
 func test_csharp_dependencies_read_every_entry_form() -> void:
@@ -266,6 +299,24 @@ func _write(path: String, text: String) -> void:
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	file.store_string(text)
 	file.close()
+
+
+## Runs the one request the tests drive, validate, which needs no project file.
+func _run_request(log: Object, start: int) -> Dictionary:
+	return _ops.run_request("validate", {"targets": []}, log, start)
+
+
+## One error entry in log, as the engine logs one.
+func _logged(log: Object, message: String) -> void:
+	var none: Array[ScriptBacktrace] = []
+	log._log_error("", "res://boot.gd", 0, "", message, false, Logger.ERROR_TYPE_ERROR, none)
+
+
+func _messages(entries: Array) -> Array:
+	var messages: Array = []
+	for entry: Dictionary in entries:
+		messages.append(entry["message"])
+	return messages
 
 
 func _entry(type: String, message: String, file: String, line: int) -> Dictionary:
