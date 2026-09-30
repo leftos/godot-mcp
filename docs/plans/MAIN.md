@@ -13,8 +13,7 @@ Waves run in order; bug reports sit ahead of the backlog inside each. Each wave 
 
 ### Release at this session's checkpoint
 
-- [ ] Cut a release once every open GitHub issue is closed (user, 2026-09-30; today #57): it carries `list_game_tools`, `call_game_tool`, `get_game_state` and `run_scratches`, which unblocks project-tools step 5 and the other designs' adoption steps
-- [ ] #57: `~/.claude/skills/godot-mcp` links the main checkout's `skills/godot-mcp`, so game repos read a skill that documents unreleased tools (`{text}` targets) against the installed 0.11.1 server. Ruled (user, 2026-09-30): publish copies both skills into `bin/publish` (`skill/`, `agent-sweep-skill/`, the zip's names), install mirrors them with the server and junctions `~/.claude/skills/godot-mcp` and `godot-agent-sweep` to the install folder's copies, so the skill always matches the running server
+- [ ] Cut a release once every open GitHub issue is closed (user, 2026-09-30; none open once #57 and #58 closed): it carries `list_game_tools`, `call_game_tool`, `get_game_state` and `run_scratches`, which unblocks project-tools step 5 and the other designs' adoption steps
 
 ### Track: ideas from the survey and the projects
 
@@ -37,6 +36,7 @@ Share nothing with the waves above; their order is not a ranking.
 
 - [ ] The splice can still leave two nodes with one `unique_id` when the engine renumbers an existing node during a save (it checks a new id only against nodes saved before it, 4.7.2 `packed_scene.cpp` L1099-1123, so a copy saved early that draws a later node's id, odds about n in 2^31, renumbers that node), since `headless/scene_splice.gd` compares sections without `unique_id` and keeps the old text: `self_check` could fall back to the full save when two node sections share a `unique_id`
 - [ ] `TempDirectoryTests.DisposeRetriesAFileHeldBriefly` (`tests/GodotMcp.Tests/TestSupport/TempDirectoryTests.cs:19`, a 2 s wall-clock bound) fails under the full unit suite with an IOException on held.txt and passes alone: seen twice on 2026-09-29
+- [ ] `tests/tools/test_itest_groups.py:13` `ALL_GROUPS` lists 11 itest groups and its "N of 11 groups" strings are stale against `run.ps1`'s `$itestGroups` (12 since `run_scratches` added `scratch`): 4 tests fail on main under `pwsh run.ps1 pytest` (seen by the #57 implementer, 2026-09-30)
 - [ ] `BridgeListenerTests.ASlowHelloDoesNotBlockAnotherBridge` (`tests/GodotMcp.Tests/Wire/BridgeListenerTests.cs:90`, a 2 s wall-clock `CancelAfter` on the accept) failed once in CI's full unit suite (run 36790564090, commit 38aa3d5, docs-only; the next two runs on the same code passed): the same wall-clock-bound class as `TempDirectoryTests` above
 - [ ] `TimeTests.AGamePausingItselfMidMonitorEndsItWithTheSamplesSoFar` (`tests/GodotMcp.IntegrationTests/TimeTests.cs`) failed once under a filtered run on a loaded machine and passed on the re-run: `monitor_property failed: The bridge refused 'monitor': The game is paused, so only a signal wait or a check-once wait (timeoutMs 0) can be met` (2026-09-29): the pause may land before the monitor starts
 - [ ] An OS-level virtual gamepad, if a game ever queries `get_connected_joypads()` (not reachable from script; see [DECISIONS.md](../DECISIONS.md#gamepad-input-from-godot-472s-source))

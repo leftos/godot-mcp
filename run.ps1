@@ -59,11 +59,12 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            ProgramFiles(x86); when that variable is empty (as it can be from Git Bash) it is set to C:\Program Files
            (x86), and vswhere's own folder is put on PATH, because a batch file the link runs afterwards calls vswhere.exe
            by bare name.
-  publish  a framework-dependent win-x64 server at bin/publish/godot-mcp.exe, with bridge/ beside it, then the dotnet
-           command (as above), whose bin/dotnet is copied to bin/publish/dotnet; ceiling 300 s
+  publish  a framework-dependent win-x64 server at bin/publish/godot-mcp.exe, with bridge/ beside it and the agent skills
+           as bin/publish/skill and bin/publish/agent-sweep-skill (copied from skills/, refused when either SKILL.md is
+           missing), then the dotnet command (as above), whose bin/dotnet is copied to bin/publish/dotnet; ceiling 300 s
   install  publish (as above), then mirror bin/publish into $env:LOCALAPPDATA\godot-mcp (robocopy /MIR, no retries),
-           link ~/.claude/skills/godot-mcp to skills/godot-mcp and ~/.claude/skills/godot-agent-sweep to
-           skills/godot-agent-sweep as directory junctions, and run the installed godot-mcp.exe --sweep-agents, printing
+           link ~/.claude/skills/godot-mcp to the install folder's skill/ and ~/.claude/skills/godot-agent-sweep to its
+           agent-sweep-skill/ as directory junctions, and run the installed godot-mcp.exe --sweep-agents, printing
            its lines as they come; ceiling 300 s for the publish, then 900 s in a heavy slot for the copy, the links and the
            sweep, whose commits run the swept repositories' hooks (which can build). They are tools/install.ps1, logged
            to .tmp/install.log. A junction that points
@@ -72,8 +73,8 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            GODOT_MCP_INSTALL_DIR overrides the install folder, GODOT_MCP_SKILLS_DIR the folder the links are made in.
            Before the mirror it stops every godot-mcp.exe running from the install folder, printing one line each
            that names the Claude session and project it served, to reconnect there with /mcp.
-  package  the release download: bin/publish removed, publish (as above), then tools/package.ps1 zips bin/publish with
-           skills/godot-mcp as skill/, skills/godot-agent-sweep as agent-sweep-skill/ and a VERSION file (the published
+  package  the release download: bin/publish removed, publish (as above, so bin/publish already holds the skills as
+           skill/ and agent-sweep-skill/), then tools/package.ps1 zips bin/publish with a VERSION file (the published
            product version) into
            .tmp/package/godot-mcp-<X.Y.Z>-win-x64.zip, writes .tmp/package/install.ps1 (tools/install-release.ps1
            with tools/InstalledServers.psm1 inlined, the release's installer), and prints both paths; .tmp/package.log, ceiling 300 s for the
@@ -996,6 +997,27 @@ function Copy-Folder {
     Copy-Item -LiteralPath $Source -Destination $Destination -Recurse
 }
 
+# The agent skills that ship with the build: each one's folder under skills/, and the name it takes under bin/publish,
+# where the install folder's mirror and the release zip both take it from.
+$skillFolders = [ordered]@{
+    'godot-mcp'         = 'skill'
+    'godot-agent-sweep' = 'agent-sweep-skill'
+}
+
+# Copies the skills into bin/publish, so a released build carries the same ones a from-source install links. A checkout
+# missing either SKILL.md stops the publish here with status 1, before a build without them can be installed or zipped.
+function Copy-SkillFolders {
+    foreach ($name in $skillFolders.Keys) {
+        $source = Join-Path $root "skills/$name"
+        if (-not (Test-Path -LiteralPath (Join-Path $source 'SKILL.md') -PathType Leaf)) {
+            [Console]::Error.WriteLine("publish: skills/$name/SKILL.md is missing.")
+            return 1
+        }
+        Copy-Folder -Source $source -Destination (Join-Path (Join-Path $root 'bin/publish') $skillFolders[$name])
+    }
+    return 0
+}
+
 # Rebuilds bin/dotnet from the staged publishes and the tracked .gdextension.
 function Copy-DotnetLayout {
     if (Test-Path -LiteralPath $dotnetOut) {
@@ -1030,9 +1052,14 @@ function Invoke-DotnetPublish {
     return 0
 }
 
-# Publishes the server into bin/publish, then the C# helper, copying bin/dotnet to bin/publish/dotnet.
+# Publishes the server into bin/publish, copies the agent skills in beside it, then the C# helper, copying bin/dotnet to
+# bin/publish/dotnet.
 function Invoke-Publish {
     $status = Invoke-Logged -Name 'publish' -TimeoutSeconds 300 -Arguments (Get-PublishArgumentList) -Slot heavy
+    if ($status -ne 0) {
+        return $status
+    }
+    $status = Copy-SkillFolders
     if ($status -ne 0) {
         return $status
     }

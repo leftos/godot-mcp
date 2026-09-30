@@ -1,4 +1,4 @@
-"""Tests for tools/install.ps1: the mirror of bin/publish and the skill junction, run against temporary folders."""
+"""Tests for tools/install.ps1: the mirror of bin/publish and the skill junctions, run against temporary folders."""
 
 from __future__ import annotations
 
@@ -28,12 +28,17 @@ class Layout:
     skills_dir: Path
 
     @property
-    def skill_source(self) -> Path:
-        return self.root / "skills" / "godot-mcp"
+    def publish(self) -> Path:
+        return self.root / "bin" / "publish"
 
     @property
     def publish_dll(self) -> Path:
-        return self.root / "bin" / "publish" / "godot-mcp.dll"
+        return self.publish / "godot-mcp.dll"
+
+    @property
+    def skill_source(self) -> Path:
+        """The publish's skill folder, mirrored into the install folder: what the link points at."""
+        return self.install_dir / "skill"
 
     @property
     def link(self) -> Path:
@@ -41,25 +46,34 @@ class Layout:
 
     @property
     def sweep_skill_source(self) -> Path:
-        return self.root / "skills" / "godot-agent-sweep"
+        return self.install_dir / "agent-sweep-skill"
 
     @property
     def sweep_link(self) -> Path:
         return self.skills_dir / "godot-agent-sweep"
 
+    @property
+    def checkout_skill(self) -> Path:
+        """The checkout's own skills/godot-mcp: what an install made before the skills shipped with the build linked."""
+        return self.root / "skills" / "godot-mcp"
+
 
 def _layout(tmp_path: Path, *, with_skill: bool = True, with_sweep_skill: bool = True) -> Layout:
     layout = Layout(root=tmp_path / "repo", install_dir=tmp_path / "installed", skills_dir=tmp_path / "home" / "skills")
-    publish = layout.root / "bin" / "publish"
+    publish = layout.publish
     publish.mkdir(parents=True)
     (publish / "godot-mcp.exe").write_text("not really an exe", encoding="utf-8")
     shutil.copyfile(VERSIONED_DLL, layout.publish_dll)
+    # A publish copies the checkout's skills into bin/publish; the install mirrors them on from there.
     if with_skill:
-        layout.skill_source.mkdir(parents=True)
-        (layout.skill_source / "SKILL.md").write_text("# godot-mcp\n", encoding="utf-8")
+        (publish / "skill").mkdir()
+        (publish / "skill" / "SKILL.md").write_text("# godot-mcp\n", encoding="utf-8")
     if with_sweep_skill:
-        layout.sweep_skill_source.mkdir(parents=True)
-        (layout.sweep_skill_source / "SKILL.md").write_text("# godot-agent-sweep\n", encoding="utf-8")
+        (publish / "agent-sweep-skill").mkdir()
+        (publish / "agent-sweep-skill" / "SKILL.md").write_text("# godot-agent-sweep\n", encoding="utf-8")
+    for name in ("godot-mcp", "godot-agent-sweep"):
+        (layout.root / "skills" / name).mkdir(parents=True)
+        (layout.root / "skills" / name / "SKILL.md").write_text(f"# {name} in the checkout\n", encoding="utf-8")
     layout.skills_dir.mkdir(parents=True)
     return layout
 
@@ -154,6 +168,44 @@ def test_install_is_idempotent(tmp_path: Path) -> None:
     assert (layout.install_dir / "godot-mcp.exe").is_file()
 
 
+def test_install_links_the_skills_from_the_install_folder_not_the_checkout(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    result = _install(layout)
+    assert result.returncode == 0, _output(result)
+    assert _points_at(layout.link, layout.skill_source)
+    assert _points_at(layout.sweep_link, layout.sweep_skill_source)
+    # The checkout's own skills are not the target, so a skill edited there reaches no installed agent.
+    assert not _points_at(layout.link, layout.checkout_skill)
+    assert (layout.skill_source / "SKILL.md").read_text(encoding="utf-8") == "# godot-mcp\n"
+
+
+def test_install_replaces_the_checkout_skill_junction_with_one_into_the_install_folder(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    # The layout every install made before the skills shipped with the build left: a junction into the checkout.
+    _make_junction(layout.link, layout.checkout_skill)
+    assert _points_at(layout.link, layout.checkout_skill)
+    result = _install(layout)
+    assert result.returncode == 0, _output(result)
+    assert _points_at(layout.link, layout.skill_source)
+    assert (layout.checkout_skill / "SKILL.md").read_text(encoding="utf-8") == "# godot-mcp in the checkout\n"
+
+
+def test_a_checkout_skill_edit_is_not_visible_through_the_junction_until_the_next_install(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    assert _install(layout).returncode == 0
+    assert (layout.link / "SKILL.md").read_text(encoding="utf-8") == "# godot-mcp\n"
+
+    (layout.checkout_skill / "SKILL.md").write_text("# edited in the checkout\n", encoding="utf-8")
+
+    assert (layout.link / "SKILL.md").read_text(encoding="utf-8") == "# godot-mcp\n"
+
+    # The next install links the skill the next publish put in bin/publish.
+    (layout.publish / "skill" / "SKILL.md").write_text("# published\n", encoding="utf-8")
+    assert _install(layout).returncode == 0
+
+    assert (layout.link / "SKILL.md").read_text(encoding="utf-8") == "# published\n"
+
+
 def test_install_replaces_a_junction_pointing_elsewhere(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
     elsewhere = tmp_path / "old-worktree" / "skills" / "godot-mcp"
@@ -239,7 +291,7 @@ def test_install_fails_without_the_skill(tmp_path: Path) -> None:
     layout = _layout(tmp_path, with_skill=False)
     result = _install(layout)
     assert result.returncode == 1
-    assert "install: skills/godot-mcp/SKILL.md is missing." in _output(result)
+    assert f"install: {layout.skill_source / 'SKILL.md'} is missing; run publish first." in _output(result)
     assert not layout.link.exists()
 
 
@@ -247,5 +299,5 @@ def test_install_fails_without_the_agent_sweep_skill(tmp_path: Path) -> None:
     layout = _layout(tmp_path, with_sweep_skill=False)
     result = _install(layout)
     assert result.returncode == 1
-    assert "install: skills/godot-agent-sweep/SKILL.md is missing." in _output(result)
+    assert f"install: {layout.sweep_skill_source / 'SKILL.md'} is missing; run publish first." in _output(result)
     assert not layout.sweep_link.exists()

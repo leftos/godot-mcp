@@ -29,6 +29,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - An `element` inside a `SubViewportContainer`, or in a window opened from one, is now aimed where the root viewport shows it.
 - A plain `attach_project` ending on a folder no longer deletes an attach file another server's waiting attach wrote since.
 - A value holding a Dictionary or Array that contains itself now reads as `"<cycle: Dictionary>"` instead of leaving the call without a reply.
+- `run.ps1 install` links the skills from the installed build, so the skill never documents tools the installed server lacks.
 - A headless refusal under a red C# build no longer quotes the errors the missing assembly causes, such as a C# autoload's, under "Godot logged:".
 
 ## 0.11.1 - 2026-09-30
