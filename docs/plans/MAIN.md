@@ -14,7 +14,7 @@ Waves run in order; bug reports sit ahead of the backlog inside each. The single
 ### Singles
 
 - [ ] The itest suite takes too long (user, 2026-09-29). The last full run (`.tmp/itest-full-out.log`): 9m 42s wall, timing lane ≈ 512 s wall / 226 s load-adjusted (lifecycle 281 s alone, ArmTests 3 min for 9 own-launch tests), build lane ≈ 570 s / 284 s (scene 187 s, prep 123 s, headless and nodes 120 s each). Chosen by the user, in this order:
-  - [ ] Measure first, after #54 and the 0.11.0 release land: one full run with per-test durations (trx) and Godot's startup timed per launch and per headless op, to size the rest
+  - [ ] Measure first (the next `/nextup` starts here, user 2026-09-29): one full run with per-test durations (trx) and Godot's startup timed per launch and per headless op, to size the rest
   - [ ] A third lane: lifecycle's classes that assert no wall-clock timing leave the timing lane (`$itestLanes`, `run.ps1` L135)
   - [ ] Landings run only the itest groups their changed files touch (bridge, headless scripts, session code, tools); the full suite at release
   - [ ] A warm headless Godot serving many headless requests instead of one process per call: faster headless tools for the games too; needs a design pass
