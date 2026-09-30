@@ -2,6 +2,19 @@
 
 How the server and the bridge fit together today, for anyone about to change them. Symbols are named by file and member, not by line. Toolchain, tests and footguns are in [DEVELOPMENT.md](./DEVELOPMENT.md); terms are in the [glossary](./README.md#glossary).
 
+## Task Index
+
+To change X, read these files, in order.
+
+| To change | Read |
+|---|---|
+| A new runtime tool | [Adding a runtime tool](#adding-a-runtime-tool) |
+| A new headless scene edit tool | [Adding a headless scene edit tool](#adding-a-headless-scene-edit-tool) |
+| How a live node path or bare name resolves (`%Name`, ambiguity, a new path form) | `bridge/godot_mcp_bridge.gd` (`_find_node`), `bridge/godot_mcp_targets.gd` (`_find_input_node`, `_nodes_named`, `_ambiguous`), `bridge/godot_mcp_inspect.gd` (`not_found`), `src/GodotMcp.Dotnet/Targets.cs` (`Find`, `TryReach`, `NotFound`), `SnippetGlobals.cs`, `GodotResolver.cs`; the path-form `[Description]`s in `CSharpTarget.cs`, `InputTarget.cs`, `RuntimeTools.Inspect.cs`, `MethodCall.cs`, `WaitCondition.cs`, `RuntimeTools.RunCSharp.cs`; tests `tests/bridge/test_inspect_not_found.gd`, `CSharpToolTests`, `InputTests`, `InspectionTests` |
+| The launch prep: its build, import, logs or wrapper | `src/GodotMcp.Server/Session/ProjectPrep.cs`, `ToolProcess.cs`, `SessionResults.cs` (`PrepResult`), `Tools/ProjectProfile.cs`, `GodotSession.cs` (`PrepareAndStartAsync`), `HeadlessRunner.cs`; tests `PrepTests`, `ProjectPrepChecksTests` |
+| How attach or join files are written or removed across servers | `src/GodotMcp.Server/Session/AttachFile.cs`, `GodotSession.Attach.cs` (`AwaitLaunchedGameAsync`, `RemoveHandoffFile`), `DormantGames.cs`, `OverrideFolders.cs` (`Hold`); tests `SessionAttachTests`, `AttachFileTests`, `DormantGamesTests` |
+| The itests' fixture copies | `tests/GodotMcp.TestSupport/CommittedFixture.cs`, `CsProbeProject.cs`, `tests/GodotMcp.IntegrationTests/Fixtures/ProbeProject.cs`, `SharedProbeSession.cs`; then DEVELOPMENT.md's fixture bullets |
+
 ## Components
 
 | Part | Where | Job |
