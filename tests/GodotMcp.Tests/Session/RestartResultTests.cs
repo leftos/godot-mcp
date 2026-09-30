@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
-using GodotMcp.Server.Tools;
 
 namespace GodotMcp.Tests.Session;
 
@@ -15,6 +14,10 @@ public sealed class RestartResultTests
     private const string Size =
         "--resolution asked for a 1000x900 window and the game's window is 800x600: the system did not give it the size asked "
         + "for, so screenshots and input work in the window it has.";
+
+    // Unlike ToolJson.Options, which ignores nulls globally and so would hide a missing attribute, this leaves a null out
+    // only where the record's own JsonIgnore says so, making the test below able to fail.
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     [Fact]
     public void NoWarningOnEitherSideIsNone() => Assert.Null(GodotSession.JoinWarnings(null, null));
@@ -37,7 +40,7 @@ public sealed class RestartResultTests
             PreviousGameExitCode = null,
         };
 
-        JsonObject json = JsonNode.Parse(JsonSerializer.Serialize(result, ToolJson.Options))!.AsObject();
+        JsonObject json = JsonNode.Parse(JsonSerializer.Serialize(result, Json))!.AsObject();
 
         Assert.False(json.ContainsKey("window"), json.ToJsonString());
     }

@@ -51,6 +51,64 @@ func test_to_json_converts_containers_recursively() -> void:
 	assert_eq(_json.to_json(value), expected, "keys become strings, arrays and packed arrays lists")
 
 
+func test_self_referencing_dictionary_stops_at_the_cycle() -> void:
+	var value: Dictionary = {}
+	value["self"] = value
+	assert_eq(
+		_json.to_json(value),
+		{"self": "<cycle: Dictionary>"},
+		"the dictionary holding itself is the marker, not a copy of itself"
+	)
+	value.erase("self")
+
+
+func test_dictionary_holding_itself_twice_is_cut_where_the_cycle_closes() -> void:
+	var value: Dictionary = {}
+	value["a"] = value
+	value["b"] = value
+	var written: Dictionary = _json.to_json(value)
+	assert_eq(
+		written,
+		{"a": "<cycle: Dictionary>", "b": "<cycle: Dictionary>"},
+		"both keys cut where the cycle closes, not a copy of the tree under each"
+	)
+	value.clear()
+
+
+func test_array_holding_itself_is_cut_where_the_cycle_closes() -> void:
+	var value: Array = []
+	value.append(value)
+	assert_eq(_json.to_json(value), ["<cycle: Array>"], "the array holding itself is the marker")
+	value.clear()
+
+
+func test_a_shared_container_that_is_no_cycle_is_written_at_each_place() -> void:
+	var shared: Dictionary = {"x": 1}
+	var value: Dictionary = {"p": shared, "q": shared}
+	var expected: Dictionary = {"p": {"x": 1}, "q": {"x": 1}}
+	assert_eq(_json.to_json(value), expected, "a container reached twice over is no cycle")
+
+
+func test_nesting_below_the_cap_is_written_whole() -> void:
+	var value: Variant = "leaf"
+	for _level in 10:
+		value = {"down": value}
+	var expected: Variant = "leaf"
+	for _level in 10:
+		expected = {"down": expected}
+	assert_eq(_json.to_json(value), expected, "a ten-deep chain comes back whole")
+
+
+func test_deep_chain_stops_at_the_depth_cap() -> void:
+	var value: Variant = "leaf"
+	for _level in 70:
+		value = {"down": value}
+	var written: Variant = _json.to_json(value)
+	for _level in 64:
+		written = written["down"]
+	assert_eq(written, "<depth limit: Dictionary>", "the dictionary at the cap is the marker")
+
+
 func test_to_json_describes_objects() -> void:
 	var described: Variant = _json.to_json(RefCounted.new())
 	assert_true(described is Dictionary, "an object becomes an object")

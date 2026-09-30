@@ -43,6 +43,9 @@ const OBJECT_DICTIONARY_REFUSAL := (
 ## How deep built-in resources nest inside one another before one is read by its class alone,
 ## which ends a cycle of resources holding each other.
 const MAX_RESOURCE_DEPTH := 8
+## How deep Dictionaries and Arrays (packed arrays included) nest inside one another before one is
+## written as its depth-limit marker, which bounds a chain no cycle closes.
+const MAX_LEVEL := 64
 ## What separates a scene's path from a built-in resource's id in that resource's resource_path.
 const SUB_RESOURCE_SEPARATOR := "::"
 ## The stored properties a built-in resource's reading leaves out: its path and id, read apart,
@@ -62,13 +65,17 @@ static var node_root: Node = null
 ## A JSON-safe copy of value: vectors, colours and rects become objects, containers are copied
 ## recursively, and anything else not JSON becomes its str(). A Node becomes its path (see
 ## _node_to_json), a Resource its path or its properties (see _resource_to_json), and any other
-## Object {class, string}, its class and to_string().
+## Object {class, string}, its class and to_string(). A Dictionary or an Array holding itself is
+## written as its cycle marker instead (see _dictionary_to_json), and one nested MAX_LEVEL deep as
+## its depth-limit marker.
 static func to_json(value: Variant) -> Variant:
-	return _to_json(value, 0)
+	return _to_json(value, 0, 0, [])
 
 
-## to_json at depth, the number of built-in resources value is nested in.
-static func _to_json(value: Variant, depth: int) -> Variant:
+## to_json at depth, the number of built-in resources value is nested in; level, the number of
+## Dictionaries and Arrays value is nested in; and path, those containers themselves, innermost
+## last, whose identity cuts a cycle.
+static func _to_json(value: Variant, depth: int, level: int, path: Array) -> Variant:
 	var json: Variant
 	match typeof(value):
 		TYPE_NIL, TYPE_BOOL, TYPE_INT, TYPE_STRING:
@@ -76,17 +83,17 @@ static func _to_json(value: Variant, depth: int) -> Variant:
 		TYPE_FLOAT:
 			json = value if is_finite(value) else str(value)
 		TYPE_DICTIONARY:
-			json = _dictionary_to_json(value, depth)
+			json = _dictionary_to_json(value, depth, level, path)
 		TYPE_OBJECT:
-			json = _object_to_json(value, depth)
+			json = _object_to_json(value, depth, level, path)
 		_:
-			json = _other_to_json(value, depth)
+			json = _other_to_json(value, depth, level, path)
 	return json
 
 
 ## Vectors, colours and rects as objects, arrays and packed arrays as lists, anything else its
 ## str().
-static func _other_to_json(value: Variant, depth: int) -> Variant:
+static func _other_to_json(value: Variant, depth: int, level: int, path: Array) -> Variant:
 	var json: Variant
 	match typeof(value):
 		TYPE_VECTOR2, TYPE_VECTOR2I:
@@ -103,34 +110,62 @@ static func _other_to_json(value: Variant, depth: int) -> Variant:
 				"height": value.size.y,
 			}
 		_:
-			json = _array_to_json(value, depth) if typeof(value) >= TYPE_ARRAY else str(value)
+			json = (
+				_array_to_json(value, depth, level, path)
+				if typeof(value) >= TYPE_ARRAY
+				else str(value)
+			)
 	return json
 
 
-static func _dictionary_to_json(values: Dictionary, depth: int) -> Dictionary:
+## The values as an object, each one nested a level deeper; a Dictionary already being written is
+## the marker "<cycle: Dictionary>", one at MAX_LEVEL the marker "<depth limit: Dictionary>".
+static func _dictionary_to_json(values: Dictionary, depth: int, level: int, path: Array) -> Variant:
+	if _on_path(path, values):
+		return "<cycle: Dictionary>"
+	if level >= MAX_LEVEL:
+		return "<depth limit: Dictionary>"
 	var json: Dictionary = {}
 	for key: Variant in values:
-		json[str(key)] = _to_json(values[key], depth)
+		json[str(key)] = _to_json(values[key], depth, level + 1, path + [values])
 	return json
 
 
-static func _array_to_json(values: Variant, depth: int) -> Array:
+## The items as a list, each one nested a level deeper; an Array already being written is the
+## marker "<cycle: Array>", one at MAX_LEVEL the marker "<depth limit: Array>". A packed array
+## holds no container, so it is no cycle and joins no path.
+static func _array_to_json(values: Variant, depth: int, level: int, path: Array) -> Variant:
+	var is_array: bool = typeof(values) == TYPE_ARRAY
+	if is_array and _on_path(path, values):
+		return "<cycle: Array>"
+	if level >= MAX_LEVEL:
+		return "<depth limit: Array>"
+	var inner: Array = path + [values] if is_array else path
 	var json: Array = []
 	for item: Variant in values:
-		json.append(_to_json(item, depth))
+		json.append(_to_json(item, depth, level + 1, inner))
 	return json
+
+
+## Whether the container is already being written, by identity and not by value: a Dictionary or
+## Array that holds itself would never end, while two equal but distinct ones are written twice.
+static func _on_path(path: Array, container: Variant) -> bool:
+	for open: Variant in path:
+		if is_same(open, container):
+			return true
+	return false
 
 
 ## A Node as its path (_node_to_json), a Resource as its path or its properties
 ## (_resource_to_json), any other Object as {class, string}, and a freed one as "<freed object>".
-static func _object_to_json(value: Variant, depth: int) -> Variant:
+static func _object_to_json(value: Variant, depth: int, level: int, path: Array) -> Variant:
 	if not is_instance_valid(value):
 		# A native getter's null Ref is an invalid Object too; only str() tells it from a freed one.
 		return null if str(value) == "<Object#null>" else "<freed object>"
 	if value is Node:
 		return _node_to_json(value)
 	if value is Resource:
-		return _resource_to_json(value, depth)
+		return _resource_to_json(value, depth, level, path)
 	return {"class": (value as Object).get_class(), "string": (value as Object).to_string()}
 
 
@@ -152,16 +187,20 @@ static func _node_to_json(node: Node) -> Variant:
 ## defaults (a script's properties when not null), resources among them read the same way. A
 ## built-in resource nested MAX_RESOURCE_DEPTH deep is read without its properties. The class is
 ## the resource's script class when it has one (_class_title), so the read shape converts back.
-static func _resource_to_json(resource: Resource, depth: int) -> Dictionary:
-	var path: String = resource.resource_path
-	if not path.is_empty() and not path.contains(SUB_RESOURCE_SEPARATOR):
+static func _resource_to_json(
+	resource: Resource, depth: int, level: int, path: Array
+) -> Dictionary:
+	var saved_path: String = resource.resource_path
+	if not saved_path.is_empty() and not saved_path.contains(SUB_RESOURCE_SEPARATOR):
 		return _external_resource_to_json(resource)
 	var json: Dictionary = {"class": _class_title(resource)}
-	if not path.is_empty():
-		var id_start: int = path.find(SUB_RESOURCE_SEPARATOR) + SUB_RESOURCE_SEPARATOR.length()
-		json["subResource"] = path.substr(id_start)
+	if not saved_path.is_empty():
+		var id_start: int = (
+			saved_path.find(SUB_RESOURCE_SEPARATOR) + SUB_RESOURCE_SEPARATOR.length()
+		)
+		json["subResource"] = saved_path.substr(id_start)
 	if depth < MAX_RESOURCE_DEPTH:
-		json["properties"] = _changed_properties(resource, depth + 1)
+		json["properties"] = _changed_properties(resource, depth + 1, level, path)
 	return json
 
 
@@ -183,7 +222,9 @@ static func _class_title(resource: Resource) -> String:
 
 ## {name: value} for the resource's stored properties that differ from its class's default, a
 ## property the class does not declare (a script's) counting as defaulting to null.
-static func _changed_properties(resource: Resource, depth: int) -> Dictionary:
+static func _changed_properties(
+	resource: Resource, depth: int, level: int, path: Array
+) -> Dictionary:
 	var properties: Dictionary = {}
 	var class_title: String = resource.get_class()
 	for info: Dictionary in resource.get_property_list():
@@ -195,7 +236,7 @@ static func _changed_properties(resource: Resource, depth: int) -> Dictionary:
 		var value: Variant = resource.get(property_name)
 		var default: Variant = ClassDB.class_get_property_default_value(class_title, property_name)
 		if typeof(value) != typeof(default) or value != default:
-			properties[property_name] = _to_json(value, depth)
+			properties[property_name] = _to_json(value, depth, level, path)
 	return properties
 
 
