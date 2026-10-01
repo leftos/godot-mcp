@@ -664,7 +664,7 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
 
         Assert.Equal(
             "snapshot s99999 is not held (evicted, or from a run that stopped or restarted, or an attached game that has gone); "
-                + "take a new one with snapshot_subtree",
+                + "take a new one with snapshot_subtree, or keep a new state read with get_game_state {options: {keep: true}}",
             unknown.Message
         );
         Assert.Contains($"'{Probe}' has 5 nodes in its subtree, more than maxNodes (1)", tooLarge.Message, StringComparison.Ordinal);
