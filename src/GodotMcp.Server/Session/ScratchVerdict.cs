@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using GodotMcp.Server.Tools;
 
 namespace GodotMcp.Server.Session;
 
@@ -57,7 +58,7 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
 /// How a scene is judged: the patterns that fail a step's line, its known reason, the profile's reason for its pace, and whether
 /// its steps are listed when green.
 /// </summary>
-internal sealed record ScratchRules(IReadOnlyList<Regex> Patterns, string? Known, string? PaceReason, bool Details);
+internal sealed record ScratchRules(IReadOnlyList<ScratchPattern> Patterns, string? Known, string? PaceReason, bool Details);
 
 /// <summary>run_scratches' result: whether every scene passed, the count of each verdict, and one entry a scene.</summary>
 internal sealed record ScratchRunResult(
@@ -73,8 +74,16 @@ internal sealed record ScratchRunResult(
 /// <summary>A scene's steps played and in all.</summary>
 internal sealed record ScratchStepCount(int Played, int Total);
 
+/// <summary>A scratch pattern a failing line matched: the regex as the profile wrote it, and the profile's reason for it, if any.</summary>
+internal sealed record ScratchMatch(string Pattern, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Reason);
+
 /// <summary>The first step that failed, or the one in flight when the scene was killed (index -1 before any step), and why.</summary>
-internal sealed record ScratchFailure(int Index, string Name, string Error, string Status);
+internal sealed record ScratchFailure(int Index, string Name, string Error, string Status)
+{
+    /// <summary>The pattern the step's first failing line matched, with the profile's reason; null when the failure was not a line match.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ScratchMatch? Pattern { get; init; }
+}
 
 /// <summary>An error feed entry as a step lists it.</summary>
 internal sealed record ScratchError(string Message, string File, int Line);
@@ -164,7 +173,7 @@ internal static partial class ScratchVerdict
     private const string ScratchNotePrefix = "[scratch]";
 
     /// <summary>Why a step failed: its call's error, else the feed's first error, else its first line a pattern matches; null if it passed.</summary>
-    public static string? StepError(ScratchStep step, IReadOnlyList<Regex> patterns)
+    public static string? StepError(ScratchStep step, IReadOnlyList<ScratchPattern> patterns)
     {
         if (step.CallError is not null)
         {
@@ -266,7 +275,7 @@ internal static partial class ScratchVerdict
     }
 
     /// <summary>The verdict before the known rule, and the step it names.</summary>
-    private static (string Verdict, ScratchFailure? FailedAt) Underlying(ScratchObservation seen, IReadOnlyList<Regex> patterns)
+    private static (string Verdict, ScratchFailure? FailedAt) Underlying(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns)
     {
         if (seen.Kill is not null)
         {
@@ -287,7 +296,7 @@ internal static partial class ScratchVerdict
         {
             if (StepError(step, patterns) is { } error)
             {
-                return (Red, new ScratchFailure(step.Index, step.Name, error, step.Status));
+                return (Red, new ScratchFailure(step.Index, step.Name, error, step.Status) { Pattern = MatchedPattern(step, patterns) });
             }
         }
 
@@ -305,14 +314,14 @@ internal static partial class ScratchVerdict
     /// Whether the exit turns a scene with every step green red: an error in the pace after the last step, a kill by the stop, a
     /// non-zero code, a leak, or a matching line after the steps.
     /// </summary>
-    private static bool ExitFails(ScratchObservation seen, IReadOnlyList<Regex> patterns) =>
+    private static bool ExitFails(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns) =>
         seen.AfterError is not null
         || seen.StopKillReason is not null
         || seen.ExitCode is not (null or 0)
         || Leaked(seen.ExitLines) is not null
         || seen.ExitLines.Any(line => Matches(line, patterns));
 
-    private static ScratchExit ExitOf(ScratchObservation seen, IReadOnlyList<Regex> patterns)
+    private static ScratchExit ExitOf(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns)
     {
         List<string> matched = [.. seen.ExitLines.Where(line => Matches(line, patterns))];
         return new ScratchExit(seen.ExitCode)
@@ -327,7 +336,7 @@ internal static partial class ScratchVerdict
     }
 
     /// <summary>A step as it is listed; a red or killed scene's step keeps its [scratch] notes beside its matching lines.</summary>
-    private static ScratchStepResult StepResult(ScratchStep step, IReadOnlyList<Regex> patterns, bool keepNotes)
+    private static ScratchStepResult StepResult(ScratchStep step, IReadOnlyList<ScratchPattern> patterns, bool keepNotes)
     {
         List<string> lines =
         [
@@ -363,31 +372,61 @@ internal static partial class ScratchVerdict
     }
 
     /// <summary>Whether a pattern matches the line; a pattern that ran past its timeout on it counts as matching.</summary>
-    private static bool Matches(string line, IReadOnlyList<Regex> patterns) => LineError(line, patterns) is not null;
+    private static bool Matches(string line, IReadOnlyList<ScratchPattern> patterns) => LineError(line, patterns) is not null;
+
+    /// <summary>
+    /// The pattern a step's first failing line matched, with the profile's reason; null when the step failed for another reason
+    /// (a call error or the feed's).
+    /// </summary>
+    private static ScratchMatch? MatchedPattern(ScratchStep step, IReadOnlyList<ScratchPattern> patterns) =>
+        step.CallError is not null || FeedError(step.Errors) is not null ? null : FailedLine(step.Lines, patterns);
+
+    /// <summary>The match of the first line any pattern fails, patterns tried in profile order; null when no line fails.</summary>
+    private static ScratchMatch? FailedLine(IReadOnlyList<string> lines, IReadOnlyList<ScratchPattern> patterns)
+    {
+        foreach (string line in lines)
+        {
+            foreach (ScratchPattern pattern in patterns)
+            {
+                if (LineError(line, pattern) is not null)
+                {
+                    return new ScratchMatch(pattern.Regex.ToString(), pattern.Reason);
+                }
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Why the line fails a step: the line itself when a pattern matches it, the pattern's refusal when it ran past its timeout
     /// on it, else null.
     /// </summary>
-    private static string? LineError(string line, IReadOnlyList<Regex> patterns)
+    private static string? LineError(string line, IReadOnlyList<ScratchPattern> patterns)
     {
-        foreach (Regex pattern in patterns)
+        foreach (ScratchPattern pattern in patterns)
         {
-            try
+            if (LineError(line, pattern) is { } error)
             {
-                if (pattern.IsMatch(line))
-                {
-                    return line;
-                }
-            }
-            catch (RegexMatchTimeoutException)
-            {
-                string seconds = pattern.MatchTimeout.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture);
-                return $"pattern '{pattern}' took over {seconds} s on a line; simplify it in scratch.patterns";
+                return error;
             }
         }
 
         return null;
+    }
+
+    /// <summary>Why one pattern fails the line: the line itself on a match, the refusal on a timeout, else null.</summary>
+    private static string? LineError(string line, ScratchPattern pattern)
+    {
+        try
+        {
+            return pattern.Regex.IsMatch(line) ? line : null;
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            string seconds = pattern.Regex.MatchTimeout.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture);
+            return $"pattern '{pattern.Regex}' took over {seconds} s on a line; simplify it in scratch.patterns";
+        }
     }
 
     [GeneratedRegex(@"(?<count>\d+) ObjectDB instances? (was|were) leaked at exit", RegexOptions.CultureInvariant)]

@@ -8,6 +8,9 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - `get_game_state {options: {keep: true}}` holds the read for `diff_snapshots`, which reports each changed state leaf, such as `seats[1].hp`.
 - `scratch.pace` entries take `{seconds, reason}`, and `run_scratches` reports the reason as `paceReason` on a red or killed scene.
+- `godot-mcp.json` takes `//` and `/* */` comments and trailing commas.
+- A `godot-mcp.json` preset takes `description`, listed beside its name when `options.preset` names an unknown preset.
+- `scratch.patterns` entries take `{pattern, reason}`, and a step failed by a matching line names the entry as `failedAt.pattern`.
 
 ### Changed
 

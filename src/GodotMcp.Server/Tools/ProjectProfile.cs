@@ -10,7 +10,7 @@ internal sealed record ProfileLaunch(LaunchRequest Request, string? Session);
 
 /// <summary>
 /// The values the top level of godot-mcp.json or one of its presets sets: null, or empty for the argument lists, where it
-/// sets none. <see cref="Session"/> is only ever set by a preset.
+/// sets none. <see cref="Session"/> and <see cref="Description"/> are only ever set by a preset.
 /// </summary>
 internal sealed record ProfileValues(
     string? Scene,
@@ -18,17 +18,19 @@ internal sealed record ProfileValues(
     IReadOnlyList<string> EngineArgs,
     string? Resolution,
     bool? Quiet,
-    string? Session
+    string? Session,
+    string? Description
 )
 {
     /// <summary>Values that set nothing.</summary>
-    public static readonly ProfileValues None = new(null, [], [], null, null, null);
+    public static readonly ProfileValues None = new(null, [], [], null, null, null, null);
 }
 
 /// <summary>
 /// A project's launch profile, the optional <c>godot-mcp.json</c> beside <c>project.godot</c>: top-level defaults for every
-/// run_project on the folder, and named presets that layer over them. Parsing is strict: an unknown key, a value of the wrong
-/// type or a malformed resolution refuses the whole file.
+/// run_project on the folder, and named presets that layer over them. The file may carry <c>//</c> and <c>/* */</c> comments and
+/// a trailing comma after the last item of an object or array. Parsing is otherwise strict: an unknown key, a value of the
+/// wrong type or a malformed resolution refuses the whole file.
 /// </summary>
 internal sealed partial class ProjectProfile
 {
@@ -39,9 +41,10 @@ internal sealed partial class ProjectProfile
     private const string PrepWrapperKey = "prepWrapper";
     private const string ScratchKey = "scratch";
     private static readonly string[] TopLevelKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "presets", PrepWrapperKey, ScratchKey];
-    private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "session"];
+    private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "session", "description"];
     private static readonly string[] ScratchKeys = ["folder", "userArgs", "pace", "known", "patterns", "parallel"];
     private static readonly string[] PaceKeys = ["seconds", "reason"];
+    private static readonly string[] PatternKeys = ["pattern", "reason"];
 
     private readonly ProfileValues _defaults;
     private readonly IReadOnlyDictionary<string, ProfileValues> _presets;
@@ -102,7 +105,7 @@ internal sealed partial class ProjectProfile
         using JsonDocument document = Parse(File.ReadAllText(path), path);
         Place top = new(path, TopLevel);
         Dictionary<string, JsonElement> keys = Keys(document.RootElement, TopLevelKeys, top);
-        ProfileValues defaults = ReadValues(keys, top, session: null);
+        ProfileValues defaults = ReadValues(keys, top, session: null, description: null);
         return new ProjectProfile(projectDir, true, defaults, ReadPresets(keys, top), ReadPrepWrapper(keys, top))
         {
             Scratch = ReadScratch(keys, top),
@@ -179,15 +182,21 @@ internal sealed partial class ProjectProfile
             );
         }
 
-        string names = string.Join(", ", _presets.Keys.Order(StringComparer.Ordinal));
+        string names = string.Join(
+            ", ",
+            _presets
+                .OrderBy(entry => entry.Key, StringComparer.Ordinal)
+                .Select(entry => entry.Value.Description is { } description ? $"{entry.Key} ({description})" : entry.Key)
+        );
         return new McpException($"options.preset \"{name}\" is not in {FilePath}; its presets are {names}. Pass one of those.");
     }
 
     private static JsonDocument Parse(string text, string path)
     {
+        JsonDocumentOptions options = new() { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
         try
         {
-            return JsonDocument.Parse(text);
+            return JsonDocument.Parse(text, options);
         }
         catch (JsonException e)
         {
@@ -211,7 +220,7 @@ internal sealed partial class ProjectProfile
         {
             Place place = new(top.Path, $"preset \"{entry.Name}\"");
             Dictionary<string, JsonElement> presetKeys = Keys(entry.Value, PresetKeys, place);
-            ProfileValues preset = ReadValues(presetKeys, place, ReadSession(presetKeys, place));
+            ProfileValues preset = ReadValues(presetKeys, place, ReadSession(presetKeys, place), ReadDescription(presetKeys, place));
             if (!presets.TryAdd(entry.Name, preset))
             {
                 throw Refused(top, $"the preset \"{entry.Name}\" appears twice in \"presets\"; keep one");
@@ -221,14 +230,15 @@ internal sealed partial class ProjectProfile
         return presets;
     }
 
-    private static ProfileValues ReadValues(Dictionary<string, JsonElement> keys, Place place, string? session) =>
+    private static ProfileValues ReadValues(Dictionary<string, JsonElement> keys, Place place, string? session, string? description) =>
         new(
             ReadString(keys, "scene", place),
             ReadStrings(keys, "userArgs", place),
             ReadStrings(keys, "engineArgs", place),
             ReadResolution(keys, place),
             ReadBool(keys, "quiet", place),
-            session
+            session,
+            description
         );
 
     /// <summary>The object's keys, each checked against <paramref name="allowed"/> and seen once.</summary>
@@ -443,25 +453,72 @@ internal sealed partial class ProjectProfile
             : throw Refused(place, $"\"known\" of \"{scene}\" must be a non-empty string, the reason the scene is known to fail");
 
     /// <summary>The section's <c>patterns</c>, each compiled as written: case-sensitive, anchored only where it anchors itself.</summary>
-    private static List<Regex> ReadPatterns(Dictionary<string, JsonElement> keys, Place place)
+    private static List<ScratchPattern> ReadPatterns(Dictionary<string, JsonElement> keys, Place place)
     {
-        List<Regex> patterns = [];
-        foreach (string pattern in ReadStrings(keys, "patterns", place))
+        List<ScratchPattern> patterns = [];
+        int item = 0;
+        foreach (JsonElement value in Expect(keys["patterns"], JsonValueKind.Array, "patterns", place).EnumerateArray())
         {
-            try
-            {
-                patterns.Add(ScratchProfile.Compile(pattern));
-            }
-            catch (ArgumentException e)
-            {
-                throw Refused(
-                    place,
-                    $"the pattern \"{pattern}\" in \"patterns\" is not a valid .NET regular expression: {e.Message} Fix or remove it"
-                );
-            }
+            patterns.Add(ReadPattern(value, ++item, place));
         }
 
         return patterns;
+    }
+
+    /// <summary>One <c>patterns</c> item: a bare string, or an object of the pattern and why a line matching it fails a step.</summary>
+    private static ScratchPattern ReadPattern(JsonElement value, int item, Place place)
+    {
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            return Pattern(place, value.GetString()!, reason: null);
+        }
+
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            throw Refused(
+                place,
+                $"\"patterns\" must be an array of regular expressions, each a string or an object {{\"pattern\", \"reason\"}}; "
+                    + $"item {item} is {Describe(value.ValueKind)}"
+            );
+        }
+
+        Place slot = new(place.Path, $"scratch, pattern {item}");
+        Dictionary<string, JsonElement> keys = Keys(value, PatternKeys, slot);
+        foreach (string required in PatternKeys)
+        {
+            if (!keys.ContainsKey(required))
+            {
+                throw Refused(slot, MissingPatternKey(required));
+            }
+        }
+
+        return Pattern(place, ReadString(keys, "pattern", slot)!, ReadPatternReason(keys, slot));
+    }
+
+    private static string MissingPatternKey(string key) =>
+        $"\"{key}\" is missing; an object pattern needs both \"pattern\" and \"reason\". Add it, or write the pattern as a bare string";
+
+    /// <summary>An object pattern's reason, a non-empty string saying why a line matching the pattern fails a step.</summary>
+    private static string ReadPatternReason(Dictionary<string, JsonElement> keys, Place slot)
+    {
+        JsonElement reason = keys["reason"];
+        return reason.ValueKind == JsonValueKind.String && reason.GetString() is { Length: > 0 } text
+            ? text
+            : throw Refused(slot, "\"reason\" must be a non-empty string, why a line matching it fails a step");
+    }
+
+    /// <summary>A pattern compiled as written, with the reason from an object item; null for a bare string.</summary>
+    private static ScratchPattern Pattern(Place place, string text, string? reason)
+    {
+        try
+        {
+            return new ScratchPattern(ScratchProfile.Compile(text), reason);
+        }
+        catch (ArgumentException e)
+        {
+            string message = $"the pattern \"{text}\" in \"patterns\" is not a valid .NET regular expression: {e.Message} Fix or remove it";
+            throw Refused(place, message);
+        }
     }
 
     private static string? ReadResolution(Dictionary<string, JsonElement> keys, Place place)
@@ -473,6 +530,15 @@ internal sealed partial class ProjectProfile
                 place,
                 $"\"resolution\" is \"{resolution}\"; it must be WIDTHxHEIGHT in pixels, with a lowercase x and no spaces, " + "e.g. \"1280x720\""
             );
+    }
+
+    /// <summary>A preset's description, a non-empty string saying what the preset is for; null when the key is absent.</summary>
+    private static string? ReadDescription(Dictionary<string, JsonElement> keys, Place place)
+    {
+        string? description = ReadString(keys, "description", place);
+        return description is null or { Length: > 0 }
+            ? description
+            : throw Refused(place, "\"description\" must be a non-empty string, what the preset is for");
     }
 
     /// <summary>A preset's session, checked by the same rule as run_project's options.session.</summary>
@@ -523,7 +589,7 @@ internal sealed record ScratchProfile(
     IReadOnlyList<string>? UserArgs,
     IReadOnlyDictionary<string, ScratchPace> Pace,
     IReadOnlyDictionary<string, string> Known,
-    IReadOnlyList<Regex> Patterns
+    IReadOnlyList<ScratchPattern> Patterns
 )
 {
     /// <summary>The longest pace, in seconds: a step's wait is a gameMs wait_for, at most 120000 ms.</summary>
@@ -539,7 +605,10 @@ internal sealed record ScratchProfile(
     public int Parallel { get; init; } = DefaultParallel;
 
     /// <summary>The patterns of a project that sets none: Godot's own error lines and its leak warning at exit.</summary>
-    public static readonly IReadOnlyList<Regex> DefaultPatterns = [Compile(@"^SCRIPT ERROR|^ERROR:|ObjectDB instances? (was|were) leaked")];
+    public static readonly IReadOnlyList<ScratchPattern> DefaultPatterns =
+    [
+        new ScratchPattern(Compile(@"^SCRIPT ERROR|^ERROR:|ObjectDB instances? (was|were) leaked"), null),
+    ];
 
     /// <summary>The section of a project that has none: no folder, and the default patterns.</summary>
     public static readonly ScratchProfile None = new(
@@ -563,3 +632,6 @@ internal sealed record ScratchProfile(
 
 /// <summary>A scene's pace in seconds and why it was set; the reason is null when the profile gave a bare number.</summary>
 internal sealed record ScratchPace(double Seconds, string? Reason);
+
+/// <summary>A pattern a step's output line fails it by, and why; the reason is null for a bare string.</summary>
+internal sealed record ScratchPattern(Regex Regex, string? Reason);

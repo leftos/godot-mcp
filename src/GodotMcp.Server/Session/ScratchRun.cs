@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using GodotMcp.Server.Tools;
 
 namespace GodotMcp.Server.Session;
 
@@ -23,7 +24,7 @@ internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace
 internal sealed record ScratchPlan(
     string ProjectDir,
     IReadOnlyList<ScratchScenePlan> Scenes,
-    IReadOnlyList<Regex> Patterns,
+    IReadOnlyList<ScratchPattern> Patterns,
     bool Prepare,
     bool Details
 )

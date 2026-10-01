@@ -35,7 +35,8 @@ internal sealed class ScratchTools(SessionRegistry sessions)
             + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
             + "{passed, green, red, known, noSteps, killed, scenes: [{scene, verdict, steps: {played, total}, pace, paceReason?, seconds, session, "
             + "failedAt?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?, alone?, "
-            + "aloneFailedAt?}]}, scenes in the order given; exit.error is an error in the pace after the last step, killed a game the "
+            + "aloneFailedAt?}]}, scenes in the order given; failedAt.pattern {pattern, reason?} names the scratch.patterns entry a "
+            + "failing line matched; exit.error is an error in the pace after the last step, killed a game the "
             + "stop had to kill; details lists each step for a red or killed scene, or with options.details; seconds covers both "
             + "plays of a scene played again. The project is prepared once for the whole run."
     )]

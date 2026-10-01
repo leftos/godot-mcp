@@ -312,6 +312,98 @@ public sealed class ProjectProfileTests : IDisposable
     }
 
     [Fact]
+    public void APresetDescriptionLoadsAndChangesNoLaunchValue()
+    {
+        Write("""{ "scene": "res://top.tscn", "presets": { "host": { "description": "the server half, started first" } } }""");
+        ProfileLaunch described = Merge(new RunOptions(Preset: "host"));
+        Write("""{ "scene": "res://top.tscn", "presets": { "host": {} } }""");
+        ProfileLaunch bare = Merge(new RunOptions(Preset: "host"));
+
+        Assert.Equal(bare.Request.Scene, described.Request.Scene);
+        Assert.Equal(bare.Request.UserArgs, described.Request.UserArgs);
+        Assert.Equal(bare.Request.EngineArgs, described.Request.EngineArgs);
+        Assert.Equal(bare.Request.Quiet, described.Request.Quiet);
+        Assert.Equal(bare.Session, described.Session);
+    }
+
+    [Theory]
+    [InlineData("""{ "presets": { "host": { "description": 5 } } }""", "(preset \"host\"): \"description\" must be a string, not a number.")]
+    [InlineData(
+        """{ "presets": { "host": { "description": "" } } }""",
+        "(preset \"host\"): \"description\" must be a non-empty string, what the preset is for."
+    )]
+    public void ABadPresetDescriptionIsRefused(string json, string problem)
+    {
+        Write(json);
+
+        Assert.Equal($"{FilePath} {problem}", Refused(() => ProjectProfile.Load(_temp.Path)));
+    }
+
+    [Fact]
+    public void ADescriptionAtTheTopLevelIsAnUnknownKey()
+    {
+        Write("""{ "description": "nope" }""");
+
+        string message = Refused(() => ProjectProfile.Load(_temp.Path));
+
+        Assert.Contains("\"description\"", message, StringComparison.Ordinal);
+        Assert.Contains(TopLevelKeys, message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnUnknownPresetListsDescribedAndBarePresets()
+    {
+        Write("""{ "presets": { "quick": {}, "host": { "description": "the server half, started first" }, "client": {} } }""");
+
+        string message = Refused(() => Merge(new RunOptions(Preset: "x")));
+
+        Assert.Equal(
+            $"options.preset \"x\" is not in {FilePath}; its presets are client, host (the server half, started first), quick. "
+                + "Pass one of those.",
+            message
+        );
+    }
+
+    [Fact]
+    public void CommentsAndTrailingCommasAreAllowed()
+    {
+        Write(
+            """
+            {
+              // the top-level defaults
+              "resolution": "1280x720", /* the window's size */
+              "presets": {
+                "server": {
+                  "userArgs": ["--server",],
+                },
+              },
+              "scratch": {
+                "pace": { "TrayScratch": { "seconds": 3, /* the tray lies at rest */ "reason": "the tray lies at rest" } }
+              }
+            }
+            """
+        );
+
+        var profile = ProjectProfile.Load(_temp.Path);
+        ProfileLaunch launch = profile.Merge(null, [], [], new RunOptions(Preset: "server"));
+
+        Assert.Equal(["--resolution", "1280x720"], launch.Request.EngineArgs.Take(2));
+        Assert.Equal(["--server"], launch.Request.UserArgs);
+        Assert.Equal(new ScratchPace(3, "the tray lies at rest"), profile.Scratch!.Pace["TrayScratch"]);
+    }
+
+    [Fact]
+    public void AnUnknownKeyIsRefusedBesideAComment()
+    {
+        Write("""{ /* the top level */ "sceen": "res://main.tscn" }""");
+
+        string message = Refused(() => ProjectProfile.Load(_temp.Path));
+
+        Assert.Contains("\"sceen\"", message, StringComparison.Ordinal);
+        Assert.Contains(TopLevelKeys, message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NoFileOrNoKeySetsNoScratchSection()
     {
         ScratchProfile? noFile = ProjectProfile.Load(_temp.Path).Scratch;
@@ -346,9 +438,9 @@ public sealed class ProjectProfileTests : IDisposable
         Assert.Equal(new ScratchPace(3, "the tray lies at rest"), scratch.Pace["TrayScratch"]);
         Assert.Equal(new ScratchPace(0.25, null), scratch.Pace["Fast"]);
         Assert.Equal("the tray drops a card under load", scratch.Known["TrayScratch"]);
-        Assert.Equal(["^FAIL", "boom$"], scratch.Patterns.Select(pattern => pattern.ToString()));
-        Assert.Matches(scratch.Patterns[0], "FAIL: x");
-        Assert.DoesNotMatch(scratch.Patterns[0], "fail: x");
+        Assert.Equal(["^FAIL", "boom$"], scratch.Patterns.Select(pattern => pattern.Regex.ToString()));
+        Assert.Matches(scratch.Patterns[0].Regex, "FAIL: x");
+        Assert.DoesNotMatch(scratch.Patterns[0].Regex, "fail: x");
     }
 
     [Fact]
@@ -372,13 +464,14 @@ public sealed class ProjectProfileTests : IDisposable
         Assert.Equal(["--top"], profile.UserArgs);
         Assert.Empty(scratch.Pace);
         Assert.Empty(scratch.Known);
-        Regex pattern = Assert.Single(scratch.Patterns);
-        Assert.Equal(ScratchProfile.DefaultPatterns[0].ToString(), pattern.ToString());
-        Assert.Matches(pattern, "SCRIPT ERROR: Invalid call.");
-        Assert.Matches(pattern, "ERROR: late failure");
-        Assert.Matches(pattern, "WARNING: 1 ObjectDB instance was leaked at exit");
-        Assert.Matches(pattern, "WARNING: 2 ObjectDB instances were leaked at exit");
-        Assert.DoesNotMatch(pattern, "[scratch] note: ERROR: in the middle");
+        ScratchPattern pattern = Assert.Single(scratch.Patterns);
+        Assert.Equal(ScratchProfile.DefaultPatterns[0].Regex.ToString(), pattern.Regex.ToString());
+        Assert.Null(pattern.Reason);
+        Assert.Matches(pattern.Regex, "SCRIPT ERROR: Invalid call.");
+        Assert.Matches(pattern.Regex, "ERROR: late failure");
+        Assert.Matches(pattern.Regex, "WARNING: 1 ObjectDB instance was leaked at exit");
+        Assert.Matches(pattern.Regex, "WARNING: 2 ObjectDB instances were leaked at exit");
+        Assert.DoesNotMatch(pattern.Regex, "[scratch] note: ERROR: in the middle");
     }
 
     [Fact]
@@ -479,6 +572,42 @@ public sealed class ProjectProfileTests : IDisposable
         "(scratch): \"known\" of \"A\" must be a non-empty string, the reason the scene is known to fail."
     )]
     [InlineData("""{ "scratch": { "patterns": "ERROR" } }""", "(scratch): \"patterns\" must be an array, not a string.")]
+    [InlineData(
+        """{ "scratch": { "patterns": ["^A", 3] } }""",
+        "(scratch): \"patterns\" must be an array of regular expressions, each a string or an object {\"pattern\", \"reason\"}; "
+            + "item 2 is a number."
+    )]
+    [InlineData(
+        """{ "scratch": { "patterns": [{"pattern": "^A"}] } }""",
+        "(scratch, pattern 1): \"reason\" is missing; an object pattern needs both \"pattern\" and \"reason\". Add it, or "
+            + "write the pattern as a bare string."
+    )]
+    [InlineData(
+        """{ "scratch": { "patterns": [{"reason": "x"}] } }""",
+        "(scratch, pattern 1): \"pattern\" is missing; an object pattern needs both \"pattern\" and \"reason\". Add it, or "
+            + "write the pattern as a bare string."
+    )]
+    [InlineData(
+        """{ "scratch": { "patterns": [{}] } }""",
+        "(scratch, pattern 1): \"pattern\" is missing; an object pattern needs both \"pattern\" and \"reason\". Add it, or "
+            + "write the pattern as a bare string."
+    )]
+    [InlineData(
+        """{ "scratch": { "patterns": [{"pattern": 3, "reason": "x"}] } }""",
+        "(scratch, pattern 1): \"pattern\" must be a string, not a number."
+    )]
+    [InlineData(
+        """{ "scratch": { "patterns": [{"pattern": "^A", "reason": ""}] } }""",
+        "(scratch, pattern 1): \"reason\" must be a non-empty string, why a line matching it fails a step."
+    )]
+    [InlineData(
+        """{ "scratch": { "patterns": [{"pattern": "^A", "reason": 5}] } }""",
+        "(scratch, pattern 1): \"reason\" must be a non-empty string, why a line matching it fails a step."
+    )]
+    [InlineData(
+        """{ "scratch": { "patterns": [{"pattern": "^A", "reason": "x", "why": "y"}] } }""",
+        "(scratch, pattern 1): unknown key \"why\"; the allowed keys are pattern, reason. Remove or rename it."
+    )]
     public void AMalformedScratchSectionIsRefusedNamingTheFile(string json, string problem)
     {
         Write(json);
@@ -486,6 +615,28 @@ public sealed class ProjectProfileTests : IDisposable
         string message = Refused(() => ProjectProfile.Load(_temp.Path));
 
         Assert.Equal($"{FilePath} {problem}", message);
+    }
+
+    [Fact]
+    public void APatternItemIsAStringOrAnObjectInEitherKeyOrder()
+    {
+        Write("""{ "scratch": { "patterns": ["^A", {"reason": "why", "pattern": "^B"}] } }""");
+
+        IReadOnlyList<ScratchPattern> patterns = ProjectProfile.Load(_temp.Path).Scratch!.Patterns;
+
+        Assert.Equal(["^A", "^B"], patterns.Select(pattern => pattern.Regex.ToString()));
+        Assert.Equal([null, "why"], patterns.Select(pattern => pattern.Reason));
+    }
+
+    [Fact]
+    public void AnInvalidObjectPatternIsRefusedAtLoadNamingIt()
+    {
+        Write("""{ "scratch": { "patterns": [{"pattern": "(", "reason": "x"}] } }""");
+
+        string message = Refused(() => ProjectProfile.Load(_temp.Path));
+
+        Assert.StartsWith($"{FilePath} (scratch): the pattern \"(\" in \"patterns\" is not a valid .NET regular expression: ", message);
+        Assert.EndsWith(" Fix or remove it.", message, StringComparison.Ordinal);
     }
 
     [Fact]

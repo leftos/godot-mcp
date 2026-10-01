@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 
@@ -9,7 +8,7 @@ namespace GodotMcp.Tests.Session;
 /// <summary>run_scratches' verdict of a scene from what the runner saw of it, with no Godot.</summary>
 public sealed class ScratchVerdictTests
 {
-    private static readonly IReadOnlyList<Regex> Default = ScratchProfile.DefaultPatterns;
+    private static readonly IReadOnlyList<ScratchPattern> Default = ScratchProfile.DefaultPatterns;
     private static readonly ScratchRules Plain = new(Default, Known: null, PaceReason: null, Details: false);
 
     [Fact]
@@ -97,13 +96,71 @@ public sealed class ScratchVerdictTests
     [Fact]
     public void ACatastrophicPatternIsItsStepsErrorNotAKill()
     {
-        IReadOnlyList<Regex> slow = [ScratchProfile.Compile("(a+)+$")];
+        IReadOnlyList<ScratchPattern> slow = [new ScratchPattern(ScratchProfile.Compile("(a+)+$"), null)];
         ScratchStep step = Step(0) with { Lines = [new string('a', 40) + "b"] };
 
         ScratchSceneResult result = ScratchVerdict.Judge(Seen(step), Plain with { Patterns = slow });
 
         Assert.Equal(ScratchVerdict.Red, result.Verdict);
         Assert.Equal("pattern '(a+)+$' took over 1 s on a line; simplify it in scratch.patterns", result.FailedAt!.Error);
+        Assert.Equal(new ScratchMatch("(a+)+$", null), result.FailedAt.Pattern);
+    }
+
+    [Fact]
+    public void ALineMatchingAReasonedPatternNamesItOnFailedAt()
+    {
+        ScratchPattern pattern = new(ScratchProfile.Compile("^FAIL"), "the scenes' own assertion prefix");
+
+        ScratchSceneResult result = ScratchVerdict.Judge(
+            Seen(Step(0) with { Lines = ["FAIL: the tray did not drop"] }),
+            Plain with
+            {
+                Patterns = [pattern],
+            }
+        );
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Equal("FAIL: the tray did not drop", result.FailedAt!.Error);
+        Assert.Equal(new ScratchMatch("^FAIL", "the scenes' own assertion prefix"), result.FailedAt.Pattern);
+    }
+
+    [Fact]
+    public void ABareStringPatternGivesAPatternWithNoReasonInTheJson()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0) with { Lines = ["ERROR: late failure"] }), Plain);
+
+        JsonObject json = JsonNode.Parse(JsonSerializer.Serialize(result, ToolJson.Options))!.AsObject();
+        JsonObject match = json["failedAt"]!["pattern"]!.AsObject();
+
+        Assert.Equal("^SCRIPT ERROR|^ERROR:|ObjectDB instances? (was|were) leaked", match["pattern"]!.GetValue<string>());
+        Assert.False(match.ContainsKey("reason"), json.ToJsonString());
+    }
+
+    [Fact]
+    public void ThePatternAfterAnotherIsNamedWhenItMatches()
+    {
+        IReadOnlyList<ScratchPattern> patterns =
+        [
+            new ScratchPattern(ScratchProfile.Compile("^A"), "first"),
+            new(ScratchProfile.Compile("boom$"), "second"),
+        ];
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0) with { Lines = ["boom"] }), Plain with { Patterns = patterns });
+
+        Assert.Equal(new ScratchMatch("boom$", "second"), result.FailedAt!.Pattern);
+    }
+
+    [Fact]
+    public void FailuresThatAreNotLineMatchesCarryNoPattern()
+    {
+        ScratchSceneResult feed = ScratchVerdict.Judge(Seen(Step(0) with { Errors = [Error("boom", "", 0)] }), Plain);
+        ScratchSceneResult call = ScratchVerdict.Judge(Seen(Step(0) with { CallError = "gone" }), Plain);
+        ScratchSceneResult killed = ScratchVerdict.Judge(Seen(Step(0)) with { Kill = new ScratchFailure(0, "step0", "ceiling", "") }, Plain);
+
+        foreach (ScratchSceneResult result in new[] { feed, call, killed })
+        {
+            JsonObject json = JsonNode.Parse(JsonSerializer.Serialize(result, ToolJson.Options))!.AsObject();
+            Assert.False(json["failedAt"]!.AsObject().ContainsKey("pattern"), json.ToJsonString());
+        }
     }
 
     [Fact]
