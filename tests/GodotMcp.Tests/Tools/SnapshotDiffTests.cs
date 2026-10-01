@@ -1,5 +1,7 @@
 using System.Text.Json.Nodes;
+using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
+using ModelContextProtocol;
 
 namespace GodotMcp.Tests.Tools;
 
@@ -126,6 +128,25 @@ public sealed class SnapshotDiffTests
         Assert.Empty(diff["changed"]!.AsArray());
         Assert.Empty(diff["added"]!.AsArray());
         Assert.Empty(diff["removed"]!.AsArray());
+    }
+
+    [Fact]
+    public void SnapshotsOfDifferentKindsAreRefusedNamingBoth()
+    {
+        McpException subtreeFirst = Assert.Throws<McpException>(() =>
+            RuntimeTools.CheckSameKind("s1", SnapshotKind.Subtree, "s2", SnapshotKind.State)
+        );
+        McpException stateFirst = Assert.Throws<McpException>(() => RuntimeTools.CheckSameKind("s3", SnapshotKind.State, "s1", SnapshotKind.Subtree));
+
+        Assert.Equal("Snapshot s1 is a subtree snapshot and s2 is a state read (get_game_state); diff two of the same kind.", subtreeFirst.Message);
+        Assert.Equal("Snapshot s3 is a state read (get_game_state) and s1 is a subtree snapshot; diff two of the same kind.", stateFirst.Message);
+    }
+
+    [Fact]
+    public void SnapshotsOfOneKindAreAccepted()
+    {
+        Assert.Null(Record.Exception(() => RuntimeTools.CheckSameKind("s1", SnapshotKind.Subtree, "s2", SnapshotKind.Subtree)));
+        Assert.Null(Record.Exception(() => RuntimeTools.CheckSameKind("s3", SnapshotKind.State, "s4", SnapshotKind.State)));
     }
 
     private static JsonObject Nodes(string json) => JsonNode.Parse(json)!.AsObject();

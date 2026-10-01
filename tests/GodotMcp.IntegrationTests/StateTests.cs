@@ -1,8 +1,10 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Tools;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -33,6 +35,18 @@ public sealed class StateTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
         		"ready": true,
         		"none": null,
         	}
+
+        """;
+
+    // A state that reports a script variable set_property can change, nested so its leaf is a dotted path.
+    private const string SeatSource = """
+        extends Node
+
+        var hp: int = 3
+
+
+        func _mcp_state() -> Dictionary:
+        	return {"seat": {"hp": hp, "name": "alex"}, "tags": ["a", "b"]}
 
         """;
 
@@ -228,6 +242,91 @@ public sealed class StateTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
 
         Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
         Assert.Equal("""{"hp":3}""", batch["steps"]![0]!["result"]!["nodes"]![0]!["state"]!.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AKeptReadDiffsWithTheLiveGameByLeaf()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await MarkAsync(cancellation, ("Main", "Hud", SeatSource), ("Main", "Plain", PlainSource));
+        string stateId = (await ReadAsync(cancellation, options: new StateOptions(Keep: true)))["stateId"]!.GetValue<string>();
+
+        await SetHpAsync(1, cancellation);
+        JsonObject diff = JsonNode.Parse(await _tools.DiffSnapshotsAsync(stateId, cancellationToken: cancellation))!.AsObject();
+
+        Assert.Equal(("/root/Main/Hud", "seat.hp", 3, 1), OnlyChange(diff));
+        Assert.Equal((0, 0), (diff["addedCount"]!.GetValue<int>(), diff["removedCount"]!.GetValue<int>()));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task TwoKeptReadsDiffByTheirIds()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await MarkAsync(cancellation, ("Main", "Hud", SeatSource));
+        StateOptions keep = new(Keep: true);
+        string first = (await ReadAsync(cancellation, options: keep))["stateId"]!.GetValue<string>();
+        await SetHpAsync(5, cancellation);
+        string second = (await ReadAsync(cancellation, options: keep))["stateId"]!.GetValue<string>();
+        await SetHpAsync(9, cancellation);
+
+        JsonObject diff = JsonNode.Parse(await _tools.DiffSnapshotsAsync(first, second, cancellationToken: cancellation))!.AsObject();
+
+        Assert.NotEqual(first, second);
+        Assert.Equal(("/root/Main/Hud", "seat.hp", 3, 5), OnlyChange(diff));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AKeptReadAgainstASubtreeSnapshotIsRefusedNamingBothKinds()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await MarkAsync(cancellation, ("Main", "Hud", SeatSource));
+        string stateId = (await ReadAsync(cancellation, options: new StateOptions(Keep: true)))["stateId"]!.GetValue<string>();
+        JsonNode subtree = JsonNode.Parse(await _tools.SnapshotSubtreeAsync("Main", cancellationToken: cancellation))!;
+        string snapshotId = subtree["snapshotId"]!.GetValue<string>();
+
+        McpException refusal = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.DiffSnapshotsAsync(stateId, snapshotId, cancellationToken: cancellation)
+        );
+
+        Assert.Equal(
+            $"Snapshot {stateId} is a state read (get_game_state) and {snapshotId} is a subtree snapshot; diff two of the same kind.",
+            refusal.Message
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task BatchDriveKeepsTheReadAndReturnsItsStateId()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await MarkAsync(cancellation, ("Main", "Hud", SeatSource));
+        BatchStep read = new(Tool: RuntimeTools.GetGameStateToolName, Args: new JsonObject { ["options"] = new JsonObject { ["keep"] = true } });
+
+        JsonObject batch = JsonNode.Parse(await _tools.BatchDriveAsync([read], _server, cancellationToken: cancellation))!.AsObject();
+
+        Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        string stateId = batch["steps"]![0]!["result"]!["stateId"]!.GetValue<string>();
+        JsonObject diff = JsonNode.Parse(await _tools.DiffSnapshotsAsync(stateId, cancellationToken: cancellation))!.AsObject();
+        Assert.Equal(0, diff["changedCount"]!.GetValue<int>());
+    }
+
+    /// <summary>Sets the Hud node's hp, which SeatSource's state reports as seat.hp.</summary>
+    private async Task SetHpAsync(int hp, CancellationToken cancellation)
+    {
+        JsonElement value = JsonSerializer.SerializeToElement(hp);
+        JsonNode reply = JsonNode.Parse(await _tools.SetPropertyAsync("/root/Main/Hud", "hp", value, cancellationToken: cancellation))!;
+        Assert.False(reply.AsObject().ContainsKey("error"), reply.ToJsonString());
+    }
+
+    /// <summary>The diff's one change as (node, property, before, after), its values integers.</summary>
+    private static (string Node, string Property, int Before, int After) OnlyChange(JsonObject diff)
+    {
+        JsonNode change = Assert.Single(diff["changed"]!.AsArray())!;
+        return (
+            change["node"]!.GetValue<string>(),
+            change["property"]!.GetValue<string>(),
+            change["before"]!.GetValue<int>(),
+            change["after"]!.GetValue<int>()
+        );
     }
 
     private async Task<JsonObject> ReadAsync(CancellationToken cancellation, string? node = null, StateOptions? options = null) =>

@@ -14,6 +14,7 @@ namespace GodotMcp.Server.Tools;
 /// </summary>
 internal sealed partial class RuntimeTools
 {
+    internal const string DiffSnapshotsToolName = "diff_snapshots";
     internal const int DefaultMaxSnapshotNodes = 2000;
     private static readonly TimeSpan SnapshotTimeout = TimeSpan.FromSeconds(30);
 
@@ -22,7 +23,8 @@ internal sealed partial class RuntimeTools
         "Captures a subtree of the running game and holds it in the session for diff_snapshots: for the node and every "
             + "descendant, the properties the inspector shows (as inspect_node lists them) and its groups as the property "
             + "groups. Returns {snapshotId, node, nodeCount}, not the data. The session holds its 16 most recently used "
-            + "snapshots, until the game stops or restarts. A subtree of more than maxNodes nodes is refused with its count."
+            + "snapshots, get_game_state's kept reads among them, until the game stops or restarts. A subtree of more than "
+            + "maxNodes nodes is refused with its count."
             + BridgeNote
     )]
     public async Task<string> SnapshotSubtreeAsync(
@@ -48,37 +50,81 @@ internal sealed partial class RuntimeTools
         return ErrorReport.AddTo(result, errors).ToJsonString();
     }
 
-    [McpServerTool(Name = "diff_snapshots", ReadOnly = true, Destructive = false, OpenWorld = false)]
+    [McpServerTool(Name = DiffSnapshotsToolName, ReadOnly = false, Destructive = true, OpenWorld = false)]
     [Description(
-        "Compares two snapshots snapshot_subtree took, or one with the live game: without afterId, the before snapshot's "
-            + "node is captured again with the same options. Nodes match by their path from the snapshot's node. Returns "
-            + "{added, removed, changed: [{node, property, before, after}], addedCount, removedCount, changedCount}: added and "
-            + "removed are paths, and each list holds at most 200 entries while the counts are full. Values compare as JSON, "
-            + "numbers within 1e-6; a property only one side has leaves the other side's value out."
+        "Compares two held snapshots of one kind, two snapshot_subtree captures or two get_game_state reads kept with keep, "
+            + "or one with the live game: without afterId, the before snapshot is taken again with the same options, a subtree "
+            + "captured again or a state read repeated with its node, keys, maxNodes and maxDepth; that repeated read runs the "
+            + "game's state methods, which are game code. A subtree snapshot and a "
+            + "state read are refused together. Nodes match by their path, a subtree's from its node, a state read's absolute; "
+            + "a state read's properties are the leaves of each node's state by dotted path (seats[1].hp; $ for a state that "
+            + "is not a Dictionary or Array with entries), or error for a node whose read failed. Returns {added, removed, "
+            + "changed: [{node, property, before, after}], addedCount, removedCount, changedCount}: added and removed are "
+            + "paths, and each list holds at most 200 entries while the counts are full. Values compare as JSON, numbers "
+            + "within 1e-6; a property only one side has leaves the other side's value out."
     )]
     public async Task<string> DiffSnapshotsAsync(
-        [Description("The earlier snapshot's snapshotId.")] string beforeId,
-        [Description("The later snapshot's snapshotId; the live game, captured now, when left out.")] string? afterId = null,
+        [Description("The earlier snapshot's id: a snapshotId snapshot_subtree returned or a stateId get_game_state returned.")] string beforeId,
+        [Description("The later snapshot's id, of the same kind; the live game, taken again now, when left out.")] string? afterId = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
-        CheckName(beforeId, "beforeId", "Pass a snapshotId snapshot_subtree returned.");
+        CheckName(beforeId, "beforeId", "Pass a snapshotId snapshot_subtree returned or a stateId get_game_state returned.");
         if (afterId is not null)
         {
-            CheckName(afterId, "afterId", "Pass a snapshotId snapshot_subtree returned, or leave afterId out to compare with the live game.");
+            CheckName(
+                afterId,
+                "afterId",
+                "Pass a snapshotId snapshot_subtree returned or a stateId get_game_state returned, or leave afterId out to compare "
+                    + "with the live game."
+            );
         }
 
         GodotSession target = Find(session);
         Snapshot before = HeldSnapshot(target, beforeId);
         if (afterId is not null)
         {
-            return SnapshotDiff.Compare(before.Nodes, HeldSnapshot(target, afterId).Nodes).ToJsonString();
+            Snapshot after = HeldSnapshot(target, afterId);
+            CheckSameKind(beforeId, before.Kind, afterId, after.Kind);
+            return SnapshotDiff.Compare(before.Nodes, after.Nodes).ToJsonString();
+        }
+
+        (JsonObject live, IReadOnlyList<ErrorEntry> errors) = await RetakeAsync(target, before, cancellationToken);
+        return ErrorReport.AddTo(SnapshotDiff.Compare(before.Nodes, live), errors).ToJsonString();
+    }
+
+    /// <exception cref="McpException">The two snapshots are of different kinds.</exception>
+    internal static void CheckSameKind(string beforeId, SnapshotKind before, string afterId, SnapshotKind after)
+    {
+        if (before != after)
+        {
+            throw new McpException($"Snapshot {beforeId} is {KindName(before)} and {afterId} is {KindName(after)}; diff two of the same kind.");
+        }
+    }
+
+    private static string KindName(SnapshotKind kind) => kind == SnapshotKind.State ? "a state read (get_game_state)" : "a subtree snapshot";
+
+    /// <summary>
+    /// The live game's nodes, taken as <paramref name="before"/> was: a subtree captured again, or a state read repeated with its
+    /// options, through get_game_state's own read, and flattened.
+    /// </summary>
+    private async Task<(JsonObject Nodes, IReadOnlyList<ErrorEntry> Errors)> RetakeAsync(
+        GodotSession target,
+        Snapshot before,
+        CancellationToken cancellationToken
+    )
+    {
+        if (before.Kind == SnapshotKind.State)
+        {
+            StateRequest reread = new(before.Node, before.Keys, before.MaxNodes, before.MaxDepth);
+            (JsonObject shaped, IReadOnlyList<ErrorEntry> stateErrors) = await ReadStateAsync(target, reread, cancellationToken);
+            return (StateFlatten.Nodes(shaped), stateErrors);
         }
 
         SnapshotRequest again = new(before.Node, before.Properties, before.Ignore, before.MaxNodes);
         (Snapshot live, IReadOnlyList<ErrorEntry> errors) = await CaptureSnapshotAsync(target, again, cancellationToken);
-        return ErrorReport.AddTo(SnapshotDiff.Compare(before.Nodes, live.Nodes), errors).ToJsonString();
+        return (live.Nodes, errors);
     }
 
     /// <exception cref="McpException">node or a property name is empty, or maxNodes is under 1.</exception>
@@ -108,7 +154,7 @@ internal sealed partial class RuntimeTools
         target.Snapshots.Find(id)
         ?? throw new McpException(
             $"snapshot {id} is not held (evicted, or from a run that stopped or restarted, or an attached game that has gone); "
-                + "take a new one with snapshot_subtree"
+                + "take a new one with snapshot_subtree, or keep a new state read with get_game_state {options: {keep: true}}"
         );
 
     private static async Task<(Snapshot Snapshot, IReadOnlyList<ErrorEntry> Errors)> CaptureSnapshotAsync(
@@ -147,7 +193,7 @@ internal sealed partial class RuntimeTools
             HandshakeExpectation.ReadString(fields, "node")
             ?? throw new McpException($"The bridge's snapshot reply names no node: {reply?.ToJsonString() ?? "null"}.");
         JsonObject nodes = fields["nodes"] is JsonObject captured ? captured.DeepClone().AsObject() : [];
-        return new Snapshot(node, request.Properties, request.Ignore, request.MaxNodes, nodes);
+        return new Snapshot(SnapshotKind.Subtree, node, request.MaxNodes, nodes) { Properties = request.Properties, Ignore = request.Ignore };
     }
 
     /// <summary>What a snapshot captures: its root as given (null: the current scene's), the property filters and the node cap.</summary>

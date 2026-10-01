@@ -131,6 +131,28 @@ public sealed class CSharpStateTests(SharedCsProbeSession shared) : IClassFixtur
         Assert.Equal($"{States}/Dictionary", result["omitted"]!["paths"]![0]!.GetValue<string>());
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AKeptReadIsReadAgainThroughTheHelper()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddStatesAsync(cancellation);
+        string stateId = (await ReadAsync(cancellation, new StateOptions(Keep: true)))["stateId"]!.GetValue<string>();
+        // Lets the game run on, so the frame each Frame node returns is a later one at the re-read.
+        await Task.Delay(200, cancellation);
+
+        JsonObject diff = JsonNode.Parse(await _tools.DiffSnapshotsAsync(stateId, cancellationToken: cancellation))!.AsObject();
+
+        // A re-read without the helper would turn every C# node's leaves into an error; only the two frame counts move.
+        JsonArray changed = diff["changed"]!.AsArray();
+        Assert.Equal(
+            [($"{States}/Frame", "$"), ($"{States}/GdFrame", "$")],
+            changed.Select(change => (change!["node"]!.GetValue<string>(), change["property"]!.GetValue<string>()))
+        );
+        JsonNode frame = changed[0]!;
+        Assert.True(frame["after"]!.GetValue<long>() > frame["before"]!.GetValue<long>(), frame.ToJsonString());
+        Assert.Equal((0, 0), (diff["addedCount"]!.GetValue<int>(), diff["removedCount"]!.GetValue<int>()));
+    }
+
     private static string Error(JsonNode entry) => entry["error"]?.GetValue<string>() ?? $"no error in {entry.ToJsonString()}";
 
     private async Task<JsonObject> ReadAsync(CancellationToken cancellation, StateOptions? options = null) =>

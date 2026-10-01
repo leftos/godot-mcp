@@ -31,6 +31,10 @@ internal static class ToolClasses
         ["set_property"] = new(EditLive, "it changes a live node's state"),
         [RuntimeTools.CsGetToolName] = new(Read, "it reads a member's value"),
         [RuntimeTools.GetGameStateToolName] = new(Read, "it reads the game's own state"),
+        [RuntimeTools.DiffSnapshotsToolName] = new(
+            Read,
+            "it compares snapshots and reads the game again, running state methods only for a kept state read"
+        ),
     };
 
     private static readonly Lazy<IReadOnlyDictionary<string, string>> Catalog = new(Load);

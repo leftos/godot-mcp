@@ -172,7 +172,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["delete_nodes"] = destructive,
             ["describe_class"] = readsTheGame,
             ["detach_project"] = changesTheGame,
-            ["diff_snapshots"] = readsTheGame,
+            ["diff_snapshots"] = destructive,
             ["disarm_project"] = changesTheGame,
             ["disconnect_signal"] = destructive,
             ["drag"] = changesTheGame,

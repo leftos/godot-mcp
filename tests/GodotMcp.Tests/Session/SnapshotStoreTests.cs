@@ -57,5 +57,21 @@ public sealed class SnapshotStoreTests
         Assert.Equal("s3", store.Add(Capture("/root/C")));
     }
 
-    private static Snapshot Capture(string node) => new(node, null, null, 2000, new JsonObject { ["."] = new JsonObject() });
+    [Fact]
+    public void AStateReadSharesTheIdsAndKeepsItsKindAndOptions()
+    {
+        SnapshotStore store = new();
+        store.Add(Capture("/root/A"));
+        Snapshot read = new(SnapshotKind.State, null, 50, []) { Keys = ["hp"], MaxDepth = 4 };
+
+        string id = store.Add(read);
+
+        Assert.Equal("s2", id);
+        Snapshot held = store.Find(id)!;
+        Assert.Equal((SnapshotKind.State, null, 50, 4), (held.Kind, held.Node, held.MaxNodes, held.MaxDepth));
+        Assert.Equal(["hp"], held.Keys!);
+        Assert.Equal(SnapshotKind.Subtree, store.Find("s1")!.Kind);
+    }
+
+    private static Snapshot Capture(string node) => new(SnapshotKind.Subtree, node, 2000, new JsonObject { ["."] = new JsonObject() });
 }

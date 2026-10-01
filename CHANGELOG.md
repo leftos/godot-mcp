@@ -2,6 +2,16 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- `get_game_state {options: {keep: true}}` holds the read for `diff_snapshots`, which reports each changed state leaf, such as `seats[1].hp`.
+
+### Changed
+
+- `diff_snapshots` is annotated destructive, since re-reading a kept state read runs the game's state methods; agents keep it as a read tool.
+
 ## 0.12.0 - 2026-09-30
 
 ### Added

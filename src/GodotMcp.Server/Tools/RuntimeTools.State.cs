@@ -33,15 +33,19 @@ internal sealed partial class RuntimeTools
             + "longer than 4000 characters of JSON comes back as {valuePreview, valueLength}. A node's error says why it has "
             + "no state: no state method, the method raised or threw (the error's text), or it returned a coroutine or a "
             + "Task, which is never awaited. warning says a C# node's _mcp_state was not read beside its _McpState. With no "
-            + "marked node, hint says how a game opts in. The state methods are game code and run at every read."
+            + "marked node, hint says how a game opts in. The state methods are game code and run at every read. With keep, "
+            + "the read is also held in the session beside snapshot_subtree's snapshots and the result gains stateId, which "
+            + "diff_snapshots compares with a later kept read or with the live game read again, one value per leaf of each "
+            + "state (seats[1].hp)."
             + ValueNote
             + BridgeNote
     )]
     public async Task<string> GetGameStateAsync(
         [Description(NodeDescription + " Only the marked nodes at or under it are read; every marked node when left out.")] string? node = null,
         [Description(
-            "{keys, maxNodes, maxDepth}: only these keys or dotted paths of each state, the most nodes to read (50 by "
-                + "default, up to 500), and the levels of nested values to write (4 by default, up to 8)."
+            "{keys, maxNodes, maxDepth, keep}: only these keys or dotted paths of each state, the most nodes to read (50 by "
+                + "default, up to 500), the levels of nested values to write (4 by default, up to 8), and whether to hold the "
+                + "read for diff_snapshots (false by default)."
         )]
             StateOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
@@ -50,12 +54,34 @@ internal sealed partial class RuntimeTools
     {
         StateRequest request = CheckStateRequest(node, options);
         GodotSession game = Find(session);
+        (JsonObject shaped, IReadOnlyList<ErrorEntry> errors) = await ReadStateAsync(game, request, cancellationToken);
+        if (options?.Keep == true)
+        {
+            shaped["stateId"] = game.Snapshots.Add(KeptState(request, shaped));
+        }
+
+        return ErrorReport.AddTo(shaped, errors).ToJsonString();
+    }
+
+    /// <summary>
+    /// One state read: the bridge's state command, with the C# helper's extension when the project has a built assembly, shaped
+    /// into get_game_state's result; diff_snapshots re-reads a kept read through it.
+    /// </summary>
+    private async Task<(JsonObject Shaped, IReadOnlyList<ErrorEntry> Errors)> ReadStateAsync(
+        GodotSession game,
+        StateRequest request,
+        CancellationToken cancellationToken
+    )
+    {
         JsonObject parameters = StateParameters(request, csharp.PrepareForState(game.ProjectDir));
         BridgeCall call = new(GetGameStateToolName, "state", parameters, InspectTimeout);
         BridgeResult result = await CallWithErrorsAsync(game, call, cancellationToken);
-        JsonObject shaped = StateMerge.Shape(result.Reply, request.Keys, hintWhenEmpty: request.Node is null);
-        return ErrorReport.AddTo(shaped, result.Errors).ToJsonString();
+        return (StateMerge.Shape(result.Reply, request.Keys, hintWhenEmpty: request.Node is null), result.Errors);
     }
+
+    /// <summary>The read as the snapshot store holds it: flattened, with the options that read it again.</summary>
+    internal static Snapshot KeptState(StateRequest request, JsonObject shaped) =>
+        new(SnapshotKind.State, request.Node, request.MaxNodes, StateFlatten.Nodes(shaped)) { Keys = request.Keys, MaxDepth = request.MaxDepth };
 
     /// <summary>
     /// The bridge's state params: node, maxNodes and maxDepth, with extension when the C# helper reads the C# nodes, or

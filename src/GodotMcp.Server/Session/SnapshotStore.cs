@@ -2,11 +2,37 @@ using System.Text.Json.Nodes;
 
 namespace GodotMcp.Server.Session;
 
+/// <summary>What took a held snapshot, which decides how diff_snapshots takes it again and what it may be compared with.</summary>
+internal enum SnapshotKind
+{
+    /// <summary>snapshot_subtree's capture: each node's inspector properties and its groups.</summary>
+    Subtree,
+
+    /// <summary>A get_game_state read kept with keep: each marked node's state flattened to one value per leaf.</summary>
+    State,
+}
+
 /// <summary>
-/// A captured subtree of the running game: the absolute path of the node it starts from, what it was captured with, and its
-/// nodes, keyed by path from that node ("." for itself), each an object of property values and its groups.
+/// A held snapshot of the running game: its kind, what it was taken with, and its nodes, each an object of values. A subtree's
+/// <see cref="Node"/> is the absolute path it starts from, its nodes keyed by path from it ("." for itself), each its property
+/// values and groups, filtered by <see cref="Properties"/> and <see cref="Ignore"/>. A state read's <see cref="Node"/> is the
+/// node as given (null: the whole tree), its nodes keyed by absolute path, each its state's leaves by dotted path
+/// (<c>StateFlatten</c>), read with <see cref="Keys"/> and <see cref="MaxDepth"/>.
 /// </summary>
-internal sealed record Snapshot(string Node, IReadOnlyList<string>? Properties, IReadOnlyList<string>? Ignore, int MaxNodes, JsonObject Nodes);
+internal sealed record Snapshot(SnapshotKind Kind, string? Node, int MaxNodes, JsonObject Nodes)
+{
+    /// <summary>A subtree's property names kept; null keeps every one.</summary>
+    public IReadOnlyList<string>? Properties { get; init; }
+
+    /// <summary>A subtree's property names left out; null leaves none out.</summary>
+    public IReadOnlyList<string>? Ignore { get; init; }
+
+    /// <summary>A state read's keys; null reads every key.</summary>
+    public IReadOnlyList<string>? Keys { get; init; }
+
+    /// <summary>A state read's levels of nested values written.</summary>
+    public int MaxDepth { get; init; }
+}
 
 /// <summary>
 /// A session's snapshots, the <see cref="Capacity"/> most recently used, under ids s1, s2, … that never repeat within the

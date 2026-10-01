@@ -77,7 +77,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Baseline | A stored screenshot (and its crop) a new capture is compared against, giving the changed pixels, their bounding box and a diff image (`save_screenshot_baseline`, `compare_screenshot`) |
 | State digest | What `get_game_state` returns: the state each marked node gives, read in one frame |
 | State method | A node's `_mcp_state()` (GDScript) or `_McpState()` (C#, any accessibility, any return type, read by the C# helper) returning the values an agent reads in place of a screenshot; its node opts in by joining the `mcp_state` group |
-| Snapshot | A capture of a live subtree's nodes with their shown properties and groups, held by the session under an id (`snapshot_subtree`) for `diff_snapshots` to compare; not a screenshot baseline |
+| Snapshot | A capture of a live subtree's nodes with their shown properties and groups (`snapshot_subtree`), or a kept game-state read flattened to one value per leaf (`get_game_state` `keep`), held by the session under an id for `diff_snapshots` to compare; not a screenshot baseline |
 | uiChanged baseline | Not a screenshot baseline: the snapshot of the UI (visible Controls, focus owner, top popup) the bridge takes when the first input gesture since launch, or since the last met `wait_for {uiChanged}`, starts, which that wait compares with |
 | gdtest | The headless GDScript unit-test run (`pwsh run.ps1 gdtest`, `tests/bridge`): many bridge-logic tests in one Godot process, as against an integration test's launch per test |
 | Complexity baseline | `tools/gdcomplexity-baseline.txt`: the GDScript functions still allowed over the complexity or length limit, a list that can only shrink |
