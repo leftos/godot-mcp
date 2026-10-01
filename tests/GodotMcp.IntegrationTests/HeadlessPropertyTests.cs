@@ -66,6 +66,39 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         + "anchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n\n"
         + "[node name=\"Backdrop\" type=\"ColorRect\" parent=\".\"]\nlayout_mode = 0\nanchor_right = 1.0\nanchor_bottom = 1.0\nmouse_filter = 2\n";
 
+    // defaults.tscn: a full-rect Control holding a Label that stores size_flags_vertical = 4 and a Node2D to edit. Godot's
+    // pack compares against the class default, and Label's constructor sets v_size_flags to SIZE_SHRINK_CENTER (4.7.2
+    // scene/gui/label.cpp L1531), so the line is one a save in place would drop.
+    private const string DefaultLabelScene =
+        "[gd_scene format=3 uid=\"uid://bqdefault0000a\"]\n\n[node name=\"Screen\" type=\"Control\"]\nlayout_mode = 3\n"
+        + "anchors_preset = 15\nanchor_right = 1.0\nanchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n\n"
+        + "[node name=\"Title\" type=\"Label\" parent=\".\"]\nsize_flags_vertical = 4\n\n"
+        + "[node name=\"Marker\" type=\"Node2D\" parent=\".\"]\n";
+
+    // text.tscn: the same Control with a Label storing text = "a", a line set back to the default drops.
+    private const string StoredTextScene =
+        "[gd_scene format=3 uid=\"uid://bqtext000000a\"]\n\n[node name=\"Screen\" type=\"Control\"]\nlayout_mode = 3\n"
+        + "anchors_preset = 15\nanchor_right = 1.0\nanchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n\n"
+        + "[node name=\"Title\" type=\"Label\" parent=\".\"]\ntext = \"a\"\n";
+
+    // notice.tscn: a full-rect Control root, the sub-scene of the instancing scene below.
+    private const string NoticeScene =
+        "[gd_scene format=3 uid=\"uid://bqnotice0000a\"]\n\n[node name=\"Notice\" type=\"Control\"]\nlayout_mode = 3\n"
+        + "anchors_preset = 15\nanchor_right = 1.0\nanchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n";
+
+    // screen.tscn: a full-rect Control instancing notice.tscn, whose Note record stores the same full-rect lines the
+    // instanced scene gives it, which Godot's pack leaves out as the instance's values equal the sub-scene's. The record
+    // stores no layout_mode: a full-rect Control under a Control parent reads 1 (Anchors) from its anchors, not the 3 it
+    // stores, so pack always writes that line here (4.7.2 control.cpp L944-947).
+    private const string NoticeInstanceScene =
+        "[gd_scene load_steps=2 format=3 uid=\"uid://bqscreen0000a\"]\n\n"
+        + "[ext_resource type=\"PackedScene\" path=\"res://notice.tscn\" id=\"1\"]\n\n"
+        + "[node name=\"Screen\" type=\"Control\"]\nlayout_mode = 3\nanchors_preset = 15\nanchor_right = 1.0\n"
+        + "anchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n\n"
+        + "[node name=\"Note\" parent=\".\" instance=ExtResource(\"1\")]\nanchors_preset = 15\n"
+        + "anchor_right = 1.0\nanchor_bottom = 1.0\n\n"
+        + "[node name=\"Marker\" type=\"Node2D\" parent=\".\"]\n";
+
     // ShadowTrail.cs: a Node2D script whose private field scale shadows Node2D.scale.
     private static readonly Dictionary<string, string> ShadowTrailSources = new() { ["ShadowTrail.cs"] = ShadowTrailSource };
 
@@ -378,6 +411,83 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         string text = File.ReadAllText(Path.Combine(probe.Directory, "screen.tscn"));
         Assert.Contains("tooltip_text = \"probe\"", text, StringComparison.Ordinal);
         Assert.EndsWith("\n\n" + ScreenBackdrop, text, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetNodePropertiesKeepsADefaultLineAnUntouchedNodeStored()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "defaults.tscn"), DefaultLabelScene);
+
+        await _tools.SetNodePropertiesAsync(
+            probe.Directory,
+            "defaults.tscn",
+            [new PropertyUpdate("Marker", "position", Json("""{"x": 5, "y": 6}"""))],
+            cancellation
+        );
+
+        string[] original = DefaultLabelScene.Split('\n');
+        string[] lines = Read(probe.Directory, "defaults.tscn").Split('\n');
+        int marker = Array.IndexOf(original, "[node name=\"Marker\" type=\"Node2D\" parent=\".\"]");
+        Assert.Equal(original.Length + 1, lines.Length);
+        Assert.StartsWith("[node name=\"Marker\" type=\"Node2D\" parent=\".\" unique_id=", lines[marker], StringComparison.Ordinal);
+        Assert.Equal([.. original[..marker], lines[marker], "position = Vector2(5, 6)", .. original[(marker + 1)..]], lines);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetNodePropertiesOnANodeKeepsItsOtherStoredDefaults()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "defaults.tscn"), DefaultLabelScene);
+
+        await _tools.SetNodePropertiesAsync(
+            probe.Directory,
+            "defaults.tscn",
+            [new PropertyUpdate("Title", "texture_filter", Json("1"))],
+            cancellation
+        );
+
+        string[] original = DefaultLabelScene.Split('\n');
+        string[] lines = Read(probe.Directory, "defaults.tscn").Split('\n');
+        int title = Array.IndexOf(original, "[node name=\"Title\" type=\"Label\" parent=\".\"]");
+        Assert.Equal(original.Length + 1, lines.Length);
+        Assert.StartsWith("[node name=\"Title\" type=\"Label\" parent=\".\" unique_id=", lines[title], StringComparison.Ordinal);
+        Assert.Equal(["size_flags_vertical = 4", "texture_filter = 1"], lines[(title + 1)..(title + 3)].Order(StringComparer.Ordinal));
+        Assert.Equal([.. original[..title], lines[title], lines[title + 1], lines[title + 2], .. original[(title + 2)..]], lines);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetNodePropertiesKeepsAnInstanceOverrideEqualToTheInstancedScene()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "notice.tscn"), NoticeScene);
+        File.WriteAllText(Path.Combine(probe.Directory, "screen.tscn"), NoticeInstanceScene);
+
+        await _tools.SetNodePropertiesAsync(
+            probe.Directory,
+            "screen.tscn",
+            [new PropertyUpdate("Marker", "position", Json("""{"x": 5, "y": 6}"""))],
+            cancellation
+        );
+
+        (string header, string[] body) = Section(probe.Directory, "screen.tscn", "Note");
+        Assert.Equal("[node name=\"Note\" parent=\".\" instance=ExtResource(\"1\")]", header);
+        Assert.Equal(["anchors_preset = 15", "anchor_right = 1.0", "anchor_bottom = 1.0"], body);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetNodePropertiesDropsALineSetBackToTheDefault()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "defaults.tscn"), StoredTextScene);
+
+        await _tools.SetNodePropertiesAsync(probe.Directory, "defaults.tscn", [new PropertyUpdate("Title", "text", Json("\"\""))], cancellation);
+
+        Assert.Empty(Section(probe.Directory, "defaults.tscn", "Title").Body);
     }
 
     [Fact(Timeout = TestTimeoutMs)]

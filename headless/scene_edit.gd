@@ -25,6 +25,12 @@ const SOURCE_SET_WARNING := (
 	"the scene stores every property Godot's pack stores, not only the ones %s stored, since "
 	+ "leaving the others out would change it: %s"
 )
+## The warning a save returns when leaving out a line its source stored would change how the scene
+## loads, with the source and what would change.
+const SOURCE_RESTORE_WARNING := (
+	"the scene leaves out lines %s stored that Godot's pack drops, since keeping them would change "
+	+ "it: %s"
+)
 
 ## The engine log operations.gd keeps (its ErrorLog, with count() and since(start)), so an edit
 ## can quote what a load it refuses logged; null when nothing set it.
@@ -245,8 +251,9 @@ static func _ends_with_any(text: String, suffixes: Array) -> bool:
 ## scene at path with the uid path has (a new one for a new file), as SceneFiles.save_resource_from
 ## does: known holds the source's own ext_resource uids, and keep_layout keeps the text source has
 ## for every section the save left alone. A save with a source stores no property the source's
-## record for a node did not store when the node loads the same without it (keep_source_set).
-## {uid, warning?} with uid as uid:// text, or {error}.
+## record for a node did not store when the node loads the same without it, and, when keep_layout,
+## keeps a property the source stored that Godot's pack leaves out when the scene still loads the
+## same (keep_source_set). {uid, warning?} with uid as uid:// text, or {error}.
 static func save(
 	root: Node, source: String, path: String, known: Dictionary, keep_layout: bool
 ) -> Dictionary:
@@ -255,7 +262,7 @@ static func save(
 		return {"error": "%s could not be packed: %s" % [path, packing["error"]]}
 	var clauses: PackedStringArray = packing["clashes"]
 	if not source.is_empty():
-		var kept: String = keep_source_set(packing["packed"], source)
+		var kept: String = keep_source_set(packing["packed"], source, keep_layout)
 		if not kept.is_empty():
 			clauses.append(kept)
 	var layout_from: String = source if keep_layout else ""
@@ -271,16 +278,20 @@ static func save(
 	return saved
 
 
-## Drops from packed each (name, value) pair of a node record that the scene at source also lists,
-## when source's record for that node stores no such property and the value is not an Object and
-## equals what the node reads as in source, instantiated afresh. Godot's pack compares against the
-## class default, which for some properties differs from what a node reads in a scene (a Control
-## subclass is built parentless for its defaults, so its layout_mode default is 3, while a child
-## of a Control in position mode reads 0: 4.7.2 class_db.cpp L2184-2196, control.cpp L978-982),
-## so it stores lines the source never had. packed is then instantiated and each dropped property
-## compared with the source's value; on a mismatch packed keeps every pair and the result is the
-## warning saying why, else "".
-static func keep_source_set(packed: PackedScene, source: String) -> String:
+## Keeps the source's stored set in packed, both ways. Drops each (name, value) pair of a node
+## record that the scene at source also lists, when source's record for that node stores no such
+## property and the value is not an Object and equals what the node reads as in source, instantiated
+## afresh. Then, when keep_layout, puts back each pair source's record stores that packed's record
+## does not, when the packed scene, instantiated, reads that value for the property anyway, so the
+## file keeps the line the source had without changing how the scene loads (a property the edit
+## changed reads its new value, so it is not restored). Godot's pack compares against the class
+## default, which for some properties differs from what a node reads in a scene (a Control subclass
+## is built parentless for its defaults, so its layout_mode default is 3, while a child of a Control
+## in position mode reads 0: 4.7.2 class_db.cpp L2184-2196, control.cpp L978-982), so it stores
+## lines the source never had and leaves out lines the source stored. packed is then instantiated
+## and each changed property compared with the value it must read; on a mismatch packed's state is
+## put back as it was and the result is the warning saying why, else "".
+static func keep_source_set(packed: PackedScene, source: String, keep_layout: bool) -> String:
 	var scene := ResourceLoader.load(source) as PackedScene
 	var loaded: Node = null
 	if scene != null:
@@ -298,14 +309,102 @@ static func keep_source_set(packed: PackedScene, source: String) -> String:
 		return _source_pairs(bundled, pairs, plan[record], dropped)
 	var trimmed: Dictionary = _with_pairs(full.duplicate(), trim)
 	loaded.free()
-	if dropped.is_empty():
+	if not dropped.is_empty():
+		packed.set("_bundled", trimmed)
+		var mismatch: String = _drop_mismatch(packed, dropped)
+		if not mismatch.is_empty():
+			packed.set("_bundled", full)
+			return SOURCE_SET_WARNING % [source, mismatch]
+	if not keep_layout:
 		return ""
-	packed.set("_bundled", trimmed)
-	var mismatch: String = _drop_mismatch(packed, dropped)
+	return _restore_source_set(packed, scene, source)
+
+
+## Restores into packed each (name, value) pair the scene at source stores that Godot's pack left
+## out of packed's state (the value is the class default), when the packed scene, instantiated as
+## it loads, reads that value for the property anyway, so the file keeps the line the source had
+## without changing how the scene loads. "" on success, else a warning clause after packed's state
+## is put back as it was.
+static func _restore_source_set(packed: PackedScene, scene: PackedScene, source: String) -> String:
+	var state: SceneState = packed.get_state()
+	var missing: Dictionary = _missing_source_values(state, _stored_values(scene.get_state()))
+	if missing.is_empty():
+		return ""
+	var loaded: Node = instantiate_native(packed, PackedScene.GEN_EDIT_STATE_MAIN)
+	if loaded == null:
+		return ""
+	var context := {"state": state, "loaded": loaded, "missing": missing, "added": {}}
+	var base: Dictionary = packed.get("_bundled")
+	var restored: Dictionary = base.duplicate()
+	restored["variants"] = (base["variants"] as Array).duplicate()
+	var restore := func(
+		bundled: Dictionary, record: int, _head: PackedInt32Array, pairs: PackedInt32Array
+	) -> PackedInt32Array:
+		return _restored_pairs(bundled, pairs, record, context)
+	var next: Dictionary = _with_pairs(restored, restore)
+	loaded.free()
+	var added: Dictionary = context["added"]
+	if added.is_empty():
+		return ""
+	packed.set("_bundled", next)
+	var mismatch: String = _drop_mismatch(packed, added)
 	if mismatch.is_empty():
 		return ""
-	packed.set("_bundled", full)
-	return SOURCE_SET_WARNING % [source, mismatch]
+	packed.set("_bundled", base)
+	return SOURCE_RESTORE_WARNING % [source, mismatch]
+
+
+## {path: {name: value}} for each record of state: the values the source's record for that path
+## holds whose name the record stores no pair for (the properties Godot's pack left out).
+static func _missing_source_values(state: SceneState, stored: Dictionary) -> Dictionary:
+	var missing: Dictionary = {}
+	for record in state.get_node_count():
+		var path: String = _plain_path(state.get_node_path(record))
+		if not stored.has(path):
+			continue
+		var values: Dictionary = (stored[path] as Dictionary).duplicate()
+		for pair in state.get_node_property_count(record):
+			values.erase(state.get_node_property_name(record, pair))
+		if not values.is_empty():
+			missing[path] = values
+	return missing
+
+
+## {path: {name: value}} for each record of state: the value it stores for each of its node's
+## properties, by the path of the node relative to the root.
+static func _stored_values(state: SceneState) -> Dictionary:
+	var stored: Dictionary = {}
+	for index in state.get_node_count():
+		var values: Dictionary = {}
+		for pair in state.get_node_property_count(index):
+			var property: String = state.get_node_property_name(index, pair)
+			values[property] = state.get_node_property_value(index, pair)
+		stored[_plain_path(state.get_node_path(index))] = values
+	return stored
+
+
+## pairs, a node record's (name index, value index) pairs, with a pair added before the script's
+## pair for each of context.missing's entry for the record's path whose value is no Object and
+## which the node context.loaded reads, so restoring it does not change how the scene loads;
+## context.added gains {path: {name: value}} for each.
+static func _restored_pairs(
+	bundled: Dictionary, pairs: PackedInt32Array, record: int, context: Dictionary
+) -> PackedInt32Array:
+	var path: String = _plain_path((context["state"] as SceneState).get_node_path(record))
+	var missing: Dictionary = context["missing"]
+	if not missing.has(path):
+		return pairs
+	var node: Node = (context["loaded"] as Node).get_node_or_null(NodePath(path))
+	if node == null:
+		return pairs
+	var hidden: PackedStringArray = _hidden_names(node)
+	for property: String in missing[path]:
+		var value: Variant = missing[path][property]
+		if typeof(value) != TYPE_OBJECT and Json.same(_loaded_value(node, property, hidden), value):
+			pairs = _with_pair(bundled, pairs, property, value)
+			var at_path: Dictionary = (context["added"] as Dictionary).get_or_add(path, {})
+			at_path[property] = value
+	return pairs
 
 
 ## {packed, clashes} for root packed as PackedScene.pack packs it, or {error} with the pack's

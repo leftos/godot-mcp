@@ -99,6 +99,13 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         + "anchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n\n"
         + ScreenBackdrop;
 
+    // stored_default.tscn: a Control holding a Label that stores size_flags_vertical = 4, a line Godot's pack leaves out
+    // (Label's constructor sets it: 4.7.2 scene/gui/label.cpp L1531). An in-place save_scene takes Godot's full form.
+    private const string StoredDefaultScene =
+        "[gd_scene format=3]\n\n[node name=\"Screen\" type=\"Control\"]\nlayout_mode = 3\nanchors_preset = 15\n"
+        + "anchor_right = 1.0\nanchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n\n"
+        + "[node name=\"Title\" type=\"Label\" parent=\".\"]\nsize_flags_vertical = 4\n";
+
     // ShadowTrail.cs: a Node2D script whose private field scale shadows Node2D.scale.
     private static readonly Dictionary<string, string> ShadowTrailSources = new() { ["ShadowTrail.cs"] = ShadowTrailSource };
 
@@ -349,6 +356,22 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         await _tools.SaveSceneAsync(probe.Directory, "screen.tscn", cancellationToken: cancellation);
 
         Assert.Contains("layout_mode = 0", BackdropProperties(probe.Directory, "screen.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SaveSceneInPlaceDropsAStoredDefault()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "stored_default.tscn"), StoredDefaultScene);
+
+        await _tools.SaveSceneAsync(probe.Directory, "stored_default.tscn", cancellationToken: cancellation);
+
+        Assert.DoesNotContain(
+            "size_flags_vertical",
+            File.ReadAllText(Path.Combine(probe.Directory, "stored_default.tscn")),
+            StringComparison.Ordinal
+        );
     }
 
     [Fact(Timeout = TestTimeoutMs)]

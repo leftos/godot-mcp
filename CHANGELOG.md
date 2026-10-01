@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- Headless scene edits keep a property line the file stored at its default, such as a `Label`'s `size_flags_vertical = 4`, instead of rewriting that node.
+
 ## 0.13.0 - 2026-10-01
 
 ### Added
