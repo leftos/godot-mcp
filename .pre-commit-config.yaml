@@ -4,6 +4,13 @@
 # the C#. Ruff (ruff.toml) checks the Python tools. No hook runs a test suite: `run.ps1 test`, `gdtest` and `pytest`
 # run by hand.
 repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: mixed-line-ending
+        args: [--fix=lf]
+        exclude: '\.(bat|cmd)$'
+
   - repo: local
     hooks:
       - id: csharpier
