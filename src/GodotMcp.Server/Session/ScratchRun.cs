@@ -7,11 +7,13 @@ namespace GodotMcp.Server.Session;
 
 /// <summary>
 /// A scratch scene to play: its name (the file's, without .tscn), its res:// path, its pace in seconds, the user arguments it
-/// starts with, and the reason the profile knows it to fail, if any.
+/// starts with, the reason the profile knows it to fail, if any, and the profile's reason for its pace, if any.
 /// </summary>
 internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace, IReadOnlyList<string> UserArgs)
 {
     public string? Known { get; init; }
+
+    public string? PaceReason { get; init; }
 }
 
 /// <summary>
@@ -154,7 +156,7 @@ internal sealed class ScratchRun
     )
     {
         ScratchObservation seen = await new ScratchRun(registry, plan, scene).PlayAsync(cancellationToken);
-        return ScratchVerdict.Judge(seen, new ScratchRules(plan.Patterns, scene.Known, plan.Details));
+        return ScratchVerdict.Judge(seen, new ScratchRules(plan.Patterns, scene.Known, scene.PaceReason, plan.Details));
     }
 
     /// <summary>

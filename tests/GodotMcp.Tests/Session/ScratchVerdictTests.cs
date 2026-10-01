@@ -10,7 +10,7 @@ namespace GodotMcp.Tests.Session;
 public sealed class ScratchVerdictTests
 {
     private static readonly IReadOnlyList<Regex> Default = ScratchProfile.DefaultPatterns;
-    private static readonly ScratchRules Plain = new(Default, Known: null, Details: false);
+    private static readonly ScratchRules Plain = new(Default, Known: null, PaceReason: null, Details: false);
 
     [Fact]
     public void EveryStepCleanAndACleanExitIsGreenWithoutSteps()
@@ -285,6 +285,74 @@ public sealed class ScratchVerdictTests
         Assert.Equal((true, 1, 0, 1, 1, 0), (run.Passed, run.Green, run.Red, run.Known, run.NoSteps, run.Killed));
         Assert.Equal([green, known, empty], run.Scenes);
     }
+
+    [Fact]
+    public void ARedSceneCarriesTheProfilesReasonForItsPace()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0) with { CallError = "x" }), Plain with { PaceReason = "the tray lies at rest" });
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Equal("the tray lies at rest", result.PaceReason);
+    }
+
+    [Fact]
+    public void AKilledSceneCarriesTheProfilesReasonForItsPace()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(
+            Seen(Step(0)) with
+            {
+                Kill = new ScratchFailure(0, "step0", "ceiling", ""),
+            },
+            Plain with
+            {
+                PaceReason = "the tray lies at rest",
+            }
+        );
+
+        Assert.Equal(ScratchVerdict.Killed, result.Verdict);
+        Assert.Equal("the tray lies at rest", result.PaceReason);
+    }
+
+    [Fact]
+    public void AGreenSceneCarriesNoReasonAndOmitsItFromTheJson()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0)), Plain with { PaceReason = "the tray lies at rest" });
+
+        JsonObject json = JsonNode.Parse(JsonSerializer.Serialize(result, ToolJson.Options))!.AsObject();
+
+        Assert.Equal(ScratchVerdict.Green, result.Verdict);
+        Assert.Null(result.PaceReason);
+        Assert.False(json.ContainsKey("paceReason"), json.ToJsonString());
+    }
+
+    [Fact]
+    public void AKnownSceneCarriesNoReason()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(
+            Seen(Step(0) with { CallError = "x" }),
+            Plain with
+            {
+                Known = "flaky tray",
+                PaceReason = "the tray lies at rest",
+            }
+        );
+
+        Assert.Equal(ScratchVerdict.KnownRed, result.Verdict);
+        Assert.Null(result.PaceReason);
+    }
+
+    [Fact]
+    public void AKnownNowGreenSceneCarriesNoReason()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0)), Plain with { Known = "flaky tray", PaceReason = "the tray lies at rest" });
+
+        Assert.Equal(ScratchVerdict.KnownNowGreen, result.Verdict);
+        Assert.Null(result.PaceReason);
+    }
+
+    [Fact]
+    public void ARedSceneWithoutAProfileReasonCarriesNone() =>
+        Assert.Null(ScratchVerdict.Judge(Seen(Step(0) with { CallError = "x" }), Plain).PaceReason);
 
     [Fact]
     public void ARedOrKilledScenePlaysAgainAloneOnlyWhenItRanBesideOthers()

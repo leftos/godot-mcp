@@ -33,7 +33,7 @@ internal sealed class ScratchTools(SessionRegistry sessions)
             + "start in order, parallel at a time; with more than one, a red or killed scene (not known, not refused before its first "
             + "step) is played once more alone after the others: green alone, its entry is the replay's with alone: true and counts "
             + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
-            + "{passed, green, red, known, noSteps, killed, scenes: [{scene, verdict, steps: {played, total}, pace, seconds, session, "
+            + "{passed, green, red, known, noSteps, killed, scenes: [{scene, verdict, steps: {played, total}, pace, paceReason?, seconds, session, "
             + "failedAt?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?, alone?, "
             + "aloneFailedAt?}]}, scenes in the order given; exit.error is an error in the pace after the last step, killed a game the "
             + "stop had to kill; details lists each step for a red or killed scene, or with options.details; seconds covers both "
@@ -87,14 +87,32 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         List<ScratchScenePlan> plans = [];
         foreach (string resPath in ResolveScenes(profile, scratch, scenes))
         {
-            string name = Path.GetFileNameWithoutExtension(resPath);
-            double pace = options.Pace ?? scratch.Pace.GetValueOrDefault(name, DefaultPace);
-            plans.Add(new ScratchScenePlan(name, resPath, pace, userArgs) { Known = scratch.Known.GetValueOrDefault(name) });
+            plans.Add(ScenePlan(Path.GetFileNameWithoutExtension(resPath), resPath, scratch, options, userArgs));
         }
 
         return new ScratchPlan(projectDir, plans, scratch.Patterns, prepare, options.Details ?? false)
         {
             Parallel = options.Parallel ?? scratch.Parallel,
+        };
+    }
+
+    /// <summary>
+    /// One scene's plan: options.pace else the profile's pace for the scene else the default, and the profile's reason for the
+    /// pace, kept only when the pace came from the profile rather than from options.pace.
+    /// </summary>
+    private static ScratchScenePlan ScenePlan(
+        string name,
+        string resPath,
+        ScratchProfile scratch,
+        ScratchOptions options,
+        IReadOnlyList<string> userArgs
+    )
+    {
+        ScratchPace? entry = scratch.Pace.GetValueOrDefault(name);
+        return new ScratchScenePlan(name, resPath, options.Pace ?? entry?.Seconds ?? DefaultPace, userArgs)
+        {
+            Known = scratch.Known.GetValueOrDefault(name),
+            PaceReason = options.Pace is null ? entry?.Reason : null,
         };
     }
 

@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - `get_game_state {options: {keep: true}}` holds the read for `diff_snapshots`, which reports each changed state leaf, such as `seats[1].hp`.
+- `scratch.pace` entries take `{seconds, reason}`, and `run_scratches` reports the reason as `paceReason` on a red or killed scene.
 
 ### Changed
 

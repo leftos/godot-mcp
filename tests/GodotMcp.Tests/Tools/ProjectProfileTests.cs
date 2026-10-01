@@ -331,7 +331,7 @@ public sealed class ProjectProfileTests : IDisposable
               "scratch": {
                 "folder": "res://Scratch",
                 "userArgs": ["--scratch-profile"],
-                "pace": { "TrayScratch": 3, "Fast": 0.25 },
+                "pace": { "TrayScratch": { "seconds": 3, "reason": "the tray lies at rest" }, "Fast": 0.25 },
                 "known": { "TrayScratch": "the tray drops a card under load" },
                 "patterns": ["^FAIL", "boom$"]
               }
@@ -343,12 +343,20 @@ public sealed class ProjectProfileTests : IDisposable
 
         Assert.Equal("res://Scratch", scratch.Folder);
         Assert.Equal(["--scratch-profile"], scratch.UserArgs);
-        Assert.Equal(3.0, scratch.Pace["TrayScratch"]);
-        Assert.Equal(0.25, scratch.Pace["Fast"]);
+        Assert.Equal(new ScratchPace(3, "the tray lies at rest"), scratch.Pace["TrayScratch"]);
+        Assert.Equal(new ScratchPace(0.25, null), scratch.Pace["Fast"]);
         Assert.Equal("the tray drops a card under load", scratch.Known["TrayScratch"]);
         Assert.Equal(["^FAIL", "boom$"], scratch.Patterns.Select(pattern => pattern.ToString()));
         Assert.Matches(scratch.Patterns[0], "FAIL: x");
         Assert.DoesNotMatch(scratch.Patterns[0], "fail: x");
+    }
+
+    [Fact]
+    public void AnObjectPaceReadsItsKeysInEitherOrder()
+    {
+        Write("""{ "scratch": { "pace": { "A": { "reason": "why", "seconds": 3 } } } }""");
+
+        Assert.Equal(new ScratchPace(3, "why"), ProjectProfile.Load(_temp.Path).Scratch!.Pace["A"]);
     }
 
     [Fact]
@@ -424,7 +432,46 @@ public sealed class ProjectProfileTests : IDisposable
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": "1" } } }""",
-        "(scratch): \"pace\" of \"A\" must be a number of seconds above 0 and at most 120, not a string."
+        "(scratch): \"pace\" of \"A\" must be a number of seconds above 0 and at most 120, or an object {\"seconds\", \"reason\"}, not a string."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": [] } } }""",
+        "(scratch): \"pace\" of \"A\" must be a number of seconds above 0 and at most 120, or an object {\"seconds\", \"reason\"}, not an array."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 3 } } } }""",
+        "(scratch, pace of \"A\"): \"reason\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or "
+            + "write the pace as a bare number of seconds."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "reason": "x" } } } }""",
+        "(scratch, pace of \"A\"): \"seconds\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or "
+            + "write the pace as a bare number of seconds."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": {} } } }""",
+        "(scratch, pace of \"A\"): \"seconds\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or "
+            + "write the pace as a bare number of seconds."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 0, "reason": "x" } } } }""",
+        "(scratch, pace of \"A\"): \"seconds\" must be a number of seconds above 0 and at most 120, not 0."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": "3", "reason": "x" } } } }""",
+        "(scratch, pace of \"A\"): \"seconds\" must be a number of seconds above 0 and at most 120, not a string."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "" } } } }""",
+        "(scratch, pace of \"A\"): \"reason\" must be a non-empty string, why the scene needs this pace."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 3, "reason": 5 } } } }""",
+        "(scratch, pace of \"A\"): \"reason\" must be a non-empty string, why the scene needs this pace."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "x", "why": "y" } } } }""",
+        "(scratch, pace of \"A\"): unknown key \"why\"; the allowed keys are seconds, reason. Remove or rename it."
     )]
     [InlineData("""{ "scratch": { "pace": { "A": 1, "A": 2 } } }""", "(scratch): the scene \"A\" appears twice in \"pace\"; keep one.")]
     [InlineData(

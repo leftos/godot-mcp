@@ -41,6 +41,7 @@ internal sealed partial class ProjectProfile
     private static readonly string[] TopLevelKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "presets", PrepWrapperKey, ScratchKey];
     private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "session"];
     private static readonly string[] ScratchKeys = ["folder", "userArgs", "pace", "known", "patterns", "parallel"];
+    private static readonly string[] PaceKeys = ["seconds", "reason"];
 
     private readonly ProfileValues _defaults;
     private readonly IReadOnlyDictionary<string, ProfileValues> _presets;
@@ -382,14 +383,59 @@ internal sealed partial class ProjectProfile
         return map;
     }
 
-    private static double ReadPace(string scene, JsonElement value, Place place) =>
-        value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out double pace) && ScratchProfile.IsPace(pace)
-            ? pace
-            : throw Refused(
+    /// <summary>One scene's pace: a bare number of seconds, or an object of the seconds and the reason for them.</summary>
+    private static ScratchPace ReadPace(string scene, JsonElement value, Place place)
+    {
+        if (value.ValueKind == JsonValueKind.Number)
+        {
+            return new ScratchPace(Seconds(value, place, $"\"pace\" of \"{scene}\""), null);
+        }
+
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            throw Refused(
                 place,
-                $"\"pace\" of \"{scene}\" must be a number of seconds above 0 and at most {ScratchProfile.MaxPaceSeconds}, not "
-                    + (value.ValueKind == JsonValueKind.Number ? value.GetRawText() : Describe(value.ValueKind))
+                $"\"pace\" of \"{scene}\" must be a number of seconds above 0 and at most {ScratchProfile.MaxPaceSeconds}, "
+                    + $"or an object {{\"seconds\", \"reason\"}}, not {Describe(value.ValueKind)}"
             );
+        }
+
+        return ReadObjectPace(scene, value, place);
+    }
+
+    /// <summary>An object pace: both keys, "seconds" and "reason", in either order, the reason why the scene needs it.</summary>
+    private static ScratchPace ReadObjectPace(string scene, JsonElement value, Place place)
+    {
+        Place pace = new(place.Path, $"scratch, pace of \"{scene}\"");
+        Dictionary<string, JsonElement> keys = Keys(value, PaceKeys, pace);
+        if (!keys.TryGetValue("seconds", out JsonElement seconds))
+        {
+            throw Refused(pace, MissingPaceKey("seconds"));
+        }
+
+        if (!keys.TryGetValue("reason", out JsonElement reason))
+        {
+            throw Refused(pace, MissingPaceKey("reason"));
+        }
+
+        return new ScratchPace(Seconds(seconds, pace, "\"seconds\""), ReadPaceReason(reason, pace));
+    }
+
+    private static string MissingPaceKey(string key) =>
+        $"\"{key}\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or write the pace as a bare number of seconds";
+
+    private static string ReadPaceReason(JsonElement value, Place place) =>
+        value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } reason
+            ? reason
+            : throw Refused(place, "\"reason\" must be a non-empty string, why the scene needs this pace");
+
+    /// <summary>A JSON number as a pace in seconds; out of range or not a number is refused naming <paramref name="key"/>.</summary>
+    private static double Seconds(JsonElement value, Place place, string key) =>
+        value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out double seconds) && ScratchProfile.IsPace(seconds)
+            ? seconds
+            : throw Refused(place, $"{key} must be a number of seconds above 0 and at most {ScratchProfile.MaxPaceSeconds}, not {Shown(value)}");
+
+    private static string Shown(JsonElement value) => value.ValueKind == JsonValueKind.Number ? value.GetRawText() : Describe(value.ValueKind);
 
     private static string ReadReason(string scene, JsonElement value, Place place) =>
         value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } reason
@@ -469,13 +515,13 @@ internal sealed partial class ProjectProfile
 
 /// <summary>
 /// godot-mcp.json's <c>scratch</c> section: the folder whose scenes run_scratches plays when given none, the user arguments a
-/// scratch run starts with in place of the top-level ones (null when the section sets none), each scene's pace in seconds, the
-/// scenes known to fail with the reason, the patterns a step's output lines fail it by, and how many scenes play at once.
+/// scratch run starts with in place of the top-level ones (null when the section sets none), each scene's pace in seconds and why,
+/// the scenes known to fail with the reason, the patterns a step's output lines fail it by, and how many scenes play at once.
 /// </summary>
 internal sealed record ScratchProfile(
     string? Folder,
     IReadOnlyList<string>? UserArgs,
-    IReadOnlyDictionary<string, double> Pace,
+    IReadOnlyDictionary<string, ScratchPace> Pace,
     IReadOnlyDictionary<string, string> Known,
     IReadOnlyList<Regex> Patterns
 )
@@ -496,7 +542,13 @@ internal sealed record ScratchProfile(
     public static readonly IReadOnlyList<Regex> DefaultPatterns = [Compile(@"^SCRIPT ERROR|^ERROR:|ObjectDB instances? (was|were) leaked")];
 
     /// <summary>The section of a project that has none: no folder, and the default patterns.</summary>
-    public static readonly ScratchProfile None = new(null, null, new Dictionary<string, double>(), new Dictionary<string, string>(), DefaultPatterns);
+    public static readonly ScratchProfile None = new(
+        null,
+        null,
+        new Dictionary<string, ScratchPace>(),
+        new Dictionary<string, string>(),
+        DefaultPatterns
+    );
 
     /// <summary>Whether <paramref name="seconds"/> is a pace: above 0 and at most <see cref="MaxPaceSeconds"/>.</summary>
     public static bool IsPace(double seconds) => seconds is > 0 and <= MaxPaceSeconds;
@@ -508,3 +560,6 @@ internal sealed record ScratchProfile(
     /// <exception cref="ArgumentException">The pattern is not a valid regular expression.</exception>
     public static Regex Compile(string pattern) => new(pattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 }
+
+/// <summary>A scene's pace in seconds and why it was set; the reason is null when the profile gave a bare number.</summary>
+internal sealed record ScratchPace(double Seconds, string? Reason);

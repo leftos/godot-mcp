@@ -53,8 +53,11 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
     public double Seconds { get; init; }
 }
 
-/// <summary>How a scene is judged: the patterns that fail a step's line, its known reason, and whether its steps are listed when green.</summary>
-internal sealed record ScratchRules(IReadOnlyList<Regex> Patterns, string? Known, bool Details);
+/// <summary>
+/// How a scene is judged: the patterns that fail a step's line, its known reason, the profile's reason for its pace, and whether
+/// its steps are listed when green.
+/// </summary>
+internal sealed record ScratchRules(IReadOnlyList<Regex> Patterns, string? Known, string? PaceReason, bool Details);
 
 /// <summary>run_scratches' result: whether every scene passed, the count of each verdict, and one entry a scene.</summary>
 internal sealed record ScratchRunResult(
@@ -115,6 +118,10 @@ internal sealed record ScratchExit(int? Code)
 /// <summary>One scene's verdict and what it rests on.</summary>
 internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchStepCount Steps, double Pace, double Seconds, string Session)
 {
+    /// <summary>The profile's reason for the scene's pace, when the scene came out red or killed; null otherwise.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PaceReason { get; init; }
+
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ScratchFailure? FailedAt { get; init; }
 
@@ -190,6 +197,7 @@ internal static partial class ScratchVerdict
             seen.Session
         )
         {
+            PaceReason = shown is Red or Killed ? rules.PaceReason : null,
             FailedAt = failedAt,
             Details = listSteps && seen.Refusal is null ? [.. seen.Steps.Select(step => StepResult(step, rules.Patterns, verdict != Green))] : null,
             Exit = ExitOf(seen, rules.Patterns),

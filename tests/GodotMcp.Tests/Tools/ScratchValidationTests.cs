@@ -149,15 +149,38 @@ public sealed class ScratchValidationTests : IDisposable
     [Fact]
     public void ThePaceIsTheOptionsElseTheProfilesElseTheDefault()
     {
-        WriteProfile("""{ "scratch": { "folder": "Scratch", "pace": { "Beta": 3 }, "known": { "Beta": "slow tray" } } }""");
+        WriteProfile(
+            """
+            {
+              "scratch": {
+                "folder": "Scratch",
+                "pace": { "Beta": { "seconds": 3, "reason": "the tray lies at rest" } },
+                "known": { "Beta": "slow tray" }
+              }
+            }
+            """
+        );
 
         ScratchPlan profiled = Plan(null);
         ScratchPlan given = Plan(null, new ScratchOptions(Pace: 1.5, Details: true));
 
         Assert.Equal([ScratchTools.DefaultPace, 3.0], profiled.Scenes.Select(scene => scene.Pace));
+        Assert.Equal([null, "the tray lies at rest"], profiled.Scenes.Select(scene => scene.PaceReason));
         Assert.Equal([null, "slow tray"], profiled.Scenes.Select(scene => scene.Known));
         Assert.Equal([1.5, 1.5], given.Scenes.Select(scene => scene.Pace));
+        Assert.All(given.Scenes, scene => Assert.Null(scene.PaceReason));
         Assert.True(given.Details);
+    }
+
+    [Fact]
+    public void ABareNumberPaceCarriesNoReason()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch", "pace": { "Beta": 2 } } }""");
+
+        ScratchScenePlan beta = Plan(["Beta"]).Scenes[0];
+
+        Assert.Equal(2.0, beta.Pace);
+        Assert.Null(beta.PaceReason);
     }
 
     [Theory]
