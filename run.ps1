@@ -246,6 +246,7 @@ $itestRules = @(
     @('tools/install-release.ps1', 'none'),
     @('tools/package.ps1', 'none'),
     @('tools/release-check.ps1', 'none'),
+    @('tools/agent-mail-guard.ps1', 'none'),
     @('tools/InstalledServers.psm1', 'none'),
     @('tools/gate.selftest.ps1', 'none'),
     @('tools/gdcomplexity-baseline.txt', 'none')
