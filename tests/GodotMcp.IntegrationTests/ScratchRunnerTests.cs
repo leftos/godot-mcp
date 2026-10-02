@@ -9,7 +9,8 @@ namespace GodotMcp.IntegrationTests;
 /// <summary>
 /// run_scratches against the scratch scenes of the InputProbe fixture (its scratch folder and godot-mcp.json) and a C# one of
 /// CsProbe's, in the real Godot: each verdict, the step list, the sessions the scenes ran in, and a C# exception reported as
-/// the failing step's error. The fixtures' copies take top-level files only, so each test copies the scratch folder in.
+/// the failing step's error; an error at the boot, GDScript's or a C# _Ready's, is red before any step. The fixtures' copies
+/// take top-level files only, so each test copies the scratch folder in.
 /// </summary>
 public sealed class ScratchRunnerTests : IAsyncDisposable
 {
@@ -37,6 +38,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
     private static readonly string[] FolderScenes =
     [
         "ScratchBeside",
+        "ScratchBootError",
         "ScratchBusy",
         "ScratchGreen",
         "ScratchLateError",
@@ -49,7 +51,21 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         "ScratchPushError",
     ];
 
-    private static readonly string[] FolderVerdicts = ["green", "killed", "green", "red", "red", "green", "known", "green", "red", "no-steps", "red"];
+    private static readonly string[] FolderVerdicts =
+    [
+        "green",
+        "red",
+        "killed",
+        "green",
+        "red",
+        "red",
+        "green",
+        "known",
+        "green",
+        "red",
+        "no-steps",
+        "red",
+    ];
 
     [Fact(Timeout = TestTimeoutMs)]
     public async Task TheScratchFolderPlaysEachSceneToItsVerdict()
@@ -57,9 +73,13 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         JsonObject result = await RunAsync(_probe.Directory, scenes: null, options: null, TestContext.Current.CancellationToken);
 
         AssertFolderVerdicts(result);
+        JsonNode prep = result["prep"]!;
+        Assert.False(string.IsNullOrEmpty(prep["build"]!.GetValue<string>()), result.ToJsonString());
+        Assert.False(string.IsNullOrEmpty(prep["import"]!.GetValue<string>()), result.ToJsonString());
         JsonArray scenes = result["scenes"]!.AsArray();
         Assert.All(scenes, scene => Assert.Null(scene!["alone"]));
-        Assert.Equal([1, 0.1, 0.5, 2, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5], scenes.Select(scene => scene!["pace"]!.GetValue<double>()));
+        Assert.Equal([1, 0.5, 0.1, 0.5, 2, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5], scenes.Select(scene => scene!["pace"]!.GetValue<double>()));
+        Assert.Equal("boot", scenes[1]!["failedAt"]!["name"]!.GetValue<string>());
     }
 
     [Fact(Timeout = ParallelTestTimeoutMs)]
@@ -69,8 +89,9 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
 
         AssertFolderVerdicts(result);
         JsonArray scenes = result["scenes"]!.AsArray();
-        Assert.False(scenes[1]!["alone"]!.GetValue<bool>());
-        Assert.Null(scenes[8]!["alone"]);
+        Assert.Null(scenes[1]!["alone"]);
+        Assert.False(scenes[2]!["alone"]!.GetValue<bool>());
+        Assert.Null(scenes[9]!["alone"]);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -103,7 +124,20 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal(FolderVerdicts, scenes.Select(scene => scene!["verdict"]!.GetValue<string>()));
         Assert.Equal(FolderScenes.Select(name => "InputProbe.scratch-" + name), scenes.Select(scene => scene!["session"]!.GetValue<string>()));
         Assert.False(result["passed"]!.GetValue<bool>());
-        Assert.Equal((4, 4, 1, 1, 1), Counts(result));
+        Assert.Equal((4, 5, 1, 1, 1), Counts(result));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnErrorAtTheBootIsRedAtTheBootAndNoStepPlays()
+    {
+        JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchBootError"], options: null, TestContext.Current.CancellationToken));
+
+        JsonNode failedAt = scene["failedAt"]!;
+        Assert.Equal("red", scene["verdict"]!.GetValue<string>());
+        Assert.Equal((-1, "boot"), (failedAt["index"]!.GetValue<int>(), failedAt["name"]!.GetValue<string>()));
+        Assert.Contains("boot failure", failedAt["error"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Equal((0, 2), (scene["steps"]!["played"]!.GetValue<int>(), scene["steps"]!["total"]!.GetValue<int>()));
+        Assert.Null(scene["details"]);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -242,21 +276,38 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
     }
 
     [Fact(Timeout = CSharpTestTimeoutMs)]
-    public async Task ACSharpStepThatThrowsIsRedWithTheExceptionInItsErrors()
+    public async Task ACSharpStepThatThrowsIsRedWithItsExceptionAndAReadyThatThrowsIsRedAtTheBoot()
     {
         using var csProbe = CsProbeProject.Unbuilt();
         CopyFolder(Path.Combine(RepoPaths.Root, "tests", "fixtures", "CsProbe", "Scratch"), Path.Combine(csProbe.Directory, "Scratch"));
 
-        JsonObject scene = Single(
-            await RunAsync(csProbe.Directory, ["res://Scratch/ScratchThrow.tscn"], options: null, TestContext.Current.CancellationToken)
+        JsonObject result = await RunAsync(
+            csProbe.Directory,
+            ["res://Scratch/ScratchThrow.tscn", "res://Scratch/ScratchBootThrow.tscn"],
+            options: null,
+            TestContext.Current.CancellationToken
         );
 
-        JsonNode failedAt = scene["failedAt"]!;
-        Assert.Equal("red", scene["verdict"]!.GetValue<string>());
-        Assert.Equal("CsProbe.scratch-ScratchThrow", scene["session"]!.GetValue<string>());
-        Assert.Equal((1, "throws", "about to throw"), (failedAt["index"]!.GetValue<int>(), failedAt["name"]!.GetValue<string>(), Status(failedAt)));
-        JsonNode error = Assert.Single(scene["details"]![1]!["errors"]!.AsArray())!;
+        JsonArray scenes = result["scenes"]!.AsArray();
+        Assert.Equal(2, scenes.Count);
+        JsonNode step = scenes[0]!;
+        JsonNode stepFailedAt = step["failedAt"]!;
+        Assert.Equal("red", step["verdict"]!.GetValue<string>());
+        Assert.Equal("CsProbe.scratch-ScratchThrow", step["session"]!.GetValue<string>());
+        Assert.Equal(
+            (1, "throws", "about to throw"),
+            (stepFailedAt["index"]!.GetValue<int>(), stepFailedAt["name"]!.GetValue<string>(), Status(stepFailedAt))
+        );
+        JsonNode error = Assert.Single(step["details"]![1]!["errors"]!.AsArray())!;
         Assert.Contains("InvalidOperationException: scratch step threw", error["message"]!.GetValue<string>(), StringComparison.Ordinal);
+
+        JsonNode boot = scenes[1]!;
+        JsonNode bootFailedAt = boot["failedAt"]!;
+        Assert.Equal("red", boot["verdict"]!.GetValue<string>());
+        Assert.Equal("CsProbe.scratch-ScratchBootThrow", boot["session"]!.GetValue<string>());
+        Assert.Equal((-1, "boot"), (bootFailedAt["index"]!.GetValue<int>(), bootFailedAt["name"]!.GetValue<string>()));
+        Assert.Contains("InvalidOperationException: scratch boot threw", bootFailedAt["error"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Equal(0, boot["steps"]!["played"]!.GetValue<int>());
     }
 
     private async Task<JsonObject> RunAsync(string projectDir, string[]? scenes, ScratchOptions? options, CancellationToken cancellation) =>

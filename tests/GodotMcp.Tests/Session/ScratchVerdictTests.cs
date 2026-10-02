@@ -94,6 +94,74 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
+    public void ABootFeedErrorIsRedAtTheBoot()
+    {
+        ScratchObservation seen = Seen() with
+        {
+            Total = 2,
+            BootErrors = [Error("boot failure", "res://s.gd", 4)],
+            LaunchLines = ["ERROR: launch noise"],
+        };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(seen, Plain with { Details = true });
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Equal(new ScratchFailure(-1, "boot", "boot failure (res://s.gd:4)", ""), result.FailedAt);
+        Assert.Equal(new ScratchStepCount(0, 2), result.Steps);
+        Assert.Null(result.Details);
+    }
+
+    [Fact]
+    public void AWarningAtTheBootIsNotRed()
+    {
+        ScratchObservation seen = Seen(Step(0)) with { BootErrors = [Error("careful", "", 0) with { Type = ErrorFeed.WarningType }] };
+
+        Assert.Equal(1, seen.Total);
+        Assert.Equal(ScratchVerdict.Green, ScratchVerdict.Judge(seen, Plain).Verdict);
+    }
+
+    [Fact]
+    public void ABootErrorInASceneWithNoStepsIsRedNotNoSteps()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen() with { BootErrors = [Error("boot failure", "", 0)] }, Plain);
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Equal(new ScratchFailure(-1, "boot", "boot failure", ""), result.FailedAt);
+    }
+
+    [Fact]
+    public void AKnownSceneRedAtBootStaysRed()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(
+            Seen() with
+            {
+                Total = 2,
+                BootErrors = [Error("boot failure", "", 0)],
+            },
+            Plain with
+            {
+                Known = "flaky tray",
+            }
+        );
+
+        ScratchRunResult run = ScratchVerdict.Summarise([result], PrepResult.Skipped);
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Null(result.Known);
+        Assert.Equal((false, 1, 0), (run.Passed, run.Red, run.Known));
+    }
+
+    [Fact]
+    public void ASceneRedAtBootIsNotReplayedAlone()
+    {
+        ScratchSceneResult booted = ScratchVerdict.Judge(Seen() with { Total = 2, BootErrors = [Error("boot failure", "", 0)] }, Plain);
+
+        Assert.Equal((ScratchVerdict.Red, 0, "boot"), (booted.Verdict, booted.Steps.Played, booted.FailedAt!.Name));
+        Assert.False(ScratchVerdict.PlaysAgainAlone(booted, parallel: 2));
+        Assert.False(ScratchVerdict.PlaysAgainAlone(booted, parallel: 4));
+    }
+
+    [Fact]
     public void ACatastrophicPatternIsItsStepsErrorNotAKill()
     {
         IReadOnlyList<ScratchPattern> slow = [new ScratchPattern(ScratchProfile.Compile("(a+)+$"), null)];
@@ -199,7 +267,7 @@ public sealed class ScratchVerdictTests
     {
         ScratchSceneResult killed = ScratchVerdict.Judge(Seen(Step(0)) with { Kill = new ScratchFailure(0, "step0", "ceiling", "") }, Plain);
 
-        ScratchRunResult run = ScratchVerdict.Summarise([killed]);
+        ScratchRunResult run = ScratchVerdict.Summarise([killed], PrepResult.Skipped);
 
         Assert.Equal((false, 0, 0, 1), (run.Passed, run.Green, run.Red, run.Killed));
     }
@@ -218,7 +286,7 @@ public sealed class ScratchVerdictTests
             }
         );
 
-        ScratchRunResult run = ScratchVerdict.Summarise([result]);
+        ScratchRunResult run = ScratchVerdict.Summarise([result], PrepResult.Skipped);
 
         Assert.Equal(ScratchVerdict.Killed, result.Verdict);
         Assert.Equal((false, 0, 1), (run.Passed, run.Known, run.Killed));
@@ -238,7 +306,7 @@ public sealed class ScratchVerdictTests
             }
         );
 
-        ScratchRunResult run = ScratchVerdict.Summarise([result]);
+        ScratchRunResult run = ScratchVerdict.Summarise([result], PrepResult.Skipped);
 
         Assert.Equal(ScratchVerdict.Red, result.Verdict);
         Assert.Equal(-1, result.FailedAt!.Index);
@@ -322,7 +390,7 @@ public sealed class ScratchVerdictTests
     {
         ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0)), Plain with { Known = "flaky tray" });
 
-        ScratchRunResult run = ScratchVerdict.Summarise([result]);
+        ScratchRunResult run = ScratchVerdict.Summarise([result], PrepResult.Skipped);
 
         Assert.Equal(ScratchVerdict.KnownNowGreen, result.Verdict);
         Assert.Equal("flaky tray", result.Known);
@@ -337,7 +405,7 @@ public sealed class ScratchVerdictTests
         ScratchSceneResult known = ScratchVerdict.Judge(Seen(Step(0) with { CallError = "x" }), Plain with { Known = "why" });
         ScratchSceneResult empty = ScratchVerdict.Judge(Seen(), Plain);
 
-        ScratchRunResult run = ScratchVerdict.Summarise([green, known, empty]);
+        ScratchRunResult run = ScratchVerdict.Summarise([green, known, empty], PrepResult.Skipped);
 
         Assert.Equal((true, 1, 0, 1, 1, 0), (run.Passed, run.Green, run.Red, run.Known, run.NoSteps, run.Killed));
         Assert.Equal([green, known, empty], run.Scenes);
@@ -457,7 +525,7 @@ public sealed class ScratchVerdictTests
         ScratchSceneResult replay = ScratchVerdict.Judge(Seen(Step(0)) with { Seconds = 1.5 }, Plain);
 
         ScratchSceneResult entry = ScratchVerdict.Alone(first, replay);
-        ScratchRunResult run = ScratchVerdict.Summarise([entry]);
+        ScratchRunResult run = ScratchVerdict.Summarise([entry], PrepResult.Skipped);
 
         Assert.Equal(ScratchVerdict.Green, entry.Verdict);
         Assert.True(entry.Alone);
@@ -483,7 +551,7 @@ public sealed class ScratchVerdictTests
         Assert.Equal(3.0, entry.Seconds);
         Assert.False(json["alone"]!.GetValue<bool>());
         Assert.Equal(1, json["aloneFailedAt"]!["index"]!.GetValue<int>());
-        Assert.Equal(1, ScratchVerdict.Summarise([entry]).Red);
+        Assert.Equal(1, ScratchVerdict.Summarise([entry], PrepResult.Skipped).Red);
     }
 
     [Fact]
@@ -520,6 +588,25 @@ public sealed class ScratchVerdictTests
         Assert.False(json.ContainsKey("known"), json.ToJsonString());
         Assert.False(json["exit"]!.AsObject().ContainsKey("leaked"), json.ToJsonString());
         Assert.Equal(1, json["steps"]!["played"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void TheRunResultCarriesItsPrepWithoutItsAbsentFields()
+    {
+        PrepResult prep = new()
+        {
+            Build = "no-csproj",
+            Import = "done",
+            ImportMs = 1200,
+        };
+
+        ScratchRunResult run = ScratchVerdict.Summarise([ScratchVerdict.Judge(Seen(Step(0)), Plain)], prep);
+        JsonObject json = JsonNode.Parse(JsonSerializer.Serialize(run, ToolJson.Options))!.AsObject();
+        JsonObject shown = json["prep"]!.AsObject();
+
+        Assert.Equal(["build", "import", "importMs"], shown.Select(pair => pair.Key));
+        Assert.Equal(("no-csproj", "done"), (shown["build"]!.GetValue<string>(), shown["import"]!.GetValue<string>()));
+        Assert.Equal(1200, shown["importMs"]!.GetValue<long>());
     }
 
     [Fact]

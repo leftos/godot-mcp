@@ -25,15 +25,18 @@ internal sealed record ScratchStep(int Index, string Name, int GameMs)
 }
 
 /// <summary>
-/// What the runner saw of one scene: the lines printed before the first step, never judged; the steps it played, and at most
-/// one of: a refusal before any step (the scene did not start, has no current scene, or its root lacks the scratch protocol),
-/// or the step in flight when it was killed (-1 outside a step) with the reason; then why the pace after the last step
-/// failed (an error in the feed, or a wait not met), the game's exit code, the stop's kill and warning, and the lines printed
-/// after the last step's window, the stop included.
+/// What the runner saw of one scene: the lines printed before the first step, never judged, and the error feed's entries from
+/// the launch to the first step, which are; the steps it played, and at most one of: a refusal before any step (the scene did
+/// not start, has no current scene, or its root lacks the scratch protocol), or the step in flight when it was killed (-1
+/// outside a step) with the reason; then why the pace after the last step failed (an error in the feed, or a wait not met),
+/// the game's exit code, the stop's kill and warning, and the lines printed after the last step's window, the stop included.
 /// </summary>
 internal sealed record ScratchObservation(string Scene, string Session, double Pace, int Total)
 {
     public IReadOnlyList<string> LaunchLines { get; init; } = [];
+
+    /// <summary>The error feed's entries from the launch to the first step; an error among them fails the scene at the boot.</summary>
+    public IReadOnlyList<ErrorEntry> BootErrors { get; init; } = [];
 
     public IReadOnlyList<ScratchStep> Steps { get; init; } = [];
 
@@ -60,7 +63,9 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
 /// </summary>
 internal sealed record ScratchRules(IReadOnlyList<ScratchPattern> Patterns, string? Known, string? PaceReason, bool Details);
 
-/// <summary>run_scratches' result: whether every scene passed, the count of each verdict, and one entry a scene.</summary>
+/// <summary>
+/// run_scratches' result: whether every scene passed, the count of each verdict, what the prep did, and one entry a scene.
+/// </summary>
 internal sealed record ScratchRunResult(
     bool Passed,
     int Green,
@@ -68,6 +73,7 @@ internal sealed record ScratchRunResult(
     int Known,
     int NoSteps,
     int Killed,
+    PrepResult Prep,
     IReadOnlyList<ScratchSceneResult> Scenes
 );
 
@@ -167,6 +173,9 @@ internal static partial class ScratchVerdict
     public const string KnownRed = "known";
     public const string KnownNowGreen = "known-now-green";
 
+    /// <summary>The name failedAt gives an error the feed logged between the launch and the first step.</summary>
+    public const string BootStep = "boot";
+
     /// <summary>The most lines a step lists; the rest are counted in one entry after them, "… N more".</summary>
     public const int MaxLines = 20;
 
@@ -196,7 +205,6 @@ internal static partial class ScratchVerdict
     {
         (string verdict, ScratchFailure? failedAt) = Underlying(seen, rules.Patterns);
         string shown = Known(verdict, failedAt, rules.Known);
-        bool listSteps = rules.Details || verdict is Red or Killed;
         return new ScratchSceneResult(
             seen.Scene,
             shown,
@@ -208,26 +216,31 @@ internal static partial class ScratchVerdict
         {
             PaceReason = shown is Red or Killed ? rules.PaceReason : null,
             FailedAt = failedAt,
-            Details = listSteps && seen.Refusal is null ? [.. seen.Steps.Select(step => StepResult(step, rules.Patterns, verdict != Green))] : null,
+            Details = ListsSteps(rules.Details, verdict, failedAt)
+                ? [.. seen.Steps.Select(step => StepResult(step, rules.Patterns, verdict != Green))]
+                : null,
             Exit = ExitOf(seen, rules.Patterns),
             Known = shown is KnownRed or KnownNowGreen ? rules.Known : null,
         };
     }
 
-    /// <summary>The run's result: each verdict counted, known-now-green among the red; it passed when none is red or killed.</summary>
-    public static ScratchRunResult Summarise(IReadOnlyList<ScratchSceneResult> scenes)
+    /// <summary>
+    /// The run's result: each verdict counted, known-now-green among the red, and the prep; it passed when none is red or killed.
+    /// </summary>
+    public static ScratchRunResult Summarise(IReadOnlyList<ScratchSceneResult> scenes, PrepResult prep)
     {
         int Count(params string[] verdicts) => scenes.Count(scene => verdicts.Contains(scene.Verdict, StringComparer.Ordinal));
         int red = Count(Red, KnownNowGreen);
         int killed = Count(Killed);
-        return new ScratchRunResult(red == 0 && killed == 0, Count(Green), red, Count(KnownRed), Count(NoSteps), killed, scenes);
+        return new ScratchRunResult(red == 0 && killed == 0, Count(Green), red, Count(KnownRed), Count(NoSteps), killed, prep, scenes);
     }
 
     /// <summary>
     /// Whether a scene is played once more alone: it ran beside others (<paramref name="parallel"/> above 1) and came out red
     /// or killed, and it is not known. A red scene refused before any step (none played, failed at index -1: it did not start,
-    /// has no current scene or lacks the scratch protocol) is not played again, since no game beside it explains that; a
-    /// killed one is, before its first step or in the pace after its last alike, since load can kill either.
+    /// has no current scene, lacks the scratch protocol or logged an error at the boot) is not played again, since no game
+    /// beside it explains that; a killed one is, before its first step or in the pace after its last alike, since load can kill
+    /// either.
     /// </summary>
     public static bool PlaysAgainAlone(ScratchSceneResult first, int parallel) =>
         parallel > 1 && first.Verdict is Red or Killed && !RefusedBeforeAnyStep(first);
@@ -277,14 +290,9 @@ internal static partial class ScratchVerdict
     /// <summary>The verdict before the known rule, and the step it names.</summary>
     private static (string Verdict, ScratchFailure? FailedAt) Underlying(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns)
     {
-        if (seen.Kill is not null)
+        if (BeforeAnyStep(seen) is { } early)
         {
-            return (Killed, seen.Kill);
-        }
-
-        if (seen.Refusal is not null)
-        {
-            return (Red, new ScratchFailure(-1, string.Empty, seen.Refusal, string.Empty));
+            return early;
         }
 
         if (seen.Total == 0)
@@ -302,6 +310,32 @@ internal static partial class ScratchVerdict
 
         return ExitFails(seen, patterns) ? (Red, null) : (Green, null);
     }
+
+    /// <summary>
+    /// The verdict a scene gets before its steps count, in this order: killed, refused, or red at the boot with the feed's first
+    /// error; null when none applies.
+    /// </summary>
+    private static (string Verdict, ScratchFailure? FailedAt)? BeforeAnyStep(ScratchObservation seen)
+    {
+        if (seen.Kill is not null)
+        {
+            return (Killed, seen.Kill);
+        }
+
+        if (seen.Refusal is not null)
+        {
+            return (Red, new ScratchFailure(-1, string.Empty, seen.Refusal, string.Empty));
+        }
+
+        return FeedError(seen.BootErrors) is { } boot ? (Red, new ScratchFailure(-1, BootStep, boot, string.Empty)) : null;
+    }
+
+    /// <summary>
+    /// Whether a scene lists its steps: with options.details, or when red or killed; never when it went red before any step played
+    /// (a refusal, or an error at the boot).
+    /// </summary>
+    private static bool ListsSteps(bool details, string verdict, ScratchFailure? failedAt) =>
+        (details || verdict is Red or Killed) && !(verdict == Red && failedAt is { Index: -1 });
 
     /// <summary>The verdict shown for a scene the profile knows to fail; one that failed before any step is red, never known.</summary>
     private static string Known(string verdict, ScratchFailure? failedAt, string? known) =>

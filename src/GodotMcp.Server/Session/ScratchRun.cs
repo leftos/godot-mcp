@@ -18,8 +18,8 @@ internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace
 }
 
 /// <summary>
-/// A checked run_scratches call: the project, its scenes in order, the patterns, whether to prepare and list every step, and
-/// how many scenes play at once.
+/// A checked run_scratches call: the project, its scenes in order, the patterns, whether to prepare and list every step, how
+/// many scenes play at once, and whether the call listed its scenes rather than leaving them to the folder.
 /// </summary>
 internal sealed record ScratchPlan(
     string ProjectDir,
@@ -30,6 +30,8 @@ internal sealed record ScratchPlan(
 )
 {
     public required int Parallel { get; init; }
+
+    public required bool Listed { get; init; }
 }
 
 /// <summary>A line number in each of a session's stdout and stderr: the edge of a step's window.</summary>
@@ -37,9 +39,11 @@ internal readonly record struct LineMark(long Stdout, long Stderr);
 
 /// <summary>
 /// Plays one scratch scene in a headless game session of its own, as an agent would with the runtime tools: launches it,
-/// asks the game for its current scene's path, checks that root for the scratch protocol, reads its step names, then per step
-/// marks the error feed, calls PlayStep, waits the pace in game time and reads GetStatus, stopping at the first failed step;
-/// after the last step it waits one more pace, then stops the game gracefully and reads the lines it printed after the steps.
+/// asks the game for its current scene's path, checks that root for the scratch protocol, reads its step names and takes the
+/// error feed's entries so far, the boot's: an error among them fails the scene before any step plays (the lines printed so far
+/// are never judged). Then per step it calls PlayStep, waits the pace in game time, reads GetStatus and takes the feed's
+/// entries since the last window, stopping at the first failed step; after the last step it waits one more pace, then stops
+/// the game gracefully and reads the lines it printed after the steps.
 /// Each window of output (the launch, each step, the pace after the last) ends at a marker line the game prints to stdout
 /// and to stderr, since the two streams arrive apart. The session stays in the registry, stopped, so get_debug_output can
 /// read it.
@@ -74,6 +78,7 @@ internal sealed class ScratchRun
     private int _inFlight = -1;
     private string _rootPath = string.Empty;
     private List<string> _launchLines = [];
+    private IReadOnlyList<ErrorEntry> _bootErrors = [];
     private List<string> _paceLines = [];
     private string? _afterError;
     private long _feedMark;
@@ -86,18 +91,14 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// Prepares the project once when the plan says so, then plays the scenes, starting them in order at most the plan's
-    /// parallel at once, and judges each; a scene red or killed beside others is then played once more alone, one at a time in
-    /// order. The result lists the scenes in the plan's order, whatever finished first.
+    /// Prepares the project once when the plan says so, then plays the scenes, starting them in <see cref="StartOrder"/> at most
+    /// the plan's parallel at once, and judges each; a scene red or killed beside others is then played once more alone, one at a time in
+    /// order. The result lists the scenes in the plan's order, whatever finished first, with what the prep did.
     /// </summary>
     /// <exception cref="SessionException">The prep failed.</exception>
     public static async Task<ScratchRunResult> RunAsync(SessionRegistry registry, ScratchPlan plan, CancellationToken cancellationToken)
     {
-        if (plan.Prepare)
-        {
-            await registry.PrepareFolderAsync(plan.ProjectDir, cancellationToken);
-        }
-
+        PrepResult prep = plan.Prepare ? await registry.PrepareFolderAsync(plan.ProjectDir, cancellationToken) : PrepResult.Skipped;
         ScratchSceneResult[] scenes = await PlayBesideAsync(registry, plan, cancellationToken);
         for (int index = 0; index < scenes.Length; index++)
         {
@@ -108,12 +109,12 @@ internal sealed class ScratchRun
             }
         }
 
-        return ScratchVerdict.Summarise(scenes);
+        return ScratchVerdict.Summarise(scenes, prep);
     }
 
     /// <summary>
-    /// Plays every scene, each started once a slot is free, in the plan's order; waits for every scene started, even when a
-    /// scene throws or the call is cancelled, so no game outlives the call.
+    /// Plays every scene, each started once a slot is free, in <see cref="StartOrder"/>, its result kept at its place in the
+    /// plan; waits for every scene started, even when a scene throws or the call is cancelled, so no game outlives the call.
     /// </summary>
     private static async Task<ScratchSceneResult[]> PlayBesideAsync(SessionRegistry registry, ScratchPlan plan, CancellationToken cancellationToken)
     {
@@ -122,7 +123,7 @@ internal sealed class ScratchRun
         List<Task> playing = [];
         try
         {
-            for (int index = 0; index < plan.Scenes.Count; index++)
+            foreach (int index in StartOrder(plan.Scenes, plan.Listed))
             {
                 await slots.WaitAsync(cancellationToken);
                 playing.Add(PlayInSlotAsync(index));
@@ -147,6 +148,16 @@ internal sealed class ScratchRun
                 slots.Release();
             }
         }
+    }
+
+    /// <summary>
+    /// The places in <paramref name="scenes"/> in the order the scenes start: a listed run's own order; a folder run's by pace,
+    /// longest first, so the slowest scenes do not start last, with equal paces in the folder's name order.
+    /// </summary>
+    internal static int[] StartOrder(IReadOnlyList<ScratchScenePlan> scenes, bool listed)
+    {
+        IEnumerable<int> places = Enumerable.Range(0, scenes.Count);
+        return listed ? [.. places] : [.. places.OrderByDescending(place => scenes[place].Pace)];
     }
 
     private static async Task<ScratchSceneResult> PlayOneAsync(
@@ -325,7 +336,7 @@ internal sealed class ScratchRun
             return Seen(session.Name) with { Refusal = refusal };
         }
 
-        if (_names.Count > 0)
+        if (_names.Count > 0 && ScratchVerdict.FeedError(_bootErrors) is null)
         {
             _deadline = _registry.Clock.Start(Ceiling(_names.Count, _scene.Pace), cancellationToken);
             await PlayStepsAsync(session, _deadline.Token);
@@ -371,7 +382,10 @@ internal sealed class ScratchRun
                 + "GetStepName(int) and GetStatus()";
     }
 
-    /// <summary>Reads the step count and every step's name, then closes the launch window: its lines are never judged.</summary>
+    /// <summary>
+    /// Reads the step count and every step's name, then closes the launch window: its lines are never judged, and the error
+    /// feed's entries so far are the boot's.
+    /// </summary>
     private async Task<string?> ReadStepsAsync(GodotSession session, CancellationToken cancellationToken)
     {
         (JsonNode? count, string? error) = await CallAsync(session, "GetStepCount", [], cancellationToken);
@@ -388,7 +402,7 @@ internal sealed class ScratchRun
         }
 
         (_launchLines, _, error) = await CloseWindowAsync(session, "launch", cancellationToken);
-        _feedMark = session.Errors.Mark();
+        _bootErrors = TakeErrors(session.Errors, ref _feedMark);
         return error;
     }
 
@@ -588,6 +602,7 @@ internal sealed class ScratchRun
         new(_scene.Name, session, _scene.Pace, _names.Count)
         {
             LaunchLines = _launchLines,
+            BootErrors = _bootErrors,
             Steps = _steps,
             AfterError = _afterError,
         };

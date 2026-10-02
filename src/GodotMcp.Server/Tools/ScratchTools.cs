@@ -30,10 +30,12 @@ internal sealed class ScratchTools(SessionRegistry sessions)
             + "on an error the game logs (push_error, an engine error, a C# exception) or a stdout or stderr line matching the "
             + "profile's scratch.patterns; after the steps the game is stopped and a non-zero exit or an ObjectDB leak turns the "
             + "scene red. Settings live in godot-mcp.json's scratch section {folder, userArgs, pace, known, patterns, parallel}. Scenes "
-            + "start in order, parallel at a time; with more than one, a red or killed scene (not known, not refused before its first "
+            + "start parallel at a time: those listed in scenes in that order, a folder run's longest profile pace first; with more "
+            + "than one, a red or killed scene (not known, not refused before its first "
             + "step) is played once more alone after the others: green alone, its entry is the replay's with alone: true and counts "
             + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
-            + "{passed, green, red, known, noSteps, killed, scenes: [{scene, verdict, steps: {played, total}, pace, paceReason?, seconds, session, "
+            + "{passed, green, red, known, noSteps, killed, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, "
+            + "scenes: [{scene, verdict, steps: {played, total}, pace, paceReason?, seconds, session, "
             + "failedAt?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?, alone?, "
             + "aloneFailedAt?}]}, scenes in the order given; failedAt.pattern {pattern, reason?} names the scratch.patterns entry a "
             + "failing line matched; exit.error is an error in the pace after the last step, killed a game the "
@@ -94,6 +96,7 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         return new ScratchPlan(projectDir, plans, scratch.Patterns, prepare, options.Details ?? false)
         {
             Parallel = options.Parallel ?? scratch.Parallel,
+            Listed = scenes is not null,
         };
     }
 

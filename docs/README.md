@@ -22,6 +22,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Scratch scene | A project's own test scene whose steps an agent or `run_scratches` plays one at a time; its root implements the scratch protocol |
 | Scratch protocol | The four methods a scratch scene's root implements: `PlayStep(int)`, `GetStepCount()`, `GetStepName(int)`, `GetStatus()` |
 | Pace | The game time `run_scratches` waits after each step before reading its status, per scene in `godot-mcp.json`'s `scratch.pace`, a number or `{seconds, reason}` (default 0.5 s) |
+| Boot (a scratch scene's) | The window from a scratch scene's launch to its first step; an error the feed logs there turns the scene red at `failedAt` `boot` |
 | Hold | `OverrideFolders.Hold`: the machine-wide lock across servers, the owners list opened alone, taken around every read-modify-write of a folder's `override.cfg` or `armed.json` so two servers never interleave them |
 | Prep lock | One server's per-folder semaphore (`SessionRegistry.PrepLock`): a launch's prep, a headless op, an import, arming and a warm host's start take it, so one server never preps or imports a folder twice at once |
 | Handoff file | The attach or join file an `attach_project` writes for a game to find the server by (`GodotSession.Attach.cs`): its token is the one the game dials with, and the attach removes it when the attach ends or fails |

@@ -8,6 +8,15 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - `watch` records property and expression tracks frame by frame while other tools drive the game, returning each track's change points, range and paused frames.
 - Item targets reach `OptionButton`, `MenuButton` and `PopupMenu` items by text or index, opening the popup first and following submenus in two calls.
+- `run_scratches` reports its `prep` block (build, import and their logs) as `run_project` does.
+
+### Changed
+
+- A `run_scratches` folder run starts its slowest-paced scenes first, so a long scene no longer ends the run alone.
+
+### Fixed
+
+- `run_scratches` turns a scene red when it errors before its first step, at `failedAt` boot, instead of passing it.
 
 ## 0.13.1 - 2026-10-01
 
