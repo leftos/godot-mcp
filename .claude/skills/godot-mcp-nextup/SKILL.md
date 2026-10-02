@@ -15,6 +15,7 @@ linear: godot-mcp
 - The plan lives in Linear: every task is a Linear issue in team GMCP, per `~/.claude/docs/plan-operations.md`; `docs/plans/MAIN.md` is its generated snapshot, never edited by hand. Project order, which is the order the queue is worked: `Ideas from the survey and the projects`, `Singles`, `Docs`. The next item is the first Todo of the first project that has one; inside a project, bug reports and requests from the game repos come ahead of the backlog.
 - A steer or a finding the item does not fix gets an **add**, in the project whose files it shares, else in `Singles`.
 - Tracker: **triage** as plan-operations says (GitHub issues reach the team through Linear's sync; an untriaged one is top-level with no project), each untriaged issue placed in the project that shares its files, else in `Singles`.
+- **No owner interview.** `nextup`'s interview and decision round are replaced here by CLAUDE.md's autonomy rule: each open question, branch verdict and design question is settled by the recommended option, written into the design doc and a comment on the issue, and dispatched on. A question a guess cannot settle goes to the ticket's filer (an issue comment, or an inbox request to the filing repo) with the item **block**ed on it, never to the owner.
 - A design for open work stays in `docs/plans/<name>.md`, linked from its issue. Once its last step lands, its rulings go into `docs/DECISIONS.md` and the file moves to `docs/plans/archive/`.
 
 ## Gates
