@@ -1,6 +1,6 @@
 # Timeline watch: several values and signals over one window, then performance monitors
 
-Design draft for the plan item "One timeline watch over several properties and signals, then performance monitors over a frame window (ideas 3, 2)" ([MAIN.md](./MAIN.md) L27, the Track), from ideas 3 and 2 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L105-113). Nothing here is decided until the open questions in section 6 are answered.
+Design draft for the plan item "One timeline watch over several properties and signals, then performance monitors over a frame window (ideas 3, 2)" ([MAIN.md](./MAIN.md) L27, the Track), from ideas 3 and 2 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L105-113). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../DECISIONS.md) decision 29, which wins where this file differs; steps 2 to 6 of section 7 are open.
 
 ## 1. Problem
 

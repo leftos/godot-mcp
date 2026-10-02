@@ -2,7 +2,7 @@
 
 The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let agents run, see and drive the user's Godot projects, written to replace the third-party `godot-mcp-runtime`.
 
-- [`plans/MAIN.md`](./plans/MAIN.md): open work, in order.
+- [`plans/MAIN.md`](./plans/MAIN.md): open work, in order: a snapshot generated from the Linear team GMCP, where every task is an issue; edited in Linear, never by hand. The plan operations are in `~/.claude/docs/plan-operations.md`. Designs for open work sit beside it in `plans/`, finished ones in `plans/archive/`.
 - [`DECISIONS.md`](./DECISIONS.md): the user's decisions and the Godot 4.7.2 facts behind them: why the server exists, the wire, gamepad input, the error feed.
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md): the components, a request's path, the session lifecycle, every tool and the recipe for a new one.
 - [`DEVELOPMENT.md`](./DEVELOPMENT.md): toolchain, commands, gates, test coverage and footguns.
@@ -78,6 +78,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | State digest | What `get_game_state` returns: the state each marked node gives, read in one frame |
 | State method | A node's `_mcp_state()` (GDScript) or `_McpState()` (C#, any accessibility, any return type, read by the C# helper) returning the values an agent reads in place of a screenshot; its node opts in by joining the `mcp_state` group |
 | Snapshot | A capture of a live subtree's nodes with their shown properties and groups (`snapshot_subtree`), or a kept game-state read flattened to one value per leaf (`get_game_state` `keep`), held by the session under an id for `diff_snapshots` to compare; not a screenshot baseline |
+| Plan snapshot | `docs/plans/MAIN.md`, generated from the Linear team GMCP's open issues by `linear snapshot`; not a node snapshot |
 | uiChanged baseline | Not a screenshot baseline: the snapshot of the UI (visible Controls, focus owner, top popup) the bridge takes when the first input gesture since launch, or since the last met `wait_for {uiChanged}`, starts, which that wait compares with |
 | gdtest | The headless GDScript unit-test run (`pwsh run.ps1 gdtest`, `tests/bridge`): many bridge-logic tests in one Godot process, as against an integration test's launch per test |
 | Complexity baseline | `tools/gdcomplexity-baseline.txt`: the GDScript functions still allowed over the complexity or length limit, a list that can only shrink |

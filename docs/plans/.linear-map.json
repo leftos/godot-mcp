@@ -1,0 +1,149 @@
+{
+  "issues": {
+    "L19": {
+      "id": "88bb18b6-f9cc-448f-89f9-cdecc8225df8",
+      "identifier": "GMCP-12",
+      "linked": true
+    },
+    "L19-1": {
+      "id": "1b136ba9-645a-4d93-b9bb-9ea7156bc49a",
+      "identifier": "GMCP-13",
+      "linked": true
+    },
+    "L19-2": {
+      "id": "e071d6ee-fbc5-4c76-9970-79c9f1c7c9aa",
+      "identifier": "GMCP-14",
+      "linked": true
+    },
+    "L19-3": {
+      "id": "a9a6cc30-a251-40ac-960e-6ba02f2ed97e",
+      "identifier": "GMCP-15",
+      "linked": true
+    },
+    "L20": {
+      "id": "3850f7da-cf74-47cc-ba3c-3c46397b73c5",
+      "identifier": "GMCP-16",
+      "linked": true
+    },
+    "L21": {
+      "id": "911774ca-6775-439e-9c67-d654cbaacbc6",
+      "identifier": "GMCP-17",
+      "linked": true
+    },
+    "L22": {
+      "id": "3ca7cd76-31ee-45a0-825d-bfed20adf102",
+      "identifier": "GMCP-18",
+      "linked": true
+    },
+    "L23": {
+      "id": "2f76ad12-287d-46a9-89a6-7732abd8a7ed",
+      "identifier": "GMCP-19",
+      "linked": true
+    },
+    "L24": {
+      "id": "130d7688-f41a-4fa8-9708-d83480f129be",
+      "identifier": "GMCP-20",
+      "linked": true
+    },
+    "L25": {
+      "id": "8a0ee302-58ba-4d1f-a9bb-a57a3bb574d6",
+      "identifier": "GMCP-21",
+      "linked": true
+    },
+    "L26": {
+      "id": "81c05dd8-7a89-4144-b354-853fae95ecd6",
+      "identifier": "GMCP-22",
+      "linked": true
+    },
+    "L27": {
+      "id": "13abe62b-1248-4b3a-b711-acaace481f2e",
+      "identifier": "GMCP-23",
+      "linked": true
+    },
+    "L33": {
+      "id": "3b81b51a-cc71-4356-9840-48686f7035e0",
+      "identifier": "GMCP-24",
+      "linked": true
+    },
+    "L34": {
+      "id": "d2ad3997-35d2-4b46-b10c-882eb9203f91",
+      "identifier": "GMCP-25",
+      "linked": true
+    },
+    "L35": {
+      "id": "8a1f509d-31bb-410f-8c46-5ec86d8e8b0c",
+      "identifier": "GMCP-26",
+      "linked": true
+    },
+    "L36": {
+      "id": "c698f9c6-e35a-419b-a0a3-dc0ac74f4979",
+      "identifier": "GMCP-27",
+      "linked": true
+    },
+    "L37": {
+      "id": "b6f06f31-67c6-45ab-8d09-440edbbd4179",
+      "identifier": "GMCP-28",
+      "linked": true
+    },
+    "L38": {
+      "id": "27c888f6-9b0d-480b-8a2b-94e0008ee5ff",
+      "identifier": "GMCP-29",
+      "linked": true
+    },
+    "L39": {
+      "id": "811df719-5394-4a99-9768-6e125085b270",
+      "identifier": "GMCP-30",
+      "linked": true
+    },
+    "L40": {
+      "id": "7db85af3-f2f2-4007-9d0f-a177130383a4",
+      "identifier": "GMCP-31",
+      "linked": true
+    },
+    "L41": {
+      "id": "cc98a162-ef71-4428-961f-877258af66fc",
+      "identifier": "GMCP-32",
+      "linked": true
+    },
+    "L42": {
+      "id": "d76ea2c9-2e2a-41f7-84db-f63d832991ab",
+      "identifier": "GMCP-33",
+      "linked": true
+    },
+    "L43": {
+      "id": "794c1ff7-e2cb-4273-bff0-722f8e7a716c",
+      "identifier": "GMCP-34",
+      "linked": true
+    },
+    "L44": {
+      "id": "a0186c15-5a6e-4961-8c51-1a204f984eb5",
+      "identifier": "GMCP-35",
+      "linked": true
+    },
+    "L45": {
+      "id": "b48b28e6-d14d-4817-ae1b-d769efea4d93",
+      "identifier": "GMCP-36",
+      "linked": true
+    },
+    "L46": {
+      "id": "d6c9a2ce-06ae-4ccf-af6e-def7554b12ae",
+      "identifier": "GMCP-37",
+      "linked": true
+    },
+    "L48": {
+      "id": "efa68a3a-3c10-4102-98c7-245e0b1597d0",
+      "identifier": "GMCP-38",
+      "linked": true
+    },
+    "docdrift-1": {
+      "id": "db2b204c-a73b-468e-89da-3cce87d3b00a",
+      "identifier": "GMCP-39",
+      "linked": true
+    }
+  },
+  "projects": {
+    "docs": "4fb6280a-84d4-4e7b-8a6a-f3543e4163f3",
+    "ideas": "05710517-d713-489d-a76b-7c47a5a6ce77",
+    "singles": "9b8f8535-56c6-4636-b34e-aa482288b8a9"
+  }
+}

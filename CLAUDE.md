@@ -9,7 +9,7 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 ## Start here
 
 - `docs/README.md`: the map and the glossary.
-- `docs/plans/MAIN.md`: open work, in order.
+- The plan lives in Linear: every task is a Linear issue in team GMCP, grouped into projects worked in order (the `godot-mcp-nextup` profile names the order). `docs/plans/MAIN.md` is a generated snapshot of it, never edited by hand: change Linear, then regenerate it. A steer or finding mid-task gets an **add** first, before any reply in prose. The operations (**add**, **land**, **triage** and the rest) are in `~/.claude/docs/plan-operations.md`. A design for open work stays in `docs/plans/<name>.md`, linked from its issue; once its last step lands it moves to `docs/plans/archive/`, after its rulings are in `docs/DECISIONS.md`.
 - `README.md`: the user-facing page: what the server lets an agent do, and the prompt that installs it; a new tool or capability, or a change to install or requirements, updates it in the same commit.
 - `CHANGELOG.md`: what each version changed, newest first.
 - `docs/DECISIONS.md`: the user's decisions and the engine facts behind them; read it before reversing one.

@@ -1,6 +1,6 @@
 # State digest: a game's own compact state in place of a screenshot
 
-Design draft for the plan item "State digest: game nodes opt in for a compact state read in place of a screenshot" ([MAIN.md](./MAIN.md) L29, the Track), from idea 4 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L115-118). Nothing here is decided until the open questions in section 6 are answered.
+Design draft for the plan item "State digest: game nodes opt in for a compact state read in place of a screenshot" ([MAIN.md](./MAIN.md) L29, the Track), from idea 4 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L115-118). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../DECISIONS.md) decision 27, which wins where this file differs; steps 5 and 6 of section 7 are open.
 
 ## 1. Problem
 
@@ -85,7 +85,7 @@ The state methods are game code, so `get_game_state` declares `Destructive = tru
 
 ### Relation to project tools
 
-[project-tools.md](./project-tools.md) marks methods an agent calls, with an attribute the game declares and the helper matches by name through `CustomAttributeData`. A digest is a different contract (one read, many nodes, keyed by node path, one frame, diffable), so it keeps its own convention. Question 1 (b) is the attribute form, which would share project-tools' name matching and the game's attribute file; a read-only game tool (`[GodotMcpTool(…, ReadOnly = true)]` returning a status) stays the way to expose a single computed answer that belongs to no node, such as opening-hand's `GetStatus`.
+[project-tools.md](./archive/project-tools.md) marks methods an agent calls, with an attribute the game declares and the helper matches by name through `CustomAttributeData`. A digest is a different contract (one read, many nodes, keyed by node path, one frame, diffable), so it keeps its own convention. Question 1 (b) is the attribute form, which would share project-tools' name matching and the game's attribute file; a read-only game tool (`[GodotMcpTool(…, ReadOnly = true)]` returning a status) stays the way to expose a single computed answer that belongs to no node, such as opening-hand's `GetStatus`.
 
 Over time is the timeline watch's job (MAIN.md L31: several properties and signals sampled over a window), not this tool's: delve's per-frame sampling script (DEVELOPMENT.md L70) is that item's evidence. The watch could later sample digest keys; nothing here depends on it.
 
