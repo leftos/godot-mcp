@@ -9,6 +9,7 @@ extends Node
 
 const TextTargets := preload("godot_mcp_text_targets.gd")
 const ItemTargets := preload("godot_mcp_item_targets.gd")
+const PopupTargets := preload("godot_mcp_popup_targets.gd")
 
 ## The refusals of an {element} target, each with the node's path in place of %s.
 const HIDDEN_TARGET := (
@@ -26,6 +27,7 @@ const PLAIN_NODE_TARGET := (
 )
 ## The offset refusals: the node's path, and for a 2D node its class; a malformed offset as JSON.
 const CONTROL_OFFSET := "offset aims inside a world node; %s is a Control."
+const POPUP_OFFSET := "offset aims inside a world node; %s is a PopupMenu."
 const OFFSET_2D_Z := "%s is a %s; offset takes x and y."
 const BAD_OFFSET := "offset must be an object {x, y, z?} of numbers; got %s"
 ## A 3D node's refusals: the node's path, then its viewport's or its camera's.
@@ -91,6 +93,15 @@ func press_refusal_of(target: Variant) -> String:
 	return ""
 
 
+## Why a drag cannot start or end at a target, or "" when it can: press_refusal_of's reasons, and
+## an item in a popup. Nothing is sent.
+func drag_refusal_of(target: Variant) -> String:
+	var resolved: Variant = resolve_target(target)
+	if resolved is Dictionary and (resolved as Dictionary).has("probe"):
+		return PopupTargets.DRAG_REFUSED
+	return press_refusal_of(target)
+
+
 ## Why no event reaches an aim's node through a SubViewport whose gui_disable_input is on, or ""
 ## when none on the way has it: its container forwards nothing to it
 ## (scene/gui/subviewport_container.cpp L230-235 in 4.7.2). A world node may still be aimed at
@@ -117,7 +128,8 @@ func point_of(resolved: Variant) -> Vector2:
 ## outermost embedded Window the node is drawn in, or null),
 ## input_disabled (the path of a SubViewport on the way whose input is disabled, or ""), for a
 ## text target matched ({by: "text", text: the shown text matched}), and for an item target item
-## (the item it resolved to, _aim_at_item)}. A blank text is no text.
+## (the item it resolved to, _aim_at_item), and for an item in a popup probe, whose point the
+## gesture places later (_aim_at_popup_item)}. A blank text is no text.
 func resolve_target(target: Variant) -> Variant:
 	if not target is Dictionary:
 		return "a target must be an object {element}, {text} or {x, y}"
@@ -155,8 +167,11 @@ func _resolve_text(text: String, under: Variant, item: Variant) -> Variant:
 ## through the drawing Control's canvas transform, then carried out as a Control's own point is),
 ## with item, the item as aimed_at reports it, and drawer, the Control that draws it, which the
 ## hit check requires the press to land on (lands_on). kind stays "control", so the input module
-## checks the hit as a Control's; aimed_at reports "item". A String says why there is none.
+## checks the hit as a Control's; aimed_at reports "item". An OptionButton's or MenuButton's
+## popup item is _aim_at_popup_item's. A String says why there is none.
 func _aim_at_item(node: Node, item: Variant) -> Variant:
+	if PopupTargets.popup_of(node) != null:
+		return _aim_at_popup_item(node, item)
 	var placed: Variant = ItemTargets.resolve(self, node, item)
 	if placed is String:
 		return placed
@@ -167,6 +182,32 @@ func _aim_at_item(node: Node, item: Variant) -> Variant:
 		aim["item"] = placed["report"]
 		aim["drawer"] = drawer
 	return aim
+
+
+## The aim at an item of node's popup (PopupTargets.resolve), with no point yet: the popup's own
+## aim (its viewport's levels and window), whose point the gesture places on the item by probing
+## (godot_mcp_popup_targets.gd), with node, the Control or PopupMenu the target named, as its
+## node; probe, the resolved item; item, the item as aimed_at reports it; and drawer, the popup's
+## items Control, which the hit check requires the press to land on. A String says why there is
+## none; nothing is sent.
+func _aim_at_popup_item(node: Node, item: Variant) -> Variant:
+	var probe: Variant = PopupTargets.resolve(node, item)
+	if probe is String:
+		return probe
+	var aim: Variant = _aim_from(probe["popup"], "control", Vector2.ZERO)
+	if aim is Dictionary:
+		aim["node"] = node
+		aim["probe"] = probe
+		aim["item"] = probe["report"]
+		aim["drawer"] = probe["items"]
+	return aim
+
+
+## An item of a PopupMenu named itself, a Window rather than a CanvasItem; an offset is refused.
+func _resolve_popup(node: PopupMenu, offset: Variant, item: Variant) -> Variant:
+	if offset != null:
+		return POPUP_OFFSET % str(node.get_path())
+	return _aim_at_popup_item(node, item)
 
 
 ## The node a text target's scan starts at: the root when under is null, else the node under
@@ -190,6 +231,8 @@ func _resolve_element(element: String, offset: Variant, item: Variant) -> Varian
 	if found is String:
 		return found
 	var node: Node = found
+	if node is PopupMenu and item != null:
+		return _resolve_popup(node, offset, item)
 	var kind: String = kind_of(node)
 	var refusal: String = _live_refusal(element, node, kind)
 	if refusal.is_empty():
@@ -467,7 +510,8 @@ func _off_screen(
 
 ## An aim as a result reports it: {x, y, kind, path, class}, x and y in the root's viewport
 ## coordinates, kind "item" for an item target, plus matched for a text target, item for an item
-## target, and viewport, its viewport's path, when that is not the root.
+## target, opened when the gesture opened the item's popup, and viewport, its viewport's path,
+## when that is neither the root nor the node itself (a PopupMenu).
 func aimed_at(aim: Dictionary) -> Dictionary:
 	var node: Node = aim["node"]
 	var point: Vector2 = aim["point"]
@@ -482,8 +526,10 @@ func aimed_at(aim: Dictionary) -> Dictionary:
 		described["matched"] = aim["matched"]
 	if aim.has("item"):
 		described["item"] = aim["item"]
+	if aim.get("opened", false):
+		described["opened"] = true
 	var viewport: Viewport = node.get_viewport()
-	if viewport != get_tree().root:
+	if viewport != get_tree().root and viewport != node:
 		described["viewport"] = str(viewport.get_path())
 	return described
 

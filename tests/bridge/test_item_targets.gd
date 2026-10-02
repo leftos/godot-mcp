@@ -16,13 +16,11 @@ func test_shape_refusal_takes_the_list_classes_and_their_descendants() -> void:
 	assert_eq(_items.item_kind("TabContainer"), "flat", "a TabContainer's kind")
 	assert_eq(
 		_items.shape_refusal("/root/Go", "Button", {"text": "A"}),
-		"/root/Go is a Button; item targets take an ItemList, TabBar, TabContainer or Tree",
+		(
+			"/root/Go is a Button; item targets take an ItemList, TabBar, TabContainer, Tree, "
+			+ "OptionButton, MenuButton or PopupMenu"
+		),
 		"a Button"
-	)
-	assert_eq(
-		_items.shape_refusal("/root/Menu", "PopupMenu", {"index": 0}),
-		"/root/Menu is a PopupMenu; item targets take an ItemList, TabBar, TabContainer or Tree",
-		"a PopupMenu waits for its own step"
 	)
 
 

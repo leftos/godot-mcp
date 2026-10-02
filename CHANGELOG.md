@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - `watch` records property and expression tracks frame by frame while other tools drive the game, returning each track's change points, range and paused frames.
+- Item targets reach `OptionButton`, `MenuButton` and `PopupMenu` items by text or index, opening the popup first and following submenus in two calls.
 
 ## 0.13.1 - 2026-10-01
 

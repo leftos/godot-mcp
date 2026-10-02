@@ -1,3 +1,7 @@
+# gdlint: disable=max-public-methods
+# The public methods are the gesture API the sibling target modules (popup_targets) call: a
+# cross-module call loses its underscore. gdlint reports the class at line 1, so the line above
+# must be the first.
 extends Node
 ## The godot-mcp bridge's input player, a child of the bridge: plays the input tools' gestures
 ## (click, drag, type_text, key, mouse_button, hover, scroll, the gamepad gestures) and, through
@@ -10,6 +14,8 @@ const MIN_DRAG_STEPS := 3
 const SETTLE_FRAMES := 2
 ## The target resolver (godot_mcp_targets.gd beside this script), this node's child.
 const TARGETS_SCRIPT := "godot_mcp_targets.gd"
+## The popup item player (godot_mcp_popup_targets.gd beside this script), this node's child.
+const POPUPS_SCRIPT := "godot_mcp_popup_targets.gd"
 ## The gestures whose result says which Controls they hit, from _hits.
 const HIT_GESTURES := ["click", "drag", "mouse_button", "hover", "scroll"]
 ## The longest a hover waits for a tooltip, the server's own limit on timeoutMs.
@@ -61,6 +67,8 @@ const UNKNOWN_KEY_HINT := (
 var bridge: Node
 ## The target resolver (godot_mcp_targets.gd), created by _ready as this node's child.
 var _targets: Node
+## The popup item player (godot_mcp_popup_targets.gd), created by _ready as this node's child.
+var _popups: Node
 ## What the playing gesture hit: pressedOn, releasedOn, guiDragStarted, dropAccepted,
 ## scrolledOn.
 var _hits: Dictionary = {}
@@ -80,14 +88,20 @@ func _ready() -> void:
 	_create_targets()
 
 
-## Creates the target resolver (godot_mcp_targets.gd) as this node's child, loaded from the
-## folder this script itself lives in, so the bridge script gains no line.
+## Creates the target resolver (godot_mcp_targets.gd) and the popup item player
+## (godot_mcp_popup_targets.gd) as this node's children, loaded from the folder this script itself
+## lives in, so the bridge script gains no line.
 func _create_targets() -> void:
 	var dir: String = (get_script() as Script).resource_path.get_base_dir()
 	_targets = (load(dir.path_join(TARGETS_SCRIPT)) as GDScript).new()
 	_targets.name = "Targets"
 	_targets.bridge = bridge
 	add_child(_targets)
+	_popups = (load(dir.path_join(POPUPS_SCRIPT)) as GDScript).new()
+	_popups.name = "PopupTargets"
+	_popups.gestures = self
+	_popups.targets = _targets
+	add_child(_popups)
 
 
 ## Plays one gesture over frames, then waits two more frames, so the game's handlers have run
@@ -235,16 +249,17 @@ func click(params: Dictionary) -> String:
 	if button == 0:
 		return _unknown_button(params.get("button"))
 	await _dismiss_tooltips()
-	var point: Variant = _aim(params.get("target"), true, false)
+	var point: Variant = await aim(params.get("target"), true, false, true)
 	if point is String:
 		return point
-	await _click_at(to_window(point), button, bool(params.get("doubleClick", false)))
+	if not _holds_submenu():
+		await click_at(to_window(point), button, bool(params.get("doubleClick", false)))
 	return ""
 
 
 ## Presses and releases at the point the pointer is already at, one frame apart; a double click
 ## follows with a second press marked double_click. The hits are the last press's and release's.
-func _click_at(window_point: Vector2, button: int, double_click: bool) -> void:
+func click_at(window_point: Vector2, button: int, double_click: bool) -> void:
 	_send_and_record(window_point, button, true, false)
 	await get_tree().process_frame
 	_send_and_record(window_point, button, false, false)
@@ -327,10 +342,10 @@ func _hovered_control(point: Vector2) -> Control:
 ## aims at the start, the only end hit-tested: what is dragged may cover the drop point. An
 ## element at either end makes aimedAt {from, to}, the point end null.
 func _play_drag(params: Dictionary) -> String:
-	var refusal: String = _targets.press_refusal_of(params.get("from"))
+	var refusal: String = _targets.drag_refusal_of(params.get("from"))
 	if not refusal.is_empty():
 		return "from: %s" % refusal
-	refusal = _targets.press_refusal_of(params.get("to"))
+	refusal = _targets.drag_refusal_of(params.get("to"))
 	if not refusal.is_empty():
 		return "to: %s" % refusal
 	var button: int = parse_button(params.get("button", "left"))
@@ -341,7 +356,7 @@ func _play_drag(params: Dictionary) -> String:
 	var end: Variant = _targets.resolve_target(params.get("to"))
 	if end is String:
 		return "to: %s" % end
-	var start: Variant = _aim(params.get("from"), true, false)
+	var start: Variant = await aim(params.get("from"), true, false, false)
 	if start is String:
 		return "from: %s" % start
 	_note_drag_aims(end)
@@ -349,7 +364,7 @@ func _play_drag(params: Dictionary) -> String:
 	return ""
 
 
-## Replaces the start's aimedAt, which _aim recorded, with {from, to} when either end is an
+## Replaces the start's aimedAt, which aim recorded, with {from, to} when either end is an
 ## element; end is the resolved end.
 func _note_drag_aims(end: Variant) -> void:
 	var from_aim: Variant = _hits.get("aimedAt")
@@ -441,8 +456,33 @@ func _play_key(params: Dictionary) -> String:
 
 ## A press or a move is hit-tested; a release is not, since Godot sends it to the Control that
 ## took the press wherever the pointer is (scene/main/viewport.cpp L2019-2025 in 4.7.2). A move
-## presses nothing, so it may aim into a SubViewport whose input is disabled.
+## presses nothing, so it may aim into a SubViewport whose input is disabled. A press opens a
+## closed OptionButton's or MenuButton's popup to reach its item; nothing is pressed on an item
+## with a submenu, while a release there is sent, so no button stays held.
 func _play_mouse_button(params: Dictionary) -> String:
+	var refusal: String = _mouse_button_refusal(params)
+	if not refusal.is_empty():
+		return refusal
+	var action: String = str(params.get("action", "press"))
+	if action == "press":
+		await _dismiss_tooltips()
+	var point: Variant = await aim(
+		params.get("target"), action != "release", false, action == "press"
+	)
+	if point is String:
+		return point
+	if action == "move":
+		await _settle_hover(point)
+	elif action != "press" or not _holds_submenu():
+		var button: int = parse_button(params.get("button", "left"))
+		_send_and_record(to_window(point), button, action == "press", false)
+		await get_tree().process_frame
+	return ""
+
+
+## Why a mouse_button cannot play, or "" when it can: its action, its target (a move's as any
+## gesture's, a press's or release's as a press's) and its button; nothing is sent.
+func _mouse_button_refusal(params: Dictionary) -> String:
 	var action: String = str(params.get("action", "press"))
 	if not action in ["press", "release", "move"]:
 		return "unknown mouse_button action '%s'; use press, release or move" % action
@@ -452,19 +492,8 @@ func _play_mouse_button(params: Dictionary) -> String:
 	)
 	if not refusal.is_empty():
 		return refusal
-	var button: int = parse_button(params.get("button", "left"))
-	if button == 0:
+	if parse_button(params.get("button", "left")) == 0:
 		return _unknown_button(params.get("button"))
-	if action == "press":
-		await _dismiss_tooltips()
-	var point: Variant = _aim(target, action != "release", false)
-	if point is String:
-		return point
-	if action == "move":
-		await _settle_hover(point)
-		return ""
-	_send_and_record(to_window(point), button, action == "press", false)
-	await get_tree().process_frame
 	return ""
 
 
@@ -478,7 +507,7 @@ func _play_scroll(params: Dictionary) -> String:
 	if not refusal.is_empty():
 		return refusal
 	await _dismiss_tooltips()
-	var point: Variant = _aim(params.get("target"), true, true)
+	var point: Variant = await aim(params.get("target"), true, true, false)
 	if point is String:
 		return point
 	_hits["scrolledOn"] = _control_under(point)
@@ -513,7 +542,7 @@ func _scroll_refusal(params: Dictionary) -> String:
 	return ""
 
 
-## After _aim has moved the pointer to a viewport point, carrying the held buttons in the
+## After aim has moved the pointer to a viewport point, carrying the held buttons in the
 ## motion's button_mask and pressing nothing, waits a frame and records the Control under it as
 ## hoveredOn. Returns that Control, or null over none.
 func _settle_hover(point: Vector2) -> Control:
@@ -528,7 +557,7 @@ func _settle_hover(point: Vector2) -> Control:
 ## finds it), waits for it to show. Records tooltip ({text, x, y, width, height, owner}, or
 ## null) and a warning when a tooltip was due and none showed.
 func _play_hover(params: Dictionary) -> String:
-	var point: Variant = _aim(params.get("target"), true, false)
+	var point: Variant = await aim(params.get("target"), true, false, false)
 	if point is String:
 		return point
 	var control: Control = await _settle_hover(point)
@@ -598,7 +627,7 @@ func _await_tooltip(tooltip_owner: Control, timeout_ms: int) -> Window:
 	var frames: int = clip_frames(timeout_ms, clip_fps())
 	var waited: int = 0
 	var popup: Window = _showing_tooltip(tooltip_owner)
-	while popup == null and _within(waited, frames, until):
+	while popup == null and within(waited, frames, until):
 		await get_tree().process_frame
 		waited += 1
 		if not is_instance_valid(tooltip_owner):
@@ -609,7 +638,7 @@ func _await_tooltip(tooltip_owner: Control, timeout_ms: int) -> Window:
 
 ## Whether a wait that has waited frames of its frames (in a recording; -1 otherwise) is still
 ## within its limit, else whether Time.get_ticks_msec is before until_ms.
-static func _within(waited: int, frames: int, until_ms: int) -> bool:
+static func within(waited: int, frames: int, until_ms: int) -> bool:
 	if frames >= 0:
 		return waited < frames
 	return Time.get_ticks_msec() < until_ms
@@ -664,21 +693,42 @@ func _find_label(node: Node) -> Label:
 ## anyway, which also makes Godot hit-test that point. An {element} target is recorded as
 ## aimedAt; with checks_hit it is then refused when the GUI would keep the press from it
 ## (_aim_refusal; scroll says the gesture is a wheel or pan, which a Stop Control with
-## force_pass_scroll_events lets through). Returns the viewport point, or a String saying why the
-## target was refused.
-func _aim(target: Variant, checks_hit: bool, scroll: bool) -> Variant:
+## force_pass_scroll_events lets through). An item in a popup is placed by the popup item player
+## first (aim_item in godot_mcp_popup_targets.gd); opens says the gesture presses, which may open
+## a closed button's popup. Returns the viewport point, or a String saying why the target was
+## refused.
+func aim(target: Variant, checks_hit: bool, scroll: bool, opens: bool) -> Variant:
 	var resolved: Variant = _targets.resolve_target(target)
 	if resolved is String:
 		return resolved
+	if resolved is Dictionary and (resolved as Dictionary).has("probe"):
+		return await _popups.aim_item(resolved, checks_hit, opens)
 	var point: Vector2 = _targets.point_of(resolved)
 	_move_to(to_window(point))
 	if resolved is Dictionary:
-		_hits["aimedAt"] = _targets.aimed_at(resolved)
-		if checks_hit:
-			var refusal: String = _aim_refusal(resolved, point, scroll)
-			if not refusal.is_empty():
-				return refusal
+		var refusal: String = record_aim(resolved, point, checks_hit, scroll)
+		if not refusal.is_empty():
+			return refusal
 	return point
+
+
+## Records an aim as aimedAt and, with checks_hit, answers why the GUI would keep the press from
+## it (_aim_refusal), or "".
+func record_aim(resolved: Dictionary, point: Vector2, checks_hit: bool, scroll: bool) -> String:
+	_hits["aimedAt"] = _targets.aimed_at(resolved)
+	return _aim_refusal(resolved, point, scroll) if checks_hit else ""
+
+
+## Whether the gesture's aim is an item with a submenu, which it holds open and presses nothing on.
+func _holds_submenu() -> bool:
+	return _popups.holds_submenu(_hits.get("aimedAt"))
+
+
+## Forgets the press and release the playing gesture recorded (pressedOn, releasedOn), as the click
+## that opens a popup does, so the item's own press records its own.
+func drop_press_hits() -> void:
+	_hits.erase("pressedOn")
+	_hits.erase("releasedOn")
 
 
 ## Why a press at an aim's point would not reach its node, or "" when it would. A Control in a
@@ -688,20 +738,20 @@ func _aim(target: Variant, checks_hit: bool, scroll: bool) -> Variant:
 ## (inner_hit); a Control target must be the Control hovered in its own viewport (_hit_refusal),
 ## and a world node must have no Control there that takes the event before physics picking
 ## (world_hit_refusal).
-func _aim_refusal(aim: Dictionary, point: Vector2, scroll: bool) -> String:
+func _aim_refusal(aimed: Dictionary, point: Vector2, scroll: bool) -> String:
 	var refusal: String = ""
-	if aim["kind"] == "control":
-		refusal = _targets.disabled_refusal(aim)
+	if aimed["kind"] == "control":
+		refusal = _targets.disabled_refusal(aimed)
 	else:
-		refusal = _targets.covering_window_refusal(aim)
+		refusal = _targets.covering_window_refusal(aimed)
 	if not refusal.is_empty():
 		return refusal
-	var hit: Variant = _targets.inner_hit(aim, _hovered_control(point))
+	var hit: Variant = _targets.inner_hit(aimed, _hovered_control(point))
 	if hit is String:
 		return hit
-	if aim["kind"] == "control":
-		return _hit_refusal(aim, point, hit)
-	return _targets.world_hit_refusal(aim, hit, scroll)
+	if aimed["kind"] == "control":
+		return _hit_refusal(aimed, point, hit)
+	return _targets.world_hit_refusal(aimed, hit, scroll)
 
 
 ## Why a press at point would miss a Control aim's node, or "" when it would not (lands_on): hit
@@ -709,9 +759,9 @@ func _aim_refusal(aim: Dictionary, point: Vector2, scroll: bool) -> String:
 ## gui_find_control picks, the same pick a press makes when no other button is held
 ## (scene/main/viewport.cpp L3522-3524, L3331 and L1941 in 4.7.2). A node that takes no clicks,
 ## itself or through an ancestor, may land on nothing.
-func _hit_refusal(aim: Dictionary, point: Vector2, hit: Control) -> String:
-	var target: Control = aim["node"]
-	if _targets.lands_on(hit, aim) or (hit == null and _targets.receiver(target) == null):
+func _hit_refusal(aimed: Dictionary, point: Vector2, hit: Control) -> String:
+	var target: Control = aimed["drawer"] if aimed.has("probe") else aimed["node"]
+	if _targets.lands_on(hit, aimed) or (hit == null and _targets.receiver(target) == null):
 		return ""
 	var hit_path: String = "<nothing>"
 	var hit_rect: String = ""
@@ -747,6 +797,14 @@ func _move_to(window_point: Vector2) -> void:
 
 ## A mouse motion at a window point, carrying relative and button_mask, moving the pointer.
 func send_motion(window_point: Vector2, relative: Vector2, button_mask: int) -> void:
+	dispatch(motion_event(window_point, relative, button_mask))
+
+
+## A new mouse motion at a window point, carrying relative and button_mask, marked as injected;
+## the pointer moves to it now.
+func motion_event(
+	window_point: Vector2, relative: Vector2, button_mask: int
+) -> InputEventMouseMotion:
 	var motion := InputEventMouseMotion.new()
 	motion.device = bridge.INJECTED_DEVICE
 	motion.position = window_point
@@ -755,7 +813,7 @@ func send_motion(window_point: Vector2, relative: Vector2, button_mask: int) -> 
 	motion.screen_relative = relative
 	motion.button_mask = button_mask
 	bridge._pointer = window_point
-	dispatch(motion)
+	return motion
 
 
 ## A mouse button press or release at a window point, kept in the bridge's held mask.

@@ -29,7 +29,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Capture | `capture_input`'s recording of a session's input, real and sent, as `simulate_input` events with gaps as waits; not the Movie Maker video, which is a recording |
 | World target | An input tool's `element` naming a 2D or 3D world node rather than a Control, aimed through its camera at its origin plus `offset`; the result's `aimedAt` gives the point |
 | Text target | An input tool's `{text}` target: the visible Control whose shown text equals the given text, optionally searched `under` a node; the result's `aimedAt.matched` says what it matched |
-| Item target | An input tool's `item` beside `element` or `text`: an item drawn inside an ItemList, TabBar, TabContainer or Tree, by its text, index or Tree path; the result's `aimedAt.item` says which |
+| Item target | An input tool's `item` beside `element` or `text`: an item drawn inside an ItemList, TabBar, TabContainer or Tree, or in the popup of an OptionButton, a MenuButton or an open PopupMenu, by its text, index or Tree path; the result's `aimedAt.item` says which |
 | Shown text | The text a Control draws, as a player reads it (translated, a LineEdit's placeholder while empty, a RichTextLabel without BBCode); what `get_ui_elements` reports as `text` and a text target matches |
 | Game tool | A game's own C# method marked with a tool mark, which `list_game_tools` lists with its owner (`on`) and argument schema and `call_game_tool` calls by name |
 | Tool mark | `[GodotMcpTool("what it does")]`, an attribute class the game declares itself and the helper matches by its name `GodotMcpToolAttribute` in any namespace |

@@ -12,7 +12,8 @@ namespace GodotMcp.Server.Tools;
 internal sealed record InputTarget(
     [property: Description(
         "A node to aim at: a Control (the centre of its rect) or a 2D or 3D world node (its origin plus offset, through its "
-            + "viewport's Camera2D, CanvasLayer or current Camera3D, and out through any SubViewportContainer). An absolute node "
+            + "viewport's Camera2D, CanvasLayer or current Camera3D, and out through any SubViewportContainer); with item, also "
+            + "a PopupMenu. An absolute node "
             + "path (/root/Main/Button), a path under the root (Main/Button), a node name, found breadth first, or %Name for a "
             + "node saved with a unique name (alone, looked up in every scene; or after its owner's path). Leave x and y out when "
             + "this is set."
@@ -44,7 +45,12 @@ internal sealed record InputTarget(
             + "and draws items): an item drawn inside it, aimed at the item's centre (on a Tree's column 0, past the fold "
             + "arrow's indent); exactly one of text, index or path, and on a Tree an optional column. A hidden item is refused, "
             + "one scrolled out of view or under a collapsed Tree item is refused with what to do first, and a disabled one is "
-            + "aimed at and reported disabled."
+            + "aimed at and reported disabled. Beside an element naming an OptionButton, a MenuButton or an open PopupMenu: an "
+            + "item of its popup, by text or index, found by moving the pointer over the popup; click and a mouse_button press "
+            + "open a closed button's popup first with a real click (aimedAt.opened), hover and the rest refuse it (click the "
+            + "button first). An item with a submenu is hovered until the submenu opens and not pressed (aimedAt.item.submenu "
+            + "names the submenu to target next). A separator, a disabled item, a popup filtered by its search bar, a native "
+            + "(not embedded) popup and a drag end are refused."
     )]
         InputItem? Item = null
 )
@@ -206,17 +212,21 @@ internal sealed record InputOffset(
 }
 
 /// <summary>
-/// An item drawn inside the ItemList, TabBar, TabContainer or Tree an element or text target names: by its text, its index,
-/// or on a Tree its path; a Tree also takes the column aimed at.
+/// An item drawn inside the ItemList, TabBar, TabContainer or Tree an element or text target names, or in the popup of an
+/// OptionButton, a MenuButton or a PopupMenu: by its text, its index, or on a Tree its path; a Tree also takes the column
+/// aimed at.
 /// </summary>
 internal sealed record InputItem(
     [property: Description(
         "The item's text as drawn (translated as the list translates it), matched exactly (case kept, surrounding whitespace "
-            + "trimmed): an ItemList item's, a tab's title, or a Tree item's text in column at any depth. Several items reading "
-            + "it are refused, listed; narrow with index or path."
+            + "trimmed): an ItemList item's, a tab's title, a Tree item's text in column at any depth, or a popup item's. "
+            + "Several items reading it are refused, listed; narrow with index or path."
     )]
         string? Text = null,
-    [property: Description("The item's index in an ItemList, or the tab's index in a TabBar or TabContainer, from 0; refused on a Tree.")]
+    [property: Description(
+        "The item's index in an ItemList, the tab's index in a TabBar or TabContainer, or the item's index in a popup "
+            + "(separators counted, as OptionButton.selected counts them), from 0; refused on a Tree."
+    )]
         int? Index = null,
     [property: Description(
         "A Tree only: the texts of the item and its ancestors in column 0, from the first level shown (the root's children "

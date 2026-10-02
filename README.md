@@ -18,7 +18,7 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 **Play it**
 
-- Click, drag, hover (and read the tooltip), scroll with the wheel or a trackpad pan, type text and press keys, aimed at a Control by name or by the text it shows, at a row, tab or tree item inside a list, at a 2D or 3D world node through its camera, or at viewport coordinates.
+- Click, drag, hover (and read the tooltip), scroll with the wheel or a trackpad pan, type text and press keys, aimed at a Control by name or by the text it shows, at a row, tab or tree item inside a list, at a dropdown or menu item (opening the dropdown first), at a 2D or 3D world node through its camera, or at viewport coordinates.
 - Press InputMap actions, and drive virtual gamepad buttons, sticks and triggers.
 - Replay arbitrary input event sequences, record what a person played and replay it, and throw random input at the game to find what breaks it.
 - Pause, step single frames and change the time scale, so a check lands on an exact frame.

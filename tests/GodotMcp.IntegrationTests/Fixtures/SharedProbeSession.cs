@@ -8,9 +8,9 @@ namespace GodotMcp.IntegrationTests.Fixtures;
 /// <summary>
 /// One quiet InputProbe run shared by a test class, with the machine's real pads shut out (shutOutRealGamepads): launched
 /// once, put back to a fresh launch's state by <see cref="ResetAsync"/> before each test, stopped after the last with the
-/// probe's tree checked clean.
+/// probe's tree checked clean. <see cref="SharedLivePadsProbeSession"/> is the same run with the real pads live.
 /// </summary>
-public sealed class SharedProbeSession : IAsyncLifetime
+public class SharedProbeSession : IAsyncLifetime
 {
     private const int ScriptTimeoutMs = 10_000;
 
@@ -90,7 +90,17 @@ public sealed class SharedProbeSession : IAsyncLifetime
     private readonly RuntimeTools _tools;
     private bool _emulateTouch;
 
-    public SharedProbeSession() => _tools = new RuntimeTools(_harness.Sessions, TestCSharp.Unused());
+    private readonly bool _shutOutRealGamepads;
+
+    public SharedProbeSession()
+        : this(shutOutRealGamepads: true) { }
+
+    /// <summary>A shared run launched with the real pads shut out, or live when <paramref name="shutOutRealGamepads"/> is false.</summary>
+    protected SharedProbeSession(bool shutOutRealGamepads)
+    {
+        _shutOutRealGamepads = shutOutRealGamepads;
+        _tools = new RuntimeTools(_harness.Sessions, TestCSharp.Unused());
+    }
 
     /// <summary>The probe project the shared run plays.</summary>
     public string ProbeDirectory => _probe.Directory;
@@ -144,7 +154,7 @@ public sealed class SharedProbeSession : IAsyncLifetime
 
     private async Task LaunchAsync(CancellationToken cancellation)
     {
-        await Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], true, true, Prepare: true), null, cancellation);
+        await Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], true, _shutOutRealGamepads, Prepare: true), null, cancellation);
         string emulate = await _tools.RunScriptAsync(
             "extends RefCounted\n\n\nfunc execute(_scene_tree: SceneTree) -> Variant:\n\treturn Input.emulate_touch_from_mouse\n",
             ScriptTimeoutMs,
@@ -153,4 +163,15 @@ public sealed class SharedProbeSession : IAsyncLifetime
         _emulateTouch = JsonNode.Parse(emulate)!["value"]!.GetValue<bool>();
         ErrorCursor = Sessions.Resolve(null).Errors.Mark();
     }
+}
+
+/// <summary>
+/// The shared InputProbe run with the machine's real pads live, for a class that opens a Popup: shut-out mode's re-sent
+/// application focus-out closes a Popup as it opens (scene/gui/popup.cpp L114-120 in 4.7.2). The live pads can move GUI
+/// focus between a press and its release (the real-pads footgun), so a test on it can lose a press.
+/// </summary>
+public sealed class SharedLivePadsProbeSession : SharedProbeSession
+{
+    public SharedLivePadsProbeSession()
+        : base(shutOutRealGamepads: false) { }
 }

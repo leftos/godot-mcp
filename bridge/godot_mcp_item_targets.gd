@@ -9,7 +9,10 @@ extends RefCounted
 ## The classes an item target takes, each with its descendants.
 const LIST_CLASSES: Array[String] = ["ItemList", "TabBar", "TabContainer", "Tree"]
 ## A node of another class: its path and class.
-const NOT_A_LIST := "%s is a %s; item targets take an ItemList, TabBar, TabContainer or Tree"
+const NOT_A_LIST := (
+	"%s is a %s; item targets take an ItemList, TabBar, TabContainer, Tree, "
+	+ "OptionButton, MenuButton or PopupMenu"
+)
 ## A Tree's key on a flat list: the list's path, its class and the key.
 const ITEM_KEY_REFUSED := "%s is a %s; item.%s is for a Tree only"
 ## An index on a Tree: the Tree's path.
