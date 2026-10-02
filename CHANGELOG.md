@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- `watch` records property and expression tracks frame by frame while other tools drive the game, returning each track's change points, range and paused frames.
+
 ## 0.13.1 - 2026-10-01
 
 ### Fixed

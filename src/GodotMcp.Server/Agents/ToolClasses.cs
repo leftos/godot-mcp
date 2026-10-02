@@ -35,6 +35,7 @@ internal static class ToolClasses
             Read,
             "it compares snapshots and reads the game again, running state methods only for a kept state read"
         ),
+        [RuntimeTools.WatchToolName] = new(Read, "it reads values over frames; it runs game code only through expressions and its call"),
     };
 
     private static readonly Lazy<IReadOnlyDictionary<string, string>> Catalog = new(Load);

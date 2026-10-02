@@ -405,7 +405,7 @@ func _sample(params: Dictionary, count: int) -> Dictionary:
 
 ## Whether value equals the last sample kept, in JSON space; false before the first.
 func _repeats(kept: Array, value: Variant) -> bool:
-	return not kept.is_empty() and _json_equal(value, kept[-1]["value"])
+	return not kept.is_empty() and json_equal(value, kept[-1]["value"])
 
 
 ## Captures a frame at each of params.points, ascending seconds of game time from the request:
@@ -826,7 +826,7 @@ func _check_property(node_name: String, property: String, wanted: Variant) -> Ar
 	if not bridge._json.has_property(node, first):
 		return [false, null, "'%s' has no property '%s'." % [node.get_path(), first]]
 	var value: Variant = bridge._json.to_json(node.get_indexed(NodePath(property)))
-	return [_json_equal(value, wanted), value]
+	return [json_equal(value, wanted), value]
 
 
 ## Parses source once with its inputs (node too when node_name is set, also the base instance)
@@ -902,8 +902,8 @@ func _as_signal_outcome(outcome: Dictionary) -> Dictionary:
 
 
 ## A JSON value compared with another: numbers within EQUAL_TOLERANCE, whatever their type;
-## arrays and objects member by member; anything else by type and value.
-func _json_equal(actual: Variant, wanted: Variant) -> bool:
+## arrays and objects member by member; anything else by type and value. The watch shares it.
+static func json_equal(actual: Variant, wanted: Variant) -> bool:
 	if _is_number(actual) and _is_number(wanted):
 		return absf(float(actual) - float(wanted)) <= EQUAL_TOLERANCE
 	if actual is Array and wanted is Array:
@@ -913,25 +913,25 @@ func _json_equal(actual: Variant, wanted: Variant) -> bool:
 	return typeof(actual) == typeof(wanted) and actual == wanted
 
 
-func _arrays_equal(actual: Array, wanted: Array) -> bool:
+static func _arrays_equal(actual: Array, wanted: Array) -> bool:
 	if actual.size() != wanted.size():
 		return false
 	for index in actual.size():
-		if not _json_equal(actual[index], wanted[index]):
+		if not json_equal(actual[index], wanted[index]):
 			return false
 	return true
 
 
-func _dictionaries_equal(actual: Dictionary, wanted: Dictionary) -> bool:
+static func _dictionaries_equal(actual: Dictionary, wanted: Dictionary) -> bool:
 	if actual.size() != wanted.size():
 		return false
 	for key: Variant in wanted:
-		if not actual.has(key) or not _json_equal(actual[key], wanted[key]):
+		if not actual.has(key) or not json_equal(actual[key], wanted[key]):
 			return false
 	return true
 
 
-func _is_number(value: Variant) -> bool:
+static func _is_number(value: Variant) -> bool:
 	return value is int or value is float
 
 

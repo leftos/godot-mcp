@@ -15,6 +15,7 @@ const SCRIPT_STOPPED := (
 
 var _bridge_script: GDScript = load_bridge_script("godot_mcp_bridge.gd")
 var _time_script: GDScript = load_bridge_script("godot_mcp_time.gd")
+var _watch_script: GDScript = load_bridge_script("godot_mcp_watch.gd")
 var _frame_script: GDScript = load_bridge_script("godot_mcp_frame.gd")
 var _dormant_script: GDScript = load_bridge_script("godot_mcp_dormant.gd")
 var _window_script: GDScript = load_bridge_script("godot_mcp_window.gd")
@@ -23,6 +24,7 @@ var _window_script: GDScript = load_bridge_script("godot_mcp_window.gd")
 func test_cancel_of_an_answered_request_replies_false() -> void:
 	var bridge: Node = _bridge_script.new()
 	bridge._time = _time_script.new()
+	bridge._watch = _watch_script.new()
 	var waiting: Dictionary = {"kind": "exists", "node": "Main", "timeoutMs": 10000}
 	var answered: Dictionary = {"kind": "exists", "node": "Main", "timeoutMs": 10000}
 	bridge._track(17, "wait_for", answered)
@@ -36,12 +38,14 @@ func test_cancel_of_an_answered_request_replies_false() -> void:
 	assert_true(bridge._cancel(18), "a running wait")
 	assert_eq(waiting.get("_cancelled"), true, "its params are marked, ending its poll")
 	bridge._time.free()
+	bridge._watch.free()
 	bridge.free()
 
 
 func test_a_lost_connection_cancels_and_forgets_the_running_requests() -> void:
 	var bridge: Node = _bridge_script.new()
 	bridge._time = _time_script.new()
+	bridge._watch = _watch_script.new()
 	var waiting: Dictionary = {"kind": "exists", "node": "Main", "timeoutMs": 10000}
 	bridge._track(18, "wait_for", waiting)
 	bridge._end_connection()
@@ -49,6 +53,7 @@ func test_a_lost_connection_cancels_and_forgets_the_running_requests() -> void:
 	assert_eq(waiting.get("_cancelled"), true, "the running wait is cancelled, ending its poll")
 	assert_true(bridge._running_requests.is_empty(), "no running request is left to cancel")
 	bridge._time.free()
+	bridge._watch.free()
 	bridge.free()
 
 
@@ -291,12 +296,14 @@ func _recording_bridge() -> Node:
 		)
 	)
 	bridge._time = _time_script.new()
+	bridge._watch = _watch_script.new()
 	bridge._json = load_bridge_script("godot_mcp_json.gd")
 	return bridge
 
 
 func _free_bridge(bridge: Node) -> void:
 	bridge._time.free()
+	bridge._watch.free()
 	bridge.free()
 
 

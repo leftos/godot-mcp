@@ -42,6 +42,7 @@ public sealed class ToolClassesTests
     [InlineData("cs_get", ToolClasses.Read)]
     [InlineData("get_game_state", ToolClasses.Read)]
     [InlineData("diff_snapshots", ToolClasses.Read)]
+    [InlineData("watch", ToolClasses.Read)]
     public void AnOverriddenToolGetsItsOverride(string tool, string expected)
     {
         Assert.Equal(expected, ToolClasses.Overrides[tool].Class);
@@ -55,7 +56,7 @@ public sealed class ToolClassesTests
             .ServedTools()
             .ToDictionary(t => t.Tool.Name!, t => ToolClasses.FromAttributes(t.Tool, t.ToolType), StringComparer.Ordinal);
 
-        Assert.Equal(6, ToolClasses.Overrides.Count);
+        Assert.Equal(7, ToolClasses.Overrides.Count);
         Assert.All(
             ToolClasses.Overrides,
             o =>

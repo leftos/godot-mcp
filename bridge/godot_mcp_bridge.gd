@@ -33,11 +33,12 @@ const STATE_SCRIPT := "godot_mcp_state.gd"
 const DORMANT_SCRIPT := "godot_mcp_dormant.gd"
 const WINDOW_SCRIPT := "godot_mcp_window.gd"
 const AUDIO_SCRIPT := "godot_mcp_audio.gd"
+const WATCH_SCRIPT := "godot_mcp_watch.gd"
 ## The commands a cancel request can end early, answering the request at once for a run_script it
 ## stops and a call_method it stops awaiting (_cancel); the server cancels one when its
 ## load-adjusted allowance passes before the request's backstopMs.
 const CANCELLABLE: PackedStringArray = [
-	"frame", "wait_for", "monitor", "frames", "dotnet", "run_script", "call_method"
+	"frame", "wait_for", "monitor", "frames", "dotnet", "run_script", "call_method", "watch"
 ]
 ## A stopped run_script's answer, the restored clause (_restore) filled in.
 const SCRIPT_STOPPED := (
@@ -86,6 +87,9 @@ var _state: Node
 var _inspect: Node
 ## The clock (godot_mcp_time.gd beside this script): pause, step, time scale and waits.
 var _time: Node
+## The watch (godot_mcp_watch.gd beside this script): the watch command's tracks, sampled each
+## frame beside every other command.
+var _watch: Node
 ## The screenshot comparison (godot_mcp_baseline.gd beside this script).
 var _baseline: Node
 ## The scene preview (godot_mcp_preview.gd beside this script): preview_scene's framing and capture.
@@ -243,6 +247,10 @@ func _build_once() -> void:
 	_time.name = "Time"
 	_time.bridge = self
 	add_child(_time)
+	_watch = (load(_script_dir.path_join(WATCH_SCRIPT)) as GDScript).new()
+	_watch.name = "Watch"
+	_watch.bridge = self
+	add_child(_watch)
 	_baseline = (load(_script_dir.path_join(BASELINE_SCRIPT)) as GDScript).new()
 	_baseline.name = "Baseline"
 	_baseline.bridge = self
@@ -315,13 +323,16 @@ func _dormant_if_armed() -> void:
 	if _dormant_script.goes_dormant_again(_endpoint_source, armed, headless):
 		_go_dormant_again()
 	else:
+		_watch.drop()
 		_audio.set_muted(false)
 
 
-## Forgets the connection that ended and a capture it ran, lets go of the injected input still
-## held, keeps the window parked when the arm is quiet or gives back one parked, and waits.
+## Forgets the connection that ended and a capture and a watch it ran, lets go of the injected
+## input still held, keeps the window parked when the arm is quiet or gives back one parked, and
+## waits.
 func _go_dormant_again() -> void:
 	_capture.stop()
+	_watch.drop()
 	_raw_events.release_all()
 	_stream = null
 	_buffer = PackedByteArray()
@@ -487,6 +498,7 @@ func _cancel(request: int) -> bool:
 	var params: Dictionary = _running_requests[request]
 	params["_cancelled"] = true
 	_time.cancel(params)
+	_watch.cancel(params)
 	if _running_scripts.has(request):
 		_stop_script(request)
 	elif _running_calls.has(request):
@@ -575,6 +587,7 @@ func _command_handlers() -> Dictionary:
 		"movie_frame": _handle_movie_frame,
 		"describe_class": _handle_describe_class,
 		"capture": _handle_capture,
+		"watch": _handle_watch,
 		"dotnet": _handle_dotnet,
 		"state": _handle_state,
 		"shutdown": _handle_shutdown,
@@ -638,6 +651,15 @@ func _handle_describe_class(id: int, params: Dictionary) -> void:
 ## out before the reply.
 func _handle_capture(id: int, params: Dictionary) -> void:
 	var outcome: Dictionary = _capture.handle(params)
+	if outcome.has("error"):
+		_reply_error(id, str(outcome["error"]))
+		return
+	_reply_ok(id, outcome["result"])
+
+
+## Runs a watch request (start, run or stop) on the Watch child, which answers {result} or {error}.
+func _handle_watch(id: int, params: Dictionary) -> void:
+	var outcome: Dictionary = await _watch.handle(params)
 	if outcome.has("error"):
 		_reply_error(id, str(outcome["error"]))
 		return

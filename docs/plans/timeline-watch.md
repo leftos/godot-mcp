@@ -1,6 +1,6 @@
 # Timeline watch: several values and signals over one window, then performance monitors
 
-Design draft for the plan item "One timeline watch over several properties and signals, then performance monitors over a frame window (ideas 3, 2)" ([MAIN.md](./MAIN.md) L27, the Track), from ideas 3 and 2 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L105-113). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../DECISIONS.md) decision 29, which wins where this file differs; steps 2 to 6 of section 7 are open.
+Design draft for the plan item "One timeline watch over several properties and signals, then performance monitors over a frame window (ideas 3, 2)" ([MAIN.md](./MAIN.md) L27, the Track), from ideas 3 and 2 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L105-113). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../DECISIONS.md) decision 29, which wins where this file differs; steps 1 and 2 of section 7 are done, steps 3 to 6 open.
 
 ## 1. Problem
 
@@ -174,7 +174,7 @@ Godot facts are cited from the `4.7.2-stable` tag of `godotengine/godot`, read t
 Each step lands on its own with its tests, docs and changelog bullet, and passes the build, `gdlint`, `gdcomplexity`, `gdtest`, the unit tests and its itest class.
 
 1. **Done: spike** (results in section 8): in InputProbe and CsProbe, through `run.ps1 drive` with sampler nodes `run_script` installed: (i) the per-frame cost of 32 property and expression tracks, 200 signal connections and 16 monitors at 60 fps, in µs a frame; (ii) `frame_ms` against a known `OS.delay_msec(300)` frame, quiet and visible, and what it reads when the window cannot draw; (iii) which built-in monitors change per frame, whether `pipeline/compilations_*` are cumulative, and what `render/draw_calls` reads for a 2D-only screen; (iv) a C# `[Signal]` with 0, 3 and 6 arguments caught by a variadic GDScript lambda, and a non-exported C# field sampled per frame; (v) a 7200-frame, 16-monitor series sent over the bridge's socket, its size and time; (vi) a property set and a signal emitted in the same `_process`, sampled at `process_frame` and at `frame_post_draw`, confirming question 6's offset. Results into section 3's Status column.
-2. **Property and expression tracks**: the `Watch` module, `watch` with `start`, `stop` and `run`, the window and paused frames, `options.call`, change points, summaries, the budgets, `frame`/`gameMs` stamps; `test_watch.gd`, `WatchValidationTests`, `WatchTimelineTests`, `WatchTests`; TOOLS.md, SKILL.md, ARCHITECTURE.md, glossary, README, changelog. Decided at briefing (2026-09-30), where the rulings left it open:
+2. **Done: property and expression tracks**: the `Watch` module, `watch` with `start`, `stop` and `run`, the window and paused frames, `options.call`, change points, summaries, the budgets, `frame`/`gameMs` stamps; `test_watch.gd`, `WatchValidationTests`, `WatchTimelineTests`, `WatchTests`; TOOLS.md, SKILL.md, ARCHITECTURE.md, glossary, README, changelog. Decided at briefing (2026-09-30), where the rulings left it open:
    - `tracks` gains a kind in the step that implements it (`signals` in step 3, `monitors` in step 4), so no key is taken before it works; the result likewise has no `events` or `monitors` key until then.
    - A `stop` with no watch running or held is refused, naming why when the bridge knows (none started, or the game restarted); a result is kept for a window that ran.
    - `start` with `options.call` answers after the watch's first frame, so the call's `{value}` or its failure is in `start`'s reply, and a failed call ends the watch before it samples; `run` reports it the same way.
@@ -184,6 +184,14 @@ Each step lands on its own with its tests, docs and changelog bullet, and passes
    - A property track is `{node, property, name?, minDelta?}` and an expression track `{name, expression, node?, minDelta?}`; a track is keyed in the result by `name` when given, else `node` and `property`; two tracks with one key are refused. An expression track's `node` missing at start is refused; one freed later records `{"$error": text}` once, and so does an expression that starts failing.
    - `minDelta` (above 0) applies to a numeric track: an int or float compares the difference, a vector keeps a sample when any component moved by at least it; on a bool, String or other track it is refused at start, naming the value's type from the first read.
    - A watch left running when a `batch_drive` ends keeps running; the batch does not stop it.
+
+   Decided while building it:
+
+   - A `run` the server releases at its allowance answers its timeline so far with `stopped: "deadline"`, as a started watch past its own deadline does.
+   - A track's `changes` is its kept change points less one (the first), counting the dropped and cut ones.
+   - A failing expression's `{"$error": text}` is kept again only when the text changes, by the change-point rule; expression failures stay out of the error feed (the expression runs with `show_error` off), so section 4's "the bridge's error feed across the call" does not hold.
+   - The 40000-character cut counts its loss per track in `cut`, and each track keeps at least its first and last point.
+   - A named property track keeps its `node` and `property` beside `name`, in `start`'s reply and in the timeline.
 3. **Signal tracks**: node and group signals, the merged `events`, the fair share, `skipped`; the CsProbe `[Signal]` and `CSharpWatchTests`.
 4. **Monitor tracks**: `frame_ms`, the built-in name map, the refused `time/*`, custom monitors, percentiles, `budgetMs`, spikes.
 5. **`monitor_property` removed** (question 11 (a)): the tool, its options, the bridge's `monitor` command and guard kind, its tests and TOOLS.md rows; MAIN.md L40's flaky-test line deleted with it.

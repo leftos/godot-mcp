@@ -111,6 +111,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "type_text",
                 "validate",
                 "wait_for",
+                "watch",
             ],
             tools.Select(tool => tool.Name).Order()
         );
@@ -220,6 +221,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["type_text"] = changesTheGame,
             ["validate"] = readsTheGame,
             ["wait_for"] = changesTheGame,
+            ["watch"] = destructive,
         };
         Dictionary<string, (bool?, bool?, bool?)> actual = tools.ToDictionary(
             tool => tool.Name,
@@ -231,7 +233,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(69, actual.Count);
+        Assert.Equal(70, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 
