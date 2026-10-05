@@ -16,10 +16,10 @@ const SETTLE_FRAMES := 2
 const TARGETS_SCRIPT := "godot_mcp_targets.gd"
 ## The popup item player (godot_mcp_popup_targets.gd beside this script), this node's child.
 const POPUPS_SCRIPT := "godot_mcp_popup_targets.gd"
+## The tooltip reader (godot_mcp_hover.gd beside this script), this node's child.
+const HOVER_SCRIPT := "godot_mcp_hover.gd"
 ## The gestures whose result says which Controls they hit, from _hits.
 const HIT_GESTURES := ["click", "drag", "mouse_button", "hover", "scroll"]
-## The longest a hover waits for a tooltip, the server's own limit on timeoutMs.
-const HOVER_TIMEOUT_CAP_MS := 10000
 ## The recording's movie frame rate, which run_project sets beside --write-movie.
 const MOVIE_FPS_VARIABLE := "GODOT_MCP_MOVIE_FPS"
 const PAUSED_TOOLTIP_WARNING := (
@@ -71,6 +71,8 @@ var bridge: Node
 var _targets: Node
 ## The popup item player (godot_mcp_popup_targets.gd), created by _ready as this node's child.
 var _popups: Node
+## The tooltip reader (godot_mcp_hover.gd), created by _ready as this node's child.
+var _hover: Node
 ## What the playing gesture hit: pressedOn, releasedOn, guiDragStarted, dropAccepted,
 ## scrolledOn.
 var _hits: Dictionary = {}
@@ -124,7 +126,7 @@ func _on_window_input(event: InputEvent) -> void:
 func _repick() -> void:
 	if not _repick_due():
 		return
-	var point: Vector2 = _to_viewport(bridge._pointer)
+	var point: Vector2 = to_viewport(bridge._pointer)
 	var motion := InputEventMouseMotion.new()
 	motion.device = DEVICE_ID_INTERNAL
 	motion.position = point
@@ -143,9 +145,10 @@ func _repick_due() -> bool:
 	)
 
 
-## Creates the target resolver (godot_mcp_targets.gd) and the popup item player
-## (godot_mcp_popup_targets.gd) as this node's children, loaded from the folder this script itself
-## lives in, so the bridge script gains no line.
+## Creates the target resolver (godot_mcp_targets.gd), the popup item player
+## (godot_mcp_popup_targets.gd) and the tooltip reader (godot_mcp_hover.gd) as this node's
+## children, loaded from the folder this script itself lives in, so the bridge script gains no
+## line.
 func _create_targets() -> void:
 	var dir: String = (get_script() as Script).resource_path.get_base_dir()
 	_targets = (load(dir.path_join(TARGETS_SCRIPT)) as GDScript).new()
@@ -157,6 +160,11 @@ func _create_targets() -> void:
 	_popups.gestures = self
 	_popups.targets = _targets
 	add_child(_popups)
+	_hover = (load(dir.path_join(HOVER_SCRIPT)) as GDScript).new()
+	_hover.name = "Hover"
+	_hover.gestures = self
+	_hover.targets = _targets
+	add_child(_hover)
 
 
 ## Plays one gesture over frames, then waits two more frames, so the game's handlers have run
@@ -177,7 +185,7 @@ func play(params: Dictionary) -> Dictionary:
 	if not error.is_empty():
 		return {"error": error}
 	var result: Dictionary = {
-		"pointer": bridge._json.to_json(_to_viewport(bridge._pointer)),
+		"pointer": bridge._json.to_json(to_viewport(bridge._pointer)),
 		"heldButtonMask": bridge._held_mask,
 	}
 	if HIT_GESTURES.has(str(params.get("gesture", ""))):
@@ -332,7 +340,7 @@ func click_at(window_point: Vector2, button: int, double_click: bool) -> void:
 func _send_and_record(
 	window_point: Vector2, button: int, pressed: bool, double_click: bool
 ) -> void:
-	var point: Vector2 = _to_viewport(window_point)
+	var point: Vector2 = to_viewport(window_point)
 	var drops: bool = (
 		not pressed and button == MOUSE_BUTTON_LEFT and get_tree().root.gui_is_dragging()
 	)
@@ -608,9 +616,9 @@ func _settle_hover(point: Vector2) -> Control:
 
 
 ## Moves to the target as mouse_button's move does; then, when params.tooltip is not false and
-## a Control has a tooltip for the pointer (the hovered one or an ancestor, as _tooltip_owner
-## finds it), waits for it to show. Records tooltip ({text, x, y, width, height, owner}, or
-## null) and a warning when a tooltip was due and none showed.
+## a Control has a tooltip for the pointer (the hovered one or an ancestor, as the tooltip
+## reader's tooltip_owner finds it), waits for it to show. Records tooltip ({text, x, y, width,
+## height, owner}, or null) and a warning when a tooltip was due and none showed.
 func _play_hover(params: Dictionary) -> String:
 	var point: Variant = await aim(params.get("target"), true, false, false)
 	if point is String:
@@ -619,7 +627,7 @@ func _play_hover(params: Dictionary) -> String:
 	_hits["tooltip"] = null
 	if control == null or not bool(params.get("tooltip", true)):
 		return ""
-	var tooltip_owner: Control = _tooltip_owner(control, point)
+	var tooltip_owner: Control = _hover.tooltip_owner(control, point)
 	if tooltip_owner == null:
 		return ""
 	# The tooltip timer starts only from a motion over a Control that can process
@@ -628,67 +636,15 @@ func _play_hover(params: Dictionary) -> String:
 	if not control.can_process():
 		_hits["warning"] = PAUSED_TOOLTIP_WARNING % str(control.get_path())
 		return ""
-	var timeout_ms: int = _tooltip_timeout_ms(params)
-	var popup: Window = await _await_tooltip(tooltip_owner, timeout_ms)
+	var timeout_ms: int = _hover.tooltip_timeout_ms(params)
+	var popup: Window = await _hover.await_tooltip(tooltip_owner, timeout_ms)
 	if popup == null:
 		_hits["warning"] = "no tooltip showed within %d ms" % timeout_ms
 	else:
-		var tooltip: Dictionary = _describe_tooltip(popup)
+		var tooltip: Dictionary = _hover.describe_tooltip(popup)
 		tooltip["owner"] = _describe(tooltip_owner)
 		_hits["tooltip"] = tooltip
 	return ""
-
-
-## The Control whose tooltip Godot shows at a viewport point over the hovered control, or null
-## when none has one, picked as the viewport's _gui_get_tooltip does (scene/main/viewport.cpp
-## L1566-1596 in 4.7.2): from the hovered Control up through its parent Controls, the first
-## whose get_tooltip answers text at the point (its tooltip_text, or a script's _get_tooltip).
-## That virtual is how a MenuBar answers a title's tooltip (scene/gui/menu_bar.cpp L989-995)
-## and a PopupMenu an item's, its items drawn by its internal PopupMenuItems Control
-## (scene/gui/popup_menu.cpp L3845-3851). The point is mapped into each Control through its own
-## transform, an embedded window's included, as point_of maps a target's centre. The climb ends
-## after a Control whose mouse filter, mouse_behavior_recursive applied, is Stop, or which is
-## top-level.
-func _tooltip_owner(control: Control, point: Vector2) -> Control:
-	var current: Control = control
-	while current != null:
-		var local: Vector2 = _targets.viewport_transform(current).affine_inverse() * point
-		if not current.get_tooltip(local).is_empty():
-			return current
-		if (
-			current.get_mouse_filter_with_override() == Control.MOUSE_FILTER_STOP
-			or current.is_set_as_top_level()
-		):
-			return null
-		current = current.get_parent_control()
-	return null
-
-
-## params.timeoutMs, else gui/timers/tooltip_delay_sec plus a second, at most
-## HOVER_TIMEOUT_CAP_MS.
-func _tooltip_timeout_ms(params: Dictionary) -> int:
-	if params.has("timeoutMs"):
-		return int(params["timeoutMs"])
-	var delay: float = float(ProjectSettings.get_setting("gui/timers/tooltip_delay_sec", 0.5))
-	return mini(int(delay * 1000.0) + 1000, HOVER_TIMEOUT_CAP_MS)
-
-
-## The tooltip popup showing for tooltip_owner, checked now and then on each process_frame,
-## which fires paused or not (scene/main/scene_tree.cpp L649, L713 in 4.7.2), until one shows or
-## timeout_ms of real time passes (in a recording, its clip frames): the tooltip timer, once
-## started, ignores pause and the time scale (viewport.cpp L2144-2146). Null when none showed.
-func _await_tooltip(tooltip_owner: Control, timeout_ms: int) -> Window:
-	var until: int = Time.get_ticks_msec() + timeout_ms
-	var frames: int = clip_frames(timeout_ms, clip_fps())
-	var waited: int = 0
-	var popup: Window = _showing_tooltip(tooltip_owner)
-	while popup == null and within(waited, frames, until):
-		await get_tree().process_frame
-		waited += 1
-		if not is_instance_valid(tooltip_owner):
-			return null
-		popup = _showing_tooltip(tooltip_owner)
-	return popup
 
 
 ## Whether a wait that has waited frames of its frames (in a recording; -1 otherwise) is still
@@ -697,51 +653,6 @@ static func within(waited: int, frames: int, until_ms: int) -> bool:
 	if frames >= 0:
 		return waited < frames
 	return Time.get_ticks_msec() < until_ms
-
-
-## A visible tooltip popup: an embedded subwindow of the root, or a Window under tooltip_owner
-## when subwindows are not embedded, since Godot parents the popup to the Control whose tooltip
-## it shows (scene/main/viewport.cpp L1687 in 4.7.2); null when none shows.
-func _showing_tooltip(tooltip_owner: Control) -> Window:
-	var candidates: Array = []
-	candidates.append_array(get_tree().root.get_embedded_subwindows())
-	candidates.append_array(tooltip_owner.get_children(true))
-	for node: Node in candidates:
-		if node is Window and (node as Window).visible and bridge._ui_snapshot.is_tooltip(node):
-			return node as Window
-	return null
-
-
-## A tooltip popup as {text, x, y, width, height} in viewport coordinates; text is its Label's,
-## null for a custom tooltip without one. A popup that is not embedded has a screen position.
-func _describe_tooltip(popup: Window) -> Dictionary:
-	var rect := Rect2(Vector2(popup.position), Vector2(popup.size))
-	if not popup.is_embedded():
-		var origin := Vector2(popup.position - get_tree().root.position)
-		var top_left: Vector2 = _to_viewport(origin)
-		rect = Rect2(top_left, _to_viewport(origin + Vector2(popup.size)) - top_left)
-	var label: Label = _find_label(popup)
-	var text: Variant = null
-	if label != null:
-		text = label.text
-	return {
-		"text": text,
-		"x": rect.position.x,
-		"y": rect.position.y,
-		"width": rect.size.x,
-		"height": rect.size.y,
-	}
-
-
-## The first Label under node, depth first, internal children included.
-func _find_label(node: Node) -> Label:
-	for child: Node in node.get_children(true):
-		if child is Label:
-			return child as Label
-		var found: Label = _find_label(child)
-		if found != null:
-			return found
-	return null
 
 
 ## Resolves a target and moves the pointer to its viewport point: the motion the gesture sends
@@ -842,7 +753,7 @@ func to_window(point: Vector2) -> Vector2:
 	return get_viewport().get_screen_transform() * point
 
 
-func _to_viewport(point: Vector2) -> Vector2:
+func to_viewport(point: Vector2) -> Vector2:
 	return get_viewport().get_screen_transform().affine_inverse() * point
 
 
