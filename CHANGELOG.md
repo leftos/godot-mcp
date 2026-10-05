@@ -23,6 +23,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - A `{text}` target on a `RichTextLabel` or a mouse-stopping `Label` now presses through a Control of its own scene instance covering it.
 - A hover from `hover` or `mouse_button` now survives the game's own cursor re-picks, a drop's end and scene changes, instead of dropping to the hidden cursor.
 - With `shutOutRealGamepads`, a `PopupMenu`, `OptionButton` list or other popup now stays open instead of closing as it opens.
+- An item target whose point lies outside the viewport is refused as off-screen, naming the item and its rect, instead of as covered.
 
 ## 0.13.1 - 2026-10-01
 

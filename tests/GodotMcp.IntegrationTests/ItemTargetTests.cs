@@ -171,20 +171,20 @@ public sealed class ItemTargetTests(SharedProbeSession shared) : IAsyncLifetime,
         );
 
         Assert.True(20 + last.GetValue<double>() > 640, last.ToJsonString());
-        McpException refused = await RefusedAsync(new InputTarget("Open", Item: new InputItem(Text: "Tab 15")), cancellation);
+        McpException refused = await RefusedAsync(new InputTarget("Open", Item: new InputItem(Text: titles[^1])), cancellation);
 
         Assert.True(
-            refused.Message.StartsWith("click failed: The bridge refused 'input': the centre of /root/Open (", StringComparison.Ordinal),
-            refused.Message
-        );
-        Assert.True(refused.Message.Contains(") lands on <nothing>, which covers it (target rect 20,20,", StringComparison.Ordinal), refused.Message);
-        Assert.True(
-            refused.Message.EndsWith(
-                "; click by {x, y} inside the target's visible part, or wait until nothing covers it.",
+            refused.Message.StartsWith(
+                $"click failed: The bridge refused 'input': item '{titles[^1]}' of /root/Open is at ",
                 StringComparison.Ordinal
             ),
             refused.Message
         );
+        Assert.True(
+            refused.Message.Contains(") lies outside the 640x360 viewport; bring the item into view first", StringComparison.Ordinal),
+            refused.Message
+        );
+        Assert.DoesNotContain("covers it", refused.Message, StringComparison.Ordinal);
         Assert.Equal(0, await ReadIntAsync("return scene_tree.root.get_node(\"Open\").current_tab", cancellation));
     }
 

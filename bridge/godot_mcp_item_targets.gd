@@ -51,6 +51,13 @@ const COLLAPSED_ITEM := "item '%s' of %s is under the collapsed item %s; expand 
 const SCROLLED_OUT_ITEM := (
 	"item '%s' of %s is at %s, outside the list's visible rect %s; " + "scroll the list first"
 )
+## An item whose point lies outside the root viewport: the item's text, the list's path, the
+## item's rect, its point and the viewport's size, as rect_text, point_text and size_text give
+## them.
+const OFF_VIEWPORT_ITEM := (
+	"item '%s' of %s is at %s, whose point (%s) lies outside the %s viewport; "
+	+ "bring the item into view first"
+)
 ## A tab or an ItemList or Tree item whose point the Control's hit test does not map back to it.
 const TAB_NOT_DRAWN := (
 	"item '%s' of %s has no drawn rect; it may be outside the tab bar's drawn range "
@@ -455,20 +462,36 @@ static func _flat_ambiguity(
 
 
 ## Why an item at rect, aimed at local, both in drawer's local space, cannot be aimed at before
-## the hit test is asked, or "": a rect with no area, or local outside drawer's visible rect
-## (scrolled out; both rects given in the root's viewport coordinates). named is [the item's
-## text, the list's path].
+## the hit test is asked, or "": a rect with no area, local outside drawer's visible rect
+## (scrolled out; both rects given in the root's viewport coordinates), or local outside the root
+## viewport (off_viewport). named is [the item's text, the list's path].
 static func _reach_refusal(
 	targets: Node, drawer: Control, rect: Rect2, local: Vector2, named: Array
 ) -> String:
 	if not rect.has_area():
 		return _not_drawn(drawer) % named
 	var visible: Rect2 = _visible_rect(drawer)
-	if not scrolled_out(local, visible):
-		return ""
 	var xform: Transform2D = targets.viewport_transform(drawer)
-	var boxes: Array = [targets.rect_text(xform * rect), targets.rect_text(xform * visible)]
-	return SCROLLED_OUT_ITEM % (named + boxes)
+	if scrolled_out(local, visible):
+		var boxes: Array = [targets.rect_text(xform * rect), targets.rect_text(xform * visible)]
+		return SCROLLED_OUT_ITEM % (named + boxes)
+	var root_rect: Rect2 = targets.get_tree().root.get_visible_rect()
+	return off_viewport(targets, xform * rect, xform * local, root_rect, named)
+
+
+## OFF_VIEWPORT_ITEM when point, the aimed point of the item at box, lies outside viewport (all in
+## the root's viewport coordinates), else "". named is [the item's text, the list's path];
+## texts is the resolver or its script, whose rect_text, point_text and size_text write the
+## numbers.
+static func off_viewport(
+	texts: Variant, box: Rect2, point: Vector2, viewport: Rect2, named: Array
+) -> String:
+	if viewport.has_point(point):
+		return ""
+	var placed: Array = [
+		texts.rect_text(box), texts.point_text(point), texts.size_text(viewport.size)
+	]
+	return OFF_VIEWPORT_ITEM % (named + placed)
 
 
 static func _not_drawn(drawer: Control) -> String:

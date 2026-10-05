@@ -1,11 +1,12 @@
 extends "res://gd_test.gd"
 ## The item targets' pure helpers (bridge/godot_mcp_item_targets.gd): the shape refusals, the
-## flat lists' pick, the listing and path texts, the ambiguity refusals, the visible rect and the
-## scrolled-out decision, the right-to-left mirror, the Tree cell's aim point and drawn text, and a
-## Tree's paths and collapsed ancestors on a Tree never added to the scene tree; item geometry
-## needs laid-out Controls and is covered by ItemTargetTests.
+## flat lists' pick, the listing and path texts, the ambiguity refusals, the visible rect, the
+## scrolled-out and off-viewport decisions, the right-to-left mirror, the Tree cell's aim point
+## and drawn text, and a Tree's paths and collapsed ancestors on a Tree never added to the scene
+## tree; item geometry needs laid-out Controls and is covered by ItemTargetTests.
 
 var _items: GDScript = load_bridge_script("godot_mcp_item_targets.gd")
+var _targets_script: GDScript = load_bridge_script("godot_mcp_targets.gd")
 
 
 func test_shape_refusal_takes_the_list_classes_and_their_descendants() -> void:
@@ -166,6 +167,33 @@ func test_scrolled_out_is_a_point_outside_the_visible_rect() -> void:
 	assert_true(_items.scrolled_out(Vector2(50, 20), visible), "under the titles")
 	assert_true(_items.scrolled_out(Vector2(195, 60), visible), "under the scroll bar")
 	assert_true(_items.scrolled_out(Vector2(50, 145), visible), "under the bottom bar")
+
+
+func test_off_viewport_refuses_a_point_outside_the_root_viewport_naming_the_item() -> void:
+	var viewport := Rect2(0, 0, 640, 360)
+	var box := Rect2(1000, 20, 60, 40)
+	var named: Array = ["Tab 15", "/root/Open"]
+	assert_eq(
+		_items.off_viewport(_targets_script, box, Vector2(1030.5, 40), viewport, named),
+		(
+			"item 'Tab 15' of /root/Open is at 1000,20,60,40, whose point (1030.5, 40) lies "
+			+ "outside the 640x360 viewport; bring the item into view first"
+		),
+		"past the right edge"
+	)
+	assert_eq(
+		_items.off_viewport(_targets_script, box, Vector2(639, 359), viewport, named),
+		"",
+		"inside, at the far corner"
+	)
+	assert_true(
+		not _items.off_viewport(_targets_script, box, Vector2(640, 40), viewport, named).is_empty(),
+		"on the right edge, which the viewport does not hold"
+	)
+	assert_true(
+		not _items.off_viewport(_targets_script, box, Vector2(30, -1), viewport, named).is_empty(),
+		"above the top"
+	)
 
 
 func test_mirror_axis_is_the_one_get_item_at_position_mirrors_about() -> void:
