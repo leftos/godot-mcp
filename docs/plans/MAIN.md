@@ -4,11 +4,11 @@
 
 ## Ideas from the survey and the projects
 
+- [x] GMCP-60 Split condition parsing out of the time module before it passes 1000 lines · release vNext
+- [x] GMCP-57 Injected pointer is not the cursor UpdateMouseCursorState and get_mouse_position read · release vNext
 - [x] GMCP-54 click: a {text, under} target is refused when the label's own card covers it · release vNext
 - [x] GMCP-56 batch_drive: a wait whose expression errors comes back met: true · release vNext
 - [x] GMCP-55 wait_for: an expression with a lambda fails with only "Expected ',' or ')'" · release vNext
-- [/] GMCP-57 Injected pointer is not the cursor UpdateMouseCursorState and get_mouse_position read
-- [ ] GMCP-60 Split condition parsing out of the time module before it passes 1000 lines
 - [x] GMCP-11 run_scratches starts scenes in name order, so a long-paced scene ends the run alone · release vNext
 - [x] GMCP-10 run_scratches never judges what a scene prints before its first step · release vNext
 - [x] GMCP-9 run_scratches returns no prep block, so a wrapped or skipped build is invisible in its result · release vNext
@@ -17,8 +17,10 @@
   - [x] GMCP-14 Test item targets on a TabBar with clip_tabs off · release vNext
   - [x] GMCP-15 Test item targets in right-to-left layouts · release vNext
   - [x] GMCP-4 click: no item target inside an OptionButton or PopupMenu · release vNext
-  - [/] GMCP-49 Keep shut-out mode from closing a PopupMenu as it opens
-  - [ ] GMCP-59 Refuse an item target outside the viewport as off-screen, not covered
+  - [x] GMCP-49 Keep shut-out mode from closing a PopupMenu as it opens · release vNext
+  - [x] GMCP-59 Refuse an item target outside the viewport as off-screen, not covered · release vNext
+  - [x] GMCP-62 Refuse a Control target outside the viewport as off-screen, not covered · release vNext
+  - [ ] GMCP-63 Name a Control's rect when its centre lies outside its SubViewport or embedded window
 - [ ] GMCP-6 record: only Movie Maker, which runs faster than real time
 - [ ] GMCP-19 Timeline watch: property, signal and monitor tracks, then retire monitor_property
 - [x] GMCP-23 Design drives that span several processes · release vNext
@@ -37,6 +39,7 @@
 
 ## Singles
 
+- [x] GMCP-50 Move the tooltip block out of the input module · release vNext
 - [ ] GMCP-53 stop_project kills a game still shutting down after a mouse_button press and release
 - [ ] GMCP-52 validate: -getItem:Compile reaches MSBuild split through a pwsh prepWrapper (MSB1014)
 - [x] GMCP-40 Add the Agent Mail lease guard as a prek hook · release vNext
@@ -55,7 +58,6 @@
 - [ ] GMCP-1 stop_project refuses to clear a dead server's leftover override.cfg
 - [ ] GMCP-42 Fix LeftBehindTests' child-listing flake under load
 - [ ] GMCP-48 Free the wait's on_draw state: a Dictionary-Callable cycle in the time module
-- [ ] GMCP-50 Move the tooltip block out of the input module
 - [ ] GMCP-51 Fix TimeTests' WaitForSignalWhilePaused flake under load
 - [ ] GMCP-61 Shut-out mode leaves real pads live in an editor-embedded game
 
