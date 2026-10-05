@@ -11,7 +11,7 @@ An agent has no tool that names a sound. Today it can:
 - read one named player's `playing` with `inspect_node`, at the moment of the call;
 - wait for one named player's `playing` to become true with `wait_for {node, property, equals}`, or for its `finished` signal;
 - read buses only through a `run_script` calling `AudioServer`;
-- from the watch's step 2 on, sample a named player's `playing` or `volume_linear` as a property track, and a bus's peak as an expression track through `Engine.get_singleton("AudioServer")` (Expression has no singletons of its own: 4.7.2 `core/math/expression.cpp` has no `has_singleton` lookup, and `Engine` is one of the bridge's `EXPRESSION_INPUTS`, `bridge/godot_mcp_time.gd` L72).
+- from the watch's step 2 on, sample a named player's `playing` or `volume_linear` as a property track, and a bus's peak as an expression track through `Engine.get_singleton("AudioServer")` (Expression has no singletons of its own: 4.7.2 `core/math/expression.cpp` has no `has_singleton` lookup, and `Engine` is one of the bridge's `EXPRESSION_INPUTS`, `bridge/godot_mcp_conditions.gd`).
 
 Each of those reads `playing`, which misleads three ways (section 2): a second voice of a polyphonic player leaves `playing` true, so the restart is invisible; a pause turns `playing` false, so it reads as a stop; and a player made and freed for one sound (a fire-and-forget player) has no path to name before it exists. None of them lists the players or says which stream a voice played.
 

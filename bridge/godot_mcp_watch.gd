@@ -17,6 +17,7 @@ extends Node
 signal changed
 
 const TIME_SCRIPT := "godot_mcp_time.gd"
+const CONDITIONS_SCRIPT := "godot_mcp_conditions.gd"
 ## The change points a track keeps from its start, and from its end in a ring.
 const FIRST_POINTS := 200
 const LAST_POINTS := 50
@@ -65,8 +66,10 @@ const MIN_DELTA_REFUSAL := (
 
 ## The bridge (godot_mcp_bridge.gd), set by it before this node enters the tree.
 var bridge: Node
-## The clock's script, for its game clock, its JSON comparison and its expression inputs.
+## The clock's script, for its game clock and its JSON comparison.
 var _time_script: GDScript
+## The conditions' script, for its expression inputs and its condition parse.
+var _conditions_script: GDScript
 ## The watch running or held, or empty (see _new_watch for its fields).
 var _watch: Dictionary = {}
 ## Why no watch runs, while _watch is empty.
@@ -76,6 +79,7 @@ var _idle_reason: String = NONE_STARTED
 func _init() -> void:
 	var script_dir: String = (get_script() as Script).resource_path.get_base_dir()
 	_time_script = load(script_dir.path_join(TIME_SCRIPT)) as GDScript
+	_conditions_script = load(script_dir.path_join(CONDITIONS_SCRIPT)) as GDScript
 
 
 ## Runs a watch request, {action: "start" | "run" | "stop", properties, expressions, frames |
@@ -218,9 +222,10 @@ func _property_track(spec: Dictionary) -> Variant:
 
 
 ## An expression track {name, expression, node?, minDelta?}, parsed once with wait_for's inputs
-## (node too, also the base instance, when given) through the clock's parse_condition: refused when
-## its node is missing, when it does not parse (Expression ignores trailing text and GDScript
-## syntax it has no operator for) or when minDelta is set and its first read is not numeric.
+## (node too, also the base instance, when given) through the conditions' parse_condition:
+## refused when its node is missing, when it does not parse (Expression ignores trailing text and
+## GDScript syntax it has no operator for) or when minDelta is set and its first read is not
+## numeric.
 func _expression_track(spec: Dictionary) -> Variant:
 	var name: String = str(spec.get("name", ""))
 	var node: Node = null
@@ -228,10 +233,10 @@ func _expression_track(spec: Dictionary) -> Variant:
 		node = bridge._find_node(spec["node"])
 		if node == null:
 			return bridge._inspect.not_found(spec["node"], "get_scene_tree lists the nodes' paths")
-	var names: PackedStringArray = _time_script.EXPRESSION_INPUTS.duplicate()
+	var names: PackedStringArray = _conditions_script.EXPRESSION_INPUTS.duplicate()
 	if node != null:
 		names.append("node")
-	var parsed: Variant = _time_script.parse_condition(str(spec.get("expression", "")), names)
+	var parsed: Variant = _conditions_script.parse_condition(str(spec.get("expression", "")), names)
 	if parsed is String:
 		return "The expression of track '%s' does not parse: %s" % [name, parsed]
 	var track: Dictionary = _new_track(spec, node)

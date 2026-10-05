@@ -19,6 +19,7 @@ const INPUT_SCRIPT := "godot_mcp_input.gd"
 const RAW_EVENTS_SCRIPT := "godot_mcp_raw_events.gd"
 const INSPECT_SCRIPT := "godot_mcp_inspect.gd"
 const TIME_SCRIPT := "godot_mcp_time.gd"
+const CONDITIONS_SCRIPT := "godot_mcp_conditions.gd"
 const BASELINE_SCRIPT := "godot_mcp_baseline.gd"
 const FRAME_SCRIPT := "godot_mcp_frame.gd"
 const LOGGER_SCRIPT := "godot_mcp_logger.gd"
@@ -90,6 +91,9 @@ var _dotnet: Node
 var _state: Node
 ## The inspector (godot_mcp_inspect.gd beside this script), a child once the bridge is on.
 var _inspect: Node
+## The conditions (godot_mcp_conditions.gd beside this script): the checks a wait polls and the
+## condition Expression's parse.
+var _conditions: Node
 ## The clock (godot_mcp_time.gd beside this script): pause, step, time scale and waits.
 var _time: Node
 ## The watch (godot_mcp_watch.gd beside this script): the watch command's tracks, sampled each
@@ -252,6 +256,10 @@ func _build_once() -> void:
 	_inspect = (load(_script_dir.path_join(INSPECT_SCRIPT)) as GDScript).new()
 	_inspect.name = "Inspect"
 	add_child(_inspect)
+	_conditions = (load(_script_dir.path_join(CONDITIONS_SCRIPT)) as GDScript).new()
+	_conditions.name = "Conditions"
+	_conditions.bridge = self
+	add_child(_conditions)
 	_time = (load(_script_dir.path_join(TIME_SCRIPT)) as GDScript).new()
 	_time.name = "Time"
 	_time.bridge = self

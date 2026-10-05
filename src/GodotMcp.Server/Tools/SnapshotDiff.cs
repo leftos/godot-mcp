@@ -7,7 +7,7 @@ namespace GodotMcp.Server.Tools;
 /// <summary>
 /// diff_snapshots' comparison of two snapshots' nodes (path → {property: value}): the paths only one of them has, and every
 /// property whose value differs. Values compare as JSON, numbers within <see cref="Tolerance"/> as wait_for compares them
-/// (bridge/godot_mcp_time.gd's _json_equal), so a float that only round-trips differently is not a change.
+/// (bridge/godot_mcp_time.gd's json_equal), so a float that only round-trips differently is not a change.
 /// </summary>
 internal static class SnapshotDiff
 {
