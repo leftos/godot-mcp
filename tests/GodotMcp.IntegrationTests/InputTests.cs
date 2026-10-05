@@ -478,29 +478,21 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         Assert.False(dragged["dropAccepted"]!.GetValue<bool>(), dragged.ToJsonString());
     }
 
-    // A run of its own with the real pads live: the shared run is shut out of them, and shut-out mode's re-sent application
-    // focus-out closes a Popup as it opens (popup.cpp L114-120 in 4.7.2).
-    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task ClickReportsAControlInsideAPopup()
     {
-        CancellationToken cancellation = TestContext.Current.CancellationToken;
-        using ProbeProject probe = new();
-        await using SessionHarness harness = new();
-        await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
-        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
-        JsonNode centre = await RunAsync(tools, PopupScript);
+        JsonNode centre = await RunAsync(PopupScript);
 
         JsonNode clicked = JsonNode.Parse(
-            await tools.ClickAsync(
+            await _tools.ClickAsync(
                 new InputTarget(null, centre["x"]!.GetValue<double>(), centre["y"]!.GetValue<double>()),
                 "left",
                 false,
-                cancellationToken: cancellation
+                cancellationToken: TestContext.Current.CancellationToken
             )
         )!;
 
         AssertHit(clicked, "pressedOn", "PopupButton", "Button");
-        await StopAndCheckCleanAsync(harness, probe);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -649,22 +641,15 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         Assert.True(shownAfter, "the TooltipPanel popup is not visible after the hover");
     }
 
-    // A run of its own, as ClickReportsAControlInsideAPopup: the shared run is shut out of the real pads, and shut-out
-    // mode's re-sent application focus-out closes a Popup as it opens (popup.cpp L114-120 in 4.7.2), a PopupMenu included.
-    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task HoverReportsAPopupMenuItemsTooltip()
     {
-        CancellationToken cancellation = TestContext.Current.CancellationToken;
-        using ProbeProject probe = new();
-        await using SessionHarness harness = new();
-        await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
-        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
-        JsonNode centre = await RunAsync(tools, PopupMenuScript);
+        JsonNode centre = await RunAsync(PopupMenuScript);
 
         JsonNode hovered = JsonNode.Parse(
-            await tools.HoverAsync(
+            await _tools.HoverAsync(
                 new InputTarget(null, centre["x"]!.GetValue<double>(), centre["y"]!.GetValue<double>()),
-                cancellationToken: cancellation
+                cancellationToken: TestContext.Current.CancellationToken
             )
         )!;
 
@@ -675,7 +660,6 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         Assert.Equal("Alpha tip", hovered["tooltip"]!["text"]!.GetValue<string>());
         Assert.True(hovered["tooltip"]!["owner"] is JsonObject, hovered.ToJsonString());
         Assert.Equal("PopupMenuItems", hovered["tooltip"]!["owner"]!["class"]!.GetValue<string>());
-        await StopAndCheckCleanAsync(harness, probe);
     }
 
     [Fact(Timeout = TestTimeoutMs)]

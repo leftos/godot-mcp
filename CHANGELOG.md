@@ -22,6 +22,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - Condition expressions in `wait_for`, `batch_drive` and `watch` refuse text that Godot's `Expression` would silently ignore, such as `a if b else c`, and name the GDScript syntax it lacks.
 - A `{text}` target on a `RichTextLabel` or a mouse-stopping `Label` now presses through a Control of its own scene instance covering it.
 - A hover from `hover` or `mouse_button` now survives the game's own cursor re-picks, a drop's end and scene changes, instead of dropping to the hidden cursor.
+- With `shutOutRealGamepads`, a `PopupMenu`, `OptionButton` list or other popup now stays open instead of closing as it opens.
 
 ## 0.13.1 - 2026-10-01
 

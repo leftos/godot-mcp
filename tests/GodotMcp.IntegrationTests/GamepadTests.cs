@@ -200,6 +200,38 @@ public sealed class GamepadTests(SharedProbeSession shared) : IAsyncLifetime, IC
         Assert.False(state[2]!.GetValue<bool>(), $"the application was focused again after the focus-in: {state.ToJsonString()}");
     }
 
+    // On Windows the OS taking focus from the window releases pressed input before the root Window's focus_exited
+    // (display_server_windows.cpp L6948-6962 in 4.7.2), after the application focus-out was answered, so the bridge sends the
+    // held injected pad state again then; an embedded popup taking focus fires focus_exited too but leaves the window
+    // focused, and sends nothing. The window's focus is faked through the bridge's reader, set with set() so that a reader
+    // the bridge lacks fails the flip's assertion, and the release is the one turning the shut-out setting on again gives
+    // (input.cpp L1324-1328), since Input.release_pressed_events is not bound to scripts.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task InjectedPadStateIsSentAgainWhenTheWindowLosesOsFocus()
+    {
+        await _tools.GamepadButtonAsync("A", "press", 0, cancellationToken: TestContext.Current.CancellationToken);
+
+        JsonNode state = await RunAsync(
+            "var pads: Node = scene_tree.root.get_node(\"GodotMcpBridge/Gamepad\")\n\t"
+                + "var focused := [true]\n\t"
+                + "pads.set(\"read_window_focused\", func() -> bool: return focused[0])\n\t"
+                + "scene_tree.root.focus_entered.emit()\n\t"
+                + "Input.set_ignore_joypad_on_unfocused_application(true)\n\t"
+                + "scene_tree.root.focus_exited.emit()\n\t"
+                + "await scene_tree.process_frame\n\t"
+                + "var after_popup := Input.is_joy_button_pressed(0, JOY_BUTTON_A)\n\t"
+                + "focused[0] = false\n\t"
+                + "scene_tree.root.focus_exited.emit()\n\t"
+                + "await scene_tree.process_frame\n\t"
+                + "var after_os := Input.is_joy_button_pressed(0, JOY_BUTTON_A)\n\t"
+                + "pads.set(\"read_window_focused\", DisplayServer.window_is_focused)\n\t"
+                + "return [after_popup, after_os]"
+        );
+
+        Assert.False(state[0]!.GetValue<bool>(), $"a focus_exited that left the window focused sent A again: {state.ToJsonString()}");
+        Assert.True(state[1]!.GetValue<bool>(), $"A was not sent again after the window lost OS focus: {state.ToJsonString()}");
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ADefaultedPadCallInjectsOnTheLowestIdNoRealPadHolds()
     {

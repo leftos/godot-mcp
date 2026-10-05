@@ -7,12 +7,11 @@ using ModelContextProtocol;
 namespace GodotMcp.IntegrationTests;
 
 /// <summary>
-/// Popup item targets against the InputProbe running in the real Godot: one shared run with the real pads live, since
-/// shut-out mode closes a Popup as it opens (<see cref="SharedLivePadsProbeSession"/>), reset before each test, the widgets
-/// built by run_script under the root, above the fixture's Main, and drawn twice before the first gesture. The live pads
-/// can move GUI focus between a press and its release, so a test here can lose a press to them.
+/// Popup item targets against the InputProbe running in the real Godot: one shared run with the real pads shut out, reset
+/// before each test, the widgets built by run_script under the root, above the fixture's Main, and drawn twice before the
+/// first gesture.
 /// </summary>
-public sealed class PopupTargetTests(SharedLivePadsProbeSession shared) : IAsyncLifetime, IClassFixture<SharedLivePadsProbeSession>
+public sealed class PopupTargetTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
     private const int TestTimeoutMs = 45_000;
     private const int ScriptTimeoutMs = 10_000;
@@ -24,7 +23,7 @@ public sealed class PopupTargetTests(SharedLivePadsProbeSession shared) : IAsync
 
     private static readonly InputTarget Recent = new("FileMenu", Item: new InputItem(Text: "Recent"));
 
-    private readonly SharedLivePadsProbeSession _shared = shared;
+    private readonly SharedProbeSession _shared = shared;
     private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());
 
     public async ValueTask InitializeAsync() => await _shared.ResetAsync(TestContext.Current.CancellationToken);
@@ -55,6 +54,25 @@ public sealed class PopupTargetTests(SharedLivePadsProbeSession shared) : IAsync
         AssertAimed(byIndex["aimedAt"]!, "/root/Weapon", "OptionButton", 4, "Spear");
         Assert.True(byIndex["aimedAt"]!["opened"]!.GetValue<bool>(), byIndex.ToJsonString());
         Assert.Equal(2, await ReadIntAsync(ReadOpens, cancellation));
+    }
+
+    // An embedded popup taking focus fires the root Window's focus_exited (scene/main/viewport.cpp L465-470 in 4.7.2), with
+    // no change of application focus; a shut-out re-assert answering it sends an application focus-out, on which a Popup
+    // hides itself (scene/gui/popup.cpp L114-121).
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task APopupMenuStaysOpenUnderShutOut()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(Weapon("") + Drawn, cancellation);
+        Assert.True(
+            (await RunAsync("return scene_tree.root.get_node(\"GodotMcpBridge/Gamepad\").real_pads_shut_out", cancellation)).GetValue<bool>()
+        );
+
+        await ClickAsync(new InputTarget("Weapon"), cancellation);
+        await RunAsync(Drawn, cancellation);
+
+        Assert.True((await RunAsync(WeaponShown, cancellation)).GetValue<bool>(), "Weapon's popup closed after the click opened it");
+        Assert.Equal(1, await ReadIntAsync(ReadOpens, cancellation));
     }
 
     [Fact(Timeout = TestTimeoutMs)]

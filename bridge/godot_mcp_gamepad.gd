@@ -7,10 +7,11 @@ extends Node
 ## injection override.cfg sets it), Godot drops the pad driver's input while the application is
 ## unfocused (core/input/input.cpp L1652, L1684 in 4.7.2), but never events sent through
 ## Input.parse_input_event. Only SceneTree's application focus-out notification marks the
-## application unfocused (scene/main/scene_tree.cpp L934-942), and every node receives it too. A
+## application unfocused (scene/main/scene_tree.cpp L934-947), and every node receives it too. A
 ## real focus-in marks it focused again, so each focus change is answered with a focus-out. Each
 ## focus-out clears pressed pad state (input.cpp L1600-1623), so the injected pads' held buttons
-## and axes are sent again after it.
+## and axes are sent again after it, and again when the OS takes focus from the window, which on
+## Windows clears it once more after the focus-out was answered.
 
 ## The highest joypad device id; 0-15 are joypads (core/input/input_event.h L64-67 in 4.7.2).
 const MAX_JOY_DEVICE := 15
@@ -54,11 +55,15 @@ var real_pads_shut_out: bool = false
 ## What the playing gesture adds to its result: device, the id it injected on, and warning. The
 ## input player empties it as a gesture starts and merges it into the result.
 var report: Dictionary = {}
+## Reads whether the OS has the game's window focused; a test replaces it to fake a focus change.
+var read_window_focused: Callable = DisplayServer.window_is_focused
 ## The buttons the injected pads hold, as Vector2i(device, button) keys.
 var _held_buttons: Dictionary = {}
 ## The value each injected axis holds, keyed by Vector2i(device, axis).
 var _axes: Dictionary = {}
 var _reassert_queued: bool = false
+## What read_window_focused said at the root Window's last focus signal.
+var _window_focused: bool = false
 var _sending_focus_out: bool = false
 ## The id pad events without a device play on, chosen by the first of them; -1 until then.
 var _chosen: int = -1
@@ -77,15 +82,21 @@ static func choose_device(connected: Array, previous: int) -> int:
 	return -1
 
 
-## Marks the application unfocused now, and again after every focus change from here on.
+## Marks the application unfocused now, and again after every application focus change from here on.
 func shut_out_real_pads() -> void:
 	real_pads_shut_out = true
+	_window_focused = read_window_focused.call()
 	var window: Window = get_tree().root
-	window.focus_entered.connect(_queue_reassert)
-	window.focus_exited.connect(_queue_reassert)
+	window.focus_entered.connect(_on_window_focus_changed)
+	window.focus_exited.connect(_on_window_focus_changed)
 	_send_focus_out()
 
 
+## Answers application focus changes with a focus-out, which the OS reports to SceneTree and it
+## passes to every node (platform/windows/display_server_windows.cpp L5691-5700,
+## scene/main/scene_tree.cpp L934-947 in 4.7.2). The root Window's focus signals get no focus-out:
+## they also fire when an embedded popup takes focus (scene/main/viewport.cpp L465-470), and a
+## focus-out sent then closes that popup as it opens (scene/gui/popup.cpp L114-121).
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_FOCUS_IN or what == NOTIFICATION_APPLICATION_FOCUS_OUT:
 		_queue_reassert()
@@ -100,9 +111,25 @@ func _queue_reassert() -> void:
 	_reassert.call_deferred()
 
 
+## Sends the held injected pad state again when the OS takes focus from the window: Windows
+## releases pressed input then, after the application focus-out was answered, and before the
+## root Window's focus_exited (display_server_windows.cpp L6948-6962 in 4.7.2). An embedded
+## popup taking focus fires the signal too but leaves the window focused, and sends nothing.
+func _on_window_focus_changed() -> void:
+	var focused: bool = read_window_focused.call()
+	var lost: bool = _window_focused and not focused
+	_window_focused = focused
+	if lost:
+		_resend_held()
+
+
 func _reassert() -> void:
 	_reassert_queued = false
 	_send_focus_out()
+	_resend_held()
+
+
+func _resend_held() -> void:
 	for key: Vector2i in _held_buttons:
 		_send_button_event(key.x, key.y, true)
 	for key: Vector2i in _axes:
