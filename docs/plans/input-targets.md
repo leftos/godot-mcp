@@ -1,6 +1,6 @@
 # Input targets: world nodes, visible text, list items
 
-Design draft for the plan item "Input aimed at 2D/3D world nodes through the camera, UI targets by visible text, and Tree/ItemList/TabBar/PopupMenu/OptionButton item targets" ([MAIN.md](./MAIN.md), Wave 1), from ideas 7 and 8 of the [survey](../research/2026-09-29-godot-mcp-survey.md). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../DECISIONS.md) decision 25, which wins where this file differs; steps 5 and 6 of section 7 are open.
+Design draft for the plan item "Input aimed at 2D/3D world nodes through the camera, UI targets by visible text, and Tree/ItemList/TabBar/PopupMenu/OptionButton item targets" ([MAIN.md](./MAIN.md), Wave 1), from ideas 7 and 8 of the [survey](../research/2026-09-29-godot-mcp-survey.md). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../DECISIONS.md) decision 25, which wins where this file differs; steps 1 to 5 of section 7 have landed, and step 6 is open.
 
 ## 1. Problem
 

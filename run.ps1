@@ -65,7 +65,7 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
   install  publish (as above), then mirror bin/publish into $env:LOCALAPPDATA\godot-mcp (robocopy /MIR, no retries),
            link ~/.claude/skills/godot-mcp to the install folder's skill/ and ~/.claude/skills/godot-agent-sweep to its
            agent-sweep-skill/ as directory junctions, and run the installed godot-mcp.exe --sweep-agents, printing
-           its lines as they come; ceiling 300 s for the publish, then 900 s in a heavy slot for the copy, the links and the
+           its lines as they come; ceiling 300 s for the publish, then 300 s in a heavy slot for the copy, the links and the
            sweep, whose commits run the swept repositories' hooks (which can build). They are tools/install.ps1, logged
            to .tmp/install.log. A junction that points
            elsewhere is replaced; anything else at a link path is refused, never deleted. A sweep that cannot start is
@@ -1087,7 +1087,7 @@ function Invoke-Install {
         '-NoProfile', '-File', (Join-Path $root 'tools/install.ps1'),
         '-Root', $root, '-InstallDir', $installDir, '-SkillsDir', $skillsDir
     )
-    return Invoke-Gated -Name 'install' -TimeoutSeconds 900 -Program 'pwsh' -Arguments $arguments -Slot heavy
+    return Invoke-Gated -Name 'install' -TimeoutSeconds 300 -Program 'pwsh' -Arguments $arguments -Slot heavy
 }
 
 # Publishes into an emptied bin/publish, so no file of an earlier publish reaches the zip, then runs tools/package.ps1
