@@ -9,6 +9,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `watch` records property and expression tracks frame by frame while other tools drive the game, returning each track's change points, range and paused frames.
 - Item targets reach `OptionButton`, `MenuButton` and `PopupMenu` items by text or index, opening the popup first and following submenus in two calls.
 - `run_scratches` reports its `prep` block (build, import and their logs) as `run_project` does.
+- `wait_for` and `batch_drive` waits report `failedChecks` when the expression errored on earlier checks, so a late `met: true` shows it.
 
 ### Changed
 
@@ -17,6 +18,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - `run_scratches` turns a scene red when it errors before its first step, at `failedAt` boot, instead of passing it.
+- Condition expressions in `wait_for`, `batch_drive` and `watch` refuse text that Godot's `Expression` would silently ignore, such as `a if b else c`, and name the GDScript syntax it lacks.
 
 ## 0.13.1 - 2026-10-01
 

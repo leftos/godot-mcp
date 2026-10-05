@@ -229,6 +229,22 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.True(waited["value"]!.GetValue<bool>(), waited.ToJsonString());
     }
 
+    // Armed is added by arm(300), so [0] fails on every check before then: each counts as not met.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnExpressionMetAfterFailedChecksCountsThem()
+    {
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
+        await ArmAsync(300);
+
+        const string Expression =
+            "node.find_children('Armed', '', false, false).size() > 0 and node.find_children('Armed', '', false, false)[0].name == 'Armed'";
+        JsonObject waited = await WaitAsync(new WaitCondition(Node: "TimeProbe", Expression: Expression));
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.True(waited["failedChecks"]?["count"]?.GetValue<int>() >= 1, waited.ToJsonString());
+        Assert.Equal("Invalid index of type int for base type Array", waited["failedChecks"]?["error"]?.GetValue<string>());
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForExpressionParseErrorFails()
     {

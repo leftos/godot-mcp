@@ -7,6 +7,11 @@ extends "res://gd_test.gd"
 ## Stands in for the tree's process_frame, so the watch's connection can be read.
 signal test_frame
 
+## The hint a refusal carries when the source reaches for GDScript syntax Expression has none of.
+# gdformat joins any split of this text back into one line past gdlint's 100 characters.
+# gdlint: ignore=max-line-length
+const NOT_GDSCRIPT_HINT := "Godot's Expression is not GDScript: it has no lambdas (func), no if/else, no is or as, no not in (write not (a in b)), and no statements; it has calls, indexing, literals and operators such as and, or, not, in, ==, !=, <, <=, >, >=, +, -, *, / and %."
+
 const BRIDGE_SOURCE := (
 	"extends Node\n\nvar _json: GDScript\nvar _inspect: Node\nvar top: Node\n\n\n"
 	+ "func _find_node(element: String) -> Node:\n"
@@ -150,6 +155,24 @@ func test_an_expression_error_is_recorded_once_and_the_track_recovers() -> void:
 	assert_eq([values[0], values[2]], [1, 2], "the values around it")
 	assert_true(values[1] is Dictionary and values[1].has("$error"), "the error: %s" % [values[1]])
 	assert_eq(track["name"], "pick", "keyed by its name")
+	_free(rig)
+
+
+func test_an_expression_track_with_text_after_its_expression_is_refused() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var spec: Dictionary = {"name": "ternary", "expression": "true if false else false"}
+	var refusal: String = watch.begin({"expressions": [spec], "frames": 1}, test_frame)
+	assert_eq(
+		refusal,
+		(
+			"The expression of track 'ternary' does not parse: text follows a complete expression, "
+			+ "and Expression would ignore it. "
+			+ NOT_GDSCRIPT_HINT
+		),
+		"the whole refusal, the hint included"
+	)
+	assert_eq(watch._watch, {}, "no watch begins")
 	_free(rig)
 
 

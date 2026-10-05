@@ -218,8 +218,9 @@ func _property_track(spec: Dictionary) -> Variant:
 
 
 ## An expression track {name, expression, node?, minDelta?}, parsed once with wait_for's inputs
-## (node too, also the base instance, when given): refused when its node is missing, when it does
-## not parse, or when minDelta is set and its first read is a value that is not numeric.
+## (node too, also the base instance, when given) through the clock's parse_condition: refused when
+## its node is missing, when it does not parse (Expression ignores trailing text and GDScript
+## syntax it has no operator for) or when minDelta is set and its first read is not numeric.
 func _expression_track(spec: Dictionary) -> Variant:
 	var name: String = str(spec.get("name", ""))
 	var node: Node = null
@@ -230,13 +231,11 @@ func _expression_track(spec: Dictionary) -> Variant:
 	var names: PackedStringArray = _time_script.EXPRESSION_INPUTS.duplicate()
 	if node != null:
 		names.append("node")
-	var expression := Expression.new()
-	if expression.parse(str(spec.get("expression", "")), names) != OK:
-		return (
-			"The expression of track '%s' does not parse: %s" % [name, expression.get_error_text()]
-		)
+	var parsed: Variant = _time_script.parse_condition(str(spec.get("expression", "")), names)
+	if parsed is String:
+		return "The expression of track '%s' does not parse: %s" % [name, parsed]
 	var track: Dictionary = _new_track(spec, node)
-	track["expression"] = expression
+	track["expression"] = parsed
 	return _checked_min_delta(track)
 
 
