@@ -58,6 +58,8 @@ const COVERED_TARGET := (
 	"the centre of %s (%s) lands on %s, which covers it (target rect %s%s); "
 	+ "click by {x, y} inside the target's visible part, or wait until nothing covers it."
 )
+## InputEvent::DEVICE_ID_INTERNAL (core/input/input_event.h L67 in 4.7.2), absent from GDScript.
+const DEVICE_ID_INTERNAL := -2
 const UNKNOWN_KEY_HINT := (
 	"Key names are Godot's Key constants without KEY_: Enter, Escape, Space, A, 1, F1, Up, "
 	+ "Shift, Ctrl, Alt, Meta. run_script can print one with OS.get_keycode_string(KEY_X)."
@@ -86,6 +88,59 @@ var _held_keys: Dictionary = {}
 func _ready() -> void:
 	get_tree().node_added.connect(_note_drag_preview)
 	_create_targets()
+
+
+## Listens for real mouse motion and re-picks the hover after each frame, while in the tree.
+func _enter_tree() -> void:
+	get_tree().root.window_input.connect(_on_window_input)
+	RenderingServer.frame_pre_draw.connect(_repick)
+
+
+func _exit_tree() -> void:
+	get_tree().root.window_input.disconnect(_on_window_input)
+	RenderingServer.frame_pre_draw.disconnect(_repick)
+
+
+## Hands the hover back to the real cursor on a real mouse motion while no injected input is in
+## play. window_input carries every event the window receives but the engine's internal ones,
+## before push_input hands it on, so no game node's _input can stop it first (window.cpp
+## L2022-2030, scene_tree.cpp L1461 in 4.7.2).
+func _on_window_input(event: InputEvent) -> void:
+	if bridge._gesture_playing or bridge._held_mask != 0:
+		return
+	if event is InputEventMouseMotion and event.device != bridge.INJECTED_DEVICE:
+		bridge._owns_pointer = false
+
+
+## Puts the hover back on the injected pointer each frame the drive owns it. Godot's re-picks
+## (update_mouse_cursor_state, which games call, a drop's end, a scene change) pick at the OS
+## cursor, unreadable on a quiet run's hidden desktop (window.cpp L935-950, viewport.cpp
+## L1483-1500, L2459, scene_tree.cpp L1692 in 4.7.2). frame_pre_draw follows the whole SceneTree
+## process (scene_tree.cpp L713-729), so no later re-pick in the frame undoes it. The motion is
+## internal: no _input, _unhandled_input or Control gui_input in game scripts sees it (node.cpp
+## L3565-3567, control.cpp L2523-2533); a physics input_event (CollisionObject2D/3D) sees it as it
+## sees the engine's own passive hover pick. It skips Input and a capture, and a re-pick on the
+## hovered Control restarts no tooltip timer (viewport.cpp L2138).
+func _repick() -> void:
+	if not _repick_due():
+		return
+	var point: Vector2 = _to_viewport(bridge._pointer)
+	var motion := InputEventMouseMotion.new()
+	motion.device = DEVICE_ID_INTERNAL
+	motion.position = point
+	motion.global_position = get_viewport().get_global_canvas_transform().affine_inverse() * point
+	get_viewport().push_input(motion, true)
+
+
+## Whether the injected pointer owns the hover with no gesture playing, no button held and the
+## mouse not captured.
+func _repick_due() -> bool:
+	return (
+		bridge._owns_pointer
+		and not bridge._gesture_playing
+		and bridge._held_mask == 0
+		and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED
+	)
 
 
 ## Creates the target resolver (godot_mcp_targets.gd) and the popup item player
@@ -813,6 +868,7 @@ func motion_event(
 	motion.screen_relative = relative
 	motion.button_mask = button_mask
 	bridge._pointer = window_point
+	bridge._owns_pointer = true
 	return motion
 
 
@@ -829,6 +885,7 @@ func send_button(window_point: Vector2, button: int, pressed: bool, double_click
 	event.position = window_point
 	event.global_position = window_point
 	bridge._pointer = window_point
+	bridge._owns_pointer = true
 	dispatch(event)
 
 
@@ -853,6 +910,7 @@ func send_wheel(window_point: Vector2, button: int, pressed: bool, factor: float
 	event.position = window_point
 	event.global_position = window_point
 	bridge._pointer = window_point
+	bridge._owns_pointer = true
 	dispatch(event)
 
 

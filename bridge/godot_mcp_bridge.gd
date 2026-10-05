@@ -64,6 +64,10 @@ var _connection_lost: bool = false
 var _held_mask: int = 0
 ## Where the injected pointer last was, in window coordinates.
 var _pointer: Vector2 = Vector2.ZERO
+## Whether the hover belongs to the injected pointer: set by every injected mouse event, cleared by
+## a real mouse motion while no injected input is in play (the cursor is the user's again) and when
+## the connection ends.
+var _owns_pointer: bool = false
 ## Whether an input gesture is playing, including the frames that settle it.
 var _gesture_playing: bool = false
 ## Whether dispatch is delivering an injected event, so the touch twins Input makes of it pass.
@@ -339,6 +343,8 @@ func _go_dormant_again() -> void:
 	_capture.stop()
 	_watch.drop()
 	_raw_events.release_all()
+	# After release_all, whose button releases take the pointer again.
+	_owns_pointer = false
 	_stream = null
 	_buffer = PackedByteArray()
 	_hello_sent = false
@@ -396,6 +402,7 @@ func _end_connection() -> void:
 		_cancel(request)
 	_running_requests.clear()
 	_dormant_if_armed()
+	_owns_pointer = false
 
 
 ## Sends the errors logged since the last flush as one {type: "errors", entries, dropped}

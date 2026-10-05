@@ -145,6 +145,47 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         + "if window.visible and window.theme_type_variation == &\"TooltipPanel\":\n\t\t\t"
         + "return true\n\t"
         + "return false";
+
+    // A game's own hover re-pick (delve's modal calls it once a panel shows or hides), then the hovered Control's name
+    // two frames later, "" over none.
+    private const string RepickThenReadHovered =
+        "scene_tree.root.update_mouse_cursor_state()\n\t"
+        + "await scene_tree.process_frame\n\t"
+        + "await scene_tree.process_frame\n\t"
+        + "var hovered: Control = scene_tree.root.gui_get_hovered_control()\n\t"
+        + "return \"\" if hovered == null else str(hovered.name)";
+
+    // The hovered Control's name two frames from now, "" over none.
+    private const string ReadHoveredInTwoFrames =
+        "await scene_tree.process_frame\n\t"
+        + "await scene_tree.process_frame\n\t"
+        + "var hovered: Control = scene_tree.root.gui_get_hovered_control()\n\t"
+        + "return \"\" if hovered == null else str(hovered.name)";
+
+    // A root node Repicker that re-picks the hover from its _process every frame, as a game that calls
+    // update_mouse_cursor_state each frame does, and counts SmallButton's mouse_entered signals in its "entered" meta.
+    private const string AddEveryFrameRepicker =
+        "var script := GDScript.new()\n\t"
+        + "script.source_code = \"extends Node\\n\\nvar button: Control\\n\\n\\n"
+        + "func _ready() -> void:\\n\\tbutton = get_tree().root.get_node(\\\"Main/SmallButton\\\")\\n"
+        + "\\tbutton.set_meta(\\\"entered\\\", 0)\\n\\tbutton.mouse_entered.connect(_on_entered)\\n\\n\\n"
+        + "func _on_entered() -> void:\\n\\tbutton.set_meta(\\\"entered\\\", int(button.get_meta(\\\"entered\\\")) + 1)\\n\\n\\n"
+        + "func _process(_delta: float) -> void:\\n\\tget_tree().root.update_mouse_cursor_state()\\n\"\n\t"
+        + "script.reload()\n\t"
+        + "var repicker := Node.new()\n\t"
+        + "repicker.name = \"Repicker\"\n\t"
+        + "repicker.set_script(script)\n\t"
+        + "scene_tree.root.add_child(repicker)\n\t"
+        + "return true";
+
+    // The hovered Control's name ("" over none) and SmallButton's mouse_entered count, five frames from now.
+    private const string ReadHoveredAndEnteredInFiveFrames =
+        "for _frame in 5:\n\t\t"
+        + "await scene_tree.process_frame\n\t"
+        + "var hovered: Control = scene_tree.root.gui_get_hovered_control()\n\t"
+        + "var entered: int = scene_tree.root.get_node(\"Main/SmallButton\").get_meta(\"entered\", -1)\n\t"
+        + "return [\"\" if hovered == null else str(hovered.name), entered]";
+
     private const string ReadSmallButtonPresses = "return scene_tree.root.get_node(\"Main/SmallButton\").press_count";
 
     // Two scene-like owners under the root, UniqueA and UniqueB, each holding a Label Shared saved with a unique name; UniqueA
@@ -376,6 +417,53 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         AssertHit(dragged, "releasedOn", "DropTarget", "ColorRect");
         Assert.True(dragged["guiDragStarted"]!.GetValue<bool>(), dragged.ToJsonString());
         Assert.True(dragged["dropAccepted"]!.GetValue<bool>(), dragged.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AGameRepickKeepsTheHoverOnTheInjectedPointer()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonNode moved = JsonNode.Parse(
+            await _tools.MouseButtonAsync(new InputTarget("SmallButton"), "left", "move", cancellationToken: cancellation)
+        )!;
+        AssertHit(moved, "hoveredOn", "SmallButton", "Button");
+
+        // Window.update_mouse_cursor_state re-picks at Viewport.get_mouse_position, the OS cursor (4.7.2 window.cpp
+        // L935-950, viewport.cpp L1483-1500), which a quiet run on the hidden desktop cannot read.
+        string hovered = (await RunAsync(RepickThenReadHovered)).GetValue<string>();
+
+        Assert.Equal("SmallButton", hovered);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AGameRepickEveryFrameKeepsTheHover()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        // An empty spot of the probe first, so the move onto SmallButton below enters it.
+        await _tools.MouseButtonAsync(new InputTarget(null, 200, 320), "left", "move", cancellationToken: cancellation);
+        await RunAsync(AddEveryFrameRepicker);
+
+        await _tools.MouseButtonAsync(new InputTarget("SmallButton"), "left", "move", cancellationToken: cancellation);
+        JsonNode after = await RunAsync(ReadHoveredAndEnteredInFiveFrames);
+
+        Assert.Equal("SmallButton", after[0]!.GetValue<string>());
+        // Not exactly one: the game's re-pick runs push_input, whose _update_mouse_over exits SmallButton at once inside
+        // the game's _process (4.7.2 viewport.cpp L3521-3524, _drop_mouse_over L3446-3481), before the bridge's re-pick
+        // enters it again at frame_pre_draw, so a game that re-picks every frame costs one exit and one enter per frame.
+        Assert.True(after[1]!.GetValue<int>() >= 1, after.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ADropLeavesTheHoverOnTheDropTarget()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonNode dragged = JsonNode.Parse(await _tools.DragAsync(DragSource, DropTarget, 300, "left", cancellationToken: cancellation))!;
+        Assert.True(dragged["dropAccepted"]!.GetValue<bool>(), dragged.ToJsonString());
+
+        // The end of a drag and drop re-picks the hover at the OS cursor (4.7.2 viewport.cpp L2459), as a game's re-pick does.
+        string hovered = (await RunAsync(ReadHoveredInTwoFrames)).GetValue<string>();
+
+        Assert.Equal("DropTarget", hovered);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
