@@ -334,6 +334,40 @@ public sealed class TextTargetTests(SharedProbeSession shared) : IAsyncLifetime,
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AControlWithItsCentreOutsideTheViewportIsRefusedAsOffScreen()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(RootButton("far", "Far", 700) + "return true", cancellation);
+        const string expected =
+            "/root/Far is at 700,100,80,40, whose centre (740, 120) lies outside the 640x360 viewport; "
+            + "bring it into view first, or click by {x, y} inside its visible part.";
+
+        foreach (InputTarget target in new[] { new InputTarget("Far"), new InputTarget(Text: "Far") })
+        {
+            McpException refused = await RefusedAsync(target, cancellation);
+
+            Assert.True(refused.Message.EndsWith(expected, StringComparison.Ordinal), refused.Message);
+            Assert.DoesNotContain("covers it", refused.Message, StringComparison.Ordinal);
+        }
+
+        Assert.Equal(0, await PressesAsync("Far", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AControlStraddlingTheViewportEdgeWithItsCentreInsideIsClicked()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(RootButton("edge", "Edge", 590) + "return true", cancellation);
+
+        JsonNode byElement = await ClickAsync(new InputTarget("Edge"), cancellation);
+        JsonNode byText = await ClickAsync(new InputTarget(Text: "Edge"), cancellation);
+
+        AssertAimed(byElement["aimedAt"]!, "/root/Edge", "Button", 630, 120);
+        AssertAimed(byText["aimedAt"]!, "/root/Edge", "Button", 630, 120);
+        Assert.Equal(2, await PressesAsync("Edge", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task ADragToATextTargetDropsAndReportsTheMatch()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -367,6 +401,11 @@ public sealed class TextTargetTests(SharedProbeSession shared) : IAsyncLifetime,
         + $"{variable}.set_meta(\"presses\", 0)\n\t"
         + $"{variable}.pressed.connect(func() -> void: {variable}.set_meta(\"presses\", int({variable}.get_meta(\"presses\")) + 1))\n\t"
         + $"{parent}.add_child({variable})\n\t";
+
+    // An 80 x 40 Button named name reading name at (x, 100) under the root, held by variable, counting its presses in its
+    // "presses" meta.
+    private static string RootButton(string variable, string name, int x) =>
+        Button(variable, "scene_tree.root", name, name, x, 100) + $"{variable}.size = Vector2(80, 40)\n\t";
 
     private static void AssertAimed(JsonNode aimed, string path, string className, double x, double y)
     {

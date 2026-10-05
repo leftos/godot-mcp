@@ -36,6 +36,12 @@ const BEHIND_CAMERA := "%s is behind the camera %s."
 ## Off-screen: the node's path, the point, then the viewport's size, or the SubViewport's path and
 ## size.
 const OFF_ROOT := "%s projects to (%s), outside the %s viewport."
+## A Control whose centre lies outside the root viewport: its path, its rect, its centre and the
+## viewport's size, as rect_text, point_text and size_text give them.
+const OFF_ROOT_CONTROL := (
+	"%s is at %s, whose centre (%s) lies outside the %s viewport; "
+	+ "bring it into view first, or click by {x, y} inside its visible part."
+)
 const OFF_SUBVIEWPORT := "%s projects to (%s) in %s, outside its %s rect."
 ## Outside an embedded window the node is drawn in: the node's path, the point in the window's
 ## embedder's coordinates, the window's path and its rect there.
@@ -311,12 +317,27 @@ static func offset_vector(offset: Variant) -> Vector3:
 
 
 ## The aim at a node: its point in its own viewport, carried out to the root's coordinates; a
-## world node's point is refused in a native window and off-screen.
+## world node's point is refused in a native window and off-screen, a Control's centre off-screen
+## (_control_off_screen).
 func _aim_of(node: Node, kind: String, offset: Vector3) -> Variant:
 	var own: Variant = _own_point(node, kind, offset)
 	if own is String:
 		return own
-	return _aim_from(node, kind, own)
+	var aim: Variant = _aim_from(node, kind, own)
+	if kind == "control" and aim is Dictionary:
+		var refusal: String = _control_off_screen(node as Control, aim["point"])
+		if not refusal.is_empty():
+			return refusal
+	return aim
+
+
+## Why a Control's centre, point in the root's coordinates, is off-screen (_off_screen), or "". A
+## Control in a native window is never refused: its point is in that window's coordinates.
+func _control_off_screen(node: Control, point: Vector2) -> String:
+	var carried: Dictionary = _carry_out(node.get_viewport())
+	if carried["native"] != null:
+		return ""
+	return _off_screen(node, point, carried["levels"], carried["windows"])
 
 
 ## The aim at a node whose point in its own viewport is own, carried out to the root's
@@ -476,7 +497,7 @@ static func _disabled_viewport(levels: Array[Dictionary]) -> String:
 	return ""
 
 
-## Why a world node's point is off-screen, or "": point, in the root's coordinates, must lie in each
+## Why a node's point is off-screen, or "": point, in the root's coordinates, must lie in each
 ## SubViewport's visible rect on the way out (innermost first, in that SubViewport's own
 ## coordinates), in each embedded window's grab rect (window_grab_rect, in its embedder's
 ## coordinates) and in the root's visible rect. A container's rect always covers its SubViewport's
@@ -504,8 +525,17 @@ func _off_screen(
 			return OFF_WINDOW % [path, point_text(there), str(window.get_path()), rect_text(rect)]
 	var root: Window = get_tree().root
 	if not root.get_visible_rect().has_point(point):
-		return OFF_ROOT % [path, point_text(point), size_text(root.get_visible_rect().size)]
+		return _off_root(node, path, point, root.get_visible_rect().size)
 	return ""
+
+
+## The refusal of a node whose point lies outside the root's visible rect of size: a Control's
+## names its rect and centre (OFF_ROOT_CONTROL), a world node's its projected point (OFF_ROOT).
+func _off_root(node: Node, path: String, point: Vector2, size: Vector2) -> String:
+	if node is Control:
+		var rect: String = rect_text(viewport_rect(node as Control))
+		return OFF_ROOT_CONTROL % [path, rect, point_text(point), size_text(size)]
+	return OFF_ROOT % [path, point_text(point), size_text(size)]
 
 
 ## An aim as a result reports it: {x, y, kind, path, class}, x and y in the root's viewport
