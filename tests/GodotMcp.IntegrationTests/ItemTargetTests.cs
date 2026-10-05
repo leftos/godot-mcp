@@ -136,6 +136,59 @@ public sealed class ItemTargetTests(SharedProbeSession shared) : IAsyncLifetime,
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATabBarWithClipTabsOffClicksATabPastItsNominalWidth()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonNode last = await RunAsync(
+            TabBar("Open", 20, 20, 150, "Tab 0", "Tab 1", "Tab 2", "Tab 3", "Tab 4", "Tab 5", "Tab 6", "Tab 7")
+                + "bar.clip_tabs = false\n\t"
+                + Drawn.Replace(
+                    "return true",
+                    "var rect: Rect2 = bar.get_tab_rect(7)\n\treturn [rect.position.x, rect.end.x]",
+                    StringComparison.Ordinal
+                ),
+            cancellation
+        );
+
+        Assert.True(last[0]!.GetValue<double>() >= 150, last.ToJsonString());
+        Assert.True(20 + last[1]!.GetValue<double>() <= 640, last.ToJsonString());
+        JsonNode clicked = await ClickAsync(new InputTarget("Open", Item: new InputItem(Text: "Tab 7")), cancellation);
+
+        Assert.Equal(7, await ReadIntAsync("return scene_tree.root.get_node(\"Open\").current_tab", cancellation));
+        AssertAimed(clicked["aimedAt"]!, "/root/Open", "TabBar", 7, "Tab 7");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATabBarWithClipTabsOffRefusesATabPastTheViewport()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string[] titles = [.. Enumerable.Range(0, 16).Select(index => $"Tab {index}")];
+        JsonNode last = await RunAsync(
+            TabBar("Open", 20, 20, 150, titles)
+                + "bar.clip_tabs = false\n\t"
+                + Drawn.Replace("return true", "return bar.get_tab_rect(15).get_center().x", StringComparison.Ordinal),
+            cancellation
+        );
+
+        Assert.True(20 + last.GetValue<double>() > 640, last.ToJsonString());
+        McpException refused = await RefusedAsync(new InputTarget("Open", Item: new InputItem(Text: "Tab 15")), cancellation);
+
+        Assert.True(
+            refused.Message.StartsWith("click failed: The bridge refused 'input': the centre of /root/Open (", StringComparison.Ordinal),
+            refused.Message
+        );
+        Assert.True(refused.Message.Contains(") lands on <nothing>, which covers it (target rect 20,20,", StringComparison.Ordinal), refused.Message);
+        Assert.True(
+            refused.Message.EndsWith(
+                "; click by {x, y} inside the target's visible part, or wait until nothing covers it.",
+                StringComparison.Ordinal
+            ),
+            refused.Message
+        );
+        Assert.Equal(0, await ReadIntAsync("return scene_tree.root.get_node(\"Open\").current_tab", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AnItemUnderACollapsedItemIsRefusedNamingIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -273,6 +326,79 @@ public sealed class ItemTargetTests(SharedProbeSession shared) : IAsyncLifetime,
         await ClickAsync(new InputTarget("Rtl", Item: new InputItem(Text: "B2")), cancellation);
 
         Assert.Equal(3, await ReadIntAsync("return int(scene_tree.root.get_node(\"Rtl\").get_meta(\"selected\"))", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ARightToLeftTabBarClicksTheTabByTextAndIndex()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonNode drawnAt = await RunAsync(
+            TabBar("Seats", 20, 20, 300, "Alex", "Sam", "Kit")
+                + "bar.layout_direction = Control.LAYOUT_DIRECTION_RTL\n\t"
+                + Drawn.Replace(
+                    "return true",
+                    "var rect: Rect2 = bar.get_global_rect()\n\treturn [rect.position.x, rect.end.x]",
+                    StringComparison.Ordinal
+                ),
+            cancellation
+        );
+        double left = drawnAt[0]!.GetValue<double>();
+        double right = drawnAt[1]!.GetValue<double>();
+
+        JsonNode byText = await ClickAsync(new InputTarget("Seats", Item: new InputItem(Text: "Kit")), cancellation);
+
+        Assert.Equal(2, await ReadIntAsync("return scene_tree.root.get_node(\"Seats\").current_tab", cancellation));
+        AssertAimed(byText["aimedAt"]!, "/root/Seats", "TabBar", 2, "Kit");
+
+        JsonNode byIndex = await ClickAsync(new InputTarget("Seats", Item: new InputItem(Index: 0)), cancellation);
+
+        Assert.Equal(0, await ReadIntAsync("return scene_tree.root.get_node(\"Seats\").current_tab", cancellation));
+        AssertAimed(byIndex["aimedAt"]!, "/root/Seats", "TabBar", 0, "Alex");
+        double first = byIndex["aimedAt"]!["x"]!.GetValue<double>();
+        Assert.InRange(first, (left + right) / 2, right);
+        Assert.True(byText["aimedAt"]!["x"]!.GetValue<double>() < first, byText.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ARightToLeftTreeSelectsADeepItemWithChildrenRatherThanFoldingIt()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            Tree("inv.layout_direction = Control.LAYOUT_DIRECTION_RTL\n\tinv.create_item(sword).set_text(0, \"Edge\")\n\t") + Drawn,
+            cancellation
+        );
+
+        JsonNode clicked = await ClickAsync(new InputTarget("Inv", Item: new InputItem(Path: ["Weapons", "Sword"])), cancellation);
+
+        JsonNode state = await RunAsync(
+            "var inv: Tree = scene_tree.root.get_node(\"Inv\")\n\tvar selected: TreeItem = inv.get_selected()\n\t"
+                + "return [selected.get_text(0) if selected != null else \"\", inv.get_root().get_child(0).get_child(0).collapsed]",
+            cancellation
+        );
+        Assert.Equal("Sword", state[0]!.GetValue<string>());
+        Assert.False(state[1]!.GetValue<bool>(), clicked.ToJsonString());
+        AssertPath(clicked["aimedAt"]!, "Weapons", "Sword");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ARightToLeftItemListScrolledSelectsTheItemClicked()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string[] texts = [.. Enumerable.Range(0, 12).Select(index => $"Item {index}")];
+        await RunAsync(
+            ItemList("RtlShort", 400, 40, 200, 60, texts)
+                + "list.layout_direction = Control.LAYOUT_DIRECTION_RTL\n\t"
+                + Drawn.Replace("return true", "", StringComparison.Ordinal)
+                + "var bar: VScrollBar = list.get_v_scroll_bar()\n\tbar.value = bar.max_value\n\t"
+                + Drawn,
+            cancellation
+        );
+
+        JsonNode clicked = await ClickAsync(new InputTarget("RtlShort", Item: new InputItem(Text: "Item 11")), cancellation);
+
+        Assert.Equal(11, await ReadIntAsync("return int(scene_tree.root.get_node(\"RtlShort\").get_meta(\"selected\"))", cancellation));
+        AssertAimed(clicked["aimedAt"]!, "/root/RtlShort", "ItemList", 11, "Item 11");
+        Assert.InRange(clicked["aimedAt"]!["y"]!.GetValue<double>(), 40, 100);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -471,6 +597,90 @@ public sealed class ItemTargetTests(SharedProbeSession shared) : IAsyncLifetime,
         AssertPath(clicked["aimedAt"]!, "A", "B", "C", "D");
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task GetUiElementsListsTheItemsAnItemTargetMatches()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            TabBar("Seats", 20, 20, 300, "Alex", "Sam", "Kit")
+                + "bar.set_tab_hidden(1, true)\n\tbar.set_tab_disabled(2, true)\n\t"
+                + ItemList("Rows", 20, 100, 200, 100, "One", "Two")
+                + Tree("weapons.collapsed = true\n\t")
+                + Drawn,
+            cancellation
+        );
+
+        JsonArray elements = JsonNode.Parse(await _tools.GetUiElementsAsync(true, null, limit: 500, cancellationToken: cancellation))![
+            "elements"
+        ]!.AsArray();
+
+        AssertItems(
+            elements,
+            "/root/Seats",
+            """[{"index": 0, "text": "Alex"}, {"index": 1, "text": "Sam", "hidden": true}, {"index": 2, "text": "Kit", "disabled": true}]"""
+        );
+        AssertItems(elements, "/root/Rows", """[{"index": 0, "text": "One"}, {"index": 1, "text": "Two"}]""");
+        AssertItems(
+            elements,
+            "/root/Inv",
+            """[{"path": ["Weapons"], "text": "Weapons"}, {"path": ["Armour"], "text": "Armour"}, {"path": ["Armour", "Helm"], "text": "Helm"}]"""
+        );
+        Assert.Equal(
+            ["/root/Inv", "/root/Rows", "/root/Seats"],
+            elements.Where(element => element!.AsObject().ContainsKey("items")).Select(element => element!["path"]!.GetValue<string>()).Order()
+        );
+
+        await ClickAsync(new InputTarget("Rows", Item: new InputItem(Text: "Two")), cancellation);
+        await ClickAsync(new InputTarget("Inv", Item: new InputItem(Path: ["Armour", "Helm"])), cancellation);
+
+        Assert.Equal(1, await ReadIntAsync("return int(scene_tree.root.get_node(\"Rows\").get_meta(\"selected\"))", cancellation));
+        Assert.Equal(
+            "Helm",
+            (await RunAsync("return scene_tree.root.get_node(\"Inv\").get_selected().get_text(0)", cancellation)).GetValue<string>()
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task GetUiElementsListsTabContainerTabsAndAShownTreeRoot()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            "for spec: Array in [[\"Book\", 20, [\"First\", \"Second\", \"Third\"]], [\"Folded\", 200, [\"One\", \"Two\"]]]:\n\t\t"
+                + "var book := TabContainer.new()\n\t\tbook.name = spec[0]\n\t\tbook.position = Vector2(20, spec[1])\n\t\t"
+                + "book.size = Vector2(300, 120)\n\t\tscene_tree.root.add_child(book)\n\t\t"
+                + "for page_name: String in spec[2]:\n\t\t\tvar page := Control.new()\n\t\t\tpage.name = page_name\n\t\t\tbook.add_child(page)\n\t"
+                + "scene_tree.root.get_node(\"Book\").set_tab_hidden(1, true)\n\t"
+                + "scene_tree.root.get_node(\"Folded\").tabs_visible = false\n\t"
+                + "var shown := Tree.new()\n\tshown.name = \"Shown\"\n\tshown.position = Vector2(360, 20)\n\tshown.size = Vector2(260, 150)\n\t"
+                + "var top: TreeItem = shown.create_item()\n\ttop.set_text(0, \"Root\")\n\tshown.create_item(top).set_text(0, \"Leaf\")\n\t"
+                + "scene_tree.root.add_child(shown)\n\t"
+                + Drawn,
+            cancellation
+        );
+
+        JsonArray elements = JsonNode.Parse(await _tools.GetUiElementsAsync(true, null, limit: 500, cancellationToken: cancellation))![
+            "elements"
+        ]!.AsArray();
+
+        AssertItems(
+            elements,
+            "/root/Book",
+            """[{"index": 0, "text": "First"}, {"index": 1, "text": "Second", "hidden": true}, {"index": 2, "text": "Third"}]"""
+        );
+        AssertItems(elements, "/root/Folded", """[{"index": 0, "text": "One", "hidden": true}, {"index": 1, "text": "Two", "hidden": true}]""");
+        AssertItems(elements, "/root/Shown", """[{"path": ["Root"], "text": "Root"}, {"path": ["Root", "Leaf"], "text": "Leaf"}]""");
+
+        await ClickAsync(new InputTarget("Book", Item: new InputItem(Text: "Third")), cancellation);
+        await ClickAsync(new InputTarget("Shown", Item: new InputItem(Path: ["Root", "Leaf"])), cancellation);
+
+        Assert.Equal(2, await ReadIntAsync("return scene_tree.root.get_node(\"Book\").current_tab", cancellation));
+        Assert.Equal(
+            "Leaf",
+            (await RunAsync("return scene_tree.root.get_node(\"Shown\").get_selected().get_text(0)", cancellation)).GetValue<string>()
+        );
+        await AssertRefusedAsync(new InputTarget("Folded", Item: new InputItem(Text: "One")), "item 'One' of /root/Folded is hidden", cancellation);
+    }
+
     // A one-column Tree named name at (20, 20), 200 x 150, its root hidden, holding "Row 0" to "Row 19", held by the script
     // variable wide with extra run before it is added; after Drawn without its return, hbar and vbar hold its scroll bars.
     private static string Rows(string name, string extra) =>
@@ -526,6 +736,14 @@ public sealed class ItemTargetTests(SharedProbeSession shared) : IAsyncLifetime,
         Assert.Equal(className, aimed["class"]!.GetValue<string>());
         Assert.Equal(index, aimed["item"]!["index"]!.GetValue<int>());
         Assert.Equal(text, aimed["item"]!["text"]!.GetValue<string>());
+    }
+
+    // The element at path has exactly the items expected, a JSON array, and no itemsTotal.
+    private static void AssertItems(JsonArray elements, string path, string expected)
+    {
+        JsonNode element = elements.Single(candidate => candidate!["path"]!.GetValue<string>() == path)!;
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(expected), element["items"]), element.ToJsonString());
+        Assert.False(element.AsObject().ContainsKey("itemsTotal"), element.ToJsonString());
     }
 
     private static void AssertPath(JsonNode aimed, params string[] path) =>

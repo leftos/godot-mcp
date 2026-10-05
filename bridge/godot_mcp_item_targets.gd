@@ -62,6 +62,8 @@ const LIST_ITEM_NOT_DRAWN := (
 )
 ## How many texts or matches a refusal lists.
 const MAX_LISTED := 10
+## How many items get_ui_elements lists for one Control (listed_items).
+const MAX_ITEMS_LISTED := 50
 
 
 ## The item an item spec names in list: {drawer, local, report}, drawer the Control that draws it
@@ -126,6 +128,78 @@ static func drawn(node: Node, mode: int, text: String) -> String:
 	if mode == Node.AUTO_TRANSLATE_MODE_ALWAYS:
 		return node.tr(text)
 	return text
+
+
+## The items get_ui_elements reports on control, read as an item target matches them, so the two
+## agree: {items, itemsTotal?}, items the first MAX_ITEMS_LISTED and itemsTotal their count when
+## there are more; or null for a Control of a class item targets do not take. A flat list's item
+## is {index, text, hidden?: true, disabled?: true} (a TabContainer's from its tab bar); a Tree's
+## is {path, text}, path its item.path, for each item neither hidden nor under a collapsed one.
+static func listed_items(control: Control) -> Variant:
+	var kind: String = item_kind(control.get_class())
+	if kind.is_empty():
+		return null
+	if kind == "tree":
+		var tree := control as Tree
+		var reachable: Array[TreeItem] = _reachable_items(tree)
+		var first: Array[TreeItem] = reachable.slice(0, MAX_ITEMS_LISTED)
+		return _listing(reachable.size(), _tree_entries(tree, first))
+	var drawer: Control = control
+	if control is TabContainer:
+		drawer = (control as TabContainer).get_tab_bar()
+	var texts: PackedStringArray = _flat_texts(drawer)
+	return _listing(texts.size(), _flat_entries(drawer, texts))
+
+
+static func _listing(total: int, entries: Array) -> Dictionary:
+	var listing: Dictionary = {"items": entries}
+	if total > MAX_ITEMS_LISTED:
+		listing["itemsTotal"] = total
+	return listing
+
+
+## The first MAX_ITEMS_LISTED of a flat list's items as listed_items lists them; texts are its
+## drawn texts (_flat_texts). Every item is hidden while drawer is not visible in the tree, as
+## _flat_item refuses it: a TabContainer with tabs_visible off hides its tab bar
+## (scene/gui/tab_container.cpp L826 in 4.7.2).
+static func _flat_entries(drawer: Control, texts: PackedStringArray) -> Array:
+	var hidden: Array[bool] = _flat_hidden(drawer)
+	var all_hidden: bool = not drawer.is_visible_in_tree()
+	var entries: Array = []
+	for index in mini(texts.size(), MAX_ITEMS_LISTED):
+		var entry: Dictionary = {"index": index, "text": texts[index]}
+		if all_hidden or hidden[index]:
+			entry["hidden"] = true
+		if _flat_disabled(drawer, index):
+			entry["disabled"] = true
+		entries.append(entry)
+	return entries
+
+
+## The items an item.path can reach, in tree order: neither hidden nor under a collapsed item,
+## walked from the first shown level without entering a hidden or a collapsed item.
+static func _reachable_items(tree: Tree) -> Array[TreeItem]:
+	var reachable: Array[TreeItem] = []
+	for item: TreeItem in _visible_only(_first_level(tree)):
+		_append_reachable(item, reachable)
+	return reachable
+
+
+## item, already known visible in the tree, and its shown descendants under no collapsed item.
+static func _append_reachable(item: TreeItem, into: Array[TreeItem]) -> void:
+	into.append(item)
+	if item.collapsed:
+		return
+	for child: TreeItem in item.get_children():
+		if child.visible:
+			_append_reachable(child, into)
+
+
+static func _tree_entries(tree: Tree, items: Array[TreeItem]) -> Array:
+	var entries: Array = []
+	for item: TreeItem in items:
+		entries.append({"path": Array(shown_path(tree, item)), "text": cell_text(tree, item, 0)})
+	return entries
 
 
 ## An ItemList's item, or a tab of a TabBar or of a TabContainer's tab bar.

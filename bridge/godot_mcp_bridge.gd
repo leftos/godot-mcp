@@ -26,6 +26,7 @@ const JSON_SCRIPT := "godot_mcp_json.gd"
 const PREVIEW_SCRIPT := "godot_mcp_preview.gd"
 const UI_SNAPSHOT_SCRIPT := "godot_mcp_ui_snapshot.gd"
 const SHOWN_TEXT_SCRIPT := "godot_mcp_shown_text.gd"
+const ITEM_TARGETS_SCRIPT := "godot_mcp_item_targets.gd"
 const CLASS_INFO_SCRIPT := "godot_mcp_class_info.gd"
 const CAPTURE_SCRIPT := "godot_mcp_capture.gd"
 const DOTNET_SCRIPT := "godot_mcp_dotnet.gd"
@@ -106,6 +107,9 @@ var _ui_snapshot: GDScript
 ## The shown text (godot_mcp_shown_text.gd beside this script), static functions called on the
 ## script itself: the text get_ui_elements reports, the one a text target matches.
 var _shown_text: GDScript
+## The item targets (godot_mcp_item_targets.gd beside this script), static functions called on the
+## script itself: the items get_ui_elements reports, read as an item target matches them.
+var _item_targets: GDScript
 ## The class reader (godot_mcp_class_info.gd beside this script), static functions called on the
 ## script itself: describe_class.
 var _class_info: GDScript
@@ -214,6 +218,7 @@ func _build_once() -> void:
 	_json = load(_script_dir.path_join(JSON_SCRIPT)) as GDScript
 	_ui_snapshot = load(_script_dir.path_join(UI_SNAPSHOT_SCRIPT)) as GDScript
 	_shown_text = load(_script_dir.path_join(SHOWN_TEXT_SCRIPT)) as GDScript
+	_item_targets = load(_script_dir.path_join(ITEM_TARGETS_SCRIPT)) as GDScript
 	_class_info = load(_script_dir.path_join(CLASS_INFO_SCRIPT)) as GDScript
 	_pads = (load(_script_dir.path_join(GAMEPAD_SCRIPT)) as GDScript).new()
 	_pads.name = "Gamepad"
@@ -749,6 +754,9 @@ func _describe_control(control: Control) -> Dictionary:
 	var shown: Variant = _shown_text.shown_text(control)
 	if shown != null:
 		element["text"] = shown
+	var listed: Variant = _item_targets.listed_items(control)
+	if listed != null:
+		element.merge(listed)
 	if control is BaseButton:
 		element["disabled"] = (control as BaseButton).disabled
 	if not control.tooltip_text.is_empty():

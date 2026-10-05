@@ -9,6 +9,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `watch` records property and expression tracks frame by frame while other tools drive the game, returning each track's change points, range and paused frames.
 - Item targets reach `OptionButton`, `MenuButton` and `PopupMenu` items by text or index, opening the popup first and following submenus in two calls.
 - `run_scratches` reports its `prep` block (build, import and their logs) as `run_project` does.
+- `get_ui_elements` lists the tabs and items of an `ItemList`, `TabBar`, `TabContainer` or `Tree` as `items`, the texts an `item` target matches.
 - `wait_for` and `batch_drive` waits report `failedChecks` when the expression errored on earlier checks, so a late `met: true` shows it.
 
 ### Changed

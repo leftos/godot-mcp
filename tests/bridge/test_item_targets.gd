@@ -224,3 +224,44 @@ func test_collapsed_ancestor_is_the_outermost_collapsed() -> void:
 	assert_eq(_items.collapsed_ancestor(leaf), outer, "the outermost")
 	assert_eq(_items.collapsed_ancestor(outer), null, "its own collapse is not an ancestor's")
 	tree.free()
+
+
+func test_listed_items_lists_the_first_fifty_and_counts_the_rest() -> void:
+	var list := ItemList.new()
+	var empty: Variant = _items.listed_items(list)
+	for index in 3:
+		list.add_item("Item %d" % index)
+	var few: Variant = _items.listed_items(list)
+	for index in range(3, 50):
+		list.add_item("Item %d" % index)
+	var fifty: Variant = _items.listed_items(list)
+	for index in range(50, 60):
+		list.add_item("Item %d" % index)
+	var many: Variant = _items.listed_items(list)
+	list.free()
+	assert_eq((fifty["items"] as Array).size(), 50, "exactly fifty listed")
+	assert_true(not (fifty as Dictionary).has("itemsTotal"), "exactly fifty, no total")
+	assert_eq(empty, {"items": []}, "an empty list")
+	assert_eq((few["items"] as Array).size(), 3, "three listed")
+	assert_true(not (few as Dictionary).has("itemsTotal"), "three, no total")
+	assert_eq([few["items"][2]["index"], few["items"][2]["text"]], [2, "Item 2"], "the third")
+	assert_eq((many["items"] as Array).size(), 50, "fifty listed")
+	var last: Dictionary = many["items"][49]
+	assert_eq([last["index"], last["text"]], [49, "Item 49"], "the fiftieth")
+	assert_eq(many["itemsTotal"], 60, "the total")
+
+
+func test_listed_items_is_null_for_a_control_that_lists_none() -> void:
+	var button := Button.new()
+	var listed: Variant = _items.listed_items(button)
+	button.free()
+	assert_eq(listed, null, "a Button")
+
+
+func test_listed_items_marks_every_item_hidden_when_the_list_is_not_visible() -> void:
+	var list := ItemList.new()
+	list.add_item("A")
+	var outside: Variant = _items.listed_items(list)
+	list.free()
+	var all_hidden: Dictionary = {"items": [{"index": 0, "text": "A", "hidden": true}]}
+	assert_eq(outside, all_hidden, "outside the tree")
