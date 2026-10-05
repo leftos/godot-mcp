@@ -16,9 +16,9 @@ public sealed class TextTargetTests(SharedProbeSession shared) : IAsyncLifetime,
     private const int ScriptTimeoutMs = 10_000;
 
     // Card (mouse-ignoring) at (400, 200), 160 x 100, as an instanced scene holds it: Hit, a text-less Button filling the
-    // card, and Title, a Label reading "Strike" at the card's (10, 10), 140 x 30, both owned by Card. Title's centre is
-    // (480, 225).
-    private const string CardBlock =
+    // card, and Title, a titleType reading "Strike" at the card's (10, 10), 140 x 30, both owned by Card. Title's centre
+    // is (480, 225).
+    private static string Card(string titleType) =>
         "var card := Control.new()\n\t"
         + "card.name = \"Card\"\n\t"
         + "card.mouse_filter = Control.MOUSE_FILTER_IGNORE\n\t"
@@ -32,13 +32,16 @@ public sealed class TextTargetTests(SharedProbeSession shared) : IAsyncLifetime,
         + "hit.pressed.connect(func() -> void: hit.set_meta(\"presses\", int(hit.get_meta(\"presses\")) + 1))\n\t"
         + "card.add_child(hit)\n\t"
         + "hit.owner = card\n\t"
-        + "var title := Label.new()\n\t"
+        + $"var title := {titleType}.new()\n\t"
         + "title.name = \"Title\"\n\t"
         + "title.text = \"Strike\"\n\t"
         + "title.position = Vector2(10, 10)\n\t"
         + "title.size = Vector2(140, 30)\n\t"
         + "card.add_child(title)\n\t"
         + "title.owner = card\n\t";
+
+    private static readonly string CardBlock = Card("Label");
+    private static readonly string RichCardBlock = Card("RichTextLabel");
 
     // TextMenu (mouse-ignoring) holds Host, reading "New Game", at (400, 250) and Join, reading "Join Game", at (400, 300),
     // each 120 x 40.
@@ -211,6 +214,106 @@ public sealed class TextTargetTests(SharedProbeSession shared) : IAsyncLifetime,
         AssertMatched(clicked["aimedAt"]!, "Strike");
         Assert.Equal("/root/Card/Hit", clicked["pressedOn"]!["path"]!.GetValue<string>());
         Assert.Equal(1, await PressesAsync("Card/Hit", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStopLabelMatchIsPressedThroughAButtonOfItsOwnSceneInstance()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(RichCardBlock + "card.move_child(hit, -1)\n\treturn true", cancellation);
+
+        JsonNode clicked = await ClickAsync(new InputTarget(Text: "Strike"), cancellation);
+
+        AssertAimed(clicked["aimedAt"]!, "/root/Card/Title", "RichTextLabel", 480, 225);
+        AssertMatched(clicked["aimedAt"]!, "Strike");
+        Assert.Equal("/root/Card/Hit", clicked["pressedOn"]!["path"]!.GetValue<string>());
+        Assert.Equal(1, await PressesAsync("Card/Hit", cancellation));
+
+        JsonNode under = await ClickAsync(new InputTarget(Text: "Strike", Under: "Card"), cancellation);
+
+        AssertAimed(under["aimedAt"]!, "/root/Card/Title", "RichTextLabel", 480, 225);
+        AssertMatched(under["aimedAt"]!, "Strike");
+        Assert.Equal("/root/Card/Hit", under["pressedOn"]!["path"]!.GetValue<string>());
+        Assert.Equal(2, await PressesAsync("Card/Hit", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AButtonMatchCoveredByItsOwnSceneIsRefused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            CardBlock
+                + "var play := Button.new()\n\t"
+                + "play.name = \"Play\"\n\t"
+                + "play.text = \"Play\"\n\t"
+                + "play.position = Vector2(10, 10)\n\t"
+                + "play.size = Vector2(140, 30)\n\t"
+                + "play.set_meta(\"presses\", 0)\n\t"
+                + "play.pressed.connect(func() -> void: play.set_meta(\"presses\", int(play.get_meta(\"presses\")) + 1))\n\t"
+                + "card.add_child(play)\n\t"
+                + "play.owner = card\n\t"
+                + "var quit := Panel.new()\n\t"
+                + "quit.name = \"ConfirmQuit\"\n\t"
+                + "quit.position = Vector2(10, 10)\n\t"
+                + "quit.size = Vector2(140, 30)\n\t"
+                + "card.add_child(quit)\n\t"
+                + "quit.owner = card\n\treturn true",
+            cancellation
+        );
+
+        McpException refused = await RefusedAsync(new InputTarget(Text: "Play"), cancellation);
+
+        Assert.Contains("the centre of /root/Card/Play", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("lands on /root/Card/ConfirmQuit, which covers it", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(0, await PressesAsync("Card/Play", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnEmbeddedPopupCoveringALabelMatchIsRefused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            CardBlock
+                + "var popup := PopupPanel.new()\n\t"
+                + "popup.name = \"Popup\"\n\t"
+                + "popup.popup_window = false\n\t"
+                + "popup.position = Vector2i(400, 200)\n\t"
+                + "popup.size = Vector2i(160, 100)\n\t"
+                + "card.add_child(popup)\n\t"
+                + "popup.owner = card\n\t"
+                + "var cover := Control.new()\n\t"
+                + "cover.name = \"Cover\"\n\t"
+                + "cover.size = Vector2(160, 100)\n\t"
+                + "popup.add_child(cover)\n\t"
+                + "cover.owner = card\n\t"
+                + "popup.show()\n\treturn true",
+            cancellation
+        );
+
+        McpException refused = await RefusedAsync(new InputTarget(Text: "Strike"), cancellation);
+
+        Assert.Contains("lands on /root/Card/Popup/Cover, which covers it", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(0, await PressesAsync("Card/Hit", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnOwnerlessSiblingOverALabelMatchIsRefused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            CardBlock
+                + "var slot := Control.new()\n\t"
+                + "slot.name = \"Slot\"\n\t"
+                + "slot.position = Vector2(400, 200)\n\t"
+                + "slot.size = Vector2(160, 100)\n\t"
+                + "scene_tree.root.add_child(slot)\n\treturn true",
+            cancellation
+        );
+
+        McpException refused = await RefusedAsync(new InputTarget(Text: "Strike"), cancellation);
+
+        Assert.Contains("the centre of /root/Card/Title (480, 225) lands on /root/Slot, which covers it", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(0, await PressesAsync("Card/Hit", cancellation));
     }
 
     [Fact(Timeout = TestTimeoutMs)]

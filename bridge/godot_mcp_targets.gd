@@ -692,9 +692,9 @@ func _ambiguous(node_name: String, named: Array[Node]) -> String:
 
 ## Whether a press on hit reaches a Control aim's node: hit is the node, a descendant of it, or,
 ## for a node that ignores the mouse, the nearest ancestor that takes its clicks; or, for a text
-## match, a Control of its own scene instance (same_instance_hit). An item aim lands only on the
-## Control that draws the item: a list's scroll bars are its children, and a press on one selects
-## nothing.
+## match of a node that acts on no press of its own and has an owner, a Control of its own scene
+## instance (same_instance_hit). An item aim lands only on the Control that draws the item: a
+## list's scroll bars are its children, and a press on one selects nothing.
 func lands_on(hit: Control, aim: Dictionary) -> bool:
 	if hit == null:
 		return false
@@ -710,15 +710,30 @@ func lands_on(hit: Control, aim: Dictionary) -> bool:
 
 
 ## Whether hit, the Control a press lands on, belongs to target's scene instance, for a target
-## that ignores the mouse and has an owner: hit is that owner or has it too, and is not itself the
-## root of another scene instanced inside it (a modal's backdrop in the HUD, whose owner is the HUD
-## too, keeps the click from the HUD's label). A card's title Label beside the Button that takes
-## the card's clicks is pressed through that Button.
+## that acts on no press of its own (_reads_only) and has an owner: hit is that owner or has it
+## too, in the target's own window (an embedded popup's Control, its owner the scene root, is
+## another window's), and is not itself the root of another scene instanced inside it (a modal's
+## backdrop in the HUD, whose owner is the HUD too, keeps the click from the HUD's label). A card's
+## title Label beside the Button that takes the card's clicks is pressed through that Button; a Play
+## Button under its own scene's ConfirmQuit Panel is not, since the Panel presses nothing the match
+## names.
 static func same_instance_hit(hit: Control, target: Control) -> bool:
 	var instance: Node = target.owner
-	if instance == null or target.get_mouse_filter_with_override() != Control.MOUSE_FILTER_IGNORE:
+	if instance == null or not _reads_only(target) or hit.get_window() != target.get_window():
 		return false
 	return hit == instance or (hit.owner == instance and hit.scene_file_path.is_empty())
+
+
+## Whether a Control acts on no press of its own: it ignores the mouse, or it is a text Control (a
+## Label or a RichTextLabel, which shows the text an agent aims at and presses nothing whatever its
+## mouse filter, a RichTextLabel keeping the Control default Stop). A Button, LineEdit or CheckBox
+## acts on a press, so a same-instance Control covering one must not take the click.
+static func _reads_only(control: Control) -> bool:
+	return (
+		control.get_mouse_filter_with_override() == Control.MOUSE_FILTER_IGNORE
+		or control is Label
+		or control is RichTextLabel
+	)
 
 
 ## The target, or its nearest Control ancestor when it ignores the mouse, that takes a click

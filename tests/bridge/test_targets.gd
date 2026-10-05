@@ -9,7 +9,7 @@ extends "res://gd_test.gd"
 var _targets_script: GDScript = load_bridge_script("godot_mcp_targets.gd")
 
 
-func test_same_instance_hit_takes_a_control_of_the_ignoring_target_scene() -> void:
+func test_same_instance_hit_takes_a_control_of_the_target_scene() -> void:
 	var targets: Node = _targets_script.new()
 	var card := _control("Card", Control.MOUSE_FILTER_IGNORE)
 	var press := _control("Press", Control.MOUSE_FILTER_STOP)
@@ -22,11 +22,31 @@ func test_same_instance_hit_takes_a_control_of_the_ignoring_target_scene() -> vo
 	assert_true(targets.same_instance_hit(press, title), "a Control the card owns")
 	assert_true(targets.same_instance_hit(card, title), "the card itself")
 	assert_true(not targets.same_instance_hit(stranger, title), "a Control of no instance")
-	title.mouse_filter = Control.MOUSE_FILTER_STOP
-	assert_true(not targets.same_instance_hit(press, title), "a target that takes clicks")
-	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var button := Button.new()
+	button.name = "Play"
+	button.mouse_filter = Control.MOUSE_FILTER_STOP
+	card.add_child(button)
+	button.owner = card
+	assert_true(
+		not targets.same_instance_hit(press, button), "a Button match, which acts on a press itself"
+	)
+	var rich := RichTextLabel.new()
+	rich.name = "Note"
+	rich.mouse_filter = Control.MOUSE_FILTER_STOP
+	card.add_child(rich)
+	rich.owner = card
+	assert_true(
+		targets.same_instance_hit(press, rich), "a RichTextLabel match, whatever its filter"
+	)
+	var caption := Label.new()
+	caption.name = "Caption"
+	caption.mouse_filter = Control.MOUSE_FILTER_STOP
+	card.add_child(caption)
+	caption.owner = card
+	assert_true(targets.same_instance_hit(press, caption), "a Label match, whatever its filter")
 	title.owner = null
 	assert_true(not targets.same_instance_hit(press, title), "a target with no owner")
+	assert_true(not targets.same_instance_hit(stranger, title), "a stranger with no owner")
 	card.free()
 	stranger.free()
 	targets.free()
@@ -66,6 +86,27 @@ func test_lands_on_widens_to_the_instance_for_a_text_match_only() -> void:
 	assert_true(targets.lands_on(press, text_aim), "a text match lands on its instance")
 	assert_true(not targets.lands_on(null, text_aim), "nothing hit")
 	card.free()
+	targets.free()
+
+
+func test_lands_on_refuses_an_ownerless_sibling_over_a_text_match() -> void:
+	var targets: Node = _targets_script.new()
+	var hand := _control("Hand", Control.MOUSE_FILTER_IGNORE)
+	var card := _control("Card", Control.MOUSE_FILTER_IGNORE)
+	var press := _control("Press", Control.MOUSE_FILTER_STOP)
+	var title := RichTextLabel.new()
+	title.name = "Title"
+	var slot := _control("Slot", Control.MOUSE_FILTER_STOP)
+	hand.add_child(card)
+	hand.add_child(slot)
+	card.add_child(press)
+	card.add_child(title)
+	press.owner = card
+	title.owner = card
+	var text_aim := {"node": title, "matched": {"by": "text", "text": "Strike"}}
+	assert_true(not targets.lands_on(slot, text_aim), "an ownerless sibling of the instance root")
+	assert_true(targets.lands_on(press, text_aim), "a Control of the text match's instance")
+	hand.free()
 	targets.free()
 
 
