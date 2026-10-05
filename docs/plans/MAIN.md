@@ -4,45 +4,22 @@
 
 ## Ideas from the survey and the projects
 
-- [x] GMCP-60 Split condition parsing out of the time module before it passes 1000 lines · release vNext
-- [x] GMCP-57 Injected pointer is not the cursor UpdateMouseCursorState and get_mouse_position read · release vNext
-- [x] GMCP-54 click: a {text, under} target is refused when the label's own card covers it · release vNext
-- [x] GMCP-56 batch_drive: a wait whose expression errors comes back met: true · release vNext
-- [x] GMCP-55 wait_for: an expression with a lambda fails with only "Expected ',' or ')'" · release vNext
-- [x] GMCP-11 run_scratches starts scenes in name order, so a long-paced scene ends the run alone · release vNext
-- [x] GMCP-10 run_scratches never judges what a scene prints before its first step · release vNext
-- [x] GMCP-9 run_scratches returns no prep block, so a wrapped or skipped build is invisible in its result · release vNext
 - [ ] GMCP-12 Finish input targets: popup items, item text in get_ui_elements, untested layouts
-  - [x] GMCP-13 Report tab and item text in get_ui_elements · release vNext
-  - [x] GMCP-14 Test item targets on a TabBar with clip_tabs off · release vNext
-  - [x] GMCP-15 Test item targets in right-to-left layouts · release vNext
-  - [x] GMCP-4 click: no item target inside an OptionButton or PopupMenu · release vNext
-  - [x] GMCP-49 Keep shut-out mode from closing a PopupMenu as it opens · release vNext
-  - [x] GMCP-59 Refuse an item target outside the viewport as off-screen, not covered · release vNext
-  - [x] GMCP-62 Refuse a Control target outside the viewport as off-screen, not covered · release vNext
   - [ ] GMCP-63 Name a Control's rect when its centre lies outside its SubViewport or embedded window
 - [ ] GMCP-6 record: only Movie Maker, which runs faster than real time
 - [ ] GMCP-19 Timeline watch: property, signal and monitor tracks, then retire monitor_property
-- [x] GMCP-23 Design drives that span several processes · release vNext
-- [x] GMCP-21 Design audio observation: which players play, bus levels (idea 9) · release vNext
-- [x] GMCP-20 Design step-until-a-condition and render diagnosis (ideas 5 and 6) · release vNext
 - [ ] GMCP-47 Drives across several processes
 - [ ] GMCP-43 Report the signals a gesture fired
 - [ ] GMCP-44 Step-until: frame_control until and input
 - [ ] GMCP-46 Audio tracks in the watch: voices and buses
-- [x] GMCP-22 Design a click that reports the signals it fired · release vNext
-- [x] GMCP-18 Suggest run_scratches to opening-hand in place of its Run-Scratches.ps1 · release vNext
-- [x] GMCP-16 Suggest game tools to opening-hand · release vNext
 - [ ] GMCP-17 State digest: wait_for on a state key, then tell the game repos
 - [ ] GMCP-7 wait_for: no call in the frame an expression or property condition is met
 - [ ] GMCP-8 options.call in capture_frames and wait_for takes only positional args, not a game tool's named ones
 
 ## Singles
 
-- [x] GMCP-50 Move the tooltip block out of the input module · release vNext
 - [ ] GMCP-53 stop_project kills a game still shutting down after a mouse_button press and release
 - [ ] GMCP-52 validate: -getItem:Compile reaches MSBuild split through a pwsh prepWrapper (MSB1014)
-- [x] GMCP-40 Add the Agent Mail lease guard as a prek hook · release vNext
 - [ ] GMCP-24 Fall back to a full save when a splice leaves two nodes one unique_id
 - [ ] GMCP-25 Keep a stored layout_mode = 3 on a full-rect Control through headless saves
 - [ ] GMCP-26 Give the bridge's mouse motions a velocity
@@ -63,7 +40,5 @@
 
 ## Docs
 
-- [x] GMCP-39 Fix ARCHITECTURE.md's path to the InputProbe main scene · release vNext
-- [x] GMCP-41 Run linear release complete in the release procedure · release vNext
 - [ ] GMCP-45 Document render diagnosis
 - [ ] GMCP-58 Re-read csharp-runtime-tools.md against the C# game-tools and state commits
