@@ -1,6 +1,6 @@
 # Timeline watch: several values and signals over one window, then performance monitors
 
-Design draft for the plan item "One timeline watch over several properties and signals, then performance monitors over a frame window (ideas 3, 2)" (GMCP-19), from ideas 3 and 2 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L105-113). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../DECISIONS.md) decision 29, which wins where this file differs; steps 1 to 4 of section 7 are done, steps 5 and 6 open.
+Design draft for the plan item "One timeline watch over several properties and signals, then performance monitors over a frame window (ideas 3, 2)" (GMCP-19), from ideas 3 and 2 of the [survey](../../research/2026-09-29-godot-mcp-survey.md) (L105-113). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../../DECISIONS.md) decision 29, which wins where this file differs; steps 1 to 4 of section 7 are done, steps 5 and 6 open.
 
 ## 1. Problem
 
@@ -123,7 +123,7 @@ Godot facts are cited from the `4.7.2-stable` tag of `godotengine/godot`, read t
 | C# fields | Godot's `get` reads every C# field it can marshal, exported or not; a record, a `List<T>` or a plain class reads null | Confirmed (decision 21) | DECISIONS.md L69; TOOLS.md L29 |
 | C# events | A plain C# `event` is not a Godot signal; only `[Signal]` delegates are | Confirmed: a plain `event` reads `has_signal` false in the spike | `Godot.SourceGenerators/ScriptSignalsGenerator.cs` L117-122 |
 | Module size | `godot_mcp_time.gd` is 940 lines and `godot_mcp_bridge.gd` 870 of gdlint's 1000 (`wc -l`), so the watch is a new module | Measured | `bridge/` |
-| Cost per C# read | The helper reads a C# member in about 49-78 µs warm, 2 s cold (the state-digest spike) | Measured for a watch (section 8): 32 C# property tracks cost 146 µs a frame at p50, about 4.6 µs a read, through Godot's `get` with no helper | [state-digest.md](./state-digest.md) section 8 |
+| Cost per C# read | The helper reads a C# member in about 49-78 µs warm, 2 s cold (the state-digest spike) | Measured for a watch (section 8): 32 C# property tracks cost 146 µs a frame at p50, about 4.6 µs a read, through Godot's `get` with no helper | [state-digest.md](../state-digest.md) section 8 |
 | Agent files | A marked agent file's `mcp__godot__` entries are exactly its classes' tools, so a removed tool leaves them at the next install; an unmarked file keeps a dead name | Confirmed | `src/GodotMcp.Server/Agents/AgentFile.cs` L28-35 |
 
 ## 4. Edges
@@ -192,7 +192,7 @@ Each step lands on its own with its tests, docs and changelog bullet, and passes
    - A failing expression's `{"$error": text}` is kept again only when the text changes, by the change-point rule; expression failures stay out of the error feed (the expression runs with `show_error` off), so section 4's "the bridge's error feed across the call" does not hold.
    - The 40000-character cut counts its loss per track in `cut`, and each track keeps at least its first and last point.
    - A named property track keeps its `node` and `property` beside `name`, in `start`'s reply and in the timeline.
-3. **Done: signal tracks**: node and group signals, the merged `events`, the fair share, `skipped`; the CsProbe `[Signal]`s (in `CsSignals.cs`) and `CSharpWatchTests`. Its briefing rulings, which settle section 2 where its lines disagree (an event is `[frame, gameMs, node, signal, args]`, and the bridge's caps are the per-track buffer only), are decision 29's "Signal tracks" in [DECISIONS.md](../DECISIONS.md).
+3. **Done: signal tracks**: node and group signals, the merged `events`, the fair share, `skipped`; the CsProbe `[Signal]`s (in `CsSignals.cs`) and `CSharpWatchTests`. Its briefing rulings, which settle section 2 where its lines disagree (an event is `[frame, gameMs, node, signal, args]`, and the bridge's caps are the per-track buffer only), are decision 29's "Signal tracks" in [DECISIONS.md](../../DECISIONS.md).
 4. **Done: monitor tracks**: `frame_ms`, the built-in name map, the refused `time/*`, custom monitors, percentiles, `budgetMs`, spikes, in a module of their own (`bridge/godot_mcp_watch_monitors.gd`). Decided at briefing (2026-10-06, each the recommended option, recorded on GMCP-19), settling section 2 where its lines disagree:
    - Built-in names are 4.7.2's `get_monitor_name` strings verbatim (`raster/total_draw_calls`, not section 2's earlier `render/draw_calls`), from a table in the bridge that a gdtest checks against every `Performance.Monitor` constant.
    - The bridge summarises each series once, at finish, and the server passes `monitors` through, outside the 40000-character cut; section 5's percentile tests in `WatchTimelineTests` move to a gdtest.

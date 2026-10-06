@@ -1,6 +1,6 @@
 # Audio observation: which players play, bus levels
 
-Design draft for Linear GMCP-21, "Design audio observation: which players play, bus levels (idea 9)", from idea 9 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L140-143), paired with the closed GitHub #50 (the `mute` option). It builds on the timeline watch of [timeline-watch.md](./timeline-watch.md) ([DECISIONS.md](../DECISIONS.md) decision 29, GMCP-19). Every question in section 7 is ruled.
+Design draft for Linear GMCP-21, "Design audio observation: which players play, bus levels (idea 9)", from idea 9 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L140-143), paired with the closed GitHub #50 (the `mute` option). It builds on the timeline watch of [timeline-watch.md](./archive/timeline-watch.md) ([DECISIONS.md](../DECISIONS.md) decision 29, GMCP-19). Every question in section 7 is ruled.
 
 Status: the blocker is cleared, since the watch's steps 2 to 4 have landed (property and expression tracks d638a9f, signal tracks 4d9d406, monitor tracks 42f1184). Next is the spike, section 6's step 1.
 

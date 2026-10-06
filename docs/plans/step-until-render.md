@@ -8,7 +8,7 @@ Status: step A1 shipped as `wait_for` `options.then` (ba6b522), which answered G
 
 ### What an agent cannot do today
 
-The time tools are `frame_control` (pause, resume, step N drawn frames and stay paused, time scale; TOOLS.md L229-233), `wait_for` (a condition checked each frame on a running game, a frame-exact `options.screenshot`, and `options.call` at the start of a `gameMs` or `frames` wait only; L247-251), `capture_frames` (L235-239), `batch_drive` (a list of steps run server-side, stopping at the first failure; L355-359) and the `watch` of [timeline-watch.md](./timeline-watch.md) (decision 29), which records how values, signals and monitors move over a window and runs beside every other tool, steps included. Checked against that set, four things had no tool; the first now has `wait_for` `options.then` (step A1):
+The time tools are `frame_control` (pause, resume, step N drawn frames and stay paused, time scale; TOOLS.md L229-233), `wait_for` (a condition checked each frame on a running game, a frame-exact `options.screenshot`, and `options.call` at the start of a `gameMs` or `frames` wait only; L247-251), `capture_frames` (L235-239), `batch_drive` (a list of steps run server-side, stopping at the first failure; L355-359) and the `watch` of [timeline-watch.md](./archive/timeline-watch.md) (decision 29), which records how values, signals and monitors move over a window and runs beside every other tool, steps included. Checked against that set, four things had no tool; the first now has `wait_for` `options.then` (step A1):
 
 | Job | Closest today | What is missing |
 |---|---|---|
