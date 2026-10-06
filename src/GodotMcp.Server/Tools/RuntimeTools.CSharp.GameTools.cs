@@ -107,6 +107,93 @@ internal sealed partial class RuntimeTools
             ["maxDepth"] = CheckGetDepth(options?.MaxDepth),
         };
 
+    /// <summary>
+    /// An options.call's game tool before the game is named: {tool, request}, request the helper's <c>tool_call</c> as
+    /// call_game_tool builds it, at its default depth. <paramref name="field"/> names the option in a refusal.
+    /// </summary>
+    /// <exception cref="McpException">args is given and is not an object, names a parameter twice, or the name is empty.</exception>
+    internal static JsonObject GameToolCallParameters(string tool, JsonElement? args, string field)
+    {
+        if (args is { ValueKind: not (JsonValueKind.Object or JsonValueKind.Undefined or JsonValueKind.Null) })
+        {
+            throw new McpException(
+                $"{field}.args for a game tool is an object of named arguments, as call_game_tool takes them: "
+                    + "{tool: \"<name>\", args: {\"<parameter>\": value}}."
+            );
+        }
+
+        return new JsonObject { ["tool"] = tool, ["request"] = CallGameToolRequest(tool, args, null) };
+    }
+
+    /// <summary>
+    /// Readies each game tool call in <paramref name="parameters"/> (call, and then.call) for the bridge, which calls it through
+    /// the C# helper in its frame: names the game in its request as call_game_tool does, and sends that request as the helper's
+    /// JSON text beside the helper copy the game loads, {tool, extension, request}. A method call is left as it is and asks
+    /// nothing.
+    /// </summary>
+    /// <exception cref="McpException">
+    /// No session answers <paramref name="session"/>, the project has no C# assembly or build, or the helper cannot be prepared;
+    /// <paramref name="toolName"/> fails.
+    /// </exception>
+    private async Task PrepareGameToolCallsAsync(string toolName, JsonObject parameters, string? session, CancellationToken cancellationToken)
+    {
+        JsonObject[] calls =
+        [
+            .. new[] { parameters["call"], (parameters["then"] as JsonObject)?["call"] }.OfType<JsonObject>().Where(call => call.ContainsKey("tool")),
+        ];
+        foreach (JsonObject call in calls)
+        {
+            JsonObject request = call["request"]!.AsObject();
+            await AddGameAsync(toolName, request, session, cancellationToken);
+            call["request"] = request.ToJsonString();
+            call["extension"] = HelperExtension(toolName, session);
+        }
+    }
+
+    /// <summary>The helper copy the session's game loads, prepared as get_game_state prepares it.</summary>
+    /// <exception cref="McpException">The helper cannot run in the project, or its copy could not be made.</exception>
+    private string HelperExtension(string toolName, string? session)
+    {
+        try
+        {
+            return csharp.PrepareExtension(Find(session).ProjectDir);
+        }
+        catch (InvalidOperationException e)
+        {
+            throw new McpException($"{toolName} failed: {e.Message}", e);
+        }
+    }
+
+    /// <summary>
+    /// A game tool's result in <paramref name="holder"/>, {tool, reply} as the bridge answers it with the helper's reply text
+    /// untouched, as call_game_tool answers it: {tool, value, type, build?}, its numbers as the helper wrote them. Any other
+    /// holder, or none, is left as it is.
+    /// </summary>
+    /// <exception cref="McpException">The reply is not the helper's JSON answer.</exception>
+    private static void ShapeToolReply(JsonObject? holder)
+    {
+        if (holder?["reply"] is null || holder["tool"]?.GetValue<string>() is not { } tool)
+        {
+            return;
+        }
+
+        CSharpReply reply;
+        try
+        {
+            reply = CSharpBridge.ParseReply(holder);
+        }
+        catch (InvalidOperationException e)
+        {
+            throw new McpException($"The game tool {tool}'s answer could not be read: {e.Message}", e);
+        }
+
+        holder.Remove("reply");
+        foreach ((string key, JsonNode? value) in CallGameToolResult(tool, reply))
+        {
+            holder[key] = value?.DeepClone();
+        }
+    }
+
     /// <summary>The arguments as the helper takes them: an empty object when left out or null.</summary>
     /// <exception cref="McpException">args is not a JSON object, or names a parameter twice.</exception>
     private static JsonObject CheckGameToolArgs(JsonElement? args)

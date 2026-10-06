@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Tools;
 using ModelContextProtocol;
@@ -301,6 +302,50 @@ public sealed class WatchValidationTests
 
     private static JsonObject BuildMonitors(WatchOptions? options, params string[] monitors) =>
         RuntimeTools.BuildWatchParameters("start", new WatchTracks(Monitors: monitors), null, options);
+
+    [Fact]
+    public void AGameToolCallIsSentAsCallGameToolsRequest()
+    {
+        WatchOptions options = new(Call: new MethodCall(Tool: "SetMood", Args: Json("""{"mood": "Angry", "times": 3}""")));
+
+        JsonObject parameters = RuntimeTools.BuildWatchParameters("start", OneTrack, null, options);
+
+        Assert.Equal(
+            """{"tool":"SetMood","request":{"op":"tool_call","name":"SetMood","args":{"mood":"Angry","times":3},"maxDepth":8}}""",
+            parameters["call"]!.ToJsonString()
+        );
+    }
+
+    [Fact]
+    public void AMethodCallIsSentAsBefore()
+    {
+        WatchOptions options = new(Call: new MethodCall("Mover", "go", Json("[2]")));
+
+        JsonObject parameters = RuntimeTools.BuildWatchParameters("start", OneTrack, null, options);
+
+        Assert.Equal("""{"node":"Mover","method":"go","args":[2]}""", parameters["call"]!.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData("SetMood", "Mover", null, null, TimeValidationTests.BothSuffix)]
+    [InlineData(null, null, null, null, TimeValidationTests.NeitherSuffix)]
+    [InlineData("SetMood", null, null, "[1]", TimeValidationTests.ToolArgsSuffix)]
+    [InlineData(null, "Mover", "go", """{"speed": 2}""", TimeValidationTests.MethodArgsSuffix)]
+    public void ACallOfNeitherOrBothFormsOrTheOtherFormsArgsIsRefused(string? tool, string? node, string? method, string? args, string suffix)
+    {
+        WatchOptions options = new(Call: new MethodCall(node, method, args is null ? null : Json(args), tool));
+
+        Assert.Equal("options.call" + suffix, Refusal(() => RuntimeTools.BuildWatchParameters("run", OneTrack, new WatchWindow(Frames: 1), options)));
+    }
+
+    [Fact]
+    public void AnEmptyToolNameIsRefusedAsCallGameToolRefusesIt() =>
+        Assert.Equal(
+            "name is empty. Pass a tool's name; list_game_tools lists them.",
+            Refusal(() => RuntimeTools.BuildWatchParameters("start", OneTrack, null, new WatchOptions(Call: new MethodCall(Tool: ""))))
+        );
+
+    private static JsonElement Json(string json) => JsonSerializer.Deserialize<JsonElement>(json);
 
     private static WatchTracks Tracks(int properties, int expressions) =>
         new(

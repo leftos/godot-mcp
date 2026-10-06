@@ -174,8 +174,8 @@ public sealed class CaptureFramesValidationTests : IDisposable
     [Fact]
     public void ACaptureSendsItsCallToTheBridge()
     {
-        JsonElement arg = JsonSerializer.Deserialize<JsonElement>("300");
-        CaptureFramesOptions options = new(Call: new MethodCall("TimeProbe", "start_clock", [arg]));
+        JsonElement args = JsonSerializer.Deserialize<JsonElement>("[300]");
+        CaptureFramesOptions options = new(Call: new MethodCall("TimeProbe", "start_clock", args));
 
         JsonObject parameters = RuntimeTools.BuildCaptureParameters([0.3], TimeSpan.FromSeconds(11), options);
 
@@ -202,6 +202,49 @@ public sealed class CaptureFramesValidationTests : IDisposable
     }
 
     [Fact]
+    public void ACaptureSendsAGameToolCallAsCallGameToolsRequest()
+    {
+        CaptureFramesOptions options = new(Call: new MethodCall(Tool: "SetMood", Args: Json("""{"mood": "Angry", "times": 3}""")));
+
+        JsonObject parameters = RuntimeTools.BuildCaptureParameters([0.3], TimeSpan.FromSeconds(11), options);
+
+        Assert.Equal(
+            """{"tool":"SetMood","request":{"op":"tool_call","name":"SetMood","args":{"mood":"Angry","times":3},"maxDepth":8}}""",
+            parameters["call"]!.ToJsonString()
+        );
+    }
+
+    [Fact]
+    public async Task AValidGameToolCallWithoutASessionSaysNoneIsRunning()
+    {
+        McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Call: new MethodCall(Tool: "Heal")));
+
+        Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("SetMood", "Main", "go", null, TimeValidationTests.BothSuffix)]
+    [InlineData(null, null, null, """{"mood": "Angry"}""", TimeValidationTests.NeitherSuffix)]
+    [InlineData("SetMood", null, null, """["Angry"]""", TimeValidationTests.ToolArgsSuffix)]
+    [InlineData(null, "TimeProbe", "start_clock", """{"ms": 300}""", TimeValidationTests.MethodArgsSuffix)]
+    public async Task ACallOfNeitherOrBothFormsOrTheOtherFormsArgsIsRefused(string? tool, string? node, string? method, string? args, string suffix)
+    {
+        MethodCall call = new(node, method, args is null ? null : Json(args), tool);
+
+        McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Call: call));
+
+        Assert.Equal("options.call" + suffix, refused.Message);
+    }
+
+    [Fact]
+    public async Task AnEmptyToolNameIsRefusedAsCallGameToolRefusesIt()
+    {
+        McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Call: new MethodCall(Tool: "")));
+
+        Assert.Equal("name is empty. Pass a tool's name; list_game_tools lists them.", refused.Message);
+    }
+
+    [Fact]
     public void TheDefaultAllowanceIsTheLastPointPlusTenSecondsAndATenthOfASecondAPoint()
     {
         Assert.Equal(TimeSpan.FromMilliseconds(1200 + 10_000 + 300), RuntimeTools.CaptureAllowance([0.1, 0.5, 1.2], null));
@@ -214,4 +257,6 @@ public sealed class CaptureFramesValidationTests : IDisposable
 
     private async Task<McpException> RefusedAsync(double[]? at, CaptureFramesOptions? options) =>
         await Assert.ThrowsAsync<McpException>(() => _tools.CaptureFramesAsync(at, options, null, TestContext.Current.CancellationToken));
+
+    private static JsonElement Json(string json) => JsonSerializer.Deserialize<JsonElement>(json);
 }

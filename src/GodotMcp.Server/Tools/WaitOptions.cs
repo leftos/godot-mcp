@@ -12,9 +12,11 @@ internal sealed record WaitOptions(
         bool? Screenshot = null,
     [property: Description(
         "gameMs and frames waits only: {node, method, args}, a method the bridge calls in the frame the count starts, so the "
-            + "count runs from the method's entry, with no round trip between; a coroutine is not awaited. The result adds call: "
-            + "{value}, the method's return value as call_method returns it (null for a coroutine). A call refused as call_method "
-            + "refuses it, or an error the method raises, fails the wait."
+            + "count runs from the method's entry, with no round trip between; a coroutine is not awaited. Or {tool, args: {...}} "
+            + "for a game tool by name with named arguments, as call_game_tool takes them. The result adds call: {value}, the "
+            + "method's return value as call_method returns it (null for a coroutine); a game tool's adds tool and type, and "
+            + "pending: true with a null value for a Task, which is not awaited. A call refused as call_method or call_game_tool "
+            + "refuses it, or an error it raises, fails the wait."
     )]
         MethodCall? Call = null,
     [property: Description(
@@ -29,9 +31,11 @@ internal sealed record WaitOptions(
 /// <summary>What wait_for runs in the frame its condition is met: a method call, an Engine.time_scale, or both.</summary>
 internal sealed record WaitThen(
     [property: Description(
-        "The method to call in the met frame, as options.call: {node, method, args}; a coroutine is not awaited. It runs before "
-            + "timeScale, so the method sees the scale the wait ran at. A call refused as call_method refuses it, or an error it "
-            + "raises, fails the wait."
+        "The method to call in the met frame, as options.call: {node, method, args}; a coroutine is not awaited. Or {tool, args: "
+            + "{...}} for a game tool by name with named arguments, as call_game_tool takes them. It runs before timeScale, so "
+            + "the call sees the scale the wait ran at. then adds call: {value}, the method's return value as call_method returns "
+            + "it (null for a coroutine); a game tool's adds tool and type, and pending: true with a null value for a Task, which "
+            + "is not awaited. A call refused as call_method or call_game_tool refuses it, or an error it raises, fails the wait."
     )]
         MethodCall? Call = null,
     [property: Description(

@@ -87,11 +87,12 @@ internal sealed partial class RuntimeTools
             + "wait uses it up, a timeout keeps it), and is refused when no gesture has taken one. options.screenshot: true "
             + "captures the frame the condition was met on as take_screenshot does, for a scene that changes faster than a "
             + "following take_screenshot can catch, adding screenshot to the result (a timed-out wait captures nothing, and a "
-            + "frame that was not drawn gives a warning instead). options.call {node, method, args}, with a gameMs or frames wait "
-            + "only, calls a method in the frame the count starts, so the count runs from its entry (a coroutine is not "
-            + "awaited), and adds call: {value}, its return value as call_method returns it; a refused call, or an error the "
-            + "method raises, fails the wait. options.then {call?, timeScale?}, with any condition kind, runs once in the frame "
-            + "the condition is met: call is a method the bridge calls there, timeScale sets Engine.time_scale right after it, and "
+            + "frame that was not drawn gives a warning instead). options.call {node, method, args}, or {tool, args} for a game "
+            + "tool, with a gameMs or frames wait only, calls it in the frame the count starts, so the count runs from its entry "
+            + "(a coroutine or a Task is not awaited), and adds call: {value}, its return value as call_method returns it, with "
+            + "tool and type for a game tool; a refused call, or an error it raises, fails the wait. options.then {call?, "
+            + "timeScale?}, with any condition kind, runs once in the frame the condition is met: call is a method the bridge "
+            + "calls there, timeScale sets Engine.time_scale right after it, and "
             + "the result adds then: {frame, call?: {value}, timeScale?}. A refused or failing call fails the wait and leaves "
             + "timeScale unset; a timeout runs nothing."
     )]
@@ -242,8 +243,8 @@ internal sealed partial class RuntimeTools
     /// {screenshot, previewMaxWidth} when <paramref name="options"/> asks for the capture, call when it gives one, and then
     /// when it gives one.</summary>
     /// <exception cref="McpException">The condition, gameMs, frames or timeoutMs is refused as the other form refuses them, a
-    /// call is given to a wait other than gameMs or frames, then is empty or its timeScale is out of range, or a node or
-    /// method is empty.</exception>
+    /// call is given to a wait other than gameMs or frames, then is empty or its timeScale is out of range, or a call or
+    /// then.call gives both forms or neither, args of the other form's shape, or an empty node, method or tool name.</exception>
     internal static JsonObject BuildWaitParameters(WaitCondition? condition, int? timeoutMs, WaitOptions? options)
     {
         JsonObject parameters = BuildWaitParameters(condition, timeoutMs);
@@ -252,7 +253,7 @@ internal sealed partial class RuntimeTools
         {
             string kind = parameters["kind"]!.GetValue<string>();
             parameters["call"] = kind is "gameMs" or "frames"
-                ? MethodCallParameters(call)
+                ? CallOptionParameters(call, "options.call")
                 : throw new McpException($"options.call is taken only by a gameMs or frames wait; this condition is {kind}.");
         }
 
@@ -266,7 +267,8 @@ internal sealed partial class RuntimeTools
 
     /// <summary>The bridge's then parameters {call?, timeScale?}, at least one.</summary>
     /// <exception cref="McpException">Neither call nor timeScale is given, timeScale is not above 0 and at most
-    /// <see cref="MaxTimeScale"/>, or the call's node or method is empty.</exception>
+    /// <see cref="MaxTimeScale"/>, or the call gives both forms or neither, args of the other form's shape, or an empty node,
+    /// method or tool name.</exception>
     internal static JsonObject ThenParameters(WaitThen then)
     {
         if (then.Call is null && then.TimeScale is null)
@@ -277,7 +279,7 @@ internal sealed partial class RuntimeTools
         JsonObject parameters = [];
         if (then.Call is { } call)
         {
-            parameters["call"] = MethodCallParameters(call);
+            parameters["call"] = CallOptionParameters(call, "options.then.call");
         }
 
         if (then.TimeScale is { } timeScale)
@@ -320,6 +322,7 @@ internal sealed partial class RuntimeTools
 
     private async Task<BridgeResult> CallWaitAsync(JsonObject parameters, string? session, CancellationToken cancellationToken)
     {
+        await PrepareGameToolCallsAsync("wait_for", parameters, session, cancellationToken);
         GodotSession target = Find(session);
         int timeoutMs = parameters["timeoutMs"]!.GetValue<int>();
         TimeSpan release = WaitRelease(parameters, timeoutMs, target.ActiveRecording is not null);

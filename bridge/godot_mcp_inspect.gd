@@ -32,6 +32,8 @@ const UNIQUE_SEGMENT_MISSING := (
 	"No node '%s' in the running game: %s%s's scene" + " has no node with the unique name '%s'%s"
 )
 const MAX_LISTED_OWNERS := 10
+## A game tool's helper reply that is not the JSON object the helper always sends: tool, reply.
+const TOOL_REPLY_UNREADABLE := "The C# helper's reply for game tool '%s' is not a JSON object: %s"
 
 ## The bridge (godot_mcp_bridge.gd), this node's parent.
 var _bridge: Node
@@ -329,8 +331,11 @@ func call_method(params: Dictionary) -> Variant:
 ## Returns a String instead when the call is refused as call_method refuses it, or when the error
 ## feed logged an error (not a warning) across the callv: a GDScript runtime error or a C#
 ## exception cannot be caught, and Godot refusing the callv itself logs one too; the String is the
-## first such error's message.
+## first such error's message. params {tool, extension, request} calls a game tool instead
+## (call_tool_now).
 func call_now(params: Dictionary) -> Variant:
+	if params.has("tool"):
+		return call_tool_now(params)
 	var prepared: Variant = _prepare_call(params)
 	if prepared is String:
 		return prepared
@@ -341,6 +346,45 @@ func call_now(params: Dictionary) -> Variant:
 	if not raised.is_empty():
 		return raised
 	return {"value": null if is_coroutine(value) else _bridge._json.to_json(value)}
+
+
+## {tool, reply}: the game tool params names ({tool, extension, request}: request the server's
+## tool_call as the helper's JSON text, extension the helper copy to load) called now through the
+## C# helper, in this frame, reply the helper's answer as it came, which the server reads as
+## call_game_tool does: GDScript's JSON parser would read every number as a float. A Task the tool
+## returns is never awaited: its pending call is forgotten, the Task left running in the game, and
+## the answer is {value: null, tool, pending: true}. Returns a String instead: the helper's own
+## text when it cannot load or refuses the call, or, as call_now, the first error the feed logged
+## across a call the helper answered.
+func call_tool_now(params: Dictionary) -> Variant:
+	var tool_name: String = str(params["tool"])
+	var extension: String = str(params.get("extension", ""))
+	var mark: int = _bridge._logger.sequence()
+	var called: Dictionary = _bridge._dotnet.call_now(extension, str(params.get("request", "")))
+	if called.has("error"):
+		return str(called["error"])
+	var reply: String = str((called["result"] as Dictionary)["reply"])
+	var refusal: String = _tool_refusal(tool_name, reply)
+	if not refusal.is_empty():
+		return refusal
+	var answer: Dictionary = {"tool": tool_name, "reply": reply}
+	if reply.begins_with(_bridge._dotnet.PENDING_PREFIX):
+		var id: String = str((JSON.parse_string(reply) as Dictionary)["pending"])
+		_bridge._dotnet.call_now(extension, JSON.stringify({"op": "forget", "id": id}))
+		answer = {"value": null, "tool": tool_name, "pending": true}
+	var raised: String = _bridge._logger.first_error_since(mark)
+	return answer if raised.is_empty() else raised
+
+
+## Why the helper's reply to game tool tool_name is a failure: its own error text when it refused,
+## or that the reply is not a JSON object; "" when it answered.
+static func _tool_refusal(tool_name: String, reply: String) -> String:
+	var parsed: Variant = JSON.parse_string(reply)
+	if not parsed is Dictionary:
+		return TOOL_REPLY_UNREADABLE % [tool_name, reply]
+	if not (parsed as Dictionary).get("ok", false):
+		return str((parsed as Dictionary).get("error", "no message"))
+	return ""
 
 
 ## [node, method, args] for params {node, method, args}: the node found, the method it has, and

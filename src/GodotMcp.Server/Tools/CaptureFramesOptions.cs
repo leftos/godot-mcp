@@ -20,9 +20,11 @@ internal sealed record CaptureFramesOptions(
         int? TimeoutMs = null,
     [property: Description(
         "{node, method, args}: a method the bridge calls in the frame the capture's clock starts, so the points count from the "
-            + "method's entry, with no round trip between; a coroutine is not awaited. The result adds call: {value}, the "
-            + "method's return value as call_method returns it (null for a coroutine). A call refused as call_method refuses it, "
-            + "or an error the method raises, fails the capture with no frames."
+            + "method's entry, with no round trip between; a coroutine is not awaited. Or {tool, args: {...}} for a game tool by "
+            + "name with named arguments, as call_game_tool takes them. The result adds call: {value}, the method's return value "
+            + "as call_method returns it (null for a coroutine); a game tool's adds tool and type, and pending: true with a null "
+            + "value for a Task, which is not awaited. A call refused as call_method or call_game_tool refuses it, or an error "
+            + "it raises, fails the capture with no frames."
     )]
         MethodCall? Call = null
 );

@@ -871,7 +871,7 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await AddTimeProbeAsync(cancellation);
-        WaitOptions options = new(Call: new MethodCall("TimeProbe", "start_clock", [Json("300")]));
+        WaitOptions options = new(Call: new MethodCall("TimeProbe", "start_clock", Json("[300]")));
 
         // start_clock(300) pauses the tree in the frame the probe's own sum from the call reaches 300 ms, after the bridge's
         // check of that frame. A wait whose clock starts in the call's frame has the same sum there and is met; one started a

@@ -83,8 +83,11 @@ internal sealed record WatchWindow(
 internal sealed record WatchOptions(
     [property: Description(
         "{node, method, args}: a method the bridge calls in the watch's first frame, before its first sample, so the window "
-            + "counts from the method's entry; a coroutine is not awaited. start's and run's replies add call: {value}; a "
-            + "refused call, or an error the method raises, fails the call and ends the watch."
+            + "counts from the method's entry; a coroutine is not awaited. Or {tool, args: {...}} for a game tool by name with "
+            + "named arguments, as call_game_tool takes them. start's and run's replies add call: {value}, the method's return "
+            + "value as call_method returns it (null for a coroutine); a game tool's adds tool and type, and pending: true with a "
+            + "null value for a Task, which is not awaited. A call refused as call_method or call_game_tool refuses it, or an "
+            + "error it raises, fails the call and ends the watch."
     )]
         MethodCall? Call = null,
     [property: Description(

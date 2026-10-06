@@ -36,6 +36,7 @@ public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<S
         "FetchLater",
         "Greet",
         "Heal",
+        "Huge",
         "SetMood",
         "Sum",
         "TryFind",
@@ -287,6 +288,14 @@ public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<S
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() => tools.ListGameToolsAsync(cancellationToken: cancellation));
         McpException refusedCall = await Assert.ThrowsAsync<McpException>(() => tools.CallGameToolAsync("Heal", cancellationToken: cancellation));
+        McpException refusedWait = await Assert.ThrowsAsync<McpException>(() =>
+            tools.WaitForAsync(
+                new WaitCondition(Frames: 1),
+                null,
+                new WaitOptions(Call: new MethodCall(Tool: "Heal")),
+                cancellationToken: cancellation
+            )
+        );
         string script =
             "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\treturn scene_tree.has_meta(\"godot_mcp_dotnet\")\n";
         JsonNode loaded = JsonNode.Parse(await tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: cancellation))!["value"]!;
@@ -300,6 +309,11 @@ public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<S
             "call_game_tool failed: This project has no C# assembly, so it has no game tools, which are C# methods marked "
                 + "[GodotMcpTool]; call_method calls a GDScript game's own methods.",
             refusedCall.Message
+        );
+        Assert.Equal(
+            "wait_for failed: This project has no C# assembly, so it has no game tools, which are C# methods marked "
+                + "[GodotMcpTool]; call_method calls a GDScript game's own methods.",
+            refusedWait.Message
         );
         Assert.False(loaded.GetValue<bool>());
     }
@@ -508,6 +522,148 @@ public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<S
         Assert.Equal("Heal", called["tool"]!.GetValue<string>());
         Assert.Equal(4, called["value"]!.GetValue<int>());
     }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task AWaitCallsAGameToolByNameWithNamedArgumentsAsItsCountStarts()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        WaitOptions options = new(Call: SetMoodCall("Sleepy"));
+
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(new WaitCondition(GameMs: 100), null, options, cancellationToken: cancellation);
+        JsonObject waited = JsonNode.Parse(Text(blocks))!.AsObject();
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        AssertSetMoodCalled(waited["call"]!.AsObject(), "Sleepy");
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task ACaptureCallsAGameToolAsItsClockStarts()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        string json = await _tools.CaptureFramesAsync([0.05], new CaptureFramesOptions(Call: SetMoodCall("Angry")), cancellationToken: cancellation);
+        JsonObject captured = JsonNode.Parse(json)!.AsObject();
+
+        Assert.Single(captured["points"]!.AsArray());
+        AssertSetMoodCalled(captured["call"]!.AsObject(), "Angry");
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task AWatchCallsAGameToolInItsFirstFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        WatchTracks tracks = new(Expressions: [new WatchExpressionTrack("one", "1")]);
+
+        JsonObject started = JsonNode
+            .Parse(await _tools.WatchAsync("start", tracks, null, new WatchOptions(Call: SetMoodCall("Calm")), cancellationToken: cancellation))!
+            .AsObject();
+        await _tools.WatchAsync("stop", cancellationToken: cancellation);
+
+        AssertSetMoodCalled(started["call"]!.AsObject(), "Calm");
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task AGameToolCallWithABadEnumNameFailsWithTheHelpersText()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        WaitOptions options = new(Call: SetMoodCall("Glum"));
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(GameMs: 100), null, options, cancellationToken: cancellation)
+        );
+
+        Assert.Contains("expected one of", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task AGameToolReturningATaskAnswersPendingWithoutAwaitingIt()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        WaitOptions options = new(Call: new MethodCall(Tool: "FetchLater", Args: JsonDocument.Parse("""{"label": "soon"}""").RootElement.Clone()));
+
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(new WaitCondition(Frames: 2), null, options, cancellationToken: cancellation);
+        JsonObject call = JsonNode.Parse(Text(blocks))!["call"]!.AsObject();
+
+        Assert.Equal("FetchLater", call["tool"]!.GetValue<string>());
+        Assert.True(call["pending"]!.GetValue<bool>(), call.ToJsonString());
+        Assert.True(call.ContainsKey("value"), call.ToJsonString());
+        Assert.Null(call["value"]);
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task AGameToolCallsNumbersComeBackAsTheHelperWroteThem()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonObject zero = await WaitCallAsync(new MethodCall(Tool: "Heal", Args: Json("""{"amount": 0}""")), cancellation);
+        JsonObject huge = await WaitCallAsync(new MethodCall(Tool: "Huge"), cancellation);
+
+        Assert.Equal("0", zero["value"]!.ToJsonString());
+        Assert.Equal("9007199254740993", huge["value"]!.ToJsonString());
+        Assert.Equal("System.Int64", huge["type"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task AGameToolThatLogsAnErrorFailsTheWait()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        WaitOptions options = new(Call: new MethodCall(Tool: "Complain"));
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(Frames: 2), null, options, cancellationToken: cancellation)
+        );
+
+        Assert.Contains("CsTools complained", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task AThenCallsAGameToolInTheMetFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        WaitOptions options = new(Then: new WaitThen(Call: SetMoodCall("Angry")));
+
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(new WaitCondition(Frames: 2), null, options, cancellationToken: cancellation);
+        JsonObject waited = JsonNode.Parse(Text(blocks))!.AsObject();
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        AssertSetMoodCalled(waited["then"]!["call"]!.AsObject(), "Angry");
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task AWaitCallsAGameToolAsItStartsAndAnotherInTheMetFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        WaitOptions options = new(Call: SetMoodCall("Calm"), Then: new WaitThen(Call: new MethodCall(Tool: "Huge")));
+
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(new WaitCondition(Frames: 2), null, options, cancellationToken: cancellation);
+        JsonObject waited = JsonNode.Parse(Text(blocks))!.AsObject();
+
+        AssertSetMoodCalled(waited["call"]!.AsObject(), "Calm");
+        JsonObject then = waited["then"]!["call"]!.AsObject();
+        Assert.Equal("Huge", then["tool"]!.GetValue<string>());
+        Assert.Equal("9007199254740993", then["value"]!.ToJsonString());
+    }
+
+    private async Task<JsonObject> WaitCallAsync(MethodCall call, CancellationToken cancellation)
+    {
+        WaitOptions options = new(Call: call);
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(new WaitCondition(Frames: 1), null, options, cancellationToken: cancellation);
+        return JsonNode.Parse(Text(blocks))!["call"]!.AsObject();
+    }
+
+    private static JsonElement Json(string json) => JsonDocument.Parse(json).RootElement.Clone();
+
+    private static MethodCall SetMoodCall(string mood) =>
+        new(Tool: "SetMood", Args: JsonDocument.Parse($$"""{"mood": "{{mood}}", "times": 3}""").RootElement.Clone());
+
+    private static void AssertSetMoodCalled(JsonObject call, string mood)
+    {
+        Assert.Equal($"{mood} x3 (calm)", call["value"]!.GetValue<string>());
+        Assert.Equal("SetMood", call["tool"]!.GetValue<string>());
+        Assert.Equal("System.String", call["type"]!.GetValue<string>());
+    }
+
+    private static string Text(IEnumerable<ContentBlock> blocks) => string.Concat(blocks.OfType<TextContentBlock>().Select(block => block.Text));
 
     private Task<JsonObject> ListAsync(GameToolsOptions? options, CancellationToken cancellation) => ListAsync(_tools, options, cancellation);
 

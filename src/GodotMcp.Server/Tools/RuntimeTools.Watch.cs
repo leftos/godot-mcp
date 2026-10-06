@@ -84,6 +84,7 @@ internal sealed partial class RuntimeTools
     )
     {
         JsonObject parameters = BuildWatchParameters(action, tracks, window, options);
+        await PrepareGameToolCallsAsync("watch", parameters, session, cancellationToken);
         BridgeResult result = await CallWithErrorsAsync(Find(session), WatchCall(action, parameters), cancellationToken);
         JsonObject reply =
             result.Reply?.DeepClone() as JsonObject
@@ -346,7 +347,7 @@ internal sealed partial class RuntimeTools
         parameters["unit"] = unit is "process" or "physics" ? unit : throw new McpException("unit must be process or physics.");
         if (options?.Call is { } call)
         {
-            parameters["call"] = MethodCallParameters(call);
+            parameters["call"] = CallOptionParameters(call, "options.call");
         }
     }
 

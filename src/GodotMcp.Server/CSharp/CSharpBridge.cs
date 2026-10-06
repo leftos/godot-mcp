@@ -156,6 +156,22 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
     }
 
     /// <summary>
+    /// The path of the helper's copy the game loads, made when it is not there yet and found again as
+    /// <see cref="PrepareForState"/> finds it; a game tool called in a frame of capture_frames, wait_for or watch names it.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The project cannot be asked, or the helper's copy could not be prepared.</exception>
+    public string PrepareExtension(string projectDir)
+    {
+        string? extension = findExtension();
+        if (Refusal(projectDir, extension) is { } refusal)
+        {
+            throw new InvalidOperationException(refusal);
+        }
+
+        return CachedCopy(extension!);
+    }
+
+    /// <summary>
     /// The folder of the helper's managed dlls inside the copy the game loads, making the copy when it is not there yet; a
     /// snippet compiles against those dlls.
     /// </summary>

@@ -158,7 +158,7 @@ internal sealed partial class RuntimeTools
         CancellationToken cancellationToken = default
     )
     {
-        JsonObject parameters = MethodCallParameters(new MethodCall(node, method, args));
+        JsonObject parameters = MethodCallParameters(node, method, args ?? []);
         var timeout = TimeSpan.FromMilliseconds(CheckCallTimeout(options?.TimeoutMs));
         GodotSession target = Find(session);
         long mark = target.Errors.Mark();
@@ -177,20 +177,57 @@ internal sealed partial class RuntimeTools
 
     /// <summary>The bridge's parameters for a method call, {node, method, args}, as call_method checks and sends them.</summary>
     /// <exception cref="McpException">The node or the method is empty.</exception>
-    internal static JsonObject MethodCallParameters(MethodCall call) =>
+    internal static JsonObject MethodCallParameters(string node, string method, IEnumerable<JsonElement> args) =>
         new()
         {
-            ["node"] = CheckNode(call.Node),
-            ["method"] = CheckName(call.Method, "method", "Pass the name of a method the node has."),
-            ["args"] = new JsonArray([.. (call.Args ?? []).Select(arg => JsonSerializer.SerializeToNode(arg))]),
+            ["node"] = CheckNode(node),
+            ["method"] = CheckName(method, "method", "Pass the name of a method the node has."),
+            ["args"] = new JsonArray([.. args.Select(arg => JsonSerializer.SerializeToNode(arg))]),
+        };
+
+    /// <summary>
+    /// The bridge's parameters for an options.call, which <paramref name="field"/> names in a refusal: a method's {node,
+    /// method, args} as call_method sends them, or a game tool's {tool, request}, the request call_game_tool builds, which
+    /// <see cref="PrepareGameToolCallsAsync"/> completes before it is sent.
+    /// </summary>
+    /// <exception cref="McpException">
+    /// Both forms or neither, args of the other form's shape, or an empty node, method or tool name.
+    /// </exception>
+    internal static JsonObject CallOptionParameters(MethodCall call, string field)
+    {
+        bool method = call.Node is not null || call.Method is not null;
+        return (call.Tool, method) switch
+        {
+            (not null, true) => throw new McpException(
+                $"{field} takes either {{node, method, args: [...]}} for a method or {{tool, args: {{...}}}} for a game tool, not both."
+            ),
+            (null, false) => throw new McpException($"{field} needs {{node, method}} for a method or {{tool}} for a game tool."),
+            ({ } tool, false) => GameToolCallParameters(tool, call.Args, field),
+            _ => MethodCallParameters(call.Node ?? string.Empty, call.Method ?? string.Empty, MethodArgs(call.Args, field)),
+        };
+    }
+
+    /// <summary>A method call's positional arguments: none when args is left out or null.</summary>
+    /// <exception cref="McpException">args is given and is not an array.</exception>
+    private static JsonElement[] MethodArgs(JsonElement? args, string field) =>
+        args switch
+        {
+            null or { ValueKind: JsonValueKind.Undefined or JsonValueKind.Null } => [],
+            { ValueKind: JsonValueKind.Array } given => [.. given.EnumerateArray()],
+            _ => throw new McpException(
+                $"{field}.args for a method is an array of positional arguments; for named arguments, call a game tool with {{tool, args}}."
+            ),
         };
 
     /// <summary>
     /// A method's value in <paramref name="holder"/> as call_method returns it: kept, or replaced by {valuePreview, valueLength}
-    /// when its JSON is longer than <see cref="MaxPropertyValueLength"/> characters. Nothing when there is no holder.
+    /// when its JSON is longer than <see cref="MaxPropertyValueLength"/> characters. A game tool's {tool, reply} from an
+    /// options.call is first shaped as call_game_tool answers (<see cref="ShapeToolReply"/>). Nothing when there is no holder.
     /// </summary>
+    /// <exception cref="McpException">A game tool's reply is not the helper's JSON answer.</exception>
     private static void CutMethodValue(JsonObject? holder)
     {
+        ShapeToolReply(holder);
         if (holder is null || ValuePreview(holder["value"], MaxPropertyValueLength) is not JsonObject preview)
         {
             return;

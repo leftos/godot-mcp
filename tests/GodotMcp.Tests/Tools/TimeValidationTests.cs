@@ -15,6 +15,15 @@ public sealed class TimeValidationTests : IDisposable
         "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
         + "{gameMs}, {frames}.";
     private const string ScaleMessage = "time_scale needs scale, greater than 0 and at most 100.";
+
+    // The refusals of an options.call of neither form, both, or args of the other form's shape, after the option's path.
+    internal const string BothSuffix = " takes either {node, method, args: [...]} for a method or {tool, args: {...}} for a game tool, not both.";
+    internal const string NeitherSuffix = " needs {node, method} for a method or {tool} for a game tool.";
+    internal const string ToolArgsSuffix =
+        ".args for a game tool is an object of named arguments, as call_game_tool takes them: "
+        + "{tool: \"<name>\", args: {\"<parameter>\": value}}.";
+    internal const string MethodArgsSuffix =
+        ".args for a method is an array of positional arguments; for named arguments, call a game tool with {tool, args}.";
     private readonly BridgeListener _listener = new(NullLogger<BridgeListener>.Instance);
     private readonly SessionRegistry _sessions;
     private readonly RuntimeTools _tools;
@@ -378,7 +387,7 @@ public sealed class TimeValidationTests : IDisposable
     [InlineData(null, 3)]
     public async Task AGameTimeWaitWithACallIsAccepted(int? gameMs, int? frames)
     {
-        WaitOptions options = new(Call: new MethodCall("TimeProbe", "start_clock", [Json("300")]));
+        WaitOptions options = new(Call: new MethodCall("TimeProbe", "start_clock", Json("[300]")));
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
             _tools.WaitForAsync(
@@ -397,7 +406,7 @@ public sealed class TimeValidationTests : IDisposable
     [InlineData(null, 3)]
     public void AGameTimeWaitSendsItsCallToTheBridge(int? gameMs, int? frames)
     {
-        WaitOptions options = new(Call: new MethodCall("TimeProbe", "start_clock", [Json("300")]));
+        WaitOptions options = new(Call: new MethodCall("TimeProbe", "start_clock", Json("[300]")));
 
         JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(GameMs: gameMs, Frames: frames), null, options);
 
@@ -555,7 +564,7 @@ public sealed class TimeValidationTests : IDisposable
     [Fact]
     public void AThenSendsItsCallAndScaleToTheBridge()
     {
-        WaitOptions options = new(Then: new WaitThen(Call: new MethodCall("TimeProbe", "record_then", [Json("7")]), TimeScale: 0.5));
+        WaitOptions options = new(Then: new WaitThen(Call: new MethodCall("TimeProbe", "record_then", Json("[7]")), TimeScale: 0.5));
 
         JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, options);
 
@@ -566,7 +575,7 @@ public sealed class TimeValidationTests : IDisposable
     public void AThenBesideACallOnAFramesWaitSendsBoth()
     {
         WaitOptions options = new(
-            Call: new MethodCall("TimeProbe", "start_clock", [Json("300")]),
+            Call: new MethodCall("TimeProbe", "start_clock", Json("[300]")),
             Then: new WaitThen(Call: new MethodCall("TimeProbe", "record_then"), TimeScale: 0.5)
         );
 
@@ -594,6 +603,94 @@ public sealed class TimeValidationTests : IDisposable
         Assert.Equal(expected.Message, refused.Message);
         Assert.Contains(" is empty. ", refused.Message, StringComparison.Ordinal);
     }
+
+    [Theory]
+    [InlineData("options.call")]
+    [InlineData("options.then.call")]
+    public void AGameToolCallSendsTheToolAndCallGameToolsRequest(string field)
+    {
+        WaitOptions options = WithCall(field, new MethodCall(Tool: "SetMood", Args: Json("""{"mood": "Angry", "times": 3}""")));
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(GameMs: 500), null, options);
+
+        Assert.Equal(
+            """{"tool":"SetMood","request":{"op":"tool_call","name":"SetMood","args":{"mood":"Angry","times":3},"maxDepth":8}}""",
+            SentCall(field, parameters).ToJsonString()
+        );
+    }
+
+    [Theory]
+    [InlineData("options.call")]
+    [InlineData("options.then.call")]
+    public void AGameToolCallWithoutArgsSendsAnEmptyObject(string field)
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(GameMs: 500), null, WithCall(field, new MethodCall(Tool: "Heal")));
+
+        Assert.Equal("{}", SentCall(field, parameters)["request"]!["args"]!.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData("options.call")]
+    [InlineData("options.then.call")]
+    public async Task AGameToolCallIsAcceptedAndAsksForASession(string field)
+    {
+        WaitOptions options = WithCall(field, new MethodCall(Tool: "SetMood", Args: Json("""{"mood": "Angry"}""")));
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(GameMs: 500), null, options, cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("options.call", "SetMood", "Main", null, null, BothSuffix)]
+    [InlineData("options.then.call", "SetMood", null, "go", null, BothSuffix)]
+    [InlineData("options.call", null, null, null, null, NeitherSuffix)]
+    [InlineData("options.then.call", null, null, null, """{"mood": "Angry"}""", NeitherSuffix)]
+    [InlineData("options.call", "SetMood", null, null, """["Angry"]""", ToolArgsSuffix)]
+    [InlineData("options.then.call", "SetMood", null, null, "\"Angry\"", ToolArgsSuffix)]
+    [InlineData("options.call", null, "TimeProbe", "start_clock", """{"ms": 300}""", MethodArgsSuffix)]
+    [InlineData("options.then.call", null, "TimeProbe", "record_then", "7", MethodArgsSuffix)]
+    public async Task ACallOfNeitherOrBothFormsOrTheOtherFormsArgsIsRefused(
+        string field,
+        string? tool,
+        string? node,
+        string? method,
+        string? args,
+        string suffix
+    )
+    {
+        MethodCall call = new(node, method, args is null ? null : Json(args), tool);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(GameMs: 500), null, WithCall(field, call), cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(field + suffix, refused.Message);
+    }
+
+    [Theory]
+    [InlineData("options.call", "")]
+    [InlineData("options.then.call", " ")]
+    public async Task AnEmptyToolNameIsRefusedAsCallGameToolRefusesIt(string field, string name)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        McpException expected = await Assert.ThrowsAsync<McpException>(() => _tools.CallGameToolAsync(name, cancellationToken: cancellation));
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(GameMs: 500), null, WithCall(field, new MethodCall(Tool: name)), cancellationToken: cancellation)
+        );
+
+        Assert.Equal(expected.Message, refused.Message);
+        Assert.StartsWith("name is empty. ", refused.Message, StringComparison.Ordinal);
+    }
+
+    private static WaitOptions WithCall(string field, MethodCall call) =>
+        field == "options.call" ? new WaitOptions(Call: call) : new WaitOptions(Then: new WaitThen(Call: call));
+
+    private static JsonObject SentCall(string field, JsonObject parameters) =>
+        field == "options.call" ? parameters["call"]!.AsObject() : parameters["then"]!["call"]!.AsObject();
 
     private static JsonElement Json(string json) => JsonSerializer.Deserialize<JsonElement>(json);
 }

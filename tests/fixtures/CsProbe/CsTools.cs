@@ -82,6 +82,9 @@ public static class CsStatics
     [GodotMcpTool("Adds two numbers.")]
     public static int Sum(int a, int b) => a + b;
 
+    [GodotMcpTool("Answers a long a double cannot hold exactly.")]
+    public static long Huge() => 9_007_199_254_740_993;
+
     [GodotMcpTool("The other tool named Twin.", Name = "Twin")]
     internal static string Mirror() => "static twin";
 }
