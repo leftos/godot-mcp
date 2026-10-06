@@ -478,5 +478,122 @@ public sealed class TimeValidationTests : IDisposable
         Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AThenWithoutCallOrTimeScaleIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, new WaitOptions(Then: new WaitThen()))
+        );
+
+        Assert.Equal("options.then needs call, timeScale or both.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(0.0, "options.then.timeScale must be greater than 0 and at most 100; got 0.")]
+    [InlineData(-1.0, "options.then.timeScale must be greater than 0 and at most 100; got -1.")]
+    [InlineData(100.5, "options.then.timeScale must be greater than 0 and at most 100; got 100.5.")]
+    public void AThenTimeScaleOutOfRangeIsRefused(double timeScale, string message)
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, new WaitOptions(Then: new WaitThen(TimeScale: timeScale)))
+        );
+
+        Assert.Equal(message, refused.Message);
+    }
+
+    [Theory]
+    [InlineData(0.01)]
+    [InlineData(100.0)]
+    public void AThenTimeScaleWithinRangeIsAccepted(double timeScale)
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(
+            new WaitCondition(Expression: "true"),
+            1000,
+            new WaitOptions(Then: new WaitThen(TimeScale: timeScale))
+        );
+
+        Assert.Equal(timeScale, parameters["then"]!["timeScale"]!.GetValue<double>());
+    }
+
+    [Fact]
+    public void AThenIsAcceptedBesideEveryConditionKind()
+    {
+        WaitCondition[] conditions =
+        [
+            new WaitCondition(Expression: "true"),
+            new WaitCondition(Node: "Main", Property: "state", EqualsValue: Json("\"done\"")),
+            new WaitCondition(Node: "Main", Exists: true),
+            new WaitCondition(Node: "Main", Signal: "fired"),
+            new WaitCondition(GameMs: 500),
+            new WaitCondition(Frames: 3),
+            new WaitCondition(UiChanged: true),
+        ];
+
+        foreach (WaitCondition condition in conditions)
+        {
+            JsonObject parameters = RuntimeTools.BuildWaitParameters(condition, 1000, new WaitOptions(Then: new WaitThen(TimeScale: 2)));
+
+            Assert.Equal(2, parameters["then"]!["timeScale"]!.GetValue<double>());
+        }
+    }
+
+    [Fact]
+    public async Task ACheckOnceWaitWithThenIsAccepted()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(
+                new WaitCondition(Expression: "true"),
+                0,
+                new WaitOptions(Then: new WaitThen(TimeScale: 0.5)),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AThenSendsItsCallAndScaleToTheBridge()
+    {
+        WaitOptions options = new(Then: new WaitThen(Call: new MethodCall("TimeProbe", "record_then", [Json("7")]), TimeScale: 0.5));
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, options);
+
+        Assert.Equal("""{"call":{"node":"TimeProbe","method":"record_then","args":[7]},"timeScale":0.5}""", parameters["then"]!.ToJsonString());
+    }
+
+    [Fact]
+    public void AThenBesideACallOnAFramesWaitSendsBoth()
+    {
+        WaitOptions options = new(
+            Call: new MethodCall("TimeProbe", "start_clock", [Json("300")]),
+            Then: new WaitThen(Call: new MethodCall("TimeProbe", "record_then"), TimeScale: 0.5)
+        );
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Frames: 3), null, options);
+
+        Assert.Equal("start_clock", parameters["call"]!["method"]!.GetValue<string>());
+        Assert.Equal("[300]", parameters["call"]!["args"]!.ToJsonString());
+        Assert.Equal("record_then", parameters["then"]!["call"]!["method"]!.GetValue<string>());
+        Assert.Equal(0.5, parameters["then"]!["timeScale"]!.GetValue<double>());
+    }
+
+    [Theory]
+    [InlineData("TimeProbe", "")]
+    [InlineData("", "record_then")]
+    public async Task AThenCallWithAnEmptyNameIsRefusedAsCallMethodRefusesIt(string node, string method)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        WaitOptions options = new(Then: new WaitThen(Call: new MethodCall(node, method)));
+
+        McpException expected = await Assert.ThrowsAsync<McpException>(() => _tools.CallMethodAsync(node, method, cancellationToken: cancellation));
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(Expression: "true"), 1000, options, cancellationToken: cancellation)
+        );
+
+        Assert.Equal(expected.Message, refused.Message);
+        Assert.Contains(" is empty. ", refused.Message, StringComparison.Ordinal);
+    }
+
     private static JsonElement Json(string json) => JsonSerializer.Deserialize<JsonElement>(json);
 }

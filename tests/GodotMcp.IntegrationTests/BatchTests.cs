@@ -211,6 +211,33 @@ public sealed class BatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
         Assert.Equal(0, steps[2]!["result"]!["changedPixels"]!.GetValue<int>());
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitForToolStepCarriesThen()
+    {
+        JsonObject batch = await BatchAsync(
+            TestContext.Current.CancellationToken,
+            new BatchStep(
+                Tool: "wait_for",
+                Args: new JsonObject
+                {
+                    ["condition"] = new JsonObject
+                    {
+                        ["node"] = SmallButton,
+                        ["property"] = "press_count",
+                        ["equals"] = 0,
+                    },
+                    ["options"] = new JsonObject { ["then"] = new JsonObject { ["timeScale"] = 0.5 } },
+                }
+            )
+        );
+
+        Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        JsonNode step = Assert.Single(batch["steps"]!.AsArray())!;
+        Assert.True(step["result"]!["met"]!.GetValue<bool>(), step.ToJsonString());
+        Assert.Equal(0.5, step["result"]!["then"]!["timeScale"]!.GetValue<double>());
+        Assert.True(step["result"]!["then"]!["frame"]!.GetValue<long>() > 0, step.ToJsonString());
+    }
+
     private static BatchStep PressCount(int count) =>
         new(Assert: "property", Node: SmallButton, Property: "press_count", EqualsValue: JsonSerializer.SerializeToElement(count));
 

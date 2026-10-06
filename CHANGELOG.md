@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `wait_for` takes `options.then`, a method call and a time scale run once in the frame its condition is met.
+
 ### Changed
 
 - A click on a tab scrolled out of a tab bar is refused naming the `scroll` call, or arrow clicks, that bring the tab into view.

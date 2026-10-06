@@ -532,10 +532,10 @@ static func frames_result(points: Array, entries: Array) -> Dictionary:
 
 ## Waits for params.kind (exists, property, signal, expression, uiChanged, gameMs or frames) with
 ## params {node, exists, property, equals, signal, expression, gameMs, frames, timeoutMs,
-## screenshot, previewMaxWidth}. Returns {result: {met, elapsedMs, frames, value | args[,
-## screenshot | warning]}}, with last instead of value on a timeout, or {error}. A timeoutMs of 0
-## checks the condition once, now, paused or not. With screenshot, a met wait captures the frame
-## it was met on (see _poll_capturing).
+## screenshot, previewMaxWidth, then}. Returns {result: {met, elapsedMs, frames, value | args[,
+## then, screenshot | warning]}}, with last instead of value on a timeout, or {error}. A timeoutMs
+## of 0 checks the condition once, now, paused or not. With screenshot, a met wait captures the
+## frame it was met on; a met wait runs then, once, in that frame (see _poll_capturing).
 func wait_for(params: Dictionary) -> Dictionary:
 	var kind: String = str(params.get("kind", ""))
 	var timeout_ms: int = int(params.get("timeoutMs", 10000))
@@ -629,17 +629,19 @@ func _check_game_time(kind: String, target: int, clock: Dictionary) -> Array:
 ## Polls probe as _poll does, for params.backstopMs when the server sends one, else timeout_ms,
 ## until a cancel of the request; with params.screenshot a met wait also captures the frame it was
 ## met on: a waiting one checks probe at each frame's draw instead (_check_at_draws), a
-## check-once one captures the draw of the frame it runs in. Returns _poll's outcome, its result
-## with screenshot or warning when met and captured.
+## check-once one captures the draw of the frame it runs in. A met wait also runs params.then in
+## the met frame (_finish_then). Returns _poll's outcome, its result with then and screenshot or
+## warning when met and captured, or {error} when then.call failed.
 func _poll_capturing(probe: Callable, timeout_ms: int, params: Dictionary) -> Dictionary:
 	var bound_ms: float = _bound_ms(params, timeout_ms)
 	if not bool(params.get("screenshot", false)):
-		return await _poll(probe, bound_ms, params)
-	var drawn: Dictionary = {}
+		return _finish_then(await _poll(probe, bound_ms, params), params, {})
+	var drawn: Dictionary = {"params": params}
 	if timeout_ms > 0:
 		probe = _check_at_draws(probe, drawn)
 	var outcome: Dictionary = await _poll(probe, bound_ms, params)
 	_stop_draw_checks(drawn)
+	outcome = _finish_then(outcome, params, drawn)
 	if outcome.has("error") or not outcome["result"]["met"]:
 		return outcome
 	return await _with_capture(drawn.get("image"), params, outcome["result"])
@@ -706,7 +708,7 @@ func _stop_draw_checks(drawn: Dictionary) -> void:
 
 
 ## Checks drawn.probe inside a frame_post_draw, until a check is met or fails; the met one
-## captures the frame just drawn.
+## captures the frame just drawn and runs then there, in that frame (_run_then_into).
 func _check_drawn_frame(drawn: Dictionary) -> void:
 	if drawn.has("kept"):
 		return
@@ -715,6 +717,7 @@ func _check_drawn_frame(drawn: Dictionary) -> void:
 	drawn["seen"] = seen
 	if seen[0]:
 		drawn["image"] = bridge._frame.grab_frame()
+		_run_then_into(drawn)
 
 
 ## The check of the frame drawn since the last call, or the met or failed one kept; nothing on the
@@ -731,7 +734,10 @@ func _checked_since_draw(drawn: Dictionary) -> Array:
 		drawn["started"] = true
 		return [false, null]
 	var probe: Callable = drawn["probe"]
-	return _keep(probe.call(), drawn)
+	var checked: Array = _keep(probe.call(), drawn)
+	if checked[0]:
+		_run_then_into(drawn)
+	return checked
 
 
 ## Keeps a met or failed answer in drawn.kept, so neither the draw nor the frame check runs the
@@ -740,6 +746,64 @@ func _keep(seen: Array, drawn: Dictionary) -> Array:
 	if seen.size() > 2 or seen[0]:
 		drawn["kept"] = seen
 	return seen
+
+
+## outcome with params.then run once and attached to its result, or {error} with the failure text
+## when then.call failed. Nothing when the wait has no then or was not met. drawn carries the
+## outcome a draw check already ran, so the met frame's then is not run again in a later frame.
+func _finish_then(outcome: Dictionary, params: Dictionary, drawn: Dictionary) -> Dictionary:
+	if outcome.has("error") or not outcome["result"]["met"] or not params.get("then") is Dictionary:
+		return outcome
+	var ran: Dictionary
+	if drawn.has("then_ran"):
+		ran = drawn["then_ran"]
+	else:
+		ran = _run_then(params)
+		if not drawn.is_empty():
+			drawn["then_ran"] = ran
+	if ran.has("failed"):
+		return {"error": _then_failure_text(params, ran, int(outcome["result"]["frames"]))}
+	outcome["result"]["then"] = ran
+	return outcome
+
+
+## Runs the met frame's then action into drawn once, so the draw check that met and the poll that
+## later reads its answer agree on the outcome.
+func _run_then_into(drawn: Dictionary) -> void:
+	if not drawn.has("then_ran"):
+		drawn["then_ran"] = _run_then(drawn["params"])
+
+
+## Runs params.then now, once: its call through the inspector, then its timeScale. Returns
+## {frame, call?, timeScale?}, {failed, frame} when the call failed, or {} when params has no then.
+func _run_then(params: Dictionary) -> Dictionary:
+	if not params.get("then") is Dictionary:
+		return {}
+	var then: Dictionary = params["then"]
+	var frame: int = Engine.get_process_frames()
+	var ran: Dictionary = {"frame": frame}
+	if then.get("call") is Dictionary:
+		var called: Variant = bridge._inspect.call_now(then["call"])
+		if called is String:
+			return {"failed": called, "frame": frame}
+		ran["call"] = called
+	if then.has("timeScale"):
+		var scale: float = float(then["timeScale"])
+		var refused: String = _set_time_scale(scale)
+		if not refused.is_empty():
+			return {"failed": refused, "frame": frame}
+		ran["timeScale"] = scale
+	return ran
+
+
+## The text a failed then.call answers: the frames waited, the frame then ran in, and the reason;
+## the ", so timeScale was not set" clause only when params.then gives a timeScale.
+func _then_failure_text(params: Dictionary, ran: Dictionary, frames: int) -> String:
+	var unset: String = ", so timeScale was not set" if params["then"].has("timeScale") else ""
+	return (
+		"The condition was met after %d frames (frame %d), but then.call failed%s: %s"
+		% [frames, int(ran["frame"]), unset, ran["failed"]]
+	)
 
 
 ## Adds the capture of the frame the wait was met on to result as result.screenshot: image when a

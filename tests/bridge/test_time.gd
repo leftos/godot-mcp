@@ -176,3 +176,196 @@ func test_text_reads_only_string_fields() -> void:
 	assert_eq(time._text({"node": null}, "node"), "", "null")
 	assert_eq(time._text({"node": 3}, "node"), "", "a number")
 	time.free()
+
+
+func test_then_runs_once_and_only_when_met() -> void:
+	var rig: Dictionary = _then_rig()
+	var params: Dictionary = {
+		"then": {"call": {"node": "CallTarget", "method": "add", "args": [1, 2]}}
+	}
+	var unmet: Dictionary = rig["time"]._finish_then(
+		{"result": {"met": false, "last": null}}, params, {}
+	)
+	assert_eq(unmet["result"]["met"], false, "the outcome is kept")
+	assert_true(not unmet["result"].has("then"), "nothing runs on a wait that was not met")
+	assert_eq(rig["target"].calls, 0, "and no method is called")
+	var met: Dictionary = rig["time"]._finish_then(
+		{"result": {"met": true, "frames": 3}}, params, {}
+	)
+	assert_eq(met["result"]["then"]["call"], {"value": 3}, "the met frame's call")
+	assert_eq(rig["target"].calls, 1, "called once")
+	var drawn: Dictionary = {"then_ran": {"frame": 7}}
+	var replay: Dictionary = rig["time"]._finish_then(
+		{"result": {"met": true, "frames": 4}}, params, drawn
+	)
+	assert_eq(
+		replay["result"]["then"], {"frame": 7}, "the draw check's outcome is kept, not run again"
+	)
+	assert_eq(rig["target"].calls, 1, "still once")
+	_free_then_rig(rig)
+
+
+func test_run_then_into_runs_the_action_once() -> void:
+	var rig: Dictionary = _then_rig()
+	var drawn: Dictionary = {
+		"params": {"then": {"call": {"node": "CallTarget", "method": "add", "args": [1, 1]}}}
+	}
+	rig["time"]._run_then_into(drawn)
+	rig["time"]._run_then_into(drawn)
+	assert_true(drawn.has("then_ran"), "the outcome is kept")
+	assert_eq(rig["target"].calls, 1, "a second draw check does not run it again")
+	_free_then_rig(rig)
+
+
+func test_then_calls_before_it_sets_the_time_scale() -> void:
+	Engine.time_scale = 1.0
+	var rig: Dictionary = _then_rig()
+	var params: Dictionary = {
+		"then": {"call": {"node": "CallTarget", "method": "scale_now"}, "timeScale": 0.5}
+	}
+	var ran: Dictionary = rig["time"]._finish_then(
+		{"result": {"met": true, "frames": 2}}, params, {}
+	)
+	assert_eq(
+		ran["result"]["then"]["call"],
+		{"value": 1.0},
+		"the method sees the scale before then sets it"
+	)
+	assert_approx(ran["result"]["then"]["timeScale"], 0.5, "the scale then set")
+	assert_approx(Engine.time_scale, 0.5, "and the engine's")
+	_free_then_rig(rig)
+	Engine.time_scale = 1.0
+
+
+func test_then_with_only_a_time_scale_sets_it() -> void:
+	Engine.time_scale = 1.0
+	var rig: Dictionary = _then_rig()
+	var ran: Dictionary = rig["time"]._finish_then(
+		{"result": {"met": true, "frames": 1}}, {"then": {"timeScale": 0.25}}, {}
+	)
+	assert_true(not ran["result"]["then"].has("call"), "no call")
+	assert_approx(Engine.time_scale, 0.25, "the scale set")
+	_free_then_rig(rig)
+	Engine.time_scale = 1.0
+
+
+func test_a_failed_then_call_skips_the_time_scale_and_names_the_met_frame() -> void:
+	Engine.time_scale = 1.0
+	var rig: Dictionary = _then_rig()
+	var frame: int = Engine.get_process_frames()
+	var with_scale: Dictionary = rig["time"]._finish_then(
+		{"result": {"met": true, "frames": 4}},
+		{"then": {"call": {"node": "CallTarget", "method": "fail"}, "timeScale": 0.5}},
+		{}
+	)
+	assert_true(with_scale.has("error"), "the wait fails: %s" % with_scale)
+	assert_eq(
+		with_scale["error"],
+		(
+			(
+				"The condition was met after 4 frames (frame %d), but then.call failed, "
+				+ "so timeScale was not set: the method failed"
+			)
+			% frame
+		),
+		"the met frame and the reason"
+	)
+	assert_approx(Engine.time_scale, 1.0, "the scale is not set")
+	var without_scale: Dictionary = rig["time"]._finish_then(
+		{"result": {"met": true, "frames": 1}},
+		{"then": {"call": {"node": "CallTarget", "method": "fail"}}},
+		{}
+	)
+	assert_eq(
+		without_scale["error"],
+		(
+			"The condition was met after 1 frames (frame %d), but then.call failed: the method failed"
+			% frame
+		),
+		"no timeScale given, no clause"
+	)
+	_free_then_rig(rig)
+	Engine.time_scale = 1.0
+
+
+## A clock whose bridge is a stand-in holding the inspector, the JSON module and an unregistered
+## logger, and CallTarget, a node outside any tree with add(a, b), scale_now() and fail().
+func _then_rig() -> Dictionary:
+	var bridge: Node = _compile(
+		(
+			"\n"
+			. join(
+				[
+					"extends Node",
+					"",
+					"var _json: GDScript",
+					"var _logger: Logger",
+					"var _inspect: Node",
+					"var target: Node",
+					"",
+					"",
+					"func _find_node(element: String) -> Node:",
+					"\treturn target if element == str(target.name) else null",
+				]
+			)
+		)
+	)
+	var target: Node = _compile(
+		(
+			"\n"
+			. join(
+				[
+					"extends Node",
+					"",
+					"var logger: Logger",
+					"var calls: int = 0",
+					"",
+					"",
+					"func add(a: int, b: int) -> int:",
+					"\tcalls += 1",
+					"\treturn a + b",
+					"",
+					"",
+					"func scale_now() -> float:",
+					"\treturn Engine.time_scale",
+					"",
+					"",
+					"func fail() -> int:",
+					"\tlog_to_feed(Logger.ERROR_TYPE_ERROR, 'the method failed')",
+					"\treturn 3",
+					"",
+					"",
+					"func log_to_feed(type: int, message: String) -> void:",
+					"\tvar none: Array[ScriptBacktrace] = []",
+					"\tlogger._log_error('f', 'res://t.gd', 1, message, '', false, type, none)",
+				]
+			)
+		)
+	)
+	target.name = "CallTarget"
+	var logger: Logger = load_bridge_script("godot_mcp_logger.gd").new()
+	target.logger = logger
+	var inspect: Node = load_bridge_script("godot_mcp_inspect.gd").new()
+	inspect._bridge = bridge
+	bridge._json = load_bridge_script("godot_mcp_json.gd")
+	bridge._logger = logger
+	bridge._inspect = inspect
+	bridge.target = target
+	var time: Node = _time_script.new()
+	time.bridge = bridge
+	return {"time": time, "target": target, "bridge": bridge}
+
+
+func _free_then_rig(rig: Dictionary) -> void:
+	rig["time"].free()
+	rig["bridge"]._inspect.free()
+	rig["bridge"].free()
+	rig["target"].free()
+
+
+## An instance of a script compiled from source.
+func _compile(source: String) -> Object:
+	var script := GDScript.new()
+	script.source_code = source
+	script.reload()
+	return script.new()

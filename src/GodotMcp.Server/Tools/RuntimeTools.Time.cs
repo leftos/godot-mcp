@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
@@ -89,7 +90,10 @@ internal sealed partial class RuntimeTools
             + "frame that was not drawn gives a warning instead). options.call {node, method, args}, with a gameMs or frames wait "
             + "only, calls a method in the frame the count starts, so the count runs from its entry (a coroutine is not "
             + "awaited), and adds call: {value}, its return value as call_method returns it; a refused call, or an error the "
-            + "method raises, fails the wait."
+            + "method raises, fails the wait. options.then {call?, timeScale?}, with any condition kind, runs once in the frame "
+            + "the condition is met: call is a method the bridge calls there, timeScale sets Engine.time_scale right after it, and "
+            + "the result adds then: {frame, call?: {value}, timeScale?}. A refused or failing call fails the wait and leaves "
+            + "timeScale unset; a timeout runs nothing."
     )]
     public async Task<IEnumerable<ContentBlock>> WaitForAsync(
         [Description(
@@ -105,7 +109,7 @@ internal sealed partial class RuntimeTools
                 + "for a signal, gameMs or frames wait."
         )]
             int? timeoutMs = null,
-        [Description("{screenshot, call}: screenshot false and no call when left out.")] WaitOptions? options = null,
+        [Description("{screenshot, call, then}: screenshot false and no call or then when left out.")] WaitOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
@@ -114,6 +118,7 @@ internal sealed partial class RuntimeTools
         BridgeResult result = await CallWaitAsync(parameters, session, cancellationToken);
         JsonObject reply = WaitReply(result);
         CutMethodValue(reply["call"] as JsonObject);
+        CutMethodValue((reply["then"] as JsonObject)?["call"] as JsonObject);
         return await WithCaptureAsync(reply, reply, result.Errors, cancellationToken);
     }
 
@@ -234,9 +239,11 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>The bridge's wait parameters as <see cref="BuildWaitParameters(WaitCondition?, int?)"/> builds them, plus
-    /// {screenshot, previewMaxWidth} when <paramref name="options"/> asks for the capture, and call when it gives one.</summary>
+    /// {screenshot, previewMaxWidth} when <paramref name="options"/> asks for the capture, call when it gives one, and then
+    /// when it gives one.</summary>
     /// <exception cref="McpException">The condition, gameMs, frames or timeoutMs is refused as the other form refuses them, a
-    /// call is given to a wait other than gameMs or frames, or its node or method is empty.</exception>
+    /// call is given to a wait other than gameMs or frames, then is empty or its timeScale is out of range, or a node or
+    /// method is empty.</exception>
     internal static JsonObject BuildWaitParameters(WaitCondition? condition, int? timeoutMs, WaitOptions? options)
     {
         JsonObject parameters = BuildWaitParameters(condition, timeoutMs);
@@ -247,6 +254,39 @@ internal sealed partial class RuntimeTools
             parameters["call"] = kind is "gameMs" or "frames"
                 ? MethodCallParameters(call)
                 : throw new McpException($"options.call is taken only by a gameMs or frames wait; this condition is {kind}.");
+        }
+
+        if (options?.Then is { } then)
+        {
+            parameters["then"] = ThenParameters(then);
+        }
+
+        return parameters;
+    }
+
+    /// <summary>The bridge's then parameters {call?, timeScale?}, at least one.</summary>
+    /// <exception cref="McpException">Neither call nor timeScale is given, timeScale is not above 0 and at most
+    /// <see cref="MaxTimeScale"/>, or the call's node or method is empty.</exception>
+    internal static JsonObject ThenParameters(WaitThen then)
+    {
+        if (then.Call is null && then.TimeScale is null)
+        {
+            throw new McpException("options.then needs call, timeScale or both.");
+        }
+
+        JsonObject parameters = [];
+        if (then.Call is { } call)
+        {
+            parameters["call"] = MethodCallParameters(call);
+        }
+
+        if (then.TimeScale is { } timeScale)
+        {
+            parameters["timeScale"] = timeScale is > 0 and <= MaxTimeScale
+                ? timeScale
+                : throw new McpException(
+                    $"options.then.timeScale must be greater than 0 and at most 100; got " + $"{timeScale.ToString(CultureInfo.InvariantCulture)}."
+                );
         }
 
         return parameters;

@@ -14,6 +14,10 @@ var n: int = 3
 ## The game seconds start_clock's clock had summed at the end of each process frame it ran in,
 ## keyed by that frame's Engine.get_process_frames().
 var clock_log: Dictionary = {}
+## What a wait_for then.call recorded with record_then: the frame it ran in, and the time scale it
+## saw before then.timeScale was set.
+var then_frame: int = -1
+var then_scale: float = 0.0
 var _clocking: bool = false
 var _clock_seconds: float = 0.0
 var _pause_at_ms: int = 0
@@ -42,6 +46,14 @@ func start_clock(pause_at_ms: int = 0) -> int:
 ## The sum clock_log holds for process frame frame, or null when the clock did not run in it.
 func clock_at(frame: int) -> Variant:
 	return clock_log.get(frame)
+
+
+## Records the frame it ran in and the time scale it saw, for a wait_for then.call, and returns
+## that frame: the itests compare it with the result's then.frame.
+func record_then() -> int:
+	then_frame = Engine.get_process_frames()
+	then_scale = Engine.time_scale
+	return then_frame
 
 
 ## Calls a method on a null instance, a GDScript runtime error that ends this method with null.

@@ -2,7 +2,8 @@ using System.ComponentModel;
 
 namespace GodotMcp.Server.Tools;
 
-/// <summary>Whether wait_for captures the frame its condition was met on, and the method a gameMs or frames wait calls as it starts.</summary>
+/// <summary>Whether wait_for captures the frame its condition was met on, the method a gameMs or frames wait calls as it
+/// starts, and what it runs in the frame its condition is met.</summary>
 internal sealed record WaitOptions(
     [property: Description(
         "Capture the frame the condition was met on as take_screenshot does (a preview at most 480 px wide); a timed-out wait "
@@ -15,5 +16,26 @@ internal sealed record WaitOptions(
             + "{value}, the method's return value as call_method returns it (null for a coroutine). A call refused as call_method "
             + "refuses it, or an error the method raises, fails the wait."
     )]
-        MethodCall? Call = null
+        MethodCall? Call = null,
+    [property: Description(
+        "Any condition kind: {call?, timeScale?}, run once in the frame the condition is met, so an effect starts there with no "
+            + "round trip. call is a method the bridge calls there, as options.call (a coroutine is not awaited); timeScale sets "
+            + "Engine.time_scale right after it. The result adds then: {frame, call?: {value}, timeScale?}. A refused or failing "
+            + "call fails the wait and leaves timeScale unset; a timeout runs nothing."
+    )]
+        WaitThen? Then = null
+);
+
+/// <summary>What wait_for runs in the frame its condition is met: a method call, an Engine.time_scale, or both.</summary>
+internal sealed record WaitThen(
+    [property: Description(
+        "The method to call in the met frame, as options.call: {node, method, args}; a coroutine is not awaited. It runs before "
+            + "timeScale, so the method sees the scale the wait ran at. A call refused as call_method refuses it, or an error it "
+            + "raises, fails the wait."
+    )]
+        MethodCall? Call = null,
+    [property: Description(
+        "The Engine.time_scale to set in the met frame, after call, greater than 0 and at most 100; the frames after it run scaled."
+    )]
+        double? TimeScale = null
 );

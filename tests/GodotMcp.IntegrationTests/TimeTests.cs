@@ -907,6 +907,111 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.Contains("Node '/root/TimeProbe' has no method 'no_such_method'.", refused.Message, StringComparison.Ordinal);
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task WaitForExpressionWithThenRecordsTheMetFrameAndSetsTheScale()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await RunAsync($"{Probe}.n = {Probe}.process_frames + 2\n\treturn true");
+
+        JsonObject waited = JsonNode
+            .Parse(
+                Text(
+                    await _tools.WaitForAsync(
+                        new WaitCondition(Node: "TimeProbe", Expression: "node.process_frames >= node.n"),
+                        null,
+                        new WaitOptions(Then: new WaitThen(Call: new MethodCall("TimeProbe", "record_then"), TimeScale: 0.5)),
+                        cancellationToken: cancellation
+                    )
+                )
+            )!
+            .AsObject();
+
+        long recorded = (await RunAsync($"return {Probe}.then_frame")).GetValue<long>();
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Equal(recorded, waited["then"]!["frame"]!.GetValue<long>());
+        Assert.Equal(1.0, (await RunAsync($"return {Probe}.then_scale")).GetValue<double>());
+        Assert.Equal(0.5, waited["then"]!["timeScale"]!.GetValue<double>());
+        Assert.Equal(0.5, (await RunAsync("return Engine.time_scale")).GetValue<double>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task WaitForExpressionWithThenAndScreenshotCapturesTheMetFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await RunAsync($"{Probe}.n = {Probe}.process_frames + 2\n\treturn true");
+
+        List<ContentBlock> blocks =
+        [
+            .. await _tools.WaitForAsync(
+                new WaitCondition(Node: "TimeProbe", Expression: "node.process_frames >= node.n"),
+                null,
+                new WaitOptions(Screenshot: true, Then: new WaitThen(Call: new MethodCall("TimeProbe", "record_then"), TimeScale: 0.5)),
+                cancellationToken: cancellation
+            ),
+        ];
+        JsonObject waited = JsonNode.Parse(Text(blocks))!.AsObject();
+
+        // The then runs inside the met frame's draw check, so then.frame, the frame record_then read and the captured draw are
+        // the one frame.
+        long recorded = (await RunAsync($"return {Probe}.then_frame")).GetValue<long>();
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Equal(recorded, waited["then"]!["frame"]!.GetValue<long>());
+        Assert.Null(waited["warning"]);
+        Assert.True(File.Exists(waited["screenshot"]!["path"]!.GetValue<string>()), waited.ToJsonString());
+        Assert.Equal("image/png", Assert.Single(blocks.OfType<ImageContentBlock>()).MimeType);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitThatTimesOutRunsNoThen()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await RunAsync($"{Probe}.then_frame = -1\n\treturn true");
+
+        JsonObject waited = JsonNode
+            .Parse(
+                Text(
+                    await _tools.WaitForAsync(
+                        new WaitCondition(Expression: "false"),
+                        300,
+                        new WaitOptions(Then: new WaitThen(Call: new MethodCall("TimeProbe", "record_then"), TimeScale: 0.5)),
+                        cancellationToken: cancellation
+                    )
+                )
+            )!
+            .AsObject();
+
+        Assert.False(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.False(waited.ContainsKey("then"), waited.ToJsonString());
+        Assert.Equal(-1, (await RunAsync($"return {Probe}.then_frame")).GetValue<int>());
+        Assert.Equal(1.0, (await RunAsync("return Engine.time_scale")).GetValue<double>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AThenCallOnAMissingMethodFailsTheWaitAndLeavesTheScale()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(
+                new WaitCondition(Expression: "true"),
+                null,
+                new WaitOptions(Then: new WaitThen(Call: new MethodCall("TimeProbe", "no_such_method"), TimeScale: 0.5)),
+                cancellationToken: cancellation
+            )
+        );
+
+        Assert.Contains(
+            "but then.call failed, so timeScale was not set: Node '/root/TimeProbe' has no method 'no_such_method'.",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(1.0, (await RunAsync("return Engine.time_scale")).GetValue<double>());
+    }
+
     // Adds OpenButton, a Button under the root, and OpenedPanel, a Panel hidden until the button is pressed; the button acts on
     // the press (ACTION_MODE_BUTTON_PRESS), not the release, and takes no focus. Returns the panel's path.
     private async Task<string> AddOpenerAsync() =>
