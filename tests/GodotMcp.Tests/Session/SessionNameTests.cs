@@ -175,13 +175,13 @@ public sealed class SessionNameTests : IAsyncDisposable
 
         string[] names =
         [
-            (await _harness.Sessions.ReserveScratchAsync(one, "Tray", "res://s/Tray.tscn")).Name,
-            (await _harness.Sessions.ReserveScratchAsync(one, "Tray", "res://s/Tray.tscn")).Name,
-            (await _harness.Sessions.ReserveScratchAsync(two, "Tray", "res://s/Tray.tscn")).Name,
-            (await _harness.Sessions.ReserveScratchAsync(one, "a b", "res://s/a b.tscn")).Name,
-            (await _harness.Sessions.ReserveScratchAsync(one, "a_b", "res://s/a_b.tscn")).Name,
-            (await _harness.Sessions.ReserveScratchAsync(one, longScene + "x", $"res://s/{longScene}x.tscn")).Name,
-            (await _harness.Sessions.ReserveScratchAsync(one, longScene + "y", $"res://s/{longScene}y.tscn")).Name,
+            (await ReserveScratchAsync(one, "Tray", "res://s/Tray.tscn")).Name,
+            (await ReserveScratchAsync(one, "Tray", "res://s/Tray.tscn")).Name,
+            (await ReserveScratchAsync(two, "Tray", "res://s/Tray.tscn")).Name,
+            (await ReserveScratchAsync(one, "a b", "res://s/a b.tscn")).Name,
+            (await ReserveScratchAsync(one, "a_b", "res://s/a_b.tscn")).Name,
+            (await ReserveScratchAsync(one, longScene + "x", $"res://s/{longScene}x.tscn")).Name,
+            (await ReserveScratchAsync(one, longScene + "y", $"res://s/{longScene}y.tscn")).Name,
         ];
 
         Assert.Equal(
@@ -202,11 +202,11 @@ public sealed class SessionNameTests : IAsyncDisposable
     public async Task AScratchRunNeverReplacesASessionStartedUnderItsNameSince()
     {
         string one = _harness.Project(Path.Combine("one", "Sky.Client"));
-        GodotSession scratch = await _harness.Sessions.ReserveScratchAsync(one, "Tray", "res://s/Tray.tscn");
+        GodotSession scratch = await ReserveScratchAsync(one, "Tray", "res://s/Tray.tscn");
         _harness.Sessions.Forget(scratch);
         await _harness.EndAttachedGameAsync(one, "Sky.Client.scratch-Tray");
 
-        GodotSession again = await _harness.Sessions.ReserveScratchAsync(one, "Tray", "res://s/Tray.tscn");
+        GodotSession again = await ReserveScratchAsync(one, "Tray", "res://s/Tray.tscn");
 
         Assert.Equal("Sky.Client.scratch-Tray-2", again.Name);
     }
@@ -219,6 +219,10 @@ public sealed class SessionNameTests : IAsyncDisposable
     [InlineData(true, "one|res://s/Tray.tscn", false)]
     public void AScratchSceneTakesAFreeNameOrItsOwnStoppedOne(bool? holderLive, string? holderScene, bool takes) =>
         Assert.Equal(takes, SessionRegistry.MayTakeScratchName(holderLive, holderScene, "one|res://s/Tray.tscn"));
+
+    /// <summary>Reserves a scratch scene's session under the folder's own name, the prefix a run without options.session uses.</summary>
+    private Task<GodotSession> ReserveScratchAsync(string projectDir, string scene, string resPath) =>
+        _harness.Sessions.ReserveScratchAsync(projectDir, scene, resPath, SessionRegistry.NameFor(null, projectDir));
 
     /// <summary>The refusal of a start under 'Sky.Client' while a session on <paramref name="holderDir"/> holds it live.</summary>
     private static string LiveSkyClientRefusal(string holderDir) =>

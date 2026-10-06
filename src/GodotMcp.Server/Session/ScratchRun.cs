@@ -19,7 +19,8 @@ internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace
 
 /// <summary>
 /// A checked run_scratches call: the project, its scenes in order, the patterns, whether to prepare and list every step, how
-/// many scenes play at once, and whether the call listed its scenes rather than leaving them to the folder.
+/// many scenes play at once, whether the call listed its scenes rather than leaving them to the folder, and the prefix each
+/// scene's session is named with.
 /// </summary>
 internal sealed record ScratchPlan(
     string ProjectDir,
@@ -32,6 +33,8 @@ internal sealed record ScratchPlan(
     public required int Parallel { get; init; }
 
     public required bool Listed { get; init; }
+
+    public required string SessionPrefix { get; init; }
 }
 
 /// <summary>A line number in each of a session's stdout and stderr: the edge of a step's window.</summary>
@@ -283,13 +286,13 @@ internal sealed class ScratchRun
         GodotSession session;
         try
         {
-            session = await _registry.ReserveScratchAsync(_plan.ProjectDir, _scene.Name, _scene.ResPath);
+            session = await _registry.ReserveScratchAsync(_plan.ProjectDir, _scene.Name, _scene.ResPath, _plan.SessionPrefix);
             _session = session;
             await session.LaunchAsync(LaunchRequestFor(session), cancellationToken);
         }
         catch (SessionException e)
         {
-            string name = _session?.Name ?? SessionRegistry.ScratchName(SessionRegistry.NameFor(null, _plan.ProjectDir), _scene.Name);
+            string name = _session?.Name ?? SessionRegistry.ScratchName(_plan.SessionPrefix, _scene.Name);
             return Seen(name) with { Refusal = $"{_scene.ResPath} did not start: {e.Message}" };
         }
 

@@ -49,7 +49,8 @@ internal sealed class PreviewTools(SessionRegistry sessions)
             string scene,
         [Description(
             "{resolution, prepare}; when left out, the window has the project's own size and prepare is auto (a stale C# assembly "
-                + "is built and missing imports are run first, within the call's 60 s, load-adjusted; the result's prep says what was done)."
+                + "is built and missing or outdated imports are run first, within the call's 60 s, load-adjusted; the result's prep "
+                + "says what was done)."
         )]
             PreviewOptions? options = null,
         [Description(RuntimeTools.ResponseModeDescription)] string responseMode = "preview",

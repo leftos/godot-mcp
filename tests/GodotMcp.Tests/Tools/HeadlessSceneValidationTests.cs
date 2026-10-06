@@ -1,3 +1,6 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Security.Cryptography;
+using System.Text;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
@@ -164,9 +167,10 @@ public sealed class HeadlessSceneValidationTests : IDisposable
         string image = Path.Combine(_project, "art.png");
         File.WriteAllText(image, string.Empty);
 
-        Assert.True(PrepScan.AssetNeedsImport(_project, image));
+        Assert.True(PrepScan.AssetNeedsImport(_project, image, ImportFingerprints.None));
         File.WriteAllText(image + ".import", "[remap]\n");
-        Assert.False(PrepScan.AssetNeedsImport(_project, image));
+        WriteImportedMd5("res://art.png");
+        Assert.False(PrepScan.AssetNeedsImport(_project, image, ImportFingerprints.None));
     }
 
     [Fact]
@@ -176,10 +180,61 @@ public sealed class HeadlessSceneValidationTests : IDisposable
         File.WriteAllText(image, string.Empty);
         File.WriteAllText(image + ".import", "[remap]\n\n[deps]\n\ndest_files=[\"res://.godot/imported/art.png-1.ctex\"]\n");
 
-        Assert.True(PrepScan.AssetNeedsImport(_project, image));
+        Assert.True(PrepScan.AssetNeedsImport(_project, image, ImportFingerprints.None));
         Directory.CreateDirectory(Path.Combine(_project, ".godot", "imported"));
         File.WriteAllText(Path.Combine(_project, ".godot", "imported", "art.png-1.ctex"), string.Empty);
-        Assert.False(PrepScan.AssetNeedsImport(_project, image));
+        WriteImportedMd5("res://art.png");
+        Assert.False(PrepScan.AssetNeedsImport(_project, image, ImportFingerprints.None));
+    }
+
+    [Fact]
+    public void AnImageChangedSinceItsImportNeedsAnImport()
+    {
+        string image = Path.Combine(_project, "art.png");
+        File.WriteAllText(image, "png");
+        File.WriteAllText(image + ".import", "[remap]\n");
+        WriteImportedMd5("res://art.png");
+        File.WriteAllText(image, "jpg");
+        File.SetLastWriteTimeUtc(image, DateTime.UtcNow.AddSeconds(5));
+
+        Assert.True(PrepScan.AssetNeedsImport(_project, image, ImportFingerprints.None));
+    }
+
+    [Fact]
+    public void AnImageWhoseImportSettingsChangedSinceTheRecordNeedsAnImport()
+    {
+        string image = Path.Combine(_project, "art.png");
+        File.WriteAllText(image, "png");
+        File.WriteAllText(image + ".import", "[remap]\n");
+        WriteImportedMd5("res://art.png");
+
+        Dictionary<string, string> record = new() { ["art.png.import"] = new string('0', 32) };
+
+        Assert.True(PrepScan.AssetNeedsImport(_project, image, record));
+    }
+
+    /// <summary>
+    /// Writes the .md5 an import leaves for the file a res:// path names, holding that file's own md5 (4.7.2
+    /// <c>editor/file_system/editor_file_system.cpp</c> L3040-3046).
+    /// </summary>
+    [SuppressMessage(
+        "Security",
+        "CA5351:Do not use broken cryptographic algorithms",
+        Justification = "The .md5 an import writes is named and hashed by md5; nothing here is a security use."
+    )]
+    private void WriteImportedMd5(string resPath)
+    {
+        string source = Path.Combine(_project, resPath["res://".Length..].Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.Combine(_project, ".godot", "imported"));
+        File.WriteAllText(
+            Path.Combine(
+                _project,
+                ".godot",
+                "imported",
+                $"{Path.GetFileName(source)}-{Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(resPath)))}.md5"
+            ),
+            $"source_md5=\"{Convert.ToHexStringLower(MD5.HashData(File.ReadAllBytes(source)))}\"\n"
+        );
     }
 
     [Theory]
@@ -193,7 +248,7 @@ public sealed class HeadlessSceneValidationTests : IDisposable
         string resource = Path.Combine(_project, name);
         File.WriteAllText(resource, string.Empty);
 
-        Assert.False(PrepScan.AssetNeedsImport(_project, resource));
+        Assert.False(PrepScan.AssetNeedsImport(_project, resource, ImportFingerprints.None));
     }
 
     [Theory]

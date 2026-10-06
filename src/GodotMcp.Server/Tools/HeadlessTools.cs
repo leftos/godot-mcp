@@ -22,7 +22,8 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
 
     internal const string PrepareDescription =
         "auto (the default): first build the project's C# assembly when it is missing or older than its sources, and run a "
-        + "Godot import when imported files are missing or a class_name script is newer than Godot's class cache, as run_project "
+        + "Godot import when imported files are missing, a source asset changed since it was imported, its import settings "
+        + "changed since the server last saw them, or a class_name script is newer than Godot's class cache, as run_project "
         + "does. never: use the project as it is.";
 
     // What a refused import suggests to a tool that takes options.prepare.

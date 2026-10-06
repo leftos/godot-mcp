@@ -119,6 +119,20 @@ public sealed class BatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATimedOutWaitNamesTheWallTimeItTook()
+    {
+        JsonObject batch = await BatchAsync(
+            TestContext.Current.CancellationToken,
+            new BatchStep(Assert: "wait", Expression: "false", TimeoutMs: 5000)
+        );
+
+        Assert.False(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        string reason = batch["failedAt"]!["reason"]!.GetValue<string>();
+        Assert.Contains("within 5000 ms (load-adjusted; ", reason, StringComparison.Ordinal);
+        Assert.Contains(" s of wall time)", reason, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AToolErrorStopsTheBatch()
     {
         JsonObject batch = await BatchAsync(

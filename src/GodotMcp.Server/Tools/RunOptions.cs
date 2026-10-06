@@ -47,7 +47,8 @@ internal sealed record RunOptions(
     internal const string PrepareDescription =
         "auto (the default): before launching, build the project's C# assembly when it is missing or older than its sources "
         + "(dotnet build; log in .godot/godot-mcp/build.log; a failed build refuses the launch with its compiler errors), then "
-        + "run a Godot import when imported files are missing (log in .godot/godot-mcp/import.log). never: launch as it is.";
+        + "run a Godot import when imported files are missing, a source asset changed since it was imported, or its import "
+        + "settings changed since the server last saw them (log in .godot/godot-mcp/import.log). never: launch as it is.";
 
     /// <summary>What refuses an explicit mute: false on a run whose quiet resolves true.</summary>
     internal const string UnmuteQuietRefusal =

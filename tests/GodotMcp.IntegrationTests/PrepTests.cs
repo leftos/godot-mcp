@@ -21,6 +21,9 @@ public sealed partial class PrepTests : IAsyncDisposable
     // A 1 x 1 PNG, so an import has something to import.
     private const string OnePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
+    // Another valid 1 x 1 PNG, a red pixel, whose bytes differ from OnePixelPng's.
+    private const string RedPixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
     // A prep wrapper taking {log}, then "--", then the command: it notes the command's program, runs the command with its
     // output in {log}, and exits with its code.
     private const string RunningWrapper =
@@ -134,6 +137,60 @@ public sealed partial class PrepTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AnAssetChangedSinceItsImportIsImportedAgain()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        await ImportIconAsync(probe.Directory, cancellation);
+        string changed = Path.Combine(probe.Directory, "icon.png");
+        File.WriteAllBytes(changed, Convert.FromBase64String(RedPixelPng));
+        File.SetLastWriteTimeUtc(changed, DateTime.UtcNow.AddSeconds(5));
+
+        LaunchResult launched = await LaunchAsync(probe.Directory, prepare: true, cancellation);
+
+        Assert.Equal("done", launched.Prep.Import);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ASidecarTheImportCreatedIsRecorded()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        string target = await ImportIconThenDeleteGodotFolderAsync(probe.Directory, cancellation);
+        File.Copy(Path.Combine(probe.Directory, "icon.png"), Path.Combine(probe.Directory, "copied.png"));
+
+        LaunchResult launched = await LaunchAsync(probe.Directory, prepare: true, cancellation);
+
+        Assert.Equal("done", launched.Prep.Import);
+        Assert.True(File.Exists(target), $"{target} was not imported");
+        Assert.True(
+            ImportFingerprints.Read(probe.Directory, NullLogger.Instance).ContainsKey("copied.png.import"),
+            File.ReadAllText(ImportFingerprints.PathIn(probe.Directory))
+        );
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ChangedImportSettingsAreImportedAgain()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        await ImportIconAsync(probe.Directory, cancellation);
+        Assert.Equal("not-needed", (await LaunchAsync(probe.Directory, prepare: true, cancellation)).Prep.Import);
+        await _harness.Sessions.StopAsync(null, cancellation);
+
+        string sidecar = Path.Combine(probe.Directory, "icon.png.import");
+        string settings = File.ReadAllText(sidecar);
+        string changed = settings.Replace("compress/mode=0", "compress/mode=1", StringComparison.Ordinal);
+        Assert.NotEqual(settings, changed);
+        File.WriteAllText(sidecar, changed);
+
+        Assert.Equal("done", (await LaunchAsync(probe.Directory, prepare: true, cancellation)).Prep.Import);
+        await _harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.Equal("not-needed", (await LaunchAsync(probe.Directory, prepare: true, cancellation)).Prep.Import);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnImportWhileAnotherSessionIsLiveIsRefused()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -228,8 +285,8 @@ public sealed partial class PrepTests : IAsyncDisposable
         return Path.Combine(project, "prep-wrapper-ran.txt");
     }
 
-    /// <summary>Adds a PNG, imports it with Godot the way the editor would, then deletes .godot/; returns the import's target.</summary>
-    internal static async Task<string> ImportIconThenDeleteGodotFolderAsync(string project, CancellationToken cancellation)
+    /// <summary>Adds a PNG and imports it with Godot the way the editor would; returns the file the import wrote.</summary>
+    internal static async Task<string> ImportIconAsync(string project, CancellationToken cancellation)
     {
         File.WriteAllBytes(Path.Combine(project, "icon.png"), Convert.FromBase64String(OnePixelPng));
         string log = Path.Combine(Path.GetTempPath(), "godot-mcp-tests", $"import-{Guid.NewGuid():N}.log");
@@ -248,6 +305,13 @@ public sealed partial class PrepTests : IAsyncDisposable
         Assert.True(dest.Success, $"no dest_files in icon.png.import:\n{sidecar}");
         string target = Path.Combine(project, dest.Groups[1].Value);
         Assert.True(File.Exists(target));
+        return target;
+    }
+
+    /// <summary>Adds a PNG, imports it with Godot the way the editor would, then deletes .godot/; returns the import's target.</summary>
+    internal static async Task<string> ImportIconThenDeleteGodotFolderAsync(string project, CancellationToken cancellation)
+    {
+        string target = await ImportIconAsync(project, cancellation);
         Directory.Delete(Path.Combine(project, ".godot"), recursive: true);
         return target;
     }

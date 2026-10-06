@@ -1,5 +1,9 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Security.Cryptography;
+using System.Text;
 using GodotMcp.Server.Session;
 using GodotMcp.TestSupport;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GodotMcp.Tests.Session;
 
@@ -25,6 +29,7 @@ public sealed class ProjectImportTests : IDisposable
     {
         string game = ProjectPrepFixtures.CreateRepositoryWithImportedIcon(_temp);
         ProjectPrepFixtures.WriteFile(Path.Combine(game, ".godot", "imported", "icon.png-0123.ctex"), "ctex", ProjectPrepFixtures.Old);
+        WriteImportedMd5(game, "res://icon.png", ProjectPrepFixtures.Built);
 
         Assert.False(PrepAssertions.IsImportNeeded(game));
     }
@@ -157,6 +162,7 @@ public sealed class ProjectImportTests : IDisposable
     public void ImportNeededWhenOnlyTheSecondOfSeveralDestFilesIsMissing()
     {
         string game = ProjectPrepFixtures.CreateBuiltRepository(_temp);
+        File.WriteAllText(Path.Combine(game, "icon.png"), "png");
         File.WriteAllText(
             Path.Combine(game, "icon.png.import"),
             "[deps]\n\nsource_file=\"res://icon.png\"\n"
@@ -166,8 +172,148 @@ public sealed class ProjectImportTests : IDisposable
         Assert.True(PrepAssertions.IsImportNeeded(game));
 
         ProjectPrepFixtures.WriteFile(Path.Combine(game, ".godot", "imported", "icon.png-0123.etc2.ctex"), "ctex", ProjectPrepFixtures.Old);
+        WriteImportedMd5(game, "res://icon.png", ProjectPrepFixtures.Built);
 
         Assert.False(PrepAssertions.IsImportNeeded(game));
+    }
+
+    [Fact]
+    public void ImportNeededWhenTheSourcesBytesChangedSinceItsMd5()
+    {
+        string game = ImportedIcon();
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, "icon.png"), "jpg", ProjectPrepFixtures.Later);
+
+        Assert.True(PrepAssertions.IsImportNeeded(game));
+    }
+
+    [Fact]
+    public void ImportNotNeededWhenTheSourceIsNewerButItsBytesAreTheSame()
+    {
+        string game = ImportedIcon();
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, "icon.png"), "png", ProjectPrepFixtures.Later);
+
+        Assert.False(PrepAssertions.IsImportNeeded(game));
+    }
+
+    [Fact]
+    public void ImportNotNeededWhenOnlyTheSidecarIsNewer()
+    {
+        string game = ImportedIcon();
+        File.SetLastWriteTimeUtc(Path.Combine(game, "icon.png.import"), ProjectPrepFixtures.Later);
+
+        Assert.False(PrepAssertions.IsImportNeeded(game));
+    }
+
+    [Fact]
+    public void ImportNeededWhenTheImportLeftNoMd5()
+    {
+        string game = ProjectPrepFixtures.CreateRepositoryWithImportedIcon(_temp);
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, ".godot", "imported", "icon.png-0123.ctex"), "ctex", ProjectPrepFixtures.Old);
+
+        Assert.True(PrepAssertions.IsImportNeeded(game));
+    }
+
+    [Fact]
+    public void ImportNotNeededWhenTheSourceIsOlderThanItsMd5HoweverDifferentItsBytes()
+    {
+        string game = ImportedIcon();
+        WriteImportedMd5(game, "res://icon.png", ProjectPrepFixtures.Latest);
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, "icon.png"), "jpg", ProjectPrepFixtures.Old);
+
+        Assert.False(PrepAssertions.IsImportNeeded(game));
+    }
+
+    [Fact]
+    public void ImportNotNeededForASidecarWhoseSourceIsGone()
+    {
+        string game = ProjectPrepFixtures.CreateBuiltRepository(_temp);
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, "ghost.png.import"), "[remap]\n\nimporter=\"texture\"\n", ProjectPrepFixtures.Built);
+
+        Assert.False(PrepAssertions.IsImportNeeded(game));
+    }
+
+    [Fact]
+    public void ImportNotNeededForAnOrphanSidecarWhoseRecordedSettingsDiffer()
+    {
+        string game = ProjectPrepFixtures.CreateBuiltRepository(_temp);
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, "ghost.png.import"), "[remap]\n\nimporter=\"texture\"\n", ProjectPrepFixtures.Built);
+        WriteFingerprints(game, ("ghost.png.import", new string('0', 32)));
+
+        Assert.False(PrepAssertions.IsImportNeeded(game));
+    }
+
+    [Fact]
+    public void ASidecarAnImportCreatedIsRecordedAfterADoneImport()
+    {
+        string game = ProjectPrepFixtures.CreateBuiltRepository(_temp);
+        IReadOnlyList<string> scanned = PrepScan.Scan(game, NullLogger.Instance).ImportFiles;
+        string created = Path.Combine(game, "new_asset.png.import");
+        ProjectPrepFixtures.WriteFile(created, "[remap]\n\nimporter=\"texture\"\n", ProjectPrepFixtures.Built);
+
+        IReadOnlyList<string> current = PrepScan.ImportFiles(game, NullLogger.Instance);
+        ImportFingerprints.Save(game, current, "done", ImportFingerprints.None, NullLogger.Instance);
+
+        Assert.DoesNotContain(created, scanned);
+        Assert.Contains(created, current);
+        Assert.Equal(ImportFingerprints.Md5Of(created), ImportFingerprints.Read(game, NullLogger.Instance)["new_asset.png.import"]);
+    }
+
+    [Fact]
+    public void ImportNeededWhenTheSidecarsImportSettingsChanged()
+    {
+        string game = ImportedIcon();
+        WriteImportedMd5(game, "res://icon.png", ProjectPrepFixtures.Latest);
+        WriteFingerprints(game, ("icon.png.import", new string('0', 32)));
+
+        Assert.True(PrepAssertions.IsImportNeeded(game));
+    }
+
+    [Fact]
+    public void ImportNotNeededWhenTheSidecarHasNoRecord()
+    {
+        string game = ImportedIcon();
+        WriteImportedMd5(game, "res://icon.png", ProjectPrepFixtures.Latest);
+
+        Assert.False(PrepAssertions.IsImportNeeded(game));
+    }
+
+    [Fact]
+    public void ImportNotNeededWhenTheSidecarsRecordMatches()
+    {
+        string game = ImportedIcon();
+        WriteImportedMd5(game, "res://icon.png", ProjectPrepFixtures.Latest);
+        string sidecar = Path.Combine(game, "icon.png.import");
+        WriteFingerprints(game, ("icon.png.import", ImportFingerprints.Md5Of(sidecar)));
+
+        Assert.False(PrepAssertions.IsImportNeeded(game));
+    }
+
+    [Theory]
+    [InlineData("keep", null)]
+    [InlineData("skip", null)]
+    [InlineData("texture", "valid=false\n")]
+    public void ASidecarGodotNeverImportsIsNeverDue(string importer, string? extra)
+    {
+        string game = ProjectPrepFixtures.CreateRepositoryWithImportedIcon(_temp);
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, ".godot", "imported", "icon.png-0123.ctex"), "ctex", ProjectPrepFixtures.Old);
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, "icon.png.import"), IconSidecar(importer, extra), ProjectPrepFixtures.Built);
+
+        Assert.False(PrepAssertions.IsImportNeeded(game));
+    }
+
+    [Fact]
+    public void ImportNeededWhenANestedSourcesBytesChangedSinceItsMd5()
+    {
+        string game = ProjectPrepFixtures.CreateBuiltRepository(_temp);
+        string source = Path.Combine(game, "Art", "Theme", "stone-face.png");
+        ProjectPrepFixtures.WriteFile(source, "png", ProjectPrepFixtures.Built);
+        ProjectPrepFixtures.WriteFile(source + ".import", "[remap]\n\nimporter=\"texture\"\n", ProjectPrepFixtures.Built);
+        WriteImportedMd5(game, "res://Art/Theme/stone-face.png", ProjectPrepFixtures.Old);
+        Assert.False(PrepAssertions.IsImportNeeded(game));
+
+        ProjectPrepFixtures.WriteFile(source, "jpg", ProjectPrepFixtures.Later);
+
+        Assert.True(PrepAssertions.IsImportNeeded(game));
     }
 
     [Fact]
@@ -212,6 +358,58 @@ public sealed class ProjectImportTests : IDisposable
         ProjectPrepFixtures.WriteFile(PrepScan.ClassCachePath(game), "list=[]\n", ProjectPrepFixtures.Old);
 
         Assert.False(PrepAssertions.IsImportNeeded(game));
+    }
+
+    /// <summary>
+    /// A built repository whose icon is imported: its dest file present, and the .md5 Godot's import leaves for it, holding the
+    /// source's own md5. The source and its sidecar sit at <see cref="ProjectPrepFixtures.Built"/> and the .md5 at
+    /// <see cref="ProjectPrepFixtures.Old"/>, so the prep reads the source.
+    /// </summary>
+    private string ImportedIcon()
+    {
+        string game = ProjectPrepFixtures.CreateRepositoryWithImportedIcon(_temp);
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, ".godot", "imported", "icon.png-0123.ctex"), "ctex", ProjectPrepFixtures.Old);
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, "icon.png"), "png", ProjectPrepFixtures.Built);
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, "icon.png.import"), IconSidecar("texture", null), ProjectPrepFixtures.Built);
+        WriteImportedMd5(game, "res://icon.png", ProjectPrepFixtures.Old);
+        return game;
+    }
+
+    /// <summary>
+    /// Writes the prep's record of every sidecar's md5 — .godot/godot-mcp/import-fingerprints.json — with the entries given.
+    /// </summary>
+    private static void WriteFingerprints(string game, params (string Sidecar, string Md5)[] entries) =>
+        ProjectPrepFixtures.WriteFile(
+            Path.Combine(game, ".godot", "godot-mcp", "import-fingerprints.json"),
+            "{" + string.Join(',', entries.Select(entry => $"\"{entry.Sidecar}\":\"{entry.Md5}\"")) + "}",
+            ProjectPrepFixtures.Built
+        );
+
+    /// <summary>A texture sidecar for the icon: its importer, any extra line, and the dest file its import wrote.</summary>
+    private static string IconSidecar(string importer, string? extra) =>
+        $"[remap]\n\nimporter=\"{importer}\"\ntype=\"CompressedTexture2D\"\n{extra}path=\"res://.godot/imported/icon.png-0123.ctex\"\n\n"
+        + "[deps]\n\nsource_file=\"res://icon.png\"\ndest_files=[\"res://.godot/imported/icon.png-0123.ctex\"]\n";
+
+    /// <summary>
+    /// Writes the .md5 Godot's import leaves for the source a res:// path names:
+    /// .godot/imported/&lt;source file name&gt;-&lt;md5 hex of the res:// path&gt;.md5, holding source_md5 of the source's
+    /// bytes (4.7.2 editor/file_system/editor_file_system.cpp L3040-3046).
+    /// </summary>
+    [SuppressMessage(
+        "Security",
+        "CA5351:Do not use broken cryptographic algorithms",
+        Justification = "The .md5 an import writes is named and hashed by md5; nothing here is a security use."
+    )]
+    private static void WriteImportedMd5(string game, string resPath, DateTime modified)
+    {
+        string source = Path.Combine(game, resPath["res://".Length..].Replace('/', Path.DirectorySeparatorChar));
+        string hash = Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(resPath)));
+        ProjectPrepFixtures.WriteFile(
+            Path.Combine(game, ".godot", "imported", $"{Path.GetFileName(source)}-{hash}.md5"),
+            $"source_md5=\"{Convert.ToHexStringLower(MD5.HashData(File.ReadAllBytes(source)))}\"\n"
+                + "dest_md5=\"00000000000000000000000000000000\"\n",
+            modified
+        );
     }
 
     /// <summary>

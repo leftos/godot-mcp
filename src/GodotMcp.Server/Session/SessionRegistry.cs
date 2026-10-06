@@ -409,14 +409,14 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         WithSuffix(folderName, string.Create(CultureInfo.InvariantCulture, $".preview-{number}"));
 
     /// <summary>
-    /// The name of the session a scratch scene plays in: <c>&lt;folder name&gt;.scratch-&lt;scene&gt;</c>, the scene's characters
-    /// outside <see cref="NameRule"/>'s set replaced by '_', the folder part cut so the whole name fits and the scene part cut
-    /// only when it alone would not.
+    /// The name of the session a scratch scene plays in: <c>&lt;prefix&gt;.scratch-&lt;scene&gt;</c>, the scene's characters
+    /// outside <see cref="NameRule"/>'s set replaced by '_', the prefix part cut so the whole name fits and the scene part cut
+    /// only when it alone would not. The prefix is the project folder's name, or the run's <c>options.session</c>.
     /// </summary>
-    internal static string ScratchName(string folderName, string scene)
+    internal static string ScratchName(string prefix, string scene)
     {
         string suffix = ".scratch-" + SanitiseFolderName(scene);
-        return WithSuffix(folderName, suffix.Length > 64 ? suffix[..64] : suffix);
+        return WithSuffix(prefix, suffix.Length > 64 ? suffix[..64] : suffix);
     }
 
     /// <summary>
@@ -428,17 +428,17 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         holderLive is null || (holderLive == false && string.Equals(holderScene, scene, StringComparison.Ordinal));
 
     /// <summary>
-    /// Registers a pending session for a scratch scene under <see cref="ScratchName"/>, or, when a live session or another
-    /// scene's session holds that, under the first of its <see cref="NumberedName"/>s from 2 that the scene may take
-    /// (<see cref="MayTakeScratchName"/>): two runs of one scene, two worktrees with one folder name, and scene names that
-    /// clean to the same text or share their first 55 characters each get a session of their own. It takes the folder's live
-    /// settings as a preview does (<see cref="FolderSettingsForPreview"/>), so it is never refused for differing from the
+    /// Registers a pending session for a scratch scene under <see cref="ScratchName"/> of the run's prefix, or, when a live
+    /// session or another scene's session holds that, under the first of its <see cref="NumberedName"/>s from 2 that the scene
+    /// may take (<see cref="MayTakeScratchName"/>): two runs of one scene, two worktrees with one folder name, and scene names
+    /// that clean to the same text or share their first 55 characters each get a session of their own. It takes the folder's
+    /// live settings as a preview does (<see cref="FolderSettingsForPreview"/>), so it is never refused for differing from the
     /// sessions it shares the override.cfg with.
     /// </summary>
-    internal async Task<GodotSession> ReserveScratchAsync(string projectDir, string scene, string resPath)
+    internal async Task<GodotSession> ReserveScratchAsync(string projectDir, string scene, string resPath, string prefix)
     {
         string owner = ProjectPaths.Normalise(projectDir) + "|" + resPath;
-        string baseName = ScratchName(NameFor(null, projectDir), scene);
+        string baseName = ScratchName(prefix, scene);
         SessionSpec spec = new(baseName, projectDir, SessionKind.Run, ShutOutRealGamepads: false, Quiet: true);
         GodotSession created = await ReserveAsync(
             spec,

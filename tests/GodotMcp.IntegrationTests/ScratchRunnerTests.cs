@@ -310,6 +310,22 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal(0, boot["steps"]!["played"]!.GetValue<int>());
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AScratchRunNamesItsSessionsAfterThePrefixItWasGiven()
+    {
+        JsonObject result = await RunAsync(
+            _probe.Directory,
+            ["ScratchGreen"],
+            new ScratchOptions(Session: "agent-a"),
+            TestContext.Current.CancellationToken
+        );
+
+        JsonObject scene = Single(result);
+        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
+        Assert.Equal("agent-a.scratch-ScratchGreen", scene["session"]!.GetValue<string>());
+        Assert.Contains(_harness.Sessions.List(includeStopped: true), session => session.Name == "agent-a.scratch-ScratchGreen");
+    }
+
     private async Task<JsonObject> RunAsync(string projectDir, string[]? scenes, ScratchOptions? options, CancellationToken cancellation) =>
         JsonNode.Parse(await _scratch.RunScratchesAsync(projectDir, scenes, options, cancellation))!.AsObject();
 

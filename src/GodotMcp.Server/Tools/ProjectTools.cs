@@ -86,7 +86,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         [Description(
             "{quiet, mute, shutOutRealGamepads, session, prepare, preset, record, dropIdle}; when left out, quiet is true unless "
                 + "godot-mcp.json sets it, mute and shutOutRealGamepads are false, prepare is auto (a stale C# assembly is built and "
-                + "missing imports are run first; the result's prep says what was done), no preset is used, the session is named by "
+                + "missing or outdated imports are run first; the result's prep says what was done), no preset is used, the session is named by "
                 + "the preset's session, else after the project folder, record is false (with record, the result's recording.path "
                 + "is the movie), and dropIdle is false."
         )]
@@ -252,7 +252,8 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     [Description(
         "Relaunches a session run_project started, with the scene, arguments and options it was launched with, keeping the "
             + "session: its name, its errors (seq keeps counting) and its debug output, where a marker line separates the old "
-            + "game's lines from the new one's. First, while the old game still runs, a stale C# assembly is built and missing "
+            + "game's lines from the new one's. First, while the old game still runs, a stale C# assembly is built and missing or "
+            + "outdated "
             + "imports are run, as run_project does; a failed build or import is an error and leaves the old game running. Then "
             + "the old game is stopped as stop_project stops it (with its warning when a debugger was attached to it), and the "
             + "new one started. A session whose game has quit or been "
@@ -269,7 +270,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     )]
     public async Task<string> RestartProjectAsync(
         [Description(
-            "{prepare}; when left out, prepare is auto (a stale C# assembly is built and missing imports are run first; the "
+            "{prepare}; when left out, prepare is auto (a stale C# assembly is built and missing or outdated imports are run first; the "
                 + "result's prep says what was done)."
         )]
             RestartOptions? options = null,

@@ -1,3 +1,6 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 
@@ -40,6 +43,9 @@ internal static partial class PrepScan
     private static readonly HashSet<string> LoadsWithoutImportExtensions = new([".tres", ".res", ".dds", ".ktx"], StringComparer.OrdinalIgnoreCase);
 
     private const string UidPrefix = "uid://";
+
+    /// <summary>What every import sidecar of a source is named: the source's own path plus this.</summary>
+    private const string ImportSuffix = ".import";
 
     // ResourceUID's char_count ('z' - 'a', 25) and base (char_count + ('9' - '0'), 34): 4.7.2 core/io/resource_uid.cpp L44-45.
     private const ulong UidCharCount = 'z' - 'a';
@@ -107,7 +113,7 @@ internal static partial class PrepScan
         List<string> projectFiles = listed?.ProjectOnly ?? topFiles;
         return new ProjectFiles(
             [.. topFiles.Where(IsBuildInput)],
-            [.. projectFiles.Where(file => HasExtension(file, ".import"))],
+            [.. projectFiles.Where(file => HasExtension(file, ImportSuffix))],
             [.. projectFiles.Where(file => HasExtension(file, ".uid"))],
             [.. projectFiles.Where(file => HasExtension(file, ".gd"))],
             [.. projectFiles.Where(file => HasExtension(file, ".tscn") || HasExtension(file, ".tres"))]
@@ -116,6 +122,16 @@ internal static partial class PrepScan
 
     /// <summary>Where the editor's scan writes the <c>class_name</c> globals a run reads (<c>project_settings.cpp</c> L1469).</summary>
     public static string ClassCachePath(string projectDir) => Path.Combine(projectDir, ".godot", "global_script_class_cache.cfg");
+
+    /// <summary>
+    /// The project's <c>.import</c> sidecars as they are now: what <see cref="Scan"/> lists, for a prep that ran an import and
+    /// must record the sidecars that import itself created.
+    /// </summary>
+    public static IReadOnlyList<string> ImportFiles(string projectDir, ILogger logger)
+    {
+        (List<string> TopFiles, List<string> ProjectOnly)? listed = ListWithGit(projectDir, logger);
+        return [.. (listed?.ProjectOnly ?? WalkFolder(projectDir)).Where(file => HasExtension(file, ImportSuffix))];
+    }
 
     /// <summary>
     /// Whether the assembly is missing, or an input is newer than both the assembly and the stamp (an input that leaves the
@@ -136,13 +152,15 @@ internal static partial class PrepScan
     }
 
     /// <summary>
-    /// Whether a Godot import is needed: a <c>.import</c> sidecar whose <c>dest_files</c> are not all present, or a uid
+    /// Whether a Godot import is needed: a <c>.import</c> sidecar whose <c>dest_files</c> are not all present, whose source is
+    /// not the one it imported or whose settings changed since the prep last saw them (<see cref="ImportOutdated"/>), or a uid
     /// <c>.godot/uid_cache.bin</c> does not hold (<see cref="IsUidCacheStale"/>), or a script declaring <c>class_name</c> that
     /// the class cache may not hold yet. A missing <c>.godot/</c> alone is not a reason.
     /// </summary>
-    public static bool ImportNeeded(string projectDir, ProjectFiles files, ILogger logger) =>
+    /// <param name="fingerprints">The md5 the prep last saw for each sidecar (<see cref="ImportFingerprints"/>).</param>
+    public static bool ImportNeeded(string projectDir, ProjectFiles files, IReadOnlyDictionary<string, string> fingerprints, ILogger logger) =>
         IsUidCacheStale(projectDir, files, logger)
-        || files.ImportFiles.Any(sidecar => HasMissingTarget(projectDir, sidecar))
+        || files.ImportFiles.Any(sidecar => HasMissingTarget(projectDir, sidecar) || ImportOutdated(projectDir, sidecar, fingerprints))
         || IsClassCacheStale(projectDir, files.Scripts);
 
     /// <summary>
@@ -301,15 +319,133 @@ internal static partial class PrepScan
 
     /// <summary>
     /// Whether a file a request loads must be imported first: it is not one that loads without an import (<c>.tres</c>,
-    /// <c>.res</c>, <c>.dds</c>, <c>.ktx</c>), and it has no <c>.import</c> sidecar or one whose <c>dest_files</c> are not
-    /// all present (an ignored sidecar is not in <see cref="ProjectFiles.ImportFiles"/>). A never-imported image fails to
-    /// load with "No loader found" (4.7.2 <c>core/io/resource_loader.cpp</c> L332).
+    /// <c>.res</c>, <c>.dds</c>, <c>.ktx</c>), and it has no <c>.import</c> sidecar, or one whose <c>dest_files</c> are not
+    /// all present or whose source is not the one it imported (<see cref="ImportOutdated"/>) (an ignored sidecar is not in
+    /// <see cref="ProjectFiles.ImportFiles"/>). A never-imported image fails to load with "No loader found" (4.7.2
+    /// <c>core/io/resource_loader.cpp</c> L332).
     /// </summary>
-    public static bool AssetNeedsImport(string projectDir, string assetPath)
+    public static bool AssetNeedsImport(string projectDir, string assetPath, IReadOnlyDictionary<string, string> fingerprints)
     {
-        string sidecar = assetPath + ".import";
+        string sidecar = assetPath + ImportSuffix;
         return !LoadsWithoutImportExtensions.Contains(Path.GetExtension(assetPath))
-            && (!File.Exists(sidecar) || HasMissingTarget(projectDir, sidecar));
+            && (!File.Exists(sidecar) || HasMissingTarget(projectDir, sidecar) || ImportOutdated(projectDir, sidecar, fingerprints));
+    }
+
+    /// <summary>
+    /// Whether a sidecar changed since it was imported, which the editor asks by the <c>.md5</c> its import wrote under
+    /// <c>.godot/imported/</c> and by the md5 it holds in its own file cache. A sidecar whose source is not there is never due,
+    /// since the editor never imports one without a source; otherwise it is due when the md5 the prep recorded differs from the
+    /// sidecar's own (<see cref="SettingsChanged"/>), or its <c>.md5</c> is missing or the source differs from the one that
+    /// import recorded (<see cref="SourceChanged"/>) (4.7.2 <c>editor/file_system/editor_file_system.cpp</c> L673-760). The
+    /// sidecar is hashed only when the record holds one for it, since the editor's own cache of import parameters cannot be read
+    /// outside the editor. A sidecar the editor never imports, its <c>importer</c> "keep" or "skip" or its <c>valid=false</c>
+    /// (L673, L643), is never due, and a sidecar missing from the working tree names nothing to import.
+    /// </summary>
+    public static bool ImportOutdated(string projectDir, string sidecar, IReadOnlyDictionary<string, string> fingerprints)
+    {
+        if (!File.Exists(sidecar))
+        {
+            return false;
+        }
+
+        (string? importer, bool invalid) = SidecarState(sidecar);
+        if (importer is "keep" or "skip" || invalid)
+        {
+            return false;
+        }
+
+        string source = sidecar[..^ImportSuffix.Length];
+        if (!File.Exists(source))
+        {
+            return false;
+        }
+
+        return SettingsChanged(projectDir, sidecar, fingerprints) || SourceChanged(projectDir, source);
+    }
+
+    /// <summary>
+    /// Whether a source differs from the one its import recorded: a missing <c>.md5</c> is due, else a <c>source_md5</c> that
+    /// differs from the source's own md5. The source is read only when it is newer than the <c>.md5</c>, so a warm project does
+    /// not hash every asset.
+    /// </summary>
+    private static bool SourceChanged(string projectDir, string source)
+    {
+        string recorded = ImportMd5Path(projectDir, source);
+        if (!File.Exists(recorded))
+        {
+            return true;
+        }
+
+        if (File.GetLastWriteTimeUtc(source) <= File.GetLastWriteTimeUtc(recorded))
+        {
+            return false;
+        }
+
+        string? imported = ReadImportMd5(recorded);
+        return imported is null || !string.Equals(imported, SourceMd5(source), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Whether a sidecar's own import settings changed since the prep recorded them: it has a recorded md5 and it differs from
+    /// the sidecar's. A sidecar with no record is not due on this ground, since there is nothing to compare yet.
+    /// </summary>
+    private static bool SettingsChanged(string projectDir, string sidecar, IReadOnlyDictionary<string, string> fingerprints) =>
+        fingerprints.TryGetValue(ImportFingerprints.KeyFor(projectDir, sidecar), out string? seen) && seen != ImportFingerprints.Md5Of(sidecar);
+
+    /// <summary>The <c>.md5</c> an import writes for a source: <c>.godot/imported/&lt;source file name&gt;-&lt;md5 of the
+    /// res:// path&gt;.md5</c> (4.7.2 <c>core/io/resource_importer.cpp</c> L541-543), the path hashed as UTF-8 with forward
+    /// slashes, lowercase hex.
+    /// </summary>
+    [SuppressMessage(
+        "Security",
+        "CA5351:Do not use broken cryptographic algorithms",
+        Justification = "Godot names its imported files and the .md5 it writes them by md5; nothing here is a security use."
+    )]
+    private static string ImportMd5Path(string projectDir, string source)
+    {
+        string relative = Path.GetRelativePath(projectDir, source).Replace('\\', '/');
+        string hash = Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes("res://" + relative)));
+        return Path.Combine(projectDir, ".godot", "imported", $"{Path.GetFileName(source)}-{hash}.md5");
+    }
+
+    /// <summary>The md5 of a file's bytes, in the lowercase hex Godot's <c>FileAccess::get_md5</c> writes.</summary>
+    [SuppressMessage(
+        "Security",
+        "CA5351:Do not use broken cryptographic algorithms",
+        Justification = "The .md5 an import writes holds the source's md5; nothing here is a security use."
+    )]
+    private static string SourceMd5(string source)
+    {
+        using FileStream stream = File.OpenRead(source);
+        return Convert.ToHexStringLower(MD5.HashData(stream));
+    }
+
+    /// <summary>The <c>source_md5="…"</c> of the <c>.md5</c> an import wrote, or null when it holds none.</summary>
+    private static string? ReadImportMd5(string md5File) =>
+        File.ReadLines(md5File)
+            .Where(line => line.StartsWith("source_md5=", StringComparison.Ordinal))
+            .Select(line => line["source_md5=".Length..].Trim().Trim('"'))
+            .FirstOrDefault(text => text.Length > 0);
+
+    /// <summary>A sidecar's <c>importer</c> (unquoted) and whether it marks itself <c>valid=false</c>.</summary>
+    private static (string? Importer, bool Invalid) SidecarState(string sidecar)
+    {
+        string? importer = null;
+        bool invalid = false;
+        foreach (string raw in File.ReadLines(sidecar))
+        {
+            string line = raw.Trim();
+            if (line.StartsWith("importer=", StringComparison.Ordinal))
+            {
+                importer = line["importer=".Length..].Trim().Trim('"');
+            }
+            else if (line is "valid=false")
+            {
+                invalid = true;
+            }
+        }
+
+        return (importer, invalid);
     }
 
     /// <summary>

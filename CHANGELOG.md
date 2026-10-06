@@ -12,11 +12,18 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `options.call` in `capture_frames`, `wait_for` and `watch` takes a C# game tool by name with named arguments, as `{tool, args}`.
 - A `run_csharp` snippet can `await ToSignal(source, signal)`, so it can wait a frame or a game signal mid-snippet.
 
+- `run_scratches` takes `options.session`, the prefix of its scenes' session names, so parallel runs from several worktrees are told apart.
+
 ### Changed
 
+- A `batch_drive` wait refused at its timeout names the wall time that passed beside its load-adjusted budget.
 - `monitor_property` is removed: `watch {action: "run"}` with a property track samples one value or several, beside every other tool.
 - `take_screenshot`, `save_screenshot_baseline` and `compare_screenshot` say to pause an animating game with `frame_control` for a before/after pair.
 - A click on a tab scrolled out of a tab bar is refused naming the `scroll` call, or arrow clicks, that bring the tab into view.
+
+### Fixed
+
+- The launch prep reimports an asset whose source changed since its import, or whose import settings changed since the server last saw them.
 
 ## 0.14.0 - 2026-10-04
 

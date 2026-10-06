@@ -357,9 +357,30 @@ internal sealed partial class RuntimeTools
             return StepOutcome.Passed(reply);
         }
 
-        string when = timeoutMs == 0 ? "when checked" : $"within {timeoutMs} ms";
+        string when = WaitWhenText(timeoutMs, reply);
         string shown = JsonSerializer.Serialize(condition, Json);
         return StepOutcome.Failed($"the {call.Step.Assert} assertion {shown} was not met {when}; wait_for returned {reply.ToJsonString()}");
+    }
+
+    /// <summary>
+    /// The "when" a wait assertion that was not met names: "when checked" with no budget, else the budget, which the server
+    /// counts on the load-adjusted clock, and, when the bridge's reply carries the wall time the wait took (<c>elapsedMs</c>),
+    /// that too, so a refusal that took far longer than its budget on a busy machine is not read as a bug.
+    /// </summary>
+    internal static string WaitWhenText(int timeoutMs, JsonObject reply)
+    {
+        if (timeoutMs == 0)
+        {
+            return "when checked";
+        }
+
+        if (reply["elapsedMs"] is not { } elapsed)
+        {
+            return $"within {timeoutMs} ms";
+        }
+
+        string wall = (elapsed.GetValue<double>() / 1000).ToString("0.#", CultureInfo.InvariantCulture);
+        return $"within {timeoutMs} ms (load-adjusted; {wall} s of wall time)";
     }
 
     private StepOutcome AssertNoErrors(AssertionCall call)

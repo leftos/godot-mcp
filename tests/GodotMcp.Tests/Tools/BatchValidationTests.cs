@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Server.Wire;
@@ -36,6 +37,20 @@ public sealed class BatchValidationTests : IDisposable
         Assert.NotNull(description);
         Assert.Contains("load-adjusted", description.Description, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void AWaitThatWasNotMetWhenCheckedSaysSo() => Assert.Equal("when checked", RuntimeTools.WaitWhenText(0, Reply(83417)));
+
+    [Fact]
+    public void ATimedOutWaitNamesItsBudgetAndTheWallTimeItTook() =>
+        Assert.Equal("within 20000 ms (load-adjusted; 83.4 s of wall time)", RuntimeTools.WaitWhenText(20000, Reply(83417)));
+
+    [Fact]
+    public void ATimedOutWaitWithoutTheRepliesWallTimeNamesItsBudgetAlone() => Assert.Equal("within 20000 ms", RuntimeTools.WaitWhenText(20000, []));
+
+    /// <summary>A wait_for reply that was not met, carrying the bridge's wall time when <paramref name="elapsedMs"/> is given.</summary>
+    private static JsonObject Reply(int? elapsedMs) =>
+        JsonNode.Parse(elapsedMs is null ? """{"met": false}""" : $"{{\"met\": false, \"elapsedMs\": {elapsedMs}}}")!.AsObject();
 
     [Fact]
     public async Task AnEmptyBatchIsRefused()

@@ -31,7 +31,8 @@ internal sealed record PrepContext(string ProjectDir, ILogger Logger, Func<IRead
 
 /// <summary>
 /// Makes a fresh checkout runnable before a launch: builds the C# assembly when it is missing or stale, then runs a Godot
-/// import when imported files are missing. The caller serialises prep per folder.
+/// import when imported files are missing, a source asset changed since it was imported, or its import settings changed since the
+/// server last saw them. The caller serialises prep per folder.
 /// </summary>
 internal static class ProjectPrep
 {
@@ -66,8 +67,10 @@ internal static class ProjectPrep
             // Read only when a step runs a process, so a prep that runs none never reads godot-mcp.json.
             Lazy<PrepWrapper?> wrapper = new(() => PrepWrapper.Read(context.ProjectDir));
             ProjectFiles files = PrepScan.Scan(context.ProjectDir, context.Logger);
+            IReadOnlyDictionary<string, string> fingerprints = ImportFingerprints.Read(context.ProjectDir, context.Logger);
             PrepStep build = await BuildAsync(context, files, wrapper, reportRedBuild, cancellationToken);
-            PrepStep import = await ImportAsync(context, files, wrapper, cancellationToken);
+            PrepStep import = await ImportAsync(context, files, fingerprints, wrapper, cancellationToken);
+            ImportFingerprints.Save(context.ProjectDir, SidecarsFor(import, context, files), import.State, fingerprints, context.Logger);
             string? wrapperNote = wrapper.IsValueCreated ? wrapper.Value?.Note : null;
             string[] notes = [.. new[] { build.Note, import.Note, wrapperNote }.OfType<string>()];
             PrepResult result = new()
@@ -343,13 +346,14 @@ internal static class ProjectPrep
     private static async Task<PrepStep> ImportAsync(
         PrepContext context,
         ProjectFiles files,
+        IReadOnlyDictionary<string, string> fingerprints,
         Lazy<PrepWrapper?> wrapper,
         CancellationToken cancellationToken
     )
     {
         if (
-            !PrepScan.ImportNeeded(context.ProjectDir, files, context.Logger)
-            && !context.ImportAssets.Any(asset => PrepScan.AssetNeedsImport(context.ProjectDir, asset))
+            !PrepScan.ImportNeeded(context.ProjectDir, files, fingerprints, context.Logger)
+            && !context.ImportAssets.Any(asset => PrepScan.AssetNeedsImport(context.ProjectDir, asset, fingerprints))
         )
         {
             return new PrepStep("not-needed", null, null);
@@ -381,6 +385,13 @@ internal static class ProjectPrep
 
         return await SecondImportAsync(godot, context, wrap, first, cancellationToken);
     }
+
+    /// <summary>
+    /// The sidecars the record is written from: the scan's, or, after an import the prep ran, the project's sidecars as they
+    /// are now, since that import writes a sidecar for every asset it imports, including one the scan before it never saw.
+    /// </summary>
+    private static IReadOnlyList<string> SidecarsFor(PrepStep import, PrepContext context, ProjectFiles files) =>
+        import.State == "done" ? PrepScan.ImportFiles(context.ProjectDir, context.Logger) : files.ImportFiles;
 
     /// <summary>
     /// A cold first pass logs errors for resources it meets before their own import, and still exits 0, so the import runs

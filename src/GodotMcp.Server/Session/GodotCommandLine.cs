@@ -10,7 +10,7 @@ namespace GodotMcp.Server.Session;
 /// What <c>run_project</c> asked for, with <see cref="ProjectPath"/> the project folder. With <see cref="Quiet"/> the window is
 /// created unfocused, off-screen and click-through, with the Dummy audio driver; with
 /// <see cref="ShutOutRealGamepads"/> it shuts the machine's real pads out of the game. With <see cref="Prepare"/> (prepare
-/// "auto") a stale C# assembly is built and missing imports are run before the launch. With <see cref="Record"/> each start
+/// "auto") a stale C# assembly is built and missing or outdated imports are run before the launch. With <see cref="Record"/> each start
 /// of the run is recorded with Godot's Movie Maker.
 /// </summary>
 internal sealed record LaunchRequest(

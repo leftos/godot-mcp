@@ -25,7 +25,8 @@ internal sealed class ScratchTools(SessionRegistry sessions)
     [McpServerTool(Name = ToolName, ReadOnly = false, Destructive = false, OpenWorld = false, Idempotent = false)]
     [Description(
         "Plays scratch scenes and reports a verdict for each: every scene runs in a fresh headless game session "
-            + "(<folder>.scratch-<scene>), its root is called through the scratch protocol (GetStepCount, GetStepName(i), then per step "
+            + "(<folder>.scratch-<scene>, or '<options.session>.scratch-<scene>'), its root is called through the scratch protocol "
+            + "(GetStepCount, GetStepName(i), then per step "
             + "PlayStep(i), a wait of the pace in game time, GetStatus), and the run stops at a scene's first failed step. A step fails "
             + "on an error the game logs (push_error, an engine error, a C# exception) or a stdout or stderr line matching the "
             + "profile's scratch.patterns; after the steps the game is stopped and a non-zero exit or an ObjectDB leak turns the "
@@ -50,9 +51,10 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         )]
             string[]? scenes = null,
         [Description(
-            "{pace, userArgs, prepare, details, parallel}: pace in seconds a step (else scratch.pace's for the scene, else 0.5); "
-                + "userArgs appended after the profile's; prepare as run_project's; details true lists every scene's steps; parallel "
-                + "the scenes at once, 1 to 4 (else scratch.parallel, else 1)."
+            "{pace, userArgs, prepare, details, parallel, session}: pace in seconds a step (else scratch.pace's for the scene, "
+                + "else 0.5); userArgs appended after the profile's; prepare as run_project's; details true lists every scene's "
+                + "steps; parallel the scenes at once, 1 to 4 (else scratch.parallel, else 1); session a prefix for the scenes' "
+                + "session names, in place of the project folder's."
         )]
             ScratchOptions? options = null,
         CancellationToken cancellationToken = default
@@ -86,6 +88,7 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         CheckPace(options.Pace);
         CheckParallel(options.Parallel);
         bool prepare = RunOptions.ParsePrepare(options.Prepare);
+        string prefix = SessionPrefix(options.Session, projectDir);
         List<string> userArgs = UserArgs(profile, scratch, options);
         List<ScratchScenePlan> plans = [];
         foreach (string resPath in ResolveScenes(profile, scratch, scenes))
@@ -97,7 +100,22 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         {
             Parallel = options.Parallel ?? scratch.Parallel,
             Listed = scenes is not null,
+            SessionPrefix = prefix,
         };
+    }
+
+    /// <summary>The prefix the plan names its sessions with: options.session when given, else the project folder's name.</summary>
+    /// <exception cref="McpException">The given name breaks the name rule.</exception>
+    private static string SessionPrefix(string? session, string projectDir)
+    {
+        try
+        {
+            return SessionRegistry.NameFor(session, projectDir);
+        }
+        catch (SessionException e)
+        {
+            throw new McpException(e.Message, e);
+        }
     }
 
     /// <summary>
@@ -264,7 +282,8 @@ internal sealed class ScratchTools(SessionRegistry sessions)
     }
 }
 
-/// <summary>run_scratches' pace, user arguments, prepare, whether every scene lists its steps, and how many scenes play at once.</summary>
+/// <summary>run_scratches' pace, user arguments, prepare, whether every scene lists its steps, how many scenes play at once, and
+/// the prefix for the scenes' session names.</summary>
 internal sealed record ScratchOptions(
     [property: Description(
         "Seconds of game time each step plays before the next, above 0 and at most 120; else the profile's scratch.pace for the " + "scene, else 0.5."
@@ -278,5 +297,10 @@ internal sealed record ScratchOptions(
         "How many scenes play at once, 1 to 4; else the profile's scratch.parallel, else 1. Above 1, a red or killed scene is "
             + "played once more alone after the others."
     )]
-        int? Parallel = null
+        int? Parallel = null,
+    [property: Description(
+        "Prefix for the scratch runs' session names, in place of the project folder's: each scene runs as '<session>.scratch-<scene>'. "
+            + "Give each worktree's agent its own, so parallel runs are told apart in list_sessions."
+    )]
+        string? Session = null
 );

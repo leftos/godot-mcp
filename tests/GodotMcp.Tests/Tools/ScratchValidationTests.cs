@@ -239,6 +239,24 @@ public sealed class ScratchValidationTests : IDisposable
         Assert.Equal(expected, SessionRegistry.ScratchName(folder, scene));
 
     [Fact]
+    public void ASessionPrefixNamesItsSessions() => Assert.Equal("agent-a.scratch-Tray", SessionRegistry.ScratchName("agent-a", "Tray"));
+
+    [Fact]
+    public void TheSessionPrefixIsTheOptionsElseTheFolderName()
+    {
+        Assert.Equal("game", Plan(["res://Other.tscn"]).SessionPrefix);
+        Assert.Equal("agent-a", Plan(["res://Other.tscn"], new ScratchOptions(Session: "agent-a")).SessionPrefix);
+    }
+
+    [Fact]
+    public void ABadSessionNameIsRefusedBeforeAnythingLaunches()
+    {
+        string message = Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Session: "agent a")));
+
+        Assert.Equal("session 'agent a' is not a valid name: a session name is 1 to 64 characters of letters, digits, '.', '_' and '-'.", message);
+    }
+
+    [Fact]
     public void ALongScratchSessionNameIsCutToSixtyFourCharacters()
     {
         string name = SessionRegistry.ScratchName(new string('f', 60), new string('s', 70));
