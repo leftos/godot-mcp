@@ -1,0 +1,241 @@
+{
+  "rules": {
+    "arm-before-start": {
+      "repo": "fa8404b7748b107e",
+      "user": "745a7a52d6a1cad1"
+    },
+    "backing-store-ratio": {
+      "repo": "d0ba6fb521356a00",
+      "user": "c926ca623a872aa1"
+    },
+    "build-before-launch": {
+      "repo": "99cb511394fd2449",
+      "user": "98f84a6005c2b76e"
+    },
+    "cancel-timed-out-requests": {
+      "repo": "d136e241d12296fa",
+      "user": "15f5c78d07fecc84"
+    },
+    "check-action-effects": {
+      "repo": "7fc43e5ac3020db1",
+      "user": "8b932e230120198d"
+    },
+    "coded-errors-never-throw": {
+      "repo": "536e9a700409b07b",
+      "user": "4db7422a30f223f1"
+    },
+    "design-names-hook-surface": {
+      "declined": "a generic server; feature designs live in the repos it drives",
+      "user": "b59f296c1d742674"
+    },
+    "dev-flag-gates-hook": {
+      "repo": "d679bd7844b98397",
+      "user": "b96675d8e49a867d"
+    },
+    "discovery-file-per-pid": {
+      "declined": "the server listens and the hook dials in, so nothing is discovered",
+      "user": "5703da5682eac4dc"
+    },
+    "drive-owned-app-in-process": {
+      "repo": "bd87ad578751ff90",
+      "user": "db0a27091136c67f"
+    },
+    "emulation-per-call": {
+      "declined": "no CDP or webview",
+      "user": "3555c3f5e23d3374"
+    },
+    "error-feed-on-results": {
+      "repo": "d02388fed30bf627",
+      "user": "779511c62a903798"
+    },
+    "fixed-tool-surface": {
+      "repo": "f8fd0840ae42755a",
+      "user": "b7e1581f0b353737"
+    },
+    "force-conditions-dev-panel": {
+      "repo": "dbf7681eced4e4e5",
+      "user": "5bab8a6ad2cb8c99"
+    },
+    "friction-log-per-session": {
+      "repo": "b54ba16162a6f2bc",
+      "user": "66b5cb9c7a3cbc98"
+    },
+    "hook-dials-in-token": {
+      "repo": "7bd7efe2678dc63c",
+      "user": "ea51e654378037b4"
+    },
+    "hook-over-scraping": {
+      "repo": "5b973cb0a2efe982",
+      "user": "6089a9a2245a7544"
+    },
+    "hook-throws-when-unready": {
+      "repo": "27106984bc766d5d",
+      "user": "5be1f004c3b9e682"
+    },
+    "inject-never-commit": {
+      "repo": "d8fb0f37b30b0846",
+      "user": "62742adcba8347c6"
+    },
+    "install-owner-cleanup-own": {
+      "repo": "e78eae700b9b7a36",
+      "user": "3a775768199ca968"
+    },
+    "launch-isolated-lifecycle": {
+      "repo": "ba8b10f4f53bc325",
+      "user": "28a150edc237b497"
+    },
+    "load-adjusted-timeouts": {
+      "repo": "77b136246e790850",
+      "user": "45cd99cd2da27dd7"
+    },
+    "mark-injected-input": {
+      "repo": "7f5f22b3ce036f29",
+      "user": "b3f75d9310294ad1"
+    },
+    "merge-inherited-webview-args": {
+      "declined": "no webview",
+      "user": "f5d059f2475ecb67"
+    },
+    "name-out-of-reach-ui": {
+      "repo": "8fcd0086c580f1eb",
+      "user": "e35b7d8c79ecea1a"
+    },
+    "never-block-main-thread": {
+      "repo": "45f340eefb9ad593",
+      "user": "dcf14eb79d22e855"
+    },
+    "no-default-session": {
+      "repo": "867d544b6a4e8737",
+      "user": "ac1efb7959c65ea8"
+    },
+    "one-coordinate-space": {
+      "repo": "fd2ca4a0e97f53f5",
+      "user": "55d55375dbbace2e"
+    },
+    "one-env-switch": {
+      "declined": "the hook is injected per run, never shipped in the app",
+      "user": "5bfa4f85ef0398a7"
+    },
+    "one-gate-source-pinned": {
+      "declined": "drives on a hidden desktop, where the app's activation cannot reach the user",
+      "user": "8d4921b6c4fad4d3"
+    },
+    "one-id-registry": {
+      "declined": "addresses elements by node path and shown text; issues no element ids",
+      "user": "736abd48b579b02c"
+    },
+    "one-typed-window-global": {
+      "repo": "9ce3b58092112553",
+      "user": "3dfce1bce3dba534"
+    },
+    "opt-in-by-name": {
+      "repo": "4054d77e83496ece",
+      "user": "2b1f0d8d66993f51"
+    },
+    "own-launched-processes": {
+      "repo": "3195999298f712b0",
+      "user": "277bfa914d066981"
+    },
+    "posted-input-hygiene": {
+      "declined": "injects input inside the app; never posts window messages",
+      "user": "cf2273232c8a49b5"
+    },
+    "queue-file-answers": {
+      "repo": "8ed0dbef0f97f7be",
+      "user": "ebfaa4da3ea3e159"
+    },
+    "quiet-by-default": {
+      "repo": "77638ba47183c9da",
+      "user": "6d334d367532d7b9"
+    },
+    "real-app-over-frontend-only": {
+      "repo": "271d0467f0483c69",
+      "user": "5d6fb063892d6fe5"
+    },
+    "real-devices-leak-in": {
+      "repo": "1bf299ad7a9ca3e3",
+      "user": "61bf56170dd34fe5"
+    },
+    "record-and-replay": {
+      "repo": "5ae9cdbd093ebdd1",
+      "user": "b9ad60542633fe76"
+    },
+    "record-steady-never-minimize": {
+      "declined": "records through the engine's own movie writer, not window capture",
+      "user": "c7abbb984fdaa216"
+    },
+    "recording-shellout-hardening": {
+      "repo": "180bd1b71cf01750",
+      "user": "b41a90509ac30655"
+    },
+    "refcount-shared-hook": {
+      "repo": "ce3ecf66d15be46e",
+      "user": "1380569a931c7157"
+    },
+    "refusals-name-the-fix": {
+      "repo": "cf468cc4ae3ff6cd",
+      "user": "c4299125d17cfe84"
+    },
+    "refuse-before-pressing": {
+      "repo": "ea9dee7bf653a909",
+      "user": "31a82a3b4c886604"
+    },
+    "run-server-from-copy": {
+      "repo": "fca5e1ed0066c122",
+      "user": "e1357ad6c047e437"
+    },
+    "say-hands-off-first": {
+      "repo": "bd2f2cfbeee09e82",
+      "user": "3876083c457cc8f6"
+    },
+    "semantic-click-first": {
+      "declined": "presses through injected pointer input as a player would; never invokes a control's action",
+      "user": "07c6ef3828d1467b"
+    },
+    "shared-wire-types": {
+      "declined": "the hook is injected from the server's own install, so the two cannot skew (draft installed-versioned-copy)",
+      "user": "bde79d8f19cf9508"
+    },
+    "stdio-protocol-only": {
+      "repo": "6e1390934467cf72",
+      "user": "dbd4a268b509a2fd"
+    },
+    "test-against-real-host": {
+      "repo": "0cdea6b1b82d73ae",
+      "user": "c8e911bb5647b3c2"
+    },
+    "test-server-over-stdio": {
+      "repo": "9a6f7375af87e7be",
+      "user": "8c8df5532748dcfb"
+    },
+    "unified-log-tail": {
+      "repo": "b7ddd89cb6b25bdb",
+      "user": "c3f49d783eac66ac"
+    },
+    "verify-foreground-before-real": {
+      "declined": "never sends OS foreground input; a quiet run never has focus",
+      "user": "e60071112c854833"
+    },
+    "verify-writes-read-back": {
+      "repo": "7d525a7fd3bbce9d",
+      "user": "9775496f794e1b4d"
+    },
+    "wait-after-heavy-transition": {
+      "repo": "0403f8fce06f7ee8",
+      "user": "f211fee3057bfaec"
+    },
+    "wait-for-conditions": {
+      "repo": "2a38ca35c490d3c4",
+      "user": "9bb1d20171a07155"
+    },
+    "waits-bounded-outcome-as-data": {
+      "repo": "18ddc3e4bbac320d",
+      "user": "1e1fedbd7932f9f8"
+    },
+    "what-capture-misses": {
+      "repo": "a16c83f20d16dc1a",
+      "user": "81e92891fb8fe24c"
+    }
+  },
+  "user_revision": 2
+}

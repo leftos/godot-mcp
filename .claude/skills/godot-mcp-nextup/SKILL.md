@@ -17,6 +17,7 @@ linear: godot-mcp
 - Tracker: **triage** as plan-operations says (GitHub issues reach the team through Linear's sync; an untriaged one is top-level with no project), each untriaged issue placed in the project that shares its files, else in `Singles`.
 - **No owner interview.** `nextup`'s interview and decision round are replaced here by CLAUDE.md's autonomy rule: each open question, branch verdict and design question is settled by the recommended option, written into the design doc and a comment on the issue, and dispatched on. A question a guess cannot settle goes to the ticket's filer (an issue comment, or an inbox request to the filing repo) with the item **block**ed on it, never to the owner.
 - A design for open work stays in `docs/plans/<name>.md`, linked from its issue. Once its last step lands, its rulings go into `docs/DECISIONS.md` and the file moves to `docs/plans/archive/`.
+- Pre-loop hook: **trade driving lessons with the other projects.** Run the user-level `conventions-sync` skill once with `--stack driving`, before the queue is read. When it changed anything, `docs/DRIVING_CONVENTIONS.md` and `docs/.conventions-sync-driving.json` land on main as their own `docs:` commit, staged by name, before the first worktree is cut; the skill commits its side of `~/.claude` itself.
 
 ## Gates
 
