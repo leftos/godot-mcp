@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Tests.Wire;
+using Microsoft.Extensions.Time.Testing;
 using ModelContextProtocol;
 
 namespace GodotMcp.Tests.Session;
@@ -14,6 +15,20 @@ public sealed class SessionAttachTests : IAsyncDisposable
     private readonly RegistryHarness _harness = new();
 
     public ValueTask DisposeAsync() => _harness.DisposeAsync();
+
+    /// <summary>
+    /// Advances <paramref name="time"/> 100 ms at a time, pausing 5 ms of real time after each step, until
+    /// <paramref name="task"/> completes or 10 s of fake time have passed.
+    /// </summary>
+    private static async Task AdvanceUntilAsync(FakeTimeProvider time, Task task, CancellationToken cancellationToken)
+    {
+        var step = TimeSpan.FromMilliseconds(100);
+        for (TimeSpan passed = TimeSpan.Zero; passed < TimeSpan.FromSeconds(10) && !task.IsCompleted; passed += step)
+        {
+            time.Advance(step);
+            await Task.Delay(TimeSpan.FromMilliseconds(5), cancellationToken);
+        }
+    }
 
     [Fact]
     public async Task AnAttachThatTimesOutLeavesNoSessionAndNoOverride()
@@ -158,6 +173,37 @@ public sealed class SessionAttachTests : IAsyncDisposable
         Assert.False(File.Exists(OverrideFile.PathIn(alpha)));
     }
 
+    // The bridge stays connected after it answers the quit, so the stop's wait for its connection to close runs out the whole
+    // grace and the warning gains the clause that its connection was still open then.
+    [Fact]
+    public async Task AStopOfAnAttachedGameWithNoProcessIdWhoseConnectionStaysOpenSaysSo()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        string alpha = harness.Project("alpha");
+        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", null);
+        Task<StopResult> stop = harness.Sessions.StopAsync("server", cancellation);
+        await game.AnswerOneAsync("quit", cancellation);
+
+        // The grace starts once the quit is acknowledged; run it out with the connection still open.
+        await AdvanceUntilAsync(time, stop, cancellation);
+
+        StopResult stopped = await stop;
+
+        Assert.False(stopped.Killed);
+        Assert.Null(stopped.KillReason);
+        Assert.NotNull(stopped.Warning);
+        Assert.StartsWith(
+            "The game's bridge sent no process id, so the game could not be killed if it did not quit; it may still be running; "
+                + "its connection was still open after 3 s of load-adjusted time (wall ",
+            stopped.Warning,
+            StringComparison.Ordinal
+        );
+        Assert.EndsWith("on average).", stopped.Warning, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task StoppingAnAttachedGameThatHasGoneSaysItHadAlreadyExited()
     {
@@ -209,10 +255,49 @@ public sealed class SessionAttachTests : IAsyncDisposable
 
         Assert.Equal(["ping", "shutdown"], [ping, quit]);
         Assert.True(stopped.Killed);
-        Assert.Equal(GameKillReason.AfterGrace(QuitRequest.Acknowledged, TimeSpan.FromSeconds(3)), stopped.KillReason);
+        Assert.NotNull(stopped.KillReason);
+        Assert.StartsWith("the game acknowledged the quit but was still shutting down after ", stopped.KillReason, StringComparison.Ordinal);
+        Assert.Contains(
+            $"the bridge's connection was still open, so the scene tree had not been freed.\nProcess {child.Id}: ",
+            stopped.KillReason,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain("Last stderr lines", stopped.KillReason, StringComparison.Ordinal);
         Assert.Null(stopped.GameExitCode);
         Assert.True(child.HasExited);
         Assert.Empty(_harness.Sessions.List(includeStopped: true));
+    }
+
+    [Fact]
+    public async Task AnAttachedGameThatExitsWhileItsStateIsSampledAfterTheGraceIsNotKilled()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        string alpha = harness.Project("alpha");
+        Process child = harness.StartOwnedGame();
+        // Ending the game inside the sample the stop takes before killing it puts the exit in the sample by construction.
+        harness.Sessions.DescribeGameProcess = _ =>
+        {
+            child.Kill(entireProcessTree: true);
+            child.WaitForExit();
+            return Task.FromResult("sampled");
+        };
+        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", child.Id);
+        Task<StopResult> stop = harness.Sessions.StopAsync("server", cancellation);
+        await game.AnswerOneAsync("pong", cancellation);
+        await game.AnswerOneAsync("quit", cancellation);
+
+        // The grace starts once the quit is acknowledged; run it out, and the sample that follows finds the game gone.
+        await AdvanceUntilAsync(time, stop, cancellation);
+
+        StopResult stopped = await stop;
+
+        Assert.False(stopped.Killed);
+        Assert.Null(stopped.KillReason);
+        Assert.NotNull(stopped.QuitMs);
+        Assert.True(child.HasExited);
     }
 
     [Fact]

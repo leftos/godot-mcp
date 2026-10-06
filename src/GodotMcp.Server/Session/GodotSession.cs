@@ -636,7 +636,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>
     /// Stops a game through its bridge <paramref name="connection"/>: a silent one is ended with <paramref name="kill"/> at once;
-    /// one that answers is asked to quit, and killed if <paramref name="watched"/> has not exited within the grace. After a quit,
+    /// one that answers is asked to quit, and killed if <paramref name="watched"/> has not exited within the grace, counted in
+    /// load-adjusted time on the registry's clock with its backstop, and the kill says what the game was doing. After a quit,
     /// <paramref name="afterQuit"/> ends what the game left behind and returns it, as leftRunning lists it.
     /// </summary>
     private async Task<RunEnd> StopGameAsync(
@@ -652,18 +653,61 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             return new RunEnd(Killed: true, Warning: null, GameKillReason.Silent, LeftRunning: [], QuitMs: null);
         }
 
+        Task<long>? closedAt = connection is null ? null : ClosedAtAsync(connection.Closed);
         long askedAt = Stopwatch.GetTimestamp();
         QuitRequest request = await AskToQuitAsync(connection);
-        TimeSpan exitGrace = CurrentExitGrace;
-        if (!await ProcessExit.WaitUntilGoneAsync(watched, exitGrace))
+        long answeredAt = request == QuitRequest.Acknowledged ? Stopwatch.GetTimestamp() : askedAt;
+        using LoadDeadline grace = registry.Clock.Start(CurrentExitGrace);
+        if (!await ProcessExit.WaitUntilGoneAsync(watched, grace))
         {
-            Log.ExitGraceExpired(_logger, ProjectDir, exitGrace.TotalSeconds);
-            await kill();
-            return new RunEnd(Killed: true, Warning: null, GameKillReason.AfterGrace(request, exitGrace), LeftRunning: [], QuitMs: null);
+            var spent = GraceSpent.Of(grace);
+            string reason = await DescribeGraceKillAsync(request, spent, watched, () => ClosedSince(closedAt, answeredAt));
+            // The state is sampled for a second, and a game that exits meanwhile quit on its own: it is not killed.
+            if (!watched.WaitForExit(0))
+            {
+                Log.ExitGraceExpired(_logger, ProjectDir, spent.Text);
+                await kill();
+                return new RunEnd(Killed: true, Warning: null, reason, LeftRunning: [], QuitMs: null);
+            }
         }
 
         int quitMs = (int)Math.Round(Stopwatch.GetElapsedTime(askedAt).TotalMilliseconds);
         return new RunEnd(Killed: false, Warning: null, KillReason: null, await afterQuit(), quitMs);
+    }
+
+    /// <summary>When the bridge's connection closed, as a <see cref="Stopwatch"/> timestamp.</summary>
+    private static async Task<long> ClosedAtAsync(Task closed)
+    {
+        await closed.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        return Stopwatch.GetTimestamp();
+    }
+
+    /// <summary>How long after <paramref name="since"/> the connection closed; null while it is still open.</summary>
+    private static TimeSpan? ClosedSince(Task<long>? closedAt, long since)
+    {
+        if (closedAt is not { IsCompletedSuccessfully: true })
+        {
+            return null;
+        }
+
+        TimeSpan after = Stopwatch.GetElapsedTime(since, closedAt.Result);
+        return after < TimeSpan.Zero ? TimeSpan.Zero : after;
+    }
+
+    /// <summary>
+    /// The killReason for a game still running when the grace ended, read before the kill: for a game asked to quit, the
+    /// game's process state and last stderr lines, then whether the bridge's connection was still open.
+    /// </summary>
+    private async Task<string> DescribeGraceKillAsync(QuitRequest request, GraceSpent grace, Process watched, Func<TimeSpan?> closedAfter)
+    {
+        if (request == QuitRequest.NotSent)
+        {
+            return GameKillReason.NotSent(grace);
+        }
+
+        string state = await registry.DescribeGameProcess(watched.Id);
+        IReadOnlyList<string>? stderr = LastStderrLines(HangProbe.StderrLineCount);
+        return GameKillReason.AfterGrace(new GraceKill(request, grace, closedAfter(), state, stderr));
     }
 
     /// <summary>

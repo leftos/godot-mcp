@@ -88,6 +88,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// </summary>
     internal Func<int, bool> IsDebuggerAttached { get; set; } = processId => DebuggerPresence.IsAttached(processId, logger);
 
+    /// <summary>How a stop describes a game's process state before killing it; a test replaces it.</summary>
+    internal Func<int, Task<string>> DescribeGameProcess { get; set; } =
+        processId => HangProbe.DescribeProcessAsync(processId, null, CancellationToken.None);
+
     /// <summary>
     /// Launches a run under <paramref name="session"/>, or when it is null under the project folder's name, numbered when a live
     /// session on another folder holds it (<see cref="DefaultName"/>).

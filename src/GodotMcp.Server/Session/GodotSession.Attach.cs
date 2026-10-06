@@ -144,8 +144,10 @@ internal sealed partial class GodotSession
         }
 
         await AskToQuitAsync(attached);
-        await attached.Closed.WaitAsync(CurrentExitGrace).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        return new RunEnd(Killed: false, DescribeUnkillable(), KillReason: null, LeftRunning: [], QuitMs: null);
+        using LoadDeadline grace = registry.Clock.Start(CurrentExitGrace);
+        await attached.Closed.WaitAsync(grace.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        string stillOpen = attached.IsOpen ? $"; its connection was still open after {GraceSpent.Of(grace).Text}" : string.Empty;
+        return new RunEnd(Killed: false, DescribeUnkillable(stillOpen), KillReason: null, LeftRunning: [], QuitMs: null);
     }
 
     private static bool HasExited(Process? game) => game is { HasExited: true };
@@ -154,11 +156,12 @@ internal sealed partial class GodotSession
     private static int? ExitCodeOf(Process? game) => game is { HasExited: true } exited ? exited.ExitCode : null;
 
     /// <summary>What a stop warns when it held no handle on the attached game's process, so it could not have killed it.</summary>
-    private string DescribeUnkillable() =>
+    /// <param name="stillOpen">"; its connection was still open after (the grace)", or empty when the connection closed in time.</param>
+    private string DescribeUnkillable(string stillOpen) =>
         GameProcessId is int pid
             ? $"The game's process (pid {pid}) could not be opened when it was attached, so the game could not be killed if it did "
-                + "not quit; it may still be running."
-            : "The game's bridge sent no process id, so the game could not be killed if it did not quit; it may still be running.";
+                + $"not quit; it may still be running{stillOpen}."
+            : $"The game's bridge sent no process id, so the game could not be killed if it did not quit; it may still be running{stillOpen}.";
 
     /// <summary>
     /// Lets go of the attached game, as a detach and a stop both do: its connection, its snapshots, its capture and the handle

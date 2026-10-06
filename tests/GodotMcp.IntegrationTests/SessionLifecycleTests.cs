@@ -359,10 +359,32 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.True(stopped.Killed);
         Assert.Null(stopped.GameExitCode);
         Assert.NotNull(stopped.KillReason);
-        Assert.Contains("still shutting down", stopped.KillReason, StringComparison.Ordinal);
+        Assert.StartsWith(
+            "the game acknowledged the quit but was still shutting down after 3 s of load-adjusted time (wall ",
+            stopped.KillReason,
+            StringComparison.Ordinal
+        );
         Assert.Null(stopped.QuitMs);
         Assert.Null(stopped.LeftRunning);
         Assert.True(stopped.OverrideRemoved);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AGameSlowToQuitInItsTreeSaysTheConnectionWasStillOpen()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
+        await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
+        await tools.RunScriptAsync(SlowToQuitScript, 10_000, null, cancellation);
+
+        StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.True(stopped.Killed);
+        Assert.NotNull(stopped.KillReason);
+        Assert.Contains("load-adjusted", stopped.KillReason, StringComparison.Ordinal);
+        Assert.Contains("connection was still open", stopped.KillReason, StringComparison.Ordinal);
+        Assert.Matches(@"\nProcess \d+: \d+ ms CPU over 1 s, \d+ threads, main thread ", stopped.KillReason);
+        Assert.Contains("\nLast stderr lines:\n", stopped.KillReason, StringComparison.Ordinal);
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

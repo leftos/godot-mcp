@@ -104,7 +104,8 @@ internal static class HangProbe
         }
     }
 
-    private static async Task<string> DescribeProcessAsync(int processId, int? runExitCode, CancellationToken cancellationToken)
+    /// <summary>The process's state, sampled for a second: its CPU, threads and main thread, or that it has exited.</summary>
+    internal static async Task<string> DescribeProcessAsync(int processId, int? runExitCode, CancellationToken cancellationToken)
     {
         Process process;
         try

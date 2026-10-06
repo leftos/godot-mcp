@@ -21,8 +21,12 @@ internal sealed class RegistryHarness : IAsyncDisposable
     private readonly List<Process> _games = [];
 
     public RegistryHarness()
+        : this(LoadClock.Shared) { }
+
+    /// <param name="clock">The clock the listener, and so every ceiling and grace the sessions enforce, runs on.</param>
+    public RegistryHarness(LoadClock clock)
     {
-        Listener = new BridgeListener(NullLogger<BridgeListener>.Instance);
+        Listener = new BridgeListener(NullLogger<BridgeListener>.Instance) { Clock = clock };
         Sessions = new SessionRegistry(Listener, NullLogger<GodotSession>.Instance)
         {
             OverrideFolders = new OverrideFolders(_temp.Combine("override-folders.txt"), TextWriter.Null),
