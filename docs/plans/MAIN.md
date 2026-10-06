@@ -4,8 +4,8 @@
 
 ## Ideas from the survey and the projects
 
-- [ ] GMCP-12 Finish input targets: popup items, item text in get_ui_elements, untested layouts
-  - [ ] GMCP-63 Name a Control's rect when its centre lies outside its SubViewport or embedded window
+- [x] GMCP-80 click on a TabBar item scrolled out of view is refused; nothing scrolls the bar to it · release vNext
+- [x] GMCP-12 Finish input targets: popup items, item text in get_ui_elements, untested layouts · release vNext
 - [ ] GMCP-6 record: only Movie Maker, which runs faster than real time
 - [ ] GMCP-19 Timeline watch: property, signal and monitor tracks, then retire monitor_property
 - [ ] GMCP-47 Drives across several processes
@@ -13,16 +13,30 @@
 - [ ] GMCP-44 Step-until: frame_control until and input
 - [ ] GMCP-46 Audio tracks in the watch: voices and buses
 - [ ] GMCP-17 State digest: wait_for on a state key, then tell the game repos
-- [ ] GMCP-7 wait_for: no call in the frame an expression or property condition is met
+- [x] GMCP-7 wait_for: no call in the frame an expression or property condition is met · release vNext
 - [ ] GMCP-8 options.call in capture_frames and wait_for takes only positional args, not a game tool's named ones
+- [ ] GMCP-68 Adopt driving lessons from the sibling projects
+  - [ ] GMCP-69 Probe h264_nvenc with a real 256x256 encode before cutting clips
+  - [ ] GMCP-70 Give each launch a scratch user:// folder so drives never touch real saves
+  - [ ] GMCP-71 Tell agents to say "hands off" before driving a game on the user's desktop
+  - [ ] GMCP-72 Answer native file dialogs from a queue instead of showing them
+  - [ ] GMCP-73 Name native file dialogs as out of reach in TOOLS.md and the skill
+  - [ ] GMCP-74 Report frame-rate drops below a floor in the game's output
+  - [ ] GMCP-75 Give bridge replies stable error codes and answer malformed frames
 
 ## Singles
 
 - [ ] GMCP-53 stop_project kills a game still shutting down after a mouse_button press and release
-- [ ] GMCP-52 validate: -getItem:Compile reaches MSBuild split through a pwsh prepWrapper (MSB1014)
+- [ ] GMCP-79 take_screenshot: an A/B on an animated scene differs everywhere unless the game is paused, and nothing says so
+- [ ] GMCP-78 batch_drive: a wait's timeout refusal names the budget, not the wall time that passed
+- [ ] GMCP-77 run_project: prep skips the import when a source asset changed since it was imported
+- [ ] GMCP-76 run_scratches: no session argument to name the scratch run's session
+- [ ] GMCP-65 hover: the per-frame re-pick hides whether the game re-picked the hover
+- [ ] GMCP-64 run_csharp: a snippet cannot await a frame (ToSignal not in scope)
 - [ ] GMCP-24 Fall back to a full save when a splice leaves two nodes one unique_id
 - [ ] GMCP-25 Keep a stored layout_mode = 3 on a full-rect Control through headless saves
 - [ ] GMCP-26 Give the bridge's mouse motions a velocity
+- [ ] GMCP-63 Name a Control's rect when its centre lies outside its SubViewport or embedded window
 - [ ] GMCP-27 Find why CSharpStateTests' first get_game_state timed out cold
 - [ ] GMCP-28 Fix TimeTests' pause-mid-monitor flake
 - [ ] GMCP-32 Find which tests leak fixture folders in %TEMP%\godot-mcp-tests
@@ -37,8 +51,13 @@
 - [ ] GMCP-48 Free the wait's on_draw state: a Dictionary-Callable cycle in the time module
 - [ ] GMCP-51 Fix TimeTests' WaitForSignalWhilePaused flake under load
 - [ ] GMCP-61 Shut-out mode leaves real pads live in an editor-embedded game
+- [ ] GMCP-82 Let run.ps1 drive run twice in one tree under its own log names
+- [ ] GMCP-83 Name the scroll that reaches a list item scrolled out of view
+- [ ] GMCP-84 Wait for a physics tick before a gesture's settle frames end, so input_event handlers report their errors
 
 ## Docs
 
+- [ ] GMCP-66 TOOLS.md: gamepad edges still say shutOutRealGamepads closes every popup
 - [ ] GMCP-45 Document render diagnosis
 - [ ] GMCP-58 Re-read csharp-runtime-tools.md against the C# game-tools and state commits
+- [ ] GMCP-81 Split markdown lines of 500+ characters
