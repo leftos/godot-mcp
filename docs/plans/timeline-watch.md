@@ -1,6 +1,6 @@
 # Timeline watch: several values and signals over one window, then performance monitors
 
-Design draft for the plan item "One timeline watch over several properties and signals, then performance monitors over a frame window (ideas 3, 2)" ([MAIN.md](./MAIN.md) L27, the Track), from ideas 3 and 2 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L105-113). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../DECISIONS.md) decision 29, which wins where this file differs; steps 1 and 2 of section 7 are done, steps 3 to 6 open.
+Design draft for the plan item "One timeline watch over several properties and signals, then performance monitors over a frame window (ideas 3, 2)" ([MAIN.md](./MAIN.md) L27, the Track), from ideas 3 and 2 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L105-113). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../DECISIONS.md) decision 29, which wins where this file differs; steps 1 to 4 of section 7 are done, steps 5 and 6 open.
 
 ## 1. Problem
 
@@ -42,14 +42,14 @@ tracks: {
   properties: [{node, property}],              // as monitor_property and wait_for take them: position:y, modulate:a
   expressions: [{name, expression, node?}],    // wait_for's inputs: node, root, tree, Input, Engine
   signals: [{node | group, signal}],           // one node, or every member of a group at start
-  monitors: ["frame_ms", "render/draw_calls", "object/nodes", "Game/NumberOfNPCs", ...]
+  monitors: ["frame_ms", "raster/total_draw_calls", "object/nodes", "Game/NumberOfNPCs", ...]
 }
 ```
 
 - A **property track** reads `node.get_indexed(property)` each sample, as `monitor_property` does (`godot_mcp_time.gd` L821-831), so a non-exported C# field Godot can marshal is read too (decision 21). A node freed during the window samples as the marker `{"$freed": true}` from then on, once, so "hidden" and "freed" read apart (delve L70's `is_instance_valid` first).
 - An **expression track** runs a parsed `Expression` each sample with `wait_for`'s inputs (`EXPRESSION_INPUTS`, `godot_mcp_conditions.gd`), parsed once at start: `{name: "focus", expression: "root.gui_get_focus_owner()"}`, `{name: "screens", node: "Main/Safe/Screens", expression: "node.get_children()"}`, each Node in the value written as its path by the JSON module's rule (a null focus owner as null). `name` keys it in the result. delve L70's rows are three tracks.
 - A **signal track** connects one variadic lambda per node (`func(...args: Array)`, as `_wait_for_signal` does, L880), so any argument count is kept; it records `[frame, node, args]` at each emission. `{group, signal}` connects every member of the group at start that has the signal; a member without it is listed in the start reply's `skipped`, not refused.
-- A **monitor track** names a built-in monitor by the name Godot's Monitor tab shows it (`render/draw_calls` for `raster/total_draw_calls`, see below), a custom monitor by its id (`Performance.has_custom_monitor`), or `frame_ms`, the bridge's own frame time (question 10).
+- A **monitor track** names a built-in monitor by its Godot name (`Performance.get_monitor_name`'s, such as `raster/total_draw_calls`, see below), a custom monitor by its id (`Performance.has_custom_monitor`), or `frame_ms`, the bridge's own frame time (question 10).
 
 Limits, checked by the server before anything is sent: at most 32 property and expression tracks together, 16 signal tracks resolving to at most 200 connections, and 16 monitors.
 
@@ -94,7 +94,7 @@ Budgets (question 8); the point and event caps are the bridge's, as it records, 
 A monitor is a track of the same watch, so a hitch sits on the same frame numbers as the signal that caused it (delve's first-draw hitch against a beat, fight-effects.md L90). The recommended set:
 
 - **`frame_ms`**: the wall time between this frame's `process_frame` and the last one's, read with `Time.get_ticks_usec()`: the measure delve takes by hand (L93, "the longest gap between two `process_frame`s"). It covers physics, process, draw and the frame cap's wait, so a 60 fps quiet run floors at about 16.7 ms and a 420 ms pipeline compile reads as one frame of about 420 ms. `options.budgetMs` (default 1000 / the project's target fps: `Engine.max_fps`, else 60) gives `over: {budget, count, frames}`.
-- **Built-in monitors read per frame** with `Performance.get_monitor`, named by the Monitor tab's own names less the section (`object/nodes`, `object/objects`, `object/orphan_nodes`, `render/draw_calls`, `render/objects`, `render/primitives`, `video/video_mem`, `pipeline/compilations_draw`, …), mapped by the bridge from the `Performance.Monitor` enum (`ClassDB.class_get_enum_constants`).
+- **Built-in monitors read per frame** with `Performance.get_monitor`, named by 4.7.2's `get_monitor_name` strings (`object/nodes`, `object/objects`, `object/orphan_nodes`, `raster/total_draw_calls`, `raster/total_objects_drawn`, `raster/total_primitives_drawn`, `video/video_mem`, `pipeline/compilations_draw`, …; `main/performance.cpp` L165-237), which the bridge maps from the `Performance.Monitor` enum (`ClassDB.class_get_enum_constants`) through a table of its own, since `get_monitor_name` is not bound to scripts.
 - **`time/fps`, `time/process` and `time/physics_process` are refused** with a pointer to `frame_ms`: the engine sets them once a second, `time/process` to the longest frame of the last second (section 3), so read per frame they repeat one value for a second and hide which frame was slow.
 - **Custom monitors** by id, each read with `Performance.get_custom_monitor`, which calls the game's callable: game code, once a frame (question 13).
 
@@ -202,9 +202,19 @@ Each step lands on its own with its tests, docs and changelog bullet, and passes
    - Plain `connect`; every connection is cut at finish, cancel and drop behind `is_instance_valid`.
    - No shared catcher with GMCP-43's planned `fired` module; it may extract one later.
    - The CsProbe signals live in a new fixture file, `CsSignals.cs`.
-4. **Monitor tracks**: `frame_ms`, the built-in name map, the refused `time/*`, custom monitors, percentiles, `budgetMs`, spikes.
+4. **Done: monitor tracks**: `frame_ms`, the built-in name map, the refused `time/*`, custom monitors, percentiles, `budgetMs`, spikes, in a module of their own (`bridge/godot_mcp_watch_monitors.gd`). Decided at briefing (2026-10-06, each the recommended option, recorded on GMCP-19), settling section 2 where its lines disagree:
+   - Built-in names are 4.7.2's `get_monitor_name` strings verbatim (`raster/total_draw_calls`, not section 2's earlier `render/draw_calls`), from a table in the bridge that a gdtest checks against every `Performance.Monitor` constant.
+   - The bridge summarises each series once, at finish, and the server passes `monitors` through, outside the 40000-character cut; section 5's percentile tests in `WatchTimelineTests` move to a gdtest.
+   - A monitor's entry is `{name, samples, p50, p95, p99, max, maxAt, mean, spikes}`, plus `custom: true`, `nonNumeric` when above 0, and on `frame_ms` `over: {budget, count, frames}`, where `frames` is the number of readings, so `count / frames` is the share over budget. Percentiles are nearest-rank.
+   - `spikes` holds at most 20 `[frame, value]`, highest first: the readings over budget for `frame_ms` (empty when none), the highest readings for any other monitor, left out when the series is constant.
+   - The default budget is 1.5 frames, `1.5 × 1000 / Engine.max_fps` (else 60), 25 ms at 60 fps, since one frame's length flags 42% of a quiet run's idle frames (section 8); `options.budgetMs` (0 to 10000) overrides it, and is refused without `frame_ms`.
+   - `frame_ms` stamps every frame at its start, paused ones included and before an `options.call`, and reads only unpaused sampled frames; the watch's first frame has no reading. With `unit: "physics"` it is refused.
+   - `time/navigation_process` is refused with the other `time/*` monitors: 4.7.2 sets it in the same once-a-second block (`main/main.cpp` L5138).
+   - The Movie Maker warning reads `Engine.get_write_movie_path()`, so a recording the server did not start is caught too.
+   - A custom monitor id is checked at start, a built-in name winning over a custom id; its first read must be a number, and a later non-number is counted in `nonNumeric`.
+   - Section 4's three warnings land here as one `warning` string: a Movie Maker recording under `frame_ms`, no frame drawn under a `raster/*` monitor, and sampling over 2 ms a frame on average.
 5. **`monitor_property` removed** (question 11 (a)): the tool, its options, the bridge's `monitor` command and guard kind, its tests and TOOLS.md rows; MAIN.md L40's flaky-test line deleted with it.
-6. **After the release that carries them**: delve's L70 and L93 sampling-script, frame-gap and `monitor_property` prose rewritten through `godot-mcp-docs-sync`, and the custom-monitor idea of its feature audit (L910) filed as a suggestion in its plan; then the rulings move into `docs/DECISIONS.md` and this subplan is deleted.
+6. **Straight after the install of the release that carries them** (owner ruling, 2026-10-06: step 5's removal ships in the same release, so delve's docs must not wait): delve's L70 and L93 sampling-script, frame-gap and `monitor_property` prose rewritten through `godot-mcp-docs-sync`, and the custom-monitor idea of its feature audit (L910) filed as a suggestion in its plan; then the rulings move into `docs/DECISIONS.md` and this subplan is deleted.
 
 ## 8. Spike results (step 1, 2026-09-30)
 

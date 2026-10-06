@@ -17,9 +17,16 @@ internal sealed partial class RuntimeTools
     internal const string WatchToolName = "watch";
     internal const int MaxWatchTracks = 32;
     internal const int MaxWatchSignalTracks = 16;
+    internal const int MaxWatchMonitors = 16;
+    internal const double MaxWatchBudgetMs = 10_000;
     internal const int DefaultWatchFrames = 600;
     private const string WatchCommand = "watch";
+    private const string FrameMsMonitor = "frame_ms";
     private static readonly string[] WatchActions = ["start", "stop", "run"];
+
+    /// <summary>The built-in monitors Godot sets once a second (main/main.cpp L5121-5141 in 4.7.2, time/navigation_process at
+    /// L5138), which a watch refuses.</summary>
+    private static readonly string[] OnceASecondMonitors = ["time/fps", "time/process", "time/physics_process", "time/navigation_process"];
 
     [McpServerTool(Name = WatchToolName, ReadOnly = false, Destructive = true, OpenWorld = false)]
     [Description(
@@ -49,22 +56,29 @@ internal sealed partial class RuntimeTools
             + "deadline passed: the window's allowance, 10 s + 100 ms a frame or gameMs + 10 s, at most 600 s, plus the time a "
             + "started watch spends paused, up to 600 s). events lists every signal track's emissions in order, at most 300 shared "
             + "fairly across signal tracks (each keeps its earliest), and eventCounts counts every emission; a freed emitter's "
-            + "signals stop. Expressions and options.call run game code. A restart, a stop_project "
+            + "signals stop. tracks.monitors adds monitors?: [{name, samples, p50, p95, p99, max, maxAt, mean, spikes?: [[frame, "
+            + "value]], over?, custom?, nonNumeric?}], each read once a sampled frame and summarised in the game: frame_ms (the wall "
+            + "time between frames, over: {budget, count, frames} against options.budgetMs, a hitch reading as one long frame), "
+            + "a built-in monitor by its Performance.get_monitor_name path (object/nodes, raster/total_draw_calls), or a custom "
+            + "monitor id; warning? says when a reading misleads. "
+            + "Expressions, options.call and custom monitors run game code. A restart, a stop_project "
             + "or a lost connection drops the watch."
     )]
     public async Task<string> WatchAsync(
         [Description("start, stop or run.")] string action,
         [Description(
             "start and run: {properties: [{node, property, name?, minDelta?}], expressions: [{name, expression, node?, minDelta?}], "
-                + "signals: [{node | group, signal}]}, at least one track; at most 32 property and expression tracks, each with a "
-                + "unique key (name, else node and property), and at most 16 signal tracks."
+                + "signals: [{node | group, signal}], monitors: [\"frame_ms\" | a built-in monitor such as \"object/nodes\" | a custom "
+                + "monitor id]}, at least one track; at most 32 property and expression tracks, each with a unique key (name, else "
+                + "node and property), at most 16 signal tracks and at most 16 monitors."
         )]
             WatchTracks? tracks = null,
         [Description(
             "start and run: exactly one of {frames} (1 to 7200) or {gameMs} (1 to 120000); start defaults to {frames: 600}, run " + "needs one."
         )]
             WatchWindow? window = null,
-        [Description("start and run: {call, unit}; no call and unit process when left out.")] WatchOptions? options = null,
+        [Description("start and run: {call, unit, budgetMs}; no call, unit process and the default budget when left out.")]
+            WatchOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
@@ -80,14 +94,17 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>
-    /// The bridge's watch parameters: {action} for stop; for start and run {action, properties?, expressions?, signals?, frames |
-    /// gameMs, unit, call?, deadlineMs}, deadlineMs the window's allowance (<see cref="WatchAllowance"/>).
+    /// The bridge's watch parameters: {action} for stop; for start and run {action, properties?, expressions?, signals?,
+    /// monitors?, frames | gameMs, unit, call?, budgetMs?, deadlineMs}, deadlineMs the window's allowance
+    /// (<see cref="WatchAllowance"/>).
     /// </summary>
     /// <exception cref="McpException">An unknown action; stop given tracks, a window or options; no track, more than
-    /// <see cref="MaxWatchTracks"/> property and expression tracks or <see cref="MaxWatchSignalTracks"/> signal tracks, an empty
-    /// node, property, name, expression, group or signal, a minDelta not above 0, two tracks with one key, a signal track with
-    /// both or neither of node and group, or two signal tracks on one emitter and signal; a window without exactly one of
-    /// frames or gameMs, or out of range; run without a window; or a unit other than process or physics.</exception>
+    /// <see cref="MaxWatchTracks"/> property and expression tracks, <see cref="MaxWatchSignalTracks"/> signal tracks or
+    /// <see cref="MaxWatchMonitors"/> monitors, an empty node, property, name, expression, group, signal or monitor, a minDelta
+    /// not above 0, two tracks with one key, a signal track with both or neither of node and group, two signal tracks on one
+    /// emitter and signal, a monitor named twice, a once-a-second time/* monitor, or frame_ms with unit physics; a window
+    /// without exactly one of frames or gameMs, or out of range; run without a window; a unit other than process or physics;
+    /// or a budgetMs out of range or without frame_ms.</exception>
     internal static JsonObject BuildWatchParameters(string action, WatchTracks? tracks, WatchWindow? window, WatchOptions? options)
     {
         if (!WatchActions.Contains(action))
@@ -106,6 +123,7 @@ internal sealed partial class RuntimeTools
         AddWatchTracks(parameters, tracks);
         AddWatchWindow(parameters, action, window);
         AddWatchOptions(parameters, options);
+        AddWatchMonitors(parameters, tracks?.Monitors ?? [], options);
         return parameters;
     }
 
@@ -141,7 +159,7 @@ internal sealed partial class RuntimeTools
         WatchPropertyTrack[] properties = given.Properties ?? [];
         WatchExpressionTrack[] expressions = given.Expressions ?? [];
         WatchSignalTrack[] signals = given.Signals ?? [];
-        CheckTrackCount(properties.Length + expressions.Length, signals.Length);
+        CheckTrackCount(properties.Length + expressions.Length, signals.Length, given.Monitors?.Length ?? 0);
         AddValueTracks(parameters, properties, expressions);
         if (signals.Length > 0)
         {
@@ -164,13 +182,13 @@ internal sealed partial class RuntimeTools
         }
     }
 
-    private static void CheckTrackCount(int valueTracks, int signalTracks)
+    private static void CheckTrackCount(int valueTracks, int signalTracks, int monitors)
     {
-        if (valueTracks + signalTracks == 0)
+        if (valueTracks + signalTracks + monitors == 0)
         {
             throw new McpException(
-                "tracks needs at least one track: {properties: [{node, property}]}, {expressions: [{name, expression}]} or "
-                    + "{signals: [{node, signal}]}."
+                "tracks needs at least one track: {properties: [{node, property}]}, {expressions: [{name, expression}]}, "
+                    + "{signals: [{node, signal}]} or {monitors: [\"frame_ms\"]}."
             );
         }
 
@@ -330,5 +348,76 @@ internal sealed partial class RuntimeTools
         {
             parameters["call"] = MethodCallParameters(call);
         }
+    }
+
+    /// <summary>Adds the monitors, each named once and none of Godot's once-a-second time/* monitors, and budgetMs, which
+    /// needs frame_ms; frame_ms measures process frames, so it is refused with unit physics.</summary>
+    private static void AddWatchMonitors(JsonObject parameters, string[] monitors, WatchOptions? options)
+    {
+        if (monitors.Length > MaxWatchMonitors)
+        {
+            throw new McpException($"tracks holds {monitors.Length} monitors; at most {MaxWatchMonitors}.");
+        }
+
+        HashSet<string> names = new(StringComparer.Ordinal);
+        foreach (string monitor in monitors)
+        {
+            CheckMonitor(monitor, names);
+        }
+
+        if (monitors.Length > 0)
+        {
+            parameters["monitors"] = new JsonArray([.. monitors.Select(monitor => (JsonNode)monitor)]);
+        }
+
+        bool frameMs = names.Contains(FrameMsMonitor);
+        if (frameMs && options?.Unit == "physics")
+        {
+            throw new McpException("frame_ms measures process frames; drop options.unit \"physics\" or the frame_ms monitor.");
+        }
+
+        AddBudget(parameters, options?.BudgetMs, frameMs);
+    }
+
+    private static void CheckMonitor(string monitor, HashSet<string> names)
+    {
+        string name = CheckName(
+            monitor,
+            "monitor",
+            "Pass frame_ms, a built-in monitor's path as Performance.get_monitor_name gives it (object/nodes, "
+                + "raster/total_draw_calls), or a custom monitor's id."
+        );
+        if (OnceASecondMonitors.Contains(name, StringComparer.Ordinal))
+        {
+            throw new McpException(
+                $"'{name}' is set once a second, so read per frame it repeats one value and hides which frame was slow; watch "
+                    + "'frame_ms' instead."
+            );
+        }
+
+        if (!names.Add(name))
+        {
+            throw new McpException($"tracks.monitors names '{name}' twice; each monitor once.");
+        }
+    }
+
+    private static void AddBudget(JsonObject parameters, double? budgetMs, bool frameMs)
+    {
+        if (budgetMs is not double budget)
+        {
+            return;
+        }
+
+        if (budget is not (> 0 and <= MaxWatchBudgetMs))
+        {
+            throw new McpException(
+                $"options.budgetMs must be greater than 0 and at most {MaxWatchBudgetMs.ToString(CultureInfo.InvariantCulture)}; got "
+                    + $"{budget.ToString(CultureInfo.InvariantCulture)}."
+            );
+        }
+
+        parameters["budgetMs"] = frameMs
+            ? budget
+            : throw new McpException("options.budgetMs applies to the frame_ms monitor; add \"frame_ms\" to tracks.monitors or drop budgetMs.");
     }
 }

@@ -3,8 +3,8 @@ using System.ComponentModel;
 namespace GodotMcp.Server.Tools;
 
 /// <summary>
-/// What a watch samples each frame and the signals it records: properties of nodes and Godot Expressions (at most 32 together)
-/// and signals (at most 16 tracks).
+/// What a watch samples each frame and the signals it records: properties of nodes and Godot Expressions (at most 32 together),
+/// signals (at most 16 tracks) and performance monitors (at most 16).
 /// </summary>
 internal sealed record WatchTracks(
     [property: Description(
@@ -22,7 +22,15 @@ internal sealed record WatchTracks(
             + "arguments; a group is resolved once at start, and a member without the signal is listed in skipped. At most 16, "
             + "connecting at most 200 nodes."
     )]
-        WatchSignalTrack[]? Signals = null
+        WatchSignalTrack[]? Signals = null,
+    [property: Description(
+        "Monitors read once a sampled frame and returned as a summary {name, samples, p50, p95, p99, max, maxAt, mean, spikes?}: "
+            + "frame_ms (the wall time between two frames, with over: {budget, count, frames} against options.budgetMs), a "
+            + "built-in monitor by its Performance.get_monitor_name path (object/nodes, raster/total_draw_calls), or a custom "
+            + "monitor's id as Performance.add_custom_monitor registered it. At most 16; time/fps, time/process, "
+            + "time/physics_process and time/navigation_process are refused, since Godot sets them once a second."
+    )]
+        string[]? Monitors = null
 );
 
 /// <summary>A signal a watch records each emission of, on one node or on every member of a group.</summary>
@@ -71,7 +79,7 @@ internal sealed record WatchWindow(
         int? GameMs = null
 );
 
-/// <summary>When a watch samples and the method it calls in its first frame.</summary>
+/// <summary>When a watch samples, the method it calls in its first frame, and the frame_ms monitor's budget.</summary>
 internal sealed record WatchOptions(
     [property: Description(
         "{node, method, args}: a method the bridge calls in the watch's first frame, before its first sample, so the window "
@@ -83,5 +91,10 @@ internal sealed record WatchOptions(
         "process (the default): sample at the start of each process frame, before the nodes' _process; physics: at the start "
             + "of each physics tick, with frames counted in ticks."
     )]
-        string? Unit = null
+        string? Unit = null,
+    [property: Description(
+        "The frame_ms monitor's budget in ms, above 0 and at most 10000: frames over it are counted in over and listed in "
+            + "spikes; left out, 1.5 frames at Engine.max_fps (60 when uncapped), 25 ms at 60."
+    )]
+        double? BudgetMs = null
 );

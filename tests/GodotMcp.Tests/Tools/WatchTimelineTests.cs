@@ -46,6 +46,45 @@ public sealed class WatchTimelineTests
     }
 
     [Fact]
+    public void MonitorsAndTheWarningPassThroughATimelineTheCutShortens()
+    {
+        JsonArray longPoints = [.. Enumerable.Range(0, 250).Select(frame => Point(frame, new string('x', 190)))];
+        JsonObject reply = Timeline(Track("Busy", "text", longPoints));
+        JsonArray spikes = [.. Enumerable.Range(0, 20).Select(frame => new JsonArray(frame, 300.5 - frame))];
+        reply["monitors"] = new JsonArray(
+            new JsonObject
+            {
+                ["name"] = "frame_ms",
+                ["samples"] = 600,
+                ["p50"] = 16.667,
+                ["max"] = 300.5,
+                ["maxAt"] = 0,
+                ["over"] = new JsonObject
+                {
+                    ["budget"] = 25.0,
+                    ["count"] = 20,
+                    ["frames"] = 600,
+                },
+                ["spikes"] = spikes,
+            },
+            new JsonObject
+            {
+                ["name"] = "game/score",
+                ["samples"] = 0,
+                ["custom"] = true,
+            }
+        );
+        reply["warning"] = "sampling took 2.50 ms a frame on average (2 tracks), which moves the frame_ms it measures; watch fewer tracks";
+        string monitors = reply["monitors"]!.ToJsonString();
+
+        JsonObject shaped = WatchTimeline.Shape(reply, WatchTimeline.MaxResultLength);
+
+        Assert.True(shaped["tracks"]![0]!.AsObject().ContainsKey("cut"), "the cut shortened the track");
+        Assert.Equal(monitors, shaped["monitors"]!.ToJsonString());
+        Assert.StartsWith("sampling took 2.50 ms", shaped["warning"]!.GetValue<string>(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ATimelineWithinTheBudgetIsNotCut()
     {
         JsonObject reply = Timeline(Track("Player", "position", [Point(0, 1), Point(1, 2), Point(2, 3)]));

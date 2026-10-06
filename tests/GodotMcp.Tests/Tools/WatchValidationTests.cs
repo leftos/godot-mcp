@@ -26,8 +26,8 @@ public sealed class WatchValidationTests
     public void AWatchWithNoTrackIsRefused()
     {
         const string Message =
-            "tracks needs at least one track: {properties: [{node, property}]}, {expressions: [{name, expression}]} or "
-            + "{signals: [{node, signal}]}.";
+            "tracks needs at least one track: {properties: [{node, property}]}, {expressions: [{name, expression}]}, "
+            + "{signals: [{node, signal}]} or {monitors: [\"frame_ms\"]}.";
 
         Assert.Equal(Message, Refusal(() => RuntimeTools.BuildWatchParameters("start", null, null, null)));
         Assert.Equal(Message, Refusal(() => RuntimeTools.BuildWatchParameters("run", new WatchTracks([], [], []), new WatchWindow(Frames: 1), null)));
@@ -227,6 +227,80 @@ public sealed class WatchValidationTests
             Refusal(() => RuntimeTools.BuildWatchParameters("start", new WatchTracks(Expressions: [new WatchExpressionTrack("one", "")]), null, null))
         );
     }
+
+    [Fact]
+    public void SixteenMonitorsAreAcceptedAloneAndASeventeenthIsRefused()
+    {
+        JsonObject parameters = RuntimeTools.BuildWatchParameters("start", new WatchTracks(Monitors: Monitors(16)), null, null);
+
+        Assert.Equal(Monitors(16), parameters["monitors"]!.AsArray().Select(monitor => monitor!.GetValue<string>()));
+        Assert.False(parameters.ContainsKey("properties"));
+        Assert.Equal(
+            "tracks holds 17 monitors; at most 16.",
+            Refusal(() => RuntimeTools.BuildWatchParameters("start", new WatchTracks(Monitors: Monitors(17)), null, null))
+        );
+    }
+
+    [Theory]
+    [InlineData("time/fps")]
+    [InlineData("time/process")]
+    [InlineData("time/physics_process")]
+    [InlineData("time/navigation_process")]
+    public void AOnceASecondTimeMonitorIsRefusedPointingAtFrameMs(string monitor) =>
+        Assert.Equal(
+            $"'{monitor}' is set once a second, so read per frame it repeats one value and hides which frame was slow; watch "
+                + "'frame_ms' instead.",
+            Refusal(() => BuildMonitors(null, "frame_ms", monitor))
+        );
+
+    [Fact]
+    public void AMonitorNamedTwiceOrEmptyIsRefused()
+    {
+        Assert.Equal(
+            "tracks.monitors names 'object/nodes' twice; each monitor once.",
+            Refusal(() => BuildMonitors(null, "object/nodes", "frame_ms", "object/nodes"))
+        );
+        Assert.StartsWith("monitor is empty.", Refusal(() => BuildMonitors(null, " ")));
+    }
+
+    [Fact]
+    public void FrameMsWithUnitPhysicsIsRefused() =>
+        Assert.Equal(
+            "frame_ms measures process frames; drop options.unit \"physics\" or the frame_ms monitor.",
+            Refusal(() => BuildMonitors(new WatchOptions(Unit: "physics"), "frame_ms"))
+        );
+
+    [Theory]
+    [InlineData(0, "options.budgetMs must be greater than 0 and at most 10000; got 0.")]
+    [InlineData(-5, "options.budgetMs must be greater than 0 and at most 10000; got -5.")]
+    [InlineData(10000.5, "options.budgetMs must be greater than 0 and at most 10000; got 10000.5.")]
+    public void ABudgetOutOfRangeIsRefused(double budgetMs, string expected) =>
+        Assert.Equal(expected, Refusal(() => BuildMonitors(new WatchOptions(BudgetMs: budgetMs), "frame_ms")));
+
+    [Fact]
+    public void ABudgetWithoutFrameMsIsRefused() =>
+        Assert.Equal(
+            "options.budgetMs applies to the frame_ms monitor; add \"frame_ms\" to tracks.monitors or drop budgetMs.",
+            Refusal(() => BuildMonitors(new WatchOptions(BudgetMs: 20), "object/nodes"))
+        );
+
+    [Fact]
+    public void MonitorsAndABudgetAreSentAsGivenAndNoBudgetWhenLeftOut()
+    {
+        JsonObject withBudget = BuildMonitors(new WatchOptions(BudgetMs: 10000), "frame_ms", "gdtest/custom");
+        JsonObject withoutBudget = BuildMonitors(null, "frame_ms");
+        JsonObject withoutMonitors = RuntimeTools.BuildWatchParameters("start", OneTrack, null, null);
+
+        Assert.Equal("""["frame_ms","gdtest/custom"]""", withBudget["monitors"]!.ToJsonString());
+        Assert.Equal(10000, withBudget["budgetMs"]!.GetValue<double>());
+        Assert.False(withoutBudget.ContainsKey("budgetMs"), withoutBudget.ToJsonString());
+        Assert.False(withoutMonitors.ContainsKey("monitors"), withoutMonitors.ToJsonString());
+    }
+
+    private static string[] Monitors(int count) => [.. Enumerable.Range(0, count).Select(index => $"game/monitor{index}")];
+
+    private static JsonObject BuildMonitors(WatchOptions? options, params string[] monitors) =>
+        RuntimeTools.BuildWatchParameters("start", new WatchTracks(Monitors: monitors), null, options);
 
     private static WatchTracks Tracks(int properties, int expressions) =>
         new(

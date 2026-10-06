@@ -11,7 +11,8 @@ namespace GodotMcp.IntegrationTests;
 /// <summary>
 /// watch against the InputProbe: a WatchMover Node2D added by run_script, whose go() tweens position:x from 0 to 100 over
 /// 0.3 s and whose answer() returns 42, the TimeProbe scene, an OpenButton that shows a hidden panel, and nodes with user
-/// signals and a WatchJumper that moves and emits moved in one _process once armed. One shared run, reset
+/// signals and a WatchJumper that moves and emits moved in one _process once armed; monitors read a frame run_script
+/// holds, the nodes it adds and a custom monitor it registers. One shared run, reset
 /// before each test, after which a watch a failed test left behind is stopped; batch_drive runs on a server built over the
 /// shared registry, as BatchTests builds it.
 /// </summary>
@@ -332,6 +333,73 @@ public sealed class WatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
         // change's; each is floored to a millisecond.
         double deltaMs = (await RunAsync($"return scene_tree.root.get_node(\"{jumper}\").moved_delta")).GetValue<double>() * 1000;
         Assert.InRange(Int(points[1]![1]) - Int(moved[1]) - deltaMs, -1, 1);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task FrameMsCatchesAFrameRunScriptHoldsFor300Ms()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        await WatchAsync("start", cancellation, new WatchTracks(Monitors: ["frame_ms"]));
+        await RunAsync("OS.delay_msec(300)\n\treturn true");
+        await _tools.WaitForAsync(new WaitCondition(Frames: 3), cancellationToken: cancellation);
+        JsonObject timeline = await WatchAsync("stop", cancellation);
+
+        JsonObject frameMs = timeline["monitors"]![0]!.AsObject();
+        double max = frameMs["max"]!.GetValue<double>();
+        Assert.True(max >= 290, frameMs.ToJsonString());
+        JsonArray first = frameMs["spikes"]![0]!.AsArray();
+        Assert.Equal((Int(frameMs["maxAt"]), max), (Int(first[0]), first[1]!.GetValue<double>()));
+        Assert.True(Int(frameMs["over"]!["count"]) >= 1, frameMs.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ObjectNodesFollowsTheNodesRunScriptAdds()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        double before = (await RunAsync("return Performance.get_monitor(Performance.OBJECT_NODE_COUNT)")).GetValue<double>();
+
+        await WatchAsync("start", cancellation, new WatchTracks(Monitors: ["object/nodes"]));
+        await RunAsync("for index in 5:\n\t\tscene_tree.root.add_child(Node.new())\n\treturn true");
+        await _tools.WaitForAsync(new WaitCondition(Frames: 3), cancellationToken: cancellation);
+        JsonObject timeline = await WatchAsync("stop", cancellation);
+
+        JsonObject nodes = timeline["monitors"]![0]!.AsObject();
+        Assert.True(nodes["max"]!.GetValue<double>() >= before + 5, $"{before} before: {nodes.ToJsonString()}");
+        Assert.True(nodes.ContainsKey("spikes"), $"a series that changed lists its highest readings: {nodes.ToJsonString()}");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACustomMonitorTheGameRegistersIsReadByItsId()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync("Performance.add_custom_monitor(\"watch/frames\", Callable(Engine, \"get_process_frames\"))\n\treturn true");
+        try
+        {
+            JsonObject started = await WatchAsync("start", cancellation, new WatchTracks(Monitors: ["watch/frames"]));
+            await _tools.WaitForAsync(new WaitCondition(Frames: 5), cancellationToken: cancellation);
+            JsonObject timeline = await WatchAsync("stop", cancellation);
+
+            Assert.True(started["monitors"]![0]!["custom"]!.GetValue<bool>(), started.ToJsonString());
+            JsonObject frames = timeline["monitors"]![0]!.AsObject();
+            Assert.True(frames["custom"]!.GetValue<bool>(), frames.ToJsonString());
+            Assert.True(Int(frames["samples"]) >= 5, frames.ToJsonString());
+            Assert.True(frames["max"]!.GetValue<double>() > frames["p50"]!.GetValue<double>(), frames.ToJsonString());
+        }
+        finally
+        {
+            await RunAsync("Performance.remove_custom_monitor(\"watch/frames\")\n\treturn true");
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATimeMonitorIsRefusedPointingAtFrameMs()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            WatchAsync("start", TestContext.Current.CancellationToken, new WatchTracks(Monitors: ["time/fps"]))
+        );
+
+        Assert.StartsWith("'time/fps' is set once a second", refused.Message, StringComparison.Ordinal);
     }
 
     private async Task<JsonObject> WatchAsync(
