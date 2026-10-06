@@ -14,6 +14,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Changed
 
+- `monitor_property` is removed: `watch {action: "run"}` with a property track samples one value or several, beside every other tool.
 - `take_screenshot`, `save_screenshot_baseline` and `compare_screenshot` say to pause an animating game with `frame_control` for a before/after pair.
 - A click on a tab scrolled out of a tab bar is refused naming the `scroll` call, or arrow clicks, that bring the tab into view.
 

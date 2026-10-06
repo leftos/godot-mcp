@@ -84,10 +84,10 @@ func test_cancel_ignores_another_requests_params() -> void:
 	var woken: Array = []
 	time.step_woken.connect(func(arrived: bool) -> void: woken.append(arrived))
 	assert_true(not time.cancel(running), "nothing runs")
-	time._running = "monitor"
+	time._running = "step"
 	time._running_params = running
 	assert_true(not time.cancel(running.duplicate()), "an equal Dictionary is another request's")
-	assert_true(not time._deadline_passed, "the running monitor goes on")
+	assert_true(not time._deadline_passed, "the running step goes on")
 	assert_eq(woken, [], "nothing is woken")
 	time.free()
 

@@ -971,7 +971,7 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
     }
 
     [Fact(Timeout = CSharpTestTimeoutMs)]
-    public async Task InspectWaitMonitorAndSetReachAPrivateFieldGodotDoesNotList()
+    public async Task InspectWaitWatchAndSetReachAPrivateFieldGodotDoesNotList()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await AddTargetsAsync(cancellation);
@@ -990,8 +990,15 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
                 )
             )!
             .AsObject();
-        JsonObject monitored = JsonNode
-            .Parse(await _tools.MonitorPropertyAsync(TargetsPath, "_clamped", new MonitorOptions(Samples: 2), cancellationToken: cancellation))!
+        JsonObject watched = JsonNode
+            .Parse(
+                await _tools.WatchAsync(
+                    "run",
+                    new WatchTracks([new WatchPropertyTrack(TargetsPath, "_clamped")]),
+                    new WatchWindow(Frames: 2),
+                    cancellationToken: cancellation
+                )
+            )!
             .AsObject();
         // A method is what `in` also finds on the node, and it is still not a property.
         McpException method = await Assert.ThrowsAsync<McpException>(() =>
@@ -1001,7 +1008,7 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
         Assert.Equal(5, inspected["properties"]?["_clamped"]?.GetValue<int>());
         Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
         Assert.Equal(5, waited["value"]?.GetValue<int>());
-        Assert.Equal(5, monitored["samples"]!.AsArray()[0]!["value"]?.GetValue<int>());
+        Assert.Equal(5, watched["tracks"]![0]!["first"]?.GetValue<double>());
         Assert.Contains("has no property 'Hit'", method.Message, StringComparison.Ordinal);
 
         try

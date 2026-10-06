@@ -204,7 +204,7 @@ Each step lands on its own with its tests, docs and changelog bullet, and passes
    - The Movie Maker warning reads `Engine.get_write_movie_path()`, so a recording the server did not start is caught too.
    - A custom monitor id is checked at start, a built-in name winning over a custom id; its first read must be a number, and a later non-number is counted in `nonNumeric`.
    - Section 4's three warnings land here as one `warning` string: a Movie Maker recording under `frame_ms`, no frame drawn under a `raster/*` monitor, and sampling over 2 ms a frame on average.
-5. **`monitor_property` removed** (question 11 (a)): the tool, its options, the bridge's `monitor` command and guard kind, its tests and TOOLS.md rows; the pause-mid-monitor flake (GMCP-28) goes with its test.
+5. **Done: `monitor_property` removed** (question 11 (a)): the tool, its options, the bridge's `monitor` command and guard kind, its tests and TOOLS.md rows; the pause-mid-monitor flake (GMCP-28) goes with its test.
 6. **Straight after the install of the release that carries them** (owner ruling, 2026-10-06: step 5's removal ships in the same release, so delve's docs must not wait): delve's L70 and L93 sampling-script, frame-gap and `monitor_property` prose rewritten through `godot-mcp-docs-sync`, and the custom-monitor idea of its feature audit (L910) filed as a suggestion in its plan; then the rulings move into `docs/DECISIONS.md` and this subplan is deleted.
 
 ## 8. Spike results (step 1, 2026-09-30)

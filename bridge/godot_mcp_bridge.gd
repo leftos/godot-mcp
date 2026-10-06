@@ -40,7 +40,7 @@ const WATCH_SCRIPT := "godot_mcp_watch.gd"
 ## stops and a call_method it stops awaiting (_cancel); the server cancels one when its
 ## load-adjusted allowance passes before the request's backstopMs.
 const CANCELLABLE: PackedStringArray = [
-	"frame", "wait_for", "monitor", "frames", "dotnet", "run_script", "call_method", "watch"
+	"frame", "wait_for", "frames", "dotnet", "run_script", "call_method", "watch"
 ]
 ## A stopped run_script's answer, the restored clause (_restore) filled in.
 const SCRIPT_STOPPED := (
@@ -397,7 +397,7 @@ func _process(_delta: float) -> void:
 
 
 ## Marks the connection gone and cancels each running request before forgetting it: no cancel can
-## reach them from the server now, and a wait_for, monitor or dotnet call would otherwise poll on
+## reach them from the server now, and a wait_for or dotnet call would otherwise poll on
 ## until its backstopMs for a reply nobody reads. A suspended run_script is dropped as a cancel
 ## stops it, and a call_method is left to end unanswered, neither restoring the time scale or the
 ## pause: no server is left to be told.
@@ -508,7 +508,7 @@ func _handle_cancel(id: int, params: Dictionary) -> void:
 
 
 ## Marks the running request's params _cancelled, which ends a wait_for's poll and a dotnet call's
-## at their next frame, and ends a running step or monitor as its deadline would. A suspended
+## at their next frame, and ends a running step or capture as its deadline would. A suspended
 ## run_script is stopped (_stop_script) and a call_method no longer awaited (_forget_call), each
 ## answered here. Returns false when the request has been answered, was never cancellable, or is
 ## unknown.
@@ -600,7 +600,6 @@ func _command_handlers() -> Dictionary:
 		"snapshot": _handle_inspect.bind("snapshot"),
 		"frame": _handle_time.bind("frame"),
 		"wait_for": _handle_time.bind("wait_for"),
-		"monitor": _handle_time.bind("monitor"),
 		"frames": _handle_time.bind("frames"),
 		"compare_screenshot": _handle_compare,
 		"preview": _handle_preview,
@@ -832,15 +831,13 @@ func _on_script_completed(value: Variant, id: int) -> void:
 	_reply_ok(id, {"value": _json.to_json(value)})
 
 
-## Runs a frame, wait_for, monitor or frames (capture_frames) request on the clock child, which
-## answers {result} or {error}.
+## Runs a frame, wait_for or frames (capture_frames) request on the clock child, which answers
+## {result} or {error}.
 func _handle_time(id: int, params: Dictionary, command: String) -> void:
 	var outcome: Dictionary
 	match command:
 		"frame":
 			outcome = await _time.frame_control(params)
-		"monitor":
-			outcome = await _time.monitor(params)
 		"frames":
 			outcome = await _time.capture_frames(params)
 		_:

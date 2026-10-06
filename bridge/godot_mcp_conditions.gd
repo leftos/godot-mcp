@@ -1,7 +1,7 @@
 extends Node
 ## The godot-mcp bridge's conditions, a child of the bridge: parses a condition Expression and
 ## builds the checks wait_for polls each frame (a node existing, a property's value, an
-## expression, the UI changed since the last gesture), and reads the property a monitor samples.
+## expression, the UI changed since the last gesture).
 ## The watch parses its expression tracks through parse_condition too.
 ##
 ## A check returns [met, value], or [false, null, error] when its condition cannot be met.

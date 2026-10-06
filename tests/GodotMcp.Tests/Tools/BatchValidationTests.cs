@@ -194,7 +194,7 @@ public sealed class BatchValidationTests : IDisposable
         Assert.DoesNotContain("list_sessions", RuntimeTools.BatchableTools);
         Assert.DoesNotContain("batch_drive", RuntimeTools.BatchableTools);
         Assert.Contains("watch", RuntimeTools.BatchableTools);
-        Assert.Equal(39, RuntimeTools.BatchableTools.Count);
+        Assert.Equal(38, RuntimeTools.BatchableTools.Count);
     }
 
     [Fact]

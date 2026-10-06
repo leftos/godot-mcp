@@ -1,7 +1,7 @@
 extends Node
 ## The godot-mcp bridge's clock, a child of the bridge: pauses, resumes and steps the scene tree,
-## sets Engine.time_scale, waits for a condition checked each frame, and samples a property
-## each frame.
+## sets Engine.time_scale, waits for a condition checked each frame, and captures frames at
+## points of game time.
 ##
 ## It runs while the tree is paused: the bridge is PROCESS_MODE_ALWAYS and this child inherits
 ## it (scene/main/node.cpp L907-935 in 4.7.2), and SceneTree emits process_frame and
@@ -33,22 +33,14 @@ const STEPPING_REFUSAL := (
 	"A step is still running on this game; wait for its reply before pause, resume or "
 	+ "another step."
 )
-const MONITORING_REFUSAL := (
-	"A monitor_property is still running on this game; wait for its reply before pause, "
-	+ "resume, a step or another monitor."
-)
 const CAPTURING_REFUSAL := (
 	"A capture_frames is still running on this game; wait for its reply before pause, resume, "
-	+ "a step, a monitor or another capture."
+	+ "a step or another capture."
 )
-## monitor's PAUSED_REFUSAL for capture_frames, whose clock is the game's own.
+## wait_for's PAUSED_REFUSAL for capture_frames, whose clock is the game's own.
 const CAPTURE_PAUSED_REFUSAL := (
 	"The game is paused, so its game time does not advance and capture_frames cannot reach its "
 	+ "points; resume it first, or step it with frame_control and its screenshot option."
-)
-const MONITOR_STALLED := (
-	"The monitor stopped after %d of %d frames: its deadline passed before the rest ran "
-	+ "(is the game running slowly?)."
 )
 ## A step counts drawn frames, and a frame is drawn only when a window can draw, or, in
 ## low-processor mode, when something changed (main/main.cpp L5071-5086 in 4.7.2).
@@ -76,12 +68,12 @@ const NOT_DRAWN_WARNING := (
 
 ## The bridge this clock belongs to, for its node lookup, JSON conversion and screenshots.
 var bridge: Node
-## What runs now, "step", "monitor" or "frames" (capture_frames), or empty: while one runs, pause,
-## resume, a step, a monitor and a capture are refused until it ends.
+## What runs now, "step" or "frames" (capture_frames), or empty: while one runs, pause, resume, a
+## step and a capture are refused until it ends.
 var _running: String = ""
-## Whether the running step's or monitor's deadline has passed.
+## Whether the running step's or capture's deadline has passed.
 var _deadline_passed: bool = false
-## The params Dictionary of the running step or monitor, the very one its request handler holds,
+## The params Dictionary of the running step or capture, the very one its request handler holds,
 ## so a cancel ends only that request; null while none runs.
 var _running_params: Variant = null
 
@@ -122,14 +114,9 @@ func _set_time_scale(scale: float) -> String:
 	return ""
 
 
-## Why a step, a monitor or a capture cannot start while the one running goes on.
+## Why a step or a capture cannot start while the one running goes on.
 func _busy_refusal() -> String:
-	match _running:
-		"monitor":
-			return MONITORING_REFUSAL
-		"frames":
-			return CAPTURING_REFUSAL
-	return STEPPING_REFUSAL
+	return CAPTURING_REFUSAL if _running == "frames" else STEPPING_REFUSAL
 
 
 ## Refuses a step that would wait for draws that never come; else runs it under the step mark
@@ -149,13 +136,13 @@ func _guarded_step(params: Dictionary, result: Dictionary) -> String:
 	return error
 
 
-## Marks kind ("step", "monitor" or "frames") running for the request holding params, set before
+## Marks kind ("step" or "frames") running for the request holding params, set before
 ## the first await so a request read in the same frame is refused, and arms its deadline:
 ## params.backstopMs when the server sends one (its allowance measured in load-adjusted time, so
 ## the server cancels sooner), else deadline_ms, the server's own allowance; either way a run the
 ## server has given up on still frees the mark. The timer ignores pause and time scale, and counts
 ## clip time in a recording, where it can fire before the server's cancel; that is harmless since
-## a healthy step, monitor or capture counts the same fixed steps the timer does, so only a
+## a healthy step or capture counts the same fixed steps the timer does, so only a
 ## stalled one reaches it, and it then answers as the server's cancel would (_on_deadline).
 ## Returns the deadline.
 func _begin(kind: String, deadline_ms: float, params: Dictionary) -> SceneTreeTimer:
@@ -183,10 +170,9 @@ func _end(deadline: SceneTreeTimer) -> void:
 	_running_params = null
 
 
-## Ends the running step, monitor or capture as its deadline would, when params is the very
-## Dictionary its request holds (a step leaves the tree paused and answers STEP_STALLED; a monitor
-## answers MONITOR_STALLED; a capture answers the frames taken, stopped and missed). Returns
-## whether it ended one.
+## Ends the running step or capture as its deadline would, when params is the very Dictionary its
+## request holds (a step leaves the tree paused and answers STEP_STALLED; a capture answers the
+## frames taken, stopped and missed). Returns whether it ended one.
 func cancel(params: Dictionary) -> bool:
 	if _running.is_empty() or not is_same(params, _running_params):
 		return false
@@ -326,84 +312,6 @@ func _run_ticks(count: int) -> int:
 	return counted
 
 
-## Samples params.property (a path such as position:x) of params.node at each of params.samples
-## frames, or physics ticks with params.unit physics, the first at the next one, each at the
-## frame's (tick's) start, before the nodes process it. Returns {result: {samples: [{frame,
-## value}], requested, droppedDuplicates, elapsedMs[, pausedAtFrame]}} or {error}; with
-## params.changesOnly (the default) a sample equal to the last one kept is dropped and counted,
-## the first always kept. It stops early, with pausedAtFrame, at a frame that finds the game has
-## paused itself, and ends at params.deadlineMs, the server's allowance, with the frames it got.
-func monitor(params: Dictionary) -> Dictionary:
-	var refusal: String = _monitor_refusal(_text(params, "node"), _text(params, "property"))
-	if not refusal.is_empty():
-		return {"error": refusal}
-	var count: int = maxi(1, int(params.get("samples", 60)))
-	var deadline: SceneTreeTimer = _begin(
-		"monitor", float(params.get("deadlineMs", 10000 + 100 * count)), params
-	)
-	var outcome: Dictionary = await _sample(params, count)
-	_end(deadline)
-	return outcome
-
-
-## Why a monitor cannot start now, or empty: a step or another monitor runs, the tree is paused
-## (its frames would show the property frozen, so wait_for's rule applies), or the node or its
-## property is missing.
-func _monitor_refusal(node_name: String, property: String) -> String:
-	if not _running.is_empty():
-		return _busy_refusal()
-	var refusal: String = _paused_refusal(get_tree().paused, 1)
-	if not refusal.is_empty():
-		return refusal
-	if bridge._find_node(node_name) == null:
-		return bridge._inspect.not_found(node_name, "get_scene_tree lists the nodes' paths")
-	var checked: Array = bridge._conditions.check_property(node_name, property, null)
-	return checked[2] if checked.size() > 2 else ""
-
-
-## Takes count samples, one at each process_frame (physics_frame with unit physics), until the
-## deadline passes. A node freed mid-way samples as null. A frame (tick) that finds the tree
-## paused means the game paused itself: the monitor stops there, unsampled, and its number is
-## returned as pausedAtFrame with the samples so far. process_frame and physics_frame are emitted
-## paused or not (scene/main/scene_tree.cpp L649, L713).
-func _sample(params: Dictionary, count: int) -> Dictionary:
-	var physics: bool = str(params.get("unit", "process")) == "physics"
-	var source: Signal = get_tree().physics_frame if physics else get_tree().process_frame
-	var changes_only: bool = bool(params.get("changesOnly", true))
-	var began: int = Time.get_ticks_msec()
-	var kept: Array = []
-	var dropped: int = 0
-	var paused_at: int = -1
-	for frame in count:
-		if not await _next(source):
-			return {"error": MONITOR_STALLED % [frame, count]}
-		if get_tree().paused:
-			paused_at = frame
-			break
-		var checked: Array = bridge._conditions.check_property(
-			_text(params, "node"), _text(params, "property"), null
-		)
-		var value: Variant = checked[1]
-		if changes_only and _repeats(kept, value):
-			dropped += 1
-		else:
-			kept.append({"frame": frame, "value": value})
-	var result: Dictionary = {
-		"samples": kept,
-		"requested": count,
-		"droppedDuplicates": dropped,
-		"elapsedMs": Time.get_ticks_msec() - began,
-	}
-	if paused_at >= 0:
-		result["pausedAtFrame"] = paused_at
-	return {"result": result}
-
-
-## Whether value equals the last sample kept, in JSON space; false before the first.
-func _repeats(kept: Array, value: Variant) -> bool:
-	return not kept.is_empty() and json_equal(value, kept[-1]["value"])
-
-
 ## Captures a frame at each of params.points, ascending seconds of game time from the request:
 ## the sum of each process frame's delta, which Engine.time_scale already scales, so the points
 ## follow the game's timers; a frame that finds the tree paused adds nothing, as it stops them.
@@ -433,7 +341,7 @@ func capture_frames(params: Dictionary) -> Dictionary:
 	return {"result": result}
 
 
-## Why a capture cannot start now, or empty: a step, a monitor or another capture runs, or the
+## Why a capture cannot start now, or empty: a step or another capture runs, or the
 ## tree is paused, so its game time would not advance.
 func _capture_refusal(paused: bool) -> String:
 	if not _running.is_empty():

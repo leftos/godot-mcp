@@ -10,9 +10,8 @@ using ModelContextProtocol.Server;
 namespace GodotMcp.Server.Tools;
 
 /// <summary>
-/// The running game's clock: pausing, resuming and stepping its scene tree, its time scale, waiting on a condition
-/// checked each frame, and sampling a property each frame. The bridge (bridge/godot_mcp_time.gd) processes while the tree
-/// is paused, so it answers throughout.
+/// The running game's clock: pausing, resuming and stepping its scene tree, its time scale, and waiting on a condition
+/// checked each frame. The bridge (bridge/godot_mcp_time.gd) processes while the tree is paused, so it answers throughout.
 /// </summary>
 internal sealed partial class RuntimeTools
 {
@@ -21,7 +20,6 @@ internal sealed partial class RuntimeTools
     internal const int MaxWaitMs = 120_000;
     internal const int MaxWaitGameMs = 120_000;
     internal const int MaxWaitFrames = 7200;
-    internal const int MaxMonitorSamples = 600;
     private const int DefaultWaitMs = 10_000;
     private const int MaxDerivedWaitMs = 600_000;
     private const int CapturePreviewMaxWidth = 480;
@@ -34,7 +32,7 @@ internal sealed partial class RuntimeTools
     // A generous allowance per stepped frame on top of FrameTimeout: a frame at 60 fps takes about 17 ms.
     private static readonly TimeSpan PerFrameAllowance = TimeSpan.FromMilliseconds(100);
 
-    // A wait's timeoutMs (in a recording, the StepAllowance of its frames) and a step's or monitor's StepAllowance are its
+    // A wait's timeoutMs (in a recording, the StepAllowance of its frames) and a step's StepAllowance are its
     // release: once that much load-adjusted time has passed, the server cancels it and the bridge ends it with its own answer
     // (at its backstopMs, 5 x the release, counted in clip time while a recording runs, when the cancel is lost). The send
     // waits this much longer for that answer.
@@ -130,65 +128,6 @@ internal sealed partial class RuntimeTools
         JsonObject parameters = BuildWaitParameters(condition, timeoutMs);
         BridgeResult result = await CallWaitAsync(parameters, session, cancellationToken);
         return ErrorReport.AddTo(WaitReply(result), result.Errors).ToJsonString();
-    }
-
-    [McpServerTool(Name = "monitor_property", ReadOnly = true, Destructive = false, OpenWorld = false)]
-    [Description(
-        "Samples a node's property in the running game once a frame (or physics tick) for options.samples frames and returns "
-            + "how it went: {samples: [{frame, value}], requested, droppedDuplicates, elapsedMs[, pausedAtFrame]}; it stops early, "
-            + "with pausedAtFrame, if the game pauses itself. Each sample is taken at the "
-            + "start of its frame, before the nodes process it; frame counts from 0 at the first, taken at the next frame. Values "
-            + "come as run_script returns them. With changesOnly (the default) a sample equal to the last one kept (numbers within "
-            + "1e-6) is dropped and counted in droppedDuplicates; the first is always kept. A missing node or property is refused "
-            + "up front; a node freed mid-way samples as null. Refused while the game is paused and while a frame_control step "
-            + "or another monitor runs; while it runs, pause, resume and a step are refused. It fails at its deadline (10 s + "
-            + "100 ms per sample, load-adjusted) naming the frames it got."
-    )]
-    public async Task<string> MonitorPropertyAsync(
-        [Description("The node: its path (/root/Main/Player), a path under the root (Main/Player) or a name.")] string node,
-        [Description("The property, or a path into one as wait_for takes it: position, position:x, modulate:a.")] string property,
-        [Description("{samples, unit, changesOnly}: 60 samples, unit process and changesOnly true when left out.")] MonitorOptions? options = null,
-        [Description(ProjectTools.SessionDescription)] string? session = null,
-        CancellationToken cancellationToken = default
-    )
-    {
-        JsonObject parameters = BuildMonitorParameters(node, property, options);
-        int samples = parameters["samples"]!.GetValue<int>();
-        TimeSpan allowance = StepAllowance(samples);
-        BridgeCall call = new("monitor_property", "monitor", parameters, allowance + WaitReplyAllowance, allowance);
-        BridgeResult result = await CallWithErrorsAsync(Find(session), call, cancellationToken);
-        JsonObject reply =
-            result.Reply?.DeepClone() as JsonObject
-            ?? throw new McpException($"The bridge's monitor reply is not an object: {result.Reply?.ToJsonString() ?? "null"}.");
-        return ErrorReport.AddTo(reply, result.Errors).ToJsonString();
-    }
-
-    /// <summary>The bridge's monitor parameters: {node, property, samples, unit, changesOnly, deadlineMs}.</summary>
-    /// <exception cref="McpException">An empty node or property, samples out of range, or a unit other than process or physics.</exception>
-    internal static JsonObject BuildMonitorParameters(string node, string property, MonitorOptions? options)
-    {
-        MonitorOptions checkedOptions = options ?? new MonitorOptions();
-        CheckNode(node);
-        CheckName(property, "property", "Pass a property name as inspect_node lists it, or a path into one such as position:x.");
-        if (checkedOptions.Samples is < 1 or > MaxMonitorSamples)
-        {
-            throw new McpException($"samples must be between 1 and {MaxMonitorSamples}.");
-        }
-
-        if (checkedOptions.Unit is not ("process" or "physics"))
-        {
-            throw new McpException("unit must be process or physics.");
-        }
-
-        return new JsonObject
-        {
-            ["node"] = node,
-            ["property"] = property,
-            ["samples"] = checkedOptions.Samples,
-            ["unit"] = checkedOptions.Unit,
-            ["changesOnly"] = checkedOptions.ChangesOnly,
-            ["deadlineMs"] = (long)StepAllowance(checkedOptions.Samples).TotalMilliseconds,
-        };
     }
 
     /// <summary>The bridge's frame parameters: {action}, plus {count, unit, screenshot} for step and {scale} for time_scale.</summary>

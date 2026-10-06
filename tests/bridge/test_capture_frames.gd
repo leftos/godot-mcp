@@ -84,13 +84,12 @@ func test_a_paused_tree_is_refused() -> void:
 
 func test_a_capture_refuses_and_is_refused_by_the_others() -> void:
 	var time: Node = _time_script.new()
-	time._running = "monitor"
-	assert_eq(time._capture_refusal(false), time.MONITORING_REFUSAL, "while a monitor runs")
 	time._running = "step"
 	assert_eq(time._capture_refusal(false), time.STEPPING_REFUSAL, "while a step runs")
 	time._running = "frames"
 	assert_eq(time._capture_refusal(false), time.CAPTURING_REFUSAL, "while another capture runs")
-	assert_eq(time._monitor_refusal("Main", "position"), time.CAPTURING_REFUSAL, "a monitor")
+	var step: Dictionary = time.frame_control({"action": "step"})
+	assert_eq(step.get("error"), time.CAPTURING_REFUSAL, "a step while a capture runs")
 	time.free()
 
 
