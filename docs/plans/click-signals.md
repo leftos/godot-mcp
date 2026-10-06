@@ -1,6 +1,6 @@
 # Fired signals: a click that reports what it set off
 
-Design draft for Linear GMCP-22, "Design a click that reports the signals it fired" (project "Ideas from the survey and the projects"), from the survey's list of what godot-mcp-runtime had that this server lacks ([survey](../research/2026-09-29-godot-mcp-survey.md) L206), not one of its numbered ideas. It builds on the input targets as decision 25 and [input-targets.md](./input-targets.md) design them, the popup items of that design's step 5 included, not on the code in flight. Section 7's questions are open.
+Design draft for Linear GMCP-22, "Design a click that reports the signals it fired" (project "Ideas from the survey and the projects"), from the survey's list of what godot-mcp-runtime had that this server lacks ([survey](../research/2026-09-29-godot-mcp-survey.md) L206), not one of its numbered ideas. It builds on the input targets as decision 25 and [input-targets.md](./archive/input-targets.md) design them, the popup items of that design's step 5 included, not on the code in flight. Section 7's questions are open.
 
 ## 1. Need
 

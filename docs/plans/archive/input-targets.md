@@ -1,6 +1,6 @@
 # Input targets: world nodes, visible text, list items
 
-Design draft for the plan item "Input aimed at 2D/3D world nodes through the camera, UI targets by visible text, and Tree/ItemList/TabBar/PopupMenu/OptionButton item targets" ([MAIN.md](./MAIN.md), Wave 1), from ideas 7 and 8 of the [survey](../research/2026-09-29-godot-mcp-survey.md). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../DECISIONS.md) decision 25, which wins where this file differs; steps 1 to 5 of section 7 have landed, and step 6 is open.
+Design draft for the plan item "Input aimed at 2D/3D world nodes through the camera, UI targets by visible text, and Tree/ItemList/TabBar/PopupMenu/OptionButton item targets" ([MAIN.md](../MAIN.md), Wave 1), from ideas 7 and 8 of the [survey](../../research/2026-09-29-godot-mcp-survey.md). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../../DECISIONS.md) decision 25, which wins where this file differs; steps 1 to 5 of section 7 have landed, and step 6 is open.
 
 ## 1. Problem
 
@@ -143,7 +143,7 @@ Each step lands on its own with its tests, docs and changelog bullet, and passes
    - `PopupTargetTests` runs on the shared session with the real pads shut out: shut-out answers only application focus changes, not the root Window's focus signals an embedded popup fires, so a popup stays open (GMCP-49).
    - The input module's public gesture API (`aim`, `click_at`, `record_aim`, `motion_event`, `dispatch`, `within`, `drop_press_hits`), which `godot_mcp_popup_targets.gd` calls, carries a file-level `gdlint: disable=max-public-methods`; GMCP-50 splits the module.
    - Follow-up rulings (each the recommended option, recorded on its issue): GMCP-54, the same-instance rule applies to a text match that does nothing on a press (one that ignores the mouse, or any `Label` or `RichTextLabel`; a `RichTextLabel` keeps Stop), only for a hit in the match's window, and a covering Control with no owner (a sibling of the instance root made in code) stays foreign and refused; GMCP-13, `get_ui_elements` lists `items` (`{index, text, hidden?, disabled?}`, a Tree's `{path, text}` for reachable items) on an ItemList, TabBar, TabContainer and Tree, at most 50 with `itemsTotal` beyond; GMCP-14 and GMCP-15 are characterization tests, landed green or with the fix their red run finds.
-6. **After the release that carries them**: the game repos' DEVELOPMENT.md workarounds (delve L67 tabs, options, Host, cards; L77 cards by title) replaced through `godot-mcp-docs-sync`, and question 7 (b) only if the user picks it.
+6. **Done after 0.14.0** (delve-the-dungeon's driving docs checked against 0.14.0 in its 7ae10c0; opening-hand asked to run the same sync by inbox, since its docs were last checked against 0.8.0): the game repos' DEVELOPMENT.md workarounds (delve L67 tabs, options, Host, cards; L77 cards by title) replaced through `godot-mcp-docs-sync`, and question 7 (b) only if the user picks it.
 
 ## 8. Spike results (step 2)
 
