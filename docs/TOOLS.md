@@ -121,6 +121,9 @@ For an agent driving a Godot project through this server: which tool fits a job,
 - **Does:** captures the game's next drawn frame to a PNG under `.godot/godot-mcp/screenshots/` and returns its path and size, plus an image.
 - **Use:** `responseMode` `path_only`, `preview` (default, at most `previewMaxWidth` wide, 480 by default) or `full`; `crop {x, y, width, height}` in viewport coordinates, mapped to the screenshot's pixels: in a window stretched to twice the project's size, the PNG is twice the rectangle's size.
 - **Edges:** the crop is in viewport coordinates (see Rules); a letterboxed window crops the same content, and a crop wholly outside the viewport fails as "the crop (x, y, w, h) lies outside the (W, H) viewport". `path_only` saves context when only the file matters. The capture is the root viewport's texture with every visible popup and tooltip on it: embedded ones (Godot's default) are in the texture, and in a project that sets `display/window/subwindows/embed_subwindows=false`, where each is its own OS window, they are pasted where the window shows them, at any stretch mode and window size. Every capture (baselines, frame steps, `wait_for`, `preview_scene`) does the same.
+- **A before/after pair:** a game that animates (a flickering light, a moving sprite) draws a different frame each time, so two shots of one state differ outside the region under test. Pause it first: `frame_control {action: "pause"}`, shoot, make the change (`set_property`), shoot again, then `frame_control {action: "resume"}`. A paused game still draws a fresh frame for each shot, since the capture waits for the next `RenderingServer.frame_post_draw`.
+
+  Pausing does not stop everything: a shader's `TIME` is "affected by time_scale but not by pausing" ([CanvasItem shaders](https://docs.godotengine.org/en/4.7/tutorials/shaders/shader_reference/canvas_item_shader.html)), and a node whose process mode is Always keeps processing ("Paused or not, this node will process", [Pausing games](https://docs.godotengine.org/en/4.7/tutorials/scripting/pausing_games.html)), so crop those out.
 
 ### `get_ui_elements`
 
@@ -376,7 +379,7 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 - **Does:** stores the next drawn frame as a named baseline under `.godot/godot-mcp/baselines/`: `{name, baselinePath, width, height, crop}`.
 - **Use:** once the game shows the state you want to guard; `name` (1 to 64 letters, digits, `.`, `_`, `-`, starting with a letter or digit), `crop`, `options {overwrite}`.
-- **Edges:** an existing name is refused without `options.overwrite`. Crop to the region under test: a clock or particle elsewhere on screen makes every comparison fail.
+- **Edges:** an existing name is refused without `options.overwrite`. Crop to the region under test: a clock or particle elsewhere on screen makes every comparison fail. Pause an animating game (`frame_control`) before saving and again before comparing, or the animation counts as changed pixels; a shader driven by `TIME` keeps moving while paused (`take_screenshot`'s "A before/after pair").
 
 ### `compare_screenshot`
 

@@ -22,7 +22,9 @@ internal sealed partial class RuntimeTools
         "Captures the running game's next drawn frame and stores it as the baseline named name, under the project's "
             + ".godot/godot-mcp/baselines/ (which git ignores) as <name>.png beside <name>.json, which records the crop, the "
             + "size and when it was saved. compare_screenshot checks the game against it later, in this run or another. An "
-            + "existing name is refused unless options.overwrite is true. Returns {name, baselinePath, width, height, crop}."
+            + "existing name is refused unless options.overwrite is true. Returns {name, baselinePath, width, height, crop}. "
+            + "Pause an animating game with frame_control before saving and before comparing, or compare_screenshot counts "
+            + "the animation as changed pixels."
     )]
     public async Task<string> SaveScreenshotBaselineAsync(
         [Description("The baseline's name: 1-64 letters, digits, '.', '_' or '-', starting with a letter or digit.")] string name,
@@ -65,7 +67,8 @@ internal sealed partial class RuntimeTools
             + "around the changed pixels (null when none) and match changedRatio <= options.maxChangedRatio; when pixels "
             + "changed, also diffPath (a dimmed grey copy with the changed pixels red), diffPreviewPath when scaled down, and "
             + "the diff image unless responseMode is path_only. A mismatch is a result, not an error; a missing baseline or "
-            + "a screenshot of another size fails."
+            + "a screenshot of another size fails. Pause an animating game with frame_control before saving and before "
+            + "comparing, or the animation counts as changed pixels."
     )]
     public async Task<IEnumerable<ContentBlock>> CompareScreenshotAsync(
         [Description("The baseline's name, as save_screenshot_baseline saved it.")] string name,

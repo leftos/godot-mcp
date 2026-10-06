@@ -14,6 +14,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Changed
 
+- `take_screenshot`, `save_screenshot_baseline` and `compare_screenshot` say to pause an animating game with `frame_control` for a before/after pair.
 - A click on a tab scrolled out of a tab bar is refused naming the `scroll` call, or arrow clicks, that bring the tab into view.
 
 ## 0.14.0 - 2026-10-04

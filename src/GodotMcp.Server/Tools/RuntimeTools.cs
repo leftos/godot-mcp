@@ -43,7 +43,9 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     [Description(
         "Captures the running game's next drawn frame and saves it as a PNG under the project's .godot/godot-mcp/screenshots/ "
             + "(which git ignores). Returns the file's absolute path and size, plus an image unless responseMode is path_only: by "
-            + "default a preview at most 480 px wide, saved beside the full-size PNG, whose path is always returned."
+            + "default a preview at most 480 px wide, saved beside the full-size PNG, whose path is always returned. A game "
+            + "that animates draws a different frame each time, so for a before/after pair pause it with frame_control first, "
+            + "take both shots, then resume it."
     )]
     public async Task<IEnumerable<ContentBlock>> TakeScreenshotAsync(
         [Description(ResponseModeDescription)] string responseMode = "preview",
