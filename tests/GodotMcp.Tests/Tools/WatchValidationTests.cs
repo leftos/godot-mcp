@@ -25,10 +25,81 @@ public sealed class WatchValidationTests
     [Fact]
     public void AWatchWithNoTrackIsRefused()
     {
-        const string Message = "tracks needs at least one track: {properties: [{node, property}]} or {expressions: [{name, expression}]}.";
+        const string Message =
+            "tracks needs at least one track: {properties: [{node, property}]}, {expressions: [{name, expression}]} or "
+            + "{signals: [{node, signal}]}.";
 
         Assert.Equal(Message, Refusal(() => RuntimeTools.BuildWatchParameters("start", null, null, null)));
-        Assert.Equal(Message, Refusal(() => RuntimeTools.BuildWatchParameters("run", new WatchTracks([], []), new WatchWindow(Frames: 1), null)));
+        Assert.Equal(Message, Refusal(() => RuntimeTools.BuildWatchParameters("run", new WatchTracks([], [], []), new WatchWindow(Frames: 1), null)));
+    }
+
+    [Fact]
+    public void SixteenSignalTracksAreAcceptedBesideThirtyTwoOthersAndASeventeenthIsRefused()
+    {
+        WatchTracks full = Tracks(20, 12) with { Signals = SignalTracks(16) };
+
+        JsonObject parameters = RuntimeTools.BuildWatchParameters("start", full, null, null);
+
+        Assert.Equal(16, parameters["signals"]!.AsArray().Count);
+        Assert.Equal(
+            "tracks holds 17 signal tracks; at most 16.",
+            Refusal(() => RuntimeTools.BuildWatchParameters("start", new WatchTracks(Signals: SignalTracks(17)), null, null))
+        );
+    }
+
+    [Fact]
+    public void ASignalTrackWithBothOrNeitherOfNodeAndGroupIsRefused()
+    {
+        const string Message = "a signal track takes node or group, not both: {node, signal} or {group, signal}.";
+        WatchTracks both = new(Signals: [new WatchSignalTrack(Node: "Button", Group: "buttons", Signal: "pressed")]);
+        WatchTracks neither = new(Signals: [new WatchSignalTrack(Signal: "pressed")]);
+
+        Assert.Equal(Message, Refusal(() => RuntimeTools.BuildWatchParameters("start", both, null, null)));
+        Assert.Equal(Message, Refusal(() => RuntimeTools.BuildWatchParameters("start", neither, null, null)));
+    }
+
+    [Fact]
+    public void AnEmptySignalNodeOrGroupIsRefused()
+    {
+        Assert.StartsWith("signal is empty.", Refusal(() => BuildSignals(new WatchSignalTrack(Node: "Button"))));
+        Assert.StartsWith("signal is empty.", Refusal(() => BuildSignals(new WatchSignalTrack(Group: "cards", Signal: " "))));
+        Assert.StartsWith("node is empty.", Refusal(() => BuildSignals(new WatchSignalTrack(Node: "", Signal: "pressed"))));
+        Assert.StartsWith("group is empty.", Refusal(() => BuildSignals(new WatchSignalTrack(Group: " ", Signal: "pressed"))));
+    }
+
+    [Fact]
+    public void TwoSignalTracksOnOneNodeOrGroupAndSignalAreRefused()
+    {
+        Assert.Equal(
+            "two signal tracks watch Button and pressed; each pair once.",
+            Refusal(() =>
+                BuildSignals(new WatchSignalTrack(Node: "Button", Signal: "pressed"), new WatchSignalTrack(Node: "Button", Signal: "pressed"))
+            )
+        );
+        Assert.Equal(
+            "two signal tracks watch cards and dealt; each pair once.",
+            Refusal(() => BuildSignals(new WatchSignalTrack(Group: "cards", Signal: "dealt"), new WatchSignalTrack(Group: "cards", Signal: "dealt")))
+        );
+
+        // A node and a group of one name are two different emitters.
+        JsonObject parameters = BuildSignals(
+            new WatchSignalTrack(Node: "cards", Signal: "dealt"),
+            new WatchSignalTrack(Group: "cards", Signal: "dealt")
+        );
+        Assert.Equal(2, parameters["signals"]!.AsArray().Count);
+    }
+
+    [Fact]
+    public void SignalTracksAreSentWithTheirNodeOrGroupAndSignal()
+    {
+        JsonObject parameters = BuildSignals(
+            new WatchSignalTrack(Node: "Main/Button", Signal: "pressed"),
+            new WatchSignalTrack(Group: "cards", Signal: "dealt")
+        );
+
+        Assert.Equal("""[{"node":"Main/Button","signal":"pressed"},{"group":"cards","signal":"dealt"}]""", parameters["signals"]!.ToJsonString());
+        Assert.False(parameters.ContainsKey("properties"));
+        Assert.False(parameters.ContainsKey("expressions"));
     }
 
     [Theory]
@@ -162,6 +233,12 @@ public sealed class WatchValidationTests
             [.. Enumerable.Range(0, properties).Select(index => new WatchPropertyTrack($"Node{index}", "position"))],
             [.. Enumerable.Range(0, expressions).Select(index => new WatchExpressionTrack($"value{index}", "root.get_child_count()"))]
         );
+
+    private static WatchSignalTrack[] SignalTracks(int count) =>
+        [.. Enumerable.Range(0, count).Select(index => new WatchSignalTrack(Node: $"Emitter{index}", Signal: "fired"))];
+
+    private static JsonObject BuildSignals(params WatchSignalTrack[] signals) =>
+        RuntimeTools.BuildWatchParameters("start", new WatchTracks(Signals: signals), null, null);
 
     private static string Refusal(Func<JsonObject> build) => Assert.Throws<McpException>(build).Message;
 }

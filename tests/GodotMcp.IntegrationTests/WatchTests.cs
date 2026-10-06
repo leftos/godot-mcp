@@ -10,7 +10,8 @@ namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// watch against the InputProbe: a WatchMover Node2D added by run_script, whose go() tweens position:x from 0 to 100 over
-/// 0.3 s and whose answer() returns 42, the TimeProbe scene, and an OpenButton that shows a hidden panel. One shared run, reset
+/// 0.3 s and whose answer() returns 42, the TimeProbe scene, an OpenButton that shows a hidden panel, and nodes with user
+/// signals and a WatchJumper that moves and emits moved in one _process once armed. One shared run, reset
 /// before each test, after which a watch a failed test left behind is stopped; batch_drive runs on a server built over the
 /// shared registry, as BatchTests builds it.
 /// </summary>
@@ -22,6 +23,10 @@ public sealed class WatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
     private const string MoverScript =
         "extends Node2D\\n\\n\\nfunc go() -> void:\\n\\tcreate_tween().tween_property(self, 'position:x', 100.0, 0.3)\\n\\n\\n"
         + "func answer() -> int:\\n\\treturn 42\\n";
+    private const string JumperScript =
+        "extends Node2D\\n\\nsignal moved\\n\\nvar armed := false\\nvar moved_delta := 0.0\\n\\n\\n"
+        + "func _process(delta: float) -> void:\\n\\tif armed:\\n\\t\\tarmed = false\\n\\t\\tmoved_delta = delta\\n\\t\\t"
+        + "position.x = 50.0\\n\\t\\tmoved.emit()\\n";
     private readonly SharedProbeSession _shared;
     private readonly ServiceProvider _services;
     private readonly McpServer _server;
@@ -223,6 +228,110 @@ public sealed class WatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
 
         Assert.Contains(RunningRefusal, refused.Message, StringComparison.Ordinal);
         Assert.Equal("stop", timeline["stopped"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SignalsFiredFromRunScriptAreRecordedWithNoneAndSixArguments()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string emitter = (
+            await RunAsync(
+                "var emitter := Node.new()\n\temitter.name = \"WatchEmitter\"\n\temitter.add_user_signal(\"ping\")\n\t"
+                    + "emitter.add_user_signal(\"dealt\")\n\tscene_tree.root.add_child(emitter)\n\treturn str(emitter.get_path())"
+            )
+        ).GetValue<string>();
+        WatchTracks tracks = new(
+            Signals: [new WatchSignalTrack(Node: emitter, Signal: "ping"), new WatchSignalTrack(Node: emitter, Signal: "dealt")]
+        );
+
+        JsonObject started = await WatchAsync("start", cancellation, tracks);
+        await RunAsync(
+            $"var emitter: Node = scene_tree.root.get_node(\"{emitter}\")\n\temitter.emit_signal(\"ping\")\n\t"
+                + "emitter.emit_signal(\"dealt\", 1, 2.5, \"ace\", Vector2(3, 4), emitter, [1, \"two\"])\n\treturn true"
+        );
+        JsonObject timeline = await WatchAsync("stop", cancellation);
+
+        Assert.Equal([1, 1], started["signals"]!.AsArray().Select(track => Int(track!["connected"])));
+        JsonArray events = timeline["events"]!.AsArray();
+        Assert.Equal(["ping", "dealt"], events.Select(item => item![3]!.GetValue<string>()));
+        Assert.Equal("[]", events[0]![4]!.ToJsonString());
+        JsonArray dealt = events[1]![4]!.AsArray();
+        Assert.Equal(6, dealt.Count);
+        Assert.Equal((1, 2.5, "ace", 3), (Int(dealt[0]), dealt[1]!.GetValue<double>(), dealt[2]!.GetValue<string>(), Int(dealt[3]!["x"])));
+        Assert.Contains(emitter, dealt[4]!.ToJsonString(), StringComparison.Ordinal);
+        Assert.Equal(2, dealt[5]!.AsArray().Count);
+        Assert.Equal(1, Int(timeline["eventCounts"]![$"{emitter}:dealt"]));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AGroupTrackRecordsEveryMemberWithTheSignalAndSkipsTheRest()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            "for index in 3:\n\t\tvar card := Node.new()\n\t\tcard.name = \"WatchCard%d\" % index\n\t\tif index < 2:\n\t\t\t"
+                + "card.add_user_signal(\"dealt\")\n\t\tcard.add_to_group(\"watch_cards\")\n\t\tscene_tree.root.add_child(card)\n\t"
+                + "return true"
+        );
+
+        JsonObject started = await WatchAsync(
+            "start",
+            cancellation,
+            // WatchCard0 is also named by a node track first, so it is connected and counted once, under that track.
+            new WatchTracks(
+                Signals: [new WatchSignalTrack(Node: "WatchCard0", Signal: "dealt"), new WatchSignalTrack(Group: "watch_cards", Signal: "dealt")]
+            )
+        );
+        await RunAsync(
+            "scene_tree.root.get_node(\"WatchCard1\").emit_signal(\"dealt\")\n\t"
+                + "scene_tree.root.get_node(\"WatchCard0\").emit_signal(\"dealt\")\n\treturn true"
+        );
+        JsonObject timeline = await WatchAsync("stop", cancellation);
+
+        JsonArray signals = started["signals"]!.AsArray();
+        Assert.Equal(
+            ("/root/WatchCard0", "dealt", 1),
+            (signals[0]!["node"]!.GetValue<string>(), signals[0]!["signal"]!.GetValue<string>(), Int(signals[0]!["connected"]))
+        );
+        Assert.Equal(
+            ("watch_cards", "dealt", 1),
+            (signals[1]!["group"]!.GetValue<string>(), signals[1]!["signal"]!.GetValue<string>(), Int(signals[1]!["connected"]))
+        );
+        Assert.Equal("/root/WatchCard2", started["skipped"]![0]!["node"]!.GetValue<string>());
+        Assert.Equal(["/root/WatchCard1", "/root/WatchCard0"], timeline["events"]!.AsArray().Select(item => item![2]!.GetValue<string>()));
+        Assert.Equal(1, Int(timeline["eventCounts"]!["/root/WatchCard0:dealt"]));
+        Assert.Equal("no signal 'dealt'", timeline["skipped"]![0]!["reason"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ASignalEmittedBesideAPropertyChangeIsStampedTheFrameBeforeTheChangeIsSampled()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string jumper = (
+            await RunAsync(
+                "var jumper := Node2D.new()\n\tjumper.name = \"WatchJumper\"\n\tvar script := GDScript.new()\n\t"
+                    + $"script.source_code = \"{JumperScript}\"\n\tscript.reload()\n\tjumper.set_script(script)\n\t"
+                    + "scene_tree.root.add_child(jumper)\n\treturn str(jumper.get_path())"
+            )
+        ).GetValue<string>();
+        WatchTracks tracks = new(
+            Properties: [new WatchPropertyTrack(jumper, "position:x")],
+            Signals: [new WatchSignalTrack(Node: jumper, Signal: "moved")]
+        );
+
+        await WatchAsync("start", cancellation, tracks);
+        await RunAsync($"scene_tree.root.get_node(\"{jumper}\").armed = true\n\treturn true");
+        await _tools.WaitForAsync(new WaitCondition(Frames: 3), cancellationToken: cancellation);
+        JsonObject timeline = await WatchAsync("stop", cancellation);
+
+        JsonArray points = timeline["tracks"]![0]!["points"]!.AsArray();
+        Assert.Equal(2, points.Count);
+        Assert.Equal(50, points[1]![2]!.GetValue<double>());
+        JsonArray moved = timeline["events"]![0]!.AsArray();
+        Assert.Equal(Int(points[1]![0]) - 1, Int(moved[0]));
+        // The signal's game time is its own frame's sample time, that frame's delta (which the jumper kept) before the
+        // change's; each is floored to a millisecond.
+        double deltaMs = (await RunAsync($"return scene_tree.root.get_node(\"{jumper}\").moved_delta")).GetValue<double>() * 1000;
+        Assert.InRange(Int(points[1]![1]) - Int(moved[1]) - deltaMs, -1, 1);
     }
 
     private async Task<JsonObject> WatchAsync(

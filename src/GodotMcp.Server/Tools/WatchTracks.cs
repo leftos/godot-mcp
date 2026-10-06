@@ -2,7 +2,10 @@ using System.ComponentModel;
 
 namespace GodotMcp.Server.Tools;
 
-/// <summary>What a watch samples each frame: properties of nodes and Godot Expressions, at most 32 together.</summary>
+/// <summary>
+/// What a watch samples each frame and the signals it records: properties of nodes and Godot Expressions (at most 32 together)
+/// and signals (at most 16 tracks).
+/// </summary>
 internal sealed record WatchTracks(
     [property: Description(
         "Property tracks, each {node, property, name?, minDelta?}: a property of a node, or a path into one as wait_for takes it "
@@ -13,7 +16,20 @@ internal sealed record WatchTracks(
         "Expression tracks, each {name, expression, node?, minDelta?}: a Godot Expression run each frame with wait_for's inputs "
             + "(node when given, root, tree, Input, Engine), such as root.gui_get_focus_owner() or node.get_children()."
     )]
-        WatchExpressionTrack[]? Expressions = null
+        WatchExpressionTrack[]? Expressions = null,
+    [property: Description(
+        "Signal tracks, each {node, signal} or {group, signal}: every emission is recorded with its frame, game time, emitter and "
+            + "arguments; a group is resolved once at start, and a member without the signal is listed in skipped. At most 16, "
+            + "connecting at most 200 nodes."
+    )]
+        WatchSignalTrack[]? Signals = null
+);
+
+/// <summary>A signal a watch records each emission of, on one node or on every member of a group.</summary>
+internal sealed record WatchSignalTrack(
+    [property: Description("The emitting node, named as a property track's node; give node or group, not both.")] string? Node = null,
+    [property: Description("A group: every node in it at start that has the signal is connected.")] string? Group = null,
+    [property: Description("The signal's name, as Godot lists it (a C# [Signal] without its EventHandler suffix).")] string Signal = ""
 );
 
 /// <summary>A property of a node a watch samples each frame.</summary>

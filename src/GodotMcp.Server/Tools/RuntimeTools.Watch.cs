@@ -8,28 +8,35 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// watch: properties and expressions of the running game sampled once a frame over a window, beside every other tool, and
-/// returned as each track's change points. The bridge (bridge/godot_mcp_watch.gd) samples and keeps the points; the server
-/// checks the request and shapes the timeline (<see cref="WatchTimeline"/>).
+/// returned as each track's change points, with the emissions of the signals it watches. The bridge
+/// (bridge/godot_mcp_watch.gd) samples and keeps the points and events; the server checks the request and shapes the
+/// timeline (<see cref="WatchTimeline"/>).
 /// </summary>
 internal sealed partial class RuntimeTools
 {
     internal const string WatchToolName = "watch";
     internal const int MaxWatchTracks = 32;
+    internal const int MaxWatchSignalTracks = 16;
     internal const int DefaultWatchFrames = 600;
     private const string WatchCommand = "watch";
     private static readonly string[] WatchActions = ["start", "stop", "run"];
 
     [McpServerTool(Name = WatchToolName, ReadOnly = false, Destructive = true, OpenWorld = false)]
     [Description(
-        "Watches properties and expressions of the running game once a frame over a window and returns how they changed. "
-            + "start begins a watch and answers after its first frame with {startFrame, tracks[, call]}; any other tool runs "
+        "Watches properties and expressions of the running game once a frame over a window, and records the signals it emits, "
+            + "and returns how they changed. "
+            + "start begins a watch and answers after its first frame with {startFrame, tracks, signals?, skipped?[, call]}; any other tool runs "
             + "meanwhile (input, waits, captures, run_script, frame_control steps); stop ends it (or collects one whose window "
             + "ended) and returns its timeline; run starts one, waits for its window and returns the timeline in one call. One "
             + "watch per session: a second start or run is refused while one runs or holds an uncollected timeline. Each frame is "
-            + "sampled at its start, before the nodes' _process, so a value set in frame N shows at sample N+1. Frames that find "
+            + "sampled at its start, before the nodes' _process, so a value set in frame N shows at sample N+1. A signal is "
+            + "stamped with the frame it fires in, so a signal emitted beside that value in frame N's _process is stamped N. "
+            + "Frames that find "
             + "the game paused are not sampled nor counted toward the window, and are listed in paused; frame_control steps count. "
             + "The timeline: {startFrame, frames, gameMs, wallMs, paused?: [[from, to]], stopped?, call?, tracks: [{name?, node?, "
-            + "property?, first, last, changes, points: [[frame, gameMs, value]], dropped?, cut?, min?, max?, minAt?, maxAt?}]}. "
+            + "property?, first, last, changes, points: [[frame, gameMs, value]], dropped?, cut?, min?, max?, minAt?, maxAt?}], "
+            + "events?: [[frame, gameMs, node, signal, args]], eventCounts?: {\"<node>:<signal>\": n}, eventsDropped?, eventsCut?, skipped?, "
+            + "skippedTotal?}. "
             + "startFrame is Engine.get_process_frames() at the watch's first frame (Engine.get_physics_frames() with unit "
             + "physics) and every frame counts from 0 there; gameMs "
             + "is game time since then; frames and gameMs count the unpaused frames sampled. points are the change points: a "
@@ -40,14 +47,17 @@ internal sealed partial class RuntimeTools
             + "counted in cut. A node freed during the window reads {\"$freed\": true} once and its track stops; an expression "
             + "that fails reads {\"$error\": text} and goes on. stopped is stop (a stop ended it early) or deadline (its "
             + "deadline passed: the window's allowance, 10 s + 100 ms a frame or gameMs + 10 s, at most 600 s, plus the time a "
-            + "started watch spends paused, up to 600 s). Expressions and options.call run game code. A restart, a stop_project "
+            + "started watch spends paused, up to 600 s). events lists every signal track's emissions in order, at most 300 shared "
+            + "fairly across signal tracks (each keeps its earliest), and eventCounts counts every emission; a freed emitter's "
+            + "signals stop. Expressions and options.call run game code. A restart, a stop_project "
             + "or a lost connection drops the watch."
     )]
     public async Task<string> WatchAsync(
         [Description("start, stop or run.")] string action,
         [Description(
-            "start and run: {properties: [{node, property, name?, minDelta?}], expressions: [{name, expression, node?, minDelta?}]}, "
-                + "at least one track and at most 32 together; each track's key (name, else node and property) must be unique."
+            "start and run: {properties: [{node, property, name?, minDelta?}], expressions: [{name, expression, node?, minDelta?}], "
+                + "signals: [{node | group, signal}]}, at least one track; at most 32 property and expression tracks, each with a "
+                + "unique key (name, else node and property), and at most 16 signal tracks."
         )]
             WatchTracks? tracks = null,
         [Description(
@@ -70,13 +80,14 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>
-    /// The bridge's watch parameters: {action} for stop; for start and run {action, properties?, expressions?, frames | gameMs,
-    /// unit, call?, deadlineMs}, deadlineMs the window's allowance (<see cref="WatchAllowance"/>).
+    /// The bridge's watch parameters: {action} for stop; for start and run {action, properties?, expressions?, signals?, frames |
+    /// gameMs, unit, call?, deadlineMs}, deadlineMs the window's allowance (<see cref="WatchAllowance"/>).
     /// </summary>
     /// <exception cref="McpException">An unknown action; stop given tracks, a window or options; no track, more than
-    /// <see cref="MaxWatchTracks"/>, an empty node, property, name or expression, a minDelta not above 0, or two tracks with
-    /// one key; a window without exactly one of frames or gameMs, or out of range; run without a window; or a unit other than
-    /// process or physics.</exception>
+    /// <see cref="MaxWatchTracks"/> property and expression tracks or <see cref="MaxWatchSignalTracks"/> signal tracks, an empty
+    /// node, property, name, expression, group or signal, a minDelta not above 0, two tracks with one key, a signal track with
+    /// both or neither of node and group, or two signal tracks on one emitter and signal; a window without exactly one of
+    /// frames or gameMs, or out of range; run without a window; or a unit other than process or physics.</exception>
     internal static JsonObject BuildWatchParameters(string action, WatchTracks? tracks, WatchWindow? window, WatchOptions? options)
     {
         if (!WatchActions.Contains(action))
@@ -126,9 +137,21 @@ internal sealed partial class RuntimeTools
 
     private static void AddWatchTracks(JsonObject parameters, WatchTracks? tracks)
     {
-        WatchPropertyTrack[] properties = tracks?.Properties ?? [];
-        WatchExpressionTrack[] expressions = tracks?.Expressions ?? [];
-        CheckTrackCount(properties.Length + expressions.Length);
+        WatchTracks given = tracks ?? new WatchTracks();
+        WatchPropertyTrack[] properties = given.Properties ?? [];
+        WatchExpressionTrack[] expressions = given.Expressions ?? [];
+        WatchSignalTrack[] signals = given.Signals ?? [];
+        CheckTrackCount(properties.Length + expressions.Length, signals.Length);
+        AddValueTracks(parameters, properties, expressions);
+        if (signals.Length > 0)
+        {
+            HashSet<string> pairs = new(StringComparer.Ordinal);
+            parameters["signals"] = new JsonArray([.. signals.Select(track => SignalTrackParameters(track, pairs))]);
+        }
+    }
+
+    private static void AddValueTracks(JsonObject parameters, WatchPropertyTrack[] properties, WatchExpressionTrack[] expressions)
+    {
         HashSet<string> keys = new(StringComparer.Ordinal);
         if (properties.Length > 0)
         {
@@ -141,17 +164,55 @@ internal sealed partial class RuntimeTools
         }
     }
 
-    private static void CheckTrackCount(int count)
+    private static void CheckTrackCount(int valueTracks, int signalTracks)
     {
-        if (count == 0)
+        if (valueTracks + signalTracks == 0)
         {
-            throw new McpException("tracks needs at least one track: {properties: [{node, property}]} or {expressions: [{name, expression}]}.");
+            throw new McpException(
+                "tracks needs at least one track: {properties: [{node, property}]}, {expressions: [{name, expression}]} or "
+                    + "{signals: [{node, signal}]}."
+            );
         }
 
-        if (count > MaxWatchTracks)
+        if (valueTracks > MaxWatchTracks)
         {
-            throw new McpException($"tracks holds {count} property and expression tracks; at most {MaxWatchTracks} together.");
+            throw new McpException($"tracks holds {valueTracks} property and expression tracks; at most {MaxWatchTracks} together.");
         }
+
+        if (signalTracks > MaxWatchSignalTracks)
+        {
+            throw new McpException($"tracks holds {signalTracks} signal tracks; at most {MaxWatchSignalTracks}.");
+        }
+    }
+
+    /// <summary>A signal track's parameters, {node, signal} or {group, signal}; <paramref name="pairs"/> holds the emitter and
+    /// signal of every track before it, a node and a group of one name apart.</summary>
+    private static JsonObject SignalTrackParameters(WatchSignalTrack? track, HashSet<string> pairs)
+    {
+        if (track is null)
+        {
+            throw new McpException("signals holds a null track; each is {node, signal} or {group, signal}.");
+        }
+
+        if ((track.Node is null) == (track.Group is null))
+        {
+            throw new McpException("a signal track takes node or group, not both: {node, signal} or {group, signal}.");
+        }
+
+        JsonObject parameters = track.Node is { } node
+            ? new JsonObject { ["node"] = CheckNode(node) }
+            : new JsonObject { ["group"] = CheckName(track.Group!, "group", "Pass a group's name, as add_to_group takes it.") };
+        string signal = CheckName(
+            track.Signal,
+            "signal",
+            "Pass a signal's name as Godot lists it, such as pressed (a C# [Signal] without its EventHandler suffix)."
+        );
+        parameters["signal"] = signal;
+        string emitter = track.Node ?? track.Group!;
+        string kind = track.Node is null ? "group" : "node";
+        return pairs.Add($"{kind}\n{emitter}\n{signal}")
+            ? parameters
+            : throw new McpException($"two signal tracks watch {emitter} and {signal}; each pair once.");
     }
 
     private static JsonObject PropertyTrackParameters(WatchPropertyTrack? track, HashSet<string> keys)

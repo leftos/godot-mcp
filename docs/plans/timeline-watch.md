@@ -192,7 +192,7 @@ Each step lands on its own with its tests, docs and changelog bullet, and passes
    - A failing expression's `{"$error": text}` is kept again only when the text changes, by the change-point rule; expression failures stay out of the error feed (the expression runs with `show_error` off), so section 4's "the bridge's error feed across the call" does not hold.
    - The 40000-character cut counts its loss per track in `cut`, and each track keeps at least its first and last point.
    - A named property track keeps its `node` and `property` beside `name`, in `start`'s reply and in the timeline.
-3. **Signal tracks**: node and group signals, the merged `events`, the fair share, `skipped`; the CsProbe `[Signal]` and `CSharpWatchTests`. Decided at briefing (2026-10-06, each the recommended option, recorded on GMCP-19), settling section 2 where its lines disagree:
+3. **Done: signal tracks**: node and group signals, the merged `events`, the fair share, `skipped`; the CsProbe `[Signal]` and `CSharpWatchTests`. Decided at briefing (2026-10-06, each the recommended option, recorded on GMCP-19), settling section 2 where its lines disagree:
    - The bridge keeps each signal track's first 300 events and counts the rest; the server applies the 300-event fair share and the 40000-character cut, so section 2's "the point and event caps are the bridge's" holds for the per-track buffer only.
    - An event is `[frame, gameMs, node, signal, args]` (section 2's `[frame, node, args]` is superseded), `args` always an array, converted at emission; once a track holds 300 events later emissions are counted, not converted.
    - `eventCounts` is keyed `"<node path>:<signal>"`, one key per connected node; the fair share counts a `{group, signal}` track as one track.

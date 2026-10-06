@@ -1,7 +1,9 @@
+# gdlint: disable=max-public-methods
 extends "res://gd_test.gd"
 ## The watch (bridge/godot_mcp_watch.gd): its window clock, change points and caps, minDelta, freed
-## nodes, expression errors and its one-watch rule. Frames are fed to advance by hand, so no frame
-## runs; the watched nodes are in no tree, so the watch names them by their names.
+## nodes, expression errors, signal tracks and its one-watch rule. Frames are fed to advance by
+## hand, so no frame runs; the watched nodes are in no tree, so the watch names them by their
+## names, and a signal's frame count and a group's members come from the test.
 # gdlint: disable=private-method-call
 
 ## Stands in for the tree's process_frame, so the watch's connection can be read.
@@ -375,6 +377,246 @@ func test_unit_physics_samples_on_the_physics_frame() -> void:
 	watch.stop()
 	assert_true(not tree.physics_frame.is_connected(handler), "a stop lets go")
 	_free(rig)
+
+
+func test_a_node_signal_is_recorded_with_its_frame_game_time_and_arguments() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var mover: Node = rig["mover"]
+	mover.add_user_signal("hit")
+	mover.add_user_signal("ping")
+	var count: Array = _count_frames(watch, 10)
+	var params: Dictionary = {
+		"signals": [{"node": "Mover", "signal": "hit"}, {"node": "Mover", "signal": "ping"}],
+		"frames": 5,
+	}
+	assert_eq(watch.begin(params, test_frame), "", "begins")
+	var running: Dictionary = watch._watch
+	watch.advance(running, false, 10, 0.25, 0)
+	mover.emit_signal("hit", 1, "two", Vector2(3, 4))
+	var started: Dictionary = watch._started(running)
+	var wanted: Array = [
+		{"node": "Mover", "signal": "hit", "connected": 1},
+		{"node": "Mover", "signal": "ping", "connected": 1},
+	]
+	assert_eq(started["signals"], wanted, "start lists each signal track")
+	assert_true(not started.has("skipped"), "nothing skipped")
+	watch.advance(running, false, 11, 0.25, 10)
+	count[0] = 11
+	mover.emit_signal("ping")
+	count[0] = 12
+	mover.emit_signal("ping")
+	var result: Dictionary = watch.stop()["result"]
+	var events: Array = [
+		[0, 0, "Mover", "hit", [1, "two", {"x": 3.0, "y": 4.0}], 0],
+		[1, 250, "Mover", "ping", [], 1],
+		[2, 500, "Mover", "ping", [], 1],
+	]
+	assert_eq(
+		result["events"], events, "each stamped with its frame and the clock before its delta"
+	)
+	assert_eq(result["eventCounts"], {"Mover:hit": 1, "Mover:ping": 2}, "counts")
+	var tracks: Array = [{"kept": 1, "total": 1}, {"kept": 2, "total": 2}]
+	assert_eq(result["eventTracks"], tracks, "each track's counts")
+	_free(rig)
+
+
+func test_a_watch_without_signal_tracks_has_no_events() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	watch.begin(_rotation(1), test_frame)
+	watch.advance(watch._watch, false, 0, 0.25, 0)
+	var started: Dictionary = watch._started(watch._watch)
+	var result: Dictionary = watch.stop()["result"]
+	assert_true(not started.has("signals"), "no signals in start's reply")
+	for key: String in ["events", "eventCounts", "eventTracks", "skipped"]:
+		assert_true(not result.has(key), "no %s" % key)
+	_free(rig)
+
+
+func test_a_missing_node_or_signal_is_refused() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var lacking: Dictionary = {"signals": [{"node": "Mover", "signal": "nope"}], "frames": 1}
+	assert_eq(watch.begin(lacking, test_frame), "Mover has no signal 'nope'", "a missing signal")
+	var missing: Dictionary = {"signals": [{"node": "Ghost", "signal": "hit"}], "frames": 1}
+	assert_true(watch.begin(missing, test_frame).contains("Ghost"), "a missing node")
+	assert_eq(watch._watch, {}, "no watch begins")
+	_free(rig)
+
+
+func test_a_group_track_connects_the_members_with_the_signal_and_skips_the_rest() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var cards: Array = _in_group(rig, "cards", 2, "dealt")
+	var plain := Node.new()
+	plain.name = "Plain"
+	plain.add_to_group("cards")
+	rig["top"].add_child(plain)
+	var params: Dictionary = {"signals": [{"group": "cards", "signal": "dealt"}], "frames": 5}
+	assert_eq(watch.begin(params, test_frame), "", "begins")
+	watch.advance(watch._watch, false, 0, 0.25, 0)
+	cards[1].emit_signal("dealt", 7)
+	cards[0].emit_signal("dealt", 8)
+	var skipped: Array = [{"node": "Plain", "reason": "no signal 'dealt'"}]
+	var started: Dictionary = watch._started(watch._watch)
+	assert_eq(started["signals"], [{"group": "cards", "signal": "dealt", "connected": 2}], "two")
+	assert_eq(started["skipped"], skipped, "the member without it")
+	var result: Dictionary = watch.stop()["result"]
+	var nodes: Array = result["events"].map(func(event: Array) -> Variant: return event[2])
+	assert_eq(nodes, ["Card1", "Card0"], "in emission order")
+	assert_eq(result["skipped"], skipped, "skipped again in the timeline")
+	var none: Dictionary = {"signals": [{"group": "cards", "signal": "nope"}], "frames": 1}
+	assert_eq(watch.begin(none, test_frame), "no node in group 'cards' has signal 'nope'", "")
+	var empty: Dictionary = {"signals": [{"group": "nobody", "signal": "dealt"}], "frames": 1}
+	assert_eq(watch.begin(empty, test_frame), "group 'nobody' has no nodes", "an empty group")
+	_free(rig)
+
+
+func test_signal_tracks_connecting_over_200_nodes_are_refused() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var many: Array = _in_group(rig, "many", 201, "went")
+	var params: Dictionary = {"signals": [{"group": "many", "signal": "went"}], "frames": 1}
+	var refusal: String = watch.begin(params, test_frame)
+	assert_eq(refusal, _watch_script.CONNECTIONS_REFUSAL % 201, "201 nodes")
+	assert_true(refusal.begins_with("the signal tracks connect 201 nodes; at most 200"), refusal)
+	assert_eq(many[0].get_signal_connection_list("went"), [], "nothing connected")
+	assert_eq(watch._watch, {}, "no watch begins")
+	_free(rig)
+
+
+func test_an_emission_while_paused_or_before_the_first_sample_is_recorded() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var mover: Node = rig["mover"]
+	mover.add_user_signal("ping")
+	var count: Array = _count_frames(watch, 40)
+	watch.begin({"signals": [{"node": "Mover", "signal": "ping"}], "frames": 5}, test_frame)
+	var running: Dictionary = watch._watch
+	mover.emit_signal("ping")
+	watch.advance(running, false, 40, 0.25, 0)
+	watch.advance(running, true, 41, 0.25, 10)
+	count[0] = 41
+	mover.emit_signal("ping")
+	var events: Array = watch.stop()["result"]["events"]
+	var stamps: Array = events.map(func(event: Array) -> Array: return event.slice(0, 2))
+	assert_eq(stamps, [[0, 0], [1, 250]], "frame 0 before the first sample; a paused frame too")
+	_free(rig)
+
+
+func test_a_signal_track_keeps_its_first_300_events_and_counts_the_rest() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var mover: Node = rig["mover"]
+	mover.add_user_signal("ping")
+	_count_frames(watch, 0)
+	watch.begin({"signals": [{"node": "Mover", "signal": "ping"}], "frames": 5}, test_frame)
+	watch.advance(watch._watch, false, 0, 0.25, 0)
+	for index in 350:
+		mover.emit_signal("ping", index)
+	var result: Dictionary = watch.stop()["result"]
+	assert_eq(result["events"].size(), 300, "the first 300")
+	assert_eq(result["events"][299][4], [299], "in order")
+	assert_eq(result["eventTracks"], [{"kept": 300, "total": 350}], "kept and total")
+	assert_eq(result["eventCounts"], {"Mover:ping": 350}, "every emission counted")
+	_free(rig)
+
+
+func test_a_freed_emitter_simply_stops() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var mover: Node = rig["mover"]
+	mover.add_user_signal("ping")
+	_count_frames(watch, 0)
+	watch.begin({"signals": [{"node": "Mover", "signal": "ping"}], "frames": 5}, test_frame)
+	watch.advance(watch._watch, false, 0, 0.25, 0)
+	mover.emit_signal("ping")
+	mover.free()
+	watch.advance(watch._watch, false, 1, 0.25, 10)
+	var result: Dictionary = watch.stop()["result"]
+	assert_eq(result["events"].size(), 1, "the one emission")
+	assert_eq(result["eventCounts"], {"Mover:ping": 1}, "counted")
+	_free(rig)
+
+
+func test_stop_cancel_and_drop_disconnect_every_signal() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var mover: Node = rig["mover"]
+	mover.add_user_signal("ping")
+	for ending: String in ["stop", "cancel", "drop running", "drop held", "window"]:
+		var params: Dictionary = {"signals": [{"node": "Mover", "signal": "ping"}], "frames": 1}
+		watch.begin(params, test_frame)
+		var running: Dictionary = watch._watch
+		var handler: Callable = running["connections"][0][2]
+		assert_true(mover.is_connected("ping", handler), "%s: connected" % ending)
+		if ending in ["drop held", "window"]:
+			watch.advance(running, false, 0, 0.25, 0)
+		match ending:
+			"stop", "window":
+				watch.stop()
+			"cancel":
+				watch.cancel(params)
+				assert_true(not mover.is_connected("ping", handler), "cancel itself disconnects")
+				watch.stop()
+			_:
+				watch.drop()
+		assert_true(not mover.is_connected("ping", handler), "%s: disconnected" % ending)
+		assert_eq(running["connections"], [], "%s: let go" % ending)
+	_free(rig)
+
+
+func test_a_node_two_tracks_name_is_connected_and_counted_once() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var mover: Node = rig["mover"]
+	mover.add_user_signal("ping")
+	mover.add_to_group("movers")
+	_in_group(rig, "movers", 0, "ping")
+	_count_frames(watch, 0)
+	var params: Dictionary = {
+		"signals": [{"node": "Mover", "signal": "ping"}, {"group": "movers", "signal": "ping"}],
+		"frames": 5,
+	}
+	assert_eq(watch.begin(params, test_frame), "", "begins")
+	watch.advance(watch._watch, false, 0, 0.25, 0)
+	assert_eq(mover.get_signal_connection_list("ping").size(), 1, "one connection")
+	var started: Dictionary = watch._started(watch._watch)
+	var connected: Array = started["signals"].map(
+		func(track: Dictionary) -> int: return track["connected"]
+	)
+	assert_eq(connected, [1, 0], "the first track that names it connects it")
+	mover.emit_signal("ping")
+	var result: Dictionary = watch.stop()["result"]
+	assert_eq(result["eventCounts"], {"Mover:ping": 1}, "counted once")
+	assert_eq(result["events"], [[0, 0, "Mover", "ping", [], 0]], "one event, the first track's")
+	_free(rig)
+
+
+## Sets the watch's frame counter to read count[0], starting at first, and returns count.
+func _count_frames(watch: Node, first: int) -> Array:
+	var count: Array = [first]
+	watch.frame_counter = func(_physics: bool) -> int: return count[0]
+	return count
+
+
+## Adds size nodes Card<n> under the rig's top to group, each with the user signal signal_name,
+## and has the watch find a group's members among top's children (gdtest runs before the root
+## enters the tree, so the tree has no groups); returns them.
+func _in_group(rig: Dictionary, group: String, size: int, signal_name: String) -> Array:
+	var top: Node = rig["top"]
+	rig["watch"].group_members = func(wanted: String) -> Array:
+		return top.get_children().filter(func(node: Node) -> bool: return node.is_in_group(wanted))
+	var nodes: Array = []
+	for index in size:
+		var node := Node.new()
+		node.name = "Card%d" % index
+		node.add_user_signal(signal_name)
+		node.add_to_group(group)
+		rig["top"].add_child(node)
+		nodes.append(node)
+	return nodes
 
 
 ## Starts a watch through _start, which answers into outcome once it resumes.

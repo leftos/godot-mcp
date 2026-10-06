@@ -152,7 +152,7 @@ $itestGroups = [ordered]@{
     headless  = @('HeadlessTests', 'HeadlessMeshTests', 'WarmHeadlessTests')
     scene     = @('HeadlessSceneTests', 'HeadlessBatchTests')
     nodes     = @('HeadlessPropertyTests', 'HeadlessSignalTests')
-    csharp    = @('CSharpToolTests', 'GameToolTests', 'CSharpStateTests')
+    csharp    = @('CSharpToolTests', 'GameToolTests', 'CSharpStateTests', 'CSharpWatchTests')
     scratch   = @('ScratchRunnerTests')
 }
 # The lanes the groups run in: each lane's groups one at a time in this order, the lanes at once. The timing lane keeps
@@ -206,8 +206,8 @@ $itestRules = @(
     @('src/GodotMcp.Server/Tools/RuntimeTools.Gamepad*.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Stress*.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Capture*.cs', 'input'),
-    @('src/GodotMcp.Server/Tools/RuntimeTools.Watch*.cs', 'time'),
-    @('src/GodotMcp.Server/Tools/Watch*.cs', 'time'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Watch*.cs', @('time', 'csharp')),
+    @('src/GodotMcp.Server/Tools/Watch*.cs', @('time', 'csharp')),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Time*.cs', @('time', 'scratch')),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Frames*.cs', 'time'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Batch*.cs', 'time'),

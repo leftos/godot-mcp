@@ -6,6 +6,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Added
 
+- `watch` records signals of a node or a group as `tracks.signals`, returning every emission with its frame, game time and arguments.
 - `wait_for` takes `options.then`, a method call and a time scale run once in the frame its condition is met.
 
 ### Changed

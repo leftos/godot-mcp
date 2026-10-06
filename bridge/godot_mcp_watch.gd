@@ -9,9 +9,11 @@ extends Node
 ## paused is neither sampled nor counted toward the window, and is listed in paused. Values are read
 ## raw and converted to JSON only when kept: a sample is kept when it differs from the last kept
 ## one, and a track keeps its first FIRST_POINTS change points and a ring of its last LAST_POINTS,
-## counting the ones between in dropped. One watch runs at a time; one whose window ended holds its
-## timeline until a stop collects it. It never takes the clock's running mark, so steps, waits and
-## captures run beside it.
+## counting the ones between in dropped. A signal track connects a variadic lambda to a node, or to
+## every member of a group at start that has the signal, and records each emission with the frame
+## it fires in; it keeps its first TRACK_EVENTS and counts the rest. One watch runs at a time; one
+## whose window ended holds its timeline until a stop collects it. It never takes the clock's
+## running mark, so steps, waits and captures run beside it.
 
 ## Emitted when the watch's first frame has run and when a watch ends.
 signal changed
@@ -21,6 +23,12 @@ const CONDITIONS_SCRIPT := "godot_mcp_conditions.gd"
 ## The change points a track keeps from its start, and from its end in a ring.
 const FIRST_POINTS := 200
 const LAST_POINTS := 50
+## The events a signal track keeps; past them it only counts its emissions.
+const TRACK_EVENTS := 300
+## The most nodes a watch's signal tracks connect together.
+const MAX_CONNECTIONS := 200
+## The most skipped group members a reply lists.
+const MAX_SKIPPED := 50
 ## The most real time a watch's deadline grows by while the game is paused.
 const MAX_PAUSED_MS := 600000
 ## The window when the request names none, as the server sends it.
@@ -63,9 +71,19 @@ const ENDED_EARLY := "The watch ended before its first frame; start it again."
 const MIN_DELTA_REFUSAL := (
 	"minDelta applies to a numeric track (an int, a float or a vector); " + "track '%s' reads %s."
 )
+const CONNECTIONS_REFUSAL := (
+	"the signal tracks connect %d nodes; at most 200 (narrow a group track or watch a signal on "
+	+ "a parent)"
+)
 
 ## The bridge (godot_mcp_bridge.gd), set by it before this node enters the tree.
 var bridge: Node
+## The engine's frame count now, given whether the watch counts physics ticks: what a signal's
+## emission is stamped with (_engine_frames; a test sets its own).
+var frame_counter: Callable
+## A group's nodes now, in tree order: what a group track connects (_tree_group; a test, whose nodes
+## are in no tree, sets its own).
+var group_members: Callable
 ## The clock's script, for its game clock and its JSON comparison.
 var _time_script: GDScript
 ## The conditions' script, for its expression inputs and its condition parse.
@@ -80,11 +98,22 @@ func _init() -> void:
 	var script_dir: String = (get_script() as Script).resource_path.get_base_dir()
 	_time_script = load(script_dir.path_join(TIME_SCRIPT)) as GDScript
 	_conditions_script = load(script_dir.path_join(CONDITIONS_SCRIPT)) as GDScript
+	frame_counter = _engine_frames
+	group_members = _tree_group
 
 
-## Runs a watch request, {action: "start" | "run" | "stop", properties, expressions, frames |
-## gameMs, unit, call, deadlineMs[, backstopMs]}; answers {result} or {error}. start answers after
-## the watch's first frame with {startFrame, tracks[, call]}; run answers the timeline when the
+func _engine_frames(physics: bool) -> int:
+	return Engine.get_physics_frames() if physics else Engine.get_process_frames()
+
+
+func _tree_group(group: String) -> Array:
+	return (Engine.get_main_loop() as SceneTree).get_nodes_in_group(group)
+
+
+## Runs a watch request, {action: "start" | "run" | "stop", properties, expressions, signals,
+## frames | gameMs, unit, call, deadlineMs[, backstopMs]}; answers {result} or {error}. start
+## answers after the watch's first frame with {startFrame, tracks[, signals, skipped, call]}; run
+## answers the timeline when the
 ## window ends; stop ends the watch and answers its timeline (_collect).
 func handle(params: Dictionary) -> Dictionary:
 	var action: String = str(params.get("action", ""))
@@ -147,9 +176,16 @@ func begin(params: Dictionary, source: Signal) -> String:
 	var refusal: String = _resolve(params.get("properties"), _property_track, tracks)
 	if refusal.is_empty():
 		refusal = _resolve(params.get("expressions"), _expression_track, tracks)
+	var signals: Array = []
+	if refusal.is_empty():
+		refusal = _resolve(params.get("signals"), _signal_track, signals)
+	if refusal.is_empty():
+		refusal = _connections_refusal(signals)
 	if not refusal.is_empty():
 		return refusal
 	_watch = _new_watch(params, tracks, source)
+	_watch["signals"] = signals
+	_connect_signals(_watch)
 	source.connect(_watch["handler"])
 	return ""
 
@@ -175,7 +211,9 @@ func _resolve(specs: Variant, make: Callable, tracks: Array) -> String:
 ## A watch: its state (running, then held), the request's params (a cancel matches them), its
 ## tracks, the frame signal and its handler, the window (kind frames or gameMs, and its target), the
 ## deadline and the real time paused so far, the game clock, the first frame's number and time, the
-## paused ranges, why it stopped early, the call's {value}, and an error that ends it.
+## paused ranges, why it stopped early, the call's {value}, an error that ends it, and for signal
+## tracks the kept events, each emitter's count, the connections, and the last frame's engine
+## count and game time (an emission in it is stamped with that time).
 func _new_watch(params: Dictionary, tracks: Array, source: Signal) -> Dictionary:
 	var physics: bool = str(params.get("unit", "process")) == "physics"
 	var kind: String = "gameMs" if params.has("gameMs") else "frames"
@@ -200,6 +238,12 @@ func _new_watch(params: Dictionary, tracks: Array, source: Signal) -> Dictionary
 		"call": {},
 		"error": "",
 		"run": false,
+		"signals": [],
+		"events": [],
+		"event_counts": {},
+		"connections": [],
+		"frame_count": -1,
+		"frame_ms": 0,
 	}
 	watch["handler"] = _on_frame.bind(watch)
 	return watch
@@ -242,6 +286,136 @@ func _expression_track(spec: Dictionary) -> Variant:
 	var track: Dictionary = _new_track(spec, node)
 	track["expression"] = parsed
 	return _checked_min_delta(track)
+
+
+## A signal track {node, signal} or {group, signal}: its emitter as given (the node's path, or the
+## group), its signal, the nodes to connect (the node, or the group's members at start that have the
+## signal), the members skipped, and its kept and total emissions. Refused when the node is missing
+## or lacks the signal, when the group has no nodes, or when none of them has it.
+func _signal_track(spec: Dictionary) -> Variant:
+	var signal_name: String = str(spec.get("signal", ""))
+	var track: Dictionary = {
+		"signal": signal_name, "nodes": [], "skipped": [], "kept": 0, "total": 0, "connected": 0
+	}
+	if spec.get("group") is String:
+		track["emitter"] = {"group": spec["group"]}
+		return _group_members(track, spec["group"])
+	var node_name: String = str(spec.get("node", ""))
+	var node: Node = bridge._find_node(node_name)
+	if node == null:
+		return bridge._inspect.not_found(node_name, "get_scene_tree lists the nodes' paths")
+	if not node.has_signal(signal_name):
+		return "%s has no signal '%s'" % [_path_of(node), signal_name]
+	track["emitter"] = {"node": _path_of(node)}
+	(track["nodes"] as Array).append(node)
+	return track
+
+
+## Fills track's nodes with group's members that have its signal, in tree order, and its skipped
+## with the others; returns track, or the refusal of a group with no nodes or none with the signal.
+func _group_members(track: Dictionary, group: String) -> Variant:
+	var members: Array = group_members.call(group)
+	if members.is_empty():
+		return "group '%s' has no nodes" % group
+	var signal_name: String = track["signal"]
+	for member: Node in members:
+		if member.has_signal(signal_name):
+			(track["nodes"] as Array).append(member)
+		else:
+			var skipped: Dictionary = {
+				"node": _path_of(member), "reason": "no signal '%s'" % signal_name
+			}
+			(track["skipped"] as Array).append(skipped)
+	if (track["nodes"] as Array).is_empty():
+		return "no node in group '%s' has signal '%s'" % [group, signal_name]
+	return track
+
+
+## The refusal of signal tracks that connect more than MAX_CONNECTIONS nodes together, each node and
+## signal counted once however many tracks name it, or "".
+static func _connections_refusal(signals: Array) -> String:
+	var keys: Dictionary = {}
+	for track: Dictionary in signals:
+		for node: Node in track["nodes"]:
+			keys[_connection_key(node, track["signal"])] = true
+	var count: int = keys.size()
+	return CONNECTIONS_REFUSAL % count if count > MAX_CONNECTIONS else ""
+
+
+## Connects one variadic lambda to each node of each signal track, plainly, so an emission is
+## recorded as it fires; counts each node's emissions from 0 and lets go of the track's nodes. A
+## node and signal an earlier track connected is not connected again, so each emission is counted
+## and kept once, under the first track that names it.
+func _connect_signals(watch: Dictionary) -> void:
+	var tracks: Array = watch["signals"]
+	var counts: Dictionary = watch["event_counts"]
+	var connected: Dictionary = {}
+	for index in tracks.size():
+		var track: Dictionary = tracks[index]
+		var signal_name: String = track["signal"]
+		for node: Node in track["nodes"]:
+			var key: String = _connection_key(node, signal_name)
+			if connected.has(key):
+				continue
+			connected[key] = true
+			var path: String = _path_of(node)
+			counts["%s:%s" % [path, signal_name]] = 0
+			var on_signal := func(...args: Array) -> void: _record(watch, index, path, args)
+			node.connect(signal_name, on_signal)
+			(watch["connections"] as Array).append([node, signal_name, on_signal])
+			track["connected"] = int(track["connected"]) + 1
+		track.erase("nodes")
+
+
+## One node's signal, whichever tracks name it.
+static func _connection_key(node: Node, signal_name: String) -> String:
+	return "%d:%s" % [node.get_instance_id(), signal_name]
+
+
+## Records an emission of signal track index's signal by the node at path: counted always, and kept
+## as [frame, gameMs, node, signal, args, track] while the track holds fewer than TRACK_EVENTS, its
+## arguments converted to JSON now. A watch that ended records nothing (an emission calls the slots
+## it copied before a disconnect).
+func _record(watch: Dictionary, index: int, path: String, args: Array) -> void:
+	if watch["state"] != "running":
+		return
+	var track: Dictionary = watch["signals"][index]
+	var signal_name: String = track["signal"]
+	var counts: Dictionary = watch["event_counts"]
+	var key: String = "%s:%s" % [path, signal_name]
+	counts[key] = int(counts.get(key, 0)) + 1
+	track["total"] = int(track["total"]) + 1
+	if int(track["kept"]) >= TRACK_EVENTS:
+		return
+	track["kept"] = int(track["kept"]) + 1
+	var stamp: Array = _stamp(watch)
+	var event: Array = [stamp[0], stamp[1], path, signal_name, bridge._json.to_json(args), index]
+	(watch["events"] as Array).append(event)
+
+
+## [frame, gameMs] for an emission now: the engine's frame count less startFrame, 0 before the
+## first frame; and the game clock before the current frame's delta, which is the time the frame
+## last advanced was sampled at when the emission is in it.
+func _stamp(watch: Dictionary) -> Array:
+	var start: int = watch["start_frame"]
+	if start < 0:
+		return [0, 0]
+	var count: int = frame_counter.call(watch["physics"])
+	if count == int(watch["frame_count"]):
+		return [maxi(0, count - start), watch["frame_ms"]]
+	return [maxi(0, count - start), floori(float(watch["clock"]["seconds"]) * 1000.0)]
+
+
+## Disconnects every signal track's lambda from the nodes still alive (a freed emitter's slots
+## went with it), then lets go of them, ending the cycle each lambda, which holds the watch, makes
+## with it.
+static func _disconnect_signals(watch: Dictionary) -> void:
+	var connections: Array = watch["connections"]
+	for connection: Array in connections:
+		var node: Variant = connection[0]
+		if is_instance_valid(node) and (node as Node).is_connected(connection[1], connection[2]):
+			(node as Node).disconnect(connection[1], connection[2])
+	connections.clear()
 
 
 ## A track's state: its spec, its node (null for an expression without one), minDelta (0 for the
@@ -356,6 +530,8 @@ func advance(watch: Dictionary, paused: bool, frame_count: int, delta: float, no
 	if int(watch["start_frame"]) < 0 and not _first_frame(watch, frame_count, now_ms):
 		return
 	var frame: int = frame_count - int(watch["start_frame"])
+	watch["frame_count"] = frame_count
+	watch["frame_ms"] = floori(float(watch["clock"]["seconds"]) * 1000.0)
 	if paused:
 		_note_paused(watch, frame, now_ms)
 	else:
@@ -512,13 +688,14 @@ static func _keep(track: Dictionary, point: Array) -> void:
 
 
 ## Ends watch, stopped early for stopped ("stop", "deadline", "call") or at its window's end (""):
-## disconnects its frames and holds it; one that ended with an error is let go at once. The handler
-## is bound to watch, so it is erased here, ending the Dictionary-Callable cycle.
+## disconnects its frames and its signals and holds it; one that ended with an error is let go at
+## once. The handler is bound to watch, so it is erased here, ending the Dictionary-Callable cycle.
 func finish(watch: Dictionary, stopped: String, now_ms: int) -> void:
 	var source: Signal = watch["source"]
 	if source.is_connected(watch["handler"]):
 		source.disconnect(watch["handler"])
 	watch.erase("handler")
+	_disconnect_signals(watch)
 	watch["state"] = "held"
 	watch["stopped"] = stopped
 	if int(watch["start_frame"]) >= 0:
@@ -559,6 +736,8 @@ func drop() -> void:
 	watch["error"] = DROPPED_ERROR
 	if watch["state"] == "running":
 		finish(watch, "", Time.get_ticks_msec())
+	# Defensive: a held watch's signals were already cut at finish.
+	_disconnect_signals(watch)
 	_release(watch)
 	_idle_reason = DROPPED
 
@@ -568,18 +747,59 @@ func _release(watch: Dictionary) -> void:
 		_watch = {}
 
 
-## start's reply: {startFrame, tracks: [{name?, node?, property?}], call?}.
+## start's reply: {startFrame, tracks: [{name?, node?, property?}], signals?: [{node | group,
+## signal, connected}], skipped?, skippedTotal?, call?}.
 func _started(watch: Dictionary) -> Dictionary:
 	var reply: Dictionary = {"startFrame": watch["start_frame"], "tracks": []}
 	for track: Dictionary in watch["tracks"]:
 		(reply["tracks"] as Array).append(_describe(track))
+	var signals: Array = watch["signals"]
+	if not signals.is_empty():
+		reply["signals"] = signals.map(_describe_signal)
+		_add_skipped(reply, signals)
 	if not (watch["call"] as Dictionary).is_empty():
 		reply["call"] = watch["call"]
 	return reply
 
 
-## The timeline, letting the watch go: {startFrame, frames, gameMs, wallMs, tracks[, paused,
-## stopped, call]}; frames and gameMs count the unpaused frames sampled and their game time.
+## A signal track as start lists it: {node | group, signal, connected}.
+static func _describe_signal(track: Dictionary) -> Dictionary:
+	var described: Dictionary = (track["emitter"] as Dictionary).duplicate()
+	described["signal"] = track["signal"]
+	described["connected"] = track["connected"]
+	return described
+
+
+## Adds the signal tracks' skipped group members to result, at most MAX_SKIPPED, with skippedTotal
+## when there are more.
+static func _add_skipped(result: Dictionary, signals: Array) -> void:
+	var skipped: Array = []
+	for track: Dictionary in signals:
+		skipped.append_array(track["skipped"])
+	if skipped.is_empty():
+		return
+	result["skipped"] = skipped.slice(0, MAX_SKIPPED)
+	if skipped.size() > MAX_SKIPPED:
+		result["skippedTotal"] = skipped.size()
+
+
+## Adds the signal tracks' kept events, in emission order, every emitter's count (eventCounts), each
+## track's kept and total emissions (eventTracks, which the server shares the events by) and the
+## skipped members to a timeline.
+static func _add_events(result: Dictionary, watch: Dictionary) -> void:
+	var signals: Array = watch["signals"]
+	result["events"] = watch["events"]
+	result["eventCounts"] = watch["event_counts"]
+	var counts: Array = []
+	for track: Dictionary in signals:
+		counts.append({"kept": track["kept"], "total": track["total"]})
+	result["eventTracks"] = counts
+	_add_skipped(result, signals)
+
+
+## The timeline, letting the watch go: {startFrame, frames, gameMs, wallMs, tracks[, events,
+## eventCounts, eventTracks, skipped, skippedTotal, paused, stopped, call]}; frames and gameMs
+## count the unpaused frames sampled and their game time; the events keys only with signal tracks.
 func _collect(watch: Dictionary) -> Dictionary:
 	var clock: Dictionary = watch["clock"]
 	var result: Dictionary = {
@@ -591,6 +811,8 @@ func _collect(watch: Dictionary) -> Dictionary:
 	}
 	for track: Dictionary in watch["tracks"]:
 		(result["tracks"] as Array).append(_track_result(track))
+	if not (watch["signals"] as Array).is_empty():
+		_add_events(result, watch)
 	if not (watch["paused"] as Array).is_empty():
 		result["paused"] = watch["paused"]
 	if not str(watch["stopped"]).is_empty():
