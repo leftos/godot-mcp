@@ -1,6 +1,8 @@
 # State digest: a game's own compact state in place of a screenshot
 
-Design draft for the plan item "State digest: game nodes opt in for a compact state read in place of a screenshot" ([MAIN.md](./MAIN.md) L29, the Track), from idea 4 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L115-118). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../DECISIONS.md) decision 27, which wins where this file differs; steps 5 and 6 of section 7 are open.
+Design draft for the plan item "State digest: game nodes opt in for a compact state read in place of a screenshot" from idea 4 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L115-118). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../DECISIONS.md) decision 27, which wins where this file differs.
+
+Status: steps 1 to 4 of section 7 have landed (the GDScript read 5fcd5a0, the C# read 71b6c5e, kept reads and diffs 1134e20). Next is step 5, a `state` condition in `wait_for` and its `batch_drive` assertion, under GMCP-17 (State digest: wait_for on a state key, then tell the game repos); step 6 follows the release that carries it.
 
 ## 1. Problem
 

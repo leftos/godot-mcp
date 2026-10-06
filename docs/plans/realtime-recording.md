@@ -1,6 +1,8 @@
 # Real-time recording: the game's window as a player sees it
 
-Design draft for Linear GMCP-6 (GitHub #61), "record: only Movie Maker, which runs faster than real time", in the project "Ideas from the survey and the projects", whose description says #61 "needs a design pass". The issue carries no survey idea number: the [survey](../research/2026-09-29-godot-mcp-survey.md) lists video recording as a capability only this server has (L67, "Y (MP4 clips)"; L212, "MP4 recordings with marks and idle drop"), and no surveyed server records in real time. Section 7's questions are open.
+Design draft for Linear GMCP-6 (GitHub #61), "record: only Movie Maker, which runs faster than real time", in the project "Ideas from the survey and the projects", whose description says #61 "needs a design pass". The issue carries no survey idea number: the [survey](../research/2026-09-29-godot-mcp-survey.md) lists video recording as a capability only this server has (L67, "Y (MP4 clips)"; L212, "MP4 recordings with marks and idle drop"), and no surveyed server records in real time. Every question in section 7 is ruled.
+
+Status: the spike (section 6's step 1) is done and on `main` (cd63e9b); its results are section 8, which settles question 3 as a refusal of quiet sessions. Next is step 2, the helper in the repo.
 
 ## 1. Need
 
