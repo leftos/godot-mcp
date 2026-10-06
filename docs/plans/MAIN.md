@@ -4,17 +4,17 @@
 
 ## Ideas from the survey and the projects
 
-- [x] GMCP-80 click on a TabBar item scrolled out of view is refused; nothing scrolls the bar to it
-- [x] GMCP-12 Finish input targets: popup items, item text in get_ui_elements, untested layouts
+- [x] GMCP-80 click on a TabBar item scrolled out of view is refused; nothing scrolls the bar to it · release vNext
+- [x] GMCP-12 Finish input targets: popup items, item text in get_ui_elements, untested layouts · release vNext
 - [ ] GMCP-6 record: only Movie Maker, which runs faster than real time
-- [ ] GMCP-19 Timeline watch: property, signal and monitor tracks, then retire monitor_property
+- [ ] GMCP-19 Timeline watch: property, signal and monitor tracks, then retire monitor_property · release vNext
 - [ ] GMCP-47 Drives across several processes
 - [ ] GMCP-43 Report the signals a gesture fired
 - [ ] GMCP-44 Step-until: frame_control until and input
 - [ ] GMCP-46 Audio tracks in the watch: voices and buses
 - [ ] GMCP-17 State digest: wait_for on a state key, then tell the game repos
-- [x] GMCP-7 wait_for: no call in the frame an expression or property condition is met
-- [x] GMCP-8 options.call in capture_frames and wait_for takes only positional args, not a game tool's named ones
+- [x] GMCP-7 wait_for: no call in the frame an expression or property condition is met · release vNext
+- [x] GMCP-8 options.call in capture_frames and wait_for takes only positional args, not a game tool's named ones · release vNext
 - [ ] GMCP-68 Adopt driving lessons from the sibling projects
   - [ ] GMCP-69 Probe h264_nvenc with a real 256x256 encode before cutting clips
   - [ ] GMCP-70 Give each launch a scratch user:// folder so drives never touch real saves
@@ -26,13 +26,13 @@
 
 ## Singles
 
-- [/] GMCP-53 stop_project kills a game still shutting down after a mouse_button press and release
-- [x] GMCP-79 take_screenshot: an A/B on an animated scene differs everywhere unless the game is paused, and nothing says so
-- [x] GMCP-78 batch_drive: a wait's timeout refusal names the budget, not the wall time that passed
-- [x] GMCP-77 run_project: prep skips the import when a source asset changed since it was imported
-- [x] GMCP-76 run_scratches: no session argument to name the scratch run's session
+- [x] GMCP-53 stop_project kills a game still shutting down after a mouse_button press and release · release vNext
+- [x] GMCP-79 take_screenshot: an A/B on an animated scene differs everywhere unless the game is paused, and nothing says so · release vNext
+- [x] GMCP-78 batch_drive: a wait's timeout refusal names the budget, not the wall time that passed · release vNext
+- [x] GMCP-77 run_project: prep skips the import when a source asset changed since it was imported · release vNext
+- [x] GMCP-76 run_scratches: no session argument to name the scratch run's session · release vNext
 - [ ] GMCP-65 hover: the per-frame re-pick hides whether the game re-picked the hover
-- [x] GMCP-64 run_csharp: a snippet cannot await a frame (ToSignal not in scope)
+- [x] GMCP-64 run_csharp: a snippet cannot await a frame (ToSignal not in scope) · release vNext
 - [ ] GMCP-24 Fall back to a full save when a splice leaves two nodes one unique_id
 - [ ] GMCP-25 Keep a stored layout_mode = 3 on a full-rect Control through headless saves
 - [ ] GMCP-26 Give the bridge's mouse motions a velocity
@@ -57,7 +57,7 @@
 
 ## Docs
 
-- [x] GMCP-66 TOOLS.md: gamepad edges still say shutOutRealGamepads closes every popup
+- [x] GMCP-66 TOOLS.md: gamepad edges still say shutOutRealGamepads closes every popup · release vNext
 - [ ] GMCP-45 Document render diagnosis
 - [ ] GMCP-58 Re-read csharp-runtime-tools.md against the C# game-tools and state commits
 - [ ] GMCP-81 Split markdown lines of 500+ characters
