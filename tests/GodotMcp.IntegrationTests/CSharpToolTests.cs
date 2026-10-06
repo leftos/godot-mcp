@@ -710,6 +710,40 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
     }
 
     [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpAwaitsAProcessFrameWithToSignal()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        const string code =
+            "var before = Engine.GetProcessFrames(); await ToSignal(Tree, SceneTree.SignalName.ProcessFrame); "
+            + "return Engine.GetProcessFrames() > before;";
+
+        JsonObject result = await RunCSharpAsync(code, null, cancellation);
+
+        Assert.True(result["value"]?.GetValue<bool>());
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpAwaitsAProcessFrameWhileThePausedGameStillDraws()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        const string code =
+            "var before = Engine.GetProcessFrames(); await ToSignal(Tree, SceneTree.SignalName.ProcessFrame); "
+            + "return Engine.GetProcessFrames() > before;";
+
+        await _tools.FrameControlAsync("pause", cancellationToken: cancellation);
+        try
+        {
+            JsonObject result = await RunCSharpAsync(code, null, cancellation);
+
+            Assert.True(result["value"]?.GetValue<bool>());
+        }
+        finally
+        {
+            await _tools.FrameControlAsync("resume", cancellationToken: cancellation);
+        }
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
     public async Task RunCSharpCompileErrorNamesTheLine()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

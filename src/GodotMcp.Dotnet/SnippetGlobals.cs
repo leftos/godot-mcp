@@ -27,6 +27,13 @@ public abstract class SnippetGlobals
     protected Window Root => Tree.Root;
 
     /// <summary>
+    /// Awaits <paramref name="signal"/> of <paramref name="source"/>, as <see cref="GodotObject.ToSignal"/> does in a node's
+    /// script: <c>await ToSignal(Tree, SceneTree.SignalName.ProcessFrame)</c> waits one frame. It takes no token, so a signal
+    /// that never fires keeps the snippet waiting past its timeout.
+    /// </summary>
+    protected SignalAwaiter ToSignal(GodotObject source, StringName signal) => source.ToSignal(source, signal);
+
+    /// <summary>
     /// The token the call's timeout cancels: hand it to an await or check it in a loop, and the snippet stops once the call
     /// has been answered as timed out. A snippet that ignores it keeps running, and a loop on the main thread that never
     /// yields cannot see the cancel.

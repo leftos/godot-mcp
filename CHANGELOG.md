@@ -10,6 +10,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `watch` reads performance monitors as `tracks.monitors`: frame time, Godot's built-in monitors and the game's custom ones, summarised with percentiles and the frames that spiked.
 - `wait_for` takes `options.then`, a method call and a time scale run once in the frame its condition is met.
 - `options.call` in `capture_frames`, `wait_for` and `watch` takes a C# game tool by name with named arguments, as `{tool, args}`.
+- A `run_csharp` snippet can `await ToSignal(source, signal)`, so it can wait a frame or a game signal mid-snippet.
 
 ### Changed
 
