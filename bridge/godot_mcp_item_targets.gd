@@ -67,6 +67,21 @@ const LIST_ITEM_NOT_DRAWN := (
 	"item '%s' of %s has no drawn rect at its point; "
 	+ "it may be scrolled under a header or not laid out yet"
 )
+## A tab scrolled out of the range a TabBar draws, its bar taking a wheel: the item's text and the
+## list's path, the tab's index, "before" or "after" the drawn tabs, the offset and the last drawn
+## tab's index, the point to scroll over, the wheel direction and the notches that reach it.
+const TAB_SCROLLED_OUT := (
+	"item '%s' of %s is scrolled out of the tab bar: tab %d lies %s the drawn tabs (%d to %d); "
+	+ 'scroll over the tab strip, scroll {target: {x: %s, y: %s}, direction: "%s", notches: %d}, '
+	+ "then try again (a notch moves the tabs by one; repeat while the tab is not drawn)"
+)
+## A tab scrolled out of a bar that takes no wheel (scrolling_enabled off): the same numbers, then
+## the scroll arrow a click works, its name, the point of its drawn rect and the click count.
+const TAB_SCROLL_OFF := (
+	"item '%s' of %s is scrolled out of the tab bar: tab %d lies %s the drawn tabs (%d to %d), "
+	+ "and the bar takes no wheel (scrolling_enabled is off); "
+	+ "click its %s arrow at (%s, %s) %d times, then try again"
+)
 ## How many texts or matches a refusal lists.
 const MAX_LISTED := 10
 ## How many items get_ui_elements lists for one Control (listed_items).
@@ -231,6 +246,9 @@ static func _flat_item(targets: Node, list: Control, spec: Dictionary) -> Varian
 ## A flat list's item at its drawn rect's centre, checked back; named is [its text, the list's
 ## path].
 static func _flat_placed(targets: Node, drawer: Control, index: int, named: Array) -> Variant:
+	var scrolled: String = tab_scroll_refusal(targets, drawer, index, named)
+	if not scrolled.is_empty():
+		return scrolled
 	var rect: Rect2 = _flat_rect(drawer, index)
 	var local: Vector2 = rect.get_center()
 	var refusal: String = _reach_refusal(targets, drawer, rect, local, named)
@@ -242,6 +260,134 @@ static func _flat_placed(targets: Node, drawer: Control, index: int, named: Arra
 	if _flat_disabled(drawer, index):
 		report["disabled"] = true
 	return {"drawer": drawer, "local": local, "report": report}
+
+
+## Why a tab is scrolled out of the range the bar drawing it draws, or "": a TabBar or a
+## TabContainer's tab bar showing its offset buttons (get_offset_buttons_visible) whose index lies
+## before its offset or after the last tab it draws. The refusal names the wheel scroll that
+## brings the tab into view, or, when the bar takes no wheel, the scroll arrow a click works; a tab
+## that is not scrolled out, or a bar drawing no tab at all, keeps the not-drawn refusal
+## (_not_drawn) its caller gives. named is [the tab's text, the list's path]; targets is the
+## resolver or its script, as off_viewport takes it, whose viewport_transform and num place and
+## print the points.
+static func tab_scroll_refusal(
+	targets: Variant, drawer: Control, index: int, named: Array
+) -> String:
+	var bar := drawer as TabBar
+	if bar == null or not bar.get_offset_buttons_visible():
+		return ""
+	var offset: int = bar.get_tab_offset()
+	var last: int = _last_drawn_tab(bar, offset)
+	if last < offset:
+		return ""
+	var side: String = scroll_side(index, offset, last)
+	if side.is_empty():
+		return ""
+	var facts: Array = [index, side, offset, last, scroll_notches(index, offset, last, side)]
+	if bar.scrolling_enabled:
+		return tab_scrolled_out_text(named, facts, _strip_point(targets, bar), targets)
+	return tab_scroll_off_text(named, facts, _arrow(targets, bar, side), targets)
+
+
+## The last tab a bar draws from its offset: the largest index at or past offset whose drawn rect
+## has area and whose centre the bar's own hit test maps back to it. A tab past the drawn range
+## sits at ofs_cache 0 and so shares tab 0's rect (scene/gui/tab_bar.cpp L1262-1264, L2029-2037 in
+## 4.7.2), and the hit test passes over a hidden one, so neither maps back to itself.
+static func _last_drawn_tab(bar: TabBar, offset: int) -> int:
+	var last: int = offset - 1
+	for index in range(offset, bar.tab_count):
+		var rect: Rect2 = bar.get_tab_rect(index)
+		if rect.has_area() and bar.get_tab_idx_at_point(rect.get_center()) == index:
+			last = index
+	return last
+
+
+## "before" when a tab's index lies before a bar's offset, "after" when past its last drawn tab,
+## "" when it lies within the drawn range.
+static func scroll_side(index: int, offset: int, last: int) -> String:
+	if index < offset:
+		return "before"
+	if index > last:
+		return "after"
+	return ""
+
+
+## The wheel notches that bring a scrolled-out tab into the drawn range, one moving a bar's offset
+## by one tab (scene/gui/tab_bar.cpp L196-214 in 4.7.2): side is scroll_side's "before" or "after".
+static func scroll_notches(index: int, offset: int, last: int, side: String) -> int:
+	if side == "before":
+		return offset - index
+	return index - last
+
+
+## TAB_SCROLLED_OUT with its numbers: named is [the tab's text, the list's path], facts [the tab's
+## index, "before" or "after", the offset, the last drawn tab's index, the notches], and point the
+## centre of the tab strip in the root's viewport coordinates. texts is the resolver or its script,
+## whose num prints the point's coordinates.
+static func tab_scrolled_out_text(
+	named: Array, facts: Array, point: Vector2, texts: Variant
+) -> String:
+	var direction: String = "up" if facts[1] == "before" else "down"
+	return (
+		TAB_SCROLLED_OUT
+		% [
+			named[0],
+			named[1],
+			facts[0],
+			facts[1],
+			facts[2],
+			facts[3],
+			texts.num(point.x),
+			texts.num(point.y),
+			direction,
+			facts[4]
+		]
+	)
+
+
+## TAB_SCROLL_OFF with its numbers: named and facts as tab_scrolled_out_text takes them, arrow
+## [the scroll arrow's theme icon name, the centre of its drawn rect in the root's viewport
+## coordinates], the arrow a click scrolls the bar in the side's direction, and facts' notches the
+## clicks it takes.
+static func tab_scroll_off_text(named: Array, facts: Array, arrow: Array, texts: Variant) -> String:
+	return (
+		TAB_SCROLL_OFF
+		% [
+			named[0],
+			named[1],
+			facts[0],
+			facts[1],
+			facts[2],
+			facts[3],
+			arrow[0],
+			texts.num(arrow[1].x),
+			texts.num(arrow[1].y),
+			facts[4]
+		]
+	)
+
+
+## The centre of a bar's tab strip in the root's viewport coordinates: the point a wheel notch
+## over the tabs must aim at.
+static func _strip_point(targets: Node, bar: TabBar) -> Vector2:
+	return targets.viewport_transform(bar) * (bar.size / 2.0)
+
+
+## The scroll arrow that brings a scrolled-out tab into the drawn range, as [its theme icon's
+## name, the centre of its drawn rect in the root's viewport coordinates]. The bar draws its two
+## icons side by side, the "decrement" one first, at its right in a left-to-right layout and its
+## left, mirrored, in a right-to-left one (scene/gui/tab_bar.cpp L244-278 click regions,
+## L589-617 draw in 4.7.2), so "increment" scrolls a tab after the drawn range in LTR and one
+## before it in RTL.
+static func _arrow(targets: Node, bar: TabBar, side: String) -> Array:
+	var rtl: bool = bar.is_layout_rtl()
+	var increment: bool = (side == "after") != rtl
+	var inc: float = bar.get_theme_icon(&"increment").get_width()
+	var dec: float = bar.get_theme_icon(&"decrement").get_width()
+	var start: float = 0.0 if rtl else bar.size.x - inc - dec
+	var x: float = start + dec + inc / 2.0 if increment else start + dec / 2.0
+	var point: Vector2 = targets.viewport_transform(bar) * Vector2(x, bar.size.y / 2.0)
+	return ["increment" if increment else "decrement", point]
 
 
 ## The index spec names among a flat list's drawn texts (hidden[i] says item i is hidden): by

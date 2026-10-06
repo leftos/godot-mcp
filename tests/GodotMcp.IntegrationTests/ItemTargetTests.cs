@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
@@ -10,7 +12,7 @@ namespace GodotMcp.IntegrationTests;
 /// Item targets against the InputProbe running in the real Godot: one shared run, reset before each test, the lists built by
 /// run_script under the root, above the fixture's Main, which fills the viewport, and drawn twice before the first gesture.
 /// </summary>
-public sealed class ItemTargetTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
+public sealed partial class ItemTargetTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
     private const int TestTimeoutMs = 45_000;
     private const int ScriptTimeoutMs = 10_000;
@@ -123,16 +125,146 @@ public sealed class ItemTargetTests(SharedProbeSession shared) : IAsyncLifetime,
     }
 
     [Fact(Timeout = TestTimeoutMs)]
-    public async Task ATabBeyondTheDrawnRangeIsRefusedAsNotDrawn()
+    public async Task ATabBeyondTheDrawnRangeIsRefusedAsScrolledOut()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        await RunAsync(TabBar("Narrow", 20, 20, 150, "Tab 0", "Tab 1", "Tab 2", "Tab 3", "Tab 4", "Tab 5", "Tab 6", "Tab 7") + Drawn, cancellation);
+        await RunAsync(TabBar("Narrow", 20, 20, 150, Tabs(8)) + Drawn, cancellation);
+
+        JsonNode state = await RunAsync(
+            "var bar: TabBar = scene_tree.root.get_node(\"Narrow\")\n\t"
+                + "var last: int = -1\n\t"
+                + "for index in bar.tab_count:\n\t\t"
+                + "var rect: Rect2 = bar.get_tab_rect(index)\n\t\t"
+                + "if rect.has_area() and bar.get_tab_idx_at_point(rect.get_center()) == index:\n\t\t\t"
+                + "last = index\n\t"
+                + "var point: Vector2 = bar.get_global_transform_with_canvas() * (bar.size / 2.0)\n\t"
+                + "return [bar.get_tab_offset(), last, point.x, point.y]",
+            cancellation
+        );
+        int offset = state[0]!.GetValue<int>();
+        int last = state[1]!.GetValue<int>();
+        string x = Num(state[2]!.GetValue<double>());
+        string y = Num(state[3]!.GetValue<double>());
 
         await AssertRefusedAsync(
             new InputTarget("Narrow", Item: new InputItem(Text: "Tab 7")),
-            "item 'Tab 7' of /root/Narrow has no drawn rect; it may be outside the tab bar's drawn range (scroll the tabs) or not laid out yet",
+            $"item 'Tab 7' of /root/Narrow is scrolled out of the tab bar: tab 7 lies after the drawn tabs ({offset} to {last}); "
+                + "scroll over the tab strip, scroll "
+                + $"{{target: {{x: {x}, y: {y}}}, direction: \"down\", notches: {7 - last}}}, then try again "
+                + "(a notch moves the tabs by one; repeat while the tab is not drawn)",
             cancellation
         );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AScrolledOutTabIsReachedByTheScrollItsRefusalNames()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(TabBar("Narrow", 20, 20, 150, Tabs(8)) + Drawn, cancellation);
+
+        int rounds = 0;
+        while (true)
+        {
+            try
+            {
+                await ClickAsync(new InputTarget("Narrow", Item: new InputItem(Text: "Tab 7")), cancellation);
+                break;
+            }
+            catch (McpException refused)
+            {
+                rounds++;
+                Assert.True(rounds <= 10, refused.Message);
+                (InputTarget target, string direction, int notches) = ScrollNamedBy(refused.Message);
+                await _tools.ScrollAsync(target, direction, notches, cancellationToken: cancellation);
+            }
+        }
+
+        Assert.True(rounds is >= 1 and <= 10, $"rounds {rounds}");
+        Assert.Equal(7, await ReadIntAsync("return scene_tree.root.get_node(\"Narrow\").current_tab", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATabBeforeTheOffsetNamesAScrollUp()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(TabBar("Narrow", 20, 20, 150, Tabs(8)) + Drawn, cancellation);
+
+        await _tools.ScrollAsync(new InputTarget(null, 95, 40), "down", 4, cancellationToken: cancellation);
+
+        Assert.True(await ReadIntAsync("return scene_tree.root.get_node(\"Narrow\").get_tab_offset()", cancellation) > 0, "the offset moved");
+        McpException refused = await RefusedAsync(new InputTarget("Narrow", Item: new InputItem(Text: "Tab 0")), cancellation);
+
+        Assert.Contains("tab 0 lies before the drawn tabs", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("direction: \"up\"", refused.Message, StringComparison.Ordinal);
+        (InputTarget target, string direction, int notches) = ScrollNamedBy(refused.Message);
+        await _tools.ScrollAsync(target, direction, notches, cancellationToken: cancellation);
+        await ClickAsync(new InputTarget("Narrow", Item: new InputItem(Text: "Tab 0")), cancellation);
+
+        Assert.Equal(0, await ReadIntAsync("return scene_tree.root.get_node(\"Narrow\").current_tab", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATabContainerTabNamesItsTabStripPoint()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(TabContainer("Book", 20, 20, 150, 200, Tabs(8)) + Drawn, cancellation);
+
+        JsonNode boxes = await RunAsync(
+            "var book: TabContainer = scene_tree.root.get_node(\"Book\")\n\t"
+                + "var strip: Rect2 = book.get_tab_bar().get_global_transform_with_canvas() * Rect2(Vector2.ZERO, book.get_tab_bar().size)\n\t"
+                + "var whole: Rect2 = book.get_global_rect()\n\t"
+                + "return [strip.position.x, strip.position.y, strip.end.x, strip.end.y, whole.get_center().x, whole.get_center().y]",
+            cancellation
+        );
+
+        McpException refused = await RefusedAsync(new InputTarget("Book", Item: new InputItem(Text: "Tab 7")), cancellation);
+
+        (InputTarget target, string direction, int notches) = ScrollNamedBy(refused.Message);
+        double x = target.X!.Value;
+        double y = target.Y!.Value;
+        Assert.InRange(x, boxes[0]!.GetValue<double>(), boxes[2]!.GetValue<double>());
+        Assert.InRange(y, boxes[1]!.GetValue<double>(), boxes[3]!.GetValue<double>());
+        Assert.True(
+            x != boxes[4]!.GetValue<double>() || y != boxes[5]!.GetValue<double>(),
+            $"the point ({x}, {y}) is the container's centre, not its tab strip's: {refused.Message}"
+        );
+
+        await _tools.ScrollAsync(target, direction, notches, cancellationToken: cancellation);
+        await ClickAsync(new InputTarget("Book", Item: new InputItem(Text: "Tab 7")), cancellation);
+
+        Assert.Equal(7, await ReadIntAsync("return scene_tree.root.get_node(\"Book\").current_tab", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATabBarWithScrollingOffNamesItsArrow()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(TabBar("Locked", 20, 20, 150, Tabs(8)) + "bar.scrolling_enabled = false\n\t" + Drawn, cancellation);
+
+        int rounds = 0;
+        while (true)
+        {
+            try
+            {
+                await ClickAsync(new InputTarget("Locked", Item: new InputItem(Text: "Tab 7")), cancellation);
+                break;
+            }
+            catch (McpException refused)
+            {
+                rounds++;
+                Assert.True(rounds <= 10, refused.Message);
+                Assert.Contains("and the bar takes no wheel (scrolling_enabled is off)", refused.Message, StringComparison.Ordinal);
+                (InputTarget arrow, string name, int clicks) = ArrowNamedBy(refused.Message);
+                Assert.Equal("increment", name);
+                for (int click = 0; click < clicks; click++)
+                {
+                    await ClickAsync(arrow, cancellation);
+                }
+            }
+        }
+
+        Assert.True(rounds is >= 1 and <= 10, $"rounds {rounds}");
+        Assert.Equal(7, await ReadIntAsync("return scene_tree.root.get_node(\"Locked\").current_tab", cancellation));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -715,6 +847,20 @@ public sealed class ItemTargetTests(SharedProbeSession shared) : IAsyncLifetime,
         + string.Concat(titles.Select(title => $"bar.add_tab(\"{title}\")\n\t"))
         + "scene_tree.root.add_child(bar)\n\t";
 
+    // A TabContainer named name at (x, y), width x height, with a Control page per title, held by the script variable book;
+    // each tab's title is its page's name, so titles hold no character a node name refuses.
+    private static string TabContainer(string name, int x, int y, int width, int height, params string[] titles) =>
+        "var book := TabContainer.new()\n\t"
+        + $"book.name = \"{name}\"\n\t"
+        + $"book.position = Vector2({x}, {y})\n\t"
+        + $"book.size = Vector2({width}, {height})\n\t"
+        + "scene_tree.root.add_child(book)\n\t"
+        + $"for page_name: String in [{string.Join(", ", titles.Select(title => $"\"{title}\""))}]:\n\t\t"
+        + "var page := Control.new()\n\t\tpage.name = page_name\n\t\tbook.add_child(page)\n\t";
+
+    // A bar's titles "Tab 0" to "Tab count-1": one 150 px wide draws only some of them.
+    private static string[] Tabs(int count) => [.. Enumerable.Range(0, count).Select(index => $"Tab {index}")];
+
     // Inv, a two-column Tree at (360, 20), 260 x 300, its root hidden: Weapons ("2") holding Sword ("Sharp") and Bow ("Long"),
     // and Armour ("1") holding Helm ("Iron"); weapons holds the Weapons item for extra.
     private static string Tree(string extra) =>
@@ -728,6 +874,43 @@ public sealed class ItemTargetTests(SharedProbeSession shared) : IAsyncLifetime,
         + "var helm: TreeItem = inv.create_item(armour)\n\thelm.set_text(0, \"Helm\")\n\thelm.set_text(1, \"Iron\")\n\t"
         + extra
         + "scene_tree.root.add_child(inv)\n\t";
+
+    // The wheel scroll a scrolled-out tab's refusal names: its point, direction and notches.
+    [GeneratedRegex("""scroll \{target: \{x: (?<x>[-\d.]+), y: (?<y>[-\d.]+)\}, direction: "(?<direction>\w+)", notches: (?<notches>\d+)\}""")]
+    private static partial Regex ScrollNamed();
+
+    // The arrow click a scrolled-out tab's refusal names when its bar takes no wheel: its point, name and count.
+    [GeneratedRegex("""click its (?<arrow>\w+) arrow at \((?<x>[-\d.]+), (?<y>[-\d.]+)\) (?<count>\d+) times""")]
+    private static partial Regex ArrowNamed();
+
+    private static (InputTarget Target, string Direction, int Notches) ScrollNamedBy(string refusal)
+    {
+        Match named = ScrollNamed().Match(refusal);
+        Assert.True(named.Success, refusal);
+        return (Point(named), named.Groups["direction"].Value, Count(named, "notches"));
+    }
+
+    private static (InputTarget Target, string Name, int Clicks) ArrowNamedBy(string refusal)
+    {
+        Match named = ArrowNamed().Match(refusal);
+        Assert.True(named.Success, refusal);
+        return (Point(named), named.Groups["arrow"].Value, Count(named, "count"));
+    }
+
+    private static InputTarget Point(Match named) => new(null, Number(named.Groups["x"].Value), Number(named.Groups["y"].Value));
+
+    private static int Count(Match named, string group) => int.Parse(named.Groups[group].Value, CultureInfo.InvariantCulture);
+
+    private static double Number(string text) => double.Parse(text, CultureInfo.InvariantCulture);
+
+    // A coordinate as the bridge prints it (its num): at most one decimal, none when whole.
+    private static string Num(double value)
+    {
+        double rounded = Math.Round(value, 1, MidpointRounding.AwayFromZero);
+        return rounded == Math.Floor(rounded)
+            ? ((long)rounded).ToString(CultureInfo.InvariantCulture)
+            : rounded.ToString("0.0", CultureInfo.InvariantCulture);
+    }
 
     private static void AssertAimed(JsonNode aimed, string path, string className, int index, string text)
     {
