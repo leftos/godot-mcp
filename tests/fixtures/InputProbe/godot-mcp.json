@@ -5,7 +5,22 @@
       "ScratchBeside": 1,
       "ScratchBusy": 0.1,
       "ScratchLateError": 2,
-      "ScratchMarker": 2
+      "ScratchMarker": 2,
+      "ScratchStepPace": {
+        "seconds": 0.25,
+        "reason": "its steps only leave a note",
+        "steps": {
+          "slow": { "seconds": 1, "reason": "the step paced by its name" },
+          "2": 0.5
+        }
+      },
+      "ScratchStepPaceAfter": {
+        "seconds": 0.1,
+        "reason": "its first step only leaves a note",
+        "steps": {
+          "arm": { "seconds": 2, "reason": "its timer fires 3 s after it, inside the wait after it" }
+        }
+      }
     },
     "known": {
       "ScratchLeak": "leaks a node at exit on purpose, so the runner's leak check has a scene to find"

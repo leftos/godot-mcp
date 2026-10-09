@@ -452,6 +452,45 @@ public sealed class ProjectProfileTests : IDisposable
     }
 
     [Fact]
+    public void AnObjectPaceReadsItsStepPacesKeyedByIndexOrNameAsNumbersOrObjects()
+    {
+        Write(
+            """
+            {
+              "scratch": {
+                "pace": {
+                  "A": {
+                    "seconds": 0.5,
+                    "reason": "most steps settle at once",
+                    "steps": { "3": 30, "FightBatch": { "reason": "the 25-line batch plays 22.7 s", "seconds": 25 } }
+                  }
+                }
+              }
+            }
+            """
+        );
+
+        ScratchPace pace = ProjectProfile.Load(_temp.Path).Scratch!.Pace["A"];
+
+        Assert.Equal((0.5, "most steps settle at once"), (pace.Seconds, pace.Reason));
+        Assert.Equal(["3", "FightBatch"], pace.Steps.Keys);
+        Assert.Equal(new ScratchPace(30, null), pace.Steps["3"]);
+        Assert.Equal(new ScratchPace(25, "the 25-line batch plays 22.7 s"), pace.Steps["FightBatch"]);
+        Assert.Empty(pace.Steps["3"].Steps);
+    }
+
+    [Fact]
+    public void APaceWithoutStepsHasNone()
+    {
+        Write("""{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "why" }, "B": 2 } } }""");
+
+        ScratchProfile scratch = ProjectProfile.Load(_temp.Path).Scratch!;
+
+        Assert.Empty(scratch.Pace["A"].Steps);
+        Assert.Empty(scratch.Pace["B"].Steps);
+    }
+
+    [Fact]
     public void AnEmptyScratchSectionTakesTheDefaults()
     {
         Write("""{ "userArgs": ["--top"], "scratch": {} }""");
@@ -564,7 +603,42 @@ public sealed class ProjectProfileTests : IDisposable
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "x", "why": "y" } } } }""",
-        "(scratch, pace of \"A\"): unknown key \"why\"; the allowed keys are seconds, reason. Remove or rename it."
+        "(scratch, pace of \"A\"): unknown key \"why\"; the allowed keys are seconds, reason, steps. Remove or rename it."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": { "seconds": 3, "reason": "y", "steps": {} } } } } } }""",
+        "(scratch, pace of \"A\", step \"2\"): unknown key \"steps\"; the allowed keys are seconds, reason. Remove or rename it."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": 0 } } } } }""",
+        "(scratch, pace of \"A\"): \"steps\" entry \"2\" must be a number of seconds above 0 and at most 120, not 0."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "Fight": { "seconds": 121, "reason": "y" } } } } } }""",
+        "(scratch, pace of \"A\", step \"Fight\"): \"seconds\" must be a number of seconds above 0 and at most 120, not 121."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "Fight": { "seconds": 3 } } } } } }""",
+        "(scratch, pace of \"A\", step \"Fight\"): \"reason\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or "
+            + "write the pace as a bare number of seconds."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": "3" } } } } }""",
+        "(scratch, pace of \"A\"): \"steps\" entry \"2\" must be a number of seconds above 0 and at most 120, or an object "
+            + "{\"seconds\", \"reason\"}, not a string."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": [3] } } } }""",
+        "(scratch, pace of \"A\"): \"steps\" must be an object, not an array."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": 1, "2": 3 } } } } }""",
+        "(scratch, pace of \"A\"): the step key \"2\" appears twice in \"steps\"; keep one."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "reason": "x", "steps": { "2": 1 } } } } }""",
+        "(scratch, pace of \"A\"): \"seconds\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or "
+            + "write the pace as a bare number of seconds."
     )]
     [InlineData("""{ "scratch": { "pace": { "A": 1, "A": 2 } } }""", "(scratch): the scene \"A\" appears twice in \"pace\"; keep one.")]
     [InlineData(

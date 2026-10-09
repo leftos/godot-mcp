@@ -49,6 +49,8 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         "ScratchNoProtocol",
         "ScratchNoSteps",
         "ScratchPushError",
+        "ScratchStepPace",
+        "ScratchStepPaceAfter",
     ];
 
     private static readonly string[] FolderVerdicts =
@@ -65,6 +67,8 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         "red",
         "no-steps",
         "red",
+        "green",
+        "red",
     ];
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -78,7 +82,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.False(string.IsNullOrEmpty(prep["import"]!.GetValue<string>()), result.ToJsonString());
         JsonArray scenes = result["scenes"]!.AsArray();
         Assert.All(scenes, scene => Assert.Null(scene!["alone"]));
-        Assert.Equal([1, 0.5, 0.1, 0.5, 2, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5], scenes.Select(scene => scene!["pace"]!.GetValue<double>()));
+        Assert.Equal([1, 0.5, 0.1, 0.5, 2, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5, 0.25, 0.1], scenes.Select(scene => scene!["pace"]!.GetValue<double>()));
         Assert.Equal("boot", scenes[1]!["failedAt"]!["name"]!.GetValue<string>());
     }
 
@@ -124,7 +128,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal(FolderVerdicts, scenes.Select(scene => scene!["verdict"]!.GetValue<string>()));
         Assert.Equal(FolderScenes.Select(name => "InputProbe.scratch-" + name), scenes.Select(scene => scene!["session"]!.GetValue<string>()));
         Assert.False(result["passed"]!.GetValue<bool>());
-        Assert.Equal((4, 5, 1, 1, 1), Counts(result));
+        Assert.Equal((5, 6, 1, 1, 1), Counts(result));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -273,6 +277,58 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal(["open", "move", "close"], details.Select(step => step!["name"]!.GetValue<string>()));
         Assert.Equal(["opened", "moved", "closed"], details.Select(step => Status(step!)));
         Assert.All(details, step => Assert.Equal(250, step!["gameMs"]!.GetValue<int>()));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStepWithItsOwnPaceWaitsItAndTheOtherStepsWaitTheScenes()
+    {
+        JsonObject scene = Single(
+            await RunAsync(_probe.Directory, ["ScratchStepPace"], new ScratchOptions(Details: true), TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
+        Assert.Equal(0.25, scene["pace"]!.GetValue<double>());
+        JsonArray details = scene["details"]!.AsArray();
+        Assert.Equal(["quick", "slow", "settle", "last"], details.Select(step => step!["name"]!.GetValue<string>()));
+        Assert.Equal([250, 1000, 500, 250], details.Select(step => step!["gameMs"]!.GetValue<int>()));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task TheWaitAfterTheLastStepIsThatStepsOwnPace()
+    {
+        JsonObject scene = Single(
+            await RunAsync(_probe.Directory, ["ScratchStepPaceAfter"], new ScratchOptions(Details: true), TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("red", scene["verdict"]!.GetValue<string>());
+        Assert.Null(scene["failedAt"]);
+        Assert.Equal([100, 2000], scene["details"]!.AsArray().Select(step => step!["gameMs"]!.GetValue<int>()));
+        Assert.Contains("error in the last step's pace after it", scene["exit"]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStepPaceKeyThatMatchesNoStepIsRedBeforeAnyStepPlays()
+    {
+        string profile = """
+            {
+              "scratch": {
+                "folder": "scratch",
+                "pace": { "ScratchGreen": { "seconds": 0.25, "reason": "quick", "steps": { "open": 1, "shut": 2 } } }
+              }
+            }
+            """;
+        await File.WriteAllTextAsync(Path.Combine(_probe.Directory, ProjectProfile.FileName), profile, TestContext.Current.CancellationToken);
+
+        JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchGreen"], options: null, TestContext.Current.CancellationToken));
+
+        JsonNode failedAt = scene["failedAt"]!;
+        Assert.Equal("red", scene["verdict"]!.GetValue<string>());
+        Assert.Equal(-1, failedAt["index"]!.GetValue<int>());
+        Assert.Equal(
+            "pace.steps key \"shut\" of ScratchGreen matches no step; its steps are 0: open, 1: move, 2: close",
+            failedAt["error"]!.GetValue<string>()
+        );
+        Assert.Equal((0, 3), (scene["steps"]!["played"]!.GetValue<int>(), scene["steps"]!["total"]!.GetValue<int>()));
     }
 
     [Fact(Timeout = CSharpTestTimeoutMs)]

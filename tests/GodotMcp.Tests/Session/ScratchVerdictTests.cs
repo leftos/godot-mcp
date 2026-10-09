@@ -716,7 +716,110 @@ public sealed class ScratchVerdictTests
 
     [Fact]
     public void TheCeilingBudgetsEachStepThePaceAfterAndTheMarkers() =>
-        Assert.Equal(TimeSpan.FromSeconds((3 * 10.5) + 0.5 + 10), ScratchRun.Ceiling(3, 0.5));
+        Assert.Equal(TimeSpan.FromSeconds((3 * 10.5) + 0.5 + 10), ScratchRun.Ceiling([0.5, 0.5, 0.5]));
+
+    [Fact]
+    public void TheCeilingSumsEachStepsOwnPaceAndWaitsTheLastStepsPaceAfter()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 30 + 10), ScratchRun.Ceiling([0.5, 30]));
+        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 10.5 + 0.5 + 10), ScratchRun.Ceiling([0.5, 30, 0.5]));
+    }
+
+    [Fact]
+    public void EachStepTakesItsPaceByIndexElseByNameElseTheScenes()
+    {
+        ScratchScenePlan scene = PacedScene(new() { ["1"] = new ScratchPace(30, "the fight plays long"), ["close"] = new ScratchPace(2, null) });
+
+        (ScratchPace[] paces, string? error) = ScratchRun.StepPaces(scene, ["open", "fight", "close", "rest"]);
+
+        Assert.Null(error);
+        Assert.Equal([0.5, 30, 2, 0.5], paces.Select(pace => pace.Seconds));
+        Assert.Equal(["the scene settles", "the fight plays long", null, "the scene settles"], paces.Select(pace => pace.Reason));
+    }
+
+    [Fact]
+    public void AKeyWithALeadingZeroIsAStepNameNotAnIndex()
+    {
+        ScratchScenePlan scene = PacedScene(new() { ["03"] = new ScratchPace(3, null) });
+
+        (ScratchPace[] paces, string? error) = ScratchRun.StepPaces(scene, ["a", "b", "c", "d", "03"]);
+
+        Assert.Null(error);
+        Assert.Equal([0.5, 0.5, 0.5, 0.5, 3], paces.Select(pace => pace.Seconds));
+    }
+
+    [Fact]
+    public void ARedStepWithItsOwnPaceCarriesThatStepsReasonAndAnotherStepTheScenes()
+    {
+        ScratchObservation seen = Seen(Step(0), Step(1) with { CallError = "x" }) with { StepPaceReasons = ["the scene settles", "the batch"] };
+        ScratchObservation first = Seen(Step(0) with { CallError = "x" }, Step(1)) with { StepPaceReasons = ["the scene settles", "the batch"] };
+        ScratchRules rules = Plain with { PaceReason = "the scene settles" };
+
+        Assert.Equal("the batch", ScratchVerdict.Judge(seen, rules).PaceReason);
+        Assert.Equal("the scene settles", ScratchVerdict.Judge(first, rules).PaceReason);
+    }
+
+    [Fact]
+    public void AKilledStepWithItsOwnPaceCarriesThatStepsReasonAndABareOneNone()
+    {
+        ScratchObservation seen = Seen(Step(0), Step(1)) with
+        {
+            StepPaceReasons = ["the scene settles", "the batch"],
+            Kill = new ScratchFailure(1, "step1", "ceiling", ""),
+        };
+        ScratchRules rules = Plain with { PaceReason = "the scene settles" };
+
+        Assert.Equal("the batch", ScratchVerdict.Judge(seen, rules).PaceReason);
+        Assert.Null(ScratchVerdict.Judge(seen with { StepPaceReasons = ["the scene settles", null] }, rules).PaceReason);
+    }
+
+    [Fact]
+    public void ARedSceneOutsideAnyStepCarriesTheScenesReason()
+    {
+        ScratchObservation seen = Seen(Step(0)) with { StepPaceReasons = ["the batch"], ExitCode = 1 };
+
+        Assert.Equal("the scene settles", ScratchVerdict.Judge(seen, Plain with { PaceReason = "the scene settles" }).PaceReason);
+    }
+
+    [Fact]
+    public void AnIndexKeyIsTriedBeforeANameAndANameOnlyPastTheLastIndex()
+    {
+        ScratchScenePlan scene = PacedScene(new() { ["0"] = new ScratchPace(3, null), ["7"] = new ScratchPace(4, null) });
+
+        (ScratchPace[] paces, string? error) = ScratchRun.StepPaces(scene, ["first", "0", "7"]);
+
+        Assert.Null(error);
+        Assert.Equal([3, 0.5, 4], paces.Select(pace => pace.Seconds));
+    }
+
+    [Theory]
+    [InlineData("5", "pace.steps key \"5\" of Paced matches no step; its steps are 0: open, 1: hit, 2: hit")]
+    [InlineData("shut", "pace.steps key \"shut\" of Paced matches no step; its steps are 0: open, 1: hit, 2: hit")]
+    [InlineData("-1", "pace.steps key \"-1\" of Paced matches no step; its steps are 0: open, 1: hit, 2: hit")]
+    [InlineData("hit", "pace.steps key \"hit\" of Paced names 2 steps (1, 2); key it by index")]
+    public void AStepPaceKeyThatMatchesNoSingleStepIsRefused(string key, string refusal)
+    {
+        ScratchScenePlan scene = PacedScene(new() { ["open"] = new ScratchPace(1, null), [key] = new ScratchPace(2, null) });
+
+        Assert.Equal(refusal, ScratchRun.StepPaces(scene, ["open", "hit", "hit"]).Error);
+    }
+
+    [Fact]
+    public void AStepPaceKeyOnASceneWithoutStepsIsRefused() =>
+        Assert.Equal(
+            "pace.steps key \"0\" of Paced matches no step; it has no steps",
+            ScratchRun.StepPaces(PacedScene(new() { ["0"] = new ScratchPace(1, null) }), []).Error
+        );
+
+    [Fact]
+    public void TwoStepPaceKeysForOneStepAreRefused() =>
+        Assert.Equal(
+            "pace.steps keys \"0\" and \"open\" of Paced both name step 0; keep one",
+            ScratchRun.StepPaces(PacedScene(new() { ["0"] = new ScratchPace(1, null), ["open"] = new ScratchPace(2, null) }), ["open", "hit"]).Error
+        );
+
+    private static ScratchScenePlan PacedScene(Dictionary<string, ScratchPace> stepPaces) =>
+        new("Paced", "res://scratch/Paced.tscn", 0.5, []) { PaceReason = "the scene settles", StepPaces = stepPaces };
 
     private static List<string> Window(OutputPage stdout, OutputPage stderr, LineMark after, LineMark before) =>
         ScratchRun.Window(stdout, stderr, after, before, "n1");

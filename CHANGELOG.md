@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - `wait_for` takes `options.edge`, met only when its condition turns true after a false check, so a condition already true waits for its next rise.
+- `run_scratches` paces single steps from the profile's `steps` map, by index or name, so one slow step no longer slows every step.
 
 ### Fixed
 

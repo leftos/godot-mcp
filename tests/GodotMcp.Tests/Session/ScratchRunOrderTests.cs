@@ -1,4 +1,5 @@
 using GodotMcp.Server.Session;
+using GodotMcp.Server.Tools;
 
 namespace GodotMcp.Tests.Session;
 
@@ -19,6 +20,26 @@ public sealed class ScratchRunOrderTests
         ScratchScenePlan[] scenes = [Scene("A", 1), Scene("B", 2), Scene("C", 1), Scene("D", 2), Scene("E", 1)];
 
         Assert.Equal([1, 3, 0, 2, 4], ScratchRun.StartOrder(scenes, listed: false));
+    }
+
+    [Fact]
+    public void AFolderRunOrdersByTheLargestPaceASceneHoldsStepPacesIncluded()
+    {
+        ScratchScenePlan[] scenes =
+        [
+            Scene("A", 0.5),
+            Scene("B", 3),
+            Scene("C", 0.5) with
+            {
+                StepPaces = new Dictionary<string, ScratchPace> { ["2"] = new(25, "the batch"), ["fight"] = new(1, null) },
+            },
+            Scene("D", 4) with
+            {
+                StepPaces = new Dictionary<string, ScratchPace> { ["0"] = new(0.25, null) },
+            },
+        ];
+
+        Assert.Equal([2, 3, 1, 0], ScratchRun.StartOrder(scenes, listed: false));
     }
 
     private static ScratchScenePlan Scene(string name, double pace) => new(name, $"res://scratch/{name}.tscn", pace, []);

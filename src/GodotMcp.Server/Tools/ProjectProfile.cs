@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
@@ -43,7 +44,9 @@ internal sealed partial class ProjectProfile
     private static readonly string[] TopLevelKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "presets", PrepWrapperKey, ScratchKey];
     private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "session", "description"];
     private static readonly string[] ScratchKeys = ["folder", "userArgs", "pace", "known", "patterns", "parallel"];
-    private static readonly string[] PaceKeys = ["seconds", "reason"];
+    private const string StepsKey = "steps";
+    private static readonly string[] StepPaceKeys = ["seconds", "reason"];
+    private static readonly string[] PaceKeys = [.. StepPaceKeys, StepsKey];
     private static readonly string[] PatternKeys = ["pattern", "reason"];
 
     private readonly ProfileValues _defaults;
@@ -393,31 +396,76 @@ internal sealed partial class ProjectProfile
         return map;
     }
 
-    /// <summary>One scene's pace: a bare number of seconds, or an object of the seconds and the reason for them.</summary>
-    private static ScratchPace ReadPace(string scene, JsonElement value, Place place)
+    /// <summary>
+    /// One scene's pace: a bare number of seconds, or an object of the seconds, the reason for them and, optionally, the paces of
+    /// some of its steps.
+    /// </summary>
+    private static ScratchPace ReadPace(string scene, JsonElement value, Place place) =>
+        ReadNumberOrObject(value, place, $"\"pace\" of \"{scene}\"", pace => ReadObjectPace(scene, pace, place));
+
+    /// <summary>
+    /// A pace written as a bare number of seconds, or as an object <paramref name="readObject"/> reads; anything else is refused
+    /// naming <paramref name="label"/>.
+    /// </summary>
+    private static ScratchPace ReadNumberOrObject(JsonElement value, Place place, string label, Func<JsonElement, ScratchPace> readObject)
     {
         if (value.ValueKind == JsonValueKind.Number)
         {
-            return new ScratchPace(Seconds(value, place, $"\"pace\" of \"{scene}\""), null);
+            return new ScratchPace(Seconds(value, place, label), null);
         }
 
         if (value.ValueKind != JsonValueKind.Object)
         {
             throw Refused(
                 place,
-                $"\"pace\" of \"{scene}\" must be a number of seconds above 0 and at most {ScratchProfile.MaxPaceSeconds}, "
+                $"{label} must be a number of seconds above 0 and at most {ScratchProfile.MaxPaceSeconds}, "
                     + $"or an object {{\"seconds\", \"reason\"}}, not {Describe(value.ValueKind)}"
             );
         }
 
-        return ReadObjectPace(scene, value, place);
+        return readObject(value);
     }
 
-    /// <summary>An object pace: both keys, "seconds" and "reason", in either order, the reason why the scene needs it.</summary>
+    /// <summary>
+    /// A scene's object pace: "seconds" and "reason", in either order, the reason why the scene needs it, and the optional
+    /// "steps", the paces of single steps.
+    /// </summary>
     private static ScratchPace ReadObjectPace(string scene, JsonElement value, Place place)
     {
         Place pace = new(place.Path, $"scratch, pace of \"{scene}\"");
         Dictionary<string, JsonElement> keys = Keys(value, PaceKeys, pace);
+        ScratchPace read = ReadSecondsAndReason(keys, pace);
+        return keys.TryGetValue(StepsKey, out JsonElement steps) ? read with { Steps = ReadStepPaces(scene, steps, pace) } : read;
+    }
+
+    /// <summary>
+    /// A scene's "steps": step keys, each a step's index or its name, to paces, each a bare number or an object of the seconds and
+    /// the reason; which step a key names is only known once the scene has started.
+    /// </summary>
+    private static Dictionary<string, ScratchPace> ReadStepPaces(string scene, JsonElement value, Place pace)
+    {
+        Dictionary<string, ScratchPace> steps = new(StringComparer.Ordinal);
+        foreach (JsonProperty entry in Expect(value, JsonValueKind.Object, StepsKey, pace).EnumerateObject())
+        {
+            Place step = new(pace.Path, $"{pace.Where}, step \"{entry.Name}\"");
+            ScratchPace read = ReadNumberOrObject(
+                entry.Value,
+                pace,
+                $"\"{StepsKey}\" entry \"{entry.Name}\"",
+                stepPace => ReadSecondsAndReason(Keys(stepPace, StepPaceKeys, step), step)
+            );
+            if (!steps.TryAdd(entry.Name, read))
+            {
+                throw Refused(pace, $"the step key \"{entry.Name}\" appears twice in \"{StepsKey}\"; keep one");
+            }
+        }
+
+        return steps;
+    }
+
+    /// <summary>An object pace's "seconds" and "reason", both required.</summary>
+    private static ScratchPace ReadSecondsAndReason(Dictionary<string, JsonElement> keys, Place pace)
+    {
         if (!keys.TryGetValue("seconds", out JsonElement seconds))
         {
             throw Refused(pace, MissingPaceKey("seconds"));
@@ -630,8 +678,15 @@ internal sealed record ScratchProfile(
     public static Regex Compile(string pattern) => new(pattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
 }
 
-/// <summary>A scene's pace in seconds and why it was set; the reason is null when the profile gave a bare number.</summary>
-internal sealed record ScratchPace(double Seconds, string? Reason);
+/// <summary>
+/// A scene's or a step's pace in seconds and why it was set; the reason is null when the profile gave a bare number. A scene's
+/// pace may carry the paces of some of its steps, keyed by a step's index or its name.
+/// </summary>
+internal sealed record ScratchPace(double Seconds, string? Reason)
+{
+    /// <summary>The paces of single steps, keyed by a step's index or its name; empty when the profile sets none.</summary>
+    public IReadOnlyDictionary<string, ScratchPace> Steps { get; init; } = ReadOnlyDictionary<string, ScratchPace>.Empty;
+}
 
 /// <summary>A pattern a step's output line fails it by, and why; the reason is null for a bare string.</summary>
 internal sealed record ScratchPattern(Regex Regex, string? Reason);

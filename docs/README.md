@@ -21,7 +21,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Owner, owners line, startup sweep | An owner is a server process (pid and start time) with a live session using a marked `override.cfg`, listed on the file's second line. A file with no running owner is stale; each server deletes the stale files among the folders listed in `%LOCALAPPDATA%\godot-mcp-cache\override-folders.txt` when it starts (the startup sweep) |
 | Scratch scene | A project's own test scene whose steps an agent or `run_scratches` plays one at a time; its root implements the scratch protocol |
 | Scratch protocol | The four methods a scratch scene's root implements: `PlayStep(int)`, `GetStepCount()`, `GetStepName(int)`, `GetStatus()` |
-| Pace | The game time `run_scratches` waits after each step before reading its status, per scene in `godot-mcp.json`'s `scratch.pace`, a number or `{seconds, reason}` (default 0.5 s) |
+| Pace | The game time `run_scratches` waits after each step before reading its status, per scene, or per step of a scene, in `godot-mcp.json`'s `scratch.pace`, a number or `{seconds, reason}` (default 0.5 s) |
 | Boot (a scratch scene's) | The window from a scratch scene's launch to its first step; an error the feed logs there turns the scene red at `failedAt` `boot` |
 | Hold | `OverrideFolders.Hold`: the machine-wide lock across servers, the owners list opened alone, taken around every read-modify-write of a folder's `override.cfg` or `armed.json` so two servers never interleave them |
 | Prep lock | One server's per-folder semaphore (`SessionRegistry.PrepLock`): a launch's prep, a headless op, an import, arming and a warm host's start take it, so one server never preps or imports a folder twice at once |

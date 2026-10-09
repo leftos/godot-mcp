@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Text.Json;
 using GodotMcp.Server.Session;
@@ -31,8 +32,8 @@ internal sealed class ScratchTools(SessionRegistry sessions)
             + "on an error the game logs (push_error, an engine error, a C# exception) or a stdout or stderr line matching the "
             + "profile's scratch.patterns; after the steps the game is stopped and a non-zero exit or an ObjectDB leak turns the "
             + "scene red. Settings live in godot-mcp.json's scratch section {folder, userArgs, pace, known, patterns, parallel}. Scenes "
-            + "start parallel at a time: those listed in scenes in that order, a folder run's longest profile pace first; with more "
-            + "than one, a red or killed scene (not known, not refused before its first "
+            + "start parallel at a time: those listed in scenes in that order, a folder run's largest profile pace (a scene's or "
+            + "one of its steps') first; with more than one, a red or killed scene (not known, not refused before its first "
             + "step) is played once more alone after the others: green alone, its entry is the replay's with alone: true and counts "
             + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
             + "{passed, green, red, known, noSteps, killed, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, "
@@ -51,10 +52,10 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         )]
             string[]? scenes = null,
         [Description(
-            "{pace, userArgs, prepare, details, parallel, session}: pace in seconds a step (else scratch.pace's for the scene, "
-                + "else 0.5); userArgs appended after the profile's; prepare as run_project's; details true lists every scene's "
-                + "steps; parallel the scenes at once, 1 to 4 (else scratch.parallel, else 1); session a prefix for the scenes' "
-                + "session names, in place of the project folder's."
+            "{pace, userArgs, prepare, details, parallel, session}: pace in seconds for every step (else scratch.pace's for the "
+                + "step, else for the scene, else 0.5); userArgs appended after the profile's; prepare as run_project's; details "
+                + "true lists every scene's steps; parallel the scenes at once, 1 to 4 (else scratch.parallel, else 1); session a "
+                + "prefix for the scenes' session names, in place of the project folder's."
         )]
             ScratchOptions? options = null,
         CancellationToken cancellationToken = default
@@ -120,7 +121,8 @@ internal sealed class ScratchTools(SessionRegistry sessions)
 
     /// <summary>
     /// One scene's plan: options.pace else the profile's pace for the scene else the default, and the profile's reason for the
-    /// pace, kept only when the pace came from the profile rather than from options.pace.
+    /// pace and its step paces, kept only when the pace came from the profile rather than from options.pace, which paces every
+    /// step.
     /// </summary>
     private static ScratchScenePlan ScenePlan(
         string name,
@@ -135,8 +137,13 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         {
             Known = scratch.Known.GetValueOrDefault(name),
             PaceReason = options.Pace is null ? entry?.Reason : null,
+            StepPaces = StepPaces(entry, options),
         };
     }
+
+    /// <summary>The profile's step paces for the scene, none when options.pace paces every step.</summary>
+    private static IReadOnlyDictionary<string, ScratchPace> StepPaces(ScratchPace? entry, ScratchOptions options) =>
+        options.Pace is null && entry is not null ? entry.Steps : ReadOnlyDictionary<string, ScratchPace>.Empty;
 
     /// <summary>The scenes as res:// paths: those given, each checked, or every .tscn directly in scratch.folder by ordinal name.</summary>
     /// <exception cref="McpException">No scenes and no folder, an empty list, a name not in the folder, or a path that is not a scene.</exception>
@@ -286,7 +293,8 @@ internal sealed class ScratchTools(SessionRegistry sessions)
 /// the prefix for the scenes' session names.</summary>
 internal sealed record ScratchOptions(
     [property: Description(
-        "Seconds of game time each step plays before the next, above 0 and at most 120; else the profile's scratch.pace for the " + "scene, else 0.5."
+        "Seconds of game time every step plays before the next, above 0 and at most 120, its scratch.pace steps entries "
+            + "included; else the profile's scratch.pace for the step, else for the scene, else 0.5."
     )]
         double? Pace = null,
     [property: Description("User arguments appended after the profile's scratch.userArgs (else its top-level userArgs); --scratch-auto is refused.")]

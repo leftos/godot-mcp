@@ -173,6 +173,33 @@ public sealed class ScratchValidationTests : IDisposable
     }
 
     [Fact]
+    public void TheProfilesStepPacesRideOnThePlanAndOptionsPaceDropsThem()
+    {
+        WriteProfile(
+            """
+            {
+              "scratch": {
+                "folder": "Scratch",
+                "pace": {
+                  "Beta": { "seconds": 0.5, "reason": "quick", "steps": { "2": 30, "fight": { "seconds": 20, "reason": "the batch" } } }
+                }
+              }
+            }
+            """
+        );
+
+        ScratchPlan profiled = Plan(null);
+        ScratchScenePlan given = Plan(["Beta"], new ScratchOptions(Pace: 1.5)).Scenes[0];
+
+        Assert.Empty(profiled.Scenes[0].StepPaces);
+        ScratchScenePlan beta = profiled.Scenes[1];
+        Assert.Equal(0.5, beta.Pace);
+        Assert.Equal(new Dictionary<string, ScratchPace> { ["2"] = new(30, null), ["fight"] = new(20, "the batch") }, beta.StepPaces);
+        Assert.Equal(1.5, given.Pace);
+        Assert.Empty(given.StepPaces);
+    }
+
+    [Fact]
     public void ABareNumberPaceCarriesNoReason()
     {
         WriteProfile("""{ "scratch": { "folder": "Scratch", "pace": { "Beta": 2 } } }""");

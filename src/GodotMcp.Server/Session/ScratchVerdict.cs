@@ -40,6 +40,12 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
 
     public IReadOnlyList<ScratchStep> Steps { get; init; } = [];
 
+    /// <summary>
+    /// Each step's reason for its pace, by index: its own step pace's (null for a bare number), else the scene's; empty before
+    /// the steps are named.
+    /// </summary>
+    public IReadOnlyList<string?> StepPaceReasons { get; init; } = [];
+
     public string? Refusal { get; init; }
 
     public ScratchFailure? Kill { get; init; }
@@ -214,7 +220,7 @@ internal static partial class ScratchVerdict
             seen.Session
         )
         {
-            PaceReason = shown is Red or Killed ? rules.PaceReason : null,
+            PaceReason = shown is Red or Killed ? PaceReasonAt(seen, failedAt, rules.PaceReason) : null,
             FailedAt = failedAt,
             Details = ListsSteps(rules.Details, verdict, failedAt)
                 ? [.. seen.Steps.Select(step => StepResult(step, rules.Patterns, verdict != Green))]
@@ -223,6 +229,13 @@ internal static partial class ScratchVerdict
             Known = shown is KnownRed or KnownNowGreen ? rules.Known : null,
         };
     }
+
+    /// <summary>
+    /// The reason for the pace of the step a red or killed scene failed at, its own step pace's when it has one; the scene's when
+    /// the failure is outside any step.
+    /// </summary>
+    private static string? PaceReasonAt(ScratchObservation seen, ScratchFailure? failedAt, string? sceneReason) =>
+        failedAt is { Index: >= 0 } failure && failure.Index < seen.StepPaceReasons.Count ? seen.StepPaceReasons[failure.Index] : sceneReason;
 
     /// <summary>
     /// The run's result: each verdict counted, known-now-green among the red, and the prep; it passed when none is red or killed.

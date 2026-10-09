@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
@@ -8,13 +9,22 @@ namespace GodotMcp.Server.Session;
 
 /// <summary>
 /// A scratch scene to play: its name (the file's, without .tscn), its res:// path, its pace in seconds, the user arguments it
-/// starts with, the reason the profile knows it to fail, if any, and the profile's reason for its pace, if any.
+/// starts with, the reason the profile knows it to fail, if any, the profile's reason for its pace, if any, and the paces of
+/// single steps, keyed by a step's index or its name.
 /// </summary>
 internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace, IReadOnlyList<string> UserArgs)
 {
     public string? Known { get; init; }
 
     public string? PaceReason { get; init; }
+
+    /// <summary>
+    /// The paces of single steps and why, keyed by a step's index or its name, resolved once the scene has named its steps.
+    /// </summary>
+    public IReadOnlyDictionary<string, ScratchPace> StepPaces { get; init; } = ReadOnlyDictionary<string, ScratchPace>.Empty;
+
+    /// <summary>The largest pace the scene holds: its own, or one of its steps'.</summary>
+    public double LargestPace => StepPaces.Values.Select(step => step.Seconds).Append(Pace).Max();
 }
 
 /// <summary>
@@ -44,9 +54,10 @@ internal readonly record struct LineMark(long Stdout, long Stderr);
 /// Plays one scratch scene in a headless game session of its own, as an agent would with the runtime tools: launches it,
 /// asks the game for its current scene's path, checks that root for the scratch protocol, reads its step names and takes the
 /// error feed's entries so far, the boot's: an error among them fails the scene before any step plays (the lines printed so far
-/// are never judged). Then per step it calls PlayStep, waits the pace in game time, reads GetStatus and takes the feed's
-/// entries since the last window, stopping at the first failed step; after the last step it waits one more pace, then stops
-/// the game gracefully and reads the lines it printed after the steps.
+/// are never judged). A step pace keyed to no single step refuses the scene before any step plays. Then per step it calls
+/// PlayStep, waits the step's pace in game time, reads GetStatus and takes the feed's entries since the last window, stopping
+/// at the first failed step; after the last step it waits that step's pace once more, then stops the game gracefully and reads
+/// the lines it printed after the steps.
 /// Each window of output (the launch, each step, the pace after the last) ends at a marker line the game prints to stdout
 /// and to stderr, since the two streams arrive apart. The session stays in the registry, stopped, so get_debug_output can
 /// read it.
@@ -75,6 +86,7 @@ internal sealed class ScratchRun
     private readonly string _nonce = Guid.NewGuid().ToString("N")[..12];
     private readonly List<string> _names = [];
     private readonly List<ScratchStep> _steps = [];
+    private ScratchPace[] _paces = [];
     private GodotSession? _session;
     private LoadDeadline? _deadline;
     private LineMark _mark;
@@ -154,13 +166,14 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// The places in <paramref name="scenes"/> in the order the scenes start: a listed run's own order; a folder run's by pace,
-    /// longest first, so the slowest scenes do not start last, with equal paces in the folder's name order.
+    /// The places in <paramref name="scenes"/> in the order the scenes start: a listed run's own order; a folder run's by the
+    /// largest pace a scene holds, its own or a step's, longest first, so the slowest scenes do not start last, with equal paces in
+    /// the folder's name order.
     /// </summary>
     internal static int[] StartOrder(IReadOnlyList<ScratchScenePlan> scenes, bool listed)
     {
         IEnumerable<int> places = Enumerable.Range(0, scenes.Count);
-        return listed ? [.. places] : [.. places.OrderByDescending(place => scenes[place].Pace)];
+        return listed ? [.. places] : [.. places.OrderByDescending(place => scenes[place].LargestPace)];
     }
 
     private static async Task<ScratchSceneResult> PlayOneAsync(
@@ -175,11 +188,65 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// The ceiling of a scene's steps, load-adjusted: each step's pace and 10 s, the pace after the last, and 10 s more for the
-    /// launch and pace markers.
+    /// The ceiling of a scene's steps, load-adjusted, from each step's pace: each step's pace and 10 s, the last step's pace once
+    /// more for the pace after it, and 10 s more for the launch and pace markers.
     /// </summary>
-    internal static TimeSpan Ceiling(int steps, double pace) =>
-        TimeSpan.FromSeconds((steps * (pace + StepAllowance.TotalSeconds)) + pace + StepAllowance.TotalSeconds);
+    internal static TimeSpan Ceiling(IReadOnlyList<double> paces) =>
+        TimeSpan.FromSeconds(paces.Sum(pace => pace + StepAllowance.TotalSeconds) + (paces.Count > 0 ? paces[^1] : 0) + StepAllowance.TotalSeconds);
+
+    /// <summary>
+    /// Each of the steps <paramref name="names"/> lists' pace and why: the scene's, or a step pace keyed by the step's index, else
+    /// by its name; or why a key names no single step, or two keys name one step.
+    /// </summary>
+    internal static (ScratchPace[] Paces, string? Error) StepPaces(ScratchScenePlan scene, IReadOnlyList<string> names)
+    {
+        ScratchPace scenePace = new(scene.Pace, scene.PaceReason);
+        ScratchPace[] paces = [.. names.Select(_ => scenePace)];
+        Dictionary<int, string> keyOf = [];
+        foreach ((string key, ScratchPace pace) in scene.StepPaces)
+        {
+            (int step, string? error) = StepOf(key, scene.Name, names);
+            error ??= keyOf.TryGetValue(step, out string? other)
+                ? $"pace.steps keys \"{other}\" and \"{key}\" of {scene.Name} both name step {step}; keep one"
+                : null;
+            if (error is not null)
+            {
+                return ([], error);
+            }
+
+            keyOf[step] = key;
+            paces[step] = pace;
+        }
+
+        return (paces, null);
+    }
+
+    /// <summary>
+    /// The step a step pace's key names: the index it spells, written without a sign or a leading zero, when there is such a step;
+    /// else the one step of that name.
+    /// </summary>
+    private static (int Step, string? Error) StepOf(string key, string scene, IReadOnlyList<string> names)
+    {
+        if (
+            int.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out int index)
+            && index < names.Count
+            && string.Equals(index.ToString(CultureInfo.InvariantCulture), key, StringComparison.Ordinal)
+        )
+        {
+            return (index, null);
+        }
+
+        int[] named = [.. Enumerable.Range(0, names.Count).Where(step => string.Equals(names[step], key, StringComparison.Ordinal))];
+        return named.Length switch
+        {
+            1 => (named[0], null),
+            0 => (-1, $"pace.steps key \"{key}\" of {scene} matches no step; {StepList(names)}"),
+            _ => (-1, $"pace.steps key \"{key}\" of {scene} names {named.Length} steps ({string.Join(", ", named)}); key it by index"),
+        };
+    }
+
+    private static string StepList(IReadOnlyList<string> names) =>
+        names.Count == 0 ? "it has no steps" : "its steps are " + string.Join(", ", names.Select((name, index) => $"{index}: {name}"));
 
     /// <summary>A pace as the game milliseconds a step waits: at least 1.</summary>
     internal static int GameMs(double pace) => (int)Math.Max(1, Math.Round(pace * 1000));
@@ -341,7 +408,7 @@ internal sealed class ScratchRun
 
         if (_names.Count > 0 && ScratchVerdict.FeedError(_bootErrors) is null)
         {
-            _deadline = _registry.Clock.Start(Ceiling(_names.Count, _scene.Pace), cancellationToken);
+            _deadline = _registry.Clock.Start(Ceiling(PaceSeconds), cancellationToken);
             await PlayStepsAsync(session, _deadline.Token);
         }
 
@@ -409,6 +476,7 @@ internal sealed class ScratchRun
         return error;
     }
 
+    /// <summary>Reads every step's name, then each step's pace; null, or why a name or a step pace could not be had.</summary>
     private async Task<string?> ReadNamesAsync(GodotSession session, int total, CancellationToken cancellationToken)
     {
         for (int index = 0; index < total; index++)
@@ -422,20 +490,20 @@ internal sealed class ScratchRun
             _names.Add(StepName(name));
         }
 
-        return null;
+        (_paces, string? paceError) = StepPaces(_scene, _names);
+        return paceError;
     }
 
     private static string StepName(JsonNode? name) =>
         name is JsonValue value && value.TryGetValue(out string? text) ? text : name?.ToJsonString() ?? string.Empty;
 
-    /// <summary>Plays each step until one fails; after the last green one, waits one more pace.</summary>
+    /// <summary>Plays each step, each waiting its own pace, until one fails; after the last green one, waits its pace once more.</summary>
     private async Task PlayStepsAsync(GodotSession session, CancellationToken limit)
     {
-        int gameMs = GameMs(_scene.Pace);
         for (int index = 0; index < _names.Count; index++)
         {
             _inFlight = index;
-            ScratchStep step = await PlayStepAsync(session, index, gameMs, limit);
+            ScratchStep step = await PlayStepAsync(session, index, GameMs(_paces[index].Seconds), limit);
             _steps.Add(step);
             if (ScratchVerdict.StepError(step, _plan.Patterns) is not null)
             {
@@ -444,7 +512,7 @@ internal sealed class ScratchRun
         }
 
         _inFlight = -1;
-        await PaceAfterAsync(session, gameMs, limit);
+        await PaceAfterAsync(session, GameMs(_paces[^1].Seconds), limit);
     }
 
     private async Task<ScratchStep> PlayStepAsync(GodotSession session, int index, int gameMs, CancellationToken limit)
@@ -595,9 +663,9 @@ internal sealed class ScratchRun
         }
 
         string backstop = _deadline?.Reason == DeadlineReason.Backstop ? _deadline.BackstopClause() : string.Empty;
-        string seconds = Ceiling(_names.Count, _scene.Pace).TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
+        string seconds = Ceiling(PaceSeconds).TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
         return $"the scene passed its ceiling of {seconds} s of load-adjusted time "
-            + $"({_names.Count} steps x (pace + 10 s), one more pace, and 10 s for the markers)"
+            + $"(each of its {_names.Count} steps' pace + 10 s, the last step's pace once more, and 10 s for the markers)"
             + $"{backstop}, so its game was stopped";
     }
 
@@ -607,8 +675,11 @@ internal sealed class ScratchRun
             LaunchLines = _launchLines,
             BootErrors = _bootErrors,
             Steps = _steps,
+            StepPaceReasons = [.. _paces.Select(pace => pace.Reason)],
             AfterError = _afterError,
         };
+
+    private double[] PaceSeconds => [.. _paces.Select(pace => pace.Seconds)];
 
     private static int WholeNumber(JsonNode? node) =>
         node is JsonValue value && value.TryGetValue(out double number) && number >= 0 && number <= int.MaxValue && number == Math.Floor(number)
