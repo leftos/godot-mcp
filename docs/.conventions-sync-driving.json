@@ -9,7 +9,7 @@
       "user": "c926ca623a872aa1"
     },
     "build-before-launch": {
-      "repo": "49a546f6d541b46e",
+      "repo": "3c4fb49efa876644",
       "user": "70a4e55758c28ceb"
     },
     "cancel-timed-out-requests": {
@@ -145,8 +145,8 @@
       "user": "ebfaa4da3ea3e159"
     },
     "quiet-by-default": {
-      "repo": "77638ba47183c9da",
-      "user": "6d334d367532d7b9"
+      "repo": "a57948c7aff284c3",
+      "user": "6bab3db9ab0a37c1"
     },
     "real-app-over-frontend-only": {
       "repo": "271d0467f0483c69",
@@ -237,5 +237,5 @@
       "user": "81e92891fb8fe24c"
     }
   },
-  "user_revision": 4
+  "user_revision": 5
 }
