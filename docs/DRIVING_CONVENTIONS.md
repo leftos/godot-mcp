@@ -295,9 +295,11 @@ Source: no FileDialog handling anywhere in bridge/ or src/ (searched); bridge/go
 ### Name what the driver cannot reach, and the route for each
 <!-- rule: name-out-of-reach-ui -->
 
-The bridge reaches only what the engine draws and routes input to. Name each surface it cannot reach, and refuse it as such rather than failing obscurely: a native menu is refused as "an OS window of its own" with the settings that would embed it, and a world node in a native window is refused since input reaches only the root and its embedded windows.
+The bridge reaches only what the engine draws and routes input to. Name each surface it cannot reach, and refuse it as such rather than failing obscurely: a native menu is refused as "an OS window of its own" with the settings that would embed it, and a world node in a native window is refused since input reaches only the root and its embedded windows. A refusal is a named error returned before any input is sent, never a half-sent gesture (the bridge's reach checks run before the first event).
 
-Native file dialogs are not named yet, in the docs or in a refusal, so an agent can still burn turns trying to click one; name them, with the route around them (queue-file-answers), beside the native menus.
+Where the game can avoid opening a native surface while driven, it does, and a tool answers in its place: a native file dialog takes a path the agent queued instead of opening.
+
+Native file dialogs are not named yet, in the docs or in a refusal, and no queue answers them yet, so an agent can still burn turns trying to click one; name them, with the route around them (queue-file-answers), beside the native menus.
 Source: bridge/godot_mcp_popup_targets.gd:19-21, bridge/godot_mcp_popup_targets.gd:138, bridge/godot_mcp_targets.gd:55, docs/TOOLS.md:146. Seen: 0 here (seeded from towercab-3d).
 
 ### Read the game's output by its tail, and log when the frame rate drops
