@@ -45,7 +45,30 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         + "\tscene_tree.root.add_child(node)\n"
         + "\treturn true\n";
 
+    // The same, but blocking 30 s: the game acknowledges the quit and never finishes it within any grace.
+    private const string IgnoresQuitScript =
+        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
+        + "\tvar script := GDScript.new()\n"
+        + "\tscript.source_code = \"extends Node\\n\\n\\nfunc _exit_tree() -> void:\\n\\tOS.delay_msec(30000)\\n\"\n"
+        + "\tscript.reload()\n"
+        + "\tvar node := Node.new()\n"
+        + "\tnode.set_script(script)\n"
+        + "\tscene_tree.root.add_child(node)\n"
+        + "\treturn true\n";
+
+    // The probe's user argument naming the file its main scene writes as it leaves the tree (tests/fixtures/InputProbe/main.gd).
+    private const string ExitMarkerArg = "--exit-marker=";
+
+    // A stop's grace for a game that acknowledged the quit, in the harness's wall time.
+    private static readonly TimeSpan QuitGrace = TimeSpan.FromSeconds(3);
+
+    // The least one game that never finishes quitting costs a stop: the grace, then the second its state is sampled before the kill.
+    private static readonly TimeSpan IgnoredQuitCost = QuitGrace + TimeSpan.FromSeconds(1);
+
     private static readonly TimeSpan ChildExitWait = TimeSpan.FromSeconds(5);
+
+    // How long a restart takes to pass its refusal checks and reach the old game's stop, well inside that stop's 3 s grace.
+    private static readonly TimeSpan RestartPastItsChecks = TimeSpan.FromSeconds(1);
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
 
@@ -454,6 +477,147 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         Assert.Null(restarted.PreviousKillReason);
         Assert.NotNull(restarted.PreviousQuitMs);
         Assert.InRange(restarted.PreviousQuitMs.Value, 1200, 2999);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AtServerExitAGameIsAskedToQuitAndRunsItsExitWork()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string marker = Path.Combine(Path.GetDirectoryName(_probe.Directory)!, "exit-marker.txt");
+        await _harness.Sessions.LaunchAsync(Request(userArgs: [ExitMarkerArg + marker]), null, cancellation);
+        using Process game = OpenGame("InputProbe");
+
+        _harness.Sessions.Shutdown();
+        _harness.Sessions.Shutdown();
+
+        Assert.True(game.HasExited, "the shutdown returned with the game still running");
+        Assert.Equal(0, game.ExitCode);
+        Assert.True(File.Exists(marker), "the game was ended without running its exit work");
+        Assert.False(File.Exists(_probe.OverrideFile));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AtServerExitGamesThatNeverFinishQuittingShareOneGraceAndAreKilled()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
+        List<Process> games = [];
+        try
+        {
+            foreach (string name in new[] { "first", "second" })
+            {
+                await _harness.Sessions.LaunchAsync(Request(), name, cancellation);
+                await tools.RunScriptAsync(IgnoresQuitScript, 10_000, name, cancellation);
+                games.Add(OpenGame(name));
+            }
+
+            var shutdown = Stopwatch.StartNew();
+            _harness.Sessions.Shutdown();
+            TimeSpan elapsed = shutdown.Elapsed;
+
+            Assert.All(games, game => Assert.True(game.HasExited, $"the game (pid {game.Id}) outlived the shutdown"));
+            // At least the grace, since each game was asked to quit first; under two ignored quits one after the other, since they share it.
+            Assert.InRange(elapsed, QuitGrace, 2 * IgnoredQuitCost);
+            Assert.False(File.Exists(_probe.OverrideFile));
+        }
+        finally
+        {
+            foreach (Process game in games)
+            {
+                game.Dispose();
+            }
+        }
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AtServerExitOneSessionsFailedStopIsReportedAndTheOthersStillStop()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
+        string marker = Path.Combine(Path.GetDirectoryName(_probe.Directory)!, "exit-marker.txt");
+        await _harness.Sessions.LaunchAsync(Request(), "failing", cancellation);
+        await tools.RunScriptAsync(IgnoresQuitScript, 10_000, "failing", cancellation);
+        await _harness.Sessions.LaunchAsync(Request(userArgs: [ExitMarkerArg + marker]), "quitting", cancellation);
+        using Process failing = OpenGame("failing");
+        // The stop reads the state of a game still running after its grace; for this one the read fails with an unexpected exception.
+        _harness.Sessions.DescribeGameProcess = processId =>
+            processId == failing.Id ? throw new NotSupportedException("the state read failed") : Task.FromResult("state");
+        TextWriter stderr = Console.Error;
+        using StringWriter captured = new();
+        Console.SetError(captured);
+        try
+        {
+            _harness.Sessions.Shutdown();
+        }
+        finally
+        {
+            Console.SetError(stderr);
+        }
+
+        Assert.Contains(
+            $"godot-mcp: stopping the game of {_probe.Directory} at shutdown failed: the state read failed",
+            captured.ToString(),
+            StringComparison.Ordinal
+        );
+        Assert.True(failing.HasExited, "the game whose stop failed outlived the shutdown");
+        Assert.True(File.Exists(marker), "the other game did not quit by itself");
+        Assert.False(File.Exists(_probe.OverrideFile));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AtServerExitARestartInFlightSettlesBeforeTheRegistryIsDisposed()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
+        await _harness.Sessions.LaunchAsync(Request(), "held", cancellation);
+        // The old game never finishes quitting, so the restart stays in flight through its stop's grace, past both refusal checks.
+        await tools.RunScriptAsync(IgnoresQuitScript, 10_000, "held", cancellation);
+        Task<RestartResult> restart = _harness.Sessions.RestartAsync("held", prepare: false, cancellation);
+        await Task.Delay(RestartPastItsChecks, cancellation);
+        try
+        {
+            await Task.Run(_harness.Sessions.Dispose, cancellation);
+
+            // Either the restart settled within the cap and its game was then stopped, or it was killed at the cap and failed.
+            Exception? failed = await Record.ExceptionAsync(() => restart);
+            Assert.True(failed is null or SessionException, $"the restart failed with something other than a refused start: {failed}");
+            if (failed is null)
+            {
+                Assert.True(await ProcessGoneAsync((await restart).ProcessId), "the restarted game outlived the registry");
+            }
+
+            Assert.False(File.Exists(_probe.OverrideFile));
+        }
+        finally
+        {
+            if (restart.IsCompletedSuccessfully)
+            {
+                EndIfRunning((await restart).ProcessId);
+            }
+        }
+    }
+
+    /// <summary>Kills a process the test left behind, with its tree, when it still runs.</summary>
+    private static void EndIfRunning(int processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            process.Kill(entireProcessTree: true);
+        }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException)
+        {
+            // It is gone already.
+        }
+    }
+
+    /// <summary>The named session's game, with its handle held so its exit code can be read after it exits.</summary>
+    private Process OpenGame(string session)
+    {
+        int processId = _harness.Sessions.List(includeStopped: false).Single(info => info.Name == session).GameProcessId!.Value;
+        var game = Process.GetProcessById(processId);
+        _ = game.Handle;
+        return game;
     }
 
     private LaunchRequest Request(string[]? userArgs = null, bool quiet = true, bool shutOutRealGamepads = false) =>

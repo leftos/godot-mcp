@@ -60,6 +60,8 @@ var _stream: StreamPeerTCP
 var _token: String = ""
 var _buffer: PackedByteArray = PackedByteArray()
 var _hello_sent: bool = false
+## Whether the server accepted the hello (its welcome command); only a welcomed run quits on a loss.
+var _welcomed: bool = false
 var _connection_lost: bool = false
 ## The mouse buttons the injected input holds down, as a MouseButtonMask.
 var _held_mask: int = 0
@@ -356,6 +358,7 @@ func _go_dormant_again() -> void:
 	_stream = null
 	_buffer = PackedByteArray()
 	_hello_sent = false
+	_welcomed = false
 	_connection_lost = false
 	_token = ""
 	_endpoint = {}
@@ -400,8 +403,12 @@ func _process(_delta: float) -> void:
 ## reach them from the server now, and a wait_for or dotnet call would otherwise poll on
 ## until its backstopMs for a reply nobody reads. A suspended run_script is dropped as a cancel
 ## stops it, and a call_method is left to end unanswered, neither restoring the time scale or the
-## pause: no server is left to be told.
+## pause: no server is left to be told. A game the server launched quits a frame later, since the
+## bridge never dials again and a server killed outright never asks it to; an attached or joined
+## game is the user's and runs on.
 func _end_connection() -> void:
+	# A refused hello is never welcomed: a child game that inherited the run's token runs on.
+	var launched: bool = _endpoint_source == _dormant_script.SOURCE_ENV and _welcomed
 	_connection_lost = true
 	for request: int in _running_scripts.keys():
 		_drop_script(request)
@@ -411,6 +418,15 @@ func _end_connection() -> void:
 	_running_requests.clear()
 	_dormant_if_armed()
 	_owns_pointer = false
+	if launched:
+		var tree: SceneTree = Engine.get_main_loop() as SceneTree
+		await tree.process_frame
+		_quit(tree)
+
+
+## Ends the game as its own quit does, running its exit work; the unit tests replace it.
+func _quit(tree: SceneTree) -> void:
+	tree.quit()
 
 
 ## Sends the errors logged since the last flush as one {type: "errors", entries, dropped}
@@ -611,11 +627,19 @@ func _command_handlers() -> Dictionary:
 		"state": _handle_state,
 		"shutdown": _handle_shutdown,
 		"cancel": _handle_cancel,
+		"welcome": _handle_welcome,
 	}
 
 
 func _handle_ping(id: int, _params: Dictionary) -> void:
 	_reply_ok(id, {"pong": true})
+
+
+## The server accepted this bridge's hello for a run it launched: from here a lost connection
+## means the server is gone, and the game quits.
+func _handle_welcome(id: int, _params: Dictionary) -> void:
+	_welcomed = true
+	_reply_ok(id, {})
 
 
 ## Replies with the number of frames Movie Maker has written so far, the index of the next one.

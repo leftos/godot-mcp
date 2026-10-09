@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Text.Json;
 using GodotMcp.IntegrationTests.Fixtures;
+using GodotMcp.Server.Session;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -15,6 +17,12 @@ public sealed class McpServerSmokeTests : IDisposable
         + "\treturn scene_tree.root.get_node(\"Main/SmallButton\").press_count\n";
     private const string VersionPattern = @"^\d+\.\d+\.\d+(\+[0-9a-f]{7})?$";
     private static readonly string[] SmokeArgs = ["--smoke"];
+
+    // The probe's user argument naming the file its main scene writes as it leaves the tree (tests/fixtures/InputProbe/main.gd).
+    private const string ExitMarkerArg = "--exit-marker=";
+
+    // How long a game may take to quit by itself once its server is gone: one frame to notice, then its exit work.
+    private static readonly TimeSpan GameQuitWait = TimeSpan.FromSeconds(10);
     private readonly ProbeProject _probe = new();
 
     public void Dispose() => _probe.Dispose();
@@ -265,17 +273,108 @@ public sealed class McpServerSmokeTests : IDisposable
         Assert.Contains("options has no 'prepar'", Text(run), StringComparison.Ordinal);
     }
 
+    [Fact(Timeout = 180_000)]
+    public async Task AGameQuitsByItselfWhenItsServerIsKilled()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string marker = Path.Combine(Path.GetDirectoryName(_probe.Directory)!, "exit-marker.txt");
+        using Process server = StartServer();
+        List<Process> games = [];
+        try
+        {
+            await using (
+                McpClient client = await McpClient.CreateAsync(
+                    new StreamClientTransport(server.StandardInput.BaseStream, server.StandardOutput.BaseStream),
+                    cancellationToken: cancellation
+                )
+            )
+            {
+                Dictionary<string, object?> arguments = new() { ["projectPath"] = _probe.Directory, ["userArgs"] = new[] { ExitMarkerArg + marker } };
+                CallToolResult run = await CallAsync(client, "run_project", arguments);
+                Assert.NotEqual(true, run.IsError);
+                CallToolResult listed = await CallAsync(client, "list_sessions", []);
+                JsonElement session = Assert.Single(JsonDocument.Parse(Text(listed)).RootElement.GetProperty("sessions").EnumerateArray());
+                games.Add(OpenProcess(session.GetProperty("gameProcessId").GetInt32()));
+                games.Add(OpenProcess(session.GetProperty("processId").GetInt32()));
+
+                // TerminateProcess, as install's Stop-Process -Force and a crash end it: no shutdown code of the server runs.
+                server.Kill();
+            }
+
+            bool quit = await ProcessExit.WaitUntilGoneAsync(games[0], GameQuitWait);
+
+            Assert.True(quit, $"the game (pid {games[0].Id}) was still running {GameQuitWait.TotalSeconds:0} s after its server was killed");
+            Assert.True(File.Exists(marker), "the game was ended without running its exit work");
+        }
+        finally
+        {
+            if (!server.HasExited)
+            {
+                server.Kill(entireProcessTree: true);
+            }
+
+            foreach (Process game in games)
+            {
+                await EndAsync(game);
+            }
+        }
+    }
+
+    private static string ServerPath => Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "godot-mcp.exe" : "godot-mcp");
+
     private static Task<McpClient> ConnectAsync()
     {
         StdioClientTransport transport = new(
             new StdioClientTransportOptions
             {
                 Name = "godot",
-                Command = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "godot-mcp.exe" : "godot-mcp"),
+                Command = ServerPath,
                 ShutdownTimeout = TimeSpan.FromSeconds(10),
             }
         );
         return McpClient.CreateAsync(transport, cancellationToken: TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Starts the built server over redirected stdio, as a host does, with its stderr read and dropped so it never blocks.</summary>
+    private static Process StartServer()
+    {
+        ProcessStartInfo start = new(ServerPath)
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        Process server = Process.Start(start) ?? throw new InvalidOperationException($"the server {ServerPath} did not start");
+        server.ErrorDataReceived += (_, _) => { };
+        server.BeginErrorReadLine();
+        return server;
+    }
+
+    /// <summary>A process by id with its handle held, so its pid cannot be reused before the test ends it.</summary>
+    private static Process OpenProcess(int processId)
+    {
+        var process = Process.GetProcessById(processId);
+        _ = process.Handle;
+        return process;
+    }
+
+    /// <summary>Kills a process the test opened if it still runs, with its tree, and waits for it to let go of its files.</summary>
+    private static async Task EndAsync(Process process)
+    {
+        using (process)
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // It has exited; the wait below still waits for its signal.
+            }
+
+            await ProcessExit.WaitUntilGoneAsync(process, GameQuitWait);
+        }
     }
 
     private static Task<CallToolResult> CallAsync(McpClient client, string tool, Dictionary<string, object?> arguments) =>

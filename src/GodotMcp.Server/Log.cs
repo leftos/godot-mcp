@@ -75,6 +75,18 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Warning, Message = "The bridge did not acknowledge shutdown; waiting for the exit anyway.")]
     public static partial void ShutdownNotAcknowledged(ILogger logger, Exception exception);
 
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The bridge of {ProjectDir} did not answer welcome; the game will not quit by itself if this server dies."
+    )]
+    public static partial void WelcomeUnanswered(ILogger logger, Exception exception, string projectDir);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The bridge of {ProjectDir} did not answer welcome within {Seconds} s; it will mark the connection when it reads it."
+    )]
+    public static partial void WelcomeTimedOut(ILogger logger, string projectDir, double seconds);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Godot for {Project} did not exit after {Grace} of shutdown; killing it.")]
     public static partial void ExitGraceExpired(ILogger logger, string project, string grace);
 

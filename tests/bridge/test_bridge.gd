@@ -203,6 +203,48 @@ func test_a_lost_connection_drops_running_scripts() -> void:
 	_free_bridge(bridge)
 
 
+func test_welcome_marks_the_connection_accepted_and_replies() -> void:
+	var bridge: Node = _recording_bridge()
+	bridge._handle_welcome(5, {})
+	assert_true(bridge._welcomed, "the server accepted the hello")
+	assert_eq(bridge.sent.size(), 1, "one reply")
+	assert_eq(bridge.sent[0].get("id"), 5, "to the welcome")
+	assert_eq(bridge.sent[0].get("ok"), true, "an ok reply")
+	_free_bridge(bridge)
+
+
+func test_a_launched_game_never_welcomed_does_not_quit_on_a_lost_connection() -> void:
+	var bridge: Node = _recording_bridge()
+	bridge._endpoint_source = _dormant_script.SOURCE_ENV
+	bridge._end_connection()
+	_frames(2)
+	assert_eq(bridge.quits, 0, "a refused hello, as a child game's inherited token is")
+	_free_bridge(bridge)
+
+
+func test_a_launched_game_quits_one_frame_after_its_connection_drops() -> void:
+	var bridge: Node = _recording_bridge()
+	bridge._endpoint_source = _dormant_script.SOURCE_ENV
+	bridge._welcomed = true
+	bridge._end_connection()
+	assert_eq(bridge.quits, 0, "not in the frame the connection dropped")
+	_frames(1)
+	assert_eq(bridge.quits, 1, "the frame after")
+	_frames(2)
+	assert_eq(bridge.quits, 1, "once")
+	_free_bridge(bridge)
+
+
+func test_an_attached_or_joined_game_never_quits_on_a_lost_connection() -> void:
+	for source: String in [_dormant_script.SOURCE_ATTACH, _dormant_script.SOURCE_JOIN]:
+		var bridge: Node = _recording_bridge()
+		bridge._endpoint_source = source
+		bridge._end_connection()
+		_frames(2)
+		assert_eq(bridge.quits, 0, "a game from %s is the user's" % source)
+		_free_bridge(bridge)
+
+
 func test_a_cancelled_call_method_restores_and_never_replies() -> void:
 	var bridge: Node = _recording_bridge()
 	# An Inspect child whose call_method runs a method that speeds time up and awaits release.
@@ -283,6 +325,7 @@ func _recording_bridge() -> Node:
 					'extends "%s"' % _bridge_script.resource_path,
 					"",
 					"var sent: Array = []",
+					"var quits: int = 0",
 					"",
 					"",
 					"func _ready() -> void:",
@@ -291,6 +334,10 @@ func _recording_bridge() -> Node:
 					"",
 					"func _send(message: Dictionary) -> void:",
 					"\tsent.append(message)",
+					"",
+					"",
+					"func _quit(_tree: SceneTree) -> void:",
+					"\tquits += 1",
 				]
 			)
 		)

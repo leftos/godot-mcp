@@ -42,6 +42,8 @@ SessionRegistry sessions = host.Services.GetRequiredService<SessionRegistry>();
 
 // A server killed before its shutdown left its override.cfg files behind; remove the ones no live server owns.
 sessions.OverrideFolders.Sweep();
+
+// The host's stop asks the games to quit; process exit is the backup for an exit without one, and finds them gone otherwise.
 host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(sessions.Shutdown);
 AppDomain.CurrentDomain.ProcessExit += (_, _) => sessions.Shutdown();
 

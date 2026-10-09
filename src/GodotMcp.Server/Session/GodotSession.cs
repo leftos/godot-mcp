@@ -272,23 +272,102 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     }
 
     /// <summary>
-    /// The last-resort cleanup for the server's own exit: kills a live game it launched and removes an attach file, without
-    /// waiting on the gate or the bridge. An attached game is left running; the registry removes the override files.
+    /// The server's own exit: a live game it launched is stopped as stop_project stops it (a ping, the shutdown command, then
+    /// the grace, and a kill for a game silent or still running after it), without waiting on the gate. An attached game is
+    /// left running and only its attach file removed. The registry bounds the wait, kills a game still running at its cap
+    /// (<see cref="KillAtShutdownAsync"/>) and removes the override files.
     /// </summary>
-    public void Shutdown()
+    /// <returns>
+    /// Whether the session was handled; false while a launch or restart is still in flight (the registry waits for those to
+    /// settle first, up to its cap), which a later shutdown pass takes again once it has its run.
+    /// </returns>
+    public async Task<bool> ShutdownAsync()
+    {
+        if (Kind == SessionKind.Attach)
+        {
+            AtShutdown(RemoveHandoffFile);
+            return true;
+        }
+
+        if (_pending || _run is not { } run)
+        {
+            return false;
+        }
+
+        if (run.IsRunning)
+        {
+            await StopRunningAsync(run);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Kills a game this session launched that is still running when the server's exit stops waiting for it to quit, with
+    /// everything it started, and waits up to <see cref="KillWait"/> for them to exit: the run's process and the game's own,
+    /// each that still runs (on Windows the game can outlive the console wrapper that is the run's process).
+    /// </summary>
+    public async Task KillAtShutdownAsync()
+    {
+        if (Kind != SessionKind.Run || _run is not { } run)
+        {
+            return;
+        }
+
+        Process[] running = [.. new[] { run.Process, run.Game }.OfType<Process>().Where(IsRunningAtShutdown)];
+        foreach (Process process in running)
+        {
+            AtShutdown(() => process.Kill(entireProcessTree: true));
+        }
+
+        bool[] gone = await Task.WhenAll(running.Select(GoneAfterKillAsync));
+        if (gone.Contains(false))
+        {
+            // Logging may already be torn down while the process exits, so this goes straight to stderr.
+            await Console.Error.WriteLineAsync(
+                $"godot-mcp: the game of {ProjectDir} was still running {KillWait.TotalSeconds:0} s after its kill at shutdown."
+            );
+        }
+    }
+
+    /// <summary>Whether a process of the run still runs; one never started or already let go of does not.</summary>
+    private static bool IsRunningAtShutdown(Process process)
     {
         try
         {
-            if (Kind == SessionKind.Attach)
-            {
-                RemoveHandoffFile();
-            }
-            else if (_run is { IsRunning: true } run)
-            {
-                run.Process.Kill(entireProcessTree: true);
-            }
+            return !process.HasExited;
         }
-        catch (Exception e) when (e is Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException)
+        catch (InvalidOperationException)
+        {
+            // Never started, or disposed as the run let go of it (ObjectDisposedException is one).
+            return false;
+        }
+    }
+
+    /// <summary>Waits up to <see cref="KillWait"/> for a killed process to exit; one the run let go of meanwhile counts as gone.</summary>
+    private static async Task<bool> GoneAfterKillAsync(Process process)
+    {
+        try
+        {
+            return await ProcessExit.WaitUntilGoneAsync(process, KillWait);
+        }
+        catch (InvalidOperationException)
+        {
+            // Disposed while the wait ran (ObjectDisposedException is one): the run has let go of it, which it does once it exits.
+            return true;
+        }
+    }
+
+    /// <summary>Runs a step of the server's exit, reporting a failure to stderr and going on.</summary>
+    private void AtShutdown(Action cleanup)
+    {
+        try
+        {
+            cleanup();
+        }
+        // Process.Kill with its tree throws AggregateException when part of the tree cannot be killed.
+        catch (Exception e)
+            when (e is Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException or AggregateException)
         {
             // Logging may already be torn down while the process exits, so this goes straight to stderr.
             Console.Error.WriteLine($"godot-mcp: cleanup of {ProjectDir} at shutdown failed: {e.Message}");
@@ -425,6 +504,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             );
             PrepResult prep = request.Prepare ? await ProjectPrep.RunAsync(context, cancellationToken) : PrepResult.Skipped;
             string bridgeScript = Installation.FindBridgeScript();
+            // A shutdown that began during the prep refuses the start before a restart's old game is stopped.
+            registry.RefuseStartAtShutdown();
             RunEnd? previousEnd = null;
             if (previous is not null)
             {
@@ -463,6 +544,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         CancellationToken cancellationToken
     )
     {
+        registry.RefuseStartAtShutdown();
         (GodotRun run, PrepResult prep, string token, RunEnd? previousEnd, string godot) = await PrepareAndStartAsync(
             request,
             previous,
@@ -478,6 +560,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         {
             run.KeepGameHandle(gameProcessId, _logger);
         }
+
+        await WelcomeAsync(connection);
 
         Log.RunStarted(_logger, processId, run.ProjectDir);
         LastLaunch = request;
@@ -545,6 +629,27 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
         cancellationToken.ThrowIfCancellationRequested();
         throw DescribeFailedLaunch(run, exitedEarly, deadline);
+    }
+
+    /// <summary>
+    /// Tells a launched game's bridge its hello was accepted, so it quits once this connection is lost; a bridge whose hello
+    /// is refused (a child game that inherited the run's token) is never welcomed and runs on. An unanswered welcome is logged.
+    /// </summary>
+    private async Task WelcomeAsync(BridgeConnection connection)
+    {
+        try
+        {
+            await connection.SendRawAsync("welcome", null, ShutdownReplyTimeout, CancellationToken.None);
+        }
+        catch (TimeoutException)
+        {
+            // The frame was written, so the bridge marks the connection once it reads it.
+            Log.WelcomeTimedOut(_logger, ProjectDir, ShutdownReplyTimeout.TotalSeconds);
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException)
+        {
+            Log.WelcomeUnanswered(_logger, e, ProjectDir);
+        }
     }
 
     private async Task ObserveAbandonedAsync(Task<BridgeConnection> accept, Task exited)

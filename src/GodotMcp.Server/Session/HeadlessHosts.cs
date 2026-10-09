@@ -187,9 +187,18 @@ internal sealed class HeadlessHosts(SessionRegistry registry)
             _hosts.Clear();
         }
 
-        foreach (HeadlessHost host in hosts)
+        // Each stop waits for its host to answer and exit, so they run at once rather than adding up; a failed one is reported.
+        (HeadlessHost Host, Task Stop)[] stops =
+        [
+            .. hosts.Select(host => (host, Task.Run(() => host.Stop("the server is shutting down", CancellationToken.None)))),
+        ];
+        Task.WhenAll(stops.Select(stop => stop.Stop)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing).GetAwaiter().GetResult();
+        foreach ((HeadlessHost host, Task stop) in stops.Where(stop => stop.Stop.IsFaulted))
         {
-            host.Stop("the server is shutting down", CancellationToken.None);
+            // Logging may already be torn down while the process exits, so this goes straight to stderr.
+            Console.Error.WriteLine(
+                $"godot-mcp: stopping the warm headless host of {host.ProjectDir} at shutdown failed: {stop.Exception!.InnerException?.Message}"
+            );
         }
 
         KeyValuePair<string, Task>[] pending;
