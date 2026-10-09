@@ -93,6 +93,56 @@ func test_a_capture_refuses_and_is_refused_by_the_others() -> void:
 	time.free()
 
 
+## Whether a capture's points count from the met frame needs a running tree (the start's poll
+## awaits process_frame), so the integration tests cover that; these cover the start's report.
+func test_a_met_start_reports_its_frame_and_its_then() -> void:
+	var then: Dictionary = {"frame": 40, "timeScale": 0.2}
+	var report: Dictionary = _time_script.start_report(
+		{"met": true, "elapsedMs": 120, "frames": 7, "value": true, "then": then}, 40
+	)
+	assert_eq(report, {"met": true, "frame": 40, "then": then}, "met, its frame and its then")
+
+
+func test_a_start_that_timed_out_reports_its_last_value_and_no_frame() -> void:
+	var report: Dictionary = _time_script.start_report(
+		{"met": false, "elapsedMs": 300, "frames": 18, "last": "idle"}, 58
+	)
+	assert_eq(report, {"met": false, "last": "idle"}, "not met, with the last value seen")
+
+
+func test_a_start_reports_its_failed_checks() -> void:
+	var failed: Dictionary = {"count": 3, "error": "Invalid named index 'nope'"}
+	var report: Dictionary = _time_script.start_report(
+		{"met": false, "frames": 3, "last": null, "failedChecks": failed}, 9
+	)
+	assert_eq(report["failedChecks"], failed, "the failed checks carried")
+
+
+func test_a_start_met_after_a_cancel_or_the_deadline_is_not_met_and_runs_no_then() -> void:
+	var time: Node = _time_script.new()
+	var scale: float = Engine.time_scale
+	var condition: Dictionary = {"then": {"timeScale": 0.5}}
+	var cancelled: Dictionary = time._start_outcome(
+		{"result": {"met": true, "elapsedMs": 40, "frames": 3, "value": true}},
+		{"_cancelled": true, "start": condition}
+	)
+	assert_eq(cancelled["result"]["met"], false, "a cancelled start is not met")
+	assert_true(not cancelled["result"].has("then"), "no then ran")
+	assert_eq(Engine.time_scale, scale, "the time scale is unchanged")
+	assert_eq(
+		_time_script.start_report(cancelled["result"], 9),
+		{"met": false, "last": true},
+		"reported as not met, with the value it last saw"
+	)
+	time._deadline_passed = true
+	var passed: Dictionary = time._start_outcome(
+		{"result": {"met": true, "frames": 3, "value": true}}, {"start": condition}
+	)
+	assert_eq(passed["result"]["met"], false, "a start met after the deadline is not met")
+	assert_eq(Engine.time_scale, scale, "the time scale is still unchanged")
+	time.free()
+
+
 func test_call_once_puts_the_methods_value_into_called() -> void:
 	var rig: Dictionary = _call_rig()
 	var called: Dictionary = {}

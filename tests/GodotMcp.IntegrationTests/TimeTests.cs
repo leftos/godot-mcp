@@ -858,6 +858,89 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task CaptureFramesWithAStartCountsFromTheMetFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await ArmAsync(500);
+        CaptureStart start = new(Node: "TimeProbe", Property: "state", EqualsValue: Json("\"done\""), TimeoutMs: 5000);
+
+        JsonObject captured = await CaptureFramesAsync([0, 0.1], new CaptureFramesOptions(Start: start), cancellation);
+
+        // arm(500) sets state to done half a second after the call, so the start is met in a frame well after the capture's
+        // request; the point at 0 is due in the clock's first frame, the met frame itself. A capture counting from its call
+        // would take it about half a second before the start.
+        JsonArray points = captured["points"]!.AsArray();
+        long metFrame = captured["start"]!["frame"]!.GetValue<long>();
+        Assert.True(captured["start"]!["met"]!.GetValue<bool>(), captured.ToJsonString());
+        Assert.Equal(2, points.Count);
+        Assert.Equal(metFrame, points[0]!["frame"]!.GetValue<long>());
+        Assert.True(points[1]!["frame"]!.GetValue<long>() > metFrame, captured.ToJsonString());
+        Assert.False(captured.ContainsKey("stopped"), captured.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task CaptureFramesWithAStartMetAtTheRequestCountsFromTheNextFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        CaptureStart start = new(Node: "TimeProbe", Exists: true);
+
+        JsonObject captured = await CaptureFramesAsync([0], new CaptureFramesOptions(Start: start), cancellation);
+
+        // TimeProbe is there when the request comes, so the start is met at its first check, in the request's frame, and the
+        // clock starts at the next process frame, as a capture without a start does.
+        JsonNode point = Assert.Single(captured["points"]!.AsArray())!;
+        Assert.True(captured["start"]!["met"]!.GetValue<bool>(), captured.ToJsonString());
+        Assert.Equal(captured["start"]!["frame"]!.GetValue<long>() + 1, point["frame"]!.GetValue<long>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACaptureWhoseStartTimesOutStopsWithNoFrames()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        CaptureStart start = new(Node: "TimeProbe", Property: "state", EqualsValue: Json("\"done\""), TimeoutMs: 300);
+
+        JsonObject captured = await CaptureFramesAsync([0.05], new CaptureFramesOptions(Start: start), cancellation);
+
+        Assert.True(captured["stopped"]!.GetValue<bool>(), captured.ToJsonString());
+        Assert.Empty(captured["points"]!.AsArray());
+        Assert.Empty(captured["files"]!.AsArray());
+        Assert.Equal([0.05], captured["missed"]!.AsArray().Select(point => point!.GetValue<double>()));
+        Assert.False(captured["start"]!["met"]!.GetValue<bool>(), captured.ToJsonString());
+        Assert.Equal("idle", captured["start"]!["last"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACaptureStartsThenTimeScaleMakesThePointsCountAtTheNewScale()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await ArmAsync(300);
+        CaptureStart start = new(Node: "TimeProbe", Property: "state", EqualsValue: Json("\"done\""), Then: new WaitThen(TimeScale: 8));
+        try
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            JsonObject captured = await CaptureFramesAsync([4.0], new CaptureFramesOptions(Start: start), cancellation);
+            watch.Stop();
+
+            // At time_scale 8 from the met frame on, 4 s of game time take half a second; at 1 they take at least 4 s.
+            JsonNode point = Assert.Single(captured["points"]!.AsArray())!;
+            Assert.True(point["gameSeconds"]!.GetValue<double>() >= 4.0, captured.ToJsonString());
+            Assert.Equal(8, captured["start"]!["then"]!["timeScale"]!.GetValue<double>());
+            Assert.True(
+                watch.Elapsed < TimeSpan.FromSeconds(4),
+                $"4 s of game time after a start setting time_scale 8 took {watch.Elapsed}; at time_scale 1 it takes at least 4 s"
+            );
+        }
+        finally
+        {
+            await FrameAsync("time_scale", scale: 1);
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForGameMsWithACallCountsFromTheCall()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

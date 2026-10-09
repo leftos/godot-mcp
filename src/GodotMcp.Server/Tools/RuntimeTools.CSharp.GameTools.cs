@@ -126,7 +126,7 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>
-    /// Readies each game tool call in <paramref name="parameters"/> (call, and then.call) for the bridge, which calls it through
+    /// Readies each game tool call in <paramref name="parameters"/> (call, then.call and start.then.call) for the bridge, which calls it through
     /// the C# helper in its frame: names the game in its request as call_game_tool does, and sends that request as the helper's
     /// JSON text beside the helper copy the game loads, {tool, extension, request}. A method call is left as it is and asks
     /// nothing.
@@ -139,7 +139,9 @@ internal sealed partial class RuntimeTools
     {
         JsonObject[] calls =
         [
-            .. new[] { parameters["call"], (parameters["then"] as JsonObject)?["call"] }.OfType<JsonObject>().Where(call => call.ContainsKey("tool")),
+            .. new[] { parameters["call"], ThenCall(parameters), ThenCall(parameters["start"] as JsonObject) }
+                .OfType<JsonObject>()
+                .Where(call => call.ContainsKey("tool")),
         ];
         foreach (JsonObject call in calls)
         {
@@ -149,6 +151,9 @@ internal sealed partial class RuntimeTools
             call["extension"] = HelperExtension(toolName, session);
         }
     }
+
+    /// <summary>The call of <paramref name="holder"/>'s then, or null when it has no then or no call.</summary>
+    private static JsonNode? ThenCall(JsonObject? holder) => (holder?["then"] as JsonObject)?["call"];
 
     /// <summary>The helper copy the session's game loads, prepared as get_game_state prepares it.</summary>
     /// <exception cref="McpException">The helper cannot run in the project, or its copy could not be made.</exception>

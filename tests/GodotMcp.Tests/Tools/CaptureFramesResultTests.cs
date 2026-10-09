@@ -121,6 +121,41 @@ public sealed class CaptureFramesResultTests
         Assert.False(result.ContainsKey("height"));
     }
 
+    [Fact]
+    public void AMetStartPassesThroughWithItsFrameAndThen()
+    {
+        JsonObject reply = Reply(Frame(First, 0.1));
+        reply["start"] = new JsonObject
+        {
+            ["met"] = true,
+            ["frame"] = 42,
+            ["then"] = new JsonObject { ["frame"] = 42, ["timeScale"] = 0.2 },
+        };
+
+        JsonObject result = RuntimeTools.CompactFrames(reply);
+
+        Assert.True(result["start"]!["met"]!.GetValue<bool>());
+        Assert.Equal(42, result["start"]!["frame"]!.GetValue<int>());
+        Assert.Equal(0.2, result["start"]!["then"]!["timeScale"]!.GetValue<double>());
+    }
+
+    [Fact]
+    public void AStartThatTimedOutPassesThroughWithItsLastValueAndNoFrames()
+    {
+        JsonObject reply = Reply();
+        reply["stopped"] = true;
+        reply["missed"] = new JsonArray(0.05, 0.15);
+        reply["start"] = new JsonObject { ["met"] = false, ["last"] = "idle" };
+
+        JsonObject result = RuntimeTools.CompactFrames(reply);
+
+        Assert.Empty(result["points"]!.AsArray());
+        Assert.Empty(result["files"]!.AsArray());
+        Assert.True(result["stopped"]!.GetValue<bool>());
+        Assert.False(result["start"]!["met"]!.GetValue<bool>());
+        Assert.Equal("idle", result["start"]!["last"]!.GetValue<string>());
+    }
+
     private static IEnumerable<string> Names(JsonObject result) => result["files"]!.AsArray().Select(name => name!.GetValue<string>());
 
     private static int Shared(params JsonObject[] frames) => RuntimeTools.CompactFrames(Reply(frames))["shared"]!.GetValue<int>();

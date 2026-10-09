@@ -41,28 +41,48 @@ internal sealed partial class RuntimeTools
             + "resume and a step are refused. options.call {node, method, args}, or {tool, args} "
             + "for a game tool, calls it in the frame the clock starts, so the points count from its entry (a coroutine or a "
             + "Task is not awaited), and adds call: {value}, its return value as call_method returns it, with tool and type for "
-            + "a game tool; a refused call, or an error it raises, fails the capture with no frames."
+            + "a game tool; a refused call, or an error it raises, fails the capture with no frames. options.start {node, "
+            + "property, equals | exists | expression, edge?, timeoutMs?, then?}, a condition laid out as wait_for's, makes the "
+            + "clock wait for it: the points count from the frame it is met, where start.then runs (call, then timeScale) and "
+            + "then options.call; a start already true at the call starts the clock at the next frame, as without one. Its "
+            + "timeoutMs, real time, 10000 when left out, is added to the capture's, at most 600000 in all. Met, the result adds start: "
+            + "{met: true, frame, then?}; a start that times out is still a success, with stopped: true, no frames and start: "
+            + "{met: false, last}."
     )]
     public async Task<string> CaptureFramesAsync(
-        [Description("The points to capture, in seconds of game time from the call's start: 1 to 1000 of them, each 0 to 120, ascending.")]
+        [Description(
+            "The points to capture, in seconds of game time from the call's start (or from the frame options.start is met): 1 to "
+                + "1000 of them, each 0 to 120, ascending."
+        )]
             double[]? at = null,
-        [Description("{every, for, crop, timeoutMs, call}: every and for instead of at; no crop, the default timeout and no call when left out.")]
+        [Description(
+            "{every, for, crop, timeoutMs, call, start}: every and for instead of at; no crop, the default timeout, no call and no "
+                + "start when left out."
+        )]
             CaptureFramesOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
         double[] points = CapturePoints(at, options);
-        TimeSpan allowance = CaptureAllowance(points, options?.TimeoutMs);
+        TimeSpan allowance = CaptureAllowance(points, options?.TimeoutMs, options?.Start);
         JsonObject parameters = BuildCaptureParameters(points, allowance, options);
         await PrepareGameToolCallsAsync("capture_frames", parameters, session, cancellationToken);
         BridgeCall call = new("capture_frames", "frames", parameters, allowance + WaitReplyAllowance, allowance);
         BridgeResult result = await CallWithErrorsAsync(Find(session), call, cancellationToken);
+        return ErrorReport.AddTo(CompactFrames(CaptureReply(result)), result.Errors).ToJsonString();
+    }
+
+    /// <summary>A copy of the bridge's capture_frames reply, with the values of its call and its start's then.call cut.</summary>
+    /// <exception cref="McpException">The reply is not an object.</exception>
+    private static JsonObject CaptureReply(BridgeResult result)
+    {
         JsonObject reply =
             result.Reply?.DeepClone() as JsonObject
             ?? throw new McpException($"The bridge's capture_frames reply is not an object: {result.Reply?.ToJsonString() ?? "null"}.");
         CutMethodValue(reply["call"] as JsonObject);
-        return ErrorReport.AddTo(CompactFrames(reply), result.Errors).ToJsonString();
+        CutMethodValue((reply["start"]?["then"] as JsonObject)?["call"] as JsonObject);
+        return reply;
     }
 
     /// <summary>The points capture_frames takes: at as given, or every, 2 x every and so on up to and including for.</summary>
@@ -77,10 +97,13 @@ internal sealed partial class RuntimeTools
         };
     }
 
-    /// <summary>The bridge's frames parameters: the path-only screenshot's with options.crop, {points, deadlineMs}, and call when given.</summary>
+    /// <summary>
+    /// The bridge's frames parameters: the path-only screenshot's with options.crop, {points, deadlineMs}, call when given,
+    /// and start (<see cref="StartParameters"/>) when given.
+    /// </summary>
     /// <exception cref="McpException">
-    /// The crop is refused, or the call gives both forms or neither, args of the other form's shape, or an empty node, method
-    /// or tool name.
+    /// The crop is refused, the call gives both forms or neither, args of the other form's shape, or an empty node, method
+    /// or tool name, or the start is refused.
     /// </exception>
     internal static JsonObject BuildCaptureParameters(double[] points, TimeSpan allowance, CaptureFramesOptions? options)
     {
@@ -92,12 +115,76 @@ internal sealed partial class RuntimeTools
             parameters["call"] = CallOptionParameters(call, "options.call");
         }
 
+        if (options?.Start is { } start)
+        {
+            parameters["start"] = StartParameters(start);
+        }
+
         return parameters;
     }
 
-    /// <summary>How long capture_frames may run: timeoutMs when given, else the last point's seconds + 10 s + 100 ms a point.</summary>
+    /// <summary>
+    /// The bridge's start parameters: the condition's fields with its kind and the timeoutMs it runs under, as a wait's
+    /// (<see cref="BuildWaitParameters(WaitCondition?, int?)"/>), plus then and edge when given.
+    /// </summary>
+    /// <exception cref="McpException">
+    /// The condition is not exactly one kind, or a kind other than exists, property or expression; timeoutMs is out of range;
+    /// then is refused as wait_for's options.then is; or edge is given with timeoutMs 0.
+    /// </exception>
+    internal static JsonObject StartParameters(CaptureStart start)
+    {
+        WaitCondition condition = new(
+            Node: start.Node,
+            Exists: start.Exists,
+            Property: start.Property,
+            EqualsValue: start.EqualsValue,
+            Signal: start.Signal,
+            Expression: start.Expression,
+            UiChanged: start.UiChanged,
+            GameMs: start.GameMs,
+            Frames: start.Frames
+        );
+        string kind = CheckCondition(condition);
+        if (kind is not ("exists" or "property" or "expression"))
+        {
+            throw new McpException($"options.start takes an exists, property or expression condition; this condition is {kind}.");
+        }
+
+        JsonObject parameters = BuildWaitParameters(condition, start.TimeoutMs);
+        if (start.Then is { } then)
+        {
+            parameters["then"] = ThenParameters(then);
+        }
+
+        if (start.Edge is true)
+        {
+            AddEdge(parameters);
+        }
+
+        return parameters;
+    }
+
+    /// <summary>
+    /// How long capture_frames may run: the capture's own allowance (<see cref="CaptureOwnAllowance"/>), plus the start's
+    /// timeoutMs (10 s when left out) when it has a start, at most <see cref="MaxCaptureTimeoutMs"/> in all.
+    /// </summary>
     /// <exception cref="McpException">timeoutMs is outside 1 to <see cref="MaxCaptureTimeoutMs"/>.</exception>
-    internal static TimeSpan CaptureAllowance(double[] points, int? timeoutMs)
+    internal static TimeSpan CaptureAllowance(double[] points, int? timeoutMs, CaptureStart? start)
+    {
+        TimeSpan allowance = CaptureOwnAllowance(points, timeoutMs);
+        if (start is null)
+        {
+            return allowance;
+        }
+
+        TimeSpan withStart = allowance + TimeSpan.FromMilliseconds(Math.Max(start.TimeoutMs ?? DefaultWaitMs, 0));
+        var cap = TimeSpan.FromMilliseconds(MaxCaptureTimeoutMs);
+        return withStart < cap ? withStart : cap;
+    }
+
+    /// <summary>How long the capture of the points may run: timeoutMs when given, else the last point's seconds + 10 s + 100 ms a point.</summary>
+    /// <exception cref="McpException">timeoutMs is outside 1 to <see cref="MaxCaptureTimeoutMs"/>.</exception>
+    private static TimeSpan CaptureOwnAllowance(double[] points, int? timeoutMs)
     {
         if (timeoutMs is not null)
         {
@@ -176,7 +263,7 @@ internal sealed partial class RuntimeTools
         AddCapture(result, frames, paths);
         result["points"] = points;
         result["shared"] = points.Count - paths.Count;
-        foreach (string key in (string[])["stopped", "missed", "call"])
+        foreach (string key in (string[])["stopped", "missed", "call", "start"])
         {
             if (reply[key] is { } carried)
             {

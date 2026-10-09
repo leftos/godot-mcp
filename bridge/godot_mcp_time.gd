@@ -318,10 +318,12 @@ func _run_ticks(count: int) -> int:
 ## A point is due in the first frame whose sum reaches it; that frame is grabbed once at its
 ## frame_post_draw and saved as take_screenshot saves it (params.crop, no preview), and every point
 ## due in it shares the file. With params.call {node, method, args}, the method is called in the
-## clock's first frame (_call_once), so the points count from its entry. Returns {result:
-## frames_result}, with call: {value} when the method was called, stopped with the points missed
-## when the deadline (params.deadlineMs, or params.backstopMs) or a cancel ends it first, or
-## {error} when it cannot start, the call fails or a frame cannot be saved.
+## clock's first frame (_call_once), so the points count from its entry. With params.start, a
+## wait condition, the clock starts in the frame it is met instead (_capture_from_start). Returns
+## {result: frames_result}, with call: {value} when the method was called and start when given,
+## stopped with the points missed when the deadline (params.deadlineMs, or params.backstopMs), a
+## cancel or the start's timeout ends it first, or {error} when it cannot start, the start's
+## condition or then fails, the call fails or a frame cannot be saved.
 func capture_frames(params: Dictionary) -> Dictionary:
 	var refusal: String = _capture_refusal(get_tree().paused)
 	if not refusal.is_empty():
@@ -331,14 +333,81 @@ func capture_frames(params: Dictionary) -> Dictionary:
 		"frames", float(params.get("deadlineMs", 10000 + 100 * points.size())), params
 	)
 	var called: Dictionary = {}
-	var taken: Variant = await _capture_points(points, params, called)
+	var start: Dictionary = {}
+	var taken: Variant = await _capture_from_start(points, params, called, start)
 	_end(deadline)
 	if taken is String:
 		return {"error": taken}
 	var result: Dictionary = frames_result(points, taken)
 	if not called.is_empty():
 		result["call"] = called
+	if not start.is_empty():
+		result["start"] = start
 	return {"result": result}
+
+
+## The capture's entries (_capture_points) once params.start, when given, is met (_await_start):
+## from the met frame itself when it was met in a frame after the request, so this frame's delta
+## counts, else from the next process_frame, as without a start. Writes the start's report into
+## start. Returns [] when the start timed out, or a String saying why the start's condition, its
+## then, the call or a frame failed.
+func _capture_from_start(
+	points: Array, params: Dictionary, called: Dictionary, start: Dictionary
+) -> Variant:
+	if not params.get("start") is Dictionary:
+		return await _capture_points(points, params, called, false)
+	var outcome: Dictionary = await _await_start(params, start)
+	if outcome.has("error"):
+		return str(outcome["error"])
+	if not outcome["result"]["met"]:
+		return []
+	return await _capture_points(points, params, called, int(outcome["result"]["frames"]) > 0)
+
+
+## Waits for params.start {kind, node, exists, property, equals, expression, timeoutMs, edge,
+## then} as wait_for waits for a condition: a probe (make_probe) checked now and then once a frame
+## (_poll), for start.timeoutMs of real time or until a cancel, running start.then in the frame it
+## is met (_start_outcome). Writes start_report into start. Returns the poll's outcome, or {error}
+## when the condition is refused, cannot be checked or then.call failed.
+func _await_start(params: Dictionary, start: Dictionary) -> Dictionary:
+	var condition: Dictionary = params["start"]
+	var failures: Dictionary = {}
+	var kind: String = str(condition.get("kind", ""))
+	var probe: Variant = bridge._conditions.make_probe(kind, condition, failures)
+	if probe is String:
+		return {"error": probe}
+	var outcome: Dictionary = await _poll(probe, float(condition.get("timeoutMs", 10000)), params)
+	bridge._conditions.add_failed_checks(outcome, failures)
+	outcome = _start_outcome(outcome, params)
+	if outcome.has("result"):
+		start.merge(start_report(outcome["result"], Engine.get_process_frames()))
+	return outcome
+
+
+## The start's poll outcome as the capture goes on from it: not met when a cancel came or the
+## deadline passed while it polled (_poll checks met first), so a condition met after either runs
+## no then and starts no clock, and nothing awaits between here and the clock's first frame; else
+## with params.start.then run in the met frame (_finish_then).
+func _start_outcome(outcome: Dictionary, params: Dictionary) -> Dictionary:
+	var ended: bool = _deadline_passed or bool(params.get("_cancelled", false))
+	if ended and outcome.has("result"):
+		outcome["result"]["met"] = false
+		return outcome
+	return _finish_then(outcome, params["start"], {})
+
+
+## A capture's start from its poll's result: {met: true, frame} when met in frame, {met: false,
+## last} when it timed out, each with then when it ran and failedChecks when checks of it failed.
+static func start_report(result: Dictionary, frame: int) -> Dictionary:
+	var report: Dictionary = {"met": result["met"]}
+	if result["met"]:
+		report["frame"] = frame
+	else:
+		report["last"] = result.get("last", result.get("value"))
+	for key: String in ["then", "failedChecks"]:
+		if result.has(key):
+			report[key] = result[key]
+	return report
 
 
 ## Why a capture cannot start now, or empty: a step or another capture runs, or the
@@ -349,32 +418,48 @@ func _capture_refusal(paused: bool) -> String:
 	return CAPTURE_PAUSED_REFUSAL if paused else ""
 
 
-## Runs the capture's clock from the next process_frame until every point is taken, the deadline
-## passes or a cancel comes, calling params.call in its first frame into called. Returns the
-## entries (frame_entries) taken, or a String saying why the call failed or a frame could not be
-## saved.
-func _capture_points(points: Array, params: Dictionary, called: Dictionary) -> Variant:
+## Runs the capture's clock from the next process_frame, or from this one when in_frame (called
+## inside a process_frame emission), until every point is taken, the deadline passes or a cancel
+## comes, calling params.call in its first frame into called. Returns the entries (frame_entries)
+## taken, or a String saying why the call failed or a frame could not be saved.
+func _capture_points(
+	points: Array, params: Dictionary, called: Dictionary, in_frame: bool
+) -> Variant:
 	var tree: SceneTree = get_tree()
 	var clock: Dictionary = {"seconds": 0.0, "frames": 0}
 	var entries: Array = []
+	var waits: bool = not in_frame
 	while entries.size() < points.size():
-		if not await _next(tree.process_frame):
+		if waits and not await _next(tree.process_frame):
 			break
+		waits = true
 		var failed: String = _call_once(params, called)
 		if not failed.is_empty():
 			return failed
-		advance_game_clock(clock, tree.paused, get_process_delta_time())
-		var elapsed: float = clock["seconds"]
-		var due: Array = due_points(points, entries.size(), elapsed)
-		if due.is_empty():
-			continue
-		if not await _next(RenderingServer.frame_post_draw):
+		var took: Variant = await _take_due(points, params, clock, entries)
+		if took is String:
+			return took
+		if not took:
 			break
-		var saved: Variant = bridge._frame.save_screenshot(bridge._frame.grab_frame(), params)
-		if saved is String:
-			return saved
-		entries.append_array(frame_entries(due, saved, Engine.get_process_frames(), elapsed))
 	return entries
+
+
+## Counts this frame on clock and, when points fall due in it, grabs the frame at its
+## frame_post_draw into entries. Returns true to go on, false when the deadline or a cancel came
+## before the draw, or a String saying why the frame could not be saved.
+func _take_due(points: Array, params: Dictionary, clock: Dictionary, entries: Array) -> Variant:
+	advance_game_clock(clock, get_tree().paused, get_process_delta_time())
+	var elapsed: float = clock["seconds"]
+	var due: Array = due_points(points, entries.size(), elapsed)
+	if due.is_empty():
+		return true
+	if not await _next(RenderingServer.frame_post_draw):
+		return false
+	var saved: Variant = bridge._frame.save_screenshot(bridge._frame.grab_frame(), params)
+	if saved is String:
+		return saved
+	entries.append_array(frame_entries(due, saved, Engine.get_process_frames(), elapsed))
+	return true
 
 
 ## Calls params.call {node, method, args} with the inspector's call_now, the first time it is

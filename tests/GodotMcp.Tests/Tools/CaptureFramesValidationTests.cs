@@ -247,13 +247,114 @@ public sealed class CaptureFramesValidationTests : IDisposable
     [Fact]
     public void TheDefaultAllowanceIsTheLastPointPlusTenSecondsAndATenthOfASecondAPoint()
     {
-        Assert.Equal(TimeSpan.FromMilliseconds(1200 + 10_000 + 300), RuntimeTools.CaptureAllowance([0.1, 0.5, 1.2], null));
-        Assert.Equal(TimeSpan.FromMilliseconds(10_100), RuntimeTools.CaptureAllowance([0], null));
+        Assert.Equal(TimeSpan.FromMilliseconds(1200 + 10_000 + 300), RuntimeTools.CaptureAllowance([0.1, 0.5, 1.2], null, null));
+        Assert.Equal(TimeSpan.FromMilliseconds(10_100), RuntimeTools.CaptureAllowance([0], null, null));
     }
 
     [Fact]
     public void TimeoutMsReplacesTheDefaultAllowance() =>
-        Assert.Equal(TimeSpan.FromMilliseconds(1500), RuntimeTools.CaptureAllowance([0.05, 5.0], 1500));
+        Assert.Equal(TimeSpan.FromMilliseconds(1500), RuntimeTools.CaptureAllowance([0.05, 5.0], 1500, null));
+
+    [Fact]
+    public void AStartsTimeoutIsAddedToTheAllowance()
+    {
+        CaptureStart start = new(Expression: "true");
+
+        Assert.Equal(TimeSpan.FromMilliseconds(300 + 10_000 + 100 + 10_000), RuntimeTools.CaptureAllowance([0.3], null, start));
+        Assert.Equal(TimeSpan.FromMilliseconds(1500 + 2000), RuntimeTools.CaptureAllowance([0.3], 1500, start with { TimeoutMs = 2000 }));
+    }
+
+    [Fact]
+    public void TheAllowanceWithAStartIsCappedAtTheMaximumTimeout() =>
+        Assert.Equal(
+            TimeSpan.FromMilliseconds(RuntimeTools.MaxCaptureTimeoutMs),
+            RuntimeTools.CaptureAllowance([0.3], 595_000, new CaptureStart(Expression: "true"))
+        );
+
+    [Fact]
+    public void ACaptureSendsItsStartToTheBridge()
+    {
+        CaptureStart start = new(
+            Node: "TimeProbe",
+            Property: "state",
+            EqualsValue: Json("\"done\""),
+            TimeoutMs: 3000,
+            Edge: true,
+            Then: new WaitThen(TimeScale: 0.5)
+        );
+
+        JsonObject parameters = RuntimeTools.BuildCaptureParameters([0.3], TimeSpan.FromSeconds(14), new CaptureFramesOptions(Start: start));
+
+        JsonObject sent = parameters["start"]!.AsObject();
+        Assert.Equal("property", sent["kind"]!.GetValue<string>());
+        Assert.Equal("TimeProbe", sent["node"]!.GetValue<string>());
+        Assert.Equal("state", sent["property"]!.GetValue<string>());
+        Assert.Equal("\"done\"", sent["equals"]!.ToJsonString());
+        Assert.Equal(3000, sent["timeoutMs"]!.GetValue<int>());
+        Assert.True(sent["edge"]!.GetValue<bool>(), sent.ToJsonString());
+        Assert.Equal("""{"timeScale":0.5}""", sent["then"]!.ToJsonString());
+    }
+
+    [Fact]
+    public void AStartLeftAtItsDefaultsWaitsTenSecondsWithNoEdgeOrThen()
+    {
+        JsonObject parameters = RuntimeTools.BuildCaptureParameters(
+            [0.3],
+            TimeSpan.FromSeconds(21),
+            new CaptureFramesOptions(Start: new CaptureStart(Node: "TimeProbe", Exists: true))
+        );
+
+        JsonObject sent = parameters["start"]!.AsObject();
+        Assert.Equal("exists", sent["kind"]!.GetValue<string>());
+        Assert.Equal(10_000, sent["timeoutMs"]!.GetValue<int>());
+        Assert.False(sent.ContainsKey("edge"), sent.ToJsonString());
+        Assert.False(sent.ContainsKey("then"), sent.ToJsonString());
+    }
+
+    [Fact]
+    public void ACaptureWithoutAStartSendsNone() =>
+        Assert.False(RuntimeTools.BuildCaptureParameters([0.3], TimeSpan.FromSeconds(11), new CaptureFramesOptions()).ContainsKey("start"));
+
+    [Theory]
+    [InlineData("signal")]
+    [InlineData("uiChanged")]
+    [InlineData("gameMs")]
+    [InlineData("frames")]
+    public async Task AStartOfAnotherKindIsRefused(string kind)
+    {
+        CaptureStart start = kind switch
+        {
+            "signal" => new(Node: "TimeProbe", Signal: "fired"),
+            "uiChanged" => new(UiChanged: true),
+            "gameMs" => new(GameMs: 500),
+            _ => new(Frames: 30),
+        };
+
+        McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Start: start));
+
+        Assert.Equal($"options.start takes an exists, property or expression condition; this condition is {kind}.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AnEdgeStartThatChecksOnceIsRefused()
+    {
+        McpException refused = await RefusedAsync(
+            [0.3],
+            new CaptureFramesOptions(Start: new CaptureStart(Expression: "true", TimeoutMs: 0, Edge: true))
+        );
+
+        Assert.Equal("timeoutMs 0 checks once, which an edge wait cannot meet; give it a timeout.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AValidStartWithoutASessionSaysNoneIsRunning()
+    {
+        CaptureStart start = new(Node: "TimeProbe", Expression: "node.state == 'done'", Edge: true, Then: new WaitThen(TimeScale: 0.2));
+
+        McpException refused = await RefusedAsync([0.05, 0.15], new CaptureFramesOptions(Start: start));
+
+        Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
 
     private async Task<McpException> RefusedAsync(double[]? at, CaptureFramesOptions? options) =>
         await Assert.ThrowsAsync<McpException>(() => _tools.CaptureFramesAsync(at, options, null, TestContext.Current.CancellationToken));
