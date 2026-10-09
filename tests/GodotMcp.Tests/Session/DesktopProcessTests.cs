@@ -11,6 +11,7 @@ public sealed class DesktopProcessTests
 {
     private const string Godot = @"C:\Program Files\Godot\Godot_console.exe";
     private const string WindowsOnly = "A quiet run starts on a hidden desktop only on Windows.";
+    private const int UoiName = 2;
 
     [Theory]
     [InlineData("plain")]
@@ -92,6 +93,43 @@ public sealed class DesktopProcessTests
         }
     }
 
+    [Fact]
+    public void HiddenDesktopPathNamesTheProcessOwnStation()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
+
+        string path = HiddenDesktop.Path;
+
+        Assert.Equal($@"{OwnStationName()}\godot-mcp-{Environment.ProcessId}", path);
+    }
+
+    // Only a non-interactive (session 0) run separates the fix from the old code: interactively the station is WinSta0.
+    [Fact]
+    public async Task AChildOnTheHiddenDesktopInitialisesUser32()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
+        string whoami = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "whoami.exe");
+        ProcessStartInfo startInfo = new(whoami) { WorkingDirectory = AppContext.BaseDirectory };
+
+        var child = DesktopProcess.CreateSuspended(startInfo, HiddenDesktop.Path);
+        using Process process = child.Process;
+        child.BeginRead(_ => { }, _ => { });
+        child.Start();
+        await process.WaitForExitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, process.ExitCode);
+    }
+
+    /// <summary>The name of the window station this process runs in, read without the server's code.</summary>
+    private static string OwnStationName()
+    {
+        nint station = GetProcessWindowStation();
+        Assert.NotEqual(0, station);
+        char[] name = new char[256];
+        Assert.True(GetUserObjectInformationW(station, UoiName, name, name.Length * sizeof(char), out _));
+        return new string(name, 0, Array.IndexOf(name, '\0'));
+    }
+
     private static string BlockFor(bool quiet, bool shutOutRealGamepads)
     {
         LaunchRequest request = new(@"C:\My Games\Probe", null, [], [], quiet, shutOutRealGamepads, Prepare: false);
@@ -119,4 +157,12 @@ public sealed class DesktopProcessTests
 
     [DllImport("kernel32.dll")]
     private static extern nint LocalFree(nint memory);
+
+    // The handle belongs to the process and is not closed.
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern nint GetProcessWindowStation();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetUserObjectInformationW(nint handle, int index, [Out] char[] buffer, int length, out int needed);
 }

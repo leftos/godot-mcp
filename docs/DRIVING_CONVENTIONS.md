@@ -155,7 +155,9 @@ Source: src/GodotMcp.Server/Session/OverrideFile.cs:129-138, src/GodotMcp.Server
 ### Build before launch, and build before stopping on a restart
 <!-- rule: build-before-launch -->
 
-Every launch, restart and headless call runs a prep first: it builds the app when its assembly is missing or older than its sources (newest tracked source time against the assembly, plus a stamp touched after each green build so a non-compile change does not rebuild every run) and runs the asset import when imported files are missing, a source asset changed since its import, or its import settings changed, writing logs named in the result's `prep`. A red build refuses the launch with the parsed compiler errors and the configuration built.
+Every launch, restart and headless call runs a prep first: it builds the app when its assembly is missing or older than its sources (newest tracked source time against the assembly, plus a stamp touched after each green build so a non-compile change does not rebuild every run) and runs the asset import when imported files are missing, a source asset changed since its import, or its import settings changed, writing logs named in the result's `prep`.
+
+A red build refuses the launch with the parsed compiler errors and the configuration built.
 
 A restart builds first, then stops, then launches, so a red build leaves the old app running, and the restarted session keeps its name, error sequence and output. A missing assembly first shows as misleading startup errors, so under a red build those symptom lines are dropped and a `csharp` block reports the cause.
 
@@ -169,7 +171,9 @@ A default run is unfocused, out of sight, click-through, silent and frame-capped
 
 Each part is set at launch, because later is too late: the engine creates its main window focused before any app script runs and un-focusing it later does not release focus, so the window is created with no-focus.
 
-Windows clamps an off-screen initial position onto the primary screen and the window shows about 0.9 s after start, before any app code, and the console wrapper drops `STARTUPINFO`'s `SW_HIDE`. So on Windows a quiet run is started on a hidden desktop (`WinSta0\godot-mcp-<server pid>`, `CreateProcessW` with `lpDesktop`), where screenshots, input and recording all work (parking it off-screen from app code had left it visible about 300 ms at (0,0)).
+Windows clamps an off-screen initial position onto the primary screen and the window shows about 0.9 s after start, before any app code, and the console wrapper drops `STARTUPINFO`'s `SW_HIDE`.
+
+So on Windows a quiet run is started on a hidden desktop (`<station>\godot-mcp-<server pid>` in the server's own window station, `CreateProcessW` with `lpDesktop` naming that station: a child named on `WinSta0` from an ssh session or a service cannot start), where screenshots, input and recording all work (parking it off-screen from app code had left it visible about 300 ms at (0,0)).
 
 Audio is off through the dummy audio driver, never by muting the app's buses, so the app's own mute stays testable and nothing leaks into its saved settings. A hidden window kept VSync and drew at the monitor's 239 Hz, so a quiet run caps at 60 fps unless the project sets its own cap.
 

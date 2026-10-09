@@ -10,10 +10,12 @@ Usage: pwsh tools/hidden-desktop.ps1 -- <program> [args...]
 Why this exists: the integration tests start real Godot games, and Windows clamps every new window onto the screen
 (Godot 4.7.2 display_server_windows.cpp L7208-7212), so even a quiet run, which the bridge parks off-screen in _ready,
 flashes a 640x360 window at the top-left of the primary screen for about 300 ms, and a run that is not quiet shows
-centred and takes the focus. A process started on another desktop of the interactive window station
-(CreateDesktopW, then STARTUPINFO.lpDesktop = "WinSta0\<name>") draws there instead, and every process it starts
-inherits that desktop, so the whole test run is invisible on the user's own desktop. `run.ps1 itest` runs its test
-gates through this script on Windows; it is Windows only.
+centred and takes the focus. A process started on another desktop draws there instead, and every process it starts
+inherits that desktop, so the whole test run is invisible on the user's own desktop. CreateDesktopW creates the desktop
+in this script's own window station (WinSta0 in an interactive session, a service station under ssh or a service), and
+STARTUPINFO.lpDesktop names that station: "<station>\<name>", with the station's name read by
+GetProcessWindowStation and GetUserObjectInformationW. A child named onto a station it cannot open fails before any of
+its code runs. `run.ps1 itest` runs its test gates through this script on Windows; it is Windows only.
 
  - The desktop is named godot-mcp-itest-<this script's process id>, so two runs at once (two worktrees) never share
    one, and it is closed when the command ends.
@@ -75,6 +77,7 @@ public static class HiddenDesktop
     const int StdErrorHandle = -12;
     const int JobObjectExtendedLimitInformation = 9;
     const uint JobObjectLimitKillOnJobClose = 0x00002000;
+    const int UoiName = 2;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct StartupInfo
@@ -127,6 +130,12 @@ public static class HiddenDesktop
 
     [DllImport("user32.dll", SetLastError = true)]
     static extern bool CloseDesktop(IntPtr desktop);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    static extern IntPtr GetProcessWindowStation();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool GetUserObjectInformationW(IntPtr handle, int index, [Out] char[] buffer, int length, out int needed);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern IntPtr CreateJobObjectW(IntPtr attributes, string name);
@@ -208,7 +217,7 @@ public static class HiddenDesktop
     {
         var startup = new StartupInfo();
         startup.cb = Marshal.SizeOf(typeof(StartupInfo));
-        startup.lpDesktop = "WinSta0\\" + desktopName;
+        startup.lpDesktop = OwnStationName() + "\\" + desktopName;
         startup.dwFlags = StartfUseStdHandles;
         startup.hStdInput = InheritableStdHandle(StdInputHandle);
         startup.hStdOutput = InheritableStdHandle(StdOutputHandle);
@@ -236,6 +245,18 @@ public static class HiddenDesktop
             CloseHandle(child.hThread);
             CloseHandle(child.hProcess);
         }
+    }
+
+    // The name of the window station this process runs in, where CreateDesktopW put the desktop. The station's
+    // handle belongs to the process and is not closed.
+    static string OwnStationName()
+    {
+        IntPtr station = GetProcessWindowStation();
+        Check(station != IntPtr.Zero, "GetProcessWindowStation");
+        var name = new char[256];
+        int needed;
+        Check(GetUserObjectInformationW(station, UoiName, name, name.Length * sizeof(char), out needed), "GetUserObjectInformationW(UOI_NAME)");
+        return new string(name, 0, Array.IndexOf(name, '\0'));
     }
 
     // STARTF_USESTDHANDLES requires inheritable handles (STARTUPINFOW, hStdInput). A missing one (null or

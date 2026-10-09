@@ -63,13 +63,16 @@ internal sealed partial class DesktopProcess : IRunProcess
     public Process Process { get; }
 
     /// <summary>
-    /// Creates the process suspended on <paramref name="desktop"/>, with its stdin closed at once and its stdout and stderr
+    /// Creates the process suspended on <paramref name="desktopPath"/>, with its stdin closed at once and its stdout and stderr
     /// on pipes that are read once <see cref="BeginRead"/> is called.
     /// </summary>
     /// <param name="startInfo">The file, arguments, working directory and environment to start with.</param>
-    /// <param name="desktop">The desktop's name within <c>WinSta0</c>.</param>
+    /// <param name="desktopPath">
+    /// The desktop's full <c>&lt;station&gt;\&lt;desktop&gt;</c> path, passed to <c>STARTUPINFO.lpDesktop</c> as given: the
+    /// station is the server's own (<see cref="HiddenDesktop.Path"/>), since a child cannot initialise on one it cannot open.
+    /// </param>
     /// <exception cref="SessionException">A Win32 call failed; the message names it and its error.</exception>
-    public static DesktopProcess CreateSuspended(ProcessStartInfo startInfo, string desktop)
+    public static DesktopProcess CreateSuspended(ProcessStartInfo startInfo, string desktopPath)
     {
         string application = Path.GetFullPath(startInfo.FileName);
         AnonymousPipeServerStream stdout;
@@ -77,7 +80,7 @@ internal sealed partial class DesktopProcess : IRunProcess
         ProcessInformation native;
         lock (ChildProcesses.StartLock)
         {
-            (stdout, stderr, native) = CreateWithPipes(application, startInfo, desktop);
+            (stdout, stderr, native) = CreateWithPipes(application, startInfo, desktopPath);
         }
 
         try
@@ -102,7 +105,7 @@ internal sealed partial class DesktopProcess : IRunProcess
     private static (AnonymousPipeServerStream Stdout, AnonymousPipeServerStream Stderr, ProcessInformation Native) CreateWithPipes(
         string application,
         ProcessStartInfo startInfo,
-        string desktop
+        string desktopPath
     )
     {
         using AnonymousPipeServerStream stdin = new(PipeDirection.Out, HandleInheritability.None);
@@ -111,7 +114,7 @@ internal sealed partial class DesktopProcess : IRunProcess
         try
         {
             nint[] inherited = [ClientHandle(stdin), ClientHandle(stdout), ClientHandle(stderr)];
-            ProcessInformation native = CreateInheriting(application, startInfo, desktop, inherited);
+            ProcessInformation native = CreateInheriting(application, startInfo, desktopPath, inherited);
             stdout.DisposeLocalCopyOfClientHandle();
             stderr.DisposeLocalCopyOfClientHandle();
             return (stdout, stderr, native);
@@ -128,7 +131,7 @@ internal sealed partial class DesktopProcess : IRunProcess
     /// Creates the process with <paramref name="inherited"/> inheritable only for the <c>CreateProcessW</c> call, as the
     /// handle list requires.
     /// </summary>
-    private static ProcessInformation CreateInheriting(string application, ProcessStartInfo startInfo, string desktop, nint[] inherited)
+    private static ProcessInformation CreateInheriting(string application, ProcessStartInfo startInfo, string desktopPath, nint[] inherited)
     {
         foreach (nint handle in inherited)
         {
@@ -140,7 +143,7 @@ internal sealed partial class DesktopProcess : IRunProcess
 
         try
         {
-            return CreateProcess(application, startInfo, desktop, inherited);
+            return CreateProcess(application, startInfo, desktopPath, inherited);
         }
         finally
         {
@@ -241,9 +244,9 @@ internal sealed partial class DesktopProcess : IRunProcess
 
     private static nint ClientHandle(AnonymousPipeServerStream pipe) => pipe.ClientSafePipeHandle.DangerousGetHandle();
 
-    private static ProcessInformation CreateProcess(string application, ProcessStartInfo startInfo, string desktop, nint[] inherited)
+    private static ProcessInformation CreateProcess(string application, ProcessStartInfo startInfo, string desktopPath, nint[] inherited)
     {
-        nint desktopName = Marshal.StringToHGlobalUni($@"WinSta0\{desktop}");
+        nint desktopName = Marshal.StringToHGlobalUni(desktopPath);
         nint commandLine = Marshal.StringToHGlobalUni(BuildCommandLine(application, startInfo.ArgumentList));
         nint environment = Marshal.StringToHGlobalUni(BuildEnvironmentBlock(startInfo.Environment));
         nint handles = Marshal.AllocHGlobal(inherited.Length * nint.Size);

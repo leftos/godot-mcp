@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- A quiet run started by a server under ssh or a service no longer fails before its game starts; the hidden desktop is named in the server's own window station.
+
 ## 0.15.0 - 2026-10-06
 
 ### Added

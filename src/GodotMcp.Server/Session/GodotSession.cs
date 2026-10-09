@@ -499,7 +499,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     {
         if (GodotCommandLine.UsesHiddenDesktop(quiet))
         {
-            return DesktopProcess.CreateSuspended(startInfo, HiddenDesktop.Name);
+            return DesktopProcess.CreateSuspended(startInfo, HiddenDesktop.Path);
         }
 
         return new StartInfoProcess(new Process { StartInfo = startInfo, EnableRaisingEvents = true });
