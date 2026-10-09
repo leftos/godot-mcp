@@ -6,6 +6,7 @@
 |---|---|---|
 | .NET SDK | 10.0.401 (`global.json`, `latestFeature`) | test runner: Microsoft.Testing.Platform |
 | Godot | 4.7.2 stable | `$env:GODOT_PATH`, else the last-sorting `Godot*console*.exe` in the first `PATH` folder holding one, else a refusal; the server, `run.ps1` (`Get-GodotPath`) and the tests look it up the same way (`Session/Installation.cs`). This machine sets `GODOT_PATH` as a user variable to `F:\Godot\Godot_console.exe` (a shell started before the variable was set lacks it: set it in that shell) |
+| Godot source | 4.7.2-stable (ed1daf0) | `F:\Godot\src-4.7.2`, a shallow clone of the tag (`git clone --depth 1 --branch 4.7.2-stable https://github.com/godotengine/godot.git`): engine behaviour is cited from it, with the class reference in `F:\Godot\docs\class-ref-xml`. `F:\Godot\repo` is an older 4.5.1 checkout with local edits; never cite it |
 | CSharpier | 1.3.0 (local tool) | `dotnet tool restore` |
 | gdlint, gdformat | gdtoolkit 4.5.0 | `uv tool install "gdtoolkit>=4,<5"`; `gdformat bridge/ tests/fixtures/` formats (it writes CRLF on Windows, which `.gitattributes` turns back into LF for `*.gd`) |
 | ffmpeg, ffprobe | 9.0.2 here | `winget install Gyan.FFmpeg`; `$env:FFMPEG_PATH`, else `PATH`. Encodes recording clips at run time (never bundled; needs libx264 and aac, which the Gyan build has, else clips fall back to `.avi` copies); `RecordingTests` also need `ffprobe` |

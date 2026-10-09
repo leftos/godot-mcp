@@ -29,7 +29,7 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 - The server's stdout is the MCP protocol: every log goes to stderr.
 - Every request on the wire carries an id; a reply for a timed-out id is dropped.
 - Input tools take viewport coordinates and map them to the window; a drag's motion events carry `button_mask` and `relative`.
-- Behaviour of Godot is cited from its 4.7.2 source or docs, never assumed; `F:\Godot\repo` is a stale 4.5.1 checkout.
+- Behaviour of Godot is cited from its 4.7.2 source or docs, never assumed: the source is `F:\Godot\src-4.7.2` (DEVELOPMENT.md, Toolchain); `F:\Godot\repo` is a stale 4.5.1 checkout.
 - Commit messages go in a file (`git commit -F .tmp/msg-<slug>.txt -- <paths>`, a file new to each commit, written in an earlier turn than the commit); enumerate files, never `git add -A`; never `--amend` or `--no-verify`.
 - Temporary files go in the untracked `.tmp/`.
 - Every build and test runs through `run.ps1`, which runs it under `tools/gate.ps1` with a ceiling. The ceiling counts load-adjusted time, so a run slowed by other agents is not killed for it. The kill line (exit 124) says why: `STALLED` (no output and no CPU for 120 s) has hung, so read the log; `TIMED OUT` kept working past the ceiling even allowing for load, a busy loop or a ceiling set too tight, so read the log before touching the ceiling; `BACKSTOP` (5 times the ceiling in wall time) with a low "machine free" figure means the machine was busy, so re-run it once alone. Never re-run a command to read its output differently. `tools/gate.ps1` is a launcher for `~/.claude/tools/gate/gate.ps1`: change the gate there, never here.
