@@ -618,7 +618,9 @@ func _settle_hover(point: Vector2) -> Control:
 ## Moves to the target as mouse_button's move does; then, when params.tooltip is not false and
 ## a Control has a tooltip for the pointer (the hovered one or an ancestor, as the tooltip
 ## reader's tooltip_owner finds it), waits for it to show. Records tooltip ({text, x, y, width,
-## height, owner}, or null) and a warning when a tooltip was due and none showed.
+## height, owner}, or null) and a warning when a tooltip was due and none showed, or when none
+## was due over a RichTextLabel with tooltip spans, naming the nearest (and where the span probe
+## stopped, when it ran out of samples).
 func _play_hover(params: Dictionary) -> String:
 	var point: Variant = await aim(params.get("target"), true, false, false)
 	if point is String:
@@ -629,6 +631,9 @@ func _play_hover(params: Dictionary) -> String:
 		return ""
 	var tooltip_owner: Control = _hover.tooltip_owner(control, point)
 	if tooltip_owner == null:
+		var near_miss: String = _hover.near_miss_warning(control, point)
+		if not near_miss.is_empty():
+			_hits["warning"] = near_miss
 		return ""
 	# The tooltip timer starts only from a motion over a Control that can process
 	# (scene/main/viewport.cpp L2117, L2136 in 4.7.2), so a pausable one in a paused tree

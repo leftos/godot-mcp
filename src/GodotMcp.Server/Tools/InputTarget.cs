@@ -50,7 +50,9 @@ internal sealed record InputTarget(
             + "open a closed button's popup first with a real click (aimedAt.opened), hover and the rest refuse it (click the "
             + "button first). An item with a submenu is hovered until the submenu opens and not pressed (aimedAt.item.submenu "
             + "names the submenu to target next). A separator, a disabled item, a popup filtered by its search bar, a native "
-            + "(not embedded) popup and a drag end are refused."
+            + "(not embedded) popup and a drag end are refused. Beside an element or text naming a RichTextLabel: a tooltip "
+            + "span (a run of text with a [hint], [url tooltip] or image tooltip), by its tooltip text or its reading-order "
+            + "index, aimed at the centre of its first line (aimedAt.item.rect; rects one per line it wraps onto)."
     )]
         InputItem? Item = null
 )
@@ -219,13 +221,15 @@ internal sealed record InputOffset(
 internal sealed record InputItem(
     [property: Description(
         "The item's text as drawn (translated as the list translates it), matched exactly (case kept, surrounding whitespace "
-            + "trimmed): an ItemList item's, a tab's title, a Tree item's text in column at any depth, or a popup item's. "
-            + "Several items reading it are refused, listed; narrow with index or path."
+            + "trimmed): an ItemList item's, a tab's title, a Tree item's text in column at any depth, or a popup item's; on a "
+            + "RichTextLabel, a tooltip span's tooltip text, not the text it shows. Several items reading it are refused, "
+            + "listed; narrow with index or path."
     )]
         string? Text = null,
     [property: Description(
-        "The item's index in an ItemList, the tab's index in a TabBar or TabContainer, or the item's index in a popup "
-            + "(separators counted, as OptionButton.selected counts them), from 0; refused on a Tree."
+        "The item's index in an ItemList, the tab's index in a TabBar or TabContainer, the item's index in a popup "
+            + "(separators counted, as OptionButton.selected counts them), or a RichTextLabel's tooltip span's in reading "
+            + "order among the lines shown, from 0; refused on a Tree."
     )]
         int? Index = null,
     [property: Description(

@@ -15,11 +15,12 @@ func test_shape_refusal_takes_the_list_classes_and_their_descendants() -> void:
 	assert_eq(_items.shape_refusal("/root/L", "Tree", {"text": "A"}), "", "a Tree")
 	assert_eq(_items.item_kind("Tree"), "tree", "a Tree's kind")
 	assert_eq(_items.item_kind("TabContainer"), "flat", "a TabContainer's kind")
+	assert_eq(_items.item_kind("RichTextLabel"), "span", "a RichTextLabel's kind")
 	assert_eq(
 		_items.shape_refusal("/root/Go", "Button", {"text": "A"}),
 		(
 			"/root/Go is a Button; item targets take an ItemList, TabBar, TabContainer, Tree, "
-			+ "OptionButton, MenuButton or PopupMenu"
+			+ "RichTextLabel, OptionButton, MenuButton or PopupMenu"
 		),
 		"a Button"
 	)
@@ -284,6 +285,13 @@ func test_listed_items_is_null_for_a_control_that_lists_none() -> void:
 	var listed: Variant = _items.listed_items(button)
 	button.free()
 	assert_eq(listed, null, "a Button")
+	var label := RichTextLabel.new()
+	label.bbcode_enabled = true
+	label.size = Vector2(300, 100)
+	label.text = "[hint=bonus]2[/hint]"
+	var spans: Variant = _items.listed_items(label)
+	label.free()
+	assert_eq(spans, null, "a RichTextLabel, whose tooltip spans get_ui_elements does not list")
 
 
 func test_listed_items_marks_every_item_hidden_when_the_list_is_not_visible() -> void:

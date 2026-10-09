@@ -747,6 +747,44 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverOffATooltipSpanWarnsWithTheNearestSpan()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddRichLabelAsync("3 × 1.5 + [hint=bonus]2[/hint] = 6.");
+        JsonNode onSpan = JsonNode.Parse(
+            await _tools.HoverAsync(
+                new InputTarget("Log", Item: new InputItem(Index: 0)),
+                new HoverOptions(Tooltip: false),
+                cancellationToken: cancellation
+            )
+        )!;
+        JsonNode rect = onSpan["aimedAt"]!["item"]!["rect"]!;
+        double x = rect["x"]!.GetValue<double>() - 3;
+        double y = rect["y"]!.GetValue<double>() + rect["height"]!.GetValue<double>() / 2;
+
+        JsonNode hovered = JsonNode.Parse(await _tools.HoverAsync(new InputTarget(null, x, y), cancellationToken: cancellation))!;
+
+        AssertHit(hovered, "hoveredOn", "Log", "RichTextLabel");
+        AssertNoHit(hovered, "tooltip");
+        string warning = hovered["warning"]!.GetValue<string>();
+        Assert.StartsWith("no tooltip at (", warning, StringComparison.Ordinal);
+        Assert.Contains("on /root/Log; its nearest tooltip span is index 0 'bonus' at ", warning, StringComparison.Ordinal);
+        Assert.EndsWith(", 3 px away; aim at it with item {index: 0}", warning, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverOnARichTextLabelWithNoSpansStaysSilent()
+    {
+        await AddRichLabelAsync("3 × 1.5 + [b]2[/b] = 6.");
+
+        JsonNode hovered = JsonNode.Parse(await _tools.HoverAsync(new InputTarget("Log"), cancellationToken: TestContext.Current.CancellationToken))!;
+
+        AssertHit(hovered, "hoveredOn", "Log", "RichTextLabel");
+        AssertNoHit(hovered, "tooltip");
+        Assert.False(hovered.AsObject().ContainsKey("warning"), hovered.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task SimulateActionPressesReleasesAndTapsAnInputMapAction()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1097,6 +1135,21 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
                 + "scene_tree.root.get_node(\"Main\").add_child(chip)\n\t"
                 + "chip.position = Vector2(160, 300)\n\t"
                 + "chip.size = Vector2(100, 40)\n\t"
+                + "await scene_tree.process_frame\n\t"
+                + "return true"
+        );
+
+    // Adds under the root a RichTextLabel Log showing bbcode at (300, 200), 300 x 40, drawn over Main.
+    private async Task AddRichLabelAsync(string bbcode) =>
+        await RunAsync(
+            "var label := RichTextLabel.new()\n\t"
+                + "label.name = \"Log\"\n\t"
+                + "label.bbcode_enabled = true\n\t"
+                + $"label.text = \"{bbcode}\"\n\t"
+                + "label.position = Vector2(300, 200)\n\t"
+                + "label.size = Vector2(300, 40)\n\t"
+                + "scene_tree.root.add_child(label)\n\t"
+                + "await scene_tree.process_frame\n\t"
                 + "await scene_tree.process_frame\n\t"
                 + "return true"
         );

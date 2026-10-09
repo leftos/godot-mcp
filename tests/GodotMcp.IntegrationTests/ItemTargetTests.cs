@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -17,6 +18,18 @@ public sealed partial class ItemTargetTests(SharedProbeSession shared) : IAsyncL
     private const int TestTimeoutMs = 45_000;
     private const int ScriptTimeoutMs = 10_000;
     private const string Drawn = "await scene_tree.process_frame\n\tawait scene_tree.process_frame\n\treturn true";
+
+    // A ScrollContainer Box at (20, 20), 600 x 300, holding Log, a fit_content RichTextLabel of 120 lines as wide as Box:
+    // line 1 ends in the span "near", line 100, scrolled out of Box, in the span "far".
+    private const string LongLog =
+        "var box := ScrollContainer.new()\n\tbox.name = \"Box\"\n\tbox.position = Vector2(20, 20)\n\tbox.size = Vector2(600, 300)\n\t"
+        + "scene_tree.root.add_child(box)\n\tvar rows := PackedStringArray()\n\t"
+        + "for row in 120:\n\t\trows.append(\"plain text on row %d that runs on long enough to fill most of the width\" % row)\n\t"
+        + "rows[1] += \" [hint=near]here[/hint]\"\n\trows[100] += \" [hint=far]there[/hint]\"\n\t"
+        + "var label := RichTextLabel.new()\n\tlabel.name = \"Log\"\n\tlabel.bbcode_enabled = true\n\tlabel.fit_content = true\n\t"
+        + "label.autowrap_mode = TextServer.AUTOWRAP_OFF\n\tlabel.size_flags_horizontal = Control.SIZE_EXPAND_FILL\n\t"
+        + "label.text = \"\\n\".join(rows)\n\tbox.add_child(label)\n\tawait scene_tree.process_frame\n\t"
+        + Drawn;
 
     private readonly SharedProbeSession _shared = shared;
     private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());
@@ -396,6 +409,331 @@ public sealed partial class ItemTargetTests(SharedProbeSession shared) : IAsyncL
 
         AssertAimed(hovered["aimedAt"]!, "/root/Rows", "ItemList", 2, "Kit");
         Assert.Equal(-1, await ReadIntAsync("return int(scene_tree.root.get_node(\"Rows\").get_meta(\"selected\"))", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task HoverOnATooltipSpanItemShowsItsTooltip()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(RichLabel("Log", 100, 100, 400, 60, "3 × 1.5 + [hint=bonus]2[/hint] = 6.") + Drawn, cancellation);
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("Log", Item: new InputItem(Text: "bonus")), cancellationToken: cancellation)
+        )!;
+
+        JsonNode aimed = hovered["aimedAt"]!;
+        AssertAimed(aimed, "/root/Log", "RichTextLabel", 0, "bonus");
+        JsonNode rect = Assert.Single(aimed["item"]!["rects"]!.AsArray())!;
+        Assert.True(JsonNode.DeepEquals(rect, aimed["item"]!["rect"]), aimed.ToJsonString());
+        double x = rect["x"]!.GetValue<double>();
+        double width = rect["width"]!.GetValue<double>();
+        Assert.True(x > 100 && width > 0 && x + width < 500, aimed.ToJsonString());
+        Assert.Equal(x + width / 2, aimed["x"]!.GetValue<double>(), 0.5);
+        Assert.False(hovered.AsObject().ContainsKey("warning"), hovered.ToJsonString());
+        Assert.True(hovered["tooltip"] is JsonObject, hovered.ToJsonString());
+        Assert.Equal("bonus", hovered["tooltip"]!["text"]!.GetValue<string>());
+        Assert.Equal("/root/Log", hovered["tooltip"]!["owner"]!["path"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATooltipSpanRefusalListsTheSpansInReadingOrder()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            RichLabel(
+                "Log",
+                100,
+                100,
+                400,
+                100,
+                "a [hint=one]11[/hint] b [hint=two]22[/hint]\\n[hint=three]33[/hint] [url href=go tooltip=Open]link[/url] "
+                    + "[url href=bare]bare[/url]"
+            )
+                + "label.tooltip_text = \"own\"\n\t"
+                + Drawn,
+            cancellation
+        );
+
+        McpException refused = await RefusedAsync(new InputTarget("Log", Item: new InputItem(Text: "nope")), cancellation);
+
+        Match listed = SpansListed().Match(refused.Message);
+        Assert.True(listed.Success, refused.Message);
+        Assert.Equal(["one", "two", "three", "Open"], listed.Groups["text"].Captures.Select(capture => capture.Value));
+        double[] xs = [.. listed.Groups["x"].Captures.Select(capture => Number(capture.Value))];
+        double[] ys = [.. listed.Groups["y"].Captures.Select(capture => Number(capture.Value))];
+        Assert.True(xs[0] < xs[1] && ys[0] == ys[1], refused.Message);
+        Assert.True(ys[2] > ys[0] && ys[2] == ys[3] && xs[2] < xs[3], refused.Message);
+        bool fact = (
+            await RunAsync(
+                "var label: RichTextLabel = scene_tree.root.get_node(\"Log\")\n\t"
+                    + "var own: String = label.get_tooltip(Vector2(1, 1))\n\t"
+                    + $"var hint: String = label.get_tooltip(Vector2({Num(xs[0] - 100 + 1)}, label.get_line_height(0) / 2.0))\n\t"
+                    + "return own == \"own\" and hint == \"one\"",
+                cancellation
+            )
+        ).GetValue<bool>();
+        Assert.True(fact, "get_tooltip answers a [hint]'s description over its glyph and tooltip_text off it");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATooltipSpanThatWrapsIsOneSpanWithARectPerLine()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(RichLabel("Log", 100, 100, 90, 200, "[hint=wrap]one two three four five six seven[/hint]") + Drawn, cancellation);
+        int lines = await ReadIntAsync("return scene_tree.root.get_node(\"Log\").get_line_count()", cancellation);
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("Log", Item: new InputItem(Index: 0)), cancellationToken: cancellation)
+        )!;
+
+        Assert.True(lines >= 2, $"the hint wraps onto {lines} lines");
+        JsonNode aimed = hovered["aimedAt"]!;
+        AssertAimed(aimed, "/root/Log", "RichTextLabel", 0, "wrap");
+        JsonArray rects = aimed["item"]!["rects"]!.AsArray();
+        Assert.Equal(lines, rects.Count);
+        for (int line = 1; line < rects.Count; line++)
+        {
+            Assert.True(rects[line]!["y"]!.GetValue<double>() > rects[line - 1]!["y"]!.GetValue<double>(), aimed.ToJsonString());
+        }
+        Assert.Equal("wrap", hovered["tooltip"]!["text"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATooltipSpanOnAScrolledLabelIsAimedAtItsScrolledPosition()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string rows = string.Join("\\n", Enumerable.Range(0, 20).Select(row => $"row {row} [hint=t{row}]x[/hint]"));
+        await RunAsync(
+            RichLabel("Log", 100, 100, 300, 100, rows)
+                + "await scene_tree.process_frame\n\tawait scene_tree.process_frame\n\t"
+                + "label.scroll_to_line(10)\n\t"
+                + Drawn,
+            cancellation
+        );
+        double lineHeight = (await RunAsync("return scene_tree.root.get_node(\"Log\").get_line_height(10)", cancellation)).GetValue<double>();
+
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("Log", Item: new InputItem(Text: "t10")), cancellationToken: cancellation)
+        )!;
+
+        JsonNode aimed = hovered["aimedAt"]!;
+        AssertAimed(aimed, "/root/Log", "RichTextLabel", 0, "t10");
+        double y = aimed["y"]!.GetValue<double>();
+        Assert.True(y > 100 && y < 100 + lineHeight, aimed.ToJsonString());
+        Assert.Equal("t10", hovered["tooltip"]!["text"]!.GetValue<string>());
+        McpException refused = await RefusedAsync(new InputTarget("Log", Item: new InputItem(Text: "t0")), cancellation);
+        Assert.Contains("/root/Log has no tooltip span 't0'; spans: index 0 't10' at ", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AClickOnATooltipSpanItemLandsOnTheLabel()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(RichLabel("Log", 100, 100, 400, 60, "3 × 1.5 + [hint=bonus]2[/hint] = 6.") + Drawn, cancellation);
+
+        JsonNode clicked = await ClickAsync(new InputTarget("Log", Item: new InputItem(Text: "bonus")), cancellation);
+
+        AssertAimed(clicked["aimedAt"]!, "/root/Log", "RichTextLabel", 0, "bonus");
+        Assert.Equal("/root/Log", clicked["pressedOn"]!["path"]!.GetValue<string>());
+        Assert.Equal("/root/Log", clicked["releasedOn"]!["path"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task TheProbeFindsASpanOnEachLineOfA600PxWide20LineLabel()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string rows = string.Join(
+            "\\n",
+            Enumerable.Range(0, 20).Select(row => $"plain text before the hint on row {row} [hint=r{row}]here[/hint] and after")
+        );
+        await RunAsync(RichLabel("Log", 20, 0, 600, 600, rows) + "label.autowrap_mode = TextServer.AUTOWRAP_OFF\n\t" + Drawn, cancellation);
+
+        int shown = await ReadIntAsync(
+            "var label: RichTextLabel = scene_tree.root.get_node(\"Log\")\n\t"
+                + "var bottom: float = scene_tree.root.get_visible_rect().end.y\n\tvar shown := 0\n\t"
+                + "for line in label.get_line_count():\n\t\t"
+                + "if label.get_line_offset(line) + label.get_line_height(line) / 2.0 < bottom:\n\t\t\tshown += 1\n\t"
+                + "return shown",
+            cancellation
+        );
+
+        var clock = Stopwatch.StartNew();
+        McpException refused = await RefusedAsync(new InputTarget("Log", Item: new InputItem(Index: 20)), cancellation);
+        clock.Stop();
+
+        TestContext.Current.TestOutputHelper?.WriteLine($"a refused span click on 20 lines x 600 px took {clock.ElapsedMilliseconds} ms");
+        Assert.True(shown is > 10 and < 20, $"the viewport shows {shown} of the 20 lines");
+        Assert.Contains($"/root/Log has no tooltip span 20; it has {shown}: index 0 'r0' at ", refused.Message, StringComparison.Ordinal);
+        Assert.True(clock.ElapsedMilliseconds < 150, $"the probe took {clock.ElapsedMilliseconds} ms");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AHoverOffASpanOfALongLogInAScrollContainerAnswersWithinASecond()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(LongLog, cancellation);
+        JsonNode onSpan = JsonNode.Parse(
+            await _tools.HoverAsync(
+                new InputTarget("Box/Log", Item: new InputItem(Text: "near")),
+                new HoverOptions(Tooltip: false),
+                cancellationToken: cancellation
+            )
+        )!;
+        JsonNode rect = onSpan["aimedAt"]!["item"]!["rect"]!;
+        double x = rect["x"]!.GetValue<double>() - 3;
+        double y = rect["y"]!.GetValue<double>() + rect["height"]!.GetValue<double>() / 2;
+
+        var clock = Stopwatch.StartNew();
+        JsonNode hovered = JsonNode.Parse(await _tools.HoverAsync(new InputTarget(null, x, y), cancellationToken: cancellation))!;
+        clock.Stop();
+
+        TestContext.Current.TestOutputHelper?.WriteLine($"a hover off a span of 120 fit_content lines took {clock.ElapsedMilliseconds} ms");
+        string warning = hovered["warning"]!.GetValue<string>();
+        Assert.Contains("on /root/Box/Log; its nearest tooltip span is index 0 'near' at ", warning, StringComparison.Ordinal);
+        Assert.EndsWith(", 3 px away; aim at it with item {index: 0}", warning, StringComparison.Ordinal);
+        Assert.True(clock.ElapsedMilliseconds < 1000, $"the hover took {clock.ElapsedMilliseconds} ms");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ASpanScrolledOutOfAScrollContainerIsNotListed()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(LongLog, cancellation);
+
+        McpException refused = await RefusedAsync(new InputTarget("Box/Log", Item: new InputItem(Text: "far")), cancellation);
+
+        Assert.Equal(["near"], ListedSpans(refused.Message));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ASpanATypewriterHasNotRevealedIsNotListed()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        // After shaping, the hidden text keeps its glyphs, so get_tooltip still answers over them.
+        await RunAsync(
+            RichLabel("Log", 100, 100, 400, 100, "[hint=shown]aa[/hint]\\n[hint=hidden]bb[/hint]")
+                + "label.visible_characters_behavior = TextServer.VC_CHARS_AFTER_SHAPING\n\tlabel.visible_characters = 2\n\t"
+                + Drawn,
+            cancellation
+        );
+
+        McpException refused = await RefusedAsync(new InputTarget("Log", Item: new InputItem(Text: "hidden")), cancellation);
+
+        Assert.Equal(["shown"], ListedSpans(refused.Message));
+    }
+
+    [Theory(Timeout = TestTimeoutMs)]
+    [InlineData("label.vertical_alignment = VERTICAL_ALIGNMENT_FILL\n\t")]
+    [InlineData("label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER\n\t")]
+    [InlineData("label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM\n\t")]
+    [InlineData("label.add_theme_constant_override(\"paragraph_separation\", 16)\n\t")]
+    public async Task TheProbeFindsASpanOnEachOfThreeLinesHoweverTheyArePlaced(string setup)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            RichLabel("Log", 100, 20, 400, 300, "[hint=a]aaa[/hint]\\n[hint=b]bbb[/hint]\\n[hint=c]ccc[/hint]") + setup + Drawn,
+            cancellation
+        );
+
+        McpException refused = await RefusedAsync(new InputTarget("Log", Item: new InputItem(Text: "nope")), cancellation);
+
+        Assert.Equal(["a", "b", "c"], ListedSpans(refused.Message));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ASmallHintBesideALargeFontIsASpanAHoverShows()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(RichLabel("Log", 100, 100, 400, 100, "[font_size=48]Gold[/font_size] [hint=x]+2[/hint]") + Drawn, cancellation);
+
+        McpException refused = await RefusedAsync(new InputTarget("Log", Item: new InputItem(Text: "nope")), cancellation);
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(new InputTarget("Log", Item: new InputItem(Text: "x")), cancellationToken: cancellation)
+        )!;
+
+        Assert.Equal(["x"], ListedSpans(refused.Message));
+        Assert.Equal("x", hovered["tooltip"]!["text"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnImageTooltipIsASpan()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        // [img tooltip=...] loads its texture from a path, so the image is added with add_image's tooltip instead.
+        await RunAsync(
+            RichLabel("Log", 100, 100, 400, 100, "before ")
+                + "var texture := ImageTexture.create_from_image(Image.create_empty(24, 24, false, Image.FORMAT_RGBA8))\n\t"
+                + "label.add_image(texture, 24, 24, Color.WHITE, INLINE_ALIGNMENT_CENTER, Rect2(), null, false, \"pic\")\n\t"
+                + Drawn,
+            cancellation
+        );
+
+        McpException refused = await RefusedAsync(new InputTarget("Log", Item: new InputItem(Text: "nope")), cancellation);
+
+        Assert.Equal(["pic"], ListedSpans(refused.Message));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AProbeThatRunsOutOfSamplesSaysWhereItStopped()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        // Scaled to half, the label shows 1280 x 720 of its own pixels in the 640 x 360 viewport: more than 20000 samples.
+        string rows = string.Join("\\n", Enumerable.Range(0, 40).Select(row => $"row {row} " + string.Concat(Enumerable.Repeat("words ", 30))));
+        await RunAsync(
+            RichLabel("Log", 0, 0, 1280, 720, "[hint=first]x[/hint] " + rows)
+                + "label.autowrap_mode = TextServer.AUTOWRAP_OFF\n\tlabel.scale = Vector2(0.5, 0.5)\n\t"
+                + Drawn,
+            cancellation
+        );
+
+        McpException refused = await RefusedAsync(new InputTarget("Log", Item: new InputItem(Index: 999)), cancellation);
+
+        Assert.Contains("/root/Log has no tooltip span 999; it has 1: index 0 'first' at ", refused.Message, StringComparison.Ordinal);
+        Assert.Matches(
+            @"; the tooltip span probe of /root/Log stopped after \d+ samples in \d+ ms, so spans past \([\d.-]+, [\d.-]+\) were not looked for\.$",
+            refused.Message
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AHoverOffASpanDeepInA3000LineLogAnswersWithinASecondAndAHalf()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        // Box scrolled to its bottom: every sample walks the label's paragraphs from line 0, so the time budget stops the probe.
+        await RunAsync(
+            "var box := ScrollContainer.new()\n\tbox.name = \"Box\"\n\tbox.position = Vector2(20, 20)\n\tbox.size = Vector2(600, 300)\n\t"
+                + "scene_tree.root.add_child(box)\n\tvar rows := PackedStringArray()\n\t"
+                + "for row in 3000:\n\t\trows.append(\"row %d\" % row)\n\trows[2995] += \" [hint=deep]here[/hint]\"\n\t"
+                + "var label := RichTextLabel.new()\n\tlabel.name = \"Log\"\n\tlabel.bbcode_enabled = true\n\tlabel.fit_content = true\n\t"
+                + "label.size_flags_horizontal = Control.SIZE_EXPAND_FILL\n\tlabel.text = \"\\n\".join(rows)\n\tbox.add_child(label)\n\t"
+                + "await scene_tree.process_frame\n\tawait scene_tree.process_frame\n\t"
+                + "box.scroll_vertical = int(box.get_v_scroll_bar().max_value)\n\t"
+                + Drawn,
+            cancellation
+        );
+        JsonNode point = await RunAsync(
+            "var label: RichTextLabel = scene_tree.root.get_node(\"Box/Log\")\n\t"
+                + "var local := Vector2(label.get_line_width(2995) + 4, label.get_line_offset(2995) + label.get_line_height(2995) / 2.0)\n\t"
+                + "var at: Vector2 = label.get_global_transform_with_canvas() * local\n\treturn [at.x, at.y]",
+            cancellation
+        );
+
+        var clock = Stopwatch.StartNew();
+        JsonNode hovered = JsonNode.Parse(
+            await _tools.HoverAsync(
+                new InputTarget(null, point[0]!.GetValue<double>(), point[1]!.GetValue<double>()),
+                cancellationToken: cancellation
+            )
+        )!;
+        clock.Stop();
+
+        TestContext.Current.TestOutputHelper?.WriteLine($"a hover off a span on line 2995 of 3000 took {clock.ElapsedMilliseconds} ms");
+        Assert.Equal("/root/Box/Log", hovered["hoveredOn"]!["path"]!.GetValue<string>());
+        string warning = hovered["warning"]!.GetValue<string>();
+        bool named = warning.Contains("its nearest tooltip span is index 0 'deep' at ", StringComparison.Ordinal);
+        bool stopped = ProbeStopped().IsMatch(warning) && warning.Contains("probe of /root/Box/Log ", StringComparison.Ordinal);
+        Assert.True(named || stopped, warning);
+        Assert.True(clock.ElapsedMilliseconds < 1500, $"the hover took {clock.ElapsedMilliseconds} ms");
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -857,6 +1195,32 @@ public sealed partial class ItemTargetTests(SharedProbeSession shared) : IAsyncL
         + "scene_tree.root.add_child(book)\n\t"
         + $"for page_name: String in [{string.Join(", ", titles.Select(title => $"\"{title}\""))}]:\n\t\t"
         + "var page := Control.new()\n\t\tpage.name = page_name\n\t\tbook.add_child(page)\n\t";
+
+    // A RichTextLabel, label in the script, named name under the root at (x, y), width x height, showing bbcode.
+    private static string RichLabel(string name, int x, int y, int width, int height, string bbcode) =>
+        "var label := RichTextLabel.new()\n\t"
+        + $"label.name = \"{name}\"\n\t"
+        + "label.bbcode_enabled = true\n\t"
+        + $"label.text = \"{bbcode}\"\n\t"
+        + $"label.position = Vector2({x}, {y})\n\t"
+        + $"label.size = Vector2({width}, {height})\n\t"
+        + "scene_tree.root.add_child(label)\n\t";
+
+    // A tooltip span refusal's listing: each span's index, text and first rect.
+    [GeneratedRegex(@"spans: (?:index \d+ '(?<text>[^']*)' at (?<x>[\d.-]+),(?<y>[\d.-]+),[\d.]+,[\d.]+(?:, |$))+")]
+    private static partial Regex SpansListed();
+
+    // The sentence a tooltip span probe that ran out of samples or time ends a refusal or warning with.
+    [GeneratedRegex(@"the tooltip span probe of \S+ stopped after \d+ samples in \d+ ms, so spans past \([\d.-]+, [\d.-]+\) were not looked for\.$")]
+    private static partial Regex ProbeStopped();
+
+    // The texts of the spans a tooltip span refusal lists, in order.
+    private static string[] ListedSpans(string refusal)
+    {
+        Match listed = SpansListed().Match(refusal);
+        Assert.True(listed.Success, refusal);
+        return [.. listed.Groups["text"].Captures.Select(capture => capture.Value)];
+    }
 
     // A bar's titles "Tab 0" to "Tab count-1": one 150 px wide draws only some of them.
     private static string[] Tabs(int count) => [.. Enumerable.Range(0, count).Select(index => $"Tab {index}")];

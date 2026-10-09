@@ -4,6 +4,8 @@ extends Node
 ## describes it. The hover gesture itself (the aim, hoveredOn, the warnings) stays in the input
 ## player.
 
+const TooltipSpans := preload("godot_mcp_tooltip_spans.gd")
+
 ## The longest a hover waits for a tooltip, the server's own limit on timeoutMs.
 const HOVER_TIMEOUT_CAP_MS := 10000
 
@@ -36,6 +38,23 @@ func tooltip_owner(control: Control, point: Vector2) -> Control:
 			return null
 		current = current.get_parent_control()
 	return null
+
+
+## The warning for a hover at a viewport point that found no tooltip over control: when control
+## is a RichTextLabel with tooltip spans, the nearest span (TooltipSpans.probe_near, then
+## near_miss_warning in viewport coordinates), then where the probe stopped when it ran out of
+## samples; "" for a label with none whose probe ran to its end, and for any other Control.
+func near_miss_warning(control: Control, point: Vector2) -> String:
+	var label := control as RichTextLabel
+	if label == null:
+		return ""
+	var path: String = str(label.get_path())
+	var xform: Transform2D = targets.viewport_transform(label)
+	var found: Dictionary = TooltipSpans.probe_near(label, xform.affine_inverse() * point)
+	var shown: Array = TooltipSpans.placed(found["spans"], xform)
+	var near_miss: String = TooltipSpans.near_miss_warning(path, point, shown, targets)
+	var stopped: String = TooltipSpans.stopped_warning(path, found["stopped"], xform, targets)
+	return TooltipSpans.and_then(near_miss, stopped)
 
 
 ## params.timeoutMs, else gui/timers/tooltip_delay_sec plus a second, at most

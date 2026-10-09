@@ -217,7 +217,8 @@ internal sealed partial class RuntimeTools
             + "Points are viewport coordinates, as get_ui_elements reports them. Returns {pointer, heldButtonMask, hoveredOn, "
             + "tooltip, warning?}: hoveredOn the Control ({path, class}) under the pointer, null over none; tooltip {text, x, "
             + "y, width, height, owner} in viewport coordinates (text null for a custom tooltip without a Label; owner the "
-            + "Control ({path, class}) whose tooltip it is), null when none showed, with a warning when one was due. Godot "
+            + "Control ({path, class}) whose tooltip it is), null when none showed, with a warning when one was due, or when "
+            + "none was due over a RichTextLabel with tooltip spans: the warning names the nearest span and its item.index. Godot "
             + "starts a tooltip's timer only while the hovered Control can process, so over a pausable Control in a paused "
             + "game hover answers at once with a warning: resume, hover, then pause."
             + TargetNote

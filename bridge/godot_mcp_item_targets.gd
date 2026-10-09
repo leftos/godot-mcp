@@ -3,15 +3,18 @@ extends RefCounted
 ## a TabBar, a TabContainer's tab bar or a Tree, named by {text | index | path, column?} and
 ## matched by the text as drawn (translated as the Control translates it), placed at a point of
 ## its rect in the local space of the Control that draws it and checked back through that
-## Control's own hit test; or a String saying why it cannot be aimed at. Static functions called
-## on the script itself.
+## Control's own hit test; or a String saying why it cannot be aimed at. On a RichTextLabel the
+## item is a tooltip span (godot_mcp_tooltip_spans.gd), named by {text | index}. Static functions
+## called on the script itself.
+
+const TooltipSpans := preload("godot_mcp_tooltip_spans.gd")
 
 ## The classes an item target takes, each with its descendants.
 const LIST_CLASSES: Array[String] = ["ItemList", "TabBar", "TabContainer", "Tree"]
 ## A node of another class: its path and class.
 const NOT_A_LIST := (
 	"%s is a %s; item targets take an ItemList, TabBar, TabContainer, Tree, "
-	+ "OptionButton, MenuButton or PopupMenu"
+	+ "RichTextLabel, OptionButton, MenuButton or PopupMenu"
 )
 ## A Tree's key on a flat list: the list's path, its class and the key.
 const ITEM_KEY_REFUSED := "%s is a %s; item.%s is for a Tree only"
@@ -99,12 +102,48 @@ static func resolve(targets: Node, list: Node, item: Variant) -> Variant:
 		return refusal
 	if list is Tree:
 		return _tree_item(targets, list as Tree, item as Dictionary)
+	if list is RichTextLabel:
+		return _span_item(targets, list as RichTextLabel, item as Dictionary)
 	return _flat_item(targets, list as Control, item as Dictionary)
 
 
+## A RichTextLabel's tooltip span, aimed at the point of its first run a sample confirmed;
+## reported as {index, text, rect, rects}, its rects ({x, y, width, height}, one per line) in the
+## root's viewport coordinates. A refusal from a probe that ran out of samples says where it
+## stopped.
+static func _span_item(targets: Node, label: RichTextLabel, spec: Dictionary) -> Variant:
+	var path: String = str(label.get_path())
+	var xform: Transform2D = targets.viewport_transform(label)
+	var found: Dictionary = TooltipSpans.probe(label)
+	var local_spans: Array = found["spans"]
+	var shown: Array = TooltipSpans.placed(local_spans, xform)
+	var picked: Variant = TooltipSpans.pick(path, shown, spec, targets)
+	if picked is String:
+		var stopped: String = TooltipSpans.stopped_warning(path, found["stopped"], xform, targets)
+		return TooltipSpans.and_then(picked, stopped)
+	var index: int = picked
+	var local: Vector2 = local_spans[index]["aim"]
+	var first: Rect2 = shown[index]["rects"][0]
+	var named: Array = [shown[index]["text"], path]
+	var root_rect: Rect2 = targets.get_tree().root.get_visible_rect()
+	var refusal: String = off_viewport(targets, first, xform * local, root_rect, named)
+	if not refusal.is_empty():
+		return refusal
+	var rects: Array = []
+	for rect: Rect2 in shown[index]["rects"]:
+		rects.append(_rect_entry(rect))
+	var report: Dictionary = {"index": index, "text": named[0], "rect": rects[0], "rects": rects}
+	return {"drawer": label, "local": local, "report": report}
+
+
+static func _rect_entry(rect: Rect2) -> Dictionary:
+	return {"x": rect.position.x, "y": rect.position.y, "width": rect.size.x, "height": rect.size.y}
+
+
 ## Why an item spec cannot be read on a node of list_class (path names it), or "": the class must
-## be one of LIST_CLASSES or descend from one, the spec an object with exactly one of text, index
-## and a non-empty path; path and column are a Tree's only, index a flat list's only.
+## be one of LIST_CLASSES or a RichTextLabel or descend from one, the spec an object with exactly
+## one of text, index and a non-empty path; path and column are a Tree's only, index refused on a
+## Tree.
 static func shape_refusal(path: String, list_class: String, item: Variant) -> String:
 	var kind: String = item_kind(list_class)
 	if kind.is_empty():
@@ -120,8 +159,11 @@ static func shape_refusal(path: String, list_class: String, item: Variant) -> St
 	return ""
 
 
-## "tree" for a Tree, "flat" for an ItemList, a TabBar or a TabContainer, "" for any other class.
+## "tree" for a Tree, "flat" for an ItemList, a TabBar or a TabContainer, "span" for a
+## RichTextLabel, "" for any other class.
 static func item_kind(list_class: String) -> String:
+	if ClassDB.is_parent_class(list_class, "RichTextLabel"):
+		return "span"
 	for known: String in LIST_CLASSES:
 		if ClassDB.is_parent_class(list_class, known):
 			return "tree" if known == "Tree" else "flat"
@@ -154,12 +196,13 @@ static func drawn(node: Node, mode: int, text: String) -> String:
 
 ## The items get_ui_elements reports on control, read as an item target matches them, so the two
 ## agree: {items, itemsTotal?}, items the first MAX_ITEMS_LISTED and itemsTotal their count when
-## there are more; or null for a Control of a class item targets do not take. A flat list's item
+## there are more; or null for a Control of a class item targets do not take, and for a
+## RichTextLabel, whose tooltip spans cost a probe of every pixel shown. A flat list's item
 ## is {index, text, hidden?: true, disabled?: true} (a TabContainer's from its tab bar); a Tree's
 ## is {path, text}, path its item.path, for each item neither hidden nor under a collapsed one.
 static func listed_items(control: Control) -> Variant:
 	var kind: String = item_kind(control.get_class())
-	if kind.is_empty():
+	if kind.is_empty() or kind == "span":
 		return null
 	if kind == "tree":
 		var tree := control as Tree
