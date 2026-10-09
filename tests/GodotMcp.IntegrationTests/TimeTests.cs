@@ -148,6 +148,209 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task StepUntilFromPausedStopsPausedOnTheMetFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await FrameAsync("pause");
+        long target = await ReadIntAsync("process_frames") + 7;
+
+        JsonObject stepped = await FrameAsync("step", options: new StepOptions(Until: FramesReach(target)));
+        long read = await InspectIntAsync("process_frames", cancellation);
+        await Task.Delay(300, cancellation);
+        long later = await InspectIntAsync("process_frames", cancellation);
+
+        Assert.True(stepped["met"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.True(stepped["value"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.False(stepped.ContainsKey("last"), stepped.ToJsonString());
+        Assert.Equal(7, stepped["processFrames"]!.GetValue<int>());
+        Assert.True(stepped["paused"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.True(stepped["frame"]!.GetValue<long>() > 0, stepped.ToJsonString());
+        Assert.Equal(target, read);
+        Assert.Equal(target, later);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task StepUntilFromRunningStopsPausedOnTheMetFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        long target = await ReadIntAsync("process_frames") + 120;
+
+        JsonObject stepped = await FrameAsync("step", options: new StepOptions(Until: FramesReach(target)));
+        await Task.Delay(300, cancellation);
+
+        Assert.True(stepped["met"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.True(stepped["paused"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.InRange(stepped["processFrames"]!.GetValue<int>(), 1, 120);
+        Assert.Equal(target, await InspectIntAsync("process_frames", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task StepUntilNeverMetRunsCountFramesAndAnswersLast()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await FrameAsync("pause");
+        long before = await ReadIntAsync("process_frames");
+
+        StepOptions options = new(Until: new WaitCondition(Node: "TimeProbe", Property: "state", EqualsValue: Json("\"never\"")));
+        JsonObject stepped = await FrameAsync("step", count: 5, options: options);
+
+        Assert.False(stepped["met"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.Equal("idle", stepped["last"]!.GetValue<string>());
+        Assert.False(stepped.ContainsKey("value"), stepped.ToJsonString());
+        Assert.Equal(5, stepped["processFrames"]!.GetValue<int>());
+        Assert.True(stepped["paused"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.Equal(before + 5, await InspectIntAsync("process_frames", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task StepUntilASignalStopsOnTheFrameItFiredIn()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await FrameAsync("pause");
+        // Armed well out: arm's timer runs while the game is paused, so a shorter one could fire before the step connects,
+        // and the frame the handler records is then the one the step's own check met the signal in.
+        await RunAsync(
+            $"var probe: Node = {Probe}\n\t"
+                + "probe.fired.connect(func(value: Variant) -> void: probe.set_meta(&\"fired_frame\", Engine.get_process_frames()))\n\t"
+                + "probe.arm(1000)\n\t"
+                + "return true"
+        );
+
+        JsonObject stepped = await FrameAsync("step", options: new StepOptions(Until: new WaitCondition(Node: "TimeProbe", Signal: "fired")));
+        long read = await InspectIntAsync("process_frames", cancellation);
+        await Task.Delay(300, cancellation);
+        long later = await InspectIntAsync("process_frames", cancellation);
+        long fired = (await RunAsync($"return {Probe}.get_meta(&\"fired_frame\", -1)")).GetValue<long>();
+        bool paused = (await RunAsync("return scene_tree.paused")).GetValue<bool>();
+
+        Assert.True(stepped["met"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.True(fired > 0, $"the signal never fired: {stepped.ToJsonString()}");
+        Assert.Equal(1000, Assert.Single(stepped["args"]!.AsArray())!.GetValue<int>());
+        Assert.False(stepped.ContainsKey("last"), stepped.ToJsonString());
+        Assert.Equal(fired, stepped["frame"]!.GetValue<long>());
+        Assert.True(stepped["paused"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.True(paused, "the game is still paused on the met frame");
+        Assert.Equal(read, later);
+        Assert.InRange(stepped["processFrames"]!.GetValue<int>(), 2, 999);
+        Assert.Equal("done", (await RunAsync($"return {Probe}.state")).GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task StepUntilAPhysicsConditionStopsOnTheTickItMet()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await FrameAsync("pause");
+        long before = await ReadIntAsync("physics_ticks");
+        long target = before + 5;
+
+        JsonObject stepped = await FrameAsync(
+            "step",
+            options: new StepOptions(Unit: "physics", Until: new WaitCondition(Node: "TimeProbe", Expression: $"node.physics_ticks >= {target}"))
+        );
+        long read = await InspectIntAsync("physics_ticks", cancellation);
+        await Task.Delay(300, cancellation);
+        long later = await InspectIntAsync("physics_ticks", cancellation);
+
+        Assert.True(stepped["met"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.Equal(5, stepped["physicsFrames"]!.GetValue<int>());
+        Assert.True(stepped["paused"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.Equal(before + stepped["physicsFrames"]!.GetValue<int>(), read);
+        Assert.Equal(read, later);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStepUntilOnAUiChangedWithNoBaselineIsRefusedAndLeavesTheClockFree()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await FrameAsync("pause");
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => FrameAsync("step", options: new StepOptions(Until: UiChangedCondition)));
+        JsonObject stepped = await FrameAsync("step", count: 1);
+
+        Assert.Contains(NoUiBaseline, refused.Message, StringComparison.Ordinal);
+        Assert.Equal(1, stepped["processFrames"]!.GetValue<int>());
+        Assert.True(stepped["paused"]!.GetValue<bool>(), stepped.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStepUntilOnAMissingSignalIsRefusedAndLeavesTheClockFree()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await FrameAsync("pause");
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            FrameAsync("step", options: new StepOptions(Until: new WaitCondition(Node: "TimeProbe", Signal: "nope")))
+        );
+        JsonObject stepped = await FrameAsync("step", count: 1);
+
+        Assert.Contains("/root/TimeProbe has no signal 'nope'", refused.Message, StringComparison.Ordinal);
+        Assert.Equal(1, stepped["processFrames"]!.GetValue<int>());
+        Assert.True(stepped["paused"]!.GetValue<bool>(), stepped.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task StepUntilWithScreenshotCapturesTheMetFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await FrameAsync("pause");
+        long target = await ReadIntAsync("process_frames") + 3;
+
+        List<ContentBlock> blocks =
+        [
+            .. await _tools.FrameControlAsync(
+                "step",
+                null,
+                null,
+                new StepOptions(Screenshot: true, Until: FramesReach(target)),
+                cancellationToken: cancellation
+            ),
+        ];
+        JsonNode reply = JsonNode.Parse(Text(blocks))!;
+        string path = reply["screenshot"]!["path"]!.GetValue<string>();
+        JsonNode pixel = await RunAsync(
+            $"var c := Image.load_from_file(\"{path.Replace('\\', '/')}\").get_pixel(600, 310)\n\treturn [c.r8, c.g8, c.b8]"
+        );
+
+        // ticker.gd paints the Swatch Color8((process_frames % 16) * 16, 0, 0) each frame, so the met frame shows target.
+        long expectedRed = target % 16 * 16;
+        Assert.True(reply["met"]!.GetValue<bool>(), reply.ToJsonString());
+        Assert.Equal(3, reply["processFrames"]!.GetValue<int>());
+        Assert.InRange(pixel[0]!.GetValue<int>(), expectedRed - 3, expectedRed + 3);
+        Assert.Equal(target, await InspectIntAsync("process_frames", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWatchAroundAStepUntilEndsAtTheStepsFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await FrameAsync("pause");
+        long target = await ReadIntAsync("process_frames") + 4;
+
+        WatchTracks tracks = new([new WatchPropertyTrack("TimeProbe", "process_frames")]);
+        JsonNode.Parse(await _tools.WatchAsync("start", tracks, cancellationToken: cancellation));
+        await Task.Delay(200, cancellation);
+        JsonObject stepped = await FrameAsync("step", options: new StepOptions(Until: FramesReach(target)));
+        await Task.Delay(100, cancellation);
+        JsonObject timeline = JsonNode.Parse(await _tools.WatchAsync("stop", cancellationToken: cancellation))!.AsObject();
+
+        Assert.True(stepped["met"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.Equal(4, stepped["processFrames"]!.GetValue<int>());
+        Assert.Equal(4, timeline["frames"]!.GetValue<int>());
+        JsonArray points = timeline["tracks"]![0]!["points"]!.AsArray();
+        long lastFrame = points[^1]![0]!.GetValue<long>();
+        Assert.Equal(stepped["frame"]!.GetValue<long>(), timeline["startFrame"]!.GetValue<long>() + lastFrame);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForNodeExists()
     {
         await AddTimeProbeAsync(TestContext.Current.CancellationToken);
@@ -1177,6 +1380,15 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     private Task<JsonNode> ArmAsync(int ms) => RunAsync($"{Probe}.arm({ms})\n\treturn true");
 
     private async Task<long> ReadIntAsync(string property) => (await RunAsync($"return {Probe}.{property}")).GetValue<long>();
+
+    /// <summary>TimeProbe's property read through inspect_node, a read tool that runs no game code.</summary>
+    private async Task<long> InspectIntAsync(string property, CancellationToken cancellationToken) =>
+        JsonNode.Parse(await _tools.InspectNodeAsync("TimeProbe", [property], cancellationToken: cancellationToken))!["properties"]![
+            property
+        ]!.GetValue<long>();
+
+    /// <summary>A step's until met once TimeProbe has processed <paramref name="target"/> frames.</summary>
+    private static WaitCondition FramesReach(long target) => new(Node: "TimeProbe", Expression: $"node.process_frames >= {target}");
 
     private async Task<JsonObject> FrameAsync(string action, int? count = null, double? scale = null, StepOptions? options = null)
     {

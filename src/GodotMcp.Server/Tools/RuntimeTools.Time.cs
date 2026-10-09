@@ -26,7 +26,12 @@ internal sealed partial class RuntimeTools
     private const string ConditionMessage =
         "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
         + "{gameMs}, {frames}.";
+    private const string UntilFramesRefusal =
+        "frame_control step's until takes any wait_for condition but frames: count is the most frames a step runs.";
     private static readonly string[] FrameActions = ["pause", "resume", "step", "time_scale"];
+
+    // What a step's reply carries beyond its counts: the frame it stopped on, and its until's answer as wait_for gives one.
+    private static readonly string[] StepReportKeys = ["frame", "met", "value", "last", "args", "failedChecks"];
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(10);
 
     // A generous allowance per stepped frame on top of FrameTimeout: a frame at 60 fps takes about 17 ms.
@@ -47,21 +52,27 @@ internal sealed partial class RuntimeTools
             + "NOTIFICATION_UNPAUSED, then NOTIFICATION_PAUSED; it fails if the game pauses itself before count frames have "
             + "run. A step counts drawn frames, so it is refused while the window cannot draw (minimized) or the game runs in "
             + "low-processor mode, and while another step runs, pause and resume are refused too. A step whose frames stop "
-            + "being drawn stops at its deadline (10 s + 100 ms per frame, load-adjusted), leaves the game paused and fails. time_scale sets "
+            + "being drawn stops at its deadline (10 s + 100 ms per frame, load-adjusted), leaves the game paused and fails. "
+            + "options.until, a wait_for condition of any kind but frames, stops the step on the first stepped frame that meets "
+            + "it, checked after each frame (never before the first) at its draw, or as the next tick starts with unit physics, "
+            + "and leaves the game paused on that frame; count is then the most frames, 1000 when left out. time_scale sets "
             + "Engine.time_scale, which scales process and physics delta. Returns {paused, timeScale, processFrames, "
-            + "physicsFrames}, the frames and ticks the step ran (0 for other actions), plus screenshot when captured."
+            + "physicsFrames}, the frames and ticks the step ran (0 for other actions), plus a step's frame "
+            + "(Engine.get_process_frames() where it stopped), screenshot when captured, and with until met plus value (args "
+            + "for a signal) or last as wait_for reports them: never met, it runs count frames and answers met: false."
     )]
     public async Task<IEnumerable<ContentBlock>> FrameControlAsync(
         [Description("pause, resume, step or time_scale.")] string action,
-        [Description("step only: how many frames (or physics ticks) to advance, 1 to 1000; 1 when left out.")] int? count = null,
+        [Description("step only: how many frames (or physics ticks) to advance, 1 to 1000; 1 when left out, 1000 with options.until.")]
+            int? count = null,
         [Description("time_scale only: the new Engine.time_scale, greater than 0 and at most 100; 1 is normal speed.")] double? scale = null,
-        [Description("step only: {unit, screenshot}; unit is process (the default) or physics.")] StepOptions? options = null,
+        [Description("step only: {unit, screenshot, until}; unit is process (the default) or physics.")] StepOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
         JsonObject parameters = BuildFrameParameters(action, count, scale, options);
-        TimeSpan allowance = StepAllowance(count ?? 1);
+        TimeSpan allowance = StepAllowance(parameters["count"]?.GetValue<int>() ?? 1);
         BridgeCall call = new("frame_control", "frame", parameters, allowance + WaitReplyAllowance, action == "step" ? allowance : null);
         BridgeResult result = await CallWithErrorsAsync(Find(session), call, cancellationToken);
         return await ShapeFrameResultAsync(result, cancellationToken);
@@ -133,8 +144,10 @@ internal sealed partial class RuntimeTools
         return ErrorReport.AddTo(WaitReply(result), result.Errors).ToJsonString();
     }
 
-    /// <summary>The bridge's frame parameters: {action}, plus {count, unit, screenshot} for step and {scale} for time_scale.</summary>
-    /// <exception cref="McpException">An unknown action, or an argument the action does not take or needs and lacks.</exception>
+    /// <summary>The bridge's frame parameters: {action}, plus {count, unit, screenshot, until} for step and {scale} for
+    /// time_scale.</summary>
+    /// <exception cref="McpException">An unknown action, an argument the action does not take or needs and lacks, or an until
+    /// condition wait_for would refuse or of the frames kind.</exception>
     internal static JsonObject BuildFrameParameters(string action, int? count, double? scale, StepOptions? options)
     {
         if (!FrameActions.Contains(action))
@@ -175,10 +188,32 @@ internal sealed partial class RuntimeTools
             throw new McpException($"timeoutMs 0 checks once, which a {kind} wait cannot do; give it a timeout.");
         }
 
-        JsonObject parameters = JsonSerializer.SerializeToNode(condition, Json)!.AsObject();
-        parameters["kind"] = kind;
+        JsonObject parameters = ConditionParameters(condition!, kind);
         parameters["timeoutMs"] = WaitTimeoutMs(condition!, timeoutMs);
         return parameters;
+    }
+
+    /// <summary>A condition as the bridge reads it: its fields as given, and its kind.</summary>
+    private static JsonObject ConditionParameters(WaitCondition condition, string kind)
+    {
+        JsonObject parameters = JsonSerializer.SerializeToNode(condition, Json)!.AsObject();
+        parameters["kind"] = kind;
+        return parameters;
+    }
+
+    /// <summary>A step's until as the bridge reads it, checked as wait_for checks its condition.</summary>
+    /// <exception cref="McpException">The condition names frames, is not exactly one kind otherwise, or its gameMs is out of
+    /// range.</exception>
+    private static JsonObject UntilParameters(WaitCondition until)
+    {
+        if (until.Frames is not null)
+        {
+            throw new McpException(UntilFramesRefusal);
+        }
+
+        string kind = CheckCondition(until);
+        CheckGameTime(until);
+        return ConditionParameters(until, kind);
     }
 
     /// <summary>The bridge's wait parameters as <see cref="BuildWaitParameters(WaitCondition?, int?)"/> builds them, plus
@@ -338,7 +373,7 @@ internal sealed partial class RuntimeTools
 
     private static void AddStepParameters(JsonObject parameters, int? count, StepOptions options)
     {
-        int frames = count ?? 1;
+        int frames = count ?? (options.Until is null ? 1 : MaxStepCount);
         if (frames is < 1 or > MaxStepCount)
         {
             throw new McpException($"count must be between 1 and {MaxStepCount}.");
@@ -354,6 +389,10 @@ internal sealed partial class RuntimeTools
         parameters["deadlineMs"] = (long)StepAllowance(frames).TotalMilliseconds;
         parameters["unit"] = unit;
         AddScreenshot(parameters, options.Screenshot);
+        if (options.Until is { } until)
+        {
+            parameters["until"] = UntilParameters(until);
+        }
     }
 
     private static void AddScreenshot(JsonObject parameters, bool? screenshot)
@@ -392,6 +431,11 @@ internal sealed partial class RuntimeTools
         if (refused is not null)
         {
             throw new McpException($"{refused} applies to step only.");
+        }
+
+        if (options.Until is not null)
+        {
+            throw new McpException("options.until applies to step only.");
         }
     }
 
@@ -435,7 +479,8 @@ internal sealed partial class RuntimeTools
     // either way; an explicit Null element is treated alike.
     private static bool HasEquals(WaitCondition condition) => condition.EqualsValue is { ValueKind: not JsonValueKind.Null };
 
-    /// <summary>The frame reply as {paused, timeScale, processFrames, physicsFrames[, screenshot]}, and the preview image when captured.</summary>
+    /// <summary>The frame reply as {paused, timeScale, processFrames, physicsFrames[, frame, met, value | args | last,
+    /// failedChecks, screenshot]}, and the preview image when captured.</summary>
     private static async Task<IEnumerable<ContentBlock>> ShapeFrameResultAsync(BridgeResult result, CancellationToken cancellationToken)
     {
         JsonObject reply =
@@ -466,12 +511,23 @@ internal sealed partial class RuntimeTools
         return [new TextContentBlock { Text = ErrorReport.AddTo(text, errors).ToJsonString() }, ImageContentBlock.FromBytes(image, "image/png")];
     }
 
-    private static JsonObject FrameState(JsonObject reply) =>
-        new()
+    private static JsonObject FrameState(JsonObject reply)
+    {
+        JsonObject state = new()
         {
             ["paused"] = reply["paused"]?.GetValue<bool>(),
             ["timeScale"] = reply["timeScale"]?.GetValue<double>(),
             ["processFrames"] = ReadInt(reply["processFrames"]) ?? 0,
             ["physicsFrames"] = ReadInt(reply["physicsFrames"]) ?? 0,
         };
+        foreach (string key in StepReportKeys)
+        {
+            if (reply.TryGetPropertyValue(key, out JsonNode? value))
+            {
+                state[key] = value?.DeepClone();
+            }
+        }
+
+        return state;
+    }
 }

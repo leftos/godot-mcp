@@ -1,28 +1,17 @@
 extends Node
-## The godot-mcp bridge's clock, a child of the bridge: pauses, resumes and steps the scene tree,
+## The godot-mcp bridge's clock, a child of the bridge: pauses, resumes and steps the scene tree
+## (the step itself runs in its Step child, godot_mcp_step.gd, under this clock's running mark),
 ## sets Engine.time_scale, waits for a condition checked each frame, and captures frames at
 ## points of game time.
 ##
 ## It runs while the tree is paused: the bridge is PROCESS_MODE_ALWAYS and this child inherits
 ## it (scene/main/node.cpp L907-935 in 4.7.2), and SceneTree emits process_frame and
 ## physics_frame every frame, paused or not (scene/main/scene_tree.cpp L649, L713).
-##
-## Stepping: a frame runs its physics ticks, then process, then draw (main/main.cpp L4970-5096),
-## and process_frame is emitted before the nodes' _process (scene_tree.cpp L713, L719), so an
-## unpause made from _process would give a partial frame. As the editor's own "next frame" does
-## (scene/debugger/scene_debugger.cpp L773-781), a step unpauses and re-pauses inside
-## RenderingServer.frame_post_draw handlers, so it covers whole frames, physics included, and a
-## capture in the Nth handler shows frame N. An await made inside a handler waits for the next
-## emission, since an emission calls the slots it had when it began (core/object/object.cpp
-## L1212-1220). A physics step counts SceneTree.physics_frame, which
-## is emitted before the nodes' _physics_process (scene_tree.cpp L649-655), and pausing turns
-## the physics servers off (scene_tree.cpp L1126-1145), so it re-pauses at the emission after
-## the last tick it runs. The number of ticks in a frame varies (main/main_timer_sync.cpp
-## L355-356) unless the game runs with --fixed-fps.
 
 ## Wakes a step's wait: true for the awaited emission, false for the step's deadline.
 signal step_woken(arrived: bool)
 
+const STEP_SCRIPT := "godot_mcp_step.gd"
 ## Numbers in a property wait match within this.
 const EQUAL_TOLERANCE := 1e-6
 const PAUSED_REFUSAL := (
@@ -52,13 +41,6 @@ const LOW_PROCESSOR_REFUSAL := (
 	"The game runs in low-processor mode, which draws only when something changes, "
 	+ "so frames cannot be stepped by their draws."
 )
-const PAUSE_CHANGED := (
-	"The game changed its own pause state during the step, " + "after %d of %d frames."
-)
-const STEP_STALLED := (
-	"The step stopped after %d of %d frames: no frame was drawn for too long "
-	+ "(is the window minimized?); the game is left paused."
-)
 ## The wait kinds counted on the game's own clock (_wait_for_game_time).
 const GAME_TIME_KINDS: PackedStringArray = ["gameMs", "frames"]
 const NOT_DRAWN_WARNING := (
@@ -76,6 +58,16 @@ var _deadline_passed: bool = false
 ## The params Dictionary of the running step or capture, the very one its request handler holds,
 ## so a cancel ends only that request; null while none runs.
 var _running_params: Variant = null
+## The Step child (godot_mcp_step.gd beside this script), which runs a step's frames.
+var _stepper: Node
+
+
+func _init() -> void:
+	var script_dir: String = (get_script() as Script).resource_path.get_base_dir()
+	_stepper = (load(script_dir.path_join(STEP_SCRIPT)) as GDScript).new()
+	_stepper.name = "Step"
+	_stepper.time = self
+	add_child(_stepper)
 
 
 ## Runs params.action: pause, resume, step {count, unit, screenshot, previewMaxWidth} or
@@ -95,7 +87,7 @@ func frame_control(params: Dictionary) -> Dictionary:
 		"time_scale":
 			error = _set_time_scale(float(params.get("scale", 0.0)))
 		"step":
-			error = await _guarded_step(params, result)
+			error = await _stepper._guarded_step(params, result)
 		_:
 			error = "unknown frame action '%s'" % action
 	if not error.is_empty():
@@ -117,29 +109,6 @@ func _set_time_scale(scale: float) -> String:
 ## Why a step or a capture cannot start while the one running goes on.
 func _busy_refusal() -> String:
 	return CAPTURING_REFUSAL if _running == "frames" else STEPPING_REFUSAL
-
-
-## Refuses a step with a screenshot on a headless game, which draws no frames, and a step that
-## would wait for draws that never come; else runs it under the step mark until it ends or its
-## deadline passes: params.deadlineMs, the server's own allowance for it, or params.backstopMs
-## when the server sends one.
-func _guarded_step(params: Dictionary, result: Dictionary) -> String:
-	var headless: String = (
-		bridge._frame.headless_refusal() if bool(params.get("screenshot", false)) else ""
-	)
-	if not headless.is_empty():
-		return headless
-	if not DisplayServer.window_can_draw():
-		return NO_DRAW_REFUSAL
-	if OS.low_processor_usage_mode:
-		return LOW_PROCESSOR_REFUSAL
-	var count: int = maxi(1, int(params.get("count", 1)))
-	var deadline: SceneTreeTimer = _begin(
-		"step", float(params.get("deadlineMs", 10000 + 100 * count)), params
-	)
-	var error: String = await _step(params, result)
-	_end(deadline)
-	return error
 
 
 ## Marks kind ("step" or "frames") running for the request holding params, set before
@@ -202,120 +171,6 @@ func _next(source: Signal) -> bool:
 	if source.is_connected(wake):
 		source.disconnect(wake)
 	return arrived
-
-
-## Leaves the tree paused and says how far a step got before its deadline.
-func _stalled(counted: int, count: int) -> String:
-	get_tree().paused = true
-	return STEP_STALLED % [counted, count]
-
-
-## From the next frame_post_draw (a running game runs whole frames until then) unpauses the
-## tree, runs params.count frames (or physics ticks) and pauses it again, writing both counts
-## into result, and the capture into result.screenshot when params.screenshot is set. Only
-## frames (ticks) that found the tree running count; one that found it paused means the game
-## paused itself, and fails the step.
-func _step(params: Dictionary, result: Dictionary) -> String:
-	var count: int = maxi(1, int(params.get("count", 1)))
-	var physics: bool = str(params.get("unit", "process")) == "physics"
-	var capture: bool = bool(params.get("screenshot", false))
-	var others: Dictionary = {"count": 0}
-	var ran: Variant = await _run_step(count, physics, capture, others)
-	if ran is String:
-		return ran
-	result["processFrames"] = others["count"] if physics else count
-	result["physicsFrames"] = count if physics else others["count"]
-	if not capture:
-		return ""
-	return await _save_capture(ran[1], physics, count, params, result)
-
-
-## Unpauses the tree inside the next frame_post_draw and runs count frames (or physics ticks),
-## counting the other unit's frames (ticks) that found the tree running into others.count.
-## Returns [counted, the capture or null], or a String when the deadline passed or the game
-## paused itself.
-func _run_step(count: int, physics: bool, capture: bool, others: Dictionary) -> Variant:
-	var tree: SceneTree = get_tree()
-	var count_other := func() -> void:
-		if not tree.paused:
-			others["count"] += 1
-	var other_signal: Signal = tree.process_frame if physics else tree.physics_frame
-	if not await _next(RenderingServer.frame_post_draw):
-		return _stalled(0, count)
-	other_signal.connect(count_other)
-	tree.paused = false
-	var ran: Array = [0, null]
-	if physics:
-		ran[0] = await _run_ticks(count)
-	else:
-		ran = await _run_frames(count, capture)
-	other_signal.disconnect(count_other)
-	if _deadline_passed:
-		return _stalled(ran[0], count)
-	if ran[0] < count:
-		return PAUSE_CHANGED % [ran[0], count]
-	return ran
-
-
-## Saves the step's capture into result.screenshot; a physics step's is the frame drawn after
-## its last tick.
-func _save_capture(
-	image: Image, physics: bool, count: int, params: Dictionary, result: Dictionary
-) -> String:
-	if physics:
-		if not await _next(RenderingServer.frame_post_draw):
-			return _stalled(count, count)
-		image = bridge._frame.grab_frame()
-	var saved: Variant = bridge._frame.save_screenshot(image, params)
-	if saved is String:
-		return saved
-	result["screenshot"] = saved
-	return ""
-
-
-## Lets count whole frames run, each counted at its frame_post_draw when its process_frame found
-## the tree running, then captures the last when asked (inside its frame_post_draw, so it shows
-## that frame) and pauses the tree there. Stops at a frame that found the tree paused. Returns
-## [frames counted, the capture or null].
-func _run_frames(count: int, capture: bool) -> Array:
-	var tree: SceneTree = get_tree()
-	var running: Array[bool] = [false]
-	var note := func() -> void: running[0] = not tree.paused
-	tree.process_frame.connect(note)
-	var counted: int = 0
-	while counted < count:
-		var drawn: bool = await _next(RenderingServer.frame_post_draw)
-		if not drawn or not running[0]:
-			break
-		running[0] = false
-		counted += 1
-	tree.process_frame.disconnect(note)
-	if counted < count:
-		return [counted, null]
-	var image: Image = null
-	if capture:
-		image = bridge._frame.grab_frame()
-	tree.paused = true
-	return [counted, image]
-
-
-## Lets count physics ticks run, each counted when its physics_frame found the tree running, and
-## pauses the tree at the next tick's physics_frame, which stops that tick's _physics_process
-## and physics server step. What that tick has run by then leaks through: main/main.cpp
-## L4972-4999 flushes input, calls iteration_prepare and runs the physics servers' sync() and
-## flush_queries() (area and body callbacks into scripts) before physics_frame is emitted.
-## Stops at a tick that found the tree paused. Returns the ticks counted.
-func _run_ticks(count: int) -> int:
-	var tree: SceneTree = get_tree()
-	var counted: int = 0
-	while counted < count:
-		var ticked: bool = await _next(tree.physics_frame)
-		if not ticked or tree.paused:
-			return counted
-		counted += 1
-	if await _next(tree.physics_frame):
-		tree.paused = true
-	return counted
 
 
 ## Captures a frame at each of params.points, ascending seconds of game time from the request:
@@ -884,26 +739,39 @@ func _capture_this_frame() -> Image:
 ## Resolves on params.node's next emission of params.signal, with its arguments. await has no
 ## timeout, so a variadic lambda catches the emission and the wait polls it once a frame.
 func _wait_for_signal(params: Dictionary, timeout_ms: int) -> Dictionary:
+	var hold: Dictionary = {}
+	var caught: Variant = signal_probe(params, hold)
+	if caught is String:
+		return {"error": caught}
+	var outcome: Dictionary = await _poll_capturing(caught, timeout_ms, params)
+	hold["release"].call()
+	return _as_signal_outcome(outcome)
+
+
+## A probe met once params.node has emitted params.signal since now, with that first emission's
+## arguments as its value, connected now; hold.release disconnects it. A String saying why when
+## the node or its signal is missing. A step's until shares it.
+func signal_probe(params: Dictionary, hold: Dictionary) -> Variant:
 	var node_name: String = _text(params, "node")
 	var signal_name: String = _text(params, "signal")
 	var node: Node = bridge._find_node(node_name)
 	if node == null:
-		return {
-			"error": bridge._inspect.not_found(node_name, "get_scene_tree lists the nodes' paths")
-		}
+		return bridge._inspect.not_found(node_name, "get_scene_tree lists the nodes' paths")
 	if not node.has_signal(signal_name):
-		return {"error": "%s has no signal '%s'" % [node.get_path(), signal_name]}
+		return "%s has no signal '%s'" % [node.get_path(), signal_name]
 	var fired: Array = []
 	var on_signal := func(...args: Array) -> void:
 		if fired.is_empty():
 			fired.append(args)
 	node.connect(signal_name, on_signal)
-	var caught := func() -> Array:
+	# A lambda holding a freed node logs an error when called, so release holds a weak reference.
+	var held: WeakRef = weakref(node)
+	hold["release"] = func() -> void:
+		var source: Object = held.get_ref()
+		if source != null and source.is_connected(signal_name, on_signal):
+			source.disconnect(signal_name, on_signal)
+	return func() -> Array:
 		return [not fired.is_empty(), null if fired.is_empty() else bridge._json.to_json(fired[0])]
-	var outcome: Dictionary = await _poll_capturing(caught, timeout_ms, params)
-	if is_instance_valid(node) and node.is_connected(signal_name, on_signal):
-		node.disconnect(signal_name, on_signal)
-	return _as_signal_outcome(outcome)
 
 
 ## A signal wait's outcome: the arguments as args instead of value, and no last.

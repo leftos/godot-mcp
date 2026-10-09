@@ -77,6 +77,106 @@ public sealed class TimeValidationTests : IDisposable
     [InlineData(0, 0)]
     public void ClipFramesRoundsClipTimeUpToMovieFrames(int milliseconds, int frames) => Assert.Equal(frames, RuntimeTools.ClipFrames(milliseconds));
 
+    [Theory]
+    [InlineData("pause", null)]
+    [InlineData("resume", null)]
+    [InlineData("time_scale", 1.0)]
+    public void UntilIsRefusedOnAnyActionButStep(string action, double? scale)
+    {
+        StepOptions options = new(Until: new WaitCondition(Expression: "true"));
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters(action, null, scale, options));
+
+        Assert.Equal("options.until applies to step only.", refused.Message);
+    }
+
+    [Fact]
+    public void UntilRefusesAFramesCondition()
+    {
+        StepOptions options = new(Until: new WaitCondition(Frames: 5));
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", 10, null, options));
+
+        Assert.Equal("frame_control step's until takes any wait_for condition but frames: count is the most frames a step runs.", refused.Message);
+    }
+
+    [Fact]
+    public void UntilRefusesAFramesConditionThatAlsoNamesANode()
+    {
+        StepOptions options = new(Until: new WaitCondition(Node: "Main", Frames: 5));
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", null, null, options));
+
+        Assert.Equal("frame_control step's until takes any wait_for condition but frames: count is the most frames a step runs.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("two kinds", ConditionMessage)]
+    [InlineData("node alone", ConditionMessage)]
+    [InlineData("gameMs 0", "gameMs must be between 1 and 120000; got 0.")]
+    public void UntilRefusesAConditionWaitForRefuses(string refusedCase, string message)
+    {
+        WaitCondition until = refusedCase switch
+        {
+            "two kinds" => new WaitCondition(Node: "Main", Exists: true, Expression: "true"),
+            "node alone" => new WaitCondition(Node: "Main"),
+            _ => new WaitCondition(GameMs: 0),
+        };
+
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildFrameParameters("step", null, null, new StepOptions(Until: until))
+        );
+
+        Assert.Equal(message, refused.Message);
+    }
+
+    [Fact]
+    public void AStepUntilDefaultsToAThousandFramesAndCarriesItsCondition()
+    {
+        StepOptions options = new(Until: new WaitCondition(Node: "TimeProbe", Expression: "node.process_frames > 3"));
+
+        JsonObject parameters = RuntimeTools.BuildFrameParameters("step", null, null, options);
+
+        Assert.Equal(1000, parameters["count"]!.GetValue<int>());
+        Assert.Equal((long)RuntimeTools.StepAllowance(1000).TotalMilliseconds, parameters["deadlineMs"]!.GetValue<long>());
+        JsonObject until = parameters["until"]!.AsObject();
+        Assert.Equal("expression", until["kind"]!.GetValue<string>());
+        Assert.Equal("TimeProbe", until["node"]!.GetValue<string>());
+        Assert.Equal("node.process_frames > 3", until["expression"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void AStepWithoutUntilStaysAtOneFrame()
+    {
+        JsonObject parameters = RuntimeTools.BuildFrameParameters("step", null, null, null);
+
+        Assert.Equal(1, parameters["count"]!.GetValue<int>());
+        Assert.False(parameters.ContainsKey("until"));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1001)]
+    public void AStepUntilsCountStaysWithinOneToAThousand(int count)
+    {
+        StepOptions options = new(Until: new WaitCondition(UiChanged: true));
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", count, null, options));
+
+        Assert.Equal("count must be between 1 and 1000.", refused.Message);
+    }
+
+    [Fact]
+    public void AStepUntilTakesAnExplicitCount()
+    {
+        StepOptions options = new(Until: new WaitCondition(Node: "TimeProbe", Signal: "fired"));
+
+        JsonObject parameters = RuntimeTools.BuildFrameParameters("step", 40, null, options);
+
+        Assert.Equal(40, parameters["count"]!.GetValue<int>());
+        Assert.Equal("signal", parameters["until"]!["kind"]!.GetValue<string>());
+    }
+
     [Fact]
     public void ARecordedWaitCountsMovieFramesAndIsReleasedAtTheStepAllowance()
     {

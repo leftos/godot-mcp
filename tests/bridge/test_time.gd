@@ -65,33 +65,6 @@ func test_poll_with_timeout_zero_checks_once_without_a_frame() -> void:
 	time.free()
 
 
-func test_cancel_ends_a_running_step_as_its_deadline() -> void:
-	var time: Node = _time_script.new()
-	var params: Dictionary = {"action": "step", "count": 5}
-	var woken: Array = []
-	time.step_woken.connect(func(arrived: bool) -> void: woken.append(arrived))
-	time._running = "step"
-	time._running_params = params
-	assert_true(time.cancel(params), "the running step is cancelled")
-	assert_true(time._deadline_passed, "as its deadline passing would")
-	assert_eq(woken, [false], "the step's wait is woken as by its deadline")
-	time.free()
-
-
-func test_cancel_ignores_another_requests_params() -> void:
-	var time: Node = _time_script.new()
-	var running: Dictionary = {"action": "step", "count": 5}
-	var woken: Array = []
-	time.step_woken.connect(func(arrived: bool) -> void: woken.append(arrived))
-	assert_true(not time.cancel(running), "nothing runs")
-	time._running = "step"
-	time._running_params = running
-	assert_true(not time.cancel(running.duplicate()), "an equal Dictionary is another request's")
-	assert_true(not time._deadline_passed, "the running step goes on")
-	assert_eq(woken, [], "nothing is woken")
-	time.free()
-
-
 func test_poll_stops_when_cancelled() -> void:
 	var time: Node = _time_script.new()
 	var checks: Array = [0]
