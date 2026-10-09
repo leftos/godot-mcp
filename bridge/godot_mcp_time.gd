@@ -440,10 +440,11 @@ static func frames_result(points: Array, entries: Array) -> Dictionary:
 
 ## Waits for params.kind (exists, property, signal, expression, uiChanged, gameMs or frames) with
 ## params {node, exists, property, equals, signal, expression, gameMs, frames, timeoutMs,
-## screenshot, previewMaxWidth, then}. Returns {result: {met, elapsedMs, frames, value | args[,
-## then, screenshot | warning]}}, with last instead of value on a timeout, or {error}. A timeoutMs
-## of 0 checks the condition once, now, paused or not. With screenshot, a met wait captures the
-## frame it was met on; a met wait runs then, once, in that frame (see _poll_capturing).
+## screenshot, previewMaxWidth, call, then, edge}. Returns {result: {met, elapsedMs, frames, value
+## | args[, call, then, screenshot | warning]}}, with last instead of value on a timeout, or
+## {error}. A timeoutMs of 0 checks the condition once, now, paused or not; with call, once right
+## after the call (_start_probe_wait). With screenshot, a met wait captures the frame it was met
+## on; a met wait runs then, once, in that frame (see _poll_capturing).
 func wait_for(params: Dictionary) -> Dictionary:
 	var kind: String = str(params.get("kind", ""))
 	var timeout_ms: int = int(params.get("timeoutMs", 10000))
@@ -458,8 +459,38 @@ func wait_for(params: Dictionary) -> Dictionary:
 	var probe: Variant = bridge._conditions.make_probe(kind, params, failures)
 	if probe is String:
 		return {"error": probe}
+	var called: Dictionary = {}
+	var failed: String = await _start_probe_wait(probe, params, timeout_ms, called)
+	if not failed.is_empty():
+		return {"error": failed}
 	var outcome: Dictionary = await _poll_capturing(probe, timeout_ms, params)
 	bridge._conditions.add_failed_checks(outcome, failures)
+	return _with_call(outcome, called)
+
+
+## Readies a probe wait's first check. With params.call: waits for the next process_frame and
+## calls the method there (_call_once), after an edge probe's baseline check (_seed_edge), so the
+## wait's first check, right after the call in that frame, can meet a rise the call made at once;
+## the poll's frames and elapsedMs count from that check. Without a call, seeds a waiting edge
+## screenshot wait, whose draw checks would otherwise first look at the first draw. Returns why the
+## call or the baseline check failed, or "".
+func _start_probe_wait(
+	probe: Callable, params: Dictionary, timeout_ms: int, called: Dictionary
+) -> String:
+	if not params.get("call") is Dictionary:
+		var screenshot: bool = bool(params.get("screenshot", false))
+		return _seed_edge(probe, params) if screenshot and timeout_ms > 0 else ""
+	await get_tree().process_frame
+	var failed: String = _seed_edge(probe, params)
+	if failed.is_empty():
+		failed = _call_once(params, called)
+	return failed
+
+
+## outcome with call: {value} added to its result when the wait called a method.
+static func _with_call(outcome: Dictionary, called: Dictionary) -> Dictionary:
+	if not called.is_empty() and outcome.has("result"):
+		outcome["result"]["call"] = called
 	return outcome
 
 
@@ -489,9 +520,7 @@ func _wait_for_game_time(
 	var probe: Callable = _check_game_time.bind(kind, int(params.get(kind, 0)), clock)
 	var outcome: Dictionary = await _poll_capturing(probe, timeout_ms, params)
 	frame.disconnect(tick)
-	if not called.is_empty() and outcome.has("result"):
-		outcome["result"]["call"] = called
-	return outcome
+	return _with_call(outcome, called)
 
 
 ## With params.call: waits for frame's next emission, calls the method there (_call_once, which
@@ -546,9 +575,6 @@ func _poll_capturing(probe: Callable, timeout_ms: int, params: Dictionary) -> Di
 		return _finish_then(await _poll(probe, bound_ms, params), params, {})
 	var drawn: Dictionary = {"params": params}
 	if timeout_ms > 0:
-		var failed: String = _seed_edge(probe, params)
-		if not failed.is_empty():
-			return {"error": failed}
 		probe = _check_at_draws(probe, drawn)
 	var outcome: Dictionary = await _poll(probe, bound_ms, params)
 	_stop_draw_checks(drawn)
@@ -558,10 +584,11 @@ func _poll_capturing(probe: Callable, timeout_ms: int, params: Dictionary) -> Di
 	return await _with_capture(drawn.get("image"), params, outcome["result"])
 
 
-## With params.edge, checks probe once now, before a waiting screenshot wait's draw checks begin:
-## their first answer to _poll is no check at all (_checked_since_draw), so without this an edge
-## probe would first look at the first draw, and a condition rising before it would read as true
-## from the start. An edge probe is never met on its first check, so no capture is skipped.
+## With params.edge, checks probe once now, as the baseline the wait's later checks rise from:
+## before params.call (_start_probe_wait), and before a waiting screenshot wait's draw checks
+## begin, whose first answer to _poll is no check at all (_checked_since_draw), so without it an
+## edge probe would first look at the first draw, and a condition rising before it would read as
+## true from the start. An edge probe is never met on its first check, so no capture is skipped.
 ## Returns the check's failure text, or "".
 func _seed_edge(probe: Callable, params: Dictionary) -> String:
 	if not bool(params.get("edge", false)):

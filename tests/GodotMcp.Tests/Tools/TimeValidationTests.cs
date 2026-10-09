@@ -374,18 +374,65 @@ public sealed class TimeValidationTests : IDisposable
         Assert.False(RuntimeTools.BuildWaitParameters(new WaitCondition(GameMs: 500), null, new WaitOptions()).ContainsKey("call"));
 
     [Theory]
-    [InlineData(null, null, "true", "expression")]
-    [InlineData("Main", true, null, "exists")]
-    public async Task ACallOnAnotherWaitKindIsRefused(string? node, bool? exists, string? expression, string kind)
+    [InlineData("signal")]
+    [InlineData("uiChanged")]
+    public async Task ACallOnASignalOrUiChangedWaitIsRefused(string kind)
     {
-        WaitCondition condition = new(Node: node, Exists: exists, Expression: expression);
+        WaitCondition condition = kind == "signal" ? new(Node: "Main", Signal: "fired") : new(UiChanged: true);
         WaitOptions options = new(Call: new MethodCall("TimeProbe", "start_clock"));
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
             _tools.WaitForAsync(condition, 1000, options, cancellationToken: TestContext.Current.CancellationToken)
         );
 
-        Assert.Equal($"options.call is taken only by a gameMs or frames wait; this condition is {kind}.", refused.Message);
+        Assert.Equal(
+            $"options.call is taken only by a gameMs, frames, exists, property or expression wait; this condition is {kind}.",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public void ACallOnAnExistsPropertyOrExpressionWaitIsAcceptedAndSent()
+    {
+        WaitCondition[] conditions =
+        [
+            new WaitCondition(Expression: "true"),
+            new WaitCondition(Node: "Main", Property: "state", EqualsValue: Json("\"done\"")),
+            new WaitCondition(Node: "Main", Exists: true),
+        ];
+        WaitOptions options = new(Call: new MethodCall("TimeProbe", "record_then", Json("[7]")));
+
+        foreach (WaitCondition condition in conditions)
+        {
+            JsonObject parameters = RuntimeTools.BuildWaitParameters(condition, 1000, options);
+
+            Assert.Equal("""{"node":"TimeProbe","method":"record_then","args":[7]}""", parameters["call"]!.ToJsonString());
+        }
+    }
+
+    [Fact]
+    public void AnEdgeWaitWithACallSendsBoth()
+    {
+        WaitOptions options = new(Call: new MethodCall("TimeProbe", "record_then"), Edge: true);
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, options);
+
+        Assert.Equal("record_then", parameters["call"]!["method"]!.GetValue<string>());
+        Assert.True(parameters["edge"]!.GetValue<bool>(), parameters.ToJsonString());
+    }
+
+    [Fact]
+    public async Task ACheckOnceExpressionWaitWithACallIsAccepted()
+    {
+        WaitOptions options = new(Call: new MethodCall("TimeProbe", "record_then"));
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 0, options);
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(Expression: "true"), 0, options, cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("""{"node":"TimeProbe","method":"record_then","args":[]}""", parameters["call"]!.ToJsonString());
+        Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
     }
 
     [Theory]

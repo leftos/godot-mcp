@@ -875,6 +875,55 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.True(waited["call"]!["value"]!.GetValue<long>() > 0, waited.ToJsonString());
     }
 
+    [Theory(Timeout = TestTimeoutMs)]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task AnExpressionWaitWithACallIsMetOnTheCallsEffectWithItsResult(bool edge, bool screenshot)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        // then_frame is -1 until record_then sets it to the frame it runs in, so the condition is false before the call and
+        // true from the call on. The wait's first check follows the call in the call's frame, and is met there with frames 0;
+        // an edge wait's baseline check comes before the call, finds it false, and makes that first check a rise. A screenshot
+        // wait checks at that frame's draw instead, and its poll reads the met draw a frame later, with frames 1.
+        WaitOptions options = new(Screenshot: screenshot, Call: new MethodCall("TimeProbe", "record_then"), Edge: edge);
+
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(
+            new WaitCondition(Node: "TimeProbe", Expression: "node.then_frame >= 0"),
+            3000,
+            options,
+            cancellationToken: cancellation
+        );
+        JsonObject waited = JsonNode.Parse(Text(blocks))!.AsObject();
+
+        long recorded = await ReadIntAsync("then_frame");
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Equal(screenshot ? 1 : 0, waited["frames"]!.GetValue<int>());
+        Assert.Equal(recorded, waited["call"]!["value"]!.GetValue<long>());
+        Assert.Equal(screenshot, waited.ContainsKey("screenshot"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnExpressionWaitWhoseCallErrorsAnswersTheErrorAndNoWait()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+
+        // The condition holds at once, so a wait that went on past the failed call would be met rather than answer the error.
+        McpException wait = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(
+                new WaitCondition(Expression: "true"),
+                3000,
+                new WaitOptions(Call: new MethodCall("TimeProbe", "fail_on_null")),
+                cancellationToken: cancellation
+            )
+        );
+
+        Assert.Contains("queue_free", wait.Message, StringComparison.Ordinal);
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task ACallThatErrorsAnswersTheErrorAndNoFrames()
     {

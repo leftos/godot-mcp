@@ -86,9 +86,10 @@ internal sealed partial class RuntimeTools
             + "captures the frame the condition was met on as take_screenshot does, for a scene that changes faster than a "
             + "following take_screenshot can catch, adding screenshot to the result (a timed-out wait captures nothing, and a "
             + "frame that was not drawn gives a warning instead). options.call {node, method, args}, or {tool, args} for a game "
-            + "tool, with a gameMs or frames wait only, calls it in the frame the count starts, so the count runs from its entry "
-            + "(a coroutine or a Task is not awaited), and adds call: {value}, its return value as call_method returns it, with "
-            + "tool and type for a game tool; a refused call, or an error it raises, fails the wait. options.then {call?, "
+            + "tool, with any wait but a signal or uiChanged one, calls it in the frame the checks start: a gameMs or frames count "
+            + "runs from its entry, and another wait's first check follows it in that frame, its frames and elapsedMs counted "
+            + "from there (a coroutine or a Task is not awaited). It adds call: {value}, its return value as call_method returns "
+            + "it, with tool and type for a game tool; a refused call, or an error it raises, fails the wait. options.then {call?, "
             + "timeScale?}, with any condition kind, runs once in the frame the condition is met: call is a method the bridge "
             + "calls there, timeScale sets Engine.time_scale right after it, and "
             + "the result adds then: {frame, call?: {value}, timeScale?}. A refused or failing call fails the wait and leaves "
@@ -106,8 +107,8 @@ internal sealed partial class RuntimeTools
             "How long to wait, in milliseconds, 0 to 120000, load-adjusted: under load it waits longer in wall time. Left out: "
                 + "10000, gameMs + 10000 for a gameMs wait, 10 s + 100 ms a frame for a frames wait. In a recording "
                 + "(run_project options.record) it counts clip time instead, 60 movie frames a second, however slowly the game runs, "
-                + "and the result adds clipMs. 0 checks the condition once, now, and works while the game is paused; it is refused "
-                + "for a signal, gameMs or frames wait."
+                + "and the result adds clipMs. 0 checks the condition once, now (after options.call, in the next frame), and works "
+                + "while the game is paused; it is refused for a signal, gameMs or frames wait."
         )]
             int? timeoutMs = null,
         [Description("{screenshot, call, then, edge}: screenshot and edge false and no call or then when left out.")] WaitOptions? options = null,
@@ -184,7 +185,7 @@ internal sealed partial class RuntimeTools
     /// {screenshot, previewMaxWidth} when <paramref name="options"/> asks for the capture, call when it gives one, and then
     /// when it gives one.</summary>
     /// <exception cref="McpException">The condition, gameMs, frames or timeoutMs is refused as the other form refuses them, a
-    /// call is given to a wait other than gameMs or frames, then is empty or its timeScale is out of range, or a call or
+    /// call is given to a signal or uiChanged wait, then is empty or its timeScale is out of range, or a call or
     /// then.call gives both forms or neither, args of the other form's shape, or an empty node, method or tool name.</exception>
     internal static JsonObject BuildWaitParameters(WaitCondition? condition, int? timeoutMs, WaitOptions? options)
     {
@@ -219,9 +220,11 @@ internal sealed partial class RuntimeTools
     private static void AddWaitCall(JsonObject parameters, MethodCall call)
     {
         string kind = parameters["kind"]!.GetValue<string>();
-        parameters["call"] = kind is "gameMs" or "frames"
+        parameters["call"] = kind is not ("signal" or "uiChanged")
             ? CallOptionParameters(call, "options.call")
-            : throw new McpException($"options.call is taken only by a gameMs or frames wait; this condition is {kind}.");
+            : throw new McpException(
+                $"options.call is taken only by a gameMs, frames, exists, property or expression wait; this condition is {kind}."
+            );
     }
 
     /// <summary>Adds edge: true to an exists, property or expression wait's parameters.</summary>
