@@ -146,7 +146,7 @@ options.input: [{frame?: k, type: "key" | "mouse_button" | "mouse_motion" | "pan
 ## 5. Alternatives considered
 
 - **A new `step_until` tool** (satelliteoflove's `godot_game_time`: until, a frame budget, an input timeline, a report, a then): a third tool on one clock beside `frame_control` and `wait_for`, its own refusals, annotations and agent-sweep entry, for options the two tools already have room for.
-- **`then.pause` on `wait_for`** in place of `until` on the step: it works only from a running game (`wait_for` refuses a paused one, decision 11), so the paused case needs the step anyway, and two tools would pause the game by two rules. Question 2.
+- **`then.pause` on `wait_for`** in place of `until` on the step: it works only from a running game (`wait_for` refuses a paused one, decision 11), so the paused case needs the step anyway. Question 2 ruled both: `then.pause` serves a long wait on a running game past the step's 1000 frames, at the cost of two pause points half a frame apart (`process_frame` against the step's `frame_post_draw`).
 - **Pausing where `wait_for` checks** (`process_frame`): the frame left has run its physics ticks and not its process, the partial frame the step's design avoids (`godot_mcp_time.gd` L10-15). Pausing at `frame_post_draw` needs a drawn frame, which is the step's rule already.
 - **A loop in `batch_drive`** (`repeat` until an assertion holds): each batch step is one bridge request, at least a frame after the last, so it cannot stop on the met frame, and the batch becomes a language.
 - **Input sent while paused, then a step** (today): pausable nodes get no input callback while paused (`scene_tree.cpp` L1471) and the just-pressed edge is stamped with the sending frame (`input.cpp` L1036). `Input.action_press` in a `run_script` is stamped the same way (L1419-1420).
@@ -175,7 +175,7 @@ Two independent halves; the step-until steps (A) and the render step (R) touch n
 
 ## 7. Open questions for the owner
 
-Ruled by the owner: 1 (a), options on `frame_control` step and `wait_for`; 2 (a), pausing on a condition only in the step's `until`; 3 (a), `then` carries `call` and `timeScale`; 4 (a), a failing `then.call` fails the wait and leaves `timeScale` unset; 5 (a), riding input sent at the stepped frame's `process_frame`; 6 (a), no report on the met frame; 7 (a), `batch_drive`'s `wait` assertion unchanged; 8 (a), render diagnosis as documentation only (decision 31); 9 (a), GMCP-7 first as step A1, then step-until and render docs as two issues. Every question is ruled.
+Ruled by the owner: 1 (a), options on `frame_control` step and `wait_for`; 2 (b), pausing on a condition both in the step's `until` and in `wait_for`'s `then.pause` (GMCP-100 builds the second); 3 (a), `then` carries `call` and `timeScale`, and `pause` with 2 (b); 4 (a), a failing `then.call` fails the wait and leaves `timeScale` unset; 5 (a), riding input sent at the stepped frame's `process_frame`; 6 (a), no report on the met frame; 7 (a), `batch_drive`'s `wait` assertion unchanged; 8 (a), render diagnosis as documentation only (decision 31); 9 (a), GMCP-7 first as step A1, then step-until and render docs as two issues. Every question is ruled.
 
 New terms, for the glossary once adopted: **met frame** (the frame a condition was first found true, the one `then` acts in and `until` stops on), **then action** (`wait_for`'s `options.then`), **step-until** (a step with `options.until`), **riding input** (a step's `options.input`, sent inside a stepped frame).
 
