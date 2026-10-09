@@ -261,6 +261,101 @@ func test_a_failed_then_call_skips_the_time_scale_and_names_the_met_frame() -> v
 	Engine.time_scale = 1.0
 
 
+func test_then_pause_pauses_the_tree_after_the_call_and_the_scale() -> void:
+	Engine.time_scale = 1.0
+	var rig: Dictionary = _tree_then_rig()
+	var params: Dictionary = {
+		"then":
+		{
+			"call": {"node": "CallTarget", "method": "scale_now"},
+			"timeScale": 0.5,
+			"pause": true,
+		}
+	}
+	var met: Dictionary = rig["time"]._finish_then(
+		{"result": {"met": true, "frames": 2}}, params, {}
+	)
+	assert_eq(
+		met["result"]["then"]["call"],
+		{"value": 1.0},
+		"the call sees the running tree and the scale before then set it"
+	)
+	assert_approx(met["result"]["then"]["timeScale"], 0.5, "the scale then set")
+	assert_eq(met["result"]["then"]["paused"], true, "then reports the pause")
+	assert_true(rig["tree"].paused, "the tree is paused")
+	Engine.time_scale = 1.0
+	_free_then_rig(rig)
+
+
+func test_a_failed_then_call_does_not_pause() -> void:
+	Engine.time_scale = 1.0
+	var rig: Dictionary = _tree_then_rig()
+	var failed: Dictionary = rig["time"]._finish_then(
+		{"result": {"met": true, "frames": 4}},
+		{
+			"then":
+			{"call": {"node": "CallTarget", "method": "fail"}, "timeScale": 0.5, "pause": true}
+		},
+		{}
+	)
+	assert_true(failed.has("error"), "the wait fails: %s" % failed)
+	assert_true(
+		failed["error"].ends_with("; the game was not paused: the method failed"),
+		"the text names the pause it did not make: %s" % failed["error"]
+	)
+	assert_true(not rig["tree"].paused, "the tree keeps running")
+	Engine.time_scale = 1.0
+	_free_then_rig(rig)
+
+
+func test_then_pause_false_does_not_pause() -> void:
+	var rig: Dictionary = _tree_then_rig()
+	var met: Dictionary = rig["time"]._finish_then(
+		{"result": {"met": true, "frames": 1}}, {"then": {"pause": false}}, {}
+	)
+	assert_true(not met["result"]["then"].has("paused"), "no pause is reported")
+	assert_true(not rig["tree"].paused, "and none is set")
+	_free_then_rig(rig)
+
+
+func test_an_unmet_wait_with_pause_leaves_the_tree_running() -> void:
+	var rig: Dictionary = _tree_then_rig()
+	var unmet: Dictionary = rig["time"]._finish_then(
+		{"result": {"met": false, "last": null}}, {"then": {"pause": true}}, {}
+	)
+	assert_eq(unmet["result"]["met"], false, "the outcome is kept")
+	assert_true(not unmet["result"].has("then"), "nothing runs on a wait that was not met")
+	assert_true(not rig["tree"].paused, "the tree keeps running")
+	_free_then_rig(rig)
+
+
+func test_a_then_pause_while_a_capture_runs_fails_and_leaves_the_tree_running() -> void:
+	var rig: Dictionary = _tree_then_rig()
+	rig["time"]._running = "frames"
+	var refused: Dictionary = rig["time"]._finish_then(
+		{"result": {"met": true, "frames": 5}}, {"then": {"pause": true}}, {}
+	)
+	assert_true(refused.has("error"), "the wait fails: %s" % refused)
+	assert_true(not rig["tree"].paused, "the tree keeps running")
+	assert_true(
+		refused["error"].begins_with("The condition was met after 5 frames (frame "),
+		"the text names the met frame: %s" % refused["error"]
+	)
+	assert_true(
+		(
+			refused["error"]
+			. ends_with(
+				(
+					"; the game was not paused, because A capture_frames is still running on this game; "
+					+ "wait for its reply before pause, resume, a step or another capture."
+				)
+			)
+		),
+		"the text names the pause it did not make: %s" % refused["error"]
+	)
+	_free_then_rig(rig)
+
+
 ## A clock whose bridge is a stand-in holding the inspector, the JSON module and an unregistered
 ## logger, and CallTarget, a node outside any tree with add(a, b), scale_now() and fail().
 func _then_rig() -> Dictionary:
@@ -334,6 +429,16 @@ func _free_then_rig(rig: Dictionary) -> void:
 	rig["bridge"]._inspect.free()
 	rig["bridge"].free()
 	rig["target"].free()
+
+
+## The then rig with a stand-in tree (a paused bool) its clock pauses on, as test_step's is, since a
+## gdtest node is outside any tree; the tests free it with _free_then_rig.
+func _tree_then_rig() -> Dictionary:
+	var rig: Dictionary = _then_rig()
+	var tree: RefCounted = _compile("extends RefCounted\n\nvar paused: bool = false\n")
+	rig["time"].then_tree = tree
+	rig["tree"] = tree
+	return rig
 
 
 ## An instance of a script compiled from source.

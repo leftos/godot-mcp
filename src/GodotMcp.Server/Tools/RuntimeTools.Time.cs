@@ -28,6 +28,7 @@ internal sealed partial class RuntimeTools
         + "{gameMs}, {frames}.";
     private const string UntilFramesRefusal =
         "frame_control step's until takes any wait_for condition but frames: count is the most frames a step runs.";
+    private const string EmptyThenRefusal = "options.then needs call, timeScale, pause or a mix.";
     private static readonly string[] FrameActions = ["pause", "resume", "step", "time_scale"];
 
     // What a step's reply carries beyond its counts: the frame it stopped on, and its until's answer as wait_for gives one.
@@ -101,10 +102,14 @@ internal sealed partial class RuntimeTools
             + "runs from its entry, and another wait's first check follows it in that frame, its frames and elapsedMs counted "
             + "from there (a coroutine or a Task is not awaited). It adds call: {value}, its return value as call_method returns "
             + "it, with tool and type for a game tool; a refused call, or an error it raises, fails the wait. options.then {call?, "
-            + "timeScale?}, with any condition kind, runs once in the frame the condition is met: call is a method the bridge "
-            + "calls there, timeScale sets Engine.time_scale right after it, and "
-            + "the result adds then: {frame, call?: {value}, timeScale?}. A refused or failing call fails the wait and leaves "
-            + "timeScale unset; a timeout runs nothing. options.edge: true, with an exists, property or expression wait and a "
+            + "timeScale?, pause?}, with any condition kind, runs once in the frame the condition is met: call is a method the bridge "
+            + "calls there, timeScale sets Engine.time_scale right after it, and pause: true leaves the game paused on that frame, as "
+            + "frame_control pause does, so a later read sees the state the condition did. A plain wait pauses before the met "
+            + "frame's _process, after its physics, so values read are the ones the wait met, but anything the game updates in "
+            + "_process (a shader, an animation) may still show the previous frame; screenshot: true pauses after the met frame is "
+            + "drawn, so a picture matches the values. The result adds then: {frame, call?: "
+            + "{value}, timeScale?, paused?}. A refused or failing call fails the wait and leaves timeScale unset and the game "
+            + "running; a timeout runs nothing. options.edge: true, with an exists, property or expression wait and a "
             + "timeout above 0, meets it only on a check that finds the condition true after one that found it false, so a "
             + "condition already true waits for its next rise."
     )]
@@ -243,7 +248,7 @@ internal sealed partial class RuntimeTools
 
         if (options.Then is { } then)
         {
-            parameters["then"] = ThenParameters(then);
+            parameters["then"] = ThenParameters(then, allowPause: true);
         }
 
         if (options.Edge is true)
@@ -280,15 +285,15 @@ internal sealed partial class RuntimeTools
         parameters["edge"] = true;
     }
 
-    /// <summary>The bridge's then parameters {call?, timeScale?}, at least one.</summary>
-    /// <exception cref="McpException">Neither call nor timeScale is given, timeScale is not above 0 and at most
-    /// <see cref="MaxTimeScale"/>, or the call gives both forms or neither, args of the other form's shape, or an empty node,
-    /// method or tool name.</exception>
-    internal static JsonObject ThenParameters(WaitThen then)
+    /// <summary>The bridge's then parameters {call?, timeScale?, pause?}, at least one of them.</summary>
+    /// <exception cref="McpException">None of call, timeScale or pause: true is given, timeScale is not above 0 and at most
+    /// <see cref="MaxTimeScale"/>, the call gives both forms or neither, args of the other form's shape, or an empty node,
+    /// method or tool name, or <paramref name="allowPause"/> is false and a pause is asked for.</exception>
+    internal static JsonObject ThenParameters(WaitThen then, bool allowPause)
     {
-        if (then.Call is null && then.TimeScale is null)
+        if (then.Call is null && then.TimeScale is null && then.Pause is not true)
         {
-            throw new McpException("options.then needs call, timeScale or both.");
+            throw new McpException(EmptyThenRefusal);
         }
 
         JsonObject parameters = [];
@@ -297,16 +302,43 @@ internal sealed partial class RuntimeTools
             parameters["call"] = CallOptionParameters(call, "options.then.call");
         }
 
-        if (then.TimeScale is { } timeScale)
+        AddThenTimeScale(parameters, then.TimeScale);
+        AddThenPause(parameters, then.Pause, allowPause);
+        return parameters;
+    }
+
+    /// <summary>Adds timeScale to a then's parameters.</summary>
+    /// <exception cref="McpException">It is not above 0 and at most <see cref="MaxTimeScale"/>.</exception>
+    private static void AddThenTimeScale(JsonObject parameters, double? timeScale)
+    {
+        if (timeScale is not { } scale)
         {
-            parameters["timeScale"] = timeScale is > 0 and <= MaxTimeScale
-                ? timeScale
-                : throw new McpException(
-                    $"options.then.timeScale must be greater than 0 and at most 100; got " + $"{timeScale.ToString(CultureInfo.InvariantCulture)}."
-                );
+            return;
         }
 
-        return parameters;
+        parameters["timeScale"] = scale is > 0 and <= MaxTimeScale
+            ? scale
+            : throw new McpException(
+                $"options.then.timeScale must be greater than 0 and at most 100; got {scale.ToString(CultureInfo.InvariantCulture)}."
+            );
+    }
+
+    /// <summary>Adds pause: true to a then's parameters.</summary>
+    /// <exception cref="McpException"><paramref name="allowPause"/> is false: a paused game adds no game time, so the capture
+    /// whose start this is would never advance.</exception>
+    private static void AddThenPause(JsonObject parameters, bool? pause, bool allowPause)
+    {
+        if (pause is not true)
+        {
+            return;
+        }
+
+        if (!allowPause)
+        {
+            throw new McpException(CaptureStartPauseRefusal);
+        }
+
+        parameters["pause"] = true;
     }
 
     /// <summary>

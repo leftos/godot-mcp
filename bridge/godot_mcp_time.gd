@@ -50,6 +50,9 @@ const NOT_DRAWN_WARNING := (
 
 ## The bridge this clock belongs to, for its node lookup, JSON conversion and screenshots.
 var bridge: Node
+## The tree a met then pauses, get_tree() when null: gdtest's stand-ins replace it, since its nodes
+## are outside any tree.
+var then_tree: Object = null
 ## What runs now, "step" or "frames" (capture_frames), or empty: while one runs, pause, resume, a
 ## step and a capture are refused until it ends.
 var _running: String = ""
@@ -647,8 +650,9 @@ func _keep(seen: Array, drawn: Dictionary) -> Array:
 
 
 ## outcome with params.then run once and attached to its result, or {error} with the failure text
-## when then.call failed. Nothing when the wait has no then or was not met. drawn carries the
-## outcome a draw check already ran, so the met frame's then is not run again in a later frame.
+## when then.call failed or its pause was skipped. Nothing when the wait has no then or was not met.
+## drawn carries the outcome a draw check already ran, so the met frame's then is not run again in a
+## later frame.
 func _finish_then(outcome: Dictionary, params: Dictionary, drawn: Dictionary) -> Dictionary:
 	if outcome.has("error") or not outcome["result"]["met"] or not params.get("then") is Dictionary:
 		return outcome
@@ -659,7 +663,7 @@ func _finish_then(outcome: Dictionary, params: Dictionary, drawn: Dictionary) ->
 		ran = _run_then(params)
 		if not drawn.is_empty():
 			drawn["then_ran"] = ran
-	if ran.has("failed"):
+	if ran.has("failed") or ran.has("failed_pause"):
 		return {"error": _then_failure_text(params, ran, int(outcome["result"]["frames"]))}
 	outcome["result"]["then"] = ran
 	return outcome
@@ -672,8 +676,10 @@ func _run_then_into(drawn: Dictionary) -> void:
 		drawn["then_ran"] = _run_then(drawn["params"])
 
 
-## Runs params.then now, once: its call through the inspector, then its timeScale. Returns
-## {frame, call?, timeScale?}, {failed, frame} when the call failed, or {} when params has no then.
+## Runs params.then now, once: its call through the inspector, then its timeScale, then its pause.
+## Returns {frame, call?, timeScale?, paused?}, {failed, frame} when the call failed, {failed_pause,
+## frame} when a step or a capture still ran and the pause was skipped, or {} when params has no
+## then.
 func _run_then(params: Dictionary) -> Dictionary:
 	if not params.get("then") is Dictionary:
 		return {}
@@ -691,16 +697,42 @@ func _run_then(params: Dictionary) -> Dictionary:
 		if not refused.is_empty():
 			return {"failed": refused, "frame": frame}
 		ran["timeScale"] = scale
+	var pause_refused: String = _apply_then_pause(then, ran)
+	if not pause_refused.is_empty():
+		return {"failed_pause": pause_refused, "frame": frame}
 	return ran
 
 
+## Leaves the game paused on the met frame when then asks for it, as frame_control pause does.
+## Returns "" once it paused or then asks for none, else why it did not: a step or a capture still
+## running would slip past a pause, so the wait fails instead.
+func _apply_then_pause(then: Dictionary, ran: Dictionary) -> String:
+	if not then.get("pause", false):
+		return ""
+	if not _running.is_empty():
+		return _busy_refusal()
+	var tree: Object = then_tree if then_tree != null else get_tree()
+	tree.paused = true
+	ran["paused"] = true
+	return ""
+
+
 ## The text a failed then.call answers: the frames waited, the frame then ran in, and the reason;
-## the ", so timeScale was not set" clause only when params.then gives a timeScale.
+## the ", so timeScale was not set" clause only when params.then gives a timeScale, the "; the game
+## was not paused" one only when it asks for a pause. A pause skipped for a running step or capture
+## answers its own text, naming why.
 func _then_failure_text(params: Dictionary, ran: Dictionary, frames: int) -> String:
-	var unset: String = ", so timeScale was not set" if params["then"].has("timeScale") else ""
+	if ran.has("failed_pause"):
+		return (
+			"The condition was met after %d frames (frame %d); the game was not paused, because %s"
+			% [frames, int(ran["frame"]), ran["failed_pause"]]
+		)
+	var then: Dictionary = params["then"]
+	var unset: String = ", so timeScale was not set" if then.has("timeScale") else ""
+	var paused: String = "; the game was not paused" if then.get("pause", false) else ""
 	return (
-		"The condition was met after %d frames (frame %d), but then.call failed%s: %s"
-		% [frames, int(ran["frame"]), unset, ran["failed"]]
+		"The condition was met after %d frames (frame %d), but then.call failed%s%s: %s"
+		% [frames, int(ran["frame"]), unset, paused, ran["failed"]]
 	)
 
 

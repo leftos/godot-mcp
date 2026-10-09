@@ -80,7 +80,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Change point | A sample a watch keeps because it differs from the last one kept (numbers by more than 1e-6, or by the track's `minDelta`), stamped `[frame, gameMs, value]`; the first sample always is one |
 | Check-once wait | `wait_for` with `timeoutMs: 0`: the condition is checked once, now, even while the game is paused |
 | Met frame | The frame in which a wait first finds its condition true: the frame `wait_for`'s `options.then` acts in and a step-until stops on |
-| Then action | `wait_for`'s `options.then {call?, timeScale?}`: a method call and a time scale run once in the met frame |
+| Then action | `wait_for`'s `options.then {call?, timeScale?, pause?}`: a method call, a time scale and a pause run once in the met frame |
 | Step-until | A `frame_control` step with `options.until`, a `wait_for` condition checked after each stepped frame: the step stops, paused, on the met frame, and `count` is then the most frames it runs |
 | Hang watchdog | The server's report, when a request times out, of whether the game's main thread is still running (it answers a ping) or stuck (it does not), with the stuck process's CPU, threads and last stderr lines, in place of a bare timeout |
 | Load-adjusted time (the server's ceilings) | The time every server timeout and ceiling counts: sampled once a second, each second of wall time adds the share of the machine that work other than the server's own leaves free (at least 5%), so it keeps wall time on an idle machine and slows under load (`LoadClock`) |

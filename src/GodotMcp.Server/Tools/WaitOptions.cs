@@ -23,10 +23,11 @@ internal sealed record WaitOptions(
     )]
         MethodCall? Call = null,
     [property: Description(
-        "Any condition kind: {call?, timeScale?}, run once in the frame the condition is met, so an effect starts there with no "
-            + "round trip. call is a method the bridge calls there, as options.call (a coroutine is not awaited); timeScale sets "
-            + "Engine.time_scale right after it. The result adds then: {frame, call?: {value}, timeScale?}. A refused or failing "
-            + "call fails the wait and leaves timeScale unset; a timeout runs nothing."
+        "Any condition kind: {call?, timeScale?, pause?}, run once in the frame the condition is met, so an effect starts there "
+            + "with no round trip. call is a method the bridge calls there, as options.call (a coroutine is not awaited); timeScale "
+            + "sets Engine.time_scale right after it; pause: true leaves the game paused on that frame, as frame_control pause does, "
+            + "so a later read sees the state the condition did. The result adds then: {frame, call?: {value}, timeScale?, paused?}. "
+            + "A refused or failing call fails the wait and leaves timeScale unset and the game running; a timeout runs nothing."
     )]
         WaitThen? Then = null,
     [property: Description(
@@ -38,7 +39,7 @@ internal sealed record WaitOptions(
         bool? Edge = null
 );
 
-/// <summary>What wait_for runs in the frame its condition is met: a method call, an Engine.time_scale, or both.</summary>
+/// <summary>What wait_for runs in the frame its condition is met: a method call, an Engine.time_scale, a pause, or any mix.</summary>
 internal sealed record WaitThen(
     [property: Description(
         "The method to call in the met frame, as options.call: {node, method, args}; a coroutine is not awaited. Or {tool, args: "
@@ -51,5 +52,14 @@ internal sealed record WaitThen(
     [property: Description(
         "The Engine.time_scale to set in the met frame, after call, greater than 0 and at most 100; the frames after it run scaled."
     )]
-        double? TimeScale = null
+        double? TimeScale = null,
+    [property: Description(
+        "true: leave the game paused on the met frame, after call and timeScale, as frame_control pause does, so the state the "
+            + "condition read holds for a later read; frame_control resume undoes it. A plain wait pauses before the met frame's "
+            + "_process, after its physics, so values read are the ones the wait met, but anything the game updates in _process (a "
+            + "shader, an animation) may still show the previous frame; screenshot: true pauses after the met frame is drawn, so a "
+            + "picture matches the values. capture_frames' start.then refuses it, as a paused game adds no game time, so the capture "
+            + "would never advance."
+    )]
+        bool? Pause = null
 );

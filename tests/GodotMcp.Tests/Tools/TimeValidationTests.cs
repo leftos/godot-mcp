@@ -578,13 +578,46 @@ public sealed class TimeValidationTests : IDisposable
     }
 
     [Fact]
-    public void AThenWithoutCallOrTimeScaleIsRefused()
+    public void AThenWithoutCallTimeScaleOrPauseIsRefused()
     {
         McpException refused = Assert.Throws<McpException>(() =>
             RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, new WaitOptions(Then: new WaitThen()))
         );
 
-        Assert.Equal("options.then needs call, timeScale or both.", refused.Message);
+        Assert.Equal("options.then needs call, timeScale, pause or a mix.", refused.Message);
+    }
+
+    [Fact]
+    public void AThenWithAPauseOfFalseAloneIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, new WaitOptions(Then: new WaitThen(Pause: false)))
+        );
+
+        Assert.Equal("options.then needs call, timeScale, pause or a mix.", refused.Message);
+    }
+
+    [Fact]
+    public void AThenWithOnlyAPauseIsAccepted()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(
+            new WaitCondition(Expression: "true"),
+            1000,
+            new WaitOptions(Then: new WaitThen(Pause: true))
+        );
+
+        Assert.Equal("""{"pause":true}""", parameters["then"]!.ToJsonString());
+    }
+
+    [Fact]
+    public void AThenWithACallAndAPauseIsAccepted()
+    {
+        WaitOptions options = new(Then: new WaitThen(Call: new MethodCall("TimeProbe", "record_then"), Pause: true));
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, options);
+
+        Assert.Equal("record_then", parameters["then"]!["call"]!["method"]!.GetValue<string>());
+        Assert.True(parameters["then"]!["pause"]!.GetValue<bool>(), parameters.ToJsonString());
     }
 
     [Theory]

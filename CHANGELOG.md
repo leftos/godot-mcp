@@ -12,6 +12,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `save_screenshot` writes a shot straight to a named PNG in the project, such as a tracked picture, in one call.
 - `run_scratches` takes `options.keepGoing`, playing on past a step that pushed an error and listing every red step in `failures`.
 - `capture_frames` takes `options.start`, a condition whose met frame starts the capture's clock, so shots count from an event rather than the call.
+- `wait_for`'s `options.then` takes `pause`, holding the game on the met frame for later reads until `frame_control resume`.
 - `frame_control` step takes `options.until`, a `wait_for` condition, and stops paused on the first frame that meets it; step results carry `frame`.
 - `hover`, `click` and every `item` target reach a RichTextLabel's tooltip spans by tooltip text or index; a hover just off one warns naming the nearest.
 

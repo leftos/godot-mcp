@@ -67,8 +67,9 @@ internal sealed record CaptureStart(
     )]
         bool? Edge = null,
     [property: Description(
-        "{call?, timeScale?}, run once in the frame the condition is met, as wait_for's options.then, before options.call; "
-            + "start adds then: {frame, call?, timeScale?}. A refused or failing call fails the capture with no frames."
+        "{call?, timeScale?}, run once in the frame the condition is met, as wait_for's options.then, before options.call; pause is "
+            + "refused, as a paused game adds no game time, so the capture would never advance. start adds then: {frame, call?, "
+            + "timeScale?}. A refused or failing call fails the capture with no frames."
     )]
         WaitThen? Then = null
 );

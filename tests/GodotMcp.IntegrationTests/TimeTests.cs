@@ -1338,6 +1338,168 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.Equal(1.0, (await RunAsync("return Engine.time_scale")).GetValue<double>());
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task WaitForThenPauseHoldsTheMetFrameForLaterReads()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await RunAsync($"{Probe}.n = {Probe}.process_frames + 3\n\treturn true");
+        long n = (await RunAsync($"return {Probe}.n")).GetValue<long>();
+
+        JsonObject waited = JsonNode
+            .Parse(
+                Text(
+                    await _tools.WaitForAsync(FramesReach(n), null, new WaitOptions(Then: new WaitThen(Pause: true)), cancellationToken: cancellation)
+                )
+            )!
+            .AsObject();
+
+        long met = await ReadIntAsync("process_frames");
+        await Task.Delay(300, cancellation);
+        long later = await ReadIntAsync("process_frames");
+        JsonObject resumed = await FrameAsync("resume");
+        await Task.Delay(300, cancellation);
+        long running = await ReadIntAsync("process_frames");
+
+        // The pause lands in the met frame, before any node's _process, so the counter still reads the met frame's value on a
+        // read made 300 ms later: it cannot drift while the game is paused. A resume lets it run on.
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.True(waited["then"]!["paused"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Equal(n, met);
+        Assert.Equal(met, later);
+        Assert.False(resumed["paused"]!.GetValue<bool>(), resumed.ToJsonString());
+        Assert.True(running > later, $"the probe did not run again after resume: {later} then {running}");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACheckOnceWaitWithThenPauseHoldsTheMetFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+
+        JsonObject waited = JsonNode
+            .Parse(
+                Text(
+                    await _tools.WaitForAsync(
+                        new WaitCondition(Expression: "true"),
+                        0,
+                        new WaitOptions(Then: new WaitThen(Pause: true)),
+                        cancellationToken: cancellation
+                    )
+                )
+            )!
+            .AsObject();
+
+        long met = await ReadIntAsync("process_frames");
+        await Task.Delay(300, cancellation);
+        long later = await ReadIntAsync("process_frames");
+        await FrameAsync("resume");
+
+        // A check-once wait is met in the frame after it starts and pauses there, like a waiting one, so the counter still
+        // reads the met frame's value on a read made 300 ms later: it cannot drift while the game is paused.
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Equal(0, waited["frames"]!.GetValue<int>());
+        Assert.True(waited["then"]!["paused"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Equal(met, later);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task WaitForThenPauseWithScreenshotHoldsTheDrawnFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await RunAsync($"{Probe}.n = {Probe}.process_frames + 3\n\treturn true");
+        long n = (await RunAsync($"return {Probe}.n")).GetValue<long>();
+
+        List<ContentBlock> blocks =
+        [
+            .. await _tools.WaitForAsync(
+                FramesReach(n),
+                null,
+                new WaitOptions(Screenshot: true, Then: new WaitThen(Pause: true)),
+                cancellationToken: cancellation
+            ),
+        ];
+        JsonObject waited = JsonNode.Parse(Text(blocks))!.AsObject();
+        string path = waited["screenshot"]!["path"]!.GetValue<string>();
+        JsonNode pixel = await RunAsync(
+            $"var c := Image.load_from_file(\"{path.Replace('\\', '/')}\").get_pixel(600, 310)\n\treturn [c.r8, c.g8, c.b8]"
+        );
+        long met = await ReadIntAsync("process_frames");
+        await Task.Delay(300, cancellation);
+        long later = await ReadIntAsync("process_frames");
+        await FrameAsync("resume");
+
+        // The wait checks at each frame's draw, and a frame the window does not draw is not checked, so the met draw can be a
+        // frame after the condition first held: the drawn frame is at or after n. The pause holds exactly the frame it
+        // checked, so the Swatch shows the counter the pause froze, and that counter cannot move on.
+        Assert.True(waited["then"]!["paused"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.True(met >= n, $"the drawn frame {met} is before the target {n}");
+        Assert.InRange(pixel[0]!.GetValue<int>(), (int)(met % 16 * 16) - 3, (int)(met % 16 * 16) + 3);
+        Assert.Equal(met, later);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task WaitForThenPauseAndTimeScaleLeavesTheScaleSetWhilePaused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        try
+        {
+            JsonObject waited = JsonNode
+                .Parse(
+                    Text(
+                        await _tools.WaitForAsync(
+                            new WaitCondition(Expression: "true"),
+                            null,
+                            new WaitOptions(Then: new WaitThen(TimeScale: 0.5, Pause: true)),
+                            cancellationToken: cancellation
+                        )
+                    )
+                )!
+                .AsObject();
+
+            JsonObject resumed = await FrameAsync("resume");
+
+            // The scale is set before the pause and holds through it, so resuming does not bring it back to 1.
+            Assert.True(waited["then"]!["paused"]!.GetValue<bool>(), waited.ToJsonString());
+            Assert.Equal(0.5, waited["then"]!["timeScale"]!.GetValue<double>());
+            Assert.Equal(0.5, resumed["timeScale"]!.GetValue<double>());
+            Assert.False(resumed["paused"]!.GetValue<bool>(), resumed.ToJsonString());
+        }
+        finally
+        {
+            await FrameAsync("time_scale", scale: 1);
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task WaitForThenPauseOnATimeoutLeavesTheGameRunning()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+
+        JsonObject waited = JsonNode
+            .Parse(
+                Text(
+                    await _tools.WaitForAsync(
+                        new WaitCondition(Expression: "false"),
+                        300,
+                        new WaitOptions(Then: new WaitThen(Pause: true)),
+                        cancellationToken: cancellation
+                    )
+                )
+            )!
+            .AsObject();
+        long before = await ReadIntAsync("process_frames");
+        await Task.Delay(200, cancellation);
+        long after = await ReadIntAsync("process_frames");
+
+        Assert.False(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.False(waited.ContainsKey("then"), waited.ToJsonString());
+        Assert.True(after > before, $"a timed-out wait with pause stopped the game: {before} then {after}");
+    }
+
     // Adds OpenButton, a Button under the root, and OpenedPanel, a Panel hidden until the button is pressed; the button acts on
     // the press (ACTION_MODE_BUTTON_PRESS), not the release, and takes no focus. Returns the panel's path.
     private async Task<string> AddOpenerAsync() =>

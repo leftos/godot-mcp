@@ -17,6 +17,8 @@ internal sealed partial class RuntimeTools
     internal const double MaxCaptureSeconds = 120;
     internal const int MaxCaptureTimeoutMs = 600_000;
     internal const string CaptureFormsMessage = "pass at (a list of seconds) or options.every and options.for, not both.";
+    internal const string CaptureStartPauseRefusal =
+        "capture_frames' start.then cannot pause: a paused game adds no game time, so the capture would never advance.";
 
     // A point k x every counts as within for when it passes it by no more than this, so every 0.1 for 0.3 gives three points.
     private const double CapturePointTolerance = 1e-9;
@@ -43,7 +45,8 @@ internal sealed partial class RuntimeTools
             + "Task is not awaited), and adds call: {value}, its return value as call_method returns it, with tool and type for "
             + "a game tool; a refused call, or an error it raises, fails the capture with no frames. options.start {node, "
             + "property, equals | exists | expression, edge?, timeoutMs?, then?}, a condition laid out as wait_for's, makes the "
-            + "clock wait for it: the points count from the frame it is met, where start.then runs (call, then timeScale) and "
+            + "clock wait for it: the points count from the frame it is met, where start.then runs (call, then timeScale; pause is "
+            + "refused, as a paused game adds no game time) and "
             + "then options.call; a start already true at the call starts the clock at the next frame, as without one. Its "
             + "timeoutMs, real time, 10000 when left out, is added to the capture's, at most 600000 in all. Met, the result adds start: "
             + "{met: true, frame, then?}; a start that times out is still a success, with stopped: true, no frames and start: "
@@ -153,7 +156,7 @@ internal sealed partial class RuntimeTools
         JsonObject parameters = BuildWaitParameters(condition, start.TimeoutMs);
         if (start.Then is { } then)
         {
-            parameters["then"] = ThenParameters(then);
+            parameters["then"] = ThenParameters(then, allowPause: false);
         }
 
         if (start.Edge is true)

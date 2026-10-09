@@ -296,6 +296,21 @@ public sealed class CaptureFramesValidationTests : IDisposable
     }
 
     [Fact]
+    public void ACaptureStartThenPauseIsRefused()
+    {
+        CaptureStart start = new(Node: "TimeProbe", Expression: "node.state == 'done'", Then: new WaitThen(Pause: true));
+
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildCaptureParameters([0.3], TimeSpan.FromSeconds(14), new CaptureFramesOptions(Start: start))
+        );
+
+        Assert.Equal(
+            "capture_frames' start.then cannot pause: a paused game adds no game time, so the capture would never advance.",
+            refused.Message
+        );
+    }
+
+    [Fact]
     public void AStartLeftAtItsDefaultsWaitsTenSecondsWithNoEdgeOrThen()
     {
         JsonObject parameters = RuntimeTools.BuildCaptureParameters(
