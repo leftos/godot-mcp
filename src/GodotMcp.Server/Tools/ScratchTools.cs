@@ -28,7 +28,8 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         "Plays scratch scenes and reports a verdict for each: every scene runs in a fresh headless game session "
             + "(<folder>.scratch-<scene>, or '<options.session>.scratch-<scene>'), its root is called through the scratch protocol "
             + "(GetStepCount, GetStepName(i), then per step "
-            + "PlayStep(i), a wait of the pace in game time, GetStatus), and the run stops at a scene's first failed step. A step fails "
+            + "PlayStep(i), a wait of the pace in game time, GetStatus), and a scene stops at its first failed step unless "
+            + "options.keepGoing. A step fails "
             + "on an error the game logs (push_error, an engine error, a C# exception) or a stdout or stderr line matching the "
             + "profile's scratch.patterns; after the steps the game is stopped and a non-zero exit or an ObjectDB leak turns the "
             + "scene red. Settings live in godot-mcp.json's scratch section {folder, userArgs, pace, known, patterns, parallel}. Scenes "
@@ -38,9 +39,10 @@ internal sealed class ScratchTools(SessionRegistry sessions)
             + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
             + "{passed, green, red, known, noSteps, killed, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, "
             + "scenes: [{scene, verdict, steps: {played, total}, pace, paceReason?, seconds, session, "
-            + "failedAt?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?, alone?, "
-            + "aloneFailedAt?}]}, scenes in the order given; failedAt.pattern {pattern, reason?} names the scratch.patterns entry a "
-            + "failing line matched; exit.error is an error in the pace after the last step, killed a game the "
+            + "failedAt?, failures?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?, alone?, "
+            + "aloneFailedAt?}]}, scenes in the order given; failedAt is the first failed step and failures [{index, name, error}] "
+            + "every one; failedAt.pattern {pattern, reason?} names the scratch.patterns entry a failing line matched; a details "
+            + "step that failed carries its error; exit.error is an error in the pace after the last step, killed a game the "
             + "stop had to kill; details lists each step for a red or killed scene, or with options.details; seconds covers both "
             + "plays of a scene played again. The project is prepared once for the whole run."
     )]
@@ -52,10 +54,12 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         )]
             string[]? scenes = null,
         [Description(
-            "{pace, userArgs, prepare, details, parallel, session}: pace in seconds for every step (else scratch.pace's for the "
-                + "step, else for the scene, else 0.5); userArgs appended after the profile's; prepare as run_project's; details "
-                + "true lists every scene's steps; parallel the scenes at once, 1 to 4 (else scratch.parallel, else 1); session a "
-                + "prefix for the scenes' session names, in place of the project folder's."
+            "{pace, userArgs, prepare, details, parallel, session, keepGoing}: pace in seconds for every step (else scratch.pace's "
+                + "for the step, else for the scene, else 0.5); userArgs appended after the profile's; prepare as run_project's; "
+                + "details true lists every scene's steps; parallel the scenes at once, 1 to 4 (else scratch.parallel, else 1); "
+                + "session a prefix for the scenes' session names, in place of the project folder's; keepGoing true (default false) "
+                + "plays a scene's next step after one red on a pushed error or a matching line, but a step whose own call failed "
+                + "(the game gone or stuck) still stops the scene."
         )]
             ScratchOptions? options = null,
         CancellationToken cancellationToken = default
@@ -102,6 +106,7 @@ internal sealed class ScratchTools(SessionRegistry sessions)
             Parallel = options.Parallel ?? scratch.Parallel,
             Listed = scenes is not null,
             SessionPrefix = prefix,
+            KeepGoing = options.KeepGoing ?? false,
         };
     }
 
@@ -289,8 +294,8 @@ internal sealed class ScratchTools(SessionRegistry sessions)
     }
 }
 
-/// <summary>run_scratches' pace, user arguments, prepare, whether every scene lists its steps, how many scenes play at once, and
-/// the prefix for the scenes' session names.</summary>
+/// <summary>run_scratches' pace, user arguments, prepare, whether every scene lists its steps, how many scenes play at once, the
+/// prefix for the scenes' session names, and whether a scene plays on past a failed step.</summary>
 internal sealed record ScratchOptions(
     [property: Description(
         "Seconds of game time every step plays before the next, above 0 and at most 120, its scratch.pace steps entries "
@@ -310,5 +315,10 @@ internal sealed record ScratchOptions(
         "Prefix for the scratch runs' session names, in place of the project folder's: each scene runs as '<session>.scratch-<scene>'. "
             + "Give each worktree's agent its own, so parallel runs are told apart in list_sessions."
     )]
-        string? Session = null
+        string? Session = null,
+    [property: Description(
+        "true plays a scene's next step after one that failed on a pushed error or a matching line, but a step whose own call "
+            + "failed (the game gone or stuck) still stops the scene; default false, the scene stops at its first failed step."
+    )]
+        bool? KeepGoing = null
 );

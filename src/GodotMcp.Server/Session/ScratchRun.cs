@@ -29,8 +29,8 @@ internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace
 
 /// <summary>
 /// A checked run_scratches call: the project, its scenes in order, the patterns, whether to prepare and list every step, how
-/// many scenes play at once, whether the call listed its scenes rather than leaving them to the folder, and the prefix each
-/// scene's session is named with.
+/// many scenes play at once, whether the call listed its scenes rather than leaving them to the folder, the prefix each
+/// scene's session is named with, and whether a scene plays on past a failed step.
 /// </summary>
 internal sealed record ScratchPlan(
     string ProjectDir,
@@ -45,6 +45,9 @@ internal sealed record ScratchPlan(
     public required bool Listed { get; init; }
 
     public required string SessionPrefix { get; init; }
+
+    /// <summary>Whether a scene plays on past a step that failed on a pushed error or a matching line.</summary>
+    public required bool KeepGoing { get; init; }
 }
 
 /// <summary>A line number in each of a session's stdout and stderr: the edge of a step's window.</summary>
@@ -56,8 +59,8 @@ internal readonly record struct LineMark(long Stdout, long Stderr);
 /// error feed's entries so far, the boot's: an error among them fails the scene before any step plays (the lines printed so far
 /// are never judged). A step pace keyed to no single step refuses the scene before any step plays. Then per step it calls
 /// PlayStep, waits the step's pace in game time, reads GetStatus and takes the feed's entries since the last window, stopping
-/// at the first failed step; after the last step it waits that step's pace once more, then stops the game gracefully and reads
-/// the lines it printed after the steps.
+/// at the first failed step, or with the plan's keep-going only at one whose call failed; after the last step it waits that
+/// step's pace once more, then stops the game gracefully and reads the lines it printed after the steps.
 /// Each window of output (the launch, each step, the pace after the last) ends at a marker line the game prints to stdout
 /// and to stderr, since the two streams arrive apart. The session stays in the registry, stopped, so get_debug_output can
 /// read it.
@@ -247,6 +250,13 @@ internal sealed class ScratchRun
 
     private static string StepList(IReadOnlyList<string> names) =>
         names.Count == 0 ? "it has no steps" : "its steps are " + string.Join(", ", names.Select((name, index) => $"{index}: {name}"));
+
+    /// <summary>
+    /// Whether the scene stops after <paramref name="step"/>: it failed, and either the call does not keep going or the step's
+    /// own call failed (PlayStep, the wait, GetStatus or the marker: the game is likely gone or stuck).
+    /// </summary>
+    internal static bool StopsAfter(ScratchStep step, IReadOnlyList<ScratchPattern> patterns, bool keepGoing) =>
+        ScratchVerdict.StepError(step, patterns) is not null && (!keepGoing || step.CallError is not null);
 
     /// <summary>A pace as the game milliseconds a step waits: at least 1.</summary>
     internal static int GameMs(double pace) => (int)Math.Max(1, Math.Round(pace * 1000));
@@ -505,7 +515,7 @@ internal sealed class ScratchRun
             _inFlight = index;
             ScratchStep step = await PlayStepAsync(session, index, GameMs(_paces[index].Seconds), limit);
             _steps.Add(step);
-            if (ScratchVerdict.StepError(step, _plan.Patterns) is not null)
+            if (StopsAfter(step, _plan.Patterns, _plan.KeepGoing))
             {
                 return;
             }

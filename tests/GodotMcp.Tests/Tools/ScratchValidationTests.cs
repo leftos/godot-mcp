@@ -200,6 +200,14 @@ public sealed class ScratchValidationTests : IDisposable
     }
 
     [Fact]
+    public void KeepGoingIsTheOptionsElseOff()
+    {
+        Assert.False(Plan(["res://Other.tscn"]).KeepGoing);
+        Assert.True(Plan(["res://Other.tscn"], new ScratchOptions(KeepGoing: true)).KeepGoing);
+        Assert.False(Plan(["res://Other.tscn"], new ScratchOptions(KeepGoing: false)).KeepGoing);
+    }
+
+    [Fact]
     public void ABareNumberPaceCarriesNoReason()
     {
         WriteProfile("""{ "scratch": { "folder": "Scratch", "pace": { "Beta": 2 } } }""");

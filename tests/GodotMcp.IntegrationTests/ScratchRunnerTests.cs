@@ -49,8 +49,10 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         "ScratchNoProtocol",
         "ScratchNoSteps",
         "ScratchPushError",
+        "ScratchQuit",
         "ScratchStepPace",
         "ScratchStepPaceAfter",
+        "ScratchTwoRed",
     ];
 
     private static readonly string[] FolderVerdicts =
@@ -67,7 +69,9 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         "red",
         "no-steps",
         "red",
+        "red",
         "green",
+        "red",
         "red",
     ];
 
@@ -82,7 +86,10 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.False(string.IsNullOrEmpty(prep["import"]!.GetValue<string>()), result.ToJsonString());
         JsonArray scenes = result["scenes"]!.AsArray();
         Assert.All(scenes, scene => Assert.Null(scene!["alone"]));
-        Assert.Equal([1, 0.5, 0.1, 0.5, 2, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5, 0.25, 0.1], scenes.Select(scene => scene!["pace"]!.GetValue<double>()));
+        Assert.Equal(
+            [1, 0.5, 0.1, 0.5, 2, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5, 0.5, 0.25, 0.1, 0.5],
+            scenes.Select(scene => scene!["pace"]!.GetValue<double>())
+        );
         Assert.Equal("boot", scenes[1]!["failedAt"]!["name"]!.GetValue<string>());
     }
 
@@ -128,7 +135,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal(FolderVerdicts, scenes.Select(scene => scene!["verdict"]!.GetValue<string>()));
         Assert.Equal(FolderScenes.Select(name => "InputProbe.scratch-" + name), scenes.Select(scene => scene!["session"]!.GetValue<string>()));
         Assert.False(result["passed"]!.GetValue<bool>());
-        Assert.Equal((5, 6, 1, 1, 1), Counts(result));
+        Assert.Equal((5, 8, 1, 1, 1), Counts(result));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -230,6 +237,47 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         JsonNode error = Assert.Single(details[1]!["errors"]!.AsArray())!;
         Assert.Equal("scratch step two failed", error["message"]!.GetValue<string>());
         Assert.EndsWith("scratch_push_error.gd", error["file"]!.GetValue<string>(), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task KeepGoingReportsEveryRedStepAndWithoutItTheSceneStopsAtTheFirst()
+    {
+        JsonObject kept = Single(
+            await RunAsync(_probe.Directory, ["ScratchTwoRed"], new ScratchOptions(KeepGoing: true), TestContext.Current.CancellationToken)
+        );
+        JsonObject stopped = Single(await RunAsync(_probe.Directory, ["ScratchTwoRed"], options: null, TestContext.Current.CancellationToken));
+
+        Assert.Equal(("red", "red"), (kept["verdict"]!.GetValue<string>(), stopped["verdict"]!.GetValue<string>()));
+        Assert.Equal((1, "first"), (kept["failedAt"]!["index"]!.GetValue<int>(), kept["failedAt"]!["name"]!.GetValue<string>()));
+        JsonArray failures = kept["failures"]!.AsArray();
+        Assert.Equal([1, 2], failures.Select(failure => failure!["index"]!.GetValue<int>()));
+        Assert.Equal(["first", "second"], failures.Select(failure => failure!["name"]!.GetValue<string>()));
+        Assert.Contains("first independent failure", failures[0]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Contains("second independent failure", failures[1]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Equal((4, 4), (kept["steps"]!["played"]!.GetValue<int>(), kept["steps"]!["total"]!.GetValue<int>()));
+        JsonArray details = kept["details"]!.AsArray();
+        Assert.Equal([true, false, false, true], details.Select(step => step!["ok"]!.GetValue<bool>()));
+        Assert.Contains("second independent failure", details[2]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Null(details[3]!["error"]);
+
+        JsonNode only = Assert.Single(stopped["failures"]!.AsArray())!;
+        Assert.Equal((1, "first"), (only["index"]!.GetValue<int>(), only["name"]!.GetValue<string>()));
+        Assert.Equal(2, stopped["steps"]!["played"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task KeepGoingStillStopsAtAStepThatLeftTheGameUnableToAnswer()
+    {
+        JsonObject scene = Single(
+            await RunAsync(_probe.Directory, ["ScratchQuit"], new ScratchOptions(KeepGoing: true), TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("red", scene["verdict"]!.GetValue<string>());
+        Assert.Equal((1, "quit"), (scene["failedAt"]!["index"]!.GetValue<int>(), scene["failedAt"]!["name"]!.GetValue<string>()));
+        Assert.Equal((2, 4), (scene["steps"]!["played"]!.GetValue<int>(), scene["steps"]!["total"]!.GetValue<int>()));
+        JsonNode failure = Assert.Single(scene["failures"]!.AsArray())!;
+        Assert.Equal(1, failure["index"]!.GetValue<int>());
+        Assert.Equal(["calm", "quit"], scene["details"]!.AsArray().Select(step => step!["name"]!.GetValue<string>()));
     }
 
     [Fact(Timeout = TestTimeoutMs)]

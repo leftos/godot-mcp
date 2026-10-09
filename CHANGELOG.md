@@ -10,6 +10,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `run_scratches` paces single steps from the profile's `steps` map, by index or name, so one slow step no longer slows every step.
 - `wait_for`'s `exists`, `property` and `expression` waits take `options.call`, run in the frame their checks start, so a step and its wait share one clock.
 - `save_screenshot` writes a shot straight to a named PNG in the project, such as a tracked picture, in one call.
+- `run_scratches` takes `options.keepGoing`, playing on past a step that pushed an error and listing every red step in `failures`.
 
 ### Fixed
 

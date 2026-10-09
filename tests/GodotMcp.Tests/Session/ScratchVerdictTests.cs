@@ -821,6 +821,120 @@ public sealed class ScratchVerdictTests
     private static ScratchScenePlan PacedScene(Dictionary<string, ScratchPace> stepPaces) =>
         new("Paced", "res://scratch/Paced.tscn", 0.5, []) { PaceReason = "the scene settles", StepPaces = stepPaces };
 
+    [Fact]
+    public void TwoRedStepsAreBothFailuresWithFailedAtTheFirstAndEachDetailsItsError()
+    {
+        ScratchObservation seen = Seen(
+            Step(0),
+            Step(1) with
+            {
+                Errors = [Error("first failure", "res://s.gd", 4)],
+            },
+            Step(2) with
+            {
+                Lines = ["ERROR: second failure"],
+            },
+            Step(3)
+        );
+
+        ScratchSceneResult result = ScratchVerdict.Judge(seen, Plain);
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Equal((1, "step1"), (result.FailedAt!.Index, result.FailedAt.Name));
+        Assert.Equal(
+            [new ScratchStepFailure(1, "step1", "first failure (res://s.gd:4)"), new ScratchStepFailure(2, "step2", "ERROR: second failure")],
+            result.Failures
+        );
+        Assert.Equal(new ScratchStepCount(4, 4), result.Steps);
+        Assert.Equal([null, "first failure (res://s.gd:4)", "ERROR: second failure", null], result.Details!.Select(step => step.Error));
+    }
+
+    [Fact]
+    public void ARedStepIsTheOnlyFailureAndAGreenSceneHasNoneAndNeitherWritesNulls()
+    {
+        ScratchSceneResult red = ScratchVerdict.Judge(Seen(Step(0), Step(1) with { CallError = "PlayStep failed: gone" }), Plain);
+        ScratchSceneResult green = ScratchVerdict.Judge(Seen(Step(0)), Plain with { Details = true });
+
+        Assert.Equal([new ScratchStepFailure(1, "step1", "PlayStep failed: gone")], red.Failures);
+        Assert.Null(green.Failures);
+        JsonObject json = JsonNode.Parse(JsonSerializer.Serialize(green, ToolJson.Options))!.AsObject();
+        Assert.False(json.ContainsKey("failures"), json.ToJsonString());
+        Assert.False(json["details"]![0]!.AsObject().ContainsKey("error"), json.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData("green", false, false)]
+    [InlineData("green", true, false)]
+    [InlineData("feed", false, true)]
+    [InlineData("feed", true, false)]
+    [InlineData("line", false, true)]
+    [InlineData("line", true, false)]
+    [InlineData("call", false, true)]
+    [InlineData("call", true, true)]
+    [InlineData("call and feed", false, true)]
+    [InlineData("call and feed", true, true)]
+    [InlineData("call and line", true, true)]
+    public void KeepGoingPlaysPastAPushedErrorOrAMatchingLineButNeverPastACallError(string failure, bool keepGoing, bool stops)
+    {
+        const string CallError = "PlayStep failed: boom";
+        ScratchStep step = failure switch
+        {
+            "feed" => Step(0) with { Errors = [Error("boom", "res://s.gd", 1)] },
+            "line" => Step(0) with { Lines = ["ERROR: boom"] },
+            "call" => Step(0) with { CallError = "wait_for 500 game ms failed: gone" },
+            "call and feed" => Step(0) with { CallError = CallError, Errors = [Error("boom", "res://s.gd", 1)] },
+            "call and line" => Step(0) with { CallError = CallError, Lines = ["ERROR: boom"] },
+            _ => Step(0),
+        };
+
+        Assert.Equal(stops, ScratchRun.StopsAfter(step, Default, keepGoing));
+    }
+
+    [Fact]
+    public void AKilledStepIsTheLastFailureAndFailedAtNamesTheKill()
+    {
+        ScratchObservation seen = Seen(
+            Step(0),
+            Step(1) with
+            {
+                Errors = [Error("first failure", "res://s.gd", 4)],
+            },
+            Step(2) with
+            {
+                Lines = ["ERROR: second failure"],
+            }
+        ) with
+        {
+            Total = 4,
+            Kill = new ScratchFailure(3, "step3", "ceiling", ""),
+        };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(seen, Plain);
+
+        Assert.Equal(ScratchVerdict.Killed, result.Verdict);
+        Assert.Equal((3, "step3", "ceiling"), (result.FailedAt!.Index, result.FailedAt.Name, result.FailedAt.Error));
+        Assert.Equal(
+            [
+                new ScratchStepFailure(1, "step1", "first failure (res://s.gd:4)"),
+                new ScratchStepFailure(2, "step2", "ERROR: second failure"),
+                new ScratchStepFailure(3, "step3", "ceiling"),
+            ],
+            result.Failures
+        );
+    }
+
+    [Fact]
+    public void AKillOutsideAnyStepIsNoFailureAndAFailureWritesItsIndex()
+    {
+        ScratchSceneResult inPace = ScratchVerdict.Judge(Seen(Step(0)) with { Kill = new ScratchFailure(-1, "", "ceiling", "") }, Plain);
+        ScratchSceneResult red = ScratchVerdict.Judge(Seen(Step(0) with { Lines = ["ERROR: boom"] }), Plain);
+
+        Assert.Null(inPace.Failures);
+        JsonObject failure = JsonNode.Parse(JsonSerializer.Serialize(red, ToolJson.Options))!["failures"]![0]!.AsObject();
+        Assert.Equal((0, "step0"), (failure["index"]!.GetValue<int>(), failure["name"]!.GetValue<string>()));
+        Assert.False(failure.ContainsKey("step"), failure.ToJsonString());
+    }
+
     private static List<string> Window(OutputPage stdout, OutputPage stderr, LineMark after, LineMark before) =>
         ScratchRun.Window(stdout, stderr, after, before, "n1");
 

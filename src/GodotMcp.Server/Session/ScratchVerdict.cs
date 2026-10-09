@@ -100,7 +100,7 @@ internal sealed record ScratchFailure(int Index, string Name, string Error, stri
 /// <summary>An error feed entry as a step lists it.</summary>
 internal sealed record ScratchError(string Message, string File, int Line);
 
-/// <summary>One step as a red scene or options.details lists it.</summary>
+/// <summary>One step as a red scene or options.details lists it, with why it failed when it did.</summary>
 internal sealed record ScratchStepResult(
     int Index,
     string Name,
@@ -109,7 +109,14 @@ internal sealed record ScratchStepResult(
     string Status,
     IReadOnlyList<ScratchError> Errors,
     IReadOnlyList<string> Lines
-);
+)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Error { get; init; }
+}
+
+/// <summary>A step that failed: its index, its name and why.</summary>
+internal sealed record ScratchStepFailure(int Index, string Name, string Error);
 
 /// <summary>
 /// How the game ended: its exit code, the objects it leaked, the lines after the last step that matched a pattern, why the
@@ -145,6 +152,10 @@ internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchS
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ScratchFailure? FailedAt { get; init; }
+
+    /// <summary>Every step played that failed, in order; null when none did.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<ScratchStepFailure>? Failures { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<ScratchStepResult>? Details { get; init; }
@@ -222,12 +233,36 @@ internal static partial class ScratchVerdict
         {
             PaceReason = shown is Red or Killed ? PaceReasonAt(seen, failedAt, rules.PaceReason) : null,
             FailedAt = failedAt,
+            Failures = Failures(seen, rules.Patterns),
             Details = ListsSteps(rules.Details, verdict, failedAt)
                 ? [.. seen.Steps.Select(step => StepResult(step, rules.Patterns, verdict != Green))]
                 : null,
             Exit = ExitOf(seen, rules.Patterns),
             Known = shown is KnownRed or KnownNowGreen ? rules.Known : null,
         };
+    }
+
+    /// <summary>
+    /// Every step that failed, in the order played, with why, then the step a kill cut off with the kill's reason; null when none
+    /// did.
+    /// </summary>
+    private static List<ScratchStepFailure>? Failures(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns)
+    {
+        List<ScratchStepFailure> failures = [];
+        foreach (ScratchStep step in seen.Steps)
+        {
+            if (StepError(step, patterns) is { } error)
+            {
+                failures.Add(new ScratchStepFailure(step.Index, step.Name, error));
+            }
+        }
+
+        if (seen.Kill is { Index: >= 0 } kill)
+        {
+            failures.Add(new ScratchStepFailure(kill.Index, kill.Name, kill.Error));
+        }
+
+        return failures.Count > 0 ? failures : null;
     }
 
     /// <summary>
@@ -398,7 +433,8 @@ internal static partial class ScratchVerdict
             lines.Insert(0, DroppedNote(step.Dropped));
         }
 
-        return new ScratchStepResult(step.Index, step.Name, StepError(step, patterns) is null, step.GameMs, step.Status, errors, Capped(lines));
+        string? error = StepError(step, patterns);
+        return new ScratchStepResult(step.Index, step.Name, error is null, step.GameMs, step.Status, errors, Capped(lines)) { Error = error };
     }
 
     /// <summary>The entry a step lists first when its window lost lines to the output buffer's cap.</summary>
