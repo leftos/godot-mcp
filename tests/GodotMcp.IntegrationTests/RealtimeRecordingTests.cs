@@ -21,7 +21,14 @@ namespace GodotMcp.IntegrationTests;
 public sealed class RealtimeRecordingTests : IAsyncDisposable
 {
     /// <summary>How long after a stop the helper may still capture: it reads its deadline file every 200 ms.</summary>
-    private const double DeadlinePollSeconds = 0.25;
+    private const double DeadlinePollSeconds = 0.2;
+
+    /// <summary>
+    /// How long before start answers a clip may begin: the clip holds every frame from the first, and start answers only once
+    /// ffmpeg has opened its encoder, which measured 0.1 to 0.3 s after the first frame (libx264 about 0.15 s, h264_nvenc about
+    /// 0.25 s, at -stats_period 0.1); doubled for a loaded machine.
+    /// </summary>
+    private const double EncoderOpenLagSeconds = 0.6;
 
     private const double LengthTolerance = 0.2;
 
@@ -92,11 +99,20 @@ public sealed class RealtimeRecordingTests : IAsyncDisposable
 
         double between = (stopping - started).TotalSeconds;
         (double seconds, _, _) = await ProbeClipAsync(ClipPath(stopped));
+        // The clip may run longer than the marks' gap by the encoder-open lag before start answered and the deadline poll after
+        // stop; it may not run shorter than the gap beyond the probe's rounding.
+        double longest = between + DeadlinePollSeconds + EncoderOpenLagSeconds;
         Assert.True(
-            seconds >= between - LengthTolerance && seconds <= between + DeadlinePollSeconds + LengthTolerance,
-            FormattableString.Invariant(
-                $"the clip lasts {seconds:F3} s; the marks were {between:F3} s apart (the helper reads its deadline every 0.2 s)"
-            )
+            seconds >= between - LengthTolerance && seconds <= longest,
+            FormattableString.Invariant($"the clip lasts {seconds:F3} s; the marks were {between:F3} s apart, ")
+                + FormattableString.Invariant($"so it must last {between - LengthTolerance:F3} to {longest:F3} s: ")
+                + FormattableString.Invariant(
+                    $"at least the gap less {LengthTolerance} s, at most the gap plus {DeadlinePollSeconds} s (the helper reads its deadline "
+                )
+                + FormattableString.Invariant(
+                    $"every 0.2 s after stop) plus {EncoderOpenLagSeconds} s (the clip begins at the first frame, up to about 0.3 s before "
+                )
+                + "start answers once ffmpeg has opened its encoder)"
         );
     }
 
