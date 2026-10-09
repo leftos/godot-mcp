@@ -98,6 +98,44 @@ public sealed class WorldTargetTests(SharedProbeSession shared) : IAsyncLifetime
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnErrorRaisedInAnAreaInputEventHandlerIsInTheClicksOwnReply()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        // Uncapped frames (no fps cap, no vsync) outrun the physics ticks, so the click's settle frames can end before the
+        // tick whose picking delivers the release to input_event; the handler raises its error only on that release.
+        JsonNode pacing = await RunAsync(
+            HideMain
+                + World2DBlock
+                + Area2D("world", "Target2D", 400, 250, 20)
+                + "target2d.input_event.connect(func(_viewport: Node, event: InputEvent, _shape: int) -> void:\n\t\t"
+                + "if event is InputEventMouseButton and not event.pressed:\n\t\t\t"
+                + "push_error(\"Target2D's release handler failed\"))\n\t"
+                + "for tick in 3:\n\t\tawait scene_tree.physics_frame\n\t"
+                + "return [Engine.max_fps, DisplayServer.window_get_vsync_mode()]",
+            cancellation
+        );
+        try
+        {
+            await RunAsync("Engine.max_fps = 0\n\tDisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)\n\treturn true", cancellation);
+            JsonNode clicked = await ClickAsync(new InputTarget("Target2D"), cancellation);
+
+            JsonArray errors = clicked["errors"]?.AsArray() ?? [];
+            Assert.True(
+                errors.Any(error => error!["message"]!.GetValue<string>().Contains("Target2D's release handler failed", StringComparison.Ordinal)),
+                clicked.ToJsonString()
+            );
+        }
+        finally
+        {
+            await RunAsync(
+                $"Engine.max_fps = {pacing[0]!.GetValue<int>()}\n\t"
+                    + $"DisplayServer.window_set_vsync_mode({pacing[1]!.GetValue<int>()} as DisplayServer.VSyncMode)\n\treturn true",
+                cancellation
+            );
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AnOffsetMovesTheAimInsideTheArea2D()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

@@ -169,7 +169,7 @@ $ErrorActionPreference = 'Stop'
 $itestGroups = [ordered]@{
     lifecycle = @('SessionLifecycleTests', 'WatchdogTests')
     sessions  = @('McpServerSmokeTests', 'AttachTests', 'ArmTests', 'QuietTests', 'ProfileTests')
-    input     = @('InputTests', 'GamepadTests', 'CaptureTests', 'StressTests', 'WorldTargetTests', 'TextTargetTests', 'ItemTargetTests', 'PopupTargetTests')
+    input     = @('InputTests', 'GamepadTests', 'CaptureTests', 'StressTests', 'WorldTargetTests', 'TextTargetTests', 'ItemTargetTests', 'PopupTargetTests', 'FiredSignalsTests')
     reads     = @('RuntimeReadTests', 'InspectionTests', 'BaselineTests', 'PreviewTests', 'StateTests', 'HeadlessCaptureTests')
     time      = @('TimeTests', 'BatchTests', 'WatchTests')
     prep      = @('PrepTests', 'RestartTests')
@@ -246,6 +246,7 @@ $itestRules = @(
     @('src/GodotMcp.Server/Tools/HeadlessTools*.cs', 'headless'),
     @('src/GodotMcp.Server/Tools/InputTarget.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Input*.cs', 'input'),
+    @('src/GodotMcp.Server/Tools/FiredSignals.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Gamepad*.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Stress*.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Capture*.cs', 'input'),

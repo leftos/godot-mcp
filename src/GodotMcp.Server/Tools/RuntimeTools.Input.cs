@@ -29,6 +29,14 @@ internal sealed partial class RuntimeTools
         + "item?, viewport?}: the point in viewport coordinates, matched {by: \"text\", text} the shown text a text target "
         + "matched, item {index, text, path?, disabled?} the item an item target resolved to (its drawn text, a Tree's path, "
         + "disabled when it is), and the node's viewport when it is not the root.";
+    private const string FiredNote =
+        " The result lists fired [{node, signal, args?, frame, listeners, count?}]: the signals the press set off on the "
+        + "pressed node's chain (with a ButtonGroup's other buttons and the root's gui_focus_changed) until the settle frames "
+        + "end, in handler order, frame (process frames since the press) grouping them, a run of one signal folded into "
+        + "count; firedDropped counts entries past the first 50, listenedOn names each chain listened on and leftTree the "
+        + "chain nodes that left the tree. listeners 0 on an engine signal means no Godot connection, not that nothing "
+        + "reacts (a game may poll); null is a C# [Signal]. An emission inside the very dispatch that changed the hover is "
+        + "missed for the newly hovered nodes; autoloads and nodes off the chain need a watch with signal tracks.";
     private const string DragTargetNote =
         ElementAim + "; an element or text target at either end adds aimedAt {from, to}, each as click's aimedAt, a point end null.";
     private const int MaxHoverTimeoutMs = 10_000;
@@ -62,6 +70,7 @@ internal sealed partial class RuntimeTools
             + "Returns {pointer, heldButtonMask, pressedOn, releasedOn}: the Controls ({path, class}) under the press and the "
             + "release, a popup's included, null over none; with doubleClick, the second click's."
             + TargetNote
+            + FiredNote
             + ErrorNote
     )]
     public Task<string> ClickAsync(
@@ -183,6 +192,7 @@ internal sealed partial class RuntimeTools
             + "class}) under the point, null over none. A press or release into a SubViewport whose gui_disable_input is on is "
             + "refused; a move is not."
             + TargetNote
+            + FiredNote
             + ErrorNote
     )]
     public Task<string> MouseButtonAsync(
@@ -428,7 +438,8 @@ internal sealed partial class RuntimeTools
 
     /// <summary>
     /// Plays one input call on the session once any earlier one on it has finished, and adds the errors the game raised while
-    /// it played to the bridge's <c>{pointer, heldButtonMask}</c> (the call still succeeds).
+    /// it played to the bridge's <c>{pointer, heldButtonMask}</c> (the call still succeeds), its fired list shaped by
+    /// <see cref="FiredSignals.Shape"/>.
     /// </summary>
     private async Task<string> SendInputAsync(
         string? session,
@@ -445,7 +456,7 @@ internal sealed partial class RuntimeTools
             BridgeCall call = new(tool, "input", parameters, InputAllowance(allowance, target.ActiveRecording is not null));
             BridgeResult result = await CallWithErrorsAsync(target, call, cancellationToken);
             JsonObject played = result.Reply as JsonObject ?? [];
-            return ErrorReport.AddTo(played, result.Errors).ToJsonString();
+            return ErrorReport.AddTo(FiredSignals.Shape(played), result.Errors).ToJsonString();
         }
         finally
         {

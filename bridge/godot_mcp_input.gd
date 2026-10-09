@@ -18,8 +18,12 @@ const TARGETS_SCRIPT := "godot_mcp_targets.gd"
 const POPUPS_SCRIPT := "godot_mcp_popup_targets.gd"
 ## The tooltip reader (godot_mcp_hover.gd beside this script), this node's child.
 const HOVER_SCRIPT := "godot_mcp_hover.gd"
+## The fired-signal listener (godot_mcp_fired.gd beside this script), this node's child.
+const FIRED_SCRIPT := "godot_mcp_fired.gd"
 ## The gestures whose result says which Controls they hit, from _hits.
 const HIT_GESTURES := ["click", "drag", "mouse_button", "hover", "scroll"]
+## The gestures whose result lists the signals they set off on their hit chains (fired).
+const FIRED_GESTURES := ["click", "mouse_button"]
 ## The recording's movie frame rate, which run_project sets beside --write-movie.
 const MOVIE_FPS_VARIABLE := "GODOT_MCP_MOVIE_FPS"
 const PAUSED_TOOLTIP_WARNING := (
@@ -73,6 +77,8 @@ var _targets: Node
 var _popups: Node
 ## The tooltip reader (godot_mcp_hover.gd), created by _ready as this node's child.
 var _hover: Node
+## The fired-signal listener (godot_mcp_fired.gd), created by _ready as this node's child.
+var _fired: Node
 ## What the playing gesture hit: pressedOn, releasedOn, guiDragStarted, dropAccepted,
 ## scrolledOn.
 var _hits: Dictionary = {}
@@ -146,9 +152,9 @@ func _repick_due() -> bool:
 
 
 ## Creates the target resolver (godot_mcp_targets.gd), the popup item player
-## (godot_mcp_popup_targets.gd) and the tooltip reader (godot_mcp_hover.gd) as this node's
-## children, loaded from the folder this script itself lives in, so the bridge script gains no
-## line.
+## (godot_mcp_popup_targets.gd), the tooltip reader (godot_mcp_hover.gd) and the fired-signal
+## listener (godot_mcp_fired.gd) as this node's children, loaded from the folder this script
+## itself lives in, so the bridge script gains no line.
 func _create_targets() -> void:
 	var dir: String = (get_script() as Script).resource_path.get_base_dir()
 	_targets = (load(dir.path_join(TARGETS_SCRIPT)) as GDScript).new()
@@ -165,22 +171,35 @@ func _create_targets() -> void:
 	_hover.gestures = self
 	_hover.targets = _targets
 	add_child(_hover)
+	_fired = (load(dir.path_join(FIRED_SCRIPT)) as GDScript).new()
+	_fired.name = "Fired"
+	_fired.bridge = bridge
+	add_child(_fired)
 
 
-## Plays one gesture over frames, then waits two more frames, so the game's handlers have run
-## and their errors are flushed ahead of the reply. Every point arrives in viewport coordinates.
+## Plays one gesture over frames; when it sent a mouse button or wheel event and no physics tick
+## has run since the last, waits for one, whose picking hands that event to a world node's
+## input_event; then waits two more frames, so the game's handlers have run (the picking's too,
+## which follows physics_frame in the tick, scene/main/scene_tree.cpp L649-652 in 4.7.2) and
+## their errors are flushed ahead of the reply. Every point arrives in viewport coordinates.
 ## Answers {result: {pointer, heldButtonMask}}, to which a click, drag, mouse_button, hover or
-## scroll adds the Controls it hit (a hover its tooltip too) and a pad gesture the gamepad's
-## report (device, warning), or {error}. Takes the uiChanged baseline when none is pending.
+## scroll adds the Controls it hit (a hover its tooltip too), a click or mouse_button what it set
+## off (the fired listener's report) and a pad gesture the gamepad's report (device, warning), or
+## {error}. Takes the uiChanged baseline when none is pending.
 func play(params: Dictionary) -> Dictionary:
 	bridge._gesture_playing = true
 	_hits = {}
 	bridge._pads.report = {}
+	var gesture: String = str(params.get("gesture", ""))
+	_fired.begin(FIRED_GESTURES.has(gesture))
 	if _ui_baseline.is_empty():
 		_ui_baseline = _snapshot_ui()
 	var error: String = await _play_gesture(params)
+	if _fired.physics_wait_due():
+		await get_tree().physics_frame
 	for _frame in SETTLE_FRAMES:
 		await get_tree().process_frame
+	var fired: Dictionary = _fired.finish()
 	bridge._gesture_playing = false
 	if not error.is_empty():
 		return {"error": error}
@@ -188,15 +207,16 @@ func play(params: Dictionary) -> Dictionary:
 		"pointer": bridge._json.to_json(to_viewport(bridge._pointer)),
 		"heldButtonMask": bridge._held_mask,
 	}
-	if HIT_GESTURES.has(str(params.get("gesture", ""))):
+	if HIT_GESTURES.has(gesture):
 		result.merge(_hits)
-	_add_pad_report(result)
+	_add_report(result, fired)
+	_add_report(result, bridge._pads.report)
 	return {"result": result}
 
 
-## Adds the gamepad's report to result; a warning follows one result already has, after a space.
-func _add_pad_report(result: Dictionary) -> void:
-	var report: Dictionary = bridge._pads.report
+## Adds a report (the fired listener's, the gamepad's) to result; a warning follows one result
+## already has, after a space.
+func _add_report(result: Dictionary, report: Dictionary) -> void:
 	for key: String in report:
 		if key == "warning" and result.has("warning"):
 			result["warning"] = "%s %s" % [result["warning"], report["warning"]]
@@ -336,7 +356,8 @@ func click_at(window_point: Vector2, button: int, double_click: bool) -> void:
 ## Sends a button press or release and records the Control it landed on as pressedOn or
 ## releasedOn. A release that drops a GUI drag reads the Control before it: the drop ends by
 ## moving the hover to the real mouse (Window.update_mouse_cursor_state, 4.7.2 window.cpp
-## L935-949), and the pointer is already at the release point.
+## L935-949), and the pointer is already at the release point. The fired listener listens on the
+## last press's Control before a release, and on the Control under the point after either.
 func _send_and_record(
 	window_point: Vector2, button: int, pressed: bool, double_click: bool
 ) -> void:
@@ -345,10 +366,11 @@ func _send_and_record(
 		not pressed and button == MOUSE_BUTTON_LEFT and get_tree().root.gui_is_dragging()
 	)
 	var before_drop: Variant = _control_under(point) if drops else null
+	_fired.before_button(pressed)
 	send_button(window_point, button, pressed, double_click)
-	_hits["pressedOn" if pressed else "releasedOn"] = (
-		before_drop if drops else _control_under(point)
-	)
+	var hovered: Control = _hovered_control(point)
+	_fired.after_button(hovered, pressed)
+	_hits["pressedOn" if pressed else "releasedOn"] = (before_drop if drops else _describe(hovered))
 
 
 ## Frees every tooltip the root shows before a press whose pressedOn is read, and waits a frame
@@ -666,7 +688,8 @@ static func within(waited: int, frames: int, until_ms: int) -> bool:
 ## (_aim_refusal; scroll says the gesture is a wheel or pan, which a Stop Control with
 ## force_pass_scroll_events lets through). An item in a popup is placed by the popup item player
 ## first (aim_item in godot_mcp_popup_targets.gd); opens says the gesture presses, which may open
-## a closed button's popup. Returns the viewport point, or a String saying why the target was
+## a closed button's popup. After the motion the fired listener listens on the hovered Control's
+## chain and an element's own. Returns the viewport point, or a String saying why the target was
 ## refused.
 func aim(target: Variant, checks_hit: bool, scroll: bool, opens: bool) -> Variant:
 	var resolved: Variant = _targets.resolve_target(target)
@@ -676,11 +699,19 @@ func aim(target: Variant, checks_hit: bool, scroll: bool, opens: bool) -> Varian
 		return await _popups.aim_item(resolved, checks_hit, opens)
 	var point: Vector2 = _targets.point_of(resolved)
 	_move_to(to_window(point))
+	listen_at(point)
 	if resolved is Dictionary:
+		_fired.listen((resolved as Dictionary).get("node"))
 		var refusal: String = record_aim(resolved, point, checks_hit, scroll)
 		if not refusal.is_empty():
 			return refusal
 	return point
+
+
+## Listens, for the playing gesture's fired list, on the chain of the Control under a viewport
+## point, read right after a motion there (the fired listener's listen).
+func listen_at(point: Vector2) -> void:
+	_fired.listen(_hovered_control(point))
 
 
 ## Records an aim as aimedAt and, with checks_hit, answers why the GUI would keep the press from
@@ -802,6 +833,7 @@ func send_button(window_point: Vector2, button: int, pressed: bool, double_click
 	event.global_position = window_point
 	bridge._pointer = window_point
 	bridge._owns_pointer = true
+	_fired.stamp_button()
 	dispatch(event)
 
 
@@ -827,6 +859,7 @@ func send_wheel(window_point: Vector2, button: int, pressed: bool, factor: float
 	event.global_position = window_point
 	bridge._pointer = window_point
 	bridge._owns_pointer = true
+	_fired.stamp_button()
 	dispatch(event)
 
 

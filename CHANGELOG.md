@@ -2,6 +2,16 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- `click` and `mouse_button` answer `fired`, the signals the press set off on the pressed node's chain in handler order, each with its listener count.
+
+### Fixed
+
+- An error raised in a world node's `input_event` handler now lands in the gesture's own reply, even when frames outrun physics ticks.
+
 ## 0.16.0 - 2026-10-09
 
 ### Added

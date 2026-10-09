@@ -437,6 +437,7 @@ func aim_item(resolved: Dictionary, checks_hit: bool, opens: bool) -> Variant:
 	if refusal.is_empty():
 		var point: Vector2 = resolved["point"]
 		move(point)
+		gestures.listen_at(point)
 		refusal = gestures.record_aim(resolved, point, checks_hit, false)
 		if refusal.is_empty():
 			refusal = await hold_submenu(resolved)
