@@ -4,9 +4,8 @@
 
 ## Ideas from the survey and the projects
 
-- [ ] GMCP-91 hover: no way to aim at a RichTextLabel hint span, and a near miss returns a null tooltip silently
 - [ ] GMCP-100 wait_for: options.then cannot pause, so the met frame drifts before the next read
-- [ ] GMCP-6 record: only Movie Maker, which runs faster than real time
+- [/] GMCP-6 record: only Movie Maker, which runs faster than real time
 - [ ] GMCP-47 Drives across several processes
 - [ ] GMCP-43 Report the signals a gesture fired
 - [ ] GMCP-44 Step-until: frame_control until and input
@@ -59,3 +58,4 @@
 - [ ] GMCP-58 Re-read csharp-runtime-tools.md against the C# game-tools and state commits
 - [ ] GMCP-81 Split markdown lines of 500+ characters
 - [ ] GMCP-101 Sort the docs/README.md glossary alphabetically
+- [ ] GMCP-109 Sort the glossary in docs/README.md alphabetically
