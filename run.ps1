@@ -5,8 +5,8 @@
 Builds, tests, formats and publishes godot-mcp.
 
 .DESCRIPTION
-Every command but itest-groups runs under tools/gate.ps1: its whole output goes to .tmp/<command>.log, the last lines are printed, and it
-exits with the command's own status, or 124 when the gate's watchdog killed it with every process it started. The
+Every command but itest-groups and itest-csharp (which runs inside its caller's gate) runs under tools/gate.ps1: its
+whole output goes to .tmp/<command>.log, the last lines are printed, and it exits with the command's own status, or 124 when the gate's watchdog killed it with every process it started. The
 watchdog kills a run for the first of three reasons, each named by a kill line in the log that this script prints with
 its reading: STALLED (no output and no CPU for 120 s: it hung), TIMED OUT (the ceiling ran out on a clock that runs
 slower while other work keeps the machine busy: a busy loop or a ceiling set too tight) or BACKSTOP (five times the
@@ -22,10 +22,10 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            first checks that every `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly
            one group, every listed class exists, every group is in exactly one lane that names only groups, and the
            heavy groups and rules tables name only groups, and stops with status 1 before running anything when not.
-           It then runs the dotnet command (as below) when the csharp group runs (a -Filter run: when the filter matches
-           a class of the csharp group), builds the project once in Release
+           It then builds the project once in Release
            (.tmp/itest-build.log, ceiling 300 s) and runs each group as its own gate in a process of its own
-           (.tmp/itest-<group>.log, ceiling 300 s, dotnet test -c Release --no-build): each lane's groups one at a time
+           (.tmp/itest-<group>.log, ceiling 300 s, dotnet test -c Release --no-build; the csharp group's gate runs
+           itest-csharp, below, with a ceiling of 420 s for its publishes): each lane's groups one at a time
            in the table's order, the three lanes at once. A group's console output, the gate's tail and verdict, goes to
            .tmp/itest-<group>.console (errors to .tmp/itest-<group>.console.err) and is printed under
            "== itest <group> (lane <lane>)" when the group ends.
@@ -38,6 +38,17 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            With -Since <ref> it runs only the groups itest-groups (below) selects, in their lanes as above, after
            printing itest-groups' lines; with none selected it prints "itest: no group touched by the changes since
            <ref>" and exits 0. -Since with -Filter is refused with status 2.
+  itest-csharp  the command the csharp group's gate runs, and a -Filter itest's gate when the filter matches a class of
+           the csharp group: the dotnet command's three publishes (as below) run with plain dotnet publish, no gate of
+           their own, each to .tmp/dotnet-<name>.log with its time printed, then bin/dotnet laid out, then dotnet test
+           -c Release --no-build of the csharp group's classes (-Filter's, when given), after a plain dotnet build -c
+           Release -warnaserror of the test project to .tmp/itest-csharp-build.log. That build compiles and copies
+           nothing when nothing changed, as after a local itest's own build, so it leaves alone the Release output the
+           other lanes' test hosts have loaded; on the build box it rebuilds what the snapshot changed. Everything runs in the one process the gate runs, so
+           the group needs nothing laid out before it and runs wherever its gate runs it, the build box included. A
+           failed publish or build prints its log's last lines and "itest-csharp: dotnet <step> failed (status <n>);
+           its log is <path>" (<step> being "publish of <name>" or "build of the test project"), and exits with its
+           status.
   itest-groups  names the itest groups the changes since -Since <ref> touch, running nothing and taking no gate: the
            changed files are the tracked files that differ from the ref (git diff --name-only <ref>, the working tree
            included) and the untracked files git does not ignore. Each file goes through the rules table at the top of
@@ -99,8 +110,9 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            after its input closed. It runs on the user's desktop, not the hidden one: a run is quiet unless a call asks
            for quiet: false, and then its window is meant to show.
 
--Filter narrows test or itest to one test class, e.g. -Filter "*SessionLifecycleTests". A filtered itest skips the
-groups: the project built in Release first (.tmp/itest-build.log, ceiling 300 s), then one gate, ceiling 300 s, logged to
+-Filter narrows test, itest or itest-csharp to one test class, e.g. -Filter "*SessionLifecycleTests". A filtered itest skips the
+groups: the project built in Release first (.tmp/itest-build.log, ceiling 300 s), then one gate, ceiling 300 s (420 s,
+through itest-csharp, when the filter selects a csharp class), logged to
 .tmp/itest-filter-<slug>.log, where <slug> is the filter with every run of characters outside A-Z, a-z and 0-9 turned
 into one '-' and trimmed of '-' at both ends (.tmp/itest-filter-SessionLifecycleTests.log for the example), so filtered
 runs of different classes in one tree at once keep their logs apart and never write a group's log; a filter that leaves
@@ -124,8 +136,8 @@ pwsh run.ps1 drive -Calls .tmp/calls.json
 param(
     [Parameter(Position = 0)]
     [ValidateSet(
-        'build', 'test', 'itest', 'itest-groups', 'format', 'format-check', 'dotnet', 'publish', 'install', 'package', 'gdtest', 'pytest',
-        'drive', 'help'
+        'build', 'test', 'itest', 'itest-groups', 'itest-csharp', 'format', 'format-check', 'dotnet', 'publish', 'install', 'package',
+        'gdtest', 'pytest', 'drive', 'help'
     )]
     [string]$Command = 'help',
 
@@ -167,6 +179,14 @@ $itestLanes = [ordered]@{
 # The groups whose tests run dotnet builds of the CsProbe project on top of their Godot runs: each takes a heavy gate
 # slot, in whichever lane it runs, and every other group a light one.
 $itestHeavyGroups = @('prep', 'headless', 'scene', 'nodes', 'csharp', 'scratch')
+# The ceiling of every itest gate, and of the csharp group's (and a filtered itest of its classes), whose gate also runs
+# the C# helper's three publishes and the test project's build: the tests' 300 s plus 120 s. A
+# cold itest-csharp of the whole group from a fresh clone (no bin or obj; the NuGet cache and compiler server warm) took
+# 91 s wall, 35 s load-adjusted: the publishes 12 s (shim 8 s, loader 2 s, helper 2 s), the build 5 s, the tests 72 s;
+# an earlier cold run of the publishes took 31 s (shim 17 s, loader 3 s, helper 11 s). The 120 s leaves room for a
+# slower machine and a first NuGet restore of ILCompiler; the time on the build box is unmeasured.
+$itestCeiling = 300
+$itestCsharpCeiling = $itestCeiling + 120
 # Which groups a changed file touches, for itest-groups and itest -Since: ordered pairs of a path pattern, '/'-separated
 # from the repo root ('*' matches within one folder, '**' across folders), and what a match selects: 'all', 'none',
 # 'class' (the group listing the class a test file is named for), or a list of groups. The first pattern a file matches
@@ -371,7 +391,18 @@ function Invoke-ItestGated {
         [Parameter(Mandatory)] [ValidateSet('heavy', 'light')] [string]$Slot
     )
     $command = Get-ItestCommand -Arguments $Arguments
-    return Invoke-Gated -Name $Name -TimeoutSeconds 300 -Program $command.Program -Arguments $command.Arguments -Slot $Slot
+    return Invoke-Gated -Name $Name -TimeoutSeconds $itestCeiling -Program $command.Program -Arguments $command.Arguments -Slot $Slot
+}
+
+# The command a gate runs for the csharp group, or for a filtered itest of its classes: run.ps1 itest-csharp, which
+# publishes the C# helper and lays out bin/dotnet before its tests, all inside that one gate.
+function Get-ItestCsharpCommand {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string]$Filter)
+    $arguments = @('-NoProfile', '-File', (Join-Path $root 'run.ps1'), 'itest-csharp')
+    if ($Filter) {
+        $arguments += @('-Filter', $Filter)
+    }
+    return @{ Program = 'pwsh'; Arguments = $arguments }
 }
 
 # The Godot executable as the server finds it (Installation.FindGodot): GODOT_PATH when set and a file, else the first folder
@@ -745,13 +776,20 @@ function Invoke-ItestGroupProcess {
         [Parameter(Mandatory)] [string]$Group,
         [Parameter(Mandatory)] [string]$Lane
     )
-    $classes = @($itestGroups[$Group] | ForEach-Object { "$itestNamespace.$_" })
-    $command = Get-ItestCommand -Arguments (Get-TestArgumentList -Project $itestProject -Classes $classes -NoBuild)
+    if ($Group -eq 'csharp') {
+        $command = Get-ItestCsharpCommand -Filter ''
+        $ceiling = $itestCsharpCeiling
+    }
+    else {
+        $classes = @($itestGroups[$Group] | ForEach-Object { "$itestNamespace.$_" })
+        $command = Get-ItestCommand -Arguments (Get-TestArgumentList -Project $itestProject -Classes $classes -NoBuild)
+        $ceiling = $itestCeiling
+    }
     $log = Join-Path $logDir "itest-$Group.log"
     $slot = Get-ItestGroupSlot -Group $Group
-    $gateOptions = @('-Log', $log, '-TimeoutSeconds', '300', '-Slot', $slot, '-Tail', '15')
+    $gateOptions = @('-Log', $log, '-TimeoutSeconds', $ceiling, '-Slot', $slot, '-Tail', '15')
     $words = @('-NoProfile', '-File', $gate) + $gateOptions + @('--', $command.Program) + $command.Arguments
-    Write-Host "itest ${Group}: started in lane $Lane (log: $log, ceiling: 300 s, slot: $slot)"
+    Write-Host "itest ${Group}: started in lane $Lane (log: $log, ceiling: $ceiling s, slot: $slot)"
     $console = Join-Path $logDir "itest-$Group.console"
     $process = Start-Process -FilePath 'pwsh' -ArgumentList @($words | ForEach-Object { ConvertTo-CommandLineWord -Word $_ }) `
         -NoNewWindow -PassThru -RedirectStandardOutput $console -RedirectStandardError "$console.err"
@@ -849,18 +887,12 @@ function Get-ItestLaneCount {
     return $lanes.Count
 }
 
-# The given groups of the integration suite: the C# helper published when the csharp group is among them, the project
-# built once, then each group under its own gate in its lane, each run whatever the one before it did, and a summary
+# The given groups of the integration suite: the project built once, then each group under its own gate in its lane
+# (the csharp group's publishing the C# helper inside its gate), each run whatever the one before it did, and a summary
 # line per group in table order with the run's wall time. Returns the first non-zero status in table order, else 0.
 function Invoke-ItestByGroup {
     param([Parameter(Mandatory)] [string[]]$Groups)
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    if ($Groups -contains 'csharp') {
-        $dotnet = Invoke-DotnetPublish
-        if ($dotnet -ne 0) {
-            return $dotnet
-        }
-    }
     $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject
     if ($build -ne 0) {
         return $build
@@ -894,23 +926,54 @@ function Get-ItestRunGroup {
     return Invoke-ItestGroupSelection -Since $Since
 }
 
-# One integration test class or more, by -Filter: the C# helper published when a filter selects a csharp class, the
-# project built, then one gate.
+# One integration test class or more, by -Filter: the project built, then one gate, which runs itest-csharp (the C#
+# helper published inside it) when a filter selects a csharp class.
 function Invoke-ItestFiltered {
     param([Parameter(Mandatory)] [string[]]$Filters)
-    if (Test-ItestFilterNeedsDotnet -Filters $Filters) {
-        $dotnet = Invoke-DotnetPublish
-        if ($dotnet -ne 0) {
-            return $dotnet
-        }
-    }
     $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject
     if ($build -ne 0) {
         return $build
     }
-    $arguments = Get-TestArgumentList -Project $itestProject -Classes $Filters -NoBuild
+    $name = Get-ItestFilterLogName -Filter $Filters[0]
     $slot = Get-ItestFilterSlot -Filters $Filters
-    return Invoke-ItestGated -Name (Get-ItestFilterLogName -Filter $Filters[0]) -Arguments $arguments -Slot $slot
+    if (Test-ItestFilterNeedsDotnet -Filters $Filters) {
+        $command = Get-ItestCsharpCommand -Filter $Filters[0]
+        return Invoke-Gated -Name $name -TimeoutSeconds $itestCsharpCeiling -Program $command.Program -Arguments $command.Arguments -Slot $slot
+    }
+    $arguments = Get-TestArgumentList -Project $itestProject -Classes $Filters -NoBuild
+    return Invoke-ItestGated -Name $name -Arguments $arguments -Slot $slot
+}
+
+# The integration test project's Release build for itest-csharp, whose dotnet test runs with --no-build: warnings as
+# errors, with no gate of its own. Incremental, it compiles and copies nothing when nothing changed (a local run after
+# itest-build), so it never rewrites the Release output the other lanes' test hosts have loaded, and on the build box it
+# rebuilds whatever the snapshot changed in a work folder an earlier run left built. Returns the build's status.
+function Invoke-ItestCsharpBuild {
+    $arguments = @('build', (Join-Path $root $itestProject), '-c', $configuration, '-warnaserror')
+    return Invoke-DotnetInProcess -Name 'itest-csharp-build' -Step 'build of the test project' -Arguments $arguments
+}
+
+# The csharp group's own run, the command its gate runs (itest-csharp): the C# helper published and laid out in
+# bin/dotnet and the test project built, all with no gate of its own, then dotnet test --no-build of -Filter's class,
+# else the group's. A gate routed to another machine runs this whole command there, where the build before it may not
+# have run. Returns the first non-zero status, else 0.
+function Invoke-ItestCsharp {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string]$Filter)
+    $status = Invoke-DotnetPublishInProcess
+    if ($status -ne 0) {
+        return $status
+    }
+    $status = Invoke-ItestCsharpBuild
+    if ($status -ne 0) {
+        return $status
+    }
+    $classes = @($Filter | Where-Object { $_ })
+    if ($classes.Count -eq 0) {
+        $classes = @($itestGroups['csharp'] | ForEach-Object { "$itestNamespace.$_" })
+    }
+    $command = Get-ItestCommand -Arguments (Get-TestArgumentList -Project $itestProject -Classes $classes -NoBuild)
+    & $command.Program @($command.Arguments) | Out-Host
+    return $LASTEXITCODE
 }
 
 # The itest command: -Filter's classes, or the groups (all of them, or those -Since's changes touch) in their lanes.
@@ -1038,14 +1101,59 @@ function Copy-DotnetLayout {
     }
 }
 
+# The dotnet arguments that publish one of the C# helper's projects into its .tmp/dotnet-publish/<name>.
+function Get-DotnetPublishArgumentList {
+    param([Parameter(Mandatory)] [string]$Name)
+    $project = $dotnetProjects[$Name]
+    return @('publish', (Join-Path $root $project.Project), '-c', 'Release', '-o', (Join-Path $dotnetStaging $Name)) + $project.Extra
+}
+
 # Publishes the shim, the loader and the helper, each under its own gate, then lays out bin/dotnet. Returns the first
 # failing publish's status, else 0.
 function Invoke-DotnetPublish {
     Initialize-VswhereEnvironment
     foreach ($name in $dotnetProjects.Keys) {
-        $project = $dotnetProjects[$name]
-        $arguments = @('publish', (Join-Path $root $project.Project), '-c', 'Release', '-o', (Join-Path $dotnetStaging $name)) + $project.Extra
-        $status = Invoke-Logged -Name "dotnet-$name" -TimeoutSeconds 300 -Arguments $arguments -Slot heavy
+        $status = Invoke-Logged -Name "dotnet-$name" -TimeoutSeconds 300 -Arguments (Get-DotnetPublishArgumentList -Name $name) -Slot heavy
+        if ($status -ne 0) {
+            return $status
+        }
+    }
+    Copy-DotnetLayout
+    Write-Host "dotnet: the helper is in $dotnetOut"
+    return 0
+}
+
+# Runs dotnet in this process for itest-csharp, under the gate that runs itest-csharp rather than one of its own, its
+# whole output in .tmp/<Name>.log, and prints the time it took. A failure prints the log's last lines, which a run on
+# another machine brings back only in the gate's own log, and a line naming the step and the log. Returns dotnet's
+# status.
+function Invoke-DotnetInProcess {
+    param(
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$Step,
+        [Parameter(Mandatory)] [string[]]$Arguments
+    )
+    $log = Join-Path $logDir "$Name.log"
+    Write-Host "itest-csharp: dotnet $Step (log: $log)"
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    & dotnet @Arguments *> $log
+    $status = $LASTEXITCODE
+    if ($status -ne 0) {
+        Get-Content -LiteralPath $log -Tail 15 | Out-Host
+        Write-Host "itest-csharp: dotnet $Step failed (status $status); its log is $log"
+        return $status
+    }
+    Write-Host "itest-csharp: dotnet $Step done in $([int]$clock.Elapsed.TotalSeconds) s"
+    return 0
+}
+
+# Publishes the shim, the loader and the helper in this process with plain dotnet publish, each to
+# .tmp/dotnet-<name>.log, then lays out bin/dotnet. Returns the first failing publish's status, else 0.
+function Invoke-DotnetPublishInProcess {
+    Initialize-VswhereEnvironment
+    foreach ($name in $dotnetProjects.Keys) {
+        $arguments = Get-DotnetPublishArgumentList -Name $name
+        $status = Invoke-DotnetInProcess -Name "dotnet-$name" -Step "publish of $name" -Arguments $arguments
         if ($status -ne 0) {
             return $status
         }
@@ -1161,6 +1269,9 @@ try {
         }
         'itest-groups' {
             exit (Invoke-ItestGroupSelection -Since $Since).Status
+        }
+        'itest-csharp' {
+            exit (Invoke-ItestCsharp -Filter $Filter)
         }
         'format' {
             $status = Invoke-Logged -Name 'format-style' -TimeoutSeconds 180 -Arguments @('format', 'style', $solution, '--severity', 'info') -Slot heavy
