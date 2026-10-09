@@ -42,11 +42,13 @@ static func compare(current: Image, baseline: Image, tolerance: int) -> Variant:
 ## Captures the next drawn frame (cropped to params.crop), saves it as a screenshot does, and
 ## compares it with the PNG at params.baselinePath within params.tolerance. Returns {path,
 ## width, height, changedPixels, totalPixels, bbox[, diffPath, diffPreviewPath]}, or a String
-## saying why it could not.
+## saying why it could not: on a headless game, the frame module's headless refusal, before the
+## baseline is looked at.
 func compare_screenshot(params: Dictionary) -> Variant:
 	var baseline_path: String = str(params.get("baselinePath", ""))
-	if not FileAccess.file_exists(baseline_path):
-		return "there is no baseline file at %s" % baseline_path
+	var refusal: String = _refusal(baseline_path)
+	if not refusal.is_empty():
+		return refusal
 	await bridge._frame.wait_for_drawn_frame()
 	var capture: Variant = _capture(params.get("crop"))
 	if capture is String:
@@ -61,6 +63,15 @@ func compare_screenshot(params: Dictionary) -> Variant:
 	if saved is String:
 		return saved
 	return _reply(saved, compared, int(params.get("previewMaxWidth", 0)))
+
+
+## Why a comparison cannot start, or empty: the frame module's headless refusal on a headless
+## game, else a missing baseline file.
+func _refusal(baseline_path: String) -> String:
+	var refusal: String = bridge._frame.headless_refusal()
+	if refusal.is_empty() and not FileAccess.file_exists(baseline_path):
+		refusal = "there is no baseline file at %s" % baseline_path
+	return refusal
 
 
 ## The changed pixels of two RGBA8 images of one size, counted pixel by pixel: get_pixel pairs
@@ -95,7 +106,7 @@ static func _diff(now: Image, then: Image, threshold: float) -> Dictionary:
 func _capture(crop: Variant) -> Variant:
 	var image: Image = bridge._frame.grab_frame()
 	if image == null:
-		return "the viewport returned no image"
+		return bridge._frame.NO_IMAGE
 	if crop is Dictionary:
 		return bridge._frame.crop(image, crop)
 	return image

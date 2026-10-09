@@ -9,13 +9,47 @@ extends Node
 ## The folder a screenshot is saved under, under the project's .godot/, which projects keep out of
 ## git.
 const SCREENSHOT_DIR := "res://.godot/godot-mcp/screenshots"
+## What a capture answers when a drawing game's viewport has no image.
+const NO_IMAGE := "the viewport returned no image"
+## What a frame-reading tool answers on a headless game (headless_refusal).
+const HEADLESS_REFUSAL := (
+	"a headless game draws no frames, so there is nothing to capture; read state with "
+	+ "get_game_state, get_ui_elements or run_script, or run the scene windowed."
+)
+## What a wait's screenshot warns on a headless game (headless_warning).
+const HEADLESS_WARNING := (
+	"a headless game draws no frames, so no screenshot was taken; read state with "
+	+ "get_game_state, get_ui_elements or run_script, or run the scene windowed."
+)
+
+
+## Whether the game runs on the headless display server, which draws no frames: it reports that
+## no window can draw (servers/display/display_server_headless.h L139-141 in 4.7.2), and the dummy
+## renderer's viewport texture is no texture, so reading its image logs 'Parameter "t" is null'
+## (servers/rendering/dummy/storage/texture_storage.h L108-110, L229).
+static func is_headless() -> bool:
+	return DisplayServer.get_name() == "headless"
+
+
+## HEADLESS_REFUSAL on a headless game, else empty: every frame-reading tool asks it before it
+## grabs or waits for a frame.
+static func headless_refusal() -> String:
+	return HEADLESS_REFUSAL if is_headless() else ""
+
+
+## HEADLESS_WARNING on a headless game, else empty.
+static func headless_warning() -> String:
+	return HEADLESS_WARNING if is_headless() else ""
 
 
 ## The root viewport's image with every visible window that is not embedded (a popup or tooltip
 ## of a project that turns embed_subwindows off, an OS window of its own) pasted on it at its place
 ## in the frame, in the order the display server lists them; null when the viewport has no
-## image. Embedded windows are already in the root viewport's image.
+## image, and on a headless game, whose viewport is never read. Embedded windows are already in
+## the root viewport's image.
 func grab_frame() -> Image:
+	if is_headless():
+		return null
 	var canvas: Image = get_viewport().get_texture().get_image()
 	if canvas == null:
 		return null
@@ -86,10 +120,11 @@ static func _rect_through(transform: Transform2D, rect: Rect2) -> Rect2i:
 ## Saves image (cropped when params.crop is set) as a PNG under the project's .godot/ folder,
 ## which projects keep out of git, and a scaled-down copy when the image is wider than
 ## params.previewMaxWidth. Returns {path, width, height[, previewPath, previewWidth,
-## previewHeight]}, or a String saying why it could not.
+## previewHeight]}, or a String saying why it could not: on a headless game, with no image,
+## HEADLESS_REFUSAL.
 func save_screenshot(image: Image, params: Dictionary) -> Variant:
 	if image == null:
-		return "the viewport returned no image"
+		return HEADLESS_REFUSAL if is_headless() else NO_IMAGE
 	if params.get("crop") is Dictionary:
 		var cropped: Variant = crop(image, params["crop"])
 		if cropped is String:

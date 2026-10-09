@@ -119,10 +119,16 @@ func _busy_refusal() -> String:
 	return CAPTURING_REFUSAL if _running == "frames" else STEPPING_REFUSAL
 
 
-## Refuses a step that would wait for draws that never come; else runs it under the step mark
-## until it ends or its deadline passes: params.deadlineMs, the server's own allowance for it, or
-## params.backstopMs when the server sends one.
+## Refuses a step with a screenshot on a headless game, which draws no frames, and a step that
+## would wait for draws that never come; else runs it under the step mark until it ends or its
+## deadline passes: params.deadlineMs, the server's own allowance for it, or params.backstopMs
+## when the server sends one.
 func _guarded_step(params: Dictionary, result: Dictionary) -> String:
+	var headless: String = (
+		bridge._frame.headless_refusal() if bool(params.get("screenshot", false)) else ""
+	)
+	if not headless.is_empty():
+		return headless
 	if not DisplayServer.window_can_draw():
 		return NO_DRAW_REFUSAL
 	if OS.low_processor_usage_mode:
@@ -323,9 +329,11 @@ func _run_ticks(count: int) -> int:
 ## {result: frames_result}, with call: {value} when the method was called and start when given,
 ## stopped with the points missed when the deadline (params.deadlineMs, or params.backstopMs), a
 ## cancel or the start's timeout ends it first, or {error} when it cannot start, the start's
-## condition or then fails, the call fails or a frame cannot be saved.
+## condition or then fails, the call fails or a frame cannot be saved, or on a headless game.
 func capture_frames(params: Dictionary) -> Dictionary:
-	var refusal: String = _capture_refusal(get_tree().paused)
+	var refusal: String = bridge._frame.headless_refusal()
+	if refusal.is_empty():
+		refusal = _capture_refusal(get_tree().paused)
 	if not refusal.is_empty():
 		return {"error": refusal}
 	var points: Array = params["points"] if params.get("points") is Array else []
@@ -843,8 +851,12 @@ func _then_failure_text(params: Dictionary, ran: Dictionary, frames: int) -> Str
 
 ## Adds the capture of the frame the wait was met on to result as result.screenshot: image when a
 ## draw check took it, else the draw of the frame running now; result.warning instead when that
-## frame is not drawn.
+## frame is not drawn, or at once on a headless game, which draws none.
 func _with_capture(image: Image, params: Dictionary, result: Dictionary) -> Dictionary:
+	var headless: String = bridge._frame.headless_warning()
+	if not headless.is_empty():
+		result["warning"] = headless
+		return {"result": result}
 	if image == null:
 		image = await _capture_this_frame()
 	if image == null:
