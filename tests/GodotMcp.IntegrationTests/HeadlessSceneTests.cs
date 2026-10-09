@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
@@ -968,6 +969,28 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         await _tools.BatchSceneOperationsAsync(probe.Directory, "combat.tscn", steps, cancellation);
 
         AssertCopiesHaveFreshIds(probe.Directory, ["Ties2", "Ties2/Tie", "Layer/Ties", "Layer/Ties/Tie"]);
+    }
+
+    // Guards the kept id against regression: Godot's save writes 150 back too, so the splice unit test with 150 against 999 is the proof.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetNodePropertiesKeepsTheEditedNodesOwnUniqueId()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "combat.tscn"), CombatScene);
+
+        await _tools.SetNodePropertiesAsync(
+            probe.Directory,
+            "combat.tscn",
+            [new PropertyUpdate("Layer", "layer", JsonDocument.Parse("2").RootElement.Clone())],
+            cancellation
+        );
+
+        // The gd_scene header gains the saver's uid, as every edit of a file without one does; the nodes follow it.
+        string text = File.ReadAllText(Path.Combine(probe.Directory, "combat.tscn"));
+        string nodes = CombatScene[CombatScene.IndexOf('\n', StringComparison.Ordinal)..];
+        string expected = nodes.Replace("unique_id=150]\n", "unique_id=150]\nlayer = 2\n", StringComparison.Ordinal);
+        Assert.Equal(expected, text[text.IndexOf('\n', StringComparison.Ordinal)..]);
     }
 
     [Fact(Timeout = TestTimeoutMs)]

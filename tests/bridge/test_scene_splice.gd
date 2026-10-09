@@ -1,3 +1,7 @@
+# gdlint: disable=max-public-methods
+# Each public method is a test the runner finds by its test_ prefix, one per splice case, so the
+# count grows with the cases. gdlint reports the class at line 1, so the line above must be the
+# first.
 extends "res://gd_test.gd"
 ## SceneSplice.splice (headless/scene_splice.gd) on scene texts written inline: the original as a
 ## hand-written file has it, the saved one as Godot 4.7 writes it (no load_steps, unique_id= on
@@ -27,7 +31,6 @@ const HOLDER := ['[node name="Holder" type="Node2D" parent="."]', 'script = ExtR
 const SAVED_HEAD := [SAVED_HEADER, "", SAVED_ENEMY_EXT, SAVED_HOLDER_EXT]
 const SAVED_LEVEL := ['[node name="Level" type="Node2D" unique_id=11]']
 const SAVED_BOSS := ['[node name="Boss" parent="." unique_id=22 instance=ExtResource("1_abcde")]']
-const SAVED_BOX_LINES := [SAVED_BOX, "position = Vector2(1, 2)", "visible = false"]
 const SAVED_HOLDER := [
 	'[node name="Holder" type="Node2D" parent="." unique_id=44]', 'script = ExtResource("2_fghij")'
 ]
@@ -61,9 +64,125 @@ func test_a_changed_property_replaces_only_that_node() -> void:
 
 	var expected: String = _original().replace(
 		'[node name="Box" type="Node2D" parent="."]\nvisible = false\nposition = Vector2(1, 2)\n',
-		SAVED_BOX + "\nposition = Vector2(5, 6)\nvisible = false\n"
+		BOX[0] + "\nposition = Vector2(5, 6)\nvisible = false\n"
 	)
-	assert_eq(spliced, {"text": expected}, "only the changed node takes the saved text")
+	assert_eq(spliced, {"text": expected}, "only the changed node takes the saved properties")
+
+
+func test_a_changed_nested_node_keeps_its_header_without_a_unique_id() -> void:
+	var tabs: String = '[node name="Tabs" type="TabBar" parent="Layout/Top"]'
+	var properties: Array = [
+		"layout_mode = 2",
+		"custom_minimum_size = Vector2(0, 32)",
+		"clip_tabs = false",
+		"max_tab_width = 120",
+	]
+	var saved: String = _panel(" unique_id=%d").replace(
+		tabs.trim_suffix("]") + " unique_id=4]\nlayout_mode = 2\n",
+		(
+			tabs.trim_suffix("]")
+			+ " unique_id=347304148]\n"
+			+ "\n".join(PackedStringArray(properties))
+			+ "\n"
+		)
+	)
+
+	var spliced: Dictionary = _splice.splice(_panel(""), saved)
+
+	var expected: String = _panel("").replace(
+		tabs + "\nlayout_mode = 2\n", tabs + "\n" + "\n".join(PackedStringArray(properties)) + "\n"
+	)
+	assert_eq(spliced, {"text": expected}, "the edited node's header stays without a unique_id")
+
+
+func test_a_changed_node_keeps_its_own_unique_id() -> void:
+	var original: String = _text(
+		[
+			"[gd_scene format=3]",
+			"",
+			'[node name="Combat" type="Node2D" unique_id=100]',
+			"",
+			'[node name="Layer" type="CanvasLayer" parent="." unique_id=150]',
+		]
+	)
+	var saved: String = _text(
+		[
+			"[gd_scene format=3]",
+			"",
+			'[node name="Combat" type="Node2D" unique_id=100]',
+			"",
+			'[node name="Layer" type="CanvasLayer" parent="." unique_id=999]',
+			"layer = 2",
+		]
+	)
+
+	var spliced: Dictionary = _splice.splice(original, saved)
+
+	assert_eq(spliced, {"text": original + "layer = 2\n"}, "the edited node keeps unique_id=150")
+
+
+func test_a_saved_tag_without_a_unique_id_gets_the_original_one() -> void:
+	var layer: String = '[node name="Layer" type="CanvasLayer" parent="." groups=["hud"]'
+	var original: String = _text(
+		[
+			"[gd_scene format=3]",
+			"",
+			'[node name="Combat" type="Node2D" unique_id=100]',
+			"",
+			layer + " unique_id=150]",
+		]
+	)
+	var saved: String = _text(
+		[
+			"[gd_scene format=3]",
+			"",
+			'[node name="Combat" type="Node2D" unique_id=100]',
+			"",
+			layer + "]",
+			"layer = 2",
+		]
+	)
+
+	var spliced: Dictionary = _splice.splice(original, saved)
+
+	assert_eq(
+		spliced,
+		{"text": original + "layer = 2\n"},
+		"the original id goes before the tag's closing bracket, after the groups"
+	)
+
+
+func test_a_changed_node_in_a_crlf_file_keeps_its_line_endings_and_id_state() -> void:
+	var head: Array = [
+		"[gd_scene format=3]", "", '[node name="Combat" type="Node2D" unique_id=100]'
+	]
+	var layer: String = '[node name="Layer" type="CanvasLayer" parent="."'
+	var hud: String = '[node name="Hud" type="Node2D" parent="."'
+	var original: String = _text(head + ["", layer + " unique_id=150]", "", hud + "]"])
+	var saved: String = _text(
+		(
+			head
+			+ [
+				"",
+				layer + " unique_id=999]",
+				"layer = 2",
+				"",
+				hud + " unique_id=300]",
+				"visible = false"
+			]
+		)
+	)
+
+	var spliced: Dictionary = _splice.splice(original.replace("\n", "\r\n"), saved)
+
+	var expected: String = _text(
+		head + ["", layer + " unique_id=150]", "layer = 2", "", hud + "]", "visible = false"]
+	)
+	assert_eq(
+		spliced,
+		{"text": expected.replace("\n", "\r\n")},
+		"each edited tag line keeps its CRLF and its own unique_id state"
+	)
 
 
 func test_a_deleted_node_drops_only_its_section() -> void:
@@ -88,7 +207,7 @@ func test_a_new_ext_resource_is_added_after_the_last() -> void:
 		. replace(
 			'[node name="Box" type="Node2D" parent="."]\nvisible = false\nposition = Vector2(1, 2)\n',
 			(
-				SAVED_BOX
+				BOX[0]
 				+ '\nposition = Vector2(1, 2)\nvisible = false\nscript = ExtResource("3_klmno")\n'
 			)
 		)
@@ -106,10 +225,7 @@ func test_renumbered_ids_map_back_to_the_originals() -> void:
 
 	var expected: String = _original().replace(
 		'[node name="Boss" parent="." instance=ExtResource("1")]\n',
-		(
-			'[node name="Boss" parent="." unique_id=22 instance=ExtResource("1")]\n'
-			+ "position = Vector2(7, 8)\n"
-		)
+		BOSS[0] + "\nposition = Vector2(7, 8)\n"
 	)
 	assert_eq(spliced, {"text": expected}, "the changed node refers to the original's ext id")
 
@@ -152,7 +268,7 @@ func test_a_sub_resource_is_matched_by_content() -> void:
 			+ "position = Vector2(1, 1)\n"
 		),
 		(
-			'[node name="Shape" type="CollisionShape2D" parent="." unique_id=2]\n'
+			'[node name="Shape" type="CollisionShape2D" parent="."]\n'
 			+ 'position = Vector2(2, 2)\nshape = SubResource("1")\n'
 		)
 	)
@@ -238,7 +354,7 @@ func test_identical_sub_resources_splice_without_falling_back() -> void:
 			+ "position = Vector2(1, 1)\n"
 		),
 		(
-			'[node name="B" type="CollisionShape2D" parent="." unique_id=3]\n'
+			'[node name="B" type="CollisionShape2D" parent="."]\n'
 			+ 'position = Vector2(2, 2)\nshape = SubResource("2")\n'
 		)
 	)
@@ -264,7 +380,7 @@ func test_an_added_identical_sub_resource_is_added() -> void:
 
 func test_a_reordered_node_takes_its_saved_place() -> void:
 	var saved: String = _nodes_text(
-		SAVED_HEAD, [SAVED_LEVEL, SAVED_HOLDER, SAVED_BOSS, SAVED_BOX_LINES]
+		SAVED_HEAD, [SAVED_LEVEL, SAVED_HOLDER, SAVED_BOSS, _saved_box([])]
 	)
 
 	var spliced: Dictionary = _splice.splice(_original(), saved)
@@ -276,7 +392,7 @@ func test_a_reordered_node_takes_its_saved_place() -> void:
 func test_a_move_and_an_add_splice_in_the_saved_order() -> void:
 	var marker: Array = [MARKER, "position = Vector2(3, 4)"]
 	var saved: String = _nodes_text(
-		SAVED_HEAD, [SAVED_LEVEL, SAVED_HOLDER, SAVED_BOSS, SAVED_BOX_LINES, marker]
+		SAVED_HEAD, [SAVED_LEVEL, SAVED_HOLDER, SAVED_BOSS, _saved_box([]), marker]
 	)
 
 	var spliced: Dictionary = _splice.splice(_original(), saved)
@@ -360,6 +476,25 @@ func _saved_shapes(b_position: String, third: bool) -> String:
 	if third:
 		lines += ["", '[node name="C" type="CollisionShape2D" parent="." unique_id=4]']
 		lines += ['shape = SubResource("RectangleShape2D_ccccc")']
+	return _text(lines)
+
+
+## An ActionPanel-shaped scene with no resources: Layout holding Top (holding Tabs, a TabBar) and
+## Bottom. id_format is "" for a file with no unique_id, or " unique_id=%d" for each node's id as
+## Godot 4.7 saves it, numbered from 1 in file order.
+func _panel(id_format: String) -> String:
+	var nodes: Array = [
+		['name="ActionPanel" type="Control"', "layout_mode = 3", "anchors_preset = 0"],
+		['name="Layout" type="VBoxContainer" parent="."', "layout_mode = 0"],
+		['name="Top" type="HBoxContainer" parent="Layout"', "layout_mode = 2"],
+		['name="Tabs" type="TabBar" parent="Layout/Top"', "layout_mode = 2"],
+		['name="Bottom" type="HBoxContainer" parent="Layout"', "layout_mode = 2"],
+	]
+	var header: String = '[gd_scene format=3 uid="uid://bppanel00000a"]'
+	var lines: Array = [header]
+	for index in nodes.size():
+		var id: String = id_format % (index + 1) if not id_format.is_empty() else ""
+		lines += ["", "[node %s%s]" % [nodes[index][0], id]] + nodes[index].slice(1)
 	return _text(lines)
 
 

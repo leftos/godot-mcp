@@ -99,6 +99,15 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         + "anchor_right = 1.0\nanchor_bottom = 1.0\n\n"
         + "[node name=\"Marker\" type=\"Node2D\" parent=\".\"]\n";
 
+    // panel.tscn: an ActionPanel-shaped Control with no unique_id on any node, its TabBar nested at Layout/Top/Tabs. The root
+    // is not full-rect, so no stored layout_mode changes at the save.
+    private const string PanelScene =
+        "[gd_scene format=3 uid=\"uid://bqpanel00000a\"]\n\n[node name=\"ActionPanel\" type=\"Control\"]\nlayout_mode = 3\n"
+        + "anchors_preset = 0\n\n[node name=\"Layout\" type=\"VBoxContainer\" parent=\".\"]\nlayout_mode = 0\n\n"
+        + "[node name=\"Top\" type=\"HBoxContainer\" parent=\"Layout\"]\nlayout_mode = 2\n\n"
+        + "[node name=\"Tabs\" type=\"TabBar\" parent=\"Layout/Top\"]\nlayout_mode = 2\n\n"
+        + "[node name=\"Bottom\" type=\"HBoxContainer\" parent=\"Layout\"]\nlayout_mode = 2\n";
+
     // ShadowTrail.cs: a Node2D script whose private field scale shadows Node2D.scale.
     private static readonly Dictionary<string, string> ShadowTrailSources = new() { ["ShadowTrail.cs"] = ShadowTrailSource };
 
@@ -430,9 +439,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         string[] original = DefaultLabelScene.Split('\n');
         string[] lines = Read(probe.Directory, "defaults.tscn").Split('\n');
         int marker = Array.IndexOf(original, "[node name=\"Marker\" type=\"Node2D\" parent=\".\"]");
-        Assert.Equal(original.Length + 1, lines.Length);
-        Assert.StartsWith("[node name=\"Marker\" type=\"Node2D\" parent=\".\" unique_id=", lines[marker], StringComparison.Ordinal);
-        Assert.Equal([.. original[..marker], lines[marker], "position = Vector2(5, 6)", .. original[(marker + 1)..]], lines);
+        Assert.Equal([.. original[..(marker + 1)], "position = Vector2(5, 6)", .. original[(marker + 1)..]], lines);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -453,9 +460,8 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         string[] lines = Read(probe.Directory, "defaults.tscn").Split('\n');
         int title = Array.IndexOf(original, "[node name=\"Title\" type=\"Label\" parent=\".\"]");
         Assert.Equal(original.Length + 1, lines.Length);
-        Assert.StartsWith("[node name=\"Title\" type=\"Label\" parent=\".\" unique_id=", lines[title], StringComparison.Ordinal);
         Assert.Equal(["size_flags_vertical = 4", "texture_filter = 1"], lines[(title + 1)..(title + 3)].Order(StringComparer.Ordinal));
-        Assert.Equal([.. original[..title], lines[title], lines[title + 1], lines[title + 2], .. original[(title + 2)..]], lines);
+        Assert.Equal([.. original[..(title + 1)], lines[title + 1], lines[title + 2], .. original[(title + 2)..]], lines);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -687,9 +693,37 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         string[] original = LevelScene.Split('\n');
         string[] lines = Read(probe.Directory, "level.tscn").Split('\n');
         int box = Array.IndexOf(original, "[node name=\"Box\" type=\"Node2D\" parent=\".\"]");
-        Assert.Equal(original.Length + 1, lines.Length);
-        Assert.StartsWith("[node name=\"Box\" type=\"Node2D\" parent=\".\" unique_id=", lines[box], StringComparison.Ordinal);
-        Assert.Equal([.. original[..box], lines[box], "position = Vector2(5, 6)", .. original[(box + 1)..]], lines);
+        Assert.Equal([.. original[..(box + 1)], "position = Vector2(5, 6)", .. original[(box + 1)..]], lines);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetNodePropertiesOnANestedNodeKeepsItsHeaderWithoutAUniqueId()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "panel.tscn"), PanelScene);
+
+        await _tools.SetNodePropertiesAsync(
+            probe.Directory,
+            "panel.tscn",
+            [
+                new PropertyUpdate("Layout/Top/Tabs", "custom_minimum_size", Json("""{"x": 0, "y": 32}""")),
+                new PropertyUpdate("Layout/Top/Tabs", "clip_tabs", Json("false")),
+                new PropertyUpdate("Layout/Top/Tabs", "max_tab_width", Json("120")),
+            ],
+            cancellation
+        );
+
+        string[] original = PanelScene.Split('\n');
+        string[] lines = Read(probe.Directory, "panel.tscn").Split('\n');
+        int tabs = Array.IndexOf(original, "[node name=\"Tabs\" type=\"TabBar\" parent=\"Layout/Top\"]");
+        Assert.Equal(original.Length + 3, lines.Length);
+        Assert.Equal(original[..(tabs + 1)], lines[..(tabs + 1)]);
+        Assert.Equal(
+            ["clip_tabs = false", "custom_minimum_size = Vector2(0, 32)", "layout_mode = 2", "max_tab_width = 120"],
+            lines[(tabs + 1)..(tabs + 5)].Order(StringComparer.Ordinal)
+        );
+        Assert.Equal(original[(tabs + 2)..], lines[(tabs + 5)..]);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -1274,8 +1308,8 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
     private static string Read(string directory, string relative) => File.ReadAllText(Path.Combine(directory, relative));
 
     /// <summary>
-    /// The header line of the node named name in a saved scene, and the property lines under it. A 4.7 save adds unique_id= to
-    /// node headers, so a header is checked by the attributes it holds.
+    /// The header line of the node named name in a saved scene, and the property lines under it. An added node's header carries
+    /// the unique_id= a 4.7 save draws for it, so a header is checked by the attributes it holds.
     /// </summary>
     private static (string Header, string[] Body) Section(string directory, string scene, string name)
     {

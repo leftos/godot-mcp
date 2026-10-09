@@ -14,6 +14,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - A quiet run started by a server under ssh or a service no longer fails before its game starts; the hidden desktop is named in the server's own window station.
+- A headless scene edit no longer writes a `unique_id` into an edited node's header in a scene that has none; an edited node keeps its own id.
 
 ## 0.15.0 - 2026-10-06
 

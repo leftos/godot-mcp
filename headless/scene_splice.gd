@@ -3,7 +3,9 @@ extends RefCounted
 ## file in Godot's own form (no load_steps, unique_id= on every node, properties reordered,
 ## ext_resource ids renumbered), so splice(original, saved) keeps every section of the file the
 ## edit left alone byte for byte and takes the saved text only for the sections it added or
-## changed.
+## changed. A changed section keeps its own unique_id state: its tag line is the saved one but for
+## unique_id=, which it has only when the original had it, with the original's value; an added
+## section keeps the unique_id the saver gave it.
 ##
 ## A section is a line opening [gd_scene, [ext_resource, [sub_resource, [node, [connection or
 ## [editable and every line up to the next such line, blank lines included. Sections are matched
@@ -32,6 +34,8 @@ static var _reference := RegEx.create_from_string(
 static var _saver_attribute := RegEx.create_from_string(
 	' (?:unique_id=-?\\d+|id="[^"]*"|uid="[^"]*")'
 )
+## A node tag line's unique_id attribute, with the space before it.
+static var _unique_id := RegEx.create_from_string(" unique_id=-?\\d+")
 ## The start of a property line: a name, then " = ".
 static var _property_start := RegEx.create_from_string("^[A-Za-z_][^\\s=]*\\s*=")
 static var _load_steps := RegEx.create_from_string(" load_steps=\\d+")
@@ -310,8 +314,8 @@ static func _id_map(before: Dictionary, after: Dictionary) -> Dictionary:
 
 
 ## original's sections that saved still has, as {kind, key, content, sep}: the original's text when
-## the canonical forms match, else saved's with its ids mapped back. A dropped section's blank lines
-## go to the section before it.
+## the canonical forms match, else saved's with its ids mapped back and the original's unique_id
+## state. A dropped section's blank lines go to the section before it.
 static func _kept_entries(
 	before: Dictionary, after: Dictionary, ids: Dictionary
 ) -> Array[Dictionary]:
@@ -325,11 +329,28 @@ static func _kept_entries(
 		var saved: Dictionary = after["by_key"][key]
 		entry["content"] = section["content"]
 		if saved["canon"] != section["canon"]:
-			entry["content"] = _mapped(saved, ids).replace(
+			var content: String = _mapped(saved, ids).replace(
 				' id="%s"' % saved["id"], ' id="%s"' % section["id"]
 			)
+			entry["content"] = _with_unique_id_of(section["head"], content)
 		entries.append(entry)
 	return entries
+
+
+## content with its tag line's unique_id as head has it: none when head has none, else head's,
+## in the place saved gave its own (before the closing "]" when it gave none). The rest of the tag
+## line is content's.
+static func _with_unique_id_of(head: String, content: String) -> String:
+	var own: RegExMatch = _unique_id.search(head)
+	var token: String = "" if own == null else own.get_string()
+	var end: int = content.find("\n")
+	var tag: String = content if end < 0 else content.substr(0, end)
+	var rest: String = "" if end < 0 else content.substr(end)
+	if _unique_id.search(tag) != null:
+		tag = _unique_id.sub(tag, token)
+	elif own != null:
+		tag = tag.insert(tag.rfind("]"), token)
+	return tag + rest
 
 
 ## saved's sections original has no key for, in saved's order, by the key of the section before
