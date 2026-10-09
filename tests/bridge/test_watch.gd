@@ -15,10 +15,13 @@ signal test_frame
 const NOT_GDSCRIPT_HINT := "Godot's Expression is not GDScript: it has no lambdas (func), no if/else, no is or as, no not in (write not (a in b)), and no statements; it has calls, indexing, literals and operators such as and, or, not, in, ==, !=, <, <=, >, >=, +, -, *, / and %."
 
 const BRIDGE_SOURCE := (
-	"extends Node\n\nvar _json: GDScript\nvar _inspect: Node\nvar top: Node\n\n\n"
+	"extends Node\n\nvar _json: GDScript\nvar _inspect: Node\nvar _logger: Logger\nvar top: Node\n\n\n"
 	+ "func _find_node(element: String) -> Node:\n"
 	+ "\treturn top.find_child(element, true, false)\n"
 )
+
+## A game method an expression calls, which raises the game's own error.
+const SHOUT_SOURCE := "extends Node2D\n\n\nfunc shout():\n\tpush_error('shout')\n\treturn 1\n"
 
 var _watch_script: GDScript = load_bridge_script("godot_mcp_watch.gd")
 
@@ -157,6 +160,60 @@ func test_an_expression_error_is_recorded_once_and_the_track_recovers() -> void:
 	assert_eq([values[0], values[2]], [1, 2], "the values around it")
 	assert_true(values[1] is Dictionary and values[1].has("$error"), "the error: %s" % [values[1]])
 	assert_eq(track["name"], "pick", "keyed by its name")
+	_free(rig)
+
+
+func test_an_engine_error_a_called_method_raises_stays_out_of_the_feed_and_reads_null() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var logger: Logger = load_bridge_script("godot_mcp_logger.gd").new()
+	rig["bridge"]._logger = logger
+	var spec: Dictionary = {"name": "first", "node": "Mover", "expression": "node.get_child(0)"}
+	watch.begin({"expressions": [spec], "frames": 3}, test_frame)
+	var running: Dictionary = watch._watch
+	var child := Node.new()
+	OS.add_logger(logger)
+	watch.advance(running, false, 0, 0.25, 0)
+	rig["mover"].add_child(child)
+	watch.advance(running, false, 1, 0.25, 10)
+	OS.remove_logger(logger)
+	# The runner fails a test on any engine error; the one get_child raised is expected, so it is
+	# taken here and checked to be the only one.
+	var raised: PackedStringArray = Engine.get_main_loop().get("_recorder").take()
+	assert_eq(raised.size(), 1, "the engine raised one error: %s" % [raised])
+	assert_true(raised.size() == 1 and raised[0].contains("out of bounds"), "%s" % [raised])
+	assert_eq(logger.take_pending(), [[], 0], "and the bridge's logger kept none of it")
+	assert_true(is_same(running["tracks"][0]["last"], child), "the track then reads the child")
+	var track: Dictionary = watch.stop()["result"]["tracks"][0]
+	assert_eq(track["points"][0], [0, 0, null], "the frame before the child reads null")
+	_free(rig)
+
+
+func test_an_error_game_code_an_expression_calls_raises_still_reaches_the_feed() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var logger: Logger = load_bridge_script("godot_mcp_logger.gd").new()
+	rig["bridge"]._logger = logger
+	var script := GDScript.new()
+	script.source_code = SHOUT_SOURCE
+	script.reload()
+	rig["mover"].set_script(script)
+	var specs: Array = [
+		{"name": "first", "node": "Mover", "expression": "node.get_child(0)"},
+		{"name": "shout", "node": "Mover", "expression": "node.shout()"},
+	]
+	watch.begin({"expressions": specs, "frames": 2}, test_frame)
+	OS.add_logger(logger)
+	watch.advance(watch._watch, false, 0, 0.25, 0)
+	OS.remove_logger(logger)
+	# Both errors reach the runner, which would fail the test on them; they are expected.
+	var raised: PackedStringArray = Engine.get_main_loop().get("_recorder").take()
+	assert_eq(raised.size(), 2, "get_child's error and the game's: %s" % [raised])
+	var entries: Array = logger.take_pending()[0]
+	var messages: Array = entries.map(func(entry: Dictionary) -> String: return entry["message"])
+	assert_eq(messages, ["shout"], "the game's error lands, get_child's does not")
+	var tracks: Array = watch.stop()["result"]["tracks"]
+	assert_eq(tracks[1]["points"], [[0, 0, 1]], "the game method's value")
 	_free(rig)
 
 

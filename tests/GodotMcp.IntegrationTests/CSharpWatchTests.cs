@@ -27,6 +27,22 @@ public sealed class CSharpWatchTests(SharedCsProbeSession shared) : IClassFixtur
 
         """;
 
+    // A CsTools node (tests/fixtures/CsProbe/CsTools.cs) with no children, whose Complain push_errors from C#.
+    private const string Complainer = "/root/Complainer";
+
+    private const string AddComplainerScript = """
+        extends RefCounted
+
+
+        func execute(scene_tree: SceneTree) -> Variant:
+        	if not scene_tree.root.has_node("Complainer"):
+        		var node: Node = load("res://CsTools.cs").new()
+        		node.name = "Complainer"
+        		scene_tree.root.add_child(node)
+        	return true
+
+        """;
+
     private readonly RuntimeTools _tools = new(shared.Sessions, shared.Bridge);
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -72,6 +88,29 @@ public sealed class CSharpWatchTests(SharedCsProbeSession shared) : IClassFixtur
         Assert.Contains(Signals, dealt[4]!.ToJsonString(), StringComparison.Ordinal);
         Assert.Equal("""[1,"two"]""", dealt[5]!.ToJsonString().Replace("1.0", "1", StringComparison.Ordinal));
         Assert.Equal(1, Int(timeline["eventCounts"]![$"{Signals}:Dealt"]));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnErrorACSharpMethodAnExpressionTrackCallsPushesLandsAndAnEngineErrorBesideItDoesNot()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonNode added = JsonNode.Parse(await _tools.RunScriptAsync(AddComplainerScript, ScriptTimeoutMs, cancellationToken: cancellation))!;
+        Assert.True(added["value"]?.GetValue<bool>() == true, added.ToJsonString());
+        WatchTracks tracks = new(
+            Expressions:
+            [
+                new WatchExpressionTrack("first", "node.get_child(0)", Node: Complainer),
+                new WatchExpressionTrack("complain", "node.Complain()", Node: Complainer),
+            ]
+        );
+
+        JsonObject timeline = JsonNode
+            .Parse(await _tools.WatchAsync("run", tracks, new WatchWindow(Frames: 3), cancellationToken: cancellation))!
+            .AsObject();
+
+        Assert.True(timeline["errors"] is JsonArray { Count: > 0 }, timeline.ToJsonString());
+        Assert.All(timeline["errors"]!.AsArray(), error => Assert.Equal("CsTools complained", error!["message"]!.GetValue<string>()));
+        Assert.Equal(1, Int(timeline["tracks"]![1]!["last"]));
     }
 
     // GDScript's JSON may write an integer as a float, so numbers are read as doubles.

@@ -28,6 +28,17 @@ public sealed class WatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
         "extends Node2D\\n\\nsignal moved\\n\\nvar armed := false\\nvar moved_delta := 0.0\\n\\n\\n"
         + "func _process(delta: float) -> void:\\n\\tif armed:\\n\\t\\tarmed = false\\n\\t\\tmoved_delta = delta\\n\\t\\t"
         + "position.x = 50.0\\n\\t\\tmoved.emit()\\n";
+
+    // Once armed, adds a child named Kid three frames later, and with arm_and_raise also has the scene's Main raise its
+    // probe error then, from the game's own _process. shout, for an expression to call, push_errors the first time.
+    private const string GrowerScript =
+        "extends Node\\n\\nvar frames_left := 0\\nvar raise := false\\nvar shouted := false\\n\\n\\n"
+        + "func arm() -> void:\\n\\tframes_left = 3\\n\\n\\n"
+        + "func arm_and_raise() -> void:\\n\\traise = true\\n\\tframes_left = 3\\n\\n\\n"
+        + "func shout() -> int:\\n\\tif not shouted:\\n\\t\\tshouted = true\\n\\t\\tpush_error('grower shout')\\n\\treturn 1\\n\\n\\n"
+        + "func _process(_delta: float) -> void:\\n\\tif frames_left <= 0:\\n\\t\\treturn\\n\\tframes_left -= 1\\n\\t"
+        + "if frames_left == 0:\\n\\t\\tvar kid := Node.new()\\n\\t\\tkid.name = 'Kid'\\n\\t\\tadd_child(kid)\\n\\t\\t"
+        + "if raise:\\n\\t\\t\\tget_tree().current_scene.probe_push_error()\\n";
     private readonly SharedProbeSession _shared;
     private readonly ServiceProvider _services;
     private readonly McpServer _server;
@@ -207,6 +218,36 @@ public sealed class WatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
         JsonObject track = timeline["tracks"]![0]!.AsObject();
         Assert.Equal("""{"$freed":true}""", track["last"]!.ToJsonString());
         Assert.Single(track["points"]!.AsArray(), point => point![2] is JsonObject marker && marker.ContainsKey("$freed"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnEngineErrorAnExpressionTrackRaisesIsNotInTheCallsErrors()
+    {
+        (JsonObject timeline, string grower) = await RunGrowerWatchAsync("arm", [], TestContext.Current.CancellationToken);
+
+        Assert.Null(timeline["errors"]);
+        AssertNullThenKid(timeline, grower);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnErrorGameCodeAnExpressionTrackCallsRaisesIsInTheCallsErrors()
+    {
+        (JsonObject timeline, string grower) = await RunGrowerWatchAsync("arm", ["node.shout()"], TestContext.Current.CancellationToken);
+
+        JsonNode error = Assert.Single(timeline["errors"]!.AsArray())!;
+        Assert.Equal("grower shout", error["message"]!.GetValue<string>());
+        AssertNullThenKid(timeline, grower);
+        Assert.Equal(1, Int(timeline["tracks"]![1]!["last"]));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task TheGamesOwnErrorDuringAWatchWithAnExpressionTrackIsStillInTheCallsErrors()
+    {
+        (JsonObject timeline, string grower) = await RunGrowerWatchAsync("arm_and_raise", [], TestContext.Current.CancellationToken);
+
+        JsonNode error = Assert.Single(timeline["errors"]!.AsArray())!;
+        Assert.Equal("probe fixture error", error["message"]!.GetValue<string>());
+        AssertNullThenKid(timeline, grower);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -424,6 +465,49 @@ public sealed class WatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
                     + "return str(mover.get_path())"
             )
         ).GetValue<string>();
+
+    /// <summary>
+    /// Adds WatchGrower and runs a 20-frame watch whose call is its <paramref name="arm"/> method, with an expression track
+    /// reading its first child, which raises an engine error each frame before Kid is added, then a track on the grower for
+    /// each of <paramref name="moreExpressions"/>; returns the timeline and the grower's path.
+    /// </summary>
+    private async Task<(JsonObject Timeline, string Grower)> RunGrowerWatchAsync(string arm, string[] moreExpressions, CancellationToken cancellation)
+    {
+        string grower = (
+            await RunAsync(
+                "var grower := Node.new()\n\tgrower.name = \"WatchGrower\"\n\tvar script := GDScript.new()\n\t"
+                    + $"script.source_code = \"{GrowerScript}\"\n\tscript.reload()\n\tgrower.set_script(script)\n\t"
+                    + "scene_tree.root.add_child(grower)\n\treturn str(grower.get_path())"
+            )
+        ).GetValue<string>();
+        WatchTracks tracks = new(
+            Expressions:
+            [
+                new WatchExpressionTrack("first", "node.get_child(0)", Node: grower),
+                .. moreExpressions.Select((expression, index) => new WatchExpressionTrack($"more{index}", expression, Node: grower)),
+            ]
+        );
+
+        JsonObject timeline = await WatchAsync(
+            "run",
+            cancellation,
+            tracks,
+            new WatchWindow(Frames: 20),
+            new WatchOptions(Call: new MethodCall(grower, arm))
+        );
+        return (timeline, grower);
+    }
+
+    /// <summary>The track on the grower at <paramref name="grower"/> read null until Kid was added, then Kid, once.</summary>
+    private static void AssertNullThenKid(JsonObject timeline, string grower)
+    {
+        JsonObject track = timeline["tracks"]![0]!.AsObject();
+        JsonArray points = track["points"]!.AsArray();
+        Assert.Equal(2, points.Count);
+        Assert.Null(points[0]![2]);
+        Assert.Equal($"{grower}/Kid", points[1]![2]!.GetValue<string>());
+        Assert.True(Int(points[1]![0]) >= 2, track.ToJsonString());
+    }
 
     /// <summary>Adds OpenButton, which shows a hidden OpenedPanel when pressed, and returns the panel's path.</summary>
     private async Task<string> AddOpenerAsync() =>

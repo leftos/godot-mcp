@@ -506,13 +506,22 @@ func _read(track: Dictionary) -> Variant:
 
 
 ## Runs expression with wait_for's inputs, and node when there is one; show_error is off, since a
-## failure would log every frame (expression.cpp L1494-1508 in 4.7.2).
+## failure would log every frame (expression.cpp L1494-1508 in 4.7.2). show_error silences only
+## Expression's own report, so the bridge's logger is muted while it runs: an engine error a method
+## it calls raises (get_child(0) on a node with no children) stays out of the call's errors, and
+## the track reads the null that method returns. The logger is read here, not kept, since a dormant
+## bridge has none until its first join.
 func _evaluate(expression: Expression, node: Node) -> Variant:
 	var tree := Engine.get_main_loop() as SceneTree
 	var inputs: Array = [tree.root, tree, Input, Engine]
 	if node != null:
 		inputs.append(node)
+	var logger: Logger = bridge._logger
+	if logger != null:
+		logger.mute(true)
 	var value: Variant = expression.execute(inputs, node, false)
+	if logger != null:
+		logger.mute(false)
 	if expression.has_execute_failed():
 		return {"$error": expression.get_error_text()}
 	return value
