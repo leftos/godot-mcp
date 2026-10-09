@@ -208,6 +208,8 @@ public sealed class BatchValidationTests : IDisposable
         Assert.DoesNotContain("run_project", RuntimeTools.BatchableTools);
         Assert.DoesNotContain("list_sessions", RuntimeTools.BatchableTools);
         Assert.DoesNotContain("batch_drive", RuntimeTools.BatchableTools);
+        // save_screenshot writes a project file, which batch_drive's edit-live class does not grant.
+        Assert.DoesNotContain("save_screenshot", RuntimeTools.BatchableTools);
         Assert.Contains("watch", RuntimeTools.BatchableTools);
         Assert.Equal(38, RuntimeTools.BatchableTools.Count);
     }

@@ -20,7 +20,7 @@ Put one line in the agent file's body, after the front matter:
 | `read` | look without changing anything: the scene tree, node properties, screenshots, frame captures, errors, `cs_get`, `get_game_state` |
 | `drive` | start, stop and play the game: `run_project`, `stop_project`, input, gamepad, `frame_control`, `wait_for`, baselines |
 | `edit-live` | change the running game's state: `set_property`, `call_method`, `run_script`, `run_csharp`, `cs_set`, `cs_call`, `call_game_tool`, `batch_drive` |
-| `edit-scene` | edit `.tscn` files headless: `add_node`, `set_node_properties`, `save_scene`, and the rest of the scene tools |
+| `edit-scene` | edit `.tscn` files headless: `add_node`, `set_node_properties`, `save_scene`, and the rest of the scene tools; also `save_screenshot`, which writes a PNG into the project |
 
 `godot-mcp --list-tools` prints every tool with its class. Pick the classes by the agent's role: a reviewer or explorer `read`; a playtester `read, drive`; a debugger that edits no file `read, drive, edit-live`; an implementer all four.
 

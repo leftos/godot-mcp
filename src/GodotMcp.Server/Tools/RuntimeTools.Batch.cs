@@ -27,7 +27,10 @@ internal sealed partial class RuntimeTools
     private const int DefaultTolerance = 2;
     private const string AssertionKindList = "property, expression, wait, no_errors, screenshot";
 
-    /// <summary>The tools a batch step may name: every tool declared on this class but batch_drive itself.</summary>
+    /// <summary>
+    /// The tools a batch step may name: every tool declared on this class but batch_drive itself and save_screenshot, which
+    /// writes a project file, a power batch_drive's edit-live class does not grant.
+    /// </summary>
     internal static readonly IReadOnlySet<string> BatchableTools = FindBatchableTools();
 
     private static readonly FrozenDictionary<string, AssertionKind> AssertionKinds = new Dictionary<string, AssertionKind>
@@ -154,7 +157,7 @@ internal sealed partial class RuntimeTools
             .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
             .Select(method => method.GetCustomAttribute<McpServerToolAttribute>()?.Name)
             .OfType<string>()
-            .Where(name => name != BatchToolName)
+            .Where(name => name is not (BatchToolName or SaveScreenshotToolName))
             .ToFrozenSet();
 
     private static void CheckStep(int index, BatchStep? step)

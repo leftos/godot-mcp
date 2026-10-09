@@ -139,6 +139,48 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task SaveScreenshotWritesTheCaptureToTheNamedFileAndKeepsThePreviewUnderDotGodot()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string folder = Path.Combine(_shared.ProbeDirectory, "docs-shots");
+        string named = Path.Combine(folder, "showcase", "probe.png");
+        // A preview narrower than the crop, so one is made and must stay beside the capture.
+        SaveScreenshotOptions options = new(PreviewMaxWidth: 40);
+        try
+        {
+            List<ContentBlock> blocks =
+            [
+                .. await _tools.SaveScreenshotAsync("docs-shots/showcase/probe.png", RedSquare, options, cancellationToken: cancellation),
+            ];
+            JsonNode reply = JsonNode.Parse(Text(blocks))!;
+            string capture = reply["capturePath"]!.GetValue<string>();
+            string screenshots = Path.Combine(_shared.ProbeDirectory, ".godot", "godot-mcp", "screenshots");
+
+            Assert.Equal(named, reply["path"]!.GetValue<string>());
+            Assert.True(File.Exists(named), $"no file at {named}: {reply.ToJsonString()}");
+            Assert.Equal(File.ReadAllBytes(capture), File.ReadAllBytes(named));
+            Assert.Equal(screenshots, Path.GetDirectoryName(capture));
+            Assert.Equal(screenshots, Path.GetDirectoryName(reply["previewPath"]!.GetValue<string>()));
+            Assert.Equal(["probe.png"], Directory.EnumerateFiles(Path.GetDirectoryName(named)!).Select(Path.GetFileName));
+
+            // A refused path is refused before the shot, so it leaves no capture behind.
+            int captures = Directory.EnumerateFiles(screenshots).Count();
+            McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+                _tools.SaveScreenshotAsync(".godot/probe.png", RedSquare, options, cancellationToken: cancellation)
+            );
+            Assert.StartsWith("path .godot/probe.png is under .godot/", refused.Message, StringComparison.Ordinal);
+            Assert.Equal(captures, Directory.EnumerateFiles(screenshots).Count());
+        }
+        finally
+        {
+            if (Directory.Exists(folder))
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AResetUndoesPauseTimeScaleHeldInputAndSceneChanges()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

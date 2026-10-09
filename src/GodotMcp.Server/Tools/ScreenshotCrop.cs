@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json.Nodes;
 
 namespace GodotMcp.Server.Tools;
 
@@ -20,6 +21,9 @@ internal enum ScreenshotMode
     Preview,
     Full,
 }
+
+/// <summary>A screenshot's bridge request: the image the result carries and the bridge's parameters.</summary>
+internal sealed record ScreenshotRequest(ScreenshotMode Mode, JsonObject Parameters);
 
 /// <summary>The files the bridge saved for one screenshot, with native paths; the preview only when one was made.</summary>
 internal sealed record ScreenshotFiles(string Path, int Width, int Height, string? PreviewPath, int? PreviewWidth, int? PreviewHeight);

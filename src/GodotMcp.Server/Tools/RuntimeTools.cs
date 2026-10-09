@@ -22,6 +22,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     internal const int MaxErrorsLimit = ErrorFeed.Capacity;
     internal const int MaxPageSize = 500;
     internal const int MaxValueLength = 20000;
+    internal const string SaveScreenshotToolName = "save_screenshot";
     internal const string ResponseModeDescription =
         "path_only: the path and size only; preview: also the image, scaled down to previewMaxWidth when wider "
         + "(the scaled copy is saved beside the full one); full: also the full-resolution image.";
@@ -62,14 +63,68 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     {
         ScreenshotMode mode = ParseMode(responseMode);
         JsonObject parameters = BuildScreenshotParameters(mode, crop, previewMaxWidth);
-        BridgeCall call = new("take_screenshot", "screenshot", parameters, ScreenshotTimeout);
-        return await CaptureAsync(Find(session), call, mode, addFields: null, cancellationToken);
+        return await ScreenshotAsync(Find(session), "take_screenshot", new ScreenshotRequest(mode, parameters), null, cancellationToken);
+    }
+
+    [McpServerTool(Name = SaveScreenshotToolName, ReadOnly = false, Destructive = false, OpenWorld = false)]
+    [Description(
+        "Captures the running game's next drawn frame as take_screenshot does and writes the PNG straight to path, a file "
+            + "in the project such as a tracked picture, in one call; take_screenshot is the read-only way, saving only under "
+            + ".godot/. path is project-relative, res:// or absolute; it must end in .png, resolve inside the project and not "
+            + "lie under .godot/. Missing folders are created, and an existing file is refused unless options.overwrite is "
+            + "true; the path is checked before the shot is taken. Returns take_screenshot's result with path the named file "
+            + "and capturePath the copy under .godot/godot-mcp/screenshots/, beside which any preview stays, plus an image "
+            + "unless options.responseMode is path_only."
+    )]
+    public async Task<IEnumerable<ContentBlock>> SaveScreenshotAsync(
+        [Description("The PNG to write: project-relative, res:// or absolute, inside the project, outside .godot/, ending in .png.")] string path,
+        [Description("A rectangle to keep, in viewport coordinates, as take_screenshot takes it.")] ScreenshotCrop? crop = null,
+        [Description("{overwrite, responseMode, previewMaxWidth}: responseMode and previewMaxWidth as take_screenshot takes them.")]
+            SaveScreenshotOptions? options = null,
+        [Description(ProjectTools.SessionDescription)] string? session = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        SaveScreenshotOptions settings = options ?? new SaveScreenshotOptions();
+        ScreenshotMode mode = ParseMode(settings.ResponseMode);
+        JsonObject parameters = BuildScreenshotParameters(mode, crop, settings.PreviewMaxWidth);
+        GodotSession target = Find(session);
+        string destination = ScreenshotTarget.Resolve(target.ProjectDir, path, settings.Overwrite);
+        return await ScreenshotAsync(
+            target,
+            SaveScreenshotToolName,
+            new ScreenshotRequest(mode, parameters),
+            (text, _) => CopyCapture(text, destination, settings.Overwrite),
+            cancellationToken
+        );
+    }
+
+    /// <summary>take_screenshot's bridge call for <paramref name="tool"/>, shaped by <see cref="CaptureAsync"/>.</summary>
+    private static Task<IEnumerable<ContentBlock>> ScreenshotAsync(
+        GodotSession target,
+        string tool,
+        ScreenshotRequest request,
+        Action<JsonObject, JsonNode?>? addFields,
+        CancellationToken cancellationToken
+    )
+    {
+        BridgeCall call = new(tool, "screenshot", request.Parameters, ScreenshotTimeout);
+        return CaptureAsync(target, call, request.Mode, addFields, cancellationToken);
+    }
+
+    /// <summary>Copies the capture to the destination, which becomes the result's path; capturePath keeps the capture's.</summary>
+    private static void CopyCapture(JsonObject text, string destination, bool overwrite)
+    {
+        string capture = text["path"]!.GetValue<string>();
+        ScreenshotTarget.Save(capture, destination, overwrite);
+        text["path"] = destination;
+        text["capturePath"] = capture;
     }
 
     /// <summary>
     /// Sends a screenshot-shaped bridge call and shapes its reply as take_screenshot does: a text block with the saved files'
-    /// paths and sizes, what <paramref name="addFields"/> adds from the reply, and the errors the game raised meanwhile, then
-    /// the image <paramref name="mode"/> asks for.
+    /// paths and sizes, what <paramref name="addFields"/> adds or changes from the reply, and the errors the game raised
+    /// meanwhile, then the image <paramref name="mode"/> asks for.
     /// </summary>
     /// <exception cref="McpException">The call failed, or the reply names no file, or the image cannot be read.</exception>
     internal static async Task<IEnumerable<ContentBlock>> CaptureAsync(
