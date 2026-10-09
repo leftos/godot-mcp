@@ -22,7 +22,9 @@ Put one line in the agent file's body, after the front matter:
 | `edit-live` | change the running game's state: `set_property`, `call_method`, `run_script`, `run_csharp`, `cs_set`, `cs_call`, `call_game_tool`, `batch_drive` |
 | `edit-scene` | edit `.tscn` files headless: `add_node`, `set_node_properties`, `save_scene`, and the rest of the scene tools |
 
-`godot-mcp --list-tools` prints every tool with its class. Pick the classes by the agent's role: a reviewer or explorer `read`; a playtester `read, drive`; a debugger that edits no file `read, drive, edit-live`; an implementer all four. The sweep then owns the agent's godot entries: it adds the tools of its classes, removes any other `mcp__godot__*` entry (a tool of another class, or one the server no longer serves), sorts them, and leaves every other entry and every other byte of the file alone. The `tools:` value must be one comma-separated line.
+`godot-mcp --list-tools` prints every tool with its class. Pick the classes by the agent's role: a reviewer or explorer `read`; a playtester `read, drive`; a debugger that edits no file `read, drive, edit-live`; an implementer all four.
+
+The sweep then owns the agent's godot entries: it adds the tools of its classes, removes any other `mcp__godot__*` entry (a tool of another class, or one the server no longer serves), sorts them, and leaves every other entry and every other byte of the file alone. The `tools:` value must be one comma-separated line.
 
 ## Run it
 
@@ -34,7 +36,9 @@ godot-mcp --sweep-agents --root D:\           # also every D:\<repo>\.claude\age
 
 `godot-mcp` is the installed `%LOCALAPPDATA%\godot-mcp\godot-mcp.exe`. The sweep always covers `~/.claude/agents`; each `--root` folder and each folder in `GODOT_MCP_SWEEP_ROOTS` (`;`-separated, set for the user) adds its child repositories' `.claude/agents`.
 
-In a git repository it commits only the tracked agent files it changed, as `chore: sync godot-mcp tools` on the current branch, with hooks, and never pushes; the commit is never killed, however long its hooks run. A repository whose would-change agent files have uncommitted changes is left untouched and reported `repo has uncommitted agent files, skipped`: commit or discard them, then run the sweep again. Each repository is visited once and printed in git's own spelling of its folder, so a `subst` drive (`D:\` for `X:\dev`) prints as its target.
+In a git repository it commits only the tracked agent files it changed, as `chore: sync godot-mcp tools` on the current branch, with hooks, and never pushes; the commit is never killed, however long its hooks run.
+
+A repository whose would-change agent files have uncommitted changes is left untouched and reported `repo has uncommitted agent files, skipped`: commit or discard them, then run the sweep again. Each repository is visited once and printed in git's own spelling of its folder, so a `subst` drive (`D:\` for `X:\dev`) prints as its target.
 
 The marker is found anywhere in the body, a fenced code block included: an agent that documents the marker is marked by it.
 
