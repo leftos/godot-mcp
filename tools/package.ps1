@@ -6,7 +6,8 @@ Zips a published godot-mcp into the download a release carries.
 
 .DESCRIPTION
 Run by `pwsh run.ps1 package` after its publish. Empties -OutputDir, then zips <Root>\bin\publish (the exe, bridge/,
-headless/, dotnet/, and the agent skills publish copied in as skill/ and agent-sweep-skill/) with a
+headless/, dotnet/, capture/ with the window capture helper, and the agent skills publish copied in as skill/ and
+agent-sweep-skill/) with a
 VERSION file holding the published godot-mcp.dll's
 product version (the value tools/install.ps1 writes beside an installed exe) into
 <OutputDir>\godot-mcp-<X.Y.Z>-win-x64.zip, X.Y.Z being that version without its +<sha>. Beside it, writes the release's
@@ -39,7 +40,7 @@ function Exit-Package {
 # Every entry the installer and a running server rely on; a publish missing one is refused before anything is zipped.
 function Assert-PublishLayout {
     param([Parameter(Mandatory)] [string]$Publish)
-    foreach ($file in @('godot-mcp.exe', 'godot-mcp.dll')) {
+    foreach ($file in @('godot-mcp.exe', 'godot-mcp.dll', 'capture/godot-mcp-capture.exe')) {
         if (-not (Test-Path -LiteralPath (Join-Path $Publish $file) -PathType Leaf)) {
             Exit-Package "package: bin/publish/$file is missing; run publish first."
         }

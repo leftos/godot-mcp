@@ -5,7 +5,7 @@
 Builds, tests, formats and publishes godot-mcp.
 
 .DESCRIPTION
-Every command but itest-groups and itest-csharp (which runs inside its caller's gate) runs under tools/gate.ps1: its
+Every command but itest-groups, itest-csharp and itest-capture (which run inside their caller's gate) runs under tools/gate.ps1: its
 whole output goes to .tmp/<command>.log, the last lines are printed, and it exits with the command's own status, or 124 when the gate's watchdog killed it with every process it started. The
 watchdog kills a run for the first of three reasons, each named by a kill line in the log that this script prints with
 its reading: STALLED (no output and no CPU for 120 s: it hung), TIMED OUT (the ceiling ran out on a clock that runs
@@ -17,15 +17,16 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            then its dotnet test -c Release --no-build; ceiling 180 s
   itest    the integration tests against the real Godot (GODOT_PATH, else a Godot*console*.exe on PATH), in the class
            groups of the table at the top of this script, which run in the three lanes of the table below it: timing
-           (lifecycle, input, time, recording, reads: the groups that assert wall-clock times), build (prep, scene,
-           csharp) and untimed (sessions, headless, nodes). It
+           (lifecycle, input, time, recording, capture, reads, scratch: the groups that assert wall-clock times), build
+           (prep, scene, csharp) and untimed (sessions, headless, nodes). It
            first checks that every `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly
            one group, every listed class exists, every group is in exactly one lane that names only groups, and the
            heavy groups and rules tables name only groups, and stops with status 1 before running anything when not.
            It then builds the project once in Release
            (.tmp/itest-build.log, ceiling 300 s) and runs each group as its own gate in a process of its own
            (.tmp/itest-<group>.log, ceiling 300 s, dotnet test -c Release --no-build; the csharp group's gate runs
-           itest-csharp, below, with a ceiling of 420 s for its publishes): each lane's groups one at a time
+           itest-csharp, below, with a ceiling of 420 s for its publishes, and the capture group's itest-capture, below,
+           with a ceiling of 420 s for its publish): each lane's groups one at a time
            in the table's order, the three lanes at once. A group's console output, the gate's tail and verdict, goes to
            .tmp/itest-<group>.console (errors to .tmp/itest-<group>.console.err) and is printed under
            "== itest <group> (lane <lane>)" when the group ends.
@@ -34,7 +35,9 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            that order. Each gate takes one of the machine's gate slots, so the three lanes take three: a heavy slot for
            the groups of the heavy groups table (prep, headless, scene, nodes, csharp, whose tests build C#), a light
            one for the rest, whichever lane a group is in. On Windows every test run (a group's or a -Filter one) goes
-           through tools/hidden-desktop.ps1, on a desktop of its own, so no Godot window shows.
+           through tools/hidden-desktop.ps1, on a desktop of its own, so no Godot window shows, except a run of the
+           visible groups table's groups (capture): Windows.Graphics.Capture cannot see a window on a hidden desktop,
+           so those tests run on the user's desktop and their Godot windows show there.
            With -Since <ref> it runs only the groups itest-groups (below) selects, in their lanes as above, after
            printing itest-groups' lines; with none selected it prints "itest: no group touched by the changes since
            <ref>" and exits 0. -Since with -Filter is refused with status 2.
@@ -49,6 +52,13 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            failed publish or build prints its log's last lines and "itest-csharp: dotnet <step> failed (status <n>);
            its log is <path>" (<step> being "publish of <name>" or "build of the test project"), and exits with its
            status.
+  itest-capture  the command the capture group's gate runs, and a -Filter itest's gate when the filter matches a class
+           of the capture group: the window capture helper published into bin/capture with plain dotnet publish, no
+           gate of its own, to .tmp/capture.log with its time printed, then dotnet test -c Release --no-build of the
+           capture group's classes (-Filter's, when given) on the user's desktop, not through tools/hidden-desktop.ps1.
+           It builds no test project: the itest build before it did, and its command never goes to the build box. A
+           failed publish prints its log's last lines and "itest-capture: dotnet publish of capture failed (status
+           <n>); its log is <path>", and exits with its status.
   itest-groups  names the itest groups the changes since -Since <ref> touch, running nothing and taking no gate: the
            changed files are the tracked files that differ from the ref (git diff --name-only <ref>, the working tree
            included) and the untracked files git does not ignore. Each file goes through the rules table at the top of
@@ -72,7 +82,9 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            by bare name.
   publish  a framework-dependent win-x64 server at bin/publish/godot-mcp.exe, with bridge/ beside it and the agent skills
            as bin/publish/skill and bin/publish/agent-sweep-skill (copied from skills/, refused when either SKILL.md is
-           missing), then the dotnet command (as above), whose bin/dotnet is copied to bin/publish/dotnet; ceiling 300 s
+           missing), then the dotnet command (as above), whose bin/dotnet is copied to bin/publish/dotnet, then the
+           window capture helper (src/GodotMcp.Capture, framework-dependent win-x64) into an emptied bin/capture
+           (.tmp/capture.log), copied to bin/publish/capture; ceiling 300 s each
   install  publish (as above), then mirror bin/publish into $env:LOCALAPPDATA\godot-mcp (robocopy /MIR, no retries),
            link ~/.claude/skills/godot-mcp to the install folder's skill/ and ~/.claude/skills/godot-agent-sweep to its
            agent-sweep-skill/ as directory junctions, and run the installed godot-mcp.exe --sweep-agents, printing
@@ -110,9 +122,10 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            after its input closed. It runs on the user's desktop, not the hidden one: a run is quiet unless a call asks
            for quiet: false, and then its window is meant to show.
 
--Filter narrows test, itest or itest-csharp to one test class, e.g. -Filter "*SessionLifecycleTests". A filtered itest skips the
+-Filter narrows test, itest, itest-csharp or itest-capture to one test class, e.g. -Filter "*SessionLifecycleTests". A filtered itest skips the
 groups: the project built in Release first (.tmp/itest-build.log, ceiling 300 s), then one gate, ceiling 300 s (420 s,
-through itest-csharp, when the filter selects a csharp class), logged to
+through itest-csharp, when the filter selects a csharp class, or through itest-capture, when it selects a capture
+class), logged to
 .tmp/itest-filter-<slug>.log, where <slug> is the filter with every run of characters outside A-Z, a-z and 0-9 turned
 into one '-' and trimmed of '-' at both ends (.tmp/itest-filter-SessionLifecycleTests.log for the example), so filtered
 runs of different classes in one tree at once keep their logs apart and never write a group's log; a filter that leaves
@@ -136,7 +149,7 @@ pwsh run.ps1 drive -Calls .tmp/calls.json
 param(
     [Parameter(Position = 0)]
     [ValidateSet(
-        'build', 'test', 'itest', 'itest-groups', 'itest-csharp', 'format', 'format-check', 'dotnet', 'publish', 'install', 'package',
+        'build', 'test', 'itest', 'itest-groups', 'itest-csharp', 'itest-capture', 'format', 'format-check', 'dotnet', 'publish', 'install', 'package',
         'gdtest', 'pytest', 'drive', 'help'
     )]
     [string]$Command = 'help',
@@ -161,6 +174,7 @@ $itestGroups = [ordered]@{
     time      = @('TimeTests', 'BatchTests', 'WatchTests')
     prep      = @('PrepTests', 'RestartTests')
     recording = @('RecordingTests')
+    capture   = @('CaptureHelperTests')
     headless  = @('HeadlessTests', 'HeadlessMeshTests', 'WarmHeadlessTests')
     scene     = @('HeadlessSceneTests', 'HeadlessBatchTests')
     nodes     = @('HeadlessPropertyTests', 'HeadlessSignalTests')
@@ -172,13 +186,18 @@ $itestGroups = [ordered]@{
 # builds and headless runs split between them beside the session tests. Every group is in exactly one lane; itest
 # refuses to run while one is not.
 $itestLanes = [ordered]@{
-    timing  = @('lifecycle', 'input', 'time', 'recording', 'reads', 'scratch')
+    timing  = @('lifecycle', 'input', 'time', 'recording', 'capture', 'reads', 'scratch')
     build   = @('prep', 'scene', 'csharp')
     untimed = @('sessions', 'headless', 'nodes')
 }
 # The groups whose tests run dotnet builds of the CsProbe project on top of their Godot runs: each takes a heavy gate
 # slot, in whichever lane it runs, and every other group a light one.
 $itestHeavyGroups = @('prep', 'headless', 'scene', 'nodes', 'csharp', 'scratch')
+# The groups whose tests capture a Godot window through Windows.Graphics.Capture, which sees no window on a hidden
+# desktop: their runs skip tools/hidden-desktop.ps1, so their windows show on the user's desktop. Their gate takes a light
+# slot, never a heavy one: a light gate always runs on this machine, and the visible desktop the group needs exists only
+# here. No group is in both this table and the heavy groups one; itest refuses that, and a -Filter spanning them.
+$itestVisibleGroups = @('capture')
 # The ceiling of every itest gate, and of the csharp group's (and a filtered itest of its classes), whose gate also runs
 # the C# helper's three publishes and the test project's build: the tests' 300 s plus 120 s. A
 # cold itest-csharp of the whole group from a fresh clone (no bin or obj; the NuGet cache and compiler server warm) took
@@ -187,6 +206,9 @@ $itestHeavyGroups = @('prep', 'headless', 'scene', 'nodes', 'csharp', 'scratch')
 # slower machine and a first NuGet restore of ILCompiler; the time on the build box is unmeasured.
 $itestCeiling = 300
 $itestCsharpCeiling = $itestCeiling + 120
+# The ceiling of the capture group's gate (and a filtered itest of its classes), which also publishes the window capture
+# helper: the tests' 300 s plus 120 s, as the csharp group's. The publish's time is unmeasured.
+$itestCaptureCeiling = $itestCeiling + 120
 # Which groups a changed file touches, for itest-groups and itest -Since: ordered pairs of a path pattern, '/'-separated
 # from the repo root ('*' matches within one folder, '**' across folders), and what a match selects: 'all', 'none',
 # 'class' (the group listing the class a test file is named for), or a list of groups. The first pattern a file matches
@@ -198,6 +220,7 @@ $itestRules = @(
     @('run.ps1', 'all'),
     @('tools/gate.ps1', 'all'),
     @('tools/hidden-desktop.ps1', 'all'),
+    @('src/GodotMcp.Capture/**', @('capture')),
     @('src/GodotMcp.Server/Session/Scratch*.cs', 'scratch'),
     @('src/GodotMcp.Server/Session/**', 'all'),
     @('src/GodotMcp.Server/Wire/**', 'all'),
@@ -288,6 +311,7 @@ $gdtestDir = Join-Path $root 'tests/bridge'
 $gdtestStamp = Join-Path $gdtestDir '.godot/gdtest-import.stamp'
 $dotnetOut = Join-Path $root 'bin/dotnet'
 $dotnetStaging = Join-Path $logDir 'dotnet-publish'
+$captureOut = Join-Path $root 'bin/capture'
 
 $gate = Join-Path $root 'tools/gate.ps1'
 
@@ -373,10 +397,13 @@ function Invoke-TestBuild {
 
 # The program and arguments of an integration test run: dotnet with the given arguments, on Windows through
 # tools/hidden-desktop.ps1, so the Godot windows the tests open appear on a desktop of their own and never on the
-# user's screen.
+# user's screen. -Visible runs dotnet on the user's desktop, for the visible groups.
 function Get-ItestCommand {
-    param([Parameter(Mandatory)] [string[]]$Arguments)
-    if (-not $IsWindows) {
+    param(
+        [Parameter(Mandatory)] [string[]]$Arguments,
+        [switch]$Visible
+    )
+    if ($Visible -or -not $IsWindows) {
         return @{ Program = 'dotnet'; Arguments = $Arguments }
     }
     $hidden = @('-NoProfile', '-File', (Join-Path $root 'tools/hidden-desktop.ps1'), '--', 'dotnet') + $Arguments
@@ -399,6 +426,17 @@ function Invoke-ItestGated {
 function Get-ItestCsharpCommand {
     param([Parameter(Mandatory)] [AllowEmptyString()] [string]$Filter)
     $arguments = @('-NoProfile', '-File', (Join-Path $root 'run.ps1'), 'itest-csharp')
+    if ($Filter) {
+        $arguments += @('-Filter', $Filter)
+    }
+    return @{ Program = 'pwsh'; Arguments = $arguments }
+}
+
+# The command a gate runs for the capture group, or for a filtered itest of its classes: run.ps1 itest-capture, which
+# publishes the window capture helper before its tests, all inside that one gate.
+function Get-ItestCaptureCommand {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string]$Filter)
+    $arguments = @('-NoProfile', '-File', (Join-Path $root 'run.ps1'), 'itest-capture')
     if ($Filter) {
         $arguments += @('-Filter', $Filter)
     }
@@ -535,21 +573,28 @@ function Get-ItestLaneDrift {
     return $parts
 }
 
-# The group names the heavy groups and rules tables give that name no group, as one phrase; empty when there is none.
+# How the heavy groups, visible groups and rules tables have drifted: a name that is no group, and a group listed in both
+# the heavy and the visible groups, as one phrase each; empty when there is none.
 function Get-ItestRuleDrift {
     $keywords = @('all', 'none', 'class')
     $groups = @($itestGroups.Keys)
-    $named = @($itestRules | ForEach-Object { $_[1] } | Where-Object { $keywords -cnotcontains $_ }) + $itestHeavyGroups
+    $named = @($itestRules | ForEach-Object { $_[1] } | Where-Object { $keywords -cnotcontains $_ }) + $itestHeavyGroups + $itestVisibleGroups
     $unknown = @($named | Where-Object { $groups -cnotcontains $_ } | Sort-Object -Unique)
-    if ($unknown.Count -eq 0) {
-        return @()
+    $both = @($itestHeavyGroups | Where-Object { $itestVisibleGroups -contains $_ } | Sort-Object -Unique)
+    $parts = @()
+    if ($unknown.Count -gt 0) {
+        $parts += "$($unknown.Count) name(s) in the heavy groups, visible groups or rules naming no group: $($unknown -join ', ')"
     }
-    return @("$($unknown.Count) name(s) in the heavy groups or rules naming no group: $($unknown -join ', ')")
+    if ($both.Count -gt 0) {
+        $parts += "$($both.Count) group(s) in both the heavy groups and the visible groups: $($both -join ', ')"
+    }
+    return $parts
 }
 
-# How the groups, lanes, heavy groups and rules tables have drifted from the project, as one message, or '' when every
-# declared class is in exactly one group, every listed class is declared, every group is in exactly one lane that names
-# only groups, and the heavy groups and rules name only groups.
+# How the groups, lanes, heavy and visible groups and rules tables have drifted from the project, as one message, or ''
+# when every declared class is in exactly one group, every listed class is declared, every group is in exactly one lane
+# that names only groups, every heavy, visible or rule name is a group, and no group is in both the heavy and the visible
+# ones.
 function Get-ItestGroupDrift {
     $parts = @(Get-ItestClassDrift) + @(Get-ItestLaneDrift) + @(Get-ItestRuleDrift)
     if ($parts.Count -eq 0) {
@@ -700,6 +745,48 @@ function Test-ItestFilterNeedsDotnet {
     return $false
 }
 
+# Whether a -Filter selects a class of a visible group, whose tests need the user's desktop and the capture helper: each
+# filter is matched against the class's full name, as the runner's --filter-class matches it.
+function Test-ItestFilterIsVisible {
+    param([Parameter(Mandatory)] [string[]]$Filters)
+    $classes = @($itestVisibleGroups | ForEach-Object { $itestGroups[$_] } | ForEach-Object { "$itestNamespace.$_" })
+    foreach ($filter in $Filters) {
+        if (@($classes | Where-Object { $_ -like $filter }).Count -gt 0) {
+            return $true
+        }
+    }
+    return $false
+}
+
+# The visible-desktop groups whose class names a -Filter selects, in table order; empty when it selects none.
+function Get-ItestFilterVisibleGroups {
+    param([Parameter(Mandatory)] [string]$Filter)
+    return @($itestVisibleGroups | Where-Object {
+            @($itestGroups[$_] | ForEach-Object { "$itestNamespace.$_" } | Where-Object { $_ -like $Filter }).Count -gt 0
+        })
+}
+
+# Whether a -Filter selects a class of a group that is not a visible-desktop one.
+function Test-ItestFilterIsHidden {
+    param([Parameter(Mandatory)] [string]$Filter)
+    $hidden = @($itestGroups.Keys | Where-Object { $itestVisibleGroups -notcontains $_ })
+    $classes = @($hidden | ForEach-Object { $itestGroups[$_] } | ForEach-Object { "$itestNamespace.$_" })
+    return @($classes | Where-Object { $_ -like $Filter }).Count -gt 0
+}
+
+# The refusal a -Filter earns for spanning the two, or '' when none does: one command cannot run both, since the visible
+# group's windows exist only on the user's desktop, which a hidden-desktop run never shows.
+function Get-ItestFilterSpanRefusal {
+    param([Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Filters)
+    foreach ($filter in $Filters) {
+        $visible = @(Get-ItestFilterVisibleGroups -Filter $filter)
+        if ($visible.Count -gt 0 -and (Test-ItestFilterIsHidden -Filter $filter)) {
+            return "itest -Filter '$filter' selects classes of the visible-desktop group $($visible -join ', ') and of hidden-desktop groups; filter them apart."
+        }
+    }
+    return ''
+}
+
 # The gate name, and so the .tmp/<name>.log, of a filtered itest: itest-filter-<slug>, never a group's name, the slug being the filter with every run
 # of characters outside [A-Za-z0-9] turned into one '-' and trimmed of '-' at both ends; plain itest when nothing is left.
 function Get-ItestFilterLogName {
@@ -779,6 +866,10 @@ function Invoke-ItestGroupProcess {
     if ($Group -eq 'csharp') {
         $command = Get-ItestCsharpCommand -Filter ''
         $ceiling = $itestCsharpCeiling
+    }
+    elseif ($itestVisibleGroups -contains $Group) {
+        $command = Get-ItestCaptureCommand -Filter ''
+        $ceiling = $itestCaptureCeiling
     }
     else {
         $classes = @($itestGroups[$Group] | ForEach-Object { "$itestNamespace.$_" })
@@ -940,6 +1031,10 @@ function Invoke-ItestFiltered {
         $command = Get-ItestCsharpCommand -Filter $Filters[0]
         return Invoke-Gated -Name $name -TimeoutSeconds $itestCsharpCeiling -Program $command.Program -Arguments $command.Arguments -Slot $slot
     }
+    if (Test-ItestFilterIsVisible -Filters $Filters) {
+        $command = Get-ItestCaptureCommand -Filter $Filters[0]
+        return Invoke-Gated -Name $name -TimeoutSeconds $itestCaptureCeiling -Program $command.Program -Arguments $command.Arguments -Slot $slot
+    }
     $arguments = Get-TestArgumentList -Project $itestProject -Classes $Filters -NoBuild
     return Invoke-ItestGated -Name $name -Arguments $arguments -Slot $slot
 }
@@ -950,7 +1045,7 @@ function Invoke-ItestFiltered {
 # rebuilds whatever the snapshot changed in a work folder an earlier run left built. Returns the build's status.
 function Invoke-ItestCsharpBuild {
     $arguments = @('build', (Join-Path $root $itestProject), '-c', $configuration, '-warnaserror')
-    return Invoke-DotnetInProcess -Name 'itest-csharp-build' -Step 'build of the test project' -Arguments $arguments
+    return Invoke-DotnetInProcess -Caller 'itest-csharp' -Name 'itest-csharp-build' -Step 'build of the test project' -Arguments $arguments
 }
 
 # The csharp group's own run, the command its gate runs (itest-csharp): the C# helper published and laid out in
@@ -976,8 +1071,29 @@ function Invoke-ItestCsharp {
     return $LASTEXITCODE
 }
 
+# The capture group's own run, the command its gate runs (itest-capture): the window capture helper published into
+# bin/capture with no gate of its own, then dotnet test --no-build of -Filter's class, else the group's, on the user's
+# desktop. The test project is not built here: the itest build before the gate did, and this command never leaves the
+# machine. Returns the first non-zero status, else 0.
+function Invoke-ItestCapture {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string]$Filter)
+    Clear-CaptureOutput
+    $status = Invoke-DotnetInProcess -Caller 'itest-capture' -Name 'capture' -Step 'publish of capture' -Arguments (Get-CapturePublishArgumentList)
+    if ($status -ne 0) {
+        return $status
+    }
+    $classes = @($Filter | Where-Object { $_ })
+    if ($classes.Count -eq 0) {
+        $classes = @($itestVisibleGroups | ForEach-Object { $itestGroups[$_] } | ForEach-Object { "$itestNamespace.$_" })
+    }
+    $command = Get-ItestCommand -Arguments (Get-TestArgumentList -Project $itestProject -Classes $classes -NoBuild) -Visible
+    & $command.Program @($command.Arguments) | Out-Host
+    return $LASTEXITCODE
+}
+
 # The itest command: -Filter's classes, or the groups (all of them, or those -Since's changes touch) in their lanes.
-# -Filter with -Since is refused with status 2; no group touched by the changes is status 0 with nothing run.
+# -Filter with -Since is refused with status 2, as is a -Filter spanning the visible-desktop group and a hidden-desktop
+# one; no group touched by the changes is status 0 with nothing run.
 function Invoke-Itest {
     param(
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Filters,
@@ -988,6 +1104,11 @@ function Invoke-Itest {
         return 2
     }
     if ($Filters.Count -gt 0) {
+        $span = Get-ItestFilterSpanRefusal -Filters $Filters
+        if ($span) {
+            [Console]::Error.WriteLine($span)
+            return 2
+        }
         return Invoke-ItestFiltered -Filters $Filters
     }
     $run = Get-ItestRunGroup -Since $Since
@@ -1129,21 +1250,22 @@ function Invoke-DotnetPublish {
 # status.
 function Invoke-DotnetInProcess {
     param(
+        [Parameter(Mandatory)] [string]$Caller,
         [Parameter(Mandatory)] [string]$Name,
         [Parameter(Mandatory)] [string]$Step,
         [Parameter(Mandatory)] [string[]]$Arguments
     )
     $log = Join-Path $logDir "$Name.log"
-    Write-Host "itest-csharp: dotnet $Step (log: $log)"
+    Write-Host "${Caller}: dotnet $Step (log: $log)"
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
     & dotnet @Arguments *> $log
     $status = $LASTEXITCODE
     if ($status -ne 0) {
         Get-Content -LiteralPath $log -Tail 15 | Out-Host
-        Write-Host "itest-csharp: dotnet $Step failed (status $status); its log is $log"
+        Write-Host "${Caller}: dotnet $Step failed (status $status); its log is $log"
         return $status
     }
-    Write-Host "itest-csharp: dotnet $Step done in $([int]$clock.Elapsed.TotalSeconds) s"
+    Write-Host "${Caller}: dotnet $Step done in $([int]$clock.Elapsed.TotalSeconds) s"
     return 0
 }
 
@@ -1153,7 +1275,7 @@ function Invoke-DotnetPublishInProcess {
     Initialize-VswhereEnvironment
     foreach ($name in $dotnetProjects.Keys) {
         $arguments = Get-DotnetPublishArgumentList -Name $name
-        $status = Invoke-DotnetInProcess -Name "dotnet-$name" -Step "publish of $name" -Arguments $arguments
+        $status = Invoke-DotnetInProcess -Caller 'itest-csharp' -Name "dotnet-$name" -Step "publish of $name" -Arguments $arguments
         if ($status -ne 0) {
             return $status
         }
@@ -1163,8 +1285,29 @@ function Invoke-DotnetPublishInProcess {
     return 0
 }
 
+# The dotnet arguments that publish the window capture helper, framework-dependent like the server, into bin/capture.
+function Get-CapturePublishArgumentList {
+    return @(
+        'publish', (Join-Path $root 'src/GodotMcp.Capture/GodotMcp.Capture.csproj'),
+        '-c', 'Release', '-r', 'win-x64', '--self-contained', 'false', '-o', $captureOut
+    )
+}
+
+# Empties bin/capture, so no file of an earlier publish of the capture helper stays beside the new one.
+function Clear-CaptureOutput {
+    if (Test-Path -LiteralPath $captureOut) {
+        Remove-Item -LiteralPath $captureOut -Recurse -Force
+    }
+}
+
+# Publishes the window capture helper into an emptied bin/capture under its own gate. Returns the publish's status.
+function Invoke-CapturePublish {
+    Clear-CaptureOutput
+    return Invoke-Logged -Name 'capture' -TimeoutSeconds 300 -Arguments (Get-CapturePublishArgumentList) -Slot heavy
+}
+
 # Publishes the server into bin/publish, copies the agent skills in beside it, then the C# helper, copying bin/dotnet to
-# bin/publish/dotnet.
+# bin/publish/dotnet, then the window capture helper, copying bin/capture to bin/publish/capture.
 function Invoke-Publish {
     $status = Invoke-Logged -Name 'publish' -TimeoutSeconds 300 -Arguments (Get-PublishArgumentList) -Slot heavy
     if ($status -ne 0) {
@@ -1179,6 +1322,11 @@ function Invoke-Publish {
         return $status
     }
     Copy-Folder -Source $dotnetOut -Destination (Join-Path $root 'bin/publish/dotnet')
+    $status = Invoke-CapturePublish
+    if ($status -ne 0) {
+        return $status
+    }
+    Copy-Folder -Source $captureOut -Destination (Join-Path $root 'bin/publish/capture')
     return 0
 }
 
@@ -1272,6 +1420,9 @@ try {
         }
         'itest-csharp' {
             exit (Invoke-ItestCsharp -Filter $Filter)
+        }
+        'itest-capture' {
+            exit (Invoke-ItestCapture -Filter $Filter)
         }
         'format' {
             $status = Invoke-Logged -Name 'format-style' -TimeoutSeconds 180 -Arguments @('format', 'style', $solution, '--severity', 'info') -Slot heavy

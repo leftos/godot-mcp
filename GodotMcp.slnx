@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/GodotMcp.Capture/GodotMcp.Capture.csproj" />
     <Project Path="src/GodotMcp.Dotnet.Core/GodotMcp.Dotnet.Core.csproj" />
     <Project Path="src/GodotMcp.Dotnet/GodotMcp.Dotnet.csproj" />
     <Project Path="src/GodotMcp.Dotnet.Loader/GodotMcp.Dotnet.Loader.csproj" />

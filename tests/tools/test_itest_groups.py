@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 RUN_PS1 = Path(__file__).resolve().parents[2] / "run.ps1"
-ALL_GROUPS = ["lifecycle", "sessions", "input", "reads", "time", "prep", "recording", "headless", "scene", "nodes", "csharp", "scratch"]
+ALL_GROUPS = ["lifecycle", "sessions", "input", "reads", "time", "prep", "recording", "capture", "headless", "scene", "nodes", "csharp", "scratch"]
 GROUP_LINE = re.compile(r"^itest-groups: (\w+) \(from (.+)\)$", re.MULTILINE)
 # The files the repo holds at its first commit; each test changes some of them, or adds a file, after it.
 STUBS = [
@@ -120,3 +120,16 @@ def test_an_unknown_ref_stops_with_status_2_and_gits_message(repo: Path) -> None
     assert result.returncode == 2, result.stdout + result.stderr
     assert "no-such-ref" in result.stderr
     assert GROUP_LINE.search(result.stdout) is None
+
+
+def _itest(repo: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    command = ["pwsh", "-NoProfile", "-File", str(repo / "run.ps1"), "itest", *arguments]
+    return subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+
+
+def test_a_filter_spanning_the_visible_and_hidden_groups_is_refused(repo: Path) -> None:
+    result = _itest(repo, "-Filter", "*Tests")
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    refusal = "itest -Filter '*Tests' selects classes of the visible-desktop group capture and of hidden-desktop groups; filter them apart."
+    assert refusal in result.stderr

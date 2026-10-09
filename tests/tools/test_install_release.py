@@ -63,6 +63,7 @@ def _release_entries() -> dict[str, str]:
         "godot-mcp.dll": "not really a dll",
         "VERSION": f"{VERSION}\n",
         "bridge/godot_mcp_bridge.gd": "extends Node\n",
+        "capture/godot-mcp-capture.exe": "not really an exe",
         "skill/SKILL.md": "# godot-mcp\n",
         "agent-sweep-skill/SKILL.md": "# godot-agent-sweep\n",
     }
@@ -90,22 +91,35 @@ def _environment(dotnet_root: Path, home: Path | None = None) -> dict[str, str]:
     return env
 
 
-@pytest.fixture(scope="module")
-def published_installer(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """The install.ps1 tools/package.ps1 writes beside the release zip, packaged from a stand-in publish."""
-    root = tmp_path_factory.mktemp("package-root")
+def _publish_layout(root: Path, *, capture_helper: bool = True) -> Path:
+    """A stand-in bin/publish holding everything package.ps1 asserts, with the capture helper left out when asked."""
     publish = root / "bin" / "publish"
-    for folder in ("bridge", "headless", "dotnet"):
+    for folder in ("bridge", "headless", "dotnet", "capture"):
         (publish / folder).mkdir(parents=True)
     (publish / "godot-mcp.exe").write_text("not really an exe", encoding="utf-8")
+    if capture_helper:
+        (publish / "capture" / "godot-mcp-capture.exe").write_text("not really an exe", encoding="utf-8")
     shutil.copyfile(VERSIONED_DLL, publish / "godot-mcp.dll")
     for name in ("godot-mcp", "godot-agent-sweep"):
         skill = root / "skills" / name
         skill.mkdir(parents=True)
         (skill / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
-    output = root / "package"
+    return publish
+
+
+def _package(root: Path, output: Path) -> subprocess.CompletedProcess[str]:
+    """Runs tools/package.ps1 against a stand-in root, as the release build does."""
     command = ["pwsh", "-NoProfile", "-File", str(TOOLS / "package.ps1"), "-Root", str(root), "-OutputDir", str(output)]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+    return subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+
+
+@pytest.fixture(scope="module")
+def published_installer(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The install.ps1 tools/package.ps1 writes beside the release zip, packaged from a stand-in publish."""
+    root = tmp_path_factory.mktemp("package-root")
+    _publish_layout(root)
+    output = root / "package"
+    result = _package(root, output)
     assert result.returncode == 0, result.stdout + result.stderr
     installer = output / "install.ps1"
     assert f"package: {installer}" in result.stdout
@@ -401,6 +415,30 @@ def test_a_zip_without_the_agent_sweep_skill_is_refused(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "is not a godot-mcp release: it has no agent-sweep-skill/SKILL.md" in _output(result)
     assert not layout.install_dir.exists()
+
+
+def test_a_zip_without_the_capture_helper_is_refused(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    entries = _release_entries()
+    del entries["capture/godot-mcp-capture.exe"]
+    partial = _write_zip(tmp_path / "partial.zip", entries)
+
+    result = _run("pwsh", layout, zip_path=partial)
+
+    assert result.returncode != 0
+    assert "is not a godot-mcp release: it has no capture/godot-mcp-capture.exe" in _output(result)
+    assert not layout.install_dir.exists()
+
+
+def test_package_refuses_a_publish_without_the_capture_helper(tmp_path: Path) -> None:
+    root = tmp_path / "package-root"
+    _publish_layout(root, capture_helper=False)
+
+    result = _package(root, tmp_path / "package")
+
+    assert result.returncode != 0
+    assert "package: bin/publish/capture/godot-mcp-capture.exe is missing" in _output(result)
+    assert not (tmp_path / "package").exists()
 
 
 def test_a_missing_zip_path_is_refused(tmp_path: Path) -> None:

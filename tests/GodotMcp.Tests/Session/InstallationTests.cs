@@ -34,6 +34,38 @@ public sealed class InstallationTests : IDisposable
         Assert.Null(Installation.FindDotnetExtension(server));
     }
 
+    [Fact]
+    public void FindsTheCaptureHelperInTheCheckout()
+    {
+        string checkout = CreateCheckout();
+        string server = CreateServerDirectory(checkout);
+        string inCheckout = WriteFile(checkout, "bin", "capture", Installation.CaptureHelperFileName);
+
+        Assert.Equal(inCheckout, Installation.FindCaptureHelper(server));
+    }
+
+    [Fact]
+    public void FindsTheCaptureHelperBesideTheServerFirst()
+    {
+        string checkout = CreateCheckout();
+        string server = CreateServerDirectory(checkout);
+        WriteFile(checkout, "bin", "capture", Installation.CaptureHelperFileName);
+        string besideServer = WriteFile(server, "capture", Installation.CaptureHelperFileName);
+
+        Assert.Equal(besideServer, Installation.FindCaptureHelper(server));
+    }
+
+    [Fact]
+    public void FindsNoCaptureHelperWhenNeitherPlaceHasIt()
+    {
+        string checkout = CreateCheckout();
+        string server = CreateServerDirectory(checkout);
+        WriteFile(checkout, "capture", Installation.CaptureHelperFileName);
+        WriteFile(_temp.Path, "bin", "capture", Installation.CaptureHelperFileName);
+
+        Assert.Null(Installation.FindCaptureHelper(server));
+    }
+
     private const string ServerExe = @"C:\opt\godot-mcp\godot-mcp.exe";
 
     [Fact]

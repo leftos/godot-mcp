@@ -232,7 +232,7 @@ function Expand-ReleaseZip {
     catch {
         throw "install: $Zip could not be unpacked: $($_.Exception.Message) Download the release again."
     }
-    foreach ($entry in @('godot-mcp.exe', 'godot-mcp.dll', 'VERSION', 'bridge', 'skill\SKILL.md', 'agent-sweep-skill\SKILL.md')) {
+    foreach ($entry in @('godot-mcp.exe', 'godot-mcp.dll', 'VERSION', 'bridge', 'capture\godot-mcp-capture.exe', 'skill\SKILL.md', 'agent-sweep-skill\SKILL.md')) {
         if (-not (Test-Path -LiteralPath (Join-Path $Destination $entry))) {
             throw "install: $Zip is not a godot-mcp release: it has no $($entry -replace '\\', '/')."
         }

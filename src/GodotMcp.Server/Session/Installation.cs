@@ -129,6 +129,11 @@ internal static class Installation
     private static readonly string DotnetExtensionBesideServer = Path.Combine("dotnet", DotnetExtensionFileName);
     private static readonly string DotnetExtensionInCheckout = Path.Combine("bin", "dotnet", DotnetExtensionFileName);
 
+    public const string CaptureHelperFileName = "godot-mcp-capture.exe";
+
+    private static readonly string CaptureHelperBesideServer = Path.Combine("capture", CaptureHelperFileName);
+    private static readonly string CaptureHelperInCheckout = Path.Combine("bin", "capture", CaptureHelperFileName);
+
     public static string FindBridgeScript() => FindBridgeScript(AppContext.BaseDirectory);
 
     /// <summary>
@@ -157,6 +162,16 @@ internal static class Installation
     /// </summary>
     public static string? FindDotnetExtension(string serverDirectory) =>
         FindShippedFile(serverDirectory, DotnetExtensionBesideServer, DotnetExtensionInCheckout);
+
+    public static string? FindCaptureHelper() => FindCaptureHelper(AppContext.BaseDirectory);
+
+    /// <summary>
+    /// The window capture helper published beside the server (<c>capture/</c> next to the exe), else the one
+    /// <c>pwsh run.ps1 publish</c> put in <c>bin/capture/</c> of the godot-mcp checkout the server was built in; null when
+    /// neither has it.
+    /// </summary>
+    public static string? FindCaptureHelper(string serverDirectory) =>
+        FindShippedFile(serverDirectory, CaptureHelperBesideServer, CaptureHelperInCheckout);
 
     private static string FindShippedScript(string serverDirectory, string relativePath, string what) =>
         FindShippedFile(serverDirectory, relativePath, relativePath)
