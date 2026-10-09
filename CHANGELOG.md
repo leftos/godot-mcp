@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `wait_for` takes `options.edge`, met only when its condition turns true after a false check, so a condition already true waits for its next rise.
+
 ### Fixed
 
 - A quiet run started by a server under ssh or a service no longer fails before its game starts; the hidden desktop is named in the server's own window station.

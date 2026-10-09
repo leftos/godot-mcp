@@ -92,7 +92,9 @@ internal sealed partial class RuntimeTools
             + "timeScale?}, with any condition kind, runs once in the frame the condition is met: call is a method the bridge "
             + "calls there, timeScale sets Engine.time_scale right after it, and "
             + "the result adds then: {frame, call?: {value}, timeScale?}. A refused or failing call fails the wait and leaves "
-            + "timeScale unset; a timeout runs nothing."
+            + "timeScale unset; a timeout runs nothing. options.edge: true, with an exists, property or expression wait and a "
+            + "timeout above 0, meets it only on a check that finds the condition true after one that found it false, so a "
+            + "condition already true waits for its next rise."
     )]
     public async Task<IEnumerable<ContentBlock>> WaitForAsync(
         [Description(
@@ -108,7 +110,7 @@ internal sealed partial class RuntimeTools
                 + "for a signal, gameMs or frames wait."
         )]
             int? timeoutMs = null,
-        [Description("{screenshot, call, then}: screenshot false and no call or then when left out.")] WaitOptions? options = null,
+        [Description("{screenshot, call, then, edge}: screenshot and edge false and no call or then when left out.")] WaitOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
@@ -187,21 +189,57 @@ internal sealed partial class RuntimeTools
     internal static JsonObject BuildWaitParameters(WaitCondition? condition, int? timeoutMs, WaitOptions? options)
     {
         JsonObject parameters = BuildWaitParameters(condition, timeoutMs);
-        AddScreenshot(parameters, options?.Screenshot);
-        if (options?.Call is { } call)
+        if (options is not null)
         {
-            string kind = parameters["kind"]!.GetValue<string>();
-            parameters["call"] = kind is "gameMs" or "frames"
-                ? CallOptionParameters(call, "options.call")
-                : throw new McpException($"options.call is taken only by a gameMs or frames wait; this condition is {kind}.");
+            AddWaitOptions(parameters, options);
         }
 
-        if (options?.Then is { } then)
+        return parameters;
+    }
+
+    private static void AddWaitOptions(JsonObject parameters, WaitOptions options)
+    {
+        AddScreenshot(parameters, options.Screenshot);
+        if (options.Call is { } call)
+        {
+            AddWaitCall(parameters, call);
+        }
+
+        if (options.Then is { } then)
         {
             parameters["then"] = ThenParameters(then);
         }
 
-        return parameters;
+        if (options.Edge is true)
+        {
+            AddEdge(parameters);
+        }
+    }
+
+    private static void AddWaitCall(JsonObject parameters, MethodCall call)
+    {
+        string kind = parameters["kind"]!.GetValue<string>();
+        parameters["call"] = kind is "gameMs" or "frames"
+            ? CallOptionParameters(call, "options.call")
+            : throw new McpException($"options.call is taken only by a gameMs or frames wait; this condition is {kind}.");
+    }
+
+    /// <summary>Adds edge: true to an exists, property or expression wait's parameters.</summary>
+    /// <exception cref="McpException">The wait is of another kind, or checks once (timeoutMs 0).</exception>
+    private static void AddEdge(JsonObject parameters)
+    {
+        string kind = parameters["kind"]!.GetValue<string>();
+        if (kind is not ("exists" or "property" or "expression"))
+        {
+            throw new McpException($"options.edge applies to exists, property and expression waits; this condition is {kind}.");
+        }
+
+        if (parameters["timeoutMs"]!.GetValue<int>() == 0)
+        {
+            throw new McpException("timeoutMs 0 checks once, which an edge wait cannot meet; give it a timeout.");
+        }
+
+        parameters["edge"] = true;
     }
 
     /// <summary>The bridge's then parameters {call?, timeScale?}, at least one.</summary>

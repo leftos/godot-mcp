@@ -25,7 +25,35 @@ var bridge: Node
 
 ## A Callable returning [met, value], or [false, null, error] when the wait cannot be met, for
 ## the condition; a String saying why there is none. failures counts an expression's failed checks.
+## With params.edge the Callable is edge_probe's, met only on a rise.
 func make_probe(kind: String, params: Dictionary, failures: Dictionary) -> Variant:
+	var probe: Variant = _kind_probe(kind, params, failures)
+	if probe is Callable and bool(params.get("edge", false)):
+		return edge_probe(probe, failures)
+	return probe
+
+
+## probe as an edge check: met only on a check that finds it met after a check that found it not
+## met, so a first check that finds it met is not; a failed check passes through as it is. A check
+## whose expression failed to run (one more in failures' count) is no fall, while a missing node
+## is one. The flag lives in the Callable, since a wait may check several times a frame (at a draw
+## and at the frame), and any earlier check counts.
+static func edge_probe(probe: Callable, failures: Dictionary) -> Callable:
+	return _check_edge.bind(probe, failures, {"fell": false})
+
+
+static func _check_edge(probe: Callable, failures: Dictionary, state: Dictionary) -> Array:
+	var failed_before: int = int(failures.get("count", 0))
+	var seen: Array = probe.call()
+	if seen.size() > 2 or state["fell"]:
+		return seen
+	if not seen[0]:
+		state["fell"] = int(failures.get("count", 0)) == failed_before
+		return seen
+	return [false, seen[1]]
+
+
+func _kind_probe(kind: String, params: Dictionary, failures: Dictionary) -> Variant:
 	var node_name: String = _text(params, "node")
 	var probe: Variant = "unknown condition kind '%s'" % kind
 	match kind:

@@ -24,6 +24,77 @@ func test_make_probe_builds_a_check_for_each_known_kind() -> void:
 	conditions.free()
 
 
+func test_an_edge_probe_is_not_met_by_a_first_check_that_finds_it_true() -> void:
+	var rig: Dictionary = _edge_rig(true)
+	var probe: Callable = rig["probe"]
+	assert_eq(probe.call(), [false, true], "true at the first check is not met")
+	assert_eq(probe.call(), [false, true], "nor at a second true check: true then true")
+	_free_edge_rig(rig)
+
+
+func test_an_edge_probe_is_met_by_a_true_check_after_a_false_one() -> void:
+	var rig: Dictionary = _edge_rig(true)
+	var probe: Callable = rig["probe"]
+	assert_eq(probe.call(), [false, true], "true first, not met")
+	rig["bridge"].present = false
+	assert_eq(probe.call(), [false, false], "the false check")
+	rig["bridge"].present = true
+	assert_eq(probe.call(), [true, true], "the rise is met")
+	_free_edge_rig(rig)
+
+
+func test_an_edge_probe_meets_a_rise_from_a_false_first_check() -> void:
+	var rig: Dictionary = _edge_rig(false)
+	var probe: Callable = rig["probe"]
+	assert_eq(probe.call(), [false, false], "false first")
+	rig["bridge"].present = true
+	assert_eq(probe.call(), [true, true], "then true is met")
+	_free_edge_rig(rig)
+
+
+func test_an_edge_probe_passes_a_failure_through() -> void:
+	var failed: Callable = func() -> Array: return [false, null, "no such node"]
+	var probe: Callable = _conditions_script.edge_probe(failed, {})
+	assert_eq(probe.call(), [false, null, "no such node"], "the failure as the probe gave it")
+
+
+func test_an_expression_that_fails_to_run_is_no_fall() -> void:
+	var failures: Dictionary = {}
+	var answers: Array = ["true", "failed", "true"]
+	var expression: Callable = func() -> Array:
+		var answer: String = answers.pop_front()
+		if answer == "failed":
+			_conditions_script.note_failure(failures, "Invalid index")
+			return [false, null]
+		return [true, true]
+	var probe: Callable = _conditions_script.edge_probe(expression, failures)
+	assert_eq(probe.call(), [false, true], "true first, not met")
+	assert_eq(probe.call(), [false, null], "the failed run, not met")
+	assert_eq(probe.call(), [false, true], "true after a failed run is no rise")
+
+
+func test_two_edge_probes_keep_their_own_fall() -> void:
+	var rig: Dictionary = _edge_rig(true)
+	var first: Callable = rig["probe"]
+	var params: Dictionary = {"node": "Main", "exists": true, "edge": true}
+	var second: Callable = rig["conditions"].make_probe("exists", params, {})
+	assert_eq(first.call(), [false, true], "the first, true first")
+	assert_eq(second.call(), [false, true], "the second, true first")
+	rig["bridge"].present = false
+	assert_eq(first.call(), [false, false], "only the first sees the fall")
+	rig["bridge"].present = true
+	assert_eq(first.call(), [true, true], "the first meets the rise")
+	assert_eq(second.call(), [false, true], "the second never fell")
+	_free_edge_rig(rig)
+
+
+func test_a_probe_without_edge_is_met_at_its_first_true_check() -> void:
+	var rig: Dictionary = _edge_rig(true, false)
+	var probe: Callable = rig["probe"]
+	assert_eq(probe.call(), [true, true], "met at once")
+	_free_edge_rig(rig)
+
+
 func test_make_probe_refuses_an_unknown_kind() -> void:
 	var conditions: Node = _conditions_script.new()
 	assert_eq(
@@ -147,3 +218,43 @@ func test_a_met_result_carries_its_failed_checks_and_a_clean_one_carries_none() 
 	conditions.add_failed_checks(clean, {})
 	assert_true(not clean["result"].has("failedChecks"), "a wait with no failed check carries none")
 	conditions.free()
+
+
+## An exists probe on Main (edge unless edge is false) whose bridge is a stand-in finding Main
+## while its present is true.
+func _edge_rig(present: bool, edge: bool = true) -> Dictionary:
+	var bridge: Node = _compile(
+		(
+			"\n"
+			. join(
+				[
+					"extends Node",
+					"",
+					"var present: bool = false",
+					"",
+					"",
+					"func _find_node(_element: String) -> Node:",
+					"\treturn self if present else null",
+				]
+			)
+		)
+	)
+	bridge.present = present
+	var conditions: Node = _conditions_script.new()
+	conditions.bridge = bridge
+	var params: Dictionary = {"node": "Main", "exists": true, "edge": edge}
+	var probe: Callable = conditions.make_probe("exists", params, {})
+	return {"probe": probe, "bridge": bridge, "conditions": conditions}
+
+
+func _free_edge_rig(rig: Dictionary) -> void:
+	rig["conditions"].free()
+	rig["bridge"].free()
+
+
+## An instance of a script compiled from source.
+func _compile(source: String) -> Object:
+	var script := GDScript.new()
+	script.source_code = source
+	script.reload()
+	return script.new()

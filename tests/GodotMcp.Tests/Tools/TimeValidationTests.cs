@@ -490,6 +490,64 @@ public sealed class TimeValidationTests : IDisposable
     }
 
     [Fact]
+    public void AnEdgeWaitOnExistsPropertyOrExpressionIsAcceptedAndSent()
+    {
+        WaitCondition[] conditions =
+        [
+            new WaitCondition(Expression: "true"),
+            new WaitCondition(Node: "Main", Property: "state", EqualsValue: Json("\"done\"")),
+            new WaitCondition(Node: "Main", Exists: true),
+        ];
+
+        foreach (WaitCondition condition in conditions)
+        {
+            JsonObject parameters = RuntimeTools.BuildWaitParameters(condition, 1000, new WaitOptions(Edge: true));
+
+            Assert.True(parameters["edge"]!.GetValue<bool>(), parameters.ToJsonString());
+        }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(false)]
+    public void AWaitWithoutEdgeSendsNone(bool? edge)
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, new WaitOptions(Edge: edge));
+
+        Assert.False(parameters.ContainsKey("edge"), parameters.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData("signal")]
+    [InlineData("uiChanged")]
+    [InlineData("gameMs")]
+    [InlineData("frames")]
+    public void AnEdgeWaitOnAnotherKindIsRefused(string kind)
+    {
+        WaitCondition condition = kind switch
+        {
+            "signal" => new WaitCondition(Node: "Main", Signal: "fired"),
+            "uiChanged" => new WaitCondition(UiChanged: true),
+            "gameMs" => new WaitCondition(GameMs: 500),
+            _ => new WaitCondition(Frames: 3),
+        };
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildWaitParameters(condition, 1000, new WaitOptions(Edge: true)));
+
+        Assert.Equal($"options.edge applies to exists, property and expression waits; this condition is {kind}.", refused.Message);
+    }
+
+    [Fact]
+    public void ACheckOnceEdgeWaitIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 0, new WaitOptions(Edge: true))
+        );
+
+        Assert.Equal("timeoutMs 0 checks once, which an edge wait cannot meet; give it a timeout.", refused.Message);
+    }
+
+    [Fact]
     public async Task ACheckOnceWaitWithThenIsAccepted()
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>

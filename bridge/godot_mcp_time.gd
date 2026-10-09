@@ -546,6 +546,9 @@ func _poll_capturing(probe: Callable, timeout_ms: int, params: Dictionary) -> Di
 		return _finish_then(await _poll(probe, bound_ms, params), params, {})
 	var drawn: Dictionary = {"params": params}
 	if timeout_ms > 0:
+		var failed: String = _seed_edge(probe, params)
+		if not failed.is_empty():
+			return {"error": failed}
 		probe = _check_at_draws(probe, drawn)
 	var outcome: Dictionary = await _poll(probe, bound_ms, params)
 	_stop_draw_checks(drawn)
@@ -553,6 +556,18 @@ func _poll_capturing(probe: Callable, timeout_ms: int, params: Dictionary) -> Di
 	if outcome.has("error") or not outcome["result"]["met"]:
 		return outcome
 	return await _with_capture(drawn.get("image"), params, outcome["result"])
+
+
+## With params.edge, checks probe once now, before a waiting screenshot wait's draw checks begin:
+## their first answer to _poll is no check at all (_checked_since_draw), so without this an edge
+## probe would first look at the first draw, and a condition rising before it would read as true
+## from the start. An edge probe is never met on its first check, so no capture is skipped.
+## Returns the check's failure text, or "".
+func _seed_edge(probe: Callable, params: Dictionary) -> String:
+	if not bool(params.get("edge", false)):
+		return ""
+	var seen: Array = probe.call()
+	return str(seen[2]) if seen.size() > 2 else ""
 
 
 ## Checks probe now and then once a frame until it is met, cannot be met, bound_ms has passed,

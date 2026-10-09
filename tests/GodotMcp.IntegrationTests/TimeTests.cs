@@ -173,6 +173,79 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnEdgeWaitOnAnAlreadyTruePropertyWaitsForTheNextRise()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        // state reads done now, idle from 1 s, when record_then logs the fall's frame as then_frame, and done again at 2 s, when
+        // arm adds Armed just before it sets state: a then that counts TimeProbe's children sees Armed only at that second rise.
+        await RunAsync(
+            $"var probe: Node = {Probe}\n\tprobe.state = \"done\"\n\tvar fall: Signal = scene_tree.create_timer(1.0).timeout\n\t"
+                + "fall.connect(probe.set.bind(\"state\", \"idle\"))\n\tfall.connect(probe.record_then)\n\tprobe.arm(2000)\n\treturn true"
+        );
+        WaitOptions options = new(Edge: true, Then: new WaitThen(Call: new MethodCall("TimeProbe", "get_child_count")));
+
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(
+            new WaitCondition(Node: "TimeProbe", Property: "state", EqualsValue: Json("\"done\"")),
+            5000,
+            options,
+            cancellationToken: cancellation
+        );
+        JsonObject waited = JsonNode.Parse(Text(blocks))!.AsObject();
+
+        // The wait began in the frame its met frame less its frames names, which must come before the fall, when state still
+        // read done, so a wait that ignored edge would have been met there; an edge wait is met only after the fall.
+        long fell = await ReadIntAsync("then_frame");
+        long metFrame = waited["then"]!["frame"]!.GetValue<long>();
+        long began = metFrame - waited["frames"]!.GetValue<long>();
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.True(began <= fell, $"began {began}, fell {fell}: {waited.ToJsonString()}");
+        Assert.True(metFrame > fell, $"met {metFrame}, fell {fell}: {waited.ToJsonString()}");
+        Assert.Equal(2, waited["then"]!["call"]!["value"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnEdgeScreenshotWaitMeetsARiseBeforeItsFirstDraw()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        // The bridge reads a request in its own _process, before TimeProbe's, and checks a screenshot wait at each frame's draw,
+        // after TimeProbe's, so the engine's frame count less TimeProbe's reads n at the request and n - 1 at every draw: the
+        // condition is false when the wait starts and true from its first draw on, a rise inside the wait's first frame.
+        await RunAsync($"{Probe}.n = Engine.get_process_frames() - {Probe}.process_frames\n\treturn true");
+
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(
+            new WaitCondition(Node: "TimeProbe", Expression: "Engine.get_process_frames() - node.process_frames < node.n"),
+            2000,
+            new WaitOptions(Screenshot: true, Edge: true),
+            cancellationToken: cancellation
+        );
+        JsonObject waited = JsonNode.Parse(Text(blocks))!.AsObject();
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.True(File.Exists(waited["screenshot"]!["path"]!.GetValue<string>()), waited.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnEdgeWaitOnAPropertyTrueThroughoutTimesOut()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await RunAsync($"{Probe}.state = \"done\"\n\treturn true");
+
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(
+            new WaitCondition(Node: "TimeProbe", Property: "state", EqualsValue: Json("\"done\"")),
+            500,
+            new WaitOptions(Edge: true),
+            cancellationToken: cancellation
+        );
+        JsonObject waited = JsonNode.Parse(Text(blocks))!.AsObject();
+
+        Assert.False(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Equal("done", waited["last"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForSignalReturnsArgs()
     {
         await AddTimeProbeAsync(TestContext.Current.CancellationToken);

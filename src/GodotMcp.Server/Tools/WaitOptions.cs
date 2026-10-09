@@ -25,7 +25,14 @@ internal sealed record WaitOptions(
             + "Engine.time_scale right after it. The result adds then: {frame, call?: {value}, timeScale?}. A refused or failing "
             + "call fails the wait and leaves timeScale unset; a timeout runs nothing."
     )]
-        WaitThen? Then = null
+        WaitThen? Then = null,
+    [property: Description(
+        "exists, property and expression waits only: true meets the wait only on a check that finds the condition true after "
+            + "a check that found it false, so a condition already true when the wait starts waits for its next rise, and one "
+            + "true throughout times out with met: false. A check whose expression fails to run does not count as false. "
+            + "Refused with timeoutMs 0."
+    )]
+        bool? Edge = null
 );
 
 /// <summary>What wait_for runs in the frame its condition is met: a method call, an Engine.time_scale, or both.</summary>
