@@ -393,6 +393,7 @@ func _process(_delta: float) -> void:
 				"projectPath": ProjectSettings.globalize_path("res://"),
 				"pid": OS.get_process_id(),
 				"window": {"width": window_size.x, "height": window_size.y},
+				"hwnd": _window.native_handle(),
 			}
 		)
 	_flush_errors()

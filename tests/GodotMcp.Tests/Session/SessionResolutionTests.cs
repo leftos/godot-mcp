@@ -57,7 +57,7 @@ public sealed class SessionResolutionTests : IAsyncDisposable
     public async Task StopWithProjectPathAndSeveralLiveSessionsThereIsRefused()
     {
         string alpha = ProjectPaths.Normalise(_harness.Project("alpha"));
-        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", null);
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
         await _harness.StartWaitingAttachAsync(alpha, "client");
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
@@ -243,7 +243,7 @@ public sealed class SessionResolutionTests : IAsyncDisposable
     {
         string alpha = _harness.Project("alpha");
         int pid = _harness.StartOwnedGame().Id;
-        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", pid);
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello { ProcessId = pid });
 
         SessionInfo listed = Assert.Single(_harness.Sessions.List(includeStopped: true));
 

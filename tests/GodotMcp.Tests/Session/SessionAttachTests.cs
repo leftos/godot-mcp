@@ -77,7 +77,7 @@ public sealed class SessionAttachTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string alpha = _harness.Project("alpha");
-        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", null);
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
         Task<DetachResult> detach;
 
         using (new FileStream(_harness.Combine("override-folders.txt"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
@@ -102,7 +102,7 @@ public sealed class SessionAttachTests : IAsyncDisposable
     public async Task AReplacedRunsExitLeavesTheOverrideAndTheFolderReserved()
     {
         string alpha = _harness.Project("alpha");
-        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", null);
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
         GodotSession session = _harness.Sessions.Resolve("server");
         using Process neverStarted = new();
 
@@ -110,6 +110,15 @@ public sealed class SessionAttachTests : IAsyncDisposable
 
         Assert.True(File.Exists(OverrideFile.PathIn(alpha)));
         Assert.True(session.IsLive);
+    }
+
+    [Fact]
+    public async Task AnAttachedSessionKeepsTheHellosWindowHandle()
+    {
+        string alpha = _harness.Project("alpha");
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello { WindowHandle = 1_311_768L });
+
+        Assert.Equal(1_311_768L, _harness.Sessions.Resolve("server").WindowHandle);
     }
 
     // The launch is parked on the folder's prep lock, which the test holds, so the session stays starting. It takes the lock
@@ -147,7 +156,7 @@ public sealed class SessionAttachTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string alpha = _harness.Project("alpha");
-        FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", null);
+        FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
         Task<StopResult> stop = _harness.Sessions.StopAsync("server", cancellation);
         string? command;
         using (game)
@@ -183,7 +192,7 @@ public sealed class SessionAttachTests : IAsyncDisposable
         using LoadClock clock = new(time, new NoLoadSource());
         await using RegistryHarness harness = new(clock);
         string alpha = harness.Project("alpha");
-        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", null);
+        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
         Task<StopResult> stop = harness.Sessions.StopAsync("server", cancellation);
         await game.AnswerOneAsync("quit", cancellation);
 
@@ -228,7 +237,7 @@ public sealed class SessionAttachTests : IAsyncDisposable
     {
         string alpha = _harness.Project("alpha");
         Process child = _harness.StartOwnedGame();
-        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", child.Id);
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello { ProcessId = child.Id });
 
         StopResult stopped = await _harness.Sessions.StopAsync("server", TestContext.Current.CancellationToken);
 
@@ -246,7 +255,7 @@ public sealed class SessionAttachTests : IAsyncDisposable
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string alpha = _harness.Project("alpha");
         Process child = _harness.StartOwnedGame();
-        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", child.Id);
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello { ProcessId = child.Id });
         Task<StopResult> stop = _harness.Sessions.StopAsync("server", cancellation);
 
         string? ping = await game.AnswerOneAsync("pong", cancellation);
@@ -284,7 +293,7 @@ public sealed class SessionAttachTests : IAsyncDisposable
             child.WaitForExit();
             return Task.FromResult("sampled");
         };
-        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", child.Id);
+        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello { ProcessId = child.Id });
         Task<StopResult> stop = harness.Sessions.StopAsync("server", cancellation);
         await game.AnswerOneAsync("pong", cancellation);
         await game.AnswerOneAsync("quit", cancellation);
@@ -304,7 +313,7 @@ public sealed class SessionAttachTests : IAsyncDisposable
     public async Task RestartingAnAttachedSessionIsRefused()
     {
         string alpha = _harness.Project("alpha");
-        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", null);
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
 
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
             _harness.Sessions.RestartAsync("server", prepare: true, TestContext.Current.CancellationToken)
@@ -351,7 +360,7 @@ public sealed class SessionAttachTests : IAsyncDisposable
     public async Task AHeadlessRunLeavesALiveSessionsOverrideInPlace()
     {
         string alpha = _harness.Project("alpha");
-        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", null);
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
 
         HeadlessRunner.ClearFolder(_harness.Sessions, alpha);
 
@@ -505,7 +514,7 @@ public sealed class SessionAttachTests : IAsyncDisposable
     {
         string alpha = _harness.Project("alpha");
 
-        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", null);
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
 
         Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(AttachFile.PathIn(alpha))!, "join-*.json"));
         Assert.False(File.Exists(AttachFile.PathIn(alpha)));
@@ -543,8 +552,20 @@ public sealed class SessionAttachTests : IAsyncDisposable
         (Task<AttachResult> firstJoin, string firstToken) = await _harness.StartWaitingJoinAsync(alpha, "first", first);
         (Task<AttachResult> secondJoin, string secondToken) = await _harness.StartWaitingJoinAsync(alpha, "second", second);
         bool bothJoinFiles = File.Exists(DormantGames.JoinPathIn(alpha, first)) && File.Exists(DormantGames.JoinPathIn(alpha, second));
-        using FakeBridge firstGame = await FakeBridge.DialAsync(_harness.Listener.Port, firstToken, alpha, first, cancellation);
-        using FakeBridge secondGame = await FakeBridge.DialAsync(_harness.Listener.Port, secondToken, alpha, second, cancellation);
+        using FakeBridge firstGame = await FakeBridge.DialAsync(
+            _harness.Listener.Port,
+            firstToken,
+            alpha,
+            new FakeHello { ProcessId = first },
+            cancellation
+        );
+        using FakeBridge secondGame = await FakeBridge.DialAsync(
+            _harness.Listener.Port,
+            secondToken,
+            alpha,
+            new FakeHello { ProcessId = second },
+            cancellation
+        );
 
         Assert.True(bothJoinFiles);
         Assert.Equal(first, (await firstJoin).JoinedPid);
@@ -589,7 +610,7 @@ public sealed class SessionAttachTests : IAsyncDisposable
         RegistryHarness.WriteDormant(alpha, pid);
 
         (Task<AttachResult> join, string token) = await _harness.StartWaitingJoinAsync(alpha, "joined", pid);
-        using FakeBridge game = await FakeBridge.DialAsync(_harness.Listener.Port, token, alpha, pid, cancellation);
+        using FakeBridge game = await FakeBridge.DialAsync(_harness.Listener.Port, token, alpha, new FakeHello { ProcessId = pid }, cancellation);
 
         Assert.Equal(pid, (await join).JoinedPid);
         Assert.True(_harness.Sessions.Resolve("joined").HasGame);

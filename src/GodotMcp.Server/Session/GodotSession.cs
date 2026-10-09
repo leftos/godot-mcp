@@ -78,6 +78,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <summary>The game's own process id, as its bridge's hello reported it; null before the handshake or from an older bridge.</summary>
     public int? GameProcessId { get; private set; }
 
+    /// <summary>
+    /// The game's main window handle, as its bridge's hello reported it; null before the handshake, from an older bridge, and
+    /// for a headless game.
+    /// </summary>
+    public long? WindowHandle { get; private set; }
+
     /// <summary>What the run was launched with, once it has launched; null for an attached game.</summary>
     internal LaunchRequest? LastLaunch { get; private set; }
 
@@ -556,6 +562,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         connection.OnCaptured(ReceiveCaptured);
         run.Connection = connection;
         GameProcessId = connection.GameProcessId;
+        WindowHandle = connection.WindowHandle;
         if (GameProcessId is int gameProcessId)
         {
             run.KeepGameHandle(gameProcessId, _logger);

@@ -115,11 +115,28 @@ public sealed class BridgeListenerTests : IDisposable
         timeout.CancelAfter(Wait);
         Task<BridgeConnection> waiter = _listener.AcceptBridgeAsync(new HandshakeExpectation("AAAA", ProjectDir), timeout.Token);
 
-        using FakeBridge game = await FakeBridge.DialAsync(_listener.Port, "AAAA", ProjectDir, processId, cancellation);
+        using FakeBridge game = await FakeBridge.DialAsync(_listener.Port, "AAAA", ProjectDir, new FakeHello { ProcessId = processId }, cancellation);
         await using BridgeConnection connection = await waiter;
 
         Assert.True(connection.IsOpen);
         Assert.Equal(processId, connection.GameProcessId);
+    }
+
+    [Theory]
+    [InlineData(1_311_768L)]
+    [InlineData(null)]
+    public async Task TheConnectionCarriesTheHellosWindowHandleOrNone(long? hwnd)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        timeout.CancelAfter(Wait);
+        Task<BridgeConnection> waiter = _listener.AcceptBridgeAsync(new HandshakeExpectation("AAAA", ProjectDir), timeout.Token);
+
+        using FakeBridge game = await FakeBridge.DialAsync(_listener.Port, "AAAA", ProjectDir, new FakeHello { WindowHandle = hwnd }, cancellation);
+        await using BridgeConnection connection = await waiter;
+
+        Assert.True(connection.IsOpen);
+        Assert.Equal(hwnd, connection.WindowHandle);
     }
 
     [Fact]

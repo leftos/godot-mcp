@@ -73,7 +73,7 @@ public sealed class SessionArmTests : IAsyncDisposable
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string alpha = _harness.Project("alpha");
         await _harness.Sessions.ArmAsync(alpha, Loud, cancellation);
-        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", null);
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
 
         DetachResult detached = await _harness.Sessions.DetachAsync("server", cancellation);
 
@@ -271,7 +271,7 @@ public sealed class SessionArmTests : IAsyncDisposable
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string alpha = _harness.Project("alpha");
         await _harness.Sessions.ArmAsync(alpha, Loud, cancellation);
-        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", null);
+        using FakeBridge game = await _harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
 
         DisarmResult disarmed = _harness.Sessions.Disarm(alpha);
         DetachResult detached = await _harness.Sessions.DetachAsync("server", cancellation);

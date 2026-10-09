@@ -211,6 +211,7 @@ internal sealed class BridgeListener : IDisposable
         BridgeConnection connection = new(client, decoder, HandshakeExpectation.ReadProcessId(hello), Clock, _logger)
         {
             Window = HandshakeExpectation.ReadWindow(hello),
+            WindowHandle = HandshakeExpectation.ReadWindowHandle(hello),
         };
         await HandOverAsync(waiter, connection);
     }

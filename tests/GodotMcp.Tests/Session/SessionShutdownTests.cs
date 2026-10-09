@@ -22,7 +22,7 @@ public sealed class SessionShutdownTests : IAsyncDisposable
     {
         string projectDir = _harness.Project("Attached");
         Process game = _harness.StartOwnedGame();
-        using FakeBridge bridge = await _harness.AttachFakeGameAsync(projectDir, "attached", game.Id);
+        using FakeBridge bridge = await _harness.AttachFakeGameAsync(projectDir, "attached", new FakeHello { ProcessId = game.Id });
 
         _harness.Sessions.Shutdown();
         _harness.Sessions.Shutdown();

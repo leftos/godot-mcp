@@ -10,27 +10,34 @@ internal sealed class FakeBridge(TcpClient client) : IDisposable
 {
     private readonly FrameDecoder _requests = new();
 
-    /// <summary>Dials with a hello that carries no pid, as a bridge older than the field does.</summary>
+    /// <summary>Dials with a hello that carries no pid and no window handle, as a bridge older than the fields does.</summary>
     public static Task<FakeBridge> DialAsync(int port, string token, string projectPath, CancellationToken cancellationToken) =>
-        DialAsync(port, token, projectPath, null, cancellationToken);
+        DialAsync(port, token, projectPath, new FakeHello(), cancellationToken);
 
-    /// <summary>Dials with a hello that carries <paramref name="processId"/> as its pid, when it is not null.</summary>
-    public static async Task<FakeBridge> DialAsync(int port, string token, string projectPath, int? processId, CancellationToken cancellationToken)
+    /// <summary>
+    /// Dials with a hello that carries <paramref name="hello"/>'s pid and window handle, each when it is not null.
+    /// </summary>
+    public static async Task<FakeBridge> DialAsync(int port, string token, string projectPath, FakeHello hello, CancellationToken cancellationToken)
     {
         TcpClient client = new();
         await client.ConnectAsync(IPAddress.Loopback, port, cancellationToken);
-        JsonObject hello = new()
+        JsonObject frame = new()
         {
             ["type"] = "hello",
             ["token"] = token,
             ["projectPath"] = projectPath,
         };
-        if (processId is not null)
+        if (hello.ProcessId is not null)
         {
-            hello["pid"] = processId;
+            frame["pid"] = hello.ProcessId;
         }
 
-        await client.GetStream().WriteAsync(FrameCodec.EncodeJson(hello), cancellationToken);
+        if (hello.WindowHandle is not null)
+        {
+            frame["hwnd"] = hello.WindowHandle;
+        }
+
+        await client.GetStream().WriteAsync(FrameCodec.EncodeJson(frame), cancellationToken);
         return new FakeBridge(client);
     }
 
@@ -175,4 +182,12 @@ internal sealed class FakeBridge(TcpClient client) : IDisposable
         };
         await WriteAsync(reply, cancellationToken);
     }
+}
+
+/// <summary>The pid and window handle a fake game's hello carries, each when it is not null.</summary>
+internal sealed record FakeHello
+{
+    public int? ProcessId { get; init; }
+
+    public long? WindowHandle { get; init; }
 }

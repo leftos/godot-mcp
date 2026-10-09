@@ -1020,7 +1020,7 @@ public sealed class HeadlessHostsTests : IDisposable
         Task<AttachResult> attach = _registry.AttachAsync(new AttachRequest(game, name, Wait, false, false, null), cancellation);
         await RegistryHarness.WaitUntilAsync(() => File.Exists(attachFile));
         string token = JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>();
-        FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, token, game, null, cancellation);
+        FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, token, game, new FakeHello(), cancellation);
         await attach.WaitAsync(Wait, cancellation);
         return bridge;
     }
@@ -1334,7 +1334,13 @@ public sealed class HeadlessHostsTests : IDisposable
                     await gate;
                 }
 
-                _bridge = await FakeBridge.DialAsync(_launch.Port, _launch.Token, _launch.ProjectDir, Id, CancellationToken.None);
+                _bridge = await FakeBridge.DialAsync(
+                    _launch.Port,
+                    _launch.Token,
+                    _launch.ProjectDir,
+                    new FakeHello { ProcessId = Id },
+                    CancellationToken.None
+                );
                 while (!_exited.Task.IsCompleted)
                 {
                     JsonObject request = await _bridge.ReadRequestAsync(CancellationToken.None);

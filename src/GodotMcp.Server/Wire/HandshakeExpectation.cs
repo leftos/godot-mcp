@@ -8,7 +8,8 @@ namespace GodotMcp.Server.Wire;
 /// <summary>
 /// What the bridge's first frame must carry for the run the server launched: <c>{type: "hello", token, projectPath}</c>.
 /// The hello's <c>pid</c>, the game's own process id, is read by <see cref="ReadProcessId"/>, and its <c>window</c>, the game
-/// window's size, by <see cref="ReadWindow"/>; neither is checked.
+/// window's size, by <see cref="ReadWindow"/>, and its <c>hwnd</c>, the main window's native handle, by
+/// <see cref="ReadWindowHandle"/>; none is checked.
 /// </summary>
 internal sealed record HandshakeExpectation(string Token, string ProjectPath)
 {
@@ -59,6 +60,31 @@ internal sealed record HandshakeExpectation(string Token, string ProjectPath)
             ? new WindowSize(width, height)
             : null;
     }
+
+    /// <summary>
+    /// The game's main window handle (an HWND on Windows), which the hello carries as <c>hwnd</c>; null when it carries none
+    /// (a bridge older than the field), carries 0 (a headless game, which has no window), or is not a whole number. A
+    /// negative value is a real handle, not a missing one: Godot returns <c>(int64_t)hWnd</c>, and a 64-bit Windows handle
+    /// sign-extends its 32 bits, so a handle with bit 31 set arrives negative. GDScript's JSON may write it as a float.
+    /// </summary>
+    internal static long? ReadWindowHandle(JsonObject hello)
+    {
+        if (hello["hwnd"] is not JsonValue value)
+        {
+            return null;
+        }
+
+        if (value.TryGetValue(out long whole))
+        {
+            return whole != 0 ? whole : null;
+        }
+
+        return value.TryGetValue(out double number) ? WholeNumberHandle(number) : null;
+    }
+
+    /// <summary><paramref name="number"/> as a window handle, or null when it is 0 or not a whole number that fits a long.</summary>
+    private static long? WholeNumberHandle(double number) =>
+        number != 0 && number >= long.MinValue && number < long.MaxValue && number == Math.Floor(number) ? (long)number : null;
 
     /// <summary>A positive whole number, which GDScript's JSON may write as a float; null for anything else.</summary>
     private static int? ReadPositiveInt(JsonNode? node)

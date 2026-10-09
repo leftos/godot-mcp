@@ -85,6 +85,13 @@ static func restore_window() -> void:
 	centre_window()
 
 
+## The main window's native handle, an HWND on Windows, which the hello reports as hwnd for the
+## server's real-time recording; 0 under the headless display server, which has no window
+## (servers/display/display_server_headless.h L146 in 4.7.2).
+static func native_handle() -> int:
+	return DisplayServer.window_get_native_handle(DisplayServer.WINDOW_HANDLE)
+
+
 ## Centres the main window on its screen's usable area, the primary screen's when it is on none.
 static func centre_window() -> void:
 	var screen: int = DisplayServer.window_get_current_screen()

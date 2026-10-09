@@ -52,6 +52,7 @@ internal sealed partial class GodotSession
             {
                 _attached = await InjectAndAwaitBridgeAsync(bridgeScript, wait, cancellationToken);
                 GameProcessId = _attached.GameProcessId;
+                WindowHandle = _attached.WindowHandle;
                 _ = ClearSnapshotsWhenClosedAsync(_attached);
                 // Last, since it cannot fail: an attach that fails after it would leave the handle open.
                 KeepAttachedGameHandle();

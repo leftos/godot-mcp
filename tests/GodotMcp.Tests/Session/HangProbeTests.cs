@@ -270,7 +270,7 @@ public sealed partial class HangProbeTests : IAsyncDisposable
         }
 
         string token = JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>();
-        _game = await FakeBridge.DialAsync(_listener.Port, token, projectDir, processId, cancellation);
+        _game = await FakeBridge.DialAsync(_listener.Port, token, projectDir, new FakeHello { ProcessId = processId }, cancellation);
         await attach;
         return _game;
     }

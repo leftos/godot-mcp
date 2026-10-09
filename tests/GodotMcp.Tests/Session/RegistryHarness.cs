@@ -121,15 +121,18 @@ internal sealed class RegistryHarness : IAsyncDisposable
         await WaitUntilAsync(() => Sessions.List(includeStopped: true).Any(session => session.Name == name));
     }
 
-    /// <summary>Attaches a session to a fake game whose hello carries <paramref name="processId"/> when it is not null.</summary>
-    public async Task<FakeBridge> AttachFakeGameAsync(string projectDir, string name, int? processId)
+    /// <summary>
+    /// Attaches a session to a fake game whose hello carries <paramref name="hello"/>'s pid and window handle, each when it is
+    /// not null.
+    /// </summary>
+    public async Task<FakeBridge> AttachFakeGameAsync(string projectDir, string name, FakeHello hello)
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string attachFile = AttachFile.PathIn(projectDir);
         Task<AttachResult> attach = Sessions.AttachAsync(new AttachRequest(projectDir, name, LongWait, false, false, null), cancellation);
         await WaitUntilAsync(() => File.Exists(attachFile));
         string token = JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>();
-        FakeBridge game = await FakeBridge.DialAsync(Listener.Port, token, projectDir, processId, cancellation);
+        FakeBridge game = await FakeBridge.DialAsync(Listener.Port, token, projectDir, hello, cancellation);
         await attach;
         return game;
     }
@@ -163,7 +166,7 @@ internal sealed class RegistryHarness : IAsyncDisposable
         }
 
         string token = JsonNode.Parse(File.ReadAllText(joinFile))!["token"]!.GetValue<string>();
-        FakeBridge game = await FakeBridge.DialAsync(Listener.Port, token, projectDir, joinedPid, cancellation);
+        FakeBridge game = await FakeBridge.DialAsync(Listener.Port, token, projectDir, new FakeHello { ProcessId = joinedPid }, cancellation);
         return (await attach, game);
     }
 
@@ -191,7 +194,7 @@ internal sealed class RegistryHarness : IAsyncDisposable
     /// <summary>Attaches a session to a fake game, then ends the game, leaving the session stopped.</summary>
     public async Task EndAttachedGameAsync(string projectDir, string name)
     {
-        FakeBridge game = await AttachFakeGameAsync(projectDir, name, null);
+        FakeBridge game = await AttachFakeGameAsync(projectDir, name, new FakeHello());
         game.Dispose();
         await WaitUntilAsync(() => !Sessions.Resolve(name).IsLive);
     }

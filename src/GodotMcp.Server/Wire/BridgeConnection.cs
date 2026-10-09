@@ -61,6 +61,11 @@ internal sealed class BridgeConnection : IAsyncDisposable
     public WindowSize? Window { get; init; }
 
     /// <summary>
+    /// The game's main window handle, as its hello reported it; null when the hello carried none or 0 (a headless game).
+    /// </summary>
+    public long? WindowHandle { get; init; }
+
+    /// <summary>
     /// Sends one command and waits for its reply's <c>result</c> for <paramref name="timeout"/> of load-adjusted time, bounded by
     /// <see cref="LoadClock.BackstopFactor"/> times it in wall time. With <paramref name="release"/>, the request carries
     /// <c>backstopMs</c>, <see cref="LoadClock.BackstopFactor"/> times the release in milliseconds, as the bridge's own
