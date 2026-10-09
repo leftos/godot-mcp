@@ -208,7 +208,7 @@ public sealed class RecordingTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
-    public async Task RecordMarkRefusesANonRecordingSession()
+    public async Task AQuietNonRecordingSessionIsRefusedWithTheFix()
     {
         await LaunchAsync(record: false);
 
@@ -216,7 +216,40 @@ public sealed class RecordingTests : IAsyncDisposable
             _tools.RecordMarkAsync("start", cancellationToken: TestContext.Current.CancellationToken)
         );
 
-        Assert.Equal("session 'InputProbe' is not recording; launch it with options.record.", refused.Message);
+        Assert.Equal(
+            "Session 'InputProbe' is quiet, so its window is on the server's hidden desktop, which a real-time recording cannot see. "
+                + "Launch it with options.quiet: false (options.mute: true keeps it silent), or with options.record for a Movie Maker "
+                + "recording.",
+            refused.Message
+        );
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AMovieRunStillMarksWithModeMovie()
+    {
+        await LaunchAsync(record: true);
+
+        string json = await _tools.RecordMarkAsync("start", cancellationToken: TestContext.Current.CancellationToken);
+
+        JsonNode reply = JsonNode.Parse(json)!;
+        Assert.Equal("start", reply["mark"]!.GetValue<string>());
+        Assert.Equal("movie", reply["mode"]!.GetValue<string>());
+        Assert.True(reply["frame"]!.GetValue<long>() >= 0, json);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task OptionsOnAMovieSessionAreRefused()
+    {
+        await LaunchAsync(record: true);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.RecordMarkAsync("start", new RecordMarkOptions(), cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(
+            "options belong to a real-time recording; session 'InputProbe' records with Movie Maker, whose marks take none.",
+            refused.Message
+        );
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

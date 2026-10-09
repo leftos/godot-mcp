@@ -33,6 +33,18 @@ internal sealed record ToolProcessRequest(string FileName, IReadOnlyList<string>
 
     /// <summary>Puts the process tree in a job of its own to measure its CPU; false stands in, in tests, for a tree that cannot join one.</summary>
     internal bool MeasureTree { get; init; } = true;
+
+    /// <summary>
+    /// Keeps the process's stdin open for the caller to write and close (<see cref="ToolProcess.Running.StandardInput"/>);
+    /// off, it is closed at once. Never the server's own stdin, which is the MCP pipe.
+    /// </summary>
+    public bool KeepStandardInput { get; init; }
+
+    /// <summary>
+    /// Gives the process's stdout to the caller to read (<see cref="ToolProcess.Running.StandardOutput"/>) instead of the log;
+    /// only stderr is logged then.
+    /// </summary>
+    public bool PipeStandardOutput { get; init; }
 }
 
 /// <summary>What killed a tool process and its tree, if anything did.</summary>
@@ -66,10 +78,11 @@ internal sealed record ToolProcessResult(int ExitCode, TimeSpan Elapsed, KillRea
 }
 
 /// <summary>
-/// Runs a tool process (a build, an import, a headless Godot) with its own stdin, closed at once, and its stdout and stderr
-/// written line by line to one log file. The process is killed with its whole process tree when it outlives its ceiling of
-/// load-adjusted time, runs <see cref="LoadClock.BackstopFactor"/> times the ceiling in wall time, or stalls: neither
-/// writes a line nor uses CPU for its stall limit.
+/// Runs a tool process (a build, an import, a headless Godot) with its own stdin, closed at once unless the request keeps it
+/// for the caller, and its stdout and stderr written line by line to one log file, stdout handed to the caller instead when
+/// the request pipes it. The process is killed with its whole process tree when it outlives its ceiling of load-adjusted
+/// time, runs <see cref="LoadClock.BackstopFactor"/> times the ceiling in wall time, or stalls: neither writes a line nor
+/// uses CPU for its stall limit.
 /// </summary>
 internal static class ToolProcess
 {
@@ -95,6 +108,18 @@ internal static class ToolProcess
     public static async Task<ToolProcessResult> RunAsync(ToolProcessRequest request, ILogger logger, CancellationToken cancellationToken)
     {
         using Running run = Start(request, logger);
+        return await WaitAsync(run, cancellationToken);
+    }
+
+    /// <summary>
+    /// Waits for a process <see cref="Start"/> started to exit, killing its tree when it passes its ceiling, its backstop or its
+    /// stall limit, then for its logged output to end. Call it once per process; the caller still owns and disposes the handle.
+    /// </summary>
+    /// <param name="run">The started process.</param>
+    /// <param name="cancellationToken">Kills the process tree and ends the call.</param>
+    /// <exception cref="OperationCanceledException">The call was cancelled; the process tree was killed first.</exception>
+    public static async Task<ToolProcessResult> WaitAsync(Running run, CancellationToken cancellationToken)
+    {
         (KillReason killed, string? detail) = await WaitOrKillAsync(run, cancellationToken);
         TimeSpan elapsed = run.Elapsed;
         await run.FinishOutputAsync();
@@ -102,10 +127,13 @@ internal static class ToolProcess
     }
 
     /// <summary>
-    /// Starts the process and keeps it: its stdin closed, its output going to its log, its tree in a job of its own. Nothing
-    /// watches its ceiling or a stall; the caller owns the handle, and <see cref="Running.Kill"/> or its exit ends it.
+    /// Starts the process and keeps it: its stdin closed unless <see cref="ToolProcessRequest.KeepStandardInput"/>, its output
+    /// going to its log (stderr alone under <see cref="ToolProcessRequest.PipeStandardOutput"/>), its tree in a job of its own.
+    /// Nothing watches its ceiling or a stall until <see cref="WaitAsync"/> does; the caller owns the handle, and
+    /// <see cref="Running.Kill"/> or its exit ends it.
     /// </summary>
     /// <exception cref="Win32Exception">The file could not be started.</exception>
+    /// <exception cref="IOException">The log could not be opened, as when another running process writes it.</exception>
     public static Running Start(ToolProcessRequest request, ILogger logger)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(request.LogPath))!);
@@ -124,9 +152,16 @@ internal static class ToolProcess
             var stopwatch = Stopwatch.StartNew();
             ChildProcesses.Start(process);
             tree = OwnWork.TreeCpu.Adopt(process, logger, request.MeasureTree);
-            // Never inherit the server's stdin, the MCP pipe (see GodotCommandLine.CreateStartInfo).
-            process.StandardInput.Close();
-            var drain = Task.WhenAll(sink.CopyAsync(process.StandardOutput), sink.CopyAsync(process.StandardError));
+            // Never inherit the server's stdin, the MCP pipe (see GodotCommandLine.CreateStartInfo): it is redirected, and
+            // closed here unless the caller writes it.
+            if (!request.KeepStandardInput)
+            {
+                process.StandardInput.Close();
+            }
+
+            Task drain = request.PipeStandardOutput
+                ? sink.CopyAsync(process.StandardError)
+                : Task.WhenAll(sink.CopyAsync(process.StandardOutput), sink.CopyAsync(process.StandardError));
             return new Running(new Started(process, sink, tree, stopwatch, drain), request, logger);
         }
         catch
@@ -294,6 +329,20 @@ internal static class ToolProcess
         public ToolProcessRequest Request => request;
 
         public ILogger Logger => logger;
+
+        /// <summary>The process's stdin, for a request that keeps it (<see cref="ToolProcessRequest.KeepStandardInput"/>).</summary>
+        /// <exception cref="InvalidOperationException">The request did not keep it: it was closed at the start.</exception>
+        public Stream StandardInput =>
+            request.KeepStandardInput
+                ? started.Process.StandardInput.BaseStream
+                : throw new InvalidOperationException($"{request.FileName}'s stdin was closed at its start; its request does not keep it.");
+
+        /// <summary>The process's stdout, for a request that pipes it (<see cref="ToolProcessRequest.PipeStandardOutput"/>).</summary>
+        /// <exception cref="InvalidOperationException">The request did not pipe it: it goes to the log.</exception>
+        public Stream StandardOutput =>
+            request.PipeStandardOutput
+                ? started.Process.StandardOutput.BaseStream
+                : throw new InvalidOperationException($"{request.FileName}'s stdout goes to its log; its request does not pipe it.");
 
         /// <summary>The lines of output written to the log so far.</summary>
         public long OutputLines => started.Sink.Lines;

@@ -41,6 +41,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | Turn what a person (or a drive) did into a replayable sequence | `capture_input` start, play, stop, then `simulate_input` with its `events` | writing the events by hand from a description |
 | Catch a visual regression | `save_screenshot_baseline` once, `compare_screenshot` or a `screenshot` assertion after | comparing screenshots by eye |
 | Keep a video of a bug | `run_project` with `options.record`, `record_mark`, `stop_project` | an OS screen recorder |
+| Record the window as a player sees it, on the wall clock | `record_mark` start and stop on a not-quiet session launched without `options.record` | `options.record`, whose clock is fixed, or an OS screen recorder |
 | Check scripts and scenes load | `validate` | launching the game to see if it errors |
 | Edit a scene file | the headless scene tools, several edits at once through `batch_scene_operations` | writing `.tscn` text by hand |
 | Set a project's launch defaults | a `godot-mcp.json` beside `project.godot` | repeating `engineArgs` on every `run_project` |
@@ -444,9 +445,24 @@ Two things are missed: an emission inside the very dispatch that changed the hov
 
 ### `record_mark`
 
-- **Does:** marks the `start` or `stop` of a clip in a session launched with `options.record`, at the movie frame reached: `{mark, frame, seconds}`.
+- **Does:** in a session launched with `options.record` (Movie Maker), marks the `start` or `stop` of a clip at the movie frame reached: `{mark, frame, seconds, mode: "movie"}`, and takes no `options`. In any other session with a window, `start` records the window in real time and `stop` ends it (below).
 - **Use:** bracket the moment worth keeping; when the run ends (`stop_project`, the game quitting, `restart_project`) each start-stop pair is cut to its own file with ffmpeg, and a start left open clips to the end.
 - **Edges:** marks alternate start, stop. A recording runs at a fixed 60 fps, so game time advances 1/60 s a frame whatever the wall clock does, and the game runs uncapped. `wait_for`'s `timeoutMs` and the gesture durations (`drag`'s `durationMs`, `hover`'s tooltip wait, a gamepad sweep) count clip time, 60 frames a second, and a wait's result adds `clipMs`; a recorded wait is released after 10 s + 100 ms a frame of load-adjusted time, so a long wait in a slow game can meet `batch_drive`'s 300 s deadline. A game started with `--write-movie` by hand and then attached keeps wall-clock durations. Capped at 10 minutes of frames; not with `--headless`. Without ffmpeg the full movie is kept and the result reports an error. If the server exits, the movie is lost.
+- **Real-time recording:** `record_mark {mark: "start", options?}` on a windowed session not launched with `options.record` films its window as a player sees it, on the game's own clock (durations and `wait_for` stay real time). `options {fps, maxSeconds}`: `fps` 1 to 60, default 30; `maxSeconds` 1 to 600, default 600; an `audio` key is refused as unknown, since a real-time clip has no audio track.
+  The picture is the client area, the size `run_project` reports with an odd side padded by a black pixel.
+  It answers once ffmpeg has opened its encoder, about 0.1 to 0.3 s after the first frame: `{mark: "start", mode: "realtime", path, width, height, fps, encoder, warning?}`, `path` the final `.mp4`, which exists only after `stop`. `stop` answers `{mark: "stop", mode: "realtime", clip: {path, seconds, frames, averageFps, width, height}, warning?}`.
+  The encoder is `h264_nvenc`, else `libx264`, else `h264_mf` (`hevc_nvenc` past 4096 px on a side), chosen once per server; one that fails as the recording starts (NVENC with no capable device, or past its session limit) falls back to the next that works, and later starts on that ffmpeg skip it until the server restarts. The server's frame copy costs about 3% of one core at 1080p30 (measured with `h264_nvenc`).
+- **Real-time edges:** one recording per session; several sessions may record at once. A recording that ended on its own (the window closed, the game quit, `maxSeconds`, a resize) is returned by the next `stop`, and a new `start` replaces a finished one nobody stopped. `detach_project` and the end of an attached session end a running capture at once, and the clip still finishes in the background (a `detach_project` during a `start` lets the start answer first).
+  A run's `stop_project` or `restart_project` ends it when the game's window closes.
+  Windows.Graphics.Capture films the window's own surface, so a window covered by another or without focus records fine, but a minimized one holds its last frame (and is refused at `start`), a window partly off the desktop is half stale (`start` warns, naming the window's rect and the desktop's), and a non-embedded popup is a separate OS window the clip does not hold. The yellow capture border shows on screen, not in the clip.
+  Refused: a mark other than `start` or `stop`, `fps must be 1 to 60; got <x>.`, `maxSeconds must be 1 to 600; got <x>.`, `options belong to record_mark start; stop takes none.`, a session that is not running or is headless, a window that has closed (the window reader's `window <hwnd> no longer exists.`), one already recording (naming its age), or a `stop` with none running.
+  Also refused at `start`: a quiet session (a run or an attach alike: its window is on the hidden desktop or parked, which the capture cannot see; launch it with `options.quiet: false`, and `options.mute: true` to keep it silent), no ffmpeg (`FFMPEG_PATH` naming no file included), no capture helper, an embedded window, a minimized window, the helper's probe refusing the window, the recordings folder not creatable, ffmpeg that cannot be run to test its encoders, a client area that differs from the size the helper measured (`record_mark start` again).
+  Also refused at `start`: no frame or an encoder that does not open within 10 s of load-adjusted time (the helper and ffmpeg are stopped, and the refusal quotes both logs).
+  And no working encoder (`ffmpeg at <path> has no working encoder for a <W>x<H> clip (tried …); see <log>`, naming the logs the cached verdicts came from).
+  A start that does not go ahead deletes its `.deadline` and `.mkv` and keeps its logs.
+  Warnings: `the capture got <a> fps of <fps>: the machine was busy, so the clip repeats frames` (an average under 90% of `fps`) and `the window changed size at <t> s; the clip ends there`. A failed helper, ffmpeg or remux fails `stop` instead, naming its log and keeping the `.mkv`. A `stop` that cannot write the deadline file kills the helper and returns the clip with a `warning` that it ends there.
+  Files are in `<project>/.godot/godot-mcp/recordings/`: `<UTC yyyyMMdd-HHmmss-fff>-<session>-realtime.mkv` while recording (playable if the server dies), remuxed to `.mp4` with faststart and the `.mkv` deleted, and, per recording, the logs `<same stamp>-<session>-realtime-capture.log` and `…-realtime-ffmpeg.log` (errors and the remux's output), plus `…-realtime-probe-<guid>.log` when a probe ran.
+  Ending the server ends every real-time recording and waits for its `.mp4` within the 10 s shutdown cap.
 
 ## Headless scene editing
 
@@ -622,6 +638,13 @@ A `godot-mcp.json` beside `project.godot` sets launch defaults for every `run_pr
 3. Trigger the bug with the input tools. The run is at a fixed 60 fps, so millisecond durations no longer match game time: wait on conditions with `wait_for`, not on durations.
 4. `record_mark {mark: "stop"}`.
 5. `stop_project`: `recording.clips` lists one `.mp4` for the pair, and the full movie is gone; `recording.error` means ffmpeg was missing or failed and `recording.path` is kept instead.
+
+### Record a clip as a player sees it
+
+1. `run_project {projectPath, options: {quiet: false}}` (add `mute: true` to keep it silent), or attach to a game that is not quiet. Leave out `record`: the game keeps its own clock.
+2. `record_mark {mark: "start"}`: it answers once the first frame is in, with `path`, the `.mp4` the clip becomes, and the `width` and `height` of the window.
+3. Drive with the input tools; durations and `wait_for` are real time, so waits count as they play.
+4. `record_mark {mark: "stop"}`: `clip` has `path`, `seconds`, `frames` and `averageFps`; read `warning` for a busy machine or a resize. Keep the window unminimized meanwhile.
 
 ### A `batch_drive` regression check against a baseline
 

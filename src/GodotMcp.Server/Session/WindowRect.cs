@@ -42,6 +42,9 @@ internal static partial class WindowRect
     /// <summary><c>DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2</c>.</summary>
     private const nint PerMonitorAwareV2 = -4;
 
+    /// <summary><c>GA_ROOT</c>: the root window, found by walking the chain of parent windows.</summary>
+    private const uint RootAncestor = 2;
+
     private const int VirtualScreenX = 76;
     private const int VirtualScreenY = 77;
     private const int VirtualScreenWidth = 78;
@@ -141,6 +144,21 @@ internal static partial class WindowRect
         }
     }
 
+    /// <summary>
+    /// Whether <paramref name="hwnd"/> is a top-level window: its root ancestor (<c>GetAncestor(GA_ROOT)</c>) is itself, not a
+    /// window it is embedded in. A handle that names no window has no root and is not top-level.
+    /// </summary>
+    /// <exception cref="SessionException">Not on Windows.</exception>
+    public static bool IsTopLevel(long hwnd)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new SessionException("Reading a window's ancestors needs Windows.");
+        }
+
+        return GetAncestor((nint)hwnd, RootAncestor) == (nint)hwnd;
+    }
+
     private static WindowReading ReadAware(nint handle, long hwnd)
     {
         if (!IsWindow(handle))
@@ -195,6 +213,9 @@ internal static partial class WindowRect
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool IsIconic(nint window);
+
+    [LibraryImport("user32.dll")]
+    private static partial nint GetAncestor(nint window, uint flags);
 
     [LibraryImport("dwmapi.dll")]
     private static partial int DwmGetWindowAttribute(nint window, uint attribute, out Rect value, uint size);

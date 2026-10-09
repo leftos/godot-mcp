@@ -137,16 +137,17 @@ internal static class RealtimeEncode
 /// <summary>
 /// Each ffmpeg's encoder probes, one per (ffmpeg path, encoder), run once for the cache's life; the server keeps one. A probe
 /// runs to its end whoever waits for it, bounded by <see cref="RealtimeEncode.ProbeCeiling"/>, so one caller's cancel does
-/// not cancel it for the next; a probe that ended faulted or cancelled is forgotten, so the next call runs it again.
+/// not cancel it for the next; a probe that ended faulted or cancelled is forgotten, so the next call runs it again. An
+/// encoder that probed usable but failed at a recording's start is marked unusable for the cache's life.
 /// </summary>
 internal sealed class EncoderProbeCache
 {
-    private readonly ConcurrentDictionary<(string FfmpegPath, string Encoder), Lazy<Task<bool>>> _probes = new();
+    private readonly ConcurrentDictionary<(string FfmpegPath, string Encoder), Verdict> _probes = new();
 
     /// <summary>
     /// Whether the ffmpeg at <paramref name="ffmpegPath"/> test-encodes one frame with <paramref name="encoder"/>. The probe
-    /// runs once and its result stays cached; cancelling <paramref name="cancellationToken"/> ends only this wait, leaving
-    /// the probe running for the next caller.
+    /// runs once, its output going to <paramref name="logPath"/>, and its result stays cached with that log; cancelling
+    /// <paramref name="cancellationToken"/> ends only this wait, leaving the probe running for the next caller.
     /// </summary>
     public async Task<bool> IsUsableAsync(
         string ffmpegPath,
@@ -157,26 +158,37 @@ internal sealed class EncoderProbeCache
     )
     {
         (string FfmpegPath, string Encoder) key = (ffmpegPath, encoder);
-        Lazy<Task<bool>> probe = _probes.GetOrAdd(
+        Verdict verdict = _probes.GetOrAdd(
             key,
-            _ => new Lazy<Task<bool>>(() => RealtimeEncode.ProbeAsync(ffmpegPath, encoder, logPath, run, CancellationToken.None))
+            _ => new Verdict(
+                logPath,
+                new Lazy<Task<bool>>(() => RealtimeEncode.ProbeAsync(ffmpegPath, encoder, logPath, run, CancellationToken.None))
+            )
         );
+        Task<bool> probe = verdict.Usable.Value;
         try
         {
-            return await probe.Value.WaitAsync(cancellationToken);
+            return await probe.WaitAsync(cancellationToken);
         }
-        catch (Exception) when (probe.Value.IsCompleted && !probe.Value.IsCompletedSuccessfully)
+        catch (Exception) when (probe.IsCompleted && !probe.IsCompletedSuccessfully)
         {
-            _probes.TryRemove(new KeyValuePair<(string FfmpegPath, string Encoder), Lazy<Task<bool>>>(key, probe));
+            _probes.TryRemove(new KeyValuePair<(string FfmpegPath, string Encoder), Verdict>(key, verdict));
             throw;
         }
     }
 
     /// <summary>
+    /// Marks <paramref name="encoder"/> unusable with the ffmpeg at <paramref name="ffmpegPath"/> for the cache's life, as
+    /// <paramref name="logPath"/> shows: it probed usable but failed when a recording started with it.
+    /// </summary>
+    public void MarkUnusable(string ffmpegPath, string encoder, string logPath) =>
+        _probes[(ffmpegPath, encoder)] = new Verdict(logPath, new Lazy<Task<bool>>(() => Task.FromResult(false)));
+
+    /// <summary>
     /// The encoder for a clip of <paramref name="crop"/>: the size class's <see cref="RealtimeEncode.Preference"/>, each
     /// candidate probed lazily and stopping at the first that passes.
     /// </summary>
-    /// <exception cref="SessionException">None of them passes; the message names those tried and the probe's log.</exception>
+    /// <exception cref="SessionException">None of them passes; the message names those tried and the logs their verdicts came from.</exception>
     public async Task<string> ChooseAsync(
         string ffmpegPath,
         string logPath,
@@ -196,8 +208,15 @@ internal sealed class EncoderProbeCache
 
         (int width, int height) = WindowRect.OutputSize(crop);
         string size = FormattableString.Invariant($"{width}x{height}");
+        IEnumerable<string> logs = preference
+            .Select(encoder => _probes.TryGetValue((ffmpegPath, encoder), out Verdict? verdict) ? verdict.LogPath : logPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
         throw new SessionException(
-            $"ffmpeg at {ffmpegPath} has no working encoder for a {size} clip (tried {string.Join(", ", preference)}); see {logPath}."
+            $"ffmpeg at {ffmpegPath} has no working encoder for a {size} clip (tried {string.Join(", ", preference)}); "
+                + $"see {string.Join(" and ", logs)}."
         );
     }
+
+    /// <summary>An encoder's probe, or its failure at a start, and the log that shows it.</summary>
+    private sealed record Verdict(string LogPath, Lazy<Task<bool>> Usable);
 }

@@ -5,8 +5,14 @@ namespace GodotMcp.Server.Session;
 /// <summary>One clip of a recording: from its start frame up to, not including, its stop frame; to the end when there is no stop.</summary>
 internal sealed record ClipSpan(long StartFrame, long? StopFrame);
 
-/// <summary>What record_mark returns: the mark, the movie frame it fell on, and that frame's time in the movie.</summary>
-internal sealed record MarkResult(string Mark, long Frame, double Seconds);
+/// <summary>
+/// What record_mark returns for a Movie Maker recording: the mark, the movie frame it fell on, that frame's time in the movie,
+/// and the mode, always <see cref="Recording.MovieMode"/>.
+/// </summary>
+internal sealed record MarkResult(string Mark, long Frame, double Seconds)
+{
+    public string Mode { get; } = Recording.MovieMode;
+}
 
 /// <summary>
 /// The movie one start of a recording run writes, the marks an agent set on it, and once the run has ended and the clips are
@@ -16,6 +22,9 @@ internal sealed class Recording(string path)
 {
     public const string StartMark = "start";
     public const string StopMark = "stop";
+
+    /// <summary>The mode a Movie Maker recording's marks report.</summary>
+    public const string MovieMode = "movie";
 
     private readonly Lock _lock = new();
     private readonly List<ClipSpan> _clips = [];

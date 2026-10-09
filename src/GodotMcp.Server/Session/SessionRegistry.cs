@@ -80,6 +80,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
     internal ILogger Logger => logger;
 
+    /// <summary>
+    /// What the sessions' real-time recordings find, read and start, and their encoder probes, cached for the registry's life:
+    /// <see cref="RealtimeEnvironment.System"/> unless set, as a test sets fakes.
+    /// </summary>
+    internal RealtimeEnvironment Realtime { get; set; } = RealtimeEnvironment.System(logger);
+
     /// <summary>Starts a warm headless host's process: <see cref="GodotHostProcess.Launch"/> unless set, as a test sets a fake one.</summary>
     internal Func<HostLaunch, IHostProcess> HostLauncher { get; init; } = launch => GodotHostProcess.Launch(launch, logger);
 
@@ -417,21 +423,27 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
-    /// Waits for every launch or restart in flight to settle, then stops every session's game at once and waits for them, the
-    /// two sharing <see cref="ShutdownCap"/> of wall time; then kills every game still running of the sessions it took. A
-    /// session still starting at the cap is handed back to a later pass and its game, once it has one, killed.
+    /// Ends every session's real-time recording at once, then waits for every launch or restart in flight to settle, then
+    /// stops every session's game at once and waits for them and for the recordings' clips, all sharing
+    /// <see cref="ShutdownCap"/> of wall time; then kills every game still running of the sessions it took. A session still
+    /// starting at the cap is handed back to a later pass and its game, once it has one, killed.
     /// </summary>
     private async Task StopGamesAtShutdownAsync(GodotSession[] sessions)
     {
         var cap = Task.Delay(ShutdownCap);
+        var recordings = Task.WhenAll(sessions.Select(session => Task.Run(() => FinishRecordingAtShutdownAsync(session))));
         await WaitForStartsAsync(sessions, cap);
         Task<bool>[] stops = [.. sessions.Select(session => Task.Run(() => ShutdownSessionAsync(session)))];
         Task<bool[]> all = Task.WhenAll(stops);
-        if (await Task.WhenAny(all, cap) != all)
+        var settled = Task.WhenAll(all, recordings);
+        if (await Task.WhenAny(settled, cap) != settled)
         {
             // Logging may already be torn down while the process exits, so this goes straight to stderr.
             await Console.Error.WriteLineAsync(
-                $"godot-mcp: the games had not all quit {ShutdownCap.TotalSeconds:0} s into the shutdown; killing the rest."
+                all.IsCompleted
+                    ? $"godot-mcp: the real-time recordings had not all finished {ShutdownCap.TotalSeconds:0} s into the shutdown; "
+                        + "an .mkv or a deadline file may be left in a project's .godot/godot-mcp/recordings."
+                    : $"godot-mcp: the games had not all quit {ShutdownCap.TotalSeconds:0} s into the shutdown; killing the rest."
             );
         }
 
@@ -451,6 +463,27 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         while (!cap.IsCompleted && sessions.Any(session => session.Kind == SessionKind.Run && session.IsStarting))
         {
             await Task.Delay(StartSettlePoll);
+        }
+    }
+
+    /// <summary>
+    /// One session's <see cref="GodotSession.FinishRealtimeAsync"/>, its real-time recording ended and its clip finished, a
+    /// failure reported to stderr so the others go on.
+    /// </summary>
+    [SuppressMessage(
+        "Design",
+        "CA1031:Do not catch general exception types",
+        Justification = "At the server's exit one recording's failed end, whatever it is, must not stop the others or the games' stops."
+    )]
+    private static async Task FinishRecordingAtShutdownAsync(GodotSession session)
+    {
+        try
+        {
+            await session.FinishRealtimeAsync();
+        }
+        catch (Exception e)
+        {
+            await Console.Error.WriteLineAsync($"godot-mcp: ending the real-time recording of {session.ProjectDir} at shutdown failed: {e.Message}");
         }
     }
 

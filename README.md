@@ -13,7 +13,7 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 - Preview a single scene as a picture without playing it, 2D or 3D, framing a 3D scene that has no camera.
 - Play a project's scratch scenes step by step in headless games and get a verdict for each, with the failing step, its errors and its output.
 - Take screenshots, whole or cropped, save one straight to a named picture in the project, or take a series at set moments of an animation in one call, and save baselines to catch visual regressions.
-- Record a run to video and cut the marked moments into MP4 clips, with the idle time between the agent's steps left out on request.
+- Record a run to video and cut the marked moments into MP4 clips, with the idle time between the agent's steps left out on request; or record the game's window in real time, as a player sees it, from a start to a stop.
 - Read the game's errors with file, line and stack on every call, plus its full output log.
 
 **Play it**
@@ -48,7 +48,7 @@ The full guide to every tool, with the edges that bite, is [docs/TOOLS.md](docs/
 - Windows 10 or 11 (the server is built for win-x64).
 - [Godot 4.7.2](https://godotengine.org/download), the console executable (`..._console.exe`); the .NET edition if your game uses C#.
 - The [.NET 10 runtime](https://dotnet.microsoft.com/download/dotnet/10.0); the installer offers to install it through winget when it is missing.
-- Optional: [ffmpeg](https://ffmpeg.org) on `PATH` (`winget install Gyan.FFmpeg`), to cut recordings into clips.
+- Optional: [ffmpeg](https://ffmpeg.org) on `PATH` (`winget install Gyan.FFmpeg`), to cut recordings into clips; real-time recordings need it. They also need the capture helper (`capture/godot-mcp-capture.exe`), which ships in the package beside the server.
 - An MCP client; the steps below use [Claude Code](https://claude.com/claude-code).
 
 ## Install it: tell your agent

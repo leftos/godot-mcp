@@ -1,3 +1,4 @@
+using System.Text.Json;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -7,6 +8,9 @@ namespace GodotMcp.Tests.Session;
 public sealed class RecordingMarksTests
 {
     private const string Movie = @"C:\Games\Probe\.godot\godot-mcp\recordings\20260926-120000-000-Probe.avi";
+
+    /// <summary>How record_mark serialises its results: the web defaults, camelCase names.</summary>
+    private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
 
     [Fact]
     public void MarksMustAlternate()
@@ -27,6 +31,18 @@ public sealed class RecordingMarksTests
         Assert.Equal(new MarkResult("stop", 90, 1.5), stopped);
         Assert.Equal("No clip is open; mark start first.", secondStop.Message);
         Assert.Equal([new ClipSpan(30, 90)], recording.Clips());
+    }
+
+    [Fact]
+    public void AMovieMarkSerialisesItsModeAsMovie()
+    {
+        Recording recording = new(Movie);
+
+        MarkResult started = recording.Mark("start", 30);
+        string json = JsonSerializer.Serialize(started, WebJson);
+
+        Assert.Equal("""{"mark":"start","frame":30,"seconds":0.5,"mode":"movie"}""", json);
+        Assert.Equal(new MarkResult("start", 30, 0.5), started);
     }
 
     [Fact]

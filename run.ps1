@@ -174,7 +174,7 @@ $itestGroups = [ordered]@{
     time      = @('TimeTests', 'BatchTests', 'WatchTests')
     prep      = @('PrepTests', 'RestartTests')
     recording = @('RecordingTests')
-    capture   = @('CaptureHelperTests')
+    capture   = @('CaptureHelperTests', 'RealtimeRecordingTests')
     headless  = @('HeadlessTests', 'HeadlessMeshTests', 'WarmHeadlessTests')
     scene     = @('HeadlessSceneTests', 'HeadlessBatchTests')
     nodes     = @('HeadlessPropertyTests', 'HeadlessSignalTests')
@@ -255,7 +255,7 @@ $itestRules = @(
     @('src/GodotMcp.Server/Tools/RuntimeTools.Time*.cs', @('time', 'scratch')),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Frames*.cs', 'time'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Batch*.cs', 'time'),
-    @('src/GodotMcp.Server/Tools/RuntimeTools.Record*.cs', 'recording'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Record*.cs', @('recording', 'capture')),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Inspect*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Snapshot*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Baseline*.cs', 'reads'),

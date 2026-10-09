@@ -166,10 +166,12 @@ internal sealed partial class GodotSession
 
     /// <summary>
     /// Lets go of the attached game, as a detach and a stop both do: its connection, its snapshots, its capture and the handle
-    /// on its process, and drops the session from the registry. The caller releases the folder.
+    /// on its process, and drops the session from the registry; a real-time recording of its window ends now and finishes on
+    /// its own, since a detached game keeps its window open. The caller releases the folder.
     /// </summary>
     private async Task EndAttachmentAsync(BridgeConnection attached)
     {
+        await EndRealtimeCaptureAsync();
         _attached = null;
         Snapshots.Clear();
         registry.Captures.End(Name, CaptureStore.EndedByStop);

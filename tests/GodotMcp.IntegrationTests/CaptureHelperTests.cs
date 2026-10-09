@@ -398,8 +398,7 @@ public sealed class CaptureHelperTests : IAsyncDisposable
     private static async Task DrainFramesAsync(Stream frames, TaskCompletionSource firstFrame, CancellationToken cancellationToken)
     {
         byte[] buffer = new byte[1 << 20];
-        int read;
-        while ((read = await frames.ReadAsync(buffer, cancellationToken)) > 0)
+        while (await frames.ReadAsync(buffer, cancellationToken) > 0)
         {
             firstFrame.TrySetResult();
         }
