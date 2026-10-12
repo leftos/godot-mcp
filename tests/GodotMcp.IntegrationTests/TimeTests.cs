@@ -914,7 +914,8 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         JsonObject captured = await CaptureFramesAsync(null, new CaptureFramesOptions(0.1, 0.3), TestContext.Current.CancellationToken);
 
         JsonArray points = captured["points"]!.AsArray();
-        Assert.Equal(3, points.Count);
+        Assert.Equal(4, points.Count);
+        Assert.Equal(0, points[0]!["at"]!.GetValue<double>());
         Assert.All(FramePaths(captured), path => Assert.True(File.Exists(path), captured.ToJsonString()));
     }
 
@@ -1099,6 +1100,52 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnEdgeStartWithACallIsMetOnTheRiseItsCallMakes()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        // then_frame is -1 until record_then sets it, so the condition is false before the call and true from it on. The start's
+        // edge baseline check comes before its call and finds it false, so the check right after the call, in the call's frame,
+        // is a rise: the start is met there and the clock starts in that frame. A call made by an earlier request instead lands
+        // before the start's first check, which then finds the condition already true, and an edge start waits for a rise that
+        // never comes.
+        CaptureStart start = new(
+            Node: "TimeProbe",
+            Expression: "node.then_frame >= 0",
+            TimeoutMs: 3000,
+            Edge: true,
+            Call: new MethodCall("TimeProbe", "record_then")
+        );
+
+        JsonObject captured = await CaptureFramesAsync([0], new CaptureFramesOptions(Start: start), cancellation);
+
+        long recorded = await ReadIntAsync("then_frame");
+        JsonObject started = captured["start"]!.AsObject();
+        JsonNode point = Assert.Single(captured["points"]!.AsArray())!;
+        Assert.True(started["met"]!.GetValue<bool>(), captured.ToJsonString());
+        Assert.Equal(recorded, started["call"]!["value"]!.GetValue<long>());
+        Assert.Equal(recorded, started["frame"]!.GetValue<long>());
+        Assert.Equal(recorded, point["frame"]!.GetValue<long>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATimedOutStartStillReportsItsCall()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        // The condition never holds, so the start times out after its call has run; its report keeps the call's value beside
+        // met: false.
+        CaptureStart start = new(Node: "TimeProbe", Expression: "false", TimeoutMs: 200, Call: new MethodCall("TimeProbe", "record_then"));
+
+        JsonObject captured = await CaptureFramesAsync([0.05], new CaptureFramesOptions(Start: start), cancellation);
+
+        long recorded = await ReadIntAsync("then_frame");
+        JsonObject started = captured["start"]!.AsObject();
+        Assert.False(started["met"]!.GetValue<bool>(), captured.ToJsonString());
+        Assert.Equal(recorded, started["call"]!["value"]!.GetValue<long>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task ACaptureWhoseStartTimesOutStopsWithNoFrames()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1224,12 +1271,18 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
             _tools.WaitForAsync(new WaitCondition(Frames: 3), null, new WaitOptions(Call: failing), cancellationToken: cancellation)
         );
 
+        // The start's condition holds at once, so a capture that went on past the failed start call would be met rather than
+        // answer the error.
+        McpException startCall = await Assert.ThrowsAsync<McpException>(() =>
+            CaptureFramesAsync([0.1], new CaptureFramesOptions(Start: new CaptureStart(Expression: "true", Call: failing)), cancellation)
+        );
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
             CaptureFramesAsync([0.1], new CaptureFramesOptions(Call: new MethodCall("TimeProbe", "no_such_method")), cancellation)
         );
 
         Assert.Contains("queue_free", capture.Message, StringComparison.Ordinal);
         Assert.Contains("queue_free", wait.Message, StringComparison.Ordinal);
+        Assert.Contains("queue_free", startCall.Message, StringComparison.Ordinal);
         Assert.Contains("Node '/root/TimeProbe' has no method 'no_such_method'.", refused.Message, StringComparison.Ordinal);
     }
 

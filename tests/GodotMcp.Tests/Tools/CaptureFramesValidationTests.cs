@@ -108,7 +108,19 @@ public sealed class CaptureFramesValidationTests : IDisposable
     {
         McpException refused = await RefusedAsync(null, new CaptureFramesOptions(0.01, 120));
 
-        Assert.Equal("options.every 0.01 over options.for 120 makes 12000 points; at most 1000 are allowed.", refused.Message);
+        Assert.Equal("options.every 0.01 over options.for 120 makes 12001 points; at most 1000 are allowed.", refused.Message);
+    }
+
+    [Fact]
+    public void EveryAndForMakingExactlyAThousandPointsWithTheOneAtZeroAreAccepted() =>
+        Assert.Equal(1000, RuntimeTools.CapturePoints(null, new CaptureFramesOptions(0.0625, 62.4375)).Length);
+
+    [Fact]
+    public async Task EveryAndForMakingAThousandAndOnePointsWithTheOneAtZeroAreRefused()
+    {
+        McpException refused = await RefusedAsync(null, new CaptureFramesOptions(0.0625, 62.5));
+
+        Assert.Equal("options.every 0.0625 over options.for 62.5 makes 1001 points; at most 1000 are allowed.", refused.Message);
     }
 
     [Fact]
@@ -141,14 +153,19 @@ public sealed class CaptureFramesValidationTests : IDisposable
     public void EqualNeighboursAreAccepted() => Assert.Equal([0.1, 0.3, 0.3], RuntimeTools.CapturePoints([0.1, 0.3, 0.3], null));
 
     [Fact]
-    public void EveryAndForGiveEachPointUpToFor() => Assert.Equal([0.5, 1.0], RuntimeTools.CapturePoints(null, new CaptureFramesOptions(0.5, 1.2)));
+    public void EveryAndForGiveEachPointUpToFor() =>
+        Assert.Equal([0, 0.5, 1.0], RuntimeTools.CapturePoints(null, new CaptureFramesOptions(0.5, 1.2)));
+
+    [Fact]
+    public void EveryAndForStartWithAPointAtZero() => Assert.Equal([0, 0.5, 1.0], RuntimeTools.CapturePoints(null, new CaptureFramesOptions(0.5, 1)));
 
     [Fact]
     public void AForThatIsAMultipleOfEveryIsItselfAPoint()
     {
         double[] points = RuntimeTools.CapturePoints(null, new CaptureFramesOptions(0.1, 0.3));
 
-        Assert.Equal(3, points.Length);
+        Assert.Equal(4, points.Length);
+        Assert.Equal(0, points[0]);
         Assert.Equal(0.3, points[^1], 9);
     }
 
@@ -293,6 +310,32 @@ public sealed class CaptureFramesValidationTests : IDisposable
         Assert.Equal(3000, sent["timeoutMs"]!.GetValue<int>());
         Assert.True(sent["edge"]!.GetValue<bool>(), sent.ToJsonString());
         Assert.Equal("""{"timeScale":0.5}""", sent["then"]!.ToJsonString());
+    }
+
+    [Fact]
+    public void ACaptureSendsItsStartCallToTheBridge()
+    {
+        CaptureStart start = new(Node: "TimeProbe", Expression: "node.then_frame >= 0", Edge: true, Call: new MethodCall("TimeProbe", "record_then"));
+
+        JsonObject parameters = RuntimeTools.BuildCaptureParameters([0], TimeSpan.FromSeconds(21), new CaptureFramesOptions(Start: start));
+
+        JsonObject call = parameters["start"]!["call"]!.AsObject();
+        Assert.Equal("TimeProbe", call["node"]!.GetValue<string>());
+        Assert.Equal("record_then", call["method"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("SetMood", "Main", "go", null, TimeValidationTests.BothSuffix)]
+    [InlineData(null, null, null, """{"mood": "Angry"}""", TimeValidationTests.NeitherSuffix)]
+    [InlineData("SetMood", null, null, """["Angry"]""", TimeValidationTests.ToolArgsSuffix)]
+    [InlineData(null, "TimeProbe", "start_clock", """{"ms": 300}""", TimeValidationTests.MethodArgsSuffix)]
+    public async Task AStartCallIsRefusedAsOptionsCallIs(string? tool, string? node, string? method, string? args, string suffix)
+    {
+        MethodCall call = new(node, method, args is null ? null : Json(args), tool);
+
+        McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Start: new CaptureStart(Expression: "true", Call: call)));
+
+        Assert.Equal("options.start.call" + suffix, refused.Message);
     }
 
     [Fact]

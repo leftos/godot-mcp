@@ -549,6 +549,22 @@ public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<S
     }
 
     [Fact(Timeout = GameToolTestTimeoutMs)]
+    public async Task ACaptureStartCallsAGameTool()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        string json = await _tools.CaptureFramesAsync(
+            [0.05],
+            new CaptureFramesOptions(Start: new CaptureStart(Expression: "true", Call: SetMoodCall("Angry"))),
+            cancellationToken: cancellation
+        );
+        JsonObject captured = JsonNode.Parse(json)!.AsObject();
+
+        Assert.Single(captured["points"]!.AsArray());
+        AssertSetMoodCalled(captured["start"]!["call"]!.AsObject(), "Angry");
+    }
+
+    [Fact(Timeout = GameToolTestTimeoutMs)]
     public async Task AWatchCallsAGameToolInItsFirstFrame()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

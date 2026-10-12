@@ -11,7 +11,8 @@ internal sealed record CaptureFramesOptions(
     [property: JsonPropertyName("for")]
     [property: Description(
         "With every, instead of at: how many seconds of game time to capture, greater than 0 and at most 120; the points are "
-            + "every, 2 x every and so on, up to and including for."
+            + "0, every, 2 x every and so on, up to and including for, at most 1000 with the point at 0. The point at 0 is taken "
+            + "in the clock's first frame, after options.call has run: one frame into the motion, not the pose before the call."
     )]
         double? For = null,
     [property: Description("A rectangle of each frame to keep, in viewport coordinates, as take_screenshot takes it.")] ScreenshotCrop? Crop = null,
@@ -30,19 +31,22 @@ internal sealed record CaptureFramesOptions(
     )]
         MethodCall? Call = null,
     [property: Description(
-        "{node, property, equals | exists | expression, edge?, timeoutMs?, then?}: a condition laid out as wait_for's, of kind "
-            + "exists, property or expression, that the clock waits for: the points count from the frame it is met, where "
-            + "start.then runs (call, then timeScale) and then options.call; a start already true at the call starts the clock at "
-            + "the next frame. Its timeoutMs (real time, 10000 when left out) is added to the capture's. Met, the result adds start: {met: "
-            + "true, frame, then?}; a start that times out answers stopped: true with no frames and start: {met: false, last}."
+        "{node, property, equals | exists | expression, edge?, timeoutMs?, then?, call?}: a condition laid out as wait_for's, of "
+            + "kind exists, property or expression, that the clock waits for: the points count from the frame it is met, where "
+            + "start.then runs (call, then timeScale) and then options.call; a start already true at the request, with no "
+            + "start.call, starts the clock at the next frame. start.call runs after an edge start's baseline check and before "
+            + "the check that can meet the start, so the start sees the change it makes; a change an earlier tool call made may "
+            + "already have happened before the start's first check, and an edge start then misses its rise. Its timeoutMs (real "
+            + "time, 10000 when left out) is added to the capture's. Met, the result adds start: {met: true, frame, then?, call?}; "
+            + "a start that times out answers stopped: true with no frames and start: {met: false, last, call?}."
     )]
         CaptureStart? Start = null
 );
 
 /// <summary>
 /// The condition capture_frames' clock waits for, laid out as wait_for's: exactly one of {node, exists}, {node, property,
-/// equals} or {expression} (node optional), with its edge, timeout and then. The other wait kinds bind so they can be refused
-/// by name.
+/// equals} or {expression} (node optional), with its edge, timeout, then and the call it makes before the check that can meet
+/// it. The other wait kinds bind so they can be refused by name.
 /// </summary>
 internal sealed record CaptureStart(
     [property: Description("The node, as wait_for's condition.node takes it.")] string? Node = null,
@@ -71,5 +75,13 @@ internal sealed record CaptureStart(
             + "refused, as a paused game adds no game time, so the capture would never advance. start adds then: {frame, call?, "
             + "timeScale?}. A refused or failing call fails the capture with no frames."
     )]
-        WaitThen? Then = null
+        WaitThen? Then = null,
+    [property: Description(
+        "{node, method, args} or {tool, args}, as options.call takes it: a method the bridge calls in the next frame, after an "
+            + "edge start's baseline check and before the check that can meet the start, so the start sees the change it makes; "
+            + "a change an earlier tool call made may already have happened before the start's first check. timeoutMs counts "
+            + "from after the call, and a start met on the check right after it starts the clock in the call's frame. start adds "
+            + "call: {value}, as options.call's. A refused or failing call fails the capture with no frames."
+    )]
+        MethodCall? Call = null
 );

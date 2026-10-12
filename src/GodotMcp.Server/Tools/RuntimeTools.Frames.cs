@@ -20,7 +20,7 @@ internal sealed partial class RuntimeTools
     internal const string CaptureStartPauseRefusal =
         "capture_frames' start.then cannot pause: a paused game adds no game time, so the capture would never advance.";
 
-    // A point k x every counts as within for when it passes it by no more than this, so every 0.1 for 0.3 gives three points.
+    // A point k x every counts as within for when it passes it by no more than this, so every 0.1 for 0.3 takes 0.3 as a point.
     private const double CapturePointTolerance = 1e-9;
 
     // The default allowance on top of the last point's game time: the time to reach the first frame and save the files.
@@ -44,13 +44,17 @@ internal sealed partial class RuntimeTools
             + "for a game tool, calls it in the frame the clock starts, so the points count from its entry (a coroutine or a "
             + "Task is not awaited), and adds call: {value}, its return value as call_method returns it, with tool and type for "
             + "a game tool; a refused call, or an error it raises, fails the capture with no frames. options.start {node, "
-            + "property, equals | exists | expression, edge?, timeoutMs?, then?}, a condition laid out as wait_for's, makes the "
+            + "property, equals | exists | expression, edge?, timeoutMs?, then?, call?}, a condition laid out as wait_for's, makes the "
             + "clock wait for it: the points count from the frame it is met, where start.then runs (call, then timeScale; pause is "
-            + "refused, as a paused game adds no game time) and "
-            + "then options.call; a start already true at the call starts the clock at the next frame, as without one. Its "
-            + "timeoutMs, real time, 10000 when left out, is added to the capture's, at most 600000 in all. Met, the result adds start: "
-            + "{met: true, frame, then?}; a start that times out is still a success, with stopped: true, no frames and start: "
-            + "{met: false, last}."
+            + "refused, as a paused game adds no game time) and then options.call; a start already true at the request, with no "
+            + "start.call, starts the clock at the next frame, as without one. start.call, laid out as options.call, runs in the "
+            + "next frame, after an edge start's baseline check and before the check that can meet the start, so the start sees "
+            + "the change it makes, and the clock starts in the frame the start is met, the call's own included; a change an "
+            + "earlier tool call made may already have happened before the start's first check, so an edge start sent after the "
+            + "call that starts a short effect can miss its rise. Its timeoutMs, real time, 10000 when left out, counted from "
+            + "after start.call, is added to the capture's, at most 600000 in all. Met, the result adds start: {met: true, frame, "
+            + "then?, call?}, call: {value} as options.call's; a start that times out is still a success, with stopped: true, no "
+            + "frames and start: {met: false, last, call?}."
     )]
     public async Task<string> CaptureFramesAsync(
         [Description(
@@ -76,7 +80,7 @@ internal sealed partial class RuntimeTools
         return ErrorReport.AddTo(CompactFrames(CaptureReply(result)), result.Errors).ToJsonString();
     }
 
-    /// <summary>A copy of the bridge's capture_frames reply, with the values of its call and its start's then.call cut.</summary>
+    /// <summary>A copy of the bridge's capture_frames reply, with the values of its call, its start's call and its start's then.call cut.</summary>
     /// <exception cref="McpException">The reply is not an object.</exception>
     private static JsonObject CaptureReply(BridgeResult result)
     {
@@ -84,11 +88,15 @@ internal sealed partial class RuntimeTools
             result.Reply?.DeepClone() as JsonObject
             ?? throw new McpException($"The bridge's capture_frames reply is not an object: {result.Reply?.ToJsonString() ?? "null"}.");
         CutMethodValue(reply["call"] as JsonObject);
+        CutMethodValue(reply["start"]?["call"] as JsonObject);
         CutMethodValue((reply["start"]?["then"] as JsonObject)?["call"] as JsonObject);
         return reply;
     }
 
-    /// <summary>The points capture_frames takes: at as given, or every, 2 x every and so on up to and including for.</summary>
+    /// <summary>
+    /// The points capture_frames takes: at as given, or 0, every, 2 x every and so on up to and including for. The point at 0
+    /// is taken in the clock's first frame, after options.call has run: one frame into the motion, not the pose before the call.
+    /// </summary>
     /// <exception cref="McpException">Neither form or both, or a point, every or for out of its bounds.</exception>
     internal static double[] CapturePoints(double[]? at, CaptureFramesOptions? options)
     {
@@ -128,11 +136,11 @@ internal sealed partial class RuntimeTools
 
     /// <summary>
     /// The bridge's start parameters: the condition's fields with its kind and the timeoutMs it runs under, as a wait's
-    /// (<see cref="BuildWaitParameters(WaitCondition?, int?)"/>), plus then and edge when given.
+    /// (<see cref="BuildWaitParameters(WaitCondition?, int?)"/>), plus then, edge and call when given.
     /// </summary>
     /// <exception cref="McpException">
     /// The condition is not exactly one kind, or a kind other than exists, property or expression; timeoutMs is out of range;
-    /// then is refused as wait_for's options.then is; or edge is given with timeoutMs 0.
+    /// then is refused as wait_for's options.then is; edge is given with timeoutMs 0; or call is refused as options.call is.
     /// </exception>
     internal static JsonObject StartParameters(CaptureStart start)
     {
@@ -162,6 +170,11 @@ internal sealed partial class RuntimeTools
         if (start.Edge is true)
         {
             AddEdge(parameters);
+        }
+
+        if (start.Call is { } call)
+        {
+            parameters["call"] = CallOptionParameters(call, "options.start.call");
         }
 
         return parameters;
@@ -235,20 +248,20 @@ internal sealed partial class RuntimeTools
             throw new McpException(Invariant($"options.for must be greater than 0 and at most {MaxCaptureSeconds} seconds; got {span}."));
         }
 
-        double count = Math.Floor((span + CapturePointTolerance) / every);
-        if (count > MaxCaptureFrames)
+        double steps = Math.Floor((span + CapturePointTolerance) / every);
+        if (steps + 1 > MaxCaptureFrames)
         {
             throw new McpException(
-                Invariant($"options.every {every} over options.for {span} makes {count:0} points; at most {MaxCaptureFrames} are allowed.")
+                Invariant($"options.every {every} over options.for {span} makes {steps + 1:0} points; at most {MaxCaptureFrames} are allowed.")
             );
         }
 
-        if (count < 1)
+        if (steps < 1)
         {
             throw new McpException(Invariant($"options.every {every} is longer than options.for {span}, so there is no point to capture."));
         }
 
-        return [.. Enumerable.Range(1, (int)count).Select(step => step * every)];
+        return [.. Enumerable.Range(0, (int)steps + 1).Select(step => step * every)];
     }
 
     /// <summary>

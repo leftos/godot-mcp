@@ -126,10 +126,10 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>
-    /// Readies each game tool call in <paramref name="parameters"/> (call, then.call and start.then.call) for the bridge, which calls it through
-    /// the C# helper in its frame: names the game in its request as call_game_tool does, and sends that request as the helper's
-    /// JSON text beside the helper copy the game loads, {tool, extension, request}. A method call is left as it is and asks
-    /// nothing.
+    /// Readies each game tool call in <paramref name="parameters"/> (call, then.call, start.call and start.then.call) for the
+    /// bridge, which calls it through the C# helper in its frame: names the game in its request as call_game_tool does, and
+    /// sends that request as the helper's JSON text beside the helper copy the game loads, {tool, extension, request}. A
+    /// method call is left as it is and asks nothing.
     /// </summary>
     /// <exception cref="McpException">
     /// No session answers <paramref name="session"/>, the project has no C# assembly or build, or the helper cannot be prepared;
@@ -139,7 +139,13 @@ internal sealed partial class RuntimeTools
     {
         JsonObject[] calls =
         [
-            .. new[] { parameters["call"], ThenCall(parameters), ThenCall(parameters["start"] as JsonObject) }
+            .. new[]
+            {
+                parameters["call"],
+                ThenCall(parameters),
+                (parameters["start"] as JsonObject)?["call"],
+                ThenCall(parameters["start"] as JsonObject),
+            }
                 .OfType<JsonObject>()
                 .Where(call => call.ContainsKey("tool")),
         ];

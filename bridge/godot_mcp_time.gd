@@ -213,10 +213,11 @@ func capture_frames(params: Dictionary) -> Dictionary:
 
 
 ## The capture's entries (_capture_points) once params.start, when given, is met (_await_start):
-## from the met frame itself when it was met in a frame after the request, so this frame's delta
-## counts, else from the next process_frame, as without a start. Writes the start's report into
-## start. Returns [] when the start timed out, or a String saying why the start's condition, its
-## then, the call or a frame failed.
+## from the met frame itself when it was met in a frame after the request or the start has a call
+## (whose checks all run inside a process_frame emission), so this frame's delta counts, else from
+## the next process_frame, as without a start. Writes the start's report into start. Returns []
+## when the start timed out, or a String saying why the start's condition, start.call,
+## start.then.call, options.call or a frame failed.
 func _capture_from_start(
 	points: Array, params: Dictionary, called: Dictionary, start: Dictionary
 ) -> Variant:
@@ -227,14 +228,18 @@ func _capture_from_start(
 		return str(outcome["error"])
 	if not outcome["result"]["met"]:
 		return []
-	return await _capture_points(points, params, called, int(outcome["result"]["frames"]) > 0)
+	var in_frame: bool = int(outcome["result"]["frames"]) > 0 or start.has("call")
+	return await _capture_points(points, params, called, in_frame)
 
 
 ## Waits for params.start {kind, node, exists, property, equals, expression, timeoutMs, edge,
-## then} as wait_for waits for a condition: a probe (make_probe) checked now and then once a frame
-## (_poll), for start.timeoutMs of real time or until a cancel, running start.then in the frame it
-## is met (_start_outcome). Writes start_report into start. Returns the poll's outcome, or {error}
-## when the condition is refused, cannot be checked or then.call failed.
+## then, call} as wait_for waits for a condition: a probe (make_probe) checked now and then once a
+## frame (_poll), for start.timeoutMs of real time or until a cancel, running start.then in the
+## frame it is met (_start_outcome). With start.call, the poll begins in the next process_frame,
+## right after the call and an edge probe's baseline check (_start_probe_wait), so its timeout
+## counts from the call. Writes start_report, plus call: {value} when it called, into start.
+## Returns the poll's outcome, or {error} when the condition is refused, cannot be checked, or
+## start.call or then.call failed.
 func _await_start(params: Dictionary, start: Dictionary) -> Dictionary:
 	var condition: Dictionary = params["start"]
 	var failures: Dictionary = {}
@@ -242,11 +247,18 @@ func _await_start(params: Dictionary, start: Dictionary) -> Dictionary:
 	var probe: Variant = bridge._conditions.make_probe(kind, condition, failures)
 	if probe is String:
 		return {"error": probe}
-	var outcome: Dictionary = await _poll(probe, float(condition.get("timeoutMs", 10000)), params)
+	var timeout_ms: int = int(condition.get("timeoutMs", 10000))
+	var start_called: Dictionary = {}
+	var failed: String = await _start_probe_wait(probe, condition, timeout_ms, start_called)
+	if not failed.is_empty():
+		return {"error": failed}
+	var outcome: Dictionary = await _poll(probe, float(timeout_ms), params)
 	bridge._conditions.add_failed_checks(outcome, failures)
 	outcome = _start_outcome(outcome, params)
 	if outcome.has("result"):
 		start.merge(start_report(outcome["result"], Engine.get_process_frames()))
+		if not start_called.is_empty():
+			start["call"] = start_called
 	return outcome
 
 
