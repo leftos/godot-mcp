@@ -57,6 +57,8 @@ var real_pads_shut_out: bool = false
 var report: Dictionary = {}
 ## Reads whether the OS has the game's window focused; a test replaces it to fake a focus change.
 var read_window_focused: Callable = DisplayServer.window_is_focused
+## Lists the real pads the platform driver connected; a test replaces it to fake a real pad.
+var read_connected_pads: Callable = Input.get_connected_joypads
 ## The buttons the injected pads hold, as Vector2i(device, button) keys.
 var _held_buttons: Dictionary = {}
 ## The value each injected axis holds, keyed by Vector2i(device, axis).
@@ -220,7 +222,7 @@ func play_raw_motion(spec: Dictionary) -> String:
 ## warning in report.
 func _device_for(params: Dictionary) -> Variant:
 	if not params.has("device"):
-		_chosen = choose_device(Input.get_connected_joypads(), _chosen)
+		_chosen = choose_device(read_connected_pads.call(), _chosen)
 		if _chosen < 0:
 			return NO_FREE_DEVICE
 		report["device"] = _chosen
@@ -228,7 +230,7 @@ func _device_for(params: Dictionary) -> Variant:
 	var device: int = _parse_device(params["device"])
 	if device < 0:
 		return _bad_device(params["device"])
-	if device in Input.get_connected_joypads():
+	if device in read_connected_pads.call():
 		_warn_real_pad(device)
 	return device
 
@@ -296,6 +298,15 @@ func release_all() -> void:
 	for key: Vector2i in _axes.keys():
 		if _axes[key] != 0.0:
 			_set_axis(key.x, key.y, 0.0)
+
+
+## The buttons the injected pads hold, as [{device, button}] with the button's name, in the order
+## they were pressed.
+func held_buttons() -> Array:
+	var held: Array = []
+	for key: Vector2i in _held_buttons:
+		held.append({"device": key.x, "button": JOY_BUTTON_NAMES[key.y]})
+	return held
 
 
 func _set_button(device: int, button: int, pressed: bool) -> void:

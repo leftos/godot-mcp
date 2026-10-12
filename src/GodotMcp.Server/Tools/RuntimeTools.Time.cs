@@ -31,8 +31,9 @@ internal sealed partial class RuntimeTools
     private const string EmptyThenRefusal = "options.then needs call, timeScale, pause or a mix.";
     private static readonly string[] FrameActions = ["pause", "resume", "step", "time_scale"];
 
-    // What a step's reply carries beyond its counts: the frame it stopped on, and its until's answer as wait_for gives one.
-    private static readonly string[] StepReportKeys = ["frame", "met", "value", "last", "args", "failedChecks"];
+    // What a step's reply carries beyond its counts: the frame it stopped on, its until's answer as wait_for gives one, and
+    // what its riding input left: the events not sent, what is still held and the real-pad warning.
+    private static readonly string[] StepReportKeys = ["frame", "met", "value", "last", "args", "failedChecks", "inputNotSent", "held", "warning"];
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(10);
 
     // A generous allowance per stepped frame on top of FrameTimeout: a frame at 60 fps takes about 17 ms.
@@ -56,7 +57,9 @@ internal sealed partial class RuntimeTools
             + "being drawn stops at its deadline (10 s + 100 ms per frame, load-adjusted), leaves the game paused and fails. "
             + "options.until, a wait_for condition of any kind but frames, stops the step on the first stepped frame that meets "
             + "it, checked after each frame (never before the first) at its draw, or as the next tick starts with unit physics, "
-            + "and leaves the game paused on that frame; count is then the most frames, 1000 when left out. time_scale sets "
+            + "and leaves the game paused on that frame; count is then the most frames, 1000 when left out. options.input sends "
+            + "simulate_input's raw events inside chosen stepped frames (process unit only), under the session's input gate as an "
+            + "input tool plays; the result adds inputNotSent, held and warning as its description says. time_scale sets "
             + "Engine.time_scale, which scales process and physics delta. Returns {paused, timeScale, processFrames, "
             + "physicsFrames}, the frames and ticks the step ran (0 for other actions), plus a step's frame "
             + "(Engine.get_process_frames() where it stopped), screenshot when captured, and with until met plus value (args "
@@ -67,7 +70,7 @@ internal sealed partial class RuntimeTools
         [Description("step only: how many frames (or physics ticks) to advance, 1 to 1000; 1 when left out, 1000 with options.until.")]
             int? count = null,
         [Description("time_scale only: the new Engine.time_scale, greater than 0 and at most 100; 1 is normal speed.")] double? scale = null,
-        [Description("step only: {unit, screenshot, until}; unit is process (the default) or physics.")] StepOptions? options = null,
+        [Description("step only: {unit, screenshot, until, input}; unit is process (the default) or physics.")] StepOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
@@ -75,8 +78,26 @@ internal sealed partial class RuntimeTools
         JsonObject parameters = BuildFrameParameters(action, count, scale, options);
         TimeSpan allowance = StepAllowance(parameters["count"]?.GetValue<int>() ?? 1);
         BridgeCall call = new("frame_control", "frame", parameters, allowance + WaitReplyAllowance, action == "step" ? allowance : null);
-        BridgeResult result = await CallWithErrorsAsync(Find(session), call, cancellationToken);
+        GodotSession target = Find(session);
+        BridgeResult result = parameters.ContainsKey("input")
+            ? await CallUnderInputGateAsync(target, call, cancellationToken)
+            : await CallWithErrorsAsync(target, call, cancellationToken);
         return await ShapeFrameResultAsync(result, cancellationToken);
+    }
+
+    /// <summary>A step with riding input, run once any earlier input call on the session has finished, as an input tool
+    /// plays.</summary>
+    private static async Task<BridgeResult> CallUnderInputGateAsync(GodotSession target, BridgeCall call, CancellationToken cancellationToken)
+    {
+        await target.InputGate.WaitAsync(cancellationToken);
+        try
+        {
+            return await CallWithErrorsAsync(target, call, cancellationToken);
+        }
+        finally
+        {
+            target.InputGate.Release();
+        }
     }
 
     [McpServerTool(Name = "wait_for", ReadOnly = false, Destructive = false, OpenWorld = false)]
@@ -149,7 +170,7 @@ internal sealed partial class RuntimeTools
         return ErrorReport.AddTo(WaitReply(result), result.Errors).ToJsonString();
     }
 
-    /// <summary>The bridge's frame parameters: {action}, plus {count, unit, screenshot, until} for step and {scale} for
+    /// <summary>The bridge's frame parameters: {action}, plus {count, unit, screenshot, until, input} for step and {scale} for
     /// time_scale.</summary>
     /// <exception cref="McpException">An unknown action, an argument the action does not take or needs and lacks, or an until
     /// condition wait_for would refuse or of the frames kind.</exception>
@@ -421,9 +442,20 @@ internal sealed partial class RuntimeTools
         parameters["deadlineMs"] = (long)StepAllowance(frames).TotalMilliseconds;
         parameters["unit"] = unit;
         AddScreenshot(parameters, options.Screenshot);
+        AddStepConditions(parameters, options, frames, unit);
+    }
+
+    /// <summary>Adds a step's until and its riding input (<see cref="StepInput.Parameters"/>) when the options give them.</summary>
+    private static void AddStepConditions(JsonObject parameters, StepOptions options, int frames, string unit)
+    {
         if (options.Until is { } until)
         {
             parameters["until"] = UntilParameters(until);
+        }
+
+        if (options.Input is { } input)
+        {
+            parameters["input"] = StepInput.Parameters(input, frames, unit);
         }
     }
 
@@ -465,9 +497,13 @@ internal sealed partial class RuntimeTools
             throw new McpException($"{refused} applies to step only.");
         }
 
-        if (options.Until is not null)
+        string? refusedOption =
+            options.Until is not null ? "options.until"
+            : options.Input is not null ? "options.input"
+            : null;
+        if (refusedOption is not null)
         {
-            throw new McpException("options.until applies to step only.");
+            throw new McpException($"{refusedOption} applies to step only.");
         }
     }
 

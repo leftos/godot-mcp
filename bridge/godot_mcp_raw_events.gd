@@ -43,6 +43,35 @@ func release_all() -> void:
 	bridge._pads.release_all()
 
 
+## What the drive holds down, by the names simulate_input takes: {keys, mouseButtons, padButtons
+## [{device, button}], actions}, the held kinds release_all lets go of; empty when nothing is.
+func held() -> Dictionary:
+	var keys: Array = _gestures.held_keys().map(
+		func(code: int) -> String: return OS.get_keycode_string(code as Key)
+	)
+	var held_now: Dictionary = {
+		"keys": keys,
+		"mouseButtons": _held_mouse_buttons(),
+		"padButtons": bridge._pads.held_buttons(),
+		"actions": _held_actions.keys().map(func(action: StringName) -> String: return str(action)),
+	}
+	for kind: Array in held_now.values():
+		if not kind.is_empty():
+			return held_now
+	return {}
+
+
+## The mouse buttons the bridge's held mask holds, by the input player's names (left, right,
+## middle), or by index for another.
+func _held_mouse_buttons() -> Array:
+	var names: Dictionary = _gestures_script.MOUSE_BUTTONS
+	var buttons: Array = []
+	for button: int in held_buttons(bridge._held_mask):
+		var button_name: Variant = names.find_key(button)
+		buttons.append(button if button_name == null else button_name)
+	return buttons
+
+
 ## Releases every action a raw action event left pressed, through the same dispatch path its press
 ## took.
 func _release_actions() -> void:
@@ -67,6 +96,14 @@ func play(events: Variant) -> String:
 		if not error.is_empty():
 			return "event %d: %s" % [index, error]
 	return ""
+
+
+## Plays one raw event in the frame it is called in, for a step's riding input: the server sends
+## what simulate_input would press and release a frame apart as a press and a release of their
+## own, and refuses a wait and a click_element, so nothing here waits a frame. Returns the event's
+## error, or "".
+func play_now(event: Variant) -> String:
+	return await _play_event(event)
 
 
 func _play_event(event: Variant) -> String:

@@ -8,6 +8,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - `click` and `mouse_button` answer `fired`, the signals the press set off on the pressed node's chain in handler order, each with its listener count.
 - `record_mark` records any windowed session not launched with `options.record` in real time, `start` to `stop`, into an MP4 clip.
+- `frame_control` step takes `options.input`, raw events sent inside chosen stepped frames, and reports what stays held and what went unsent.
 
 ### Fixed
 

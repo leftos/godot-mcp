@@ -229,6 +229,13 @@ func has_ui_baseline() -> bool:
 	return not _ui_baseline.is_empty()
 
 
+## Takes the uiChanged baseline when none is pending, as a gesture starting does: a step's riding
+## input takes it this way.
+func take_ui_baseline() -> void:
+	if _ui_baseline.is_empty():
+		_ui_baseline = _snapshot_ui()
+
+
 ## What changed in the UI since the baseline, as the snapshot's diff gives it; empty when nothing
 ## did or no baseline is pending.
 func ui_change() -> Dictionary:

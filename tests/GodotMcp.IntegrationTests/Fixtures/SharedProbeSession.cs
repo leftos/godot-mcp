@@ -15,9 +15,11 @@ public class SharedProbeSession : IAsyncLifetime
     private const int ScriptTimeoutMs = 10_000;
 
     // Frees every root child but the autoloads, loads the main scene again and waits for it, then undoes what a test may
-    // have set on the engine. Keys and actions carry no bridge-side state, so they are released here; the mouse buttons
-    // and pad buttons and axes the bridge holds are returned, for ResetAsync to release through simulate_input. The
-    // bridge's pointer goes back to the origin, since a raw mouse_motion with no relative takes its step from it.
+    // have set on the engine. Keys and actions are released here: the ones the bridge holds (its input player's held keys
+    // and its raw event player's held actions) through the bridge, so a step's held is empty after a reset, then any other
+    // still pressed in Input. The mouse buttons and pad buttons and axes the bridge holds are returned, for ResetAsync to
+    // release through simulate_input. The bridge's pointer goes back to the origin, since a raw mouse_motion with no
+    // relative takes its step from it.
     private const string ResetScript = """
         extends RefCounted
 
@@ -27,8 +29,8 @@ public class SharedProbeSession : IAsyncLifetime
         	Engine.time_scale = 1.0
         	RenderingServer.render_loop_enabled = true
         	Input.emulate_touch_from_mouse = {EMULATE_TOUCH}
-        	_release_keys_and_actions()
         	var root: Window = scene_tree.root
+        	_release_keys_and_actions(root)
         	root.get_node("GodotMcpBridge").set("_pointer", Vector2.ZERO)
         	root.get_node("GodotMcpBridge/Gestures").set("_ui_baseline", {})
         	for child: Node in root.get_children():
@@ -43,7 +45,11 @@ public class SharedProbeSession : IAsyncLifetime
         	return {"reloaded": scene_tree.current_scene != null, "held": _held(root)}
 
 
-        func _release_keys_and_actions() -> void:
+        func _release_keys_and_actions(root: Window) -> void:
+        	var gestures: Node = root.get_node("GodotMcpBridge/Gestures")
+        	for keycode: int in gestures.held_keys():
+        		gestures.send_key(keycode, false, 0, PackedStringArray())
+        	root.get_node("GodotMcpBridge/RawEvents")._release_actions()
         	var codes: Array = range(32, 0x300) + range(KEY_SPECIAL, KEY_SPECIAL + 0x200)
         	for code: int in codes:
         		var key := code as Key

@@ -19,6 +19,14 @@ extends Node
 ## Until: the condition is checked where the step counts: a frame at its frame_post_draw, so the
 ## check sees the state that frame drew, and a tick at the next tick's physics_frame, where the
 ## step would re-pause; never before the first, so a step runs at least one frame.
+##
+## Riding input: params.input, the server's event list sorted by frame, is sent at each stepped
+## frame's process_frame, before that frame's nodes process (scene_tree.cpp L713), through the
+## raw event player, so _input and is_action_just_pressed in _process see an event in its own
+## frame: a press is stamped with this process frame and the next physics tick
+## (core/input/input.cpp L1035-1036). The schedule advances with the counted (drawn) frames: a
+## process_frame whose frame is not drawn (main/main.cpp L5080-5096) moves it on no further.
+## Process unit only, which the server enforces.
 
 const PAUSE_CHANGED := (
 	"The game changed its own pause state during the step, " + "after %d of %d frames."
@@ -35,6 +43,8 @@ var time: Node
 ## headless display server draws nothing.
 var frames_tree: Object = null
 var draws: Signal = RenderingServer.frame_post_draw
+## The running step's riding input (_riding_of), which its frames' process_frame handler sends.
+var _riding: Dictionary = {"events": [], "next": 0, "frame": 0, "error": ""}
 
 
 ## Refuses a step with a screenshot on a headless game, which draws no frames, a step that would
@@ -51,7 +61,7 @@ func _guarded_step(params: Dictionary, result: Dictionary) -> String:
 		return time.NO_DRAW_REFUSAL
 	if OS.low_processor_usage_mode:
 		return time.LOW_PROCESSOR_REFUSAL
-	var until: Variant = _until_of(params)
+	var until: Variant = _until_with_baseline(params)
 	if until is String:
 		return until
 	var count: int = maxi(1, int(params.get("count", 1)))
@@ -62,6 +72,29 @@ func _guarded_step(params: Dictionary, result: Dictionary) -> String:
 	time._end(deadline)
 	_release_until(until)
 	return error
+
+
+## The until state of params (_until_of), after taking the uiChanged baseline when params carries
+## riding input and none is pending, as a gesture starting does, so a uiChanged until compares
+## with the UI from before the input. A refused until drops the baseline this call took, so a
+## refused step leaves none behind.
+func _until_with_baseline(params: Dictionary) -> Variant:
+	var gestures: Node = time.bridge._gestures
+	var takes: bool = not _riding_of(params)["events"].is_empty() and not gestures.has_ui_baseline()
+	if takes:
+		gestures.take_ui_baseline()
+	var until: Variant = _until_of(params)
+	if until is String and takes:
+		gestures.use_up_ui_baseline()
+	return until
+
+
+## The riding input of params.input, the server's events sorted by frame, each with frame and
+## index (its place in the agent's list): {events, next (the next to send), frame (the running
+## frames whose input has been sent), error (the failed event's text)}.
+static func _riding_of(params: Dictionary) -> Dictionary:
+	var events: Array = params["input"] if params.get("input") is Array else []
+	return {"events": events, "next": 0, "frame": 0, "error": ""}
 
 
 ## The until state of params.until, a wait condition {kind, ...}: {kind, failures, probe,
@@ -116,24 +149,54 @@ func _stalled(counted: int, count: int) -> String:
 ## From the next frame_post_draw (a running game runs whole frames until then) unpauses the
 ## tree, runs params.count frames (or physics ticks), or fewer when until is met first, and
 ## pauses it again, writing both counts, frame (Engine.get_process_frames() at the stop) and
-## until's answer into result, and the capture into result.screenshot when params.screenshot is
-## set. Only frames (ticks) that found the tree running count; one that found it paused means the
-## game paused itself, and fails the step.
+## until's answer into result, what the riding input left (_riding_report), and the capture into
+## result.screenshot when params.screenshot is set. Only frames (ticks) that found the tree
+## running count; one that found it paused means the game paused itself, and fails the step. A
+## riding event that fails ends the step paused at its frame and fails it with the event's text.
+## However a step with riding input fails, its text ends with what is held (_with_held).
 func _step(params: Dictionary, result: Dictionary, until: Dictionary) -> String:
 	var count: int = maxi(1, int(params.get("count", 1)))
 	var physics: bool = str(params.get("unit", "process")) == "physics"
 	var capture: bool = bool(params.get("screenshot", false))
 	var others: Dictionary = {"count": 0}
+	_riding = _riding_of(params)
+	_mark_riding(true)
 	var ran: Variant = await _run_step(count, physics, capture, others, until)
+	_mark_riding(false)
 	if ran is String:
-		return ran
+		return _with_held(ran)
+	return _with_held(await _report_step(ran, others["count"], params, result, until))
+
+
+## Writes a step that ran into result: frame, both counts (others, the other unit's), what the
+## riding input left, until's answer and the capture when params.screenshot asks for it. Returns
+## the text of the first that failed, or "".
+func _report_step(
+	ran: Array, others: int, params: Dictionary, result: Dictionary, until: Dictionary
+) -> String:
+	var count: int = maxi(1, int(params.get("count", 1)))
+	var physics: bool = str(params.get("unit", "process")) == "physics"
 	result["frame"] = Engine.get_process_frames()
-	result["processFrames"] = others["count"] if physics else ran[0]
-	result["physicsFrames"] = ran[0] if physics else others["count"]
-	var failed: String = _until_report(until, result)
-	if not failed.is_empty() or not capture:
+	result["processFrames"] = others if physics else ran[0]
+	result["physicsFrames"] = ran[0] if physics else others
+	var failed: String = _riding_report(result)
+	if failed.is_empty():
+		failed = _until_report(until, result)
+	if not failed.is_empty() or not bool(params.get("screenshot", false)):
 		return failed
 	return await _save_capture(ran[1], physics, ran[0], count, params, result)
+
+
+## failed followed by "; held: <JSON>" (the raw event player's held) when the step carried riding
+## input and anything is held, so the agent learns what to release however the step failed; failed
+## as it is otherwise, and "" for a step that did not fail.
+func _with_held(failed: String) -> String:
+	if failed.is_empty() or _riding["events"].is_empty():
+		return failed
+	var held: Dictionary = time.bridge._raw_events.held()
+	if held.is_empty():
+		return failed
+	return "%s; held: %s" % [failed, JSON.stringify(held, "", false)]
 
 
 ## Unpauses the tree inside the next frame_post_draw and runs count frames (or physics ticks),
@@ -165,10 +228,89 @@ func _run_step(
 	return ran
 
 
-## Whether a step stopped short of count for a reason other than its until: a frame (tick) that
-## found the tree paused, or a draw that never came.
-static func _ended_early(counted: int, count: int, until: Dictionary) -> bool:
-	return counted < count and not bool(until.get("stopped", false))
+## Whether a step stopped short of count for a reason other than its until or a riding event that
+## failed: a frame (tick) that found the tree paused, or a draw that never came.
+func _ended_early(counted: int, count: int, until: Dictionary) -> bool:
+	return (
+		counted < count
+		and not bool(until.get("stopped", false))
+		and str(_riding["error"]).is_empty()
+	)
+
+
+## Marks a gesture playing while the step's riding input does, so a watched run's real mouse is
+## swallowed and the hover is not re-picked, as during a gesture, and empties the gamepad's report
+## as a gesture starting does, so its warning is the riding pad events' own; a step without input
+## leaves both alone.
+func _mark_riding(playing: bool) -> void:
+	if _riding["events"].is_empty():
+		return
+	time.bridge._gesture_playing = playing
+	if playing:
+		time.bridge._pads.report = {}
+
+
+## At a stepped frame's process_frame: notes in frame.running whether it found the tree running
+## and, when it did and the schedule stands at the frames counted so far (frame.counted), sends
+## the next counted frame's riding input, before the frame's nodes process. A process_frame after
+## one whose frame was not drawn finds the schedule ahead of the count and sends nothing.
+func _note_frame(tree: Object, frame: Dictionary) -> void:
+	frame["running"] = not tree.paused
+	if frame["running"] and _riding["frame"] == frame["counted"]:
+		await _ride()
+
+
+## Sends the running frame's riding input, the events whose frame is riding.frame, in order, then
+## moves riding.frame on; stops at the first event that fails, keeping "event <index>: <its
+## error>" in riding.error.
+func _ride() -> void:
+	var events: Array = _riding["events"]
+	while _riding["next"] < events.size() and str(_riding["error"]).is_empty():
+		var event: Dictionary = events[_riding["next"]]
+		if int(event.get("frame", 0)) > _riding["frame"]:
+			break
+		_riding["next"] += 1
+		var error: String = await time.bridge._raw_events.play_now(event)
+		if not error.is_empty():
+			var index: int = int(event.get("index", _riding["next"] - 1))
+			_riding["error"] = "event %d: %s" % [index, error]
+	_riding["frame"] += 1
+
+
+## Whether the step ends at the frame just counted: a riding event failed in it, or until is met
+## (or cannot be met) there.
+func _stops_here(until: Dictionary) -> bool:
+	return not str(_riding["error"]).is_empty() or _until_met(until)
+
+
+## Writes what the riding input left into result: inputNotSent, the events an early stop left
+## unsent (a press-and-release entry counts as two), held (the raw event player's held) and
+## warning (_add_pad_warning), each when there is any. Returns the failed event's text, writing
+## nothing then, or "" (and writes nothing) without input.
+func _riding_report(result: Dictionary) -> String:
+	var events: Array = _riding["events"]
+	var error: String = _riding["error"]
+	if events.is_empty() or not error.is_empty():
+		return error
+	var unsent: int = events.size() - int(_riding["next"])
+	if unsent > 0:
+		result["inputNotSent"] = unsent
+	var held: Dictionary = time.bridge._raw_events.held()
+	if not held.is_empty():
+		result["held"] = held
+	_add_pad_warning(result)
+	return ""
+
+
+## Adds the gamepad's warning, the one simulate_input gives when a pad event plays on a connected
+## real pad, to result.warning, after a space when result already has one.
+func _add_pad_warning(result: Dictionary) -> void:
+	var warning: String = str(time.bridge._pads.report.get("warning", ""))
+	if warning.is_empty():
+		return
+	if result.has("warning"):
+		warning = "%s %s" % [result["warning"], warning]
+	result["warning"] = warning
 
 
 ## Checks until's probe, keeping its answer in until.seen; true, marking until.stopped, when it is
@@ -216,24 +358,25 @@ func _save_capture(
 	return ""
 
 
-## Lets count whole frames run, each counted at its frame_post_draw when its process_frame found
-## the tree running and until checked there, then captures the last when asked (inside its
-## frame_post_draw, so it shows that frame) and pauses the tree there. Stops at a frame that
-## found the tree paused, or at the first whose check met until. Returns [frames counted, the
-## capture or null].
+## Lets count whole frames run, each sending its riding input at its process_frame and counted at
+## its frame_post_draw when its process_frame found the tree running and until checked there,
+## then captures the last when asked (inside its frame_post_draw, so it shows that frame) and
+## pauses the tree there. Stops at a frame that found the tree paused, or at the first in which a
+## riding event failed or whose check met until. Returns [frames counted, the capture or null].
 func _run_frames(count: int, capture: bool, until: Dictionary) -> Array:
 	var tree: Object = _tree()
-	var running: Array[bool] = [false]
-	var note := func() -> void: running[0] = not tree.paused
+	var frame: Dictionary = {"running": false, "counted": 0}
+	var note: Callable = _note_frame.bind(tree, frame)
 	tree.process_frame.connect(note)
 	var counted: int = 0
 	while counted < count:
 		var drawn: bool = await time._next(draws)
-		if not drawn or not running[0]:
+		if not drawn or not frame["running"]:
 			break
-		running[0] = false
+		frame["running"] = false
 		counted += 1
-		if _until_met(until):
+		frame["counted"] = counted
+		if _stops_here(until):
 			break
 	tree.process_frame.disconnect(note)
 	if _ended_early(counted, count, until):
