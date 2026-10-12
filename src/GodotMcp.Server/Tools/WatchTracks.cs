@@ -4,7 +4,7 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// What a watch samples each frame and the signals it records: properties of nodes and Godot Expressions (at most 32 together),
-/// signals (at most 16 tracks) and performance monitors (at most 16).
+/// signals (at most 16 tracks), performance monitors (at most 16) and the voices of audio players.
 /// </summary>
 internal sealed record WatchTracks(
     [property: Description(
@@ -30,7 +30,28 @@ internal sealed record WatchTracks(
             + "monitor's id as Performance.add_custom_monitor registered it. At most 16; time/fps, time/process, "
             + "time/physics_process and time/navigation_process are refused, since Godot sets them once a second."
     )]
-        string[]? Monitors = null
+        string[]? Monitors = null,
+    [property: Description(
+        "Audio: {players: {under?}} follows the voices of every AudioStreamPlayer, AudioStreamPlayer2D and AudioStreamPlayer3D "
+            + "at or under under (default the root), found at start or added during the window, at most 200 at a time; each "
+            + "voice's start, pause, resume and end is listed in audio.voices."
+    )]
+        WatchAudioTrack? Audio = null
+);
+
+/// <summary>The audio a watch follows: the voices of the players at or under a node.</summary>
+internal sealed record WatchAudioTrack(
+    [property: Description("The players whose voices are listed: {} for every player under the root, {under} for those at or under a node.")]
+        WatchAudioPlayers? Players = null
+);
+
+/// <summary>Which audio players a watch follows.</summary>
+internal sealed record WatchAudioPlayers(
+    [property: Description(
+        "The node whose players, itself included, are followed, named as a property track's node; it must exist when the watch "
+            + "starts. Left out, the root."
+    )]
+        string? Under = null
 );
 
 /// <summary>A signal a watch records each emission of, on one node or on every member of a group.</summary>

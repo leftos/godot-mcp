@@ -61,6 +61,21 @@ internal sealed partial class RuntimeTools
             + "time between frames, over: {budget, count, frames} against options.budgetMs, a hitch reading as one long frame), "
             + "a built-in monitor by its Performance.get_monitor_name path (object/nodes, raster/total_draw_calls), or a custom "
             + "monitor id; warning? says when a reading misleads. "
+            + "tracks.audio.players follows every AudioStreamPlayer, 2D and 3D at or under players.under (default the root), "
+            + "found at start or added during the window (at most 200 at a time, the rest counted in playersSkipped), and adds "
+            + "audio: {voices: [[frame, gameMs, event, path, {stream?, bus?, maxPolyphony?, position?, reason?}]], voiceCounts: "
+            + "{\"<path>\": {starts, ends}}, voiceCountsCut?, voicesDropped?, voicesCut?, playersFollowed?, playersSkipped?}; "
+            + "start's reply adds audio: {driver, mixRate, bridgeMuted, players: {count, playing: [{path, stream, bus, ...}]}, "
+            + "playersSkipped?}. event is start (a new playback: with unit process, a play() in frame N's processing reads at "
+            + "N+1, in a physics tick at N; it carries the stream, by its resource path (res://x.tscn::<id> for one embedded in a "
+            + "scene) or {class} when it has none, the bus, maxPolyphony above 1 and a 2D or 3D player's global position, not "
+            + "the playback position, null outside the tree), pause or resume (stream_paused flipped; it follows the player's "
+            + "oldest voice) or end (the player holds no playback; reason finished, freed or stopped; an end with no start is a "
+            + "voice start's players.playing listed). Voices are read in paused frames too. At most 300 voices, shared fairly "
+            + "across players (each keeps its earliest, the earliest players first), the rest counted in voicesDropped; "
+            + "voiceCounts keeps the 100 paths with the most starts and ends and counts the rest in voiceCountsCut. A player "
+            + "made, played and freed within one frame is never seen; a start says the game asked for the sound, not that it "
+            + "was heard. "
             + "Expressions, options.call and custom monitors run game code. A restart, a stop_project "
             + "or a lost connection drops the watch."
     )]
@@ -69,8 +84,8 @@ internal sealed partial class RuntimeTools
         [Description(
             "start and run: {properties: [{node, property, name?, minDelta?}], expressions: [{name, expression, node?, minDelta?}], "
                 + "signals: [{node | group, signal}], monitors: [\"frame_ms\" | a built-in monitor such as \"object/nodes\" | a custom "
-                + "monitor id]}, at least one track; at most 32 property and expression tracks, each with a unique key (name, else "
-                + "node and property), at most 16 signal tracks and at most 16 monitors."
+                + "monitor id], audio: {players: {under?}}}, at least one track; at most 32 property and expression tracks, each "
+                + "with a unique key (name, else node and property), at most 16 signal tracks and at most 16 monitors."
         )]
             WatchTracks? tracks = null,
         [Description(
@@ -96,14 +111,15 @@ internal sealed partial class RuntimeTools
 
     /// <summary>
     /// The bridge's watch parameters: {action} for stop; for start and run {action, properties?, expressions?, signals?,
-    /// monitors?, frames | gameMs, unit, call?, budgetMs?, deadlineMs}, deadlineMs the window's allowance
+    /// monitors?, audio?, frames | gameMs, unit, call?, budgetMs?, deadlineMs}, deadlineMs the window's allowance
     /// (<see cref="WatchAllowance"/>).
     /// </summary>
     /// <exception cref="McpException">An unknown action; stop given tracks, a window or options; no track, more than
     /// <see cref="MaxWatchTracks"/> property and expression tracks, <see cref="MaxWatchSignalTracks"/> signal tracks or
     /// <see cref="MaxWatchMonitors"/> monitors, an empty node, property, name, expression, group, signal or monitor, a minDelta
     /// not above 0, two tracks with one key, a signal track with both or neither of node and group, two signal tracks on one
-    /// emitter and signal, a monitor named twice, a once-a-second time/* monitor, or frame_ms with unit physics; a window
+    /// emitter and signal, a monitor named twice, a once-a-second time/* monitor, frame_ms with unit physics, an audio track
+    /// without players, or an empty under; a window
     /// without exactly one of frames or gameMs, or out of range; run without a window; a unit other than process or physics;
     /// or a budgetMs out of range or without frame_ms.</exception>
     internal static JsonObject BuildWatchParameters(string action, WatchTracks? tracks, WatchWindow? window, WatchOptions? options)
@@ -160,13 +176,15 @@ internal sealed partial class RuntimeTools
         WatchPropertyTrack[] properties = given.Properties ?? [];
         WatchExpressionTrack[] expressions = given.Expressions ?? [];
         WatchSignalTrack[] signals = given.Signals ?? [];
-        CheckTrackCount(properties.Length + expressions.Length, signals.Length, given.Monitors?.Length ?? 0);
+        CheckTrackCount(properties.Length + expressions.Length, signals.Length, OtherTrackCount(given));
         AddValueTracks(parameters, properties, expressions);
         if (signals.Length > 0)
         {
             HashSet<string> pairs = new(StringComparer.Ordinal);
             parameters["signals"] = new JsonArray([.. signals.Select(track => SignalTrackParameters(track, pairs))]);
         }
+
+        AddWatchAudio(parameters, given.Audio);
     }
 
     private static void AddValueTracks(JsonObject parameters, WatchPropertyTrack[] properties, WatchExpressionTrack[] expressions)
@@ -183,13 +201,16 @@ internal sealed partial class RuntimeTools
         }
     }
 
-    private static void CheckTrackCount(int valueTracks, int signalTracks, int monitors)
+    /// <summary>The monitors, and the audio track as one.</summary>
+    private static int OtherTrackCount(WatchTracks tracks) => (tracks.Monitors?.Length ?? 0) + (tracks.Audio is null ? 0 : 1);
+
+    private static void CheckTrackCount(int valueTracks, int signalTracks, int otherTracks)
     {
-        if (valueTracks + signalTracks + monitors == 0)
+        if (valueTracks + signalTracks + otherTracks == 0)
         {
             throw new McpException(
                 "tracks needs at least one track: {properties: [{node, property}]}, {expressions: [{name, expression}]}, "
-                    + "{signals: [{node, signal}]} or {monitors: [\"frame_ms\"]}."
+                    + "{signals: [{node, signal}]}, {monitors: [\"frame_ms\"]} or {audio: {players: {}}}."
             );
         }
 
@@ -400,6 +421,34 @@ internal sealed partial class RuntimeTools
         {
             throw new McpException($"tracks.monitors names '{name}' twice; each monitor once.");
         }
+    }
+
+    /// <summary>Adds the audio track, {players: {under?}}; the bridge resolves under and refuses a node that does not
+    /// exist.</summary>
+    private static void AddWatchAudio(JsonObject parameters, WatchAudioTrack? audio)
+    {
+        if (audio is null)
+        {
+            return;
+        }
+
+        WatchAudioPlayers players =
+            audio.Players
+            ?? throw new McpException(
+                "tracks.audio needs players: {players: {}} follows every audio player under the root, {players: {under: \"<node>\"}} "
+                    + "those at or under a node."
+            );
+        JsonObject spec = [];
+        if (players.Under is { } under)
+        {
+            spec["under"] = CheckName(
+                under,
+                "under",
+                "Pass a node's path (/root/Main/Level), a path under the root (Main/Level) or a name, or leave under out for the root."
+            );
+        }
+
+        parameters["audio"] = new JsonObject { ["players"] = spec };
     }
 
     private static void AddBudget(JsonObject parameters, double? budgetMs, bool frameMs)

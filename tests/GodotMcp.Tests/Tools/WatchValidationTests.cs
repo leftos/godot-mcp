@@ -26,9 +26,7 @@ public sealed class WatchValidationTests
     [Fact]
     public void AWatchWithNoTrackIsRefused()
     {
-        const string Message =
-            "tracks needs at least one track: {properties: [{node, property}]}, {expressions: [{name, expression}]}, "
-            + "{signals: [{node, signal}]} or {monitors: [\"frame_ms\"]}.";
+        const string Message = WatchAudioValidationTests.NoTrack;
 
         Assert.Equal(Message, Refusal(() => RuntimeTools.BuildWatchParameters("start", null, null, null)));
         Assert.Equal(Message, Refusal(() => RuntimeTools.BuildWatchParameters("run", new WatchTracks([], [], []), new WatchWindow(Frames: 1), null)));

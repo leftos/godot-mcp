@@ -11,6 +11,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `frame_control` step takes `options.input`, raw events sent inside chosen stepped frames, and reports what stays held and what went unsent.
 - `capture_frames` takes `options.start.call`, run after the start's first check, so an edge start sees the change its own call makes.
 - `run_scratches` takes `options.steps`, indices, names or ranges, and plays only those steps, reporting them as `selected`.
+- `watch` takes `tracks.audio.players`, following audio players and reporting each sound's start, pause, resume and end with its reason.
 
 ### Changed
 

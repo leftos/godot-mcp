@@ -3,10 +3,10 @@ using System.Text.Json.Nodes;
 namespace GodotMcp.Server.Tools;
 
 /// <summary>
-/// The shape of a watch's timeline: a value or a signal's argument over <see cref="MaxValueLength"/> characters of JSON as
-/// {valuePreview, valueLength}; the signal tracks' events shared fairly up to <see cref="MaxEvents"/>; and a timeline over
-/// <see cref="MaxResultLength"/> characters cut from the middle of its longest lists (a track's points, or the events), each
-/// counting its cut.
+/// The shape of a watch's timeline: a value, a signal's argument or a voice's stream over <see cref="MaxValueLength"/>
+/// characters of JSON as {valuePreview, valueLength}; the signal tracks' events shared fairly up to <see cref="MaxEvents"/>
+/// and the audio players' voices up to <see cref="MaxVoices"/>; and a timeline over <see cref="MaxResultLength"/> characters
+/// cut from the middle of its longest lists (a track's points, the events, or the voices), each counting its cut.
 /// </summary>
 internal static class WatchTimeline
 {
@@ -19,8 +19,20 @@ internal static class WatchTimeline
     /// <summary>The most events a timeline keeps across its signal tracks.</summary>
     internal const int MaxEvents = 300;
 
+    /// <summary>The most voices a timeline keeps across its audio players.</summary>
+    internal const int MaxVoices = 300;
+
+    /// <summary>The most players' paths a timeline's voiceCounts keeps.</summary>
+    internal const int MaxVoiceCountPaths = 100;
+
     /// <summary>Where the bridge's event names the signal track it belongs to, after [frame, gameMs, node, signal, args].</summary>
     private const int EventTrackIndex = 5;
+
+    /// <summary>Where a voice, [frame, gameMs, event, path, {...}], names its player.</summary>
+    private const int VoicePlayerIndex = 3;
+
+    /// <summary>Where a voice holds its {stream?, bus?, maxPolyphony?, position?, reason?}.</summary>
+    private const int VoiceInfoIndex = 4;
 
     /// <summary>
     /// A timeline as the tool returns it: each track's long values and each event's long arguments previewed, the events
@@ -44,6 +56,7 @@ internal static class WatchTimeline
         }
 
         ShareEvents(reply);
+        ShareVoices(reply);
         CutLists(reply, maxLength);
         return reply;
     }
@@ -164,6 +177,161 @@ internal static class WatchTimeline
         }
     }
 
+    /// <summary>
+    /// Keeps each audio player's fair share of the bridge's voices (<see cref="EarliestFairShares"/>), its earliest, in the
+    /// order they were read; counts every voice left out in voicesDropped, from the bridge's count of every voice it read
+    /// (voiceTotal, which the result leaves out); cuts voiceCounts to its busiest paths (<see cref="CutVoiceCounts"/>); and
+    /// previews each kept voice's long stream.
+    /// </summary>
+    private static void ShareVoices(JsonObject reply)
+    {
+        if (reply["audio"] is not JsonObject audio)
+        {
+            return;
+        }
+
+        int? total = Count(audio["voiceTotal"]);
+        audio.Remove("voiceTotal");
+        CutVoiceCounts(audio);
+        if (audio["voices"] is not JsonArray voices)
+        {
+            return;
+        }
+
+        (List<string> players, Dictionary<string, int> left) = VoicesPerPlayer(voices);
+        int[] fair = EarliestFairShares([.. players.Select(player => left[player])], MaxVoices);
+        var shares = players.Zip(fair).ToDictionary(pair => pair.First, pair => pair.Second, StringComparer.Ordinal);
+        int read = voices.Count;
+        for (int index = voices.Count - 1; index >= 0; index--)
+        {
+            KeepOrRemoveVoice(voices, index, shares, left);
+        }
+
+        int dropped = (total ?? read) - voices.Count;
+        if (dropped > 0)
+        {
+            audio["voicesDropped"] = dropped;
+        }
+    }
+
+    /// <summary>Each player's voices in <paramref name="voices"/>, the players in the order of their first voice.</summary>
+    private static (List<string> Players, Dictionary<string, int> Counts) VoicesPerPlayer(JsonArray voices)
+    {
+        List<string> players = [];
+        Dictionary<string, int> counts = new(StringComparer.Ordinal);
+        foreach (JsonNode? voice in voices)
+        {
+            string player = PlayerOf(voice);
+            if (!counts.TryGetValue(player, out int count))
+            {
+                players.Add(player);
+            }
+
+            counts[player] = count + 1;
+        }
+
+        return (players, counts);
+    }
+
+    /// <summary>
+    /// Each of <paramref name="available"/>'s players' share of <paramref name="capacity"/>, the players in the order of their
+    /// first voice: each keeps up to the highest level that fits (<see cref="ShareLevel"/>), and what that leaves goes one
+    /// voice each to the earliest players holding more, so with more players than capacity the earliest keep one each.
+    /// </summary>
+    private static int[] EarliestFairShares(IReadOnlyList<int> available, int capacity)
+    {
+        int level = ShareLevel(available, capacity);
+        int[] shares = [.. available.Select(count => Math.Min(count, level))];
+        int left = capacity - shares.Sum();
+        for (int index = 0; index < shares.Length && left > 0; index++)
+        {
+            if (available[index] > level)
+            {
+                shares[index]++;
+                left--;
+            }
+        }
+
+        return shares;
+    }
+
+    /// <summary>The highest level such that every player keeping up to it, or all it has when that is fewer, fits in
+    /// <paramref name="capacity"/>.</summary>
+    private static int ShareLevel(IReadOnlyList<int> available, int capacity)
+    {
+        int low = 0;
+        int high = available.Count == 0 ? 0 : available.Max();
+        while (low < high)
+        {
+            int middle = (low + high + 1) / 2;
+            if (available.Sum(count => Math.Min(count, middle)) <= capacity)
+            {
+                low = middle;
+            }
+            else
+            {
+                high = middle - 1;
+            }
+        }
+
+        return low;
+    }
+
+    /// <summary>
+    /// Keeps voiceCounts' <see cref="MaxVoiceCountPaths"/> paths with the most starts and ends, the earliest on ties (the
+    /// bridge adds a path when it first counts it), in their order, and counts the rest in voiceCountsCut.
+    /// </summary>
+    private static void CutVoiceCounts(JsonObject audio)
+    {
+        if (audio["voiceCounts"] is not JsonObject counts || counts.Count <= MaxVoiceCountPaths)
+        {
+            return;
+        }
+
+        string[] cut =
+        [
+            .. counts
+                .Select((pair, order) => (Path: pair.Key, Voices: StartsAndEnds(pair.Value), Order: order))
+                .OrderByDescending(path => path.Voices)
+                .ThenBy(path => path.Order)
+                .Skip(MaxVoiceCountPaths)
+                .Select(path => path.Path),
+        ];
+        foreach (string path in cut)
+        {
+            counts.Remove(path);
+        }
+
+        audio["voiceCountsCut"] = cut.Length;
+    }
+
+    private static int StartsAndEnds(JsonNode? count) => (Count(count?["starts"]) ?? 0) + (Count(count?["ends"]) ?? 0);
+
+    /// <summary>
+    /// Keeps the voice at <paramref name="index"/>, walked from the last, while its player has more voices left than its share,
+    /// previewing its stream, else removes it; <paramref name="left"/> counts each player's voices not walked yet.
+    /// </summary>
+    private static void KeepOrRemoveVoice(JsonArray voices, int index, Dictionary<string, int> shares, Dictionary<string, int> left)
+    {
+        string player = PlayerOf(voices[index]);
+        left[player]--;
+        if (left[player] >= shares[player])
+        {
+            voices.RemoveAt(index);
+            return;
+        }
+
+        if (voices[index] is JsonArray { Count: > VoiceInfoIndex } voice && voice[VoiceInfoIndex] is JsonObject info)
+        {
+            PreviewMember(info, "stream");
+        }
+    }
+
+    private static string PlayerOf(JsonNode? voice) =>
+        voice is JsonArray { Count: > VoicePlayerIndex } item && item[VoicePlayerIndex] is JsonValue path && path.TryGetValue(out string? name)
+            ? name
+            : "";
+
     private static int TrackOf(JsonArray item) => item.Count > EventTrackIndex ? Count(item[EventTrackIndex]) ?? 0 : 0;
 
     // GDScript's JSON may write an integer as a float, so a count is read as a double.
@@ -201,13 +369,19 @@ internal static class WatchTimeline
         }
     }
 
-    /// <summary>The lists a cut may shorten: each track's points, and the events when the watch has signal tracks.</summary>
+    /// <summary>The lists a cut may shorten: each track's points, the events when the watch has signal tracks, and the
+    /// voices when it has an audio track.</summary>
     private static List<CutList> ListsOf(JsonObject reply)
     {
         List<CutList> lists = [.. Tracks(reply).Select(track => new CutList(track, "points", "cut"))];
         if (reply["events"] is JsonArray)
         {
             lists.Add(new CutList(reply, "events", "eventsCut"));
+        }
+
+        if (reply["audio"] is JsonObject audio && audio["voices"] is JsonArray)
+        {
+            lists.Add(new CutList(audio, "voices", "voicesCut"));
         }
 
         return lists;

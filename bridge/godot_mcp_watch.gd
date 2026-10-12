@@ -13,7 +13,8 @@ extends Node
 ## every member of a group at start that has the signal, and records each emission with the frame
 ## it fires in; it keeps its first TRACK_EVENTS and counts the rest. Monitors (frame_ms, Godot's
 ## built-in monitors and custom ones) are read each sampled frame and summarised at the end by
-## godot_mcp_watch_monitors.gd. One watch runs at a time; one whose window ended holds its timeline
+## godot_mcp_watch_monitors.gd. Audio players' voices are read each frame, paused ones too, by
+## godot_mcp_watch_audio.gd. One watch runs at a time; one whose window ended holds its timeline
 ## until a stop collects it. It never takes the clock's running mark, so steps, waits and captures
 ## run beside it.
 
@@ -23,6 +24,7 @@ signal changed
 const TIME_SCRIPT := "godot_mcp_time.gd"
 const CONDITIONS_SCRIPT := "godot_mcp_conditions.gd"
 const MONITORS_SCRIPT := "godot_mcp_watch_monitors.gd"
+const AUDIO_SCRIPT := "godot_mcp_watch_audio.gd"
 ## The change points a track keeps from its start, and from its end in a ring.
 const FIRST_POINTS := 200
 const LAST_POINTS := 50
@@ -93,12 +95,17 @@ var usec_clock: Callable
 ## The Movie Maker file the run writes, "" when it records none: whether frame_ms warns that it
 ## measures render speed (Engine.get_write_movie_path; a test sets its own).
 var movie_path: Callable
+## Whether a node is an audio player an audio track follows (the audio script's is_player; a test,
+## whose stand-in players are of no player class, sets its own).
+var audio_player: Callable
 ## The clock's script, for its game clock and its JSON comparison.
 var _time_script: GDScript
 ## The conditions' script, for its expression inputs and its condition parse.
 var _conditions_script: GDScript
 ## The monitors' script, which resolves, reads and summarises a watch's monitors.
 var _monitors_script: GDScript
+## The audio script, which follows a watch's audio players and reads their voices.
+var _audio_script: GDScript
 ## The watch running or held, or empty (see _new_watch for its fields).
 var _watch: Dictionary = {}
 ## Why no watch runs, while _watch is empty.
@@ -110,6 +117,8 @@ func _init() -> void:
 	_time_script = load(script_dir.path_join(TIME_SCRIPT)) as GDScript
 	_conditions_script = load(script_dir.path_join(CONDITIONS_SCRIPT)) as GDScript
 	_monitors_script = load(script_dir.path_join(MONITORS_SCRIPT)) as GDScript
+	_audio_script = load(script_dir.path_join(AUDIO_SCRIPT)) as GDScript
+	audio_player = func(node: Node) -> bool: return _audio_script.is_player(node)
 	frame_counter = _engine_frames
 	group_members = _tree_group
 	usec_clock = Callable(Time, "get_ticks_usec")
@@ -125,10 +134,10 @@ func _tree_group(group: String) -> Array:
 
 
 ## Runs a watch request, {action: "start" | "run" | "stop", properties, expressions, signals,
-## monitors, frames | gameMs, unit, call, budgetMs, deadlineMs[, backstopMs]}; answers {result} or
-## {error}. start answers after the watch's first frame with {startFrame, tracks[, signals,
-## skipped, monitors, call]}; run answers the timeline when the window ends; stop ends the watch
-## and answers its timeline (_collect).
+## monitors, audio, frames | gameMs, unit, call, budgetMs, deadlineMs[, backstopMs]}; answers
+## {result} or {error}. start answers after the watch's first frame with {startFrame, tracks[,
+## signals, skipped, monitors, audio, call]}; run answers the timeline when the window ends; stop
+## ends the watch and answers its timeline (_collect).
 func handle(params: Dictionary) -> Dictionary:
 	var action: String = str(params.get("action", ""))
 	match action:
@@ -200,9 +209,13 @@ func begin(params: Dictionary, source: Signal) -> String:
 		perf = _monitors_script.begin(params, movie_path)
 	if perf is String:
 		return perf
+	var audio: Variant = _audio_script.begin(params, bridge, audio_player)
+	if audio is String:
+		return audio
 	_watch = _new_watch(params, tracks, source)
 	_watch["signals"] = signals
 	_watch["perf"] = perf
+	_watch["audio"] = audio
 	_connect_signals(_watch)
 	source.connect(_watch["handler"])
 	return ""
@@ -231,7 +244,8 @@ func _resolve(specs: Variant, make: Callable, tracks: Array) -> String:
 ## deadline and the real time paused so far, the game clock, the first frame's number and time, the
 ## paused ranges, why it stopped early, the call's {value}, an error that ends it, and for signal
 ## tracks the kept events, each emitter's count, the connections, and the last frame's engine
-## count and game time (an emission in it is stamped with that time).
+## count and game time (an emission in it is stamped with that time); begin adds the monitors'
+## state (perf) and the audio players' (audio, {} without an audio track).
 func _new_watch(params: Dictionary, tracks: Array, source: Signal) -> Dictionary:
 	var physics: bool = str(params.get("unit", "process")) == "physics"
 	var kind: String = "gameMs" if params.has("gameMs") else "frames"
@@ -262,6 +276,7 @@ func _new_watch(params: Dictionary, tracks: Array, source: Signal) -> Dictionary
 		"connections": [],
 		"frame_count": -1,
 		"frame_ms": 0,
+		"audio": {},
 	}
 	watch["handler"] = _on_frame.bind(watch)
 	return watch
@@ -548,9 +563,9 @@ func _on_frame(watch: Dictionary) -> void:
 
 ## One frame of watch: frame_count is the engine's frame (tick) count, delta the frame's scaled
 ## delta, now_ms the real time. The first frame calls params.call and stamps startFrame. An unpaused
-## frame is sampled and counted on the game clock; a paused one is listed. The watch ends when its
-## window is full or its deadline (the window's allowance plus the real time paused, up to
-## MAX_PAUSED_MS) has passed.
+## frame is sampled and counted on the game clock; a paused one is listed, and only its voices are
+## read. The watch ends when its window is full or its deadline (the window's allowance plus the
+## real time paused, up to MAX_PAUSED_MS) has passed.
 func advance(watch: Dictionary, paused: bool, frame_count: int, delta: float, now_ms: int) -> void:
 	if watch["state"] != "running":
 		return
@@ -563,6 +578,7 @@ func advance(watch: Dictionary, paused: bool, frame_count: int, delta: float, no
 	if paused:
 		_note_paused(watch, frame, now_ms)
 		_monitors_script.stamp(watch["perf"], now_usec)
+		_audio_script.sample(watch["audio"], frame, watch["frame_ms"])
 	else:
 		_sample(watch, frame, now_usec)
 		_time_script.advance_game_clock(watch["clock"], false, delta)
@@ -617,15 +633,16 @@ static func _past_deadline(watch: Dictionary, now_ms: int) -> bool:
 	return now_ms - int(watch["began_ms"]) > allowed
 
 
-## Samples every track still sampling at frame, stamped with the game time so far, then every
-## monitor, which measures frame_ms to now_usec (the frame's stamp) and the sampling's own time
-## from began.
+## Samples every track still sampling at frame, stamped with the game time so far, and the audio
+## players' voices, then every monitor, which measures frame_ms to now_usec (the frame's stamp) and
+## the sampling's own time from began.
 func _sample(watch: Dictionary, frame: int, now_usec: int) -> void:
 	var began: int = usec_clock.call()
 	var game_ms: int = floori(float(watch["clock"]["seconds"]) * 1000.0)
 	for track: Dictionary in watch["tracks"]:
 		if not track["done"]:
 			_sample_track(track, frame, game_ms)
+	_audio_script.sample(watch["audio"], frame, game_ms)
 	_monitors_script.sample(watch["perf"], frame, now_usec, began, usec_clock)
 
 
@@ -721,15 +738,17 @@ static func _keep(track: Dictionary, point: Array) -> void:
 
 
 ## Ends watch, stopped early for stopped ("stop", "deadline", "call") or at its window's end (""):
-## disconnects its frames and its signals, summarises its monitors and frees their series, and
-## holds it; one that ended with an error is let go at once. The handler is bound to watch, so it
-## is erased here, ending the Dictionary-Callable cycle.
+## disconnects its frames, its signals and its audio players' connections, summarises its monitors
+## and frees their series, and holds it; one that ended with an error is let go at once. The
+## handler is bound to watch, so it is erased here, ending the Dictionary-Callable cycle; the audio
+## state's callables are let go the same way.
 func finish(watch: Dictionary, stopped: String, now_ms: int) -> void:
 	var source: Signal = watch["source"]
 	if source.is_connected(watch["handler"]):
 		source.disconnect(watch["handler"])
 	watch.erase("handler")
 	_disconnect_signals(watch)
+	_audio_script.release(watch["audio"])
 	_monitors_script.finish(watch)
 	watch["state"] = "held"
 	watch["stopped"] = stopped
@@ -771,8 +790,9 @@ func drop() -> void:
 	watch["error"] = DROPPED_ERROR
 	if watch["state"] == "running":
 		finish(watch, "", Time.get_ticks_msec())
-	# Defensive: a held watch's signals were already cut at finish.
+	# Defensive: a held watch's signals and audio connections were already cut at finish.
 	_disconnect_signals(watch)
+	_audio_script.release(watch["audio"])
 	_release(watch)
 	_idle_reason = DROPPED
 
@@ -783,7 +803,7 @@ func _release(watch: Dictionary) -> void:
 
 
 ## start's reply: {startFrame, tracks: [{name?, node?, property?}], signals?: [{node | group,
-## signal, connected}], skipped?, skippedTotal?, monitors?: [{name, custom?}], call?}.
+## signal, connected}], skipped?, skippedTotal?, monitors?: [{name, custom?}], audio?, call?}.
 func _started(watch: Dictionary) -> Dictionary:
 	var reply: Dictionary = {"startFrame": watch["start_frame"], "tracks": []}
 	for track: Dictionary in watch["tracks"]:
@@ -793,6 +813,7 @@ func _started(watch: Dictionary) -> Dictionary:
 		reply["signals"] = signals.map(_describe_signal)
 		_add_skipped(reply, signals)
 	_monitors_script.describe(reply, watch["perf"])
+	_audio_script.describe(reply, watch["audio"])
 	if not (watch["call"] as Dictionary).is_empty():
 		reply["call"] = watch["call"]
 	return reply
@@ -834,9 +855,10 @@ static func _add_events(result: Dictionary, watch: Dictionary) -> void:
 
 
 ## The timeline, letting the watch go: {startFrame, frames, gameMs, wallMs, tracks[, events,
-## eventCounts, eventTracks, skipped, skippedTotal, monitors, warning, paused, stopped, call]};
-## frames and gameMs count the unpaused frames sampled and their game time; the events keys only
-## with signal tracks, monitors only with monitors, warning only when one applies.
+## eventCounts, eventTracks, skipped, skippedTotal, monitors, warning, audio, paused, stopped,
+## call]}; frames and gameMs count the unpaused frames sampled and their game time; the events keys
+## only with signal tracks, monitors only with monitors, audio only with an audio track, warning
+## only when one applies.
 func _collect(watch: Dictionary) -> Dictionary:
 	var clock: Dictionary = watch["clock"]
 	var result: Dictionary = {
@@ -851,6 +873,7 @@ func _collect(watch: Dictionary) -> Dictionary:
 	if not (watch["signals"] as Array).is_empty():
 		_add_events(result, watch)
 	_monitors_script.add_to(result, watch["perf"])
+	_audio_script.add_to(result, watch["audio"])
 	if not (watch["paused"] as Array).is_empty():
 		result["paused"] = watch["paused"]
 	if not str(watch["stopped"]).is_empty():
