@@ -15,7 +15,8 @@ namespace GodotMcp.IntegrationTests;
 /// record_mark's real-time recording of a visible InputProbe's window: the hello's window handle, a clip as long as the wall
 /// time between its marks and as large as the window, a frame that matches a screenshot of the same still, the .mp4 it
 /// finishes as, and the refusal of a quiet run. It runs on the user's desktop (the capture group skips the hidden desktop,
-/// which Windows.Graphics.Capture cannot see), with the capture helper the group's gate publishes into bin/capture; the
+/// which Windows.Graphics.Capture cannot see), its games launched unfocused so they leave the foreground alone, with the
+/// capture helper the group's gate publishes into bin/capture; the
 /// clips are read back with ffprobe and ffmpeg, found beside ffmpeg.
 /// </summary>
 public sealed class RealtimeRecordingTests : IAsyncDisposable
@@ -39,7 +40,7 @@ public sealed class RealtimeRecordingTests : IAsyncDisposable
     private const double FrameTolerance = 6;
 
     private readonly ProbeProject _probe = new();
-    private readonly SessionHarness _harness = new();
+    private readonly SessionHarness _harness = new(launchesUnfocused: true);
     private readonly RuntimeTools _tools;
 
     // Whether a start answered with no stop after it, so a test that failed between them still ends its recording.

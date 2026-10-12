@@ -377,7 +377,7 @@ public sealed class HeadlessTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         ProbeProject probe = Track(new ProbeProject());
-        OverrideFile.Write(probe.Directory, Installation.FindBridgeScript(), shutOutRealGamepads: false, quiet: true);
+        OverrideFile.Write(probe.Directory, Installation.FindBridgeScript(), shutOutRealGamepads: false, quiet: true, unfocused: false);
         OverrideOwner dead = new(Environment.ProcessId, OverrideOwner.Current.StartTicks - 1);
         string[] lines = File.ReadAllText(probe.OverrideFile).Split('\n');
         lines[1] = $"{OverrideFile.OwnersPrefix}{dead}";

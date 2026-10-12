@@ -13,7 +13,8 @@ namespace GodotMcp.IntegrationTests;
 /// deadline's length at the size its probe names, read back with ffprobe; an offset crop with odd sides is written padded
 /// to even and its frames are the window's pixels; a crop past the window is refused, and a window closed mid-capture ends
 /// the run cleanly. It runs on the user's desktop (the capture group skips the hidden desktop, which Windows.Graphics.Capture
-/// cannot see), and needs the helper published into bin/capture, which the group's gate does first.
+/// cannot see), its games launched unfocused so they leave the foreground alone, and needs the helper published into
+/// bin/capture, which the group's gate does first.
 /// </summary>
 public sealed class CaptureHelperTests : IAsyncDisposable
 {
@@ -23,7 +24,7 @@ public sealed class CaptureHelperTests : IAsyncDisposable
     private static readonly TimeSpan FirstFrameWait = TimeSpan.FromSeconds(15);
 
     private readonly ProbeProject _probe = new();
-    private readonly SessionHarness _harness = new();
+    private readonly SessionHarness _harness = new(launchesUnfocused: true);
     private readonly TempDirectory _temp = new();
 
     public async ValueTask DisposeAsync()
@@ -52,6 +53,38 @@ public sealed class CaptureHelperTests : IAsyncDisposable
         );
         Assert.Equal(int.Parse(sides[0], CultureInfo.InvariantCulture), width);
         Assert.Equal(int.Parse(sides[1], CultureInfo.InvariantCulture), height);
+    }
+
+    /// <summary>
+    /// A visible launch leaves the foreground alone: the window shows on the user's desktop without taking focus. It is read
+    /// once the game's main window exists, which Godot creates and shows, focused unless told otherwise, before any script runs.
+    /// Windows' foreground lock keeps a launch from a background process off the foreground of a desktop in use anyway, so the
+    /// window is also checked for the no-activate style an unfocused window is created with, and for not being topmost, which
+    /// would keep it above the user's windows.
+    /// </summary>
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AVisibleLaunchLeavesTheForegroundAlone()
+    {
+        nint before = CaptureWindows.Foreground();
+        string hwnd = await LaunchVisibleAsync(TestContext.Current.CancellationToken);
+
+        nint after = CaptureWindows.Foreground();
+        int game = _harness.Sessions.Resolve(null).GameProcessId ?? throw new InvalidOperationException("the hello carried no game pid.");
+        Assert.True(
+            CaptureWindows.OwnerOf(after) != game,
+            FormattableString.Invariant(
+                $"the launch took the foreground: window {before} had it before, and the game's (pid {game}, main window {hwnd}) window {after} after"
+            )
+        );
+        long style = CaptureWindows.ExtendedStyle(nint.Parse(hwnd, CultureInfo.InvariantCulture));
+        Assert.True(
+            (style & CaptureWindows.NoActivateStyle) != 0,
+            FormattableString.Invariant($"the game's main window {hwnd} can be activated (extended style 0x{style:X}): it was not created unfocused")
+        );
+        Assert.True(
+            (style & CaptureWindows.TopmostStyle) == 0,
+            FormattableString.Invariant($"the game's main window {hwnd} is topmost (extended style 0x{style:X}): it sits above the user's windows")
+        );
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -179,7 +212,7 @@ public sealed class CaptureHelperTests : IAsyncDisposable
         }
     }
 
-    /// <summary>Launches the probe on this desktop, not quiet, and returns its game window's handle as a decimal.</summary>
+    /// <summary>Launches the probe on this desktop, not quiet but unfocused, and returns its game window's handle as a decimal.</summary>
     private async Task<string> LaunchVisibleAsync(CancellationToken cancellationToken)
     {
         await _harness.Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], false, false, Prepare: true), null, cancellationToken);

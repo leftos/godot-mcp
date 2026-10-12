@@ -38,7 +38,8 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            through tools/hidden-desktop.ps1, on a desktop of its own, so no Godot window shows, except a run of the
            visible groups table's groups (capture): Windows.Graphics.Capture cannot see a window on a hidden desktop,
            so those tests run on the user's desktop and their Godot windows show there.
-           With -Since <ref> it runs only the groups itest-groups (below) selects, in their lanes as above, after
+           With -Since <ref> it runs only the groups itest-groups (below) selects, which leave the visible groups out
+           unless a change touches recording or capture, in their lanes as above, after
            printing itest-groups' lines; with none selected it prints "itest: no group touched by the changes since
            <ref>" and exits 0. -Since with -Filter is refused with status 2.
   itest-csharp  the command the csharp group's gate runs, and a -Filter itest's gate when the filter matches a class of
@@ -62,8 +63,13 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
   itest-groups  names the itest groups the changes since -Since <ref> touch, running nothing and taking no gate: the
            changed files are the tracked files that differ from the ref (git diff --name-only <ref>, the working tree
            included) and the untracked files git does not ignore. Each file goes through the rules table at the top of
-           this script, the first matching pattern deciding (anything under bridge/ selects every group, since
-           godot_mcp_bridge.gd preloads every module), and a file no rule maps selects every group. It prints
+           this script, the first matching pattern deciding (anything under bridge/ selects every group but the visible
+           ones, since godot_mcp_bridge.gd preloads every module), and a file no rule maps selects every group. A
+           visible group (capture), whose windows show on the user's desktop, is selected only by a change to what it
+           tests: the capture helper, the real-time recording, the window handle the hello reports
+           (bridge/godot_mcp_window.gd and bridge/godot_mcp_bridge.gd), tools/hidden-desktop.ps1, Installation.cs or
+           the integration tests' fixtures and support project, or by a file no rule maps or its own test classes. It
+           prints
            "itest-groups: <file> is unmapped: no rule maps it, so it runs every group" for each such file,
            "itest-groups: <group> (from <file>)" for each selected group in the groups table's order with the first
            file that selected it, then "itest-groups: <n> of <m> groups from <k> changed files". -Since is required
@@ -210,25 +216,38 @@ $itestCsharpCeiling = $itestCeiling + 120
 # helper: the tests' 300 s plus 120 s, as the csharp group's. The publish's time is unmeasured.
 $itestCaptureCeiling = $itestCeiling + 120
 # Which groups a changed file touches, for itest-groups and itest -Since: ordered pairs of a path pattern, '/'-separated
-# from the repo root ('*' matches within one folder, '**' across folders), and what a match selects: 'all', 'none',
-# 'class' (the group listing the class a test file is named for), or a list of groups. The first pattern a file matches
-# decides; a file no pattern matches, or a test file whose class no group lists, selects every group and is named as
-# unmapped. Anything under bridge/ selects every group, since godot_mcp_bridge.gd preloads every module.
+# from the repo root ('*' matches within one folder, '**' across folders), and what a match selects: 'all' (every group
+# but the visible groups table's), 'none', 'class' (the group listing the class a test file is named for), or a list of
+# groups. The first pattern a file matches decides; a file no pattern matches, or a test file whose class no group lists,
+# selects every group, the visible ones included, and is named as unmapped. A visible group runs on the user's desktop,
+# so a rule selects it only for a change to what it tests: the capture helper, the real-time recording, the window
+# handle the hello reports (godot_mcp_window.gd, sent by godot_mcp_bridge.gd), tools/hidden-desktop.ps1, which decides
+# which desktop a group runs on, Installation.cs, which finds Godot and the capture helper, and the test harness and
+# support the capture classes use; those rules name every group ($itestEveryGroup) or the capture group, ahead of the
+# broader rules their paths also match. tests/fixtures/** stays 'all': a probe project's content seldom changes what
+# the capture tests see, and the full itest covers it. Anything else under bridge/ selects 'all', since godot_mcp_bridge.gd
+# preloads every module.
 $itestRuntimeGroups = @('lifecycle', 'sessions', 'input', 'reads', 'time', 'prep', 'recording', 'csharp')
+$itestEveryGroup = @($itestGroups.Keys)
 $itestRules = @(
+    @('bridge/godot_mcp_window.gd', $itestEveryGroup),
+    @('bridge/godot_mcp_bridge.gd', $itestEveryGroup),
     @('bridge/**', 'all'),
     @('run.ps1', 'all'),
     @('tools/gate.ps1', 'all'),
-    @('tools/hidden-desktop.ps1', 'all'),
+    @('tools/hidden-desktop.ps1', $itestEveryGroup),
     @('src/GodotMcp.Capture/**', @('capture')),
+    @('src/GodotMcp.Server/Session/Realtime*.cs', @('capture')),
+    @('src/GodotMcp.Server/Session/GodotSession.Realtime.cs', @('capture')),
+    @('src/GodotMcp.Server/Session/Installation.cs', $itestEveryGroup),
     @('src/GodotMcp.Server/Session/Scratch*.cs', 'scratch'),
     @('src/GodotMcp.Server/Session/**', 'all'),
     @('src/GodotMcp.Server/Wire/**', 'all'),
     @('src/GodotMcp.Server/*.cs', 'all'),
     @('src/GodotMcp.Server/*.csproj', 'all'),
     @('Directory.*.props', 'all'),
-    @('tests/GodotMcp.TestSupport/**', 'all'),
-    @('tests/GodotMcp.IntegrationTests/Fixtures/**', 'all'),
+    @('tests/GodotMcp.TestSupport/**', $itestEveryGroup),
+    @('tests/GodotMcp.IntegrationTests/Fixtures/**', $itestEveryGroup),
     @('tests/GodotMcp.IntegrationTests/GodotMcp.IntegrationTests.csproj', 'all'),
     @('tests/fixtures/**', 'all'),
     @('tests/GodotMcp.IntegrationTests/xunit.runner.json', 'all'),
@@ -623,26 +642,26 @@ function Get-ItestClassGroup {
     return ''
 }
 
-# What a rule's selection gives a file: @{ Groups; Unmapped }, every group for 'all', none for 'none', the group listing
-# the class the file is named for for 'class' (every group, unmapped, when no group lists it), else the rule's groups.
+# What a rule's selection gives a file: @{ Groups; Unmapped }, every group but the visible ones for 'all', none for
+# 'none', the group listing the class the file is named for for 'class' (every group, the visible ones included,
+# unmapped, when no group lists it), else the rule's groups.
 function Resolve-ItestRuleSelection {
     param(
         [Parameter(Mandatory)] [object]$Selects,
         [Parameter(Mandatory)] [string]$File
     )
-    $every = @{ Groups = @($itestGroups.Keys); Unmapped = $false }
     if ($Selects -isnot [string]) {
         return @{ Groups = @($Selects); Unmapped = $false }
     }
     switch -CaseSensitive ($Selects) {
-        'all' { return $every }
+        'all' { return @{ Groups = @($itestGroups.Keys | Where-Object { $itestVisibleGroups -notcontains $_ }); Unmapped = $false } }
         'none' { return @{ Groups = @(); Unmapped = $false } }
         'class' {
             $group = Get-ItestClassGroup -Class ([IO.Path]::GetFileNameWithoutExtension($File))
             if ($group) {
                 return @{ Groups = @($group); Unmapped = $false }
             }
-            return @{ Groups = $every.Groups; Unmapped = $true }
+            return @{ Groups = @($itestGroups.Keys); Unmapped = $true }
         }
     }
     return @{ Groups = @($Selects); Unmapped = $false }

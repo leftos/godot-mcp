@@ -81,6 +81,13 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     internal ILogger Logger => logger;
 
     /// <summary>
+    /// Whether a session that is not quiet still has its window created unfocused, in place (<see cref="OverrideFile"/>'s
+    /// unfocused file), so it shows on the user's desktop without taking the foreground: off unless set, as the capture tests
+    /// set it, whose windows Windows.Graphics.Capture must see there.
+    /// </summary>
+    internal bool LaunchesUnfocused { get; init; }
+
+    /// <summary>
     /// What the sessions' real-time recordings find, read and start, and their encoder probes, cached for the registry's life:
     /// <see cref="RealtimeEnvironment.System"/> unless set, as a test sets fakes.
     /// </summary>
@@ -1269,7 +1276,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                         return;
                     }
 
-                    OverrideFile.Write(projectDir, bridgeScript, settings.ShutOutRealGamepads, settings.Quiet);
+                    OverrideFile.Write(projectDir, bridgeScript, settings.ShutOutRealGamepads, settings.Quiet, LaunchesUnfocused);
                 }
             }
         );

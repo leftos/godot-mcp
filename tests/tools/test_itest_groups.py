@@ -11,6 +11,8 @@ import pytest
 
 RUN_PS1 = Path(__file__).resolve().parents[2] / "run.ps1"
 ALL_GROUPS = ["lifecycle", "sessions", "input", "reads", "time", "prep", "recording", "capture", "headless", "scene", "nodes", "csharp", "scratch"]
+# Every group a rule's 'all' selects: all of them but the visible-desktop ones.
+ALL_BUT_VISIBLE = [group for group in ALL_GROUPS if group != "capture"]
 GROUP_LINE = re.compile(r"^itest-groups: (\w+) \(from (.+)\)$", re.MULTILINE)
 # The files the repo holds at its first commit; each test changes some of them, or adds a file, after it.
 STUBS = [
@@ -106,6 +108,43 @@ def test_an_unmapped_file_selects_every_group_and_is_named(repo: Path) -> None:
     result = _itest_groups(repo)
     assert _selected(result) == ALL_GROUPS
     assert "itest-groups: notes.txt is unmapped: no rule maps it, so it runs every group" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        "bridge/godot_mcp_input.gd",
+        "src/GodotMcp.Server/Session/SessionRegistry.cs",
+    ],
+)
+def test_a_shared_file_selects_every_group_but_the_visible_ones(repo: Path, changed: str) -> None:
+    _change(repo, changed)
+    assert _selected(_itest_groups(repo)) == ALL_BUT_VISIBLE
+
+
+def test_a_change_to_run_ps1_selects_every_group_but_the_visible_ones(repo: Path) -> None:
+    with (repo / "run.ps1").open("a", encoding="utf-8", newline="\n") as script:
+        script.write("# changed\n")
+    assert _selected(_itest_groups(repo)) == ALL_BUT_VISIBLE
+
+
+@pytest.mark.parametrize(
+    ("changed", "groups"),
+    [
+        ("src/GodotMcp.Server/Tools/RuntimeTools.Record.cs", ["recording", "capture"]),
+        ("src/GodotMcp.Server/Session/RealtimeRecording.cs", ["capture"]),
+        ("src/GodotMcp.Capture/Program.cs", ["capture"]),
+        ("bridge/godot_mcp_window.gd", ALL_GROUPS),
+        ("tools/hidden-desktop.ps1", ALL_GROUPS),
+        ("src/GodotMcp.Server/Session/Installation.cs", ALL_GROUPS),
+        ("tests/GodotMcp.IntegrationTests/Fixtures/SessionHarness.cs", ALL_GROUPS),
+        ("tests/GodotMcp.TestSupport/RepoPaths.cs", ALL_GROUPS),
+        ("tests/GodotMcp.IntegrationTests/CaptureHelperTests.cs", ["capture"]),
+    ],
+)
+def test_a_change_to_recording_or_capture_selects_the_capture_group(repo: Path, changed: str, groups: list[str]) -> None:
+    _change(repo, changed)
+    assert _selected(_itest_groups(repo)) == groups
 
 
 def test_an_untracked_test_class_file_selects_the_group_listing_it(repo: Path) -> None:

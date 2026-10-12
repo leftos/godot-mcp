@@ -22,9 +22,19 @@ internal sealed class SessionHarness : IAsyncDisposable
     private readonly BridgeListener _listener;
 
     public SessionHarness()
+        : this(launchesUnfocused: false) { }
+
+    /// <param name="launchesUnfocused">
+    /// Whether its sessions that are not quiet have their windows created unfocused (<see cref="SessionRegistry.LaunchesUnfocused"/>).
+    /// </param>
+    public SessionHarness(bool launchesUnfocused)
     {
         _listener = new(NullLogger<BridgeListener>.Instance) { Clock = _wallClock };
-        Sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance) { LaunchClock = LoadClock.Shared };
+        Sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance)
+        {
+            LaunchClock = LoadClock.Shared,
+            LaunchesUnfocused = launchesUnfocused,
+        };
     }
 
     public SessionRegistry Sessions { get; }
