@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.Tools;
@@ -65,7 +66,7 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
 
 /// <summary>
 /// How a scene is judged: the patterns that fail a step's line, its known reason, the profile's reason for its pace, and whether
-/// its steps are listed when green.
+/// its steps are listed when green and every listed step carries its detail.
 /// </summary>
 internal sealed record ScratchRules(IReadOnlyList<ScratchPattern> Patterns, string? Known, string? PaceReason, bool Details);
 
@@ -97,22 +98,36 @@ internal sealed record ScratchFailure(int Index, string Name, string Error, stri
     public ScratchMatch? Pattern { get; init; }
 }
 
-/// <summary>An error feed entry as a step lists it.</summary>
-internal sealed record ScratchError(string Message, string File, int Line);
+/// <summary>An error feed entry as a step lists it, standing for every identical one (same message, file and line).</summary>
+internal sealed record ScratchError(string Message, string File, int Line)
+{
+    /// <summary>How many identical entries the step logged; null for one.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Count { get; init; }
+}
 
-/// <summary>One step as a red scene or options.details lists it, with why it failed when it did.</summary>
-internal sealed record ScratchStepResult(
-    int Index,
-    string Name,
-    bool Ok,
-    int GameMs,
-    string Status,
-    IReadOnlyList<ScratchError> Errors,
-    IReadOnlyList<string> Lines
-)
+/// <summary>
+/// One step as a red or killed scene, or options.details, lists it: its status line always; its detail (error, errors, lines)
+/// when it failed or options.details asked for every step's, cut to fit a budget when it ran over.
+/// </summary>
+internal sealed record ScratchStepResult(int Index, string Name, bool Ok, int GameMs, string Status)
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<ScratchError>? Errors { get; init; }
+
+    /// <summary>How many distinct errors did not fit in <see cref="Errors"/>; null when all did.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? ErrorsOmitted { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Lines { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Error { get; init; }
+
+    /// <summary>Why the detail lost lines or errors from its end, and where the full log is; null when it fit.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Cut { get; init; }
 }
 
 /// <summary>A step that failed: its index, its name and why.</summary>
@@ -193,28 +208,80 @@ internal static partial class ScratchVerdict
     /// <summary>The name failedAt gives an error the feed logged between the launch and the first step.</summary>
     public const string BootStep = "boot";
 
-    /// <summary>The most lines a step lists; the rest are counted in one entry after them, "… N more".</summary>
+    /// <summary>
+    /// The most lines a step lists with options.details, and exit.lines; the rest are counted in one entry after them, "… N more".
+    /// </summary>
     public const int MaxLines = 20;
+
+    /// <summary>
+    /// The most characters kept of a single-string copy of an error (failedAt.error, failures[].error with options.details, a step's error and
+    /// exit.error, a feed error's location kept after it), of a step's status and of each of its lines.
+    /// </summary>
+    public const int MaxCopyChars = 500;
+
+    /// <summary>
+    /// The most characters failures[].error keeps without options.details: failures index the steps, whose own error carries
+    /// the message at <see cref="MaxCopyChars"/>.
+    /// </summary>
+    public const int MaxFailureIndexChars = 200;
+
+    /// <summary>
+    /// The most characters a step's detail (its error, errors and lines, serialised) takes with options.details; past it, lines
+    /// then errors are dropped from the end.
+    /// </summary>
+    public const int MaxStepDetailChars = 4000;
+
+    /// <summary>The most distinct errors a failing step lists without options.details; the rest are counted in errorsOmitted.</summary>
+    public const int MaxErrorsCompact = 3;
+
+    /// <summary>The most lines a failing step lists without options.details; the rest are counted in one entry, "… N more".</summary>
+    public const int MaxLinesCompact = 5;
+
+    /// <summary>The most characters a failing step's detail takes without options.details, as <see cref="MaxStepDetailChars"/>.</summary>
+    public const int MaxStepDetailCharsCompact = 1500;
+
+    /// <summary>The detail every step gets with options.details.</summary>
+    private static readonly DetailLimits Full = new(ErrorReport.MaxPerResult, ErrorReport.MaxMessageLength, MaxLines, MaxStepDetailChars);
+
+    /// <summary>The detail a failing step gets without options.details.</summary>
+    private static readonly DetailLimits Compact = new(MaxErrorsCompact, MaxCopyChars, MaxLinesCompact, MaxStepDetailCharsCompact);
 
     private const string ScratchNotePrefix = "[scratch]";
 
-    /// <summary>Why a step failed: its call's error, else the feed's first error, else its first line a pattern matches; null if it passed.</summary>
-    public static string? StepError(ScratchStep step, IReadOnlyList<ScratchPattern> patterns)
+    /// <summary>
+    /// Why a step failed: its call's error, else the feed's first error, else its first line a pattern matches, cut to
+    /// <see cref="MaxCopyChars"/>; null if it passed.
+    /// </summary>
+    public static string? StepError(ScratchStep step, IReadOnlyList<ScratchPattern> patterns) => StepError(step, patterns, MaxCopyChars);
+
+    /// <summary>As <see cref="StepError(ScratchStep, IReadOnlyList{ScratchPattern})"/>, cut to <paramref name="max"/> characters.</summary>
+    private static string? StepError(ScratchStep step, IReadOnlyList<ScratchPattern> patterns, int max)
     {
         if (step.CallError is not null)
         {
-            return step.CallError;
+            return OutputBuffer.Cut(step.CallError, max);
         }
 
-        return FeedError(step.Errors) ?? step.Lines.Select(line => LineError(line, patterns)).FirstOrDefault(error => error is not null);
+        return FeedError(step.Errors, max)
+            ?? (
+                step.Lines.Select(line => LineError(line, patterns)).FirstOrDefault(error => error is not null) is { } line
+                    ? OutputBuffer.Cut(line, max)
+                    : null
+            );
     }
 
-    /// <summary>The feed's first error (not warning) as a step or the exit reports it, with its file and line; null when none.</summary>
-    public static string? FeedError(IEnumerable<ErrorEntry> entries) =>
+    /// <summary>
+    /// The feed's first error (not warning) as a step or the exit reports it, its message cut to <see cref="MaxCopyChars"/>, with
+    /// its file and line; null when none.
+    /// </summary>
+    public static string? FeedError(IEnumerable<ErrorEntry> entries) => FeedError(entries, MaxCopyChars);
+
+    /// <summary>As <see cref="FeedError(IEnumerable{ErrorEntry})"/>, the message cut to <paramref name="max"/> characters.</summary>
+    private static string? FeedError(IEnumerable<ErrorEntry> entries, int max) =>
         entries.FirstOrDefault(entry => entry.IsError) is { } error
             ? error.File.Length > 0
-                ? $"{error.Message} ({error.File}:{error.Line})"
-                : error.Message
+                ? $"{OutputBuffer.Cut(error.Message, max)} ({error.File}:{error.Line})"
+                : OutputBuffer.Cut(error.Message, max)
             : null;
 
     /// <summary>The scene's verdict and result.</summary>
@@ -233,25 +300,23 @@ internal static partial class ScratchVerdict
         {
             PaceReason = shown is Red or Killed ? PaceReasonAt(seen, failedAt, rules.PaceReason) : null,
             FailedAt = failedAt,
-            Failures = Failures(seen, rules.Patterns),
-            Details = ListsSteps(rules.Details, verdict, failedAt)
-                ? [.. seen.Steps.Select(step => StepResult(step, rules.Patterns, verdict != Green))]
-                : null,
+            Failures = Failures(seen, rules.Patterns, rules.Details ? MaxCopyChars : MaxFailureIndexChars),
+            Details = ListsSteps(rules.Details, verdict, failedAt) ? [.. seen.Steps.Select(step => StepResult(step, rules, seen.Session))] : null,
             Exit = ExitOf(seen, rules.Patterns),
             Known = shown is KnownRed or KnownNowGreen ? rules.Known : null,
         };
     }
 
     /// <summary>
-    /// Every step that failed, in the order played, with why, then the step a kill cut off with the kill's reason; null when none
-    /// did.
+    /// Every step that failed, in the order played, with why cut to <paramref name="max"/> characters, then the step a kill cut
+    /// off with the kill's reason; null when none did.
     /// </summary>
-    private static List<ScratchStepFailure>? Failures(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns)
+    private static List<ScratchStepFailure>? Failures(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns, int max)
     {
         List<ScratchStepFailure> failures = [];
         foreach (ScratchStep step in seen.Steps)
         {
-            if (StepError(step, patterns) is { } error)
+            if (StepError(step, patterns, max) is { } error)
             {
                 failures.Add(new ScratchStepFailure(step.Index, step.Name, error));
             }
@@ -352,7 +417,13 @@ internal static partial class ScratchVerdict
         {
             if (StepError(step, patterns) is { } error)
             {
-                return (Red, new ScratchFailure(step.Index, step.Name, error, step.Status) { Pattern = MatchedPattern(step, patterns) });
+                return (
+                    Red,
+                    new ScratchFailure(step.Index, step.Name, error, OutputBuffer.Cut(step.Status, MaxCopyChars))
+                    {
+                        Pattern = MatchedPattern(step, patterns),
+                    }
+                );
             }
         }
 
@@ -409,7 +480,7 @@ internal static partial class ScratchVerdict
         return new ScratchExit(seen.ExitCode)
         {
             Leaked = Leaked(seen.ExitLines),
-            Lines = matched.Count > 0 ? Capped(matched) : null,
+            Lines = matched.Count > 0 ? Capped(matched, MaxLines) : null,
             Error = seen.AfterError,
             Killed = seen.StopKillReason is null ? null : true,
             KillReason = seen.StopKillReason,
@@ -417,42 +488,129 @@ internal static partial class ScratchVerdict
         };
     }
 
-    /// <summary>A step as it is listed; a red or killed scene's step keeps its [scratch] notes beside its matching lines.</summary>
-    private static ScratchStepResult StepResult(ScratchStep step, IReadOnlyList<ScratchPattern> patterns, bool keepNotes)
+    /// <summary>
+    /// A step as it is listed: its status line, and its detail when it failed or options.details asks for every step's; the errors
+    /// folded and the lines its matching ones and [scratch] notes, within the limits of <see cref="Full"/> detail with
+    /// options.details, of <see cref="Compact"/> detail without.
+    /// </summary>
+    private static ScratchStepResult StepResult(ScratchStep step, ScratchRules rules, string session)
+    {
+        string? error = StepError(step, rules.Patterns);
+        ScratchStepResult listed = new(step.Index, step.Name, error is null, step.GameMs, OutputBuffer.Cut(step.Status, MaxCopyChars));
+        if (error is null && !rules.Details)
+        {
+            return listed;
+        }
+
+        DetailLimits limits = rules.Details ? Full : Compact;
+        List<ErrorReport.Collapsed> folded = ErrorReport.Collapse([.. step.Errors.Where(entry => entry.IsError)]);
+        return WithinBudget(
+            listed with
+            {
+                Errors = [.. folded.Take(limits.Errors).Select(entry => Folded(entry, limits.MessageChars))],
+                ErrorsOmitted = folded.Count > limits.Errors ? folded.Count - limits.Errors : null,
+                Error = error,
+            },
+            StepLines(step, rules.Patterns),
+            limits,
+            session
+        );
+    }
+
+    private static ScratchError Folded(ErrorReport.Collapsed error, int messageChars) =>
+        new(OutputBuffer.Cut(error.First.Message, messageChars), error.First.File, error.First.Line) { Count = error.Count > 1 ? error.Count : null };
+
+    /// <summary>A step's matching lines and [scratch] notes, each cut to <see cref="MaxCopyChars"/>, after a note of the lines it lost.</summary>
+    private static List<string> StepLines(ScratchStep step, IReadOnlyList<ScratchPattern> patterns)
     {
         List<string> lines =
         [
-            .. step.Lines.Where(line => Matches(line, patterns) || (keepNotes && line.StartsWith(ScratchNotePrefix, StringComparison.Ordinal))),
-        ];
-        List<ScratchError> errors =
-        [
-            .. step.Errors.Where(entry => entry.IsError).Select(entry => new ScratchError(entry.Message, entry.File, entry.Line)),
+            .. step
+                .Lines.Where(line => Matches(line, patterns) || line.StartsWith(ScratchNotePrefix, StringComparison.Ordinal))
+                .Select(line => OutputBuffer.Cut(line, MaxCopyChars)),
         ];
         if (step.Dropped > 0)
         {
             lines.Insert(0, DroppedNote(step.Dropped));
         }
 
-        string? error = StepError(step, patterns);
-        return new ScratchStepResult(step.Index, step.Name, error is null, step.GameMs, step.Status, errors, Capped(lines)) { Error = error };
+        return lines;
     }
+
+    /// <summary>
+    /// The step with its lines, at most the limits' count then "… N more", fitted with its error and errors in the limits'
+    /// characters: lines go first, then errors from the end but the first, those counted in errorsOmitted; a step that lost any
+    /// carries a cut note naming the budget and the session whose log holds them.
+    /// </summary>
+    private static ScratchStepResult WithinBudget(ScratchStepResult step, List<string> allLines, DetailLimits limits, string session)
+    {
+        List<ScratchError> errors = [.. step.Errors ?? []];
+        int errorSize = step.Error is null ? 0 : Serialised(step.Error);
+        int shown = Math.Min(allLines.Count, limits.Lines);
+        int kept = FitLines(allLines, shown, limits.Chars - errorSize - ArraySize(errors));
+        List<string> lines = Capped(allLines, kept);
+        int dropped = DropErrors(errors, limits.Chars - errorSize - ArraySize(lines));
+        return step with
+        {
+            Lines = lines,
+            Errors = errors,
+            ErrorsOmitted = Omitted(step.ErrorsOmitted, dropped),
+            Cut = kept < shown || dropped > 0 ? CutNote(limits.Chars, session) : null,
+        };
+    }
+
+    /// <summary>How many of the lines, at most <paramref name="kept"/>, fit in <paramref name="room"/> characters with their "… N more".</summary>
+    private static int FitLines(List<string> allLines, int kept, int room)
+    {
+        while (kept > 0 && ArraySize(Capped(allLines, kept)) > room)
+        {
+            kept--;
+        }
+
+        return kept;
+    }
+
+    /// <summary>Drops errors from the end, never the first, until they fit in <paramref name="room"/> characters; returns how many.</summary>
+    private static int DropErrors(List<ScratchError> errors, int room)
+    {
+        int dropped = 0;
+        while (errors.Count > 1 && ArraySize(errors) > room)
+        {
+            errors.RemoveAt(errors.Count - 1);
+            dropped++;
+        }
+
+        return dropped;
+    }
+
+    private static int? Omitted(int? capped, int dropped) => (capped ?? 0) + dropped is > 0 and int omitted ? omitted : null;
+
+    private static string CutNote(int budget, string session) =>
+        string.Create(CultureInfo.InvariantCulture, $"detail over {budget} characters; get_debug_output {session} holds the full log");
+
+    private static int ArraySize<T>(List<T> items) => 2 + items.Sum(item => Serialised(item)) + Math.Max(0, items.Count - 1);
+
+    private static int Serialised<T>(T value) => JsonSerializer.Serialize(value, ToolJson.Options).Length;
 
     /// <summary>The entry a step lists first when its window lost lines to the output buffer's cap.</summary>
     internal static string DroppedNote(long dropped) =>
         string.Create(CultureInfo.InvariantCulture, $"… {dropped} earlier lines were no longer in the output buffer");
 
-    /// <summary>The first <see cref="MaxLines"/> lines, followed by "… N more" when there are more.</summary>
-    internal static List<string> Capped(List<string> lines)
+    /// <summary>The first <paramref name="max"/> lines, followed by "… N more" when there are more.</summary>
+    internal static List<string> Capped(List<string> lines, int max)
     {
-        if (lines.Count <= MaxLines)
+        if (lines.Count <= max)
         {
             return lines;
         }
 
-        List<string> kept = lines[..MaxLines];
-        kept.Add(string.Create(CultureInfo.InvariantCulture, $"… {lines.Count - MaxLines} more"));
+        List<string> kept = lines[..max];
+        kept.Add(string.Create(CultureInfo.InvariantCulture, $"… {lines.Count - max} more"));
         return kept;
     }
+
+    /// <summary>How much detail a listed step keeps: its distinct errors, its lines and the characters of the whole.</summary>
+    private sealed record DetailLimits(int Errors, int MessageChars, int Lines, int Chars);
 
     /// <summary>Whether a pattern matches the line; a pattern that ran past its timeout on it counts as matching.</summary>
     private static bool Matches(string line, IReadOnlyList<ScratchPattern> patterns) => LineError(line, patterns) is not null;

@@ -41,10 +41,17 @@ internal sealed class ScratchTools(SessionRegistry sessions)
             + "scenes: [{scene, verdict, steps: {played, total}, pace, paceReason?, seconds, session, "
             + "failedAt?, failures?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?, alone?, "
             + "aloneFailedAt?}]}, scenes in the order given; failedAt is the first failed step and failures [{index, name, error}] "
-            + "every one; failedAt.pattern {pattern, reason?} names the scratch.patterns entry a failing line matched; a details "
-            + "step that failed carries its error; exit.error is an error in the pace after the last step, killed a game the "
-            + "stop had to kill; details lists each step for a red or killed scene, or with options.details; seconds covers both "
-            + "plays of a scene played again. The project is prepared once for the whole run."
+            + "every one; failedAt.pattern {pattern, reason?} names the scratch.patterns entry a failing line matched; details "
+            + "lists every played step of a red or killed scene, or of any scene with options.details, by its status line "
+            + "{index, name, ok, gameMs, status}; without details, a failing step carries its error, its first 3 errors and 5 "
+            + "lines in at most 1500 characters; details: true gives every step's full detail, 20 errors, 20 lines, 4000 "
+            + "characters ({error, errors, errorsOmitted?, lines, cut?}); errors [{message, file, line, count?}] are folded with "
+            + "a count (errorsOmitted counts the rest), messages cut at 500 characters without details and 2000 with; "
+            + "failures[].error is cut at 200 characters without details, 500 with; a step's "
+            + "first error entry is always kept; cut names the budget a step's detail ran over and the session whose "
+            + "get_debug_output holds the full log; exit.error is an error in the pace "
+            + "after the last step, killed a game the stop had to kill; seconds covers both plays of a scene played again. The "
+            + "project is prepared once for the whole run."
     )]
     public async Task<string> RunScratchesAsync(
         [Description("The folder that holds the project's project.godot.")] string projectPath,
@@ -56,7 +63,8 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         [Description(
             "{pace, userArgs, prepare, details, parallel, session, keepGoing}: pace in seconds for every step (else scratch.pace's "
                 + "for the step, else for the scene, else 0.5); userArgs appended after the profile's; prepare as run_project's; "
-                + "details true lists every scene's steps; parallel the scenes at once, 1 to 4 (else scratch.parallel, else 1); "
+                + "details true lists every scene's steps and gives every step its full detail; parallel the scenes at once, 1 to 4 "
+                + "(else scratch.parallel, else 1); "
                 + "session a prefix for the scenes' session names, in place of the project folder's; keepGoing true (default false) "
                 + "plays a scene's next step after one red on a pushed error or a matching line, but a step whose own call failed "
                 + "(the game gone or stuck) still stops the scene."
@@ -305,7 +313,13 @@ internal sealed record ScratchOptions(
     [property: Description("User arguments appended after the profile's scratch.userArgs (else its top-level userArgs); --scratch-auto is refused.")]
         string[]? UserArgs = null,
     [property: Description(RunOptions.PrepareDescription)] string? Prepare = null,
-    [property: Description("true lists every scene's steps; a red or killed scene lists them anyway.")] bool? Details = null,
+    [property: Description(
+        "true lists every scene's steps and gives every step, green or red, its full detail (error, errors, lines with its "
+            + "[scratch] notes): 20 folded errors, 20 lines, 4000 characters. Without details, a red or killed scene still lists "
+            + "every step by its status line, and a failing step carries its error, its first 3 errors and 5 lines in 1500 "
+            + "characters, each error message cut at 500. Errors are folded with a count, messages cut at 2000 characters with details."
+    )]
+        bool? Details = null,
     [property: Description(
         "How many scenes play at once, 1 to 4; else the profile's scratch.parallel, else 1. Above 1, a red or killed scene is "
             + "played once more alone after the others."

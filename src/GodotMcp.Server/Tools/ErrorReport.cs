@@ -140,7 +140,7 @@ internal static class ErrorReport
     }
 
     /// <summary>The errors grouped by message, file and line, in the order each first appeared.</summary>
-    private static List<Collapsed> Collapse(IReadOnlyList<ErrorEntry> errors)
+    internal static List<Collapsed> Collapse(IReadOnlyList<ErrorEntry> errors)
     {
         Dictionary<(string Message, string File, int Line), int> positions = [];
         List<Collapsed> collapsed = [];
@@ -160,5 +160,6 @@ internal static class ErrorReport
         return collapsed;
     }
 
-    private sealed record Collapsed(ErrorEntry First, int Count);
+    /// <summary>An error as it first appeared, and how many identical ones it stands for.</summary>
+    internal sealed record Collapsed(ErrorEntry First, int Count);
 }

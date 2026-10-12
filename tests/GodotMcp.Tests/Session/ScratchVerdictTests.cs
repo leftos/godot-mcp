@@ -25,14 +25,14 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
-    public void DetailsListAGreenScenesSteps()
+    public void DetailsListAGreenScenesStepsWithTheirNotes()
     {
         ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0) with { Lines = ["[scratch] opened"] }), Plain with { Details = true });
 
         ScratchStepResult step = Assert.Single(result.Details!);
         Assert.True(step.Ok);
         Assert.Equal(500, step.GameMs);
-        Assert.Empty(step.Lines);
+        Assert.Equal(["[scratch] opened"], step.Lines);
     }
 
     [Fact]
@@ -564,15 +564,17 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
-    public void AStepListsAtMostTwentyLinesAndCountsTheRest()
+    public void AStepListsAtMostTwentyLinesWithDetailsAndFiveWithoutAndCountsTheRest()
     {
         ScratchStep noisy = Step(0) with { Lines = [.. Enumerable.Range(0, 25).Select(n => $"ERROR: {n}")] };
 
-        IReadOnlyList<string> lines = ScratchVerdict.Judge(Seen(noisy), Plain).Details![0].Lines;
+        IReadOnlyList<string> full = ScratchVerdict.Judge(Seen(noisy), Plain with { Details = true }).Details![0].Lines!;
+        IReadOnlyList<string> compact = ScratchVerdict.Judge(Seen(noisy), Plain).Details![0].Lines!;
 
-        Assert.Equal(21, lines.Count);
-        Assert.Equal("ERROR: 19", lines[19]);
-        Assert.Equal("… 5 more", lines[20]);
+        Assert.Equal(21, full.Count);
+        Assert.Equal("ERROR: 19", full[19]);
+        Assert.Equal("… 5 more", full[20]);
+        Assert.Equal(["ERROR: 0", "ERROR: 1", "ERROR: 2", "ERROR: 3", "ERROR: 4", "… 20 more"], compact);
     }
 
     [Fact]
@@ -934,6 +936,244 @@ public sealed class ScratchVerdictTests
         Assert.Equal((0, "step0"), (failure["index"]!.GetValue<int>(), failure["name"]!.GetValue<string>()));
         Assert.False(failure.ContainsKey("step"), failure.ToJsonString());
     }
+
+    [Fact]
+    public void TwoHundredIdenticalErrorsFoldIntoOneEntryWithTheirCount()
+    {
+        ScratchStep flooding = Step(0) with { Errors = [.. Enumerable.Repeat(Error("same every frame", "res://s.gd", 3), 200)] };
+
+        JsonObject step = Json(ScratchVerdict.Judge(Seen(flooding), Plain))["details"]![0]!.AsObject();
+
+        JsonObject error = Assert.Single(step["errors"]!.AsArray())!.AsObject();
+        Assert.Equal(("same every frame", 200), (error["message"]!.GetValue<string>(), error["count"]!.GetValue<int>()));
+        Assert.False(step.ContainsKey("errorsOmitted"), step.ToJsonString());
+    }
+
+    [Fact]
+    public void AHundredThousandCharacterMessageIsCutInEveryCopy()
+    {
+        string message = new('m', 100_000);
+
+        JsonObject json = Json(ScratchVerdict.Judge(Seen(Step(0) with { Errors = [Error(message, "", 0)] }), Plain with { Details = true }));
+
+        JsonNode step = json["details"]![0]!;
+        string copy = OutputBuffer.Cut(message, 500);
+        Assert.Equal(OutputBuffer.Cut(message, 2000), step["errors"]![0]!["message"]!.GetValue<string>());
+        Assert.Equal(
+            [copy, copy, copy],
+            [step["error"]!.GetValue<string>(), json["failedAt"]!["error"]!.GetValue<string>(), json["failures"]![0]!["error"]!.GetValue<string>()]
+        );
+    }
+
+    [Fact]
+    public void AFailuresErrorIsCutAtTwoHundredWithoutDetailsAndFiveHundredWith()
+    {
+        string message = new('m', 100_000);
+        ScratchStep failing = Step(0) with { Errors = [Error(message, "res://s.gd", 3)] };
+
+        JsonObject compact = Json(ScratchVerdict.Judge(Seen(failing), Plain));
+        JsonObject full = Json(ScratchVerdict.Judge(Seen(failing), Plain with { Details = true }));
+
+        Assert.Equal($"{OutputBuffer.Cut(message, 200)} (res://s.gd:3)", compact["failures"]![0]!["error"]!.GetValue<string>());
+        Assert.Equal($"{OutputBuffer.Cut(message, 500)} (res://s.gd:3)", full["failures"]![0]!["error"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData(true, 20)]
+    [InlineData(false, 3)]
+    public void FiftyDistinctErrorsListTwentyWithDetailsOrThreeWithoutAndCountTheRest(bool details, int listed)
+    {
+        ScratchStep noisy = Step(0) with { Errors = [.. Enumerable.Range(0, 50).Select(n => Error($"error {n}", "res://s.gd", n + 1))] };
+
+        JsonObject step = Json(ScratchVerdict.Judge(Seen(noisy), Plain with { Details = details }))["details"]![0]!.AsObject();
+
+        JsonArray errors = step["errors"]!.AsArray();
+        Assert.Equal(listed, errors.Count);
+        Assert.Equal(
+            ("error 0", $"error {listed - 1}"),
+            (errors[0]!["message"]!.GetValue<string>(), errors[listed - 1]!["message"]!.GetValue<string>())
+        );
+        Assert.All(errors, error => Assert.False(error!.AsObject().ContainsKey("count"), error.ToJsonString()));
+        Assert.Equal(50 - listed, step["errorsOmitted"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void ATwentyOneStepRedScenePlayedOnWhereEveryStepFailsLongSerialisesUnderFortyThousandCharactersWithoutDetails()
+    {
+        string tail = new('t', 20_000);
+        ScratchStep[] steps =
+        [
+            .. Enumerable
+                .Range(0, 21)
+                .Select(index =>
+                    Step(index) with
+                    {
+                        Status = $"step {index} played",
+                        Errors = [.. Enumerable.Range(0, 5).Select(n => Error($"step {index} error {n} {tail}", "res://s.gd", n + 1))],
+                        Lines = [.. Enumerable.Range(0, 10).Select(n => $"[scratch] step {index} note {n} {tail}")],
+                    }
+                ),
+        ];
+
+        string json = JsonSerializer.Serialize(ScratchVerdict.Judge(Seen(steps), Plain), ToolJson.Options);
+
+        Assert.True(json.Length < 40_000, $"{json.Length} characters");
+    }
+
+    [Fact]
+    public void ARedScenePlayedOnListsItsGreenStepsByTheirStatusLineOnly()
+    {
+        ScratchObservation seen = Seen(
+            Step(0) with
+            {
+                Status = "calm",
+                Lines = ["[scratch] calm"],
+            },
+            Step(1) with
+            {
+                Status = "fails",
+                Errors = [Error("boom", "res://s.gd", 4)],
+                Lines = ["[scratch] fails"],
+            },
+            Step(2) with
+            {
+                Status = "after",
+                Lines = ["[scratch] after"],
+            }
+        );
+
+        JsonArray details = Json(ScratchVerdict.Judge(seen, Plain))["details"]!.AsArray();
+
+        string[] statusLine = ["index", "name", "ok", "gameMs", "status"];
+        Assert.Equal(statusLine, details[0]!.AsObject().Select(field => field.Key));
+        Assert.Equal(statusLine, details[2]!.AsObject().Select(field => field.Key));
+        Assert.Equal([.. statusLine, "errors", "lines", "error"], details[1]!.AsObject().Select(field => field.Key));
+    }
+
+    [Fact]
+    public void NotesAppearOnlyOnTheFailingStepUnlessDetailsAsksForEveryStep()
+    {
+        ScratchObservation seen = Seen(
+            Step(0) with
+            {
+                Lines = ["[scratch] calm"],
+            },
+            Step(1) with
+            {
+                Lines = ["[scratch] fails", "ERROR: boom"],
+            },
+            Step(2) with
+            {
+                Lines = ["[scratch] after"],
+            }
+        );
+
+        ScratchSceneResult plain = ScratchVerdict.Judge(seen, Plain);
+        ScratchSceneResult detailed = ScratchVerdict.Judge(seen, Plain with { Details = true });
+
+        Assert.Equal([null, ["[scratch] fails", "ERROR: boom"], null], plain.Details!.Select(step => step.Lines));
+        Assert.Equal(
+            [
+                ["[scratch] calm"],
+                ["[scratch] fails", "ERROR: boom"],
+                ["[scratch] after"],
+            ],
+            detailed.Details!.Select(step => step.Lines)
+        );
+    }
+
+    [Fact]
+    public void AFortyNineStepRedSceneWithAFloodingStepSerialisesUnderSixtyThousandCharacters()
+    {
+        string flood = new('f', 5000);
+        ScratchStep flooding = Step(10) with
+        {
+            Status = "flooding\n" + flood,
+            Errors = [.. Enumerable.Range(0, 500).Select(n => Error($"{n % 50} {flood}", "res://s.gd", 9))],
+            Lines = [.. Enumerable.Range(0, 500).Select(n => $"ERROR: {n} {flood}")],
+        };
+        ScratchStep[] steps =
+        [
+            .. Enumerable
+                .Range(0, 49)
+                .Select(index =>
+                    index == 10
+                        ? flooding
+                        : Step(index) with
+                        {
+                            Status = $"step {index} played",
+                            Lines = [.. Enumerable.Range(0, 30).Select(n => $"[scratch] note {n} {flood}")],
+                        }
+                ),
+        ];
+
+        string json = JsonSerializer.Serialize(ScratchVerdict.Judge(Seen(steps), Plain), ToolJson.Options);
+
+        Assert.True(json.Length < 60_000, $"{json.Length} characters");
+    }
+
+    [Theory]
+    [InlineData(true, 4000)]
+    [InlineData(false, 1500)]
+    public void AStepsDetailOverItsBudgetIsCutAndNamesTheBudgetAndTheSessionsLog(bool details, int budget)
+    {
+        ScratchStep verbose = Step(0) with { Lines = [.. Enumerable.Range(0, 20).Select(n => $"ERROR: {n} {new string('x', 1000)}")] };
+
+        JsonObject step = Json(ScratchVerdict.Judge(Seen(verbose), Plain with { Details = details }))["details"]![0]!.AsObject();
+
+        JsonArray lines = step["lines"]!.AsArray();
+        int detail =
+            step["error"]!.ToJsonString(ToolJson.Options).Length
+            + step["errors"]!.ToJsonString(ToolJson.Options).Length
+            + lines.ToJsonString(ToolJson.Options).Length;
+        Assert.InRange(detail, 1, budget);
+        Assert.InRange(lines.Count, 1, 19);
+        Assert.Equal(OutputBuffer.Cut($"ERROR: 0 {new string('x', 1000)}", 500), lines[0]!.GetValue<string>());
+        Assert.Equal($"detail over {budget} characters; get_debug_output probe.scratch-Scene holds the full log", step["cut"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void ErrorsTheBudgetDropsAreCountedInErrorsOmitted()
+    {
+        ScratchStep failing = Step(0) with
+        {
+            Errors = [.. Enumerable.Range(0, 3).Select(n => Error($"{n} {new string('e', 598)}", "res://s.gd", n + 1))],
+        };
+
+        JsonObject listed = Json(ScratchVerdict.Judge(Seen(failing), Plain))["details"]![0]!.AsObject();
+
+        Assert.Single(listed["errors"]!.AsArray());
+        Assert.Equal(2, listed["errorsOmitted"]?.GetValue<int>());
+    }
+
+    [Fact]
+    public void AFailingStepOverItsBudgetWithNothingDroppableCarriesNoCut()
+    {
+        string file = "res://" + new string('f', 3000) + ".gd";
+        ScratchStep failing = Step(0) with { Errors = [Error("boom", file, 7)] };
+
+        JsonObject step = Json(ScratchVerdict.Judge(Seen(failing), Plain))["details"]![0]!.AsObject();
+
+        Assert.True(step["error"]!.GetValue<string>().Length > ScratchVerdict.MaxStepDetailCharsCompact, step.ToJsonString());
+        Assert.Single(step["errors"]!.AsArray());
+        Assert.False(step.ContainsKey("cut"), step.ToJsonString());
+    }
+
+    [Fact]
+    public void TheFirstErrorsEntrySurvivesTheBudgetWhenTheErrorAloneIsFarOverIt()
+    {
+        string file = "res://" + new string('f', 3000) + ".gd";
+        ScratchStep failing = Step(0) with { Errors = [Error("first", file, 1), Error("second", file, 2), Error("third", file, 3)] };
+
+        JsonObject step = Json(ScratchVerdict.Judge(Seen(failing), Plain))["details"]![0]!.AsObject();
+
+        JsonObject listed = Assert.Single(step["errors"]!.AsArray())!.AsObject();
+        Assert.Equal("first", listed["message"]!.GetValue<string>());
+        Assert.Equal(2, step["errorsOmitted"]!.GetValue<int>());
+        Assert.NotNull(step["cut"]);
+    }
+
+    private static JsonObject Json(ScratchSceneResult result) => JsonNode.Parse(JsonSerializer.Serialize(result, ToolJson.Options))!.AsObject();
 
     private static List<string> Window(OutputPage stdout, OutputPage stderr, LineMark after, LineMark before) =>
         ScratchRun.Window(stdout, stderr, after, before, "n1");

@@ -40,6 +40,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         "ScratchBeside",
         "ScratchBootError",
         "ScratchBusy",
+        "ScratchFlood",
         "ScratchGreen",
         "ScratchLateError",
         "ScratchLateLine",
@@ -60,6 +61,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         "green",
         "red",
         "killed",
+        "red",
         "green",
         "red",
         "red",
@@ -87,7 +89,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         JsonArray scenes = result["scenes"]!.AsArray();
         Assert.All(scenes, scene => Assert.Null(scene!["alone"]));
         Assert.Equal(
-            [1, 0.5, 0.1, 0.5, 2, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5, 0.5, 0.25, 0.1, 0.5],
+            [1, 0.5, 0.1, 0.5, 0.5, 2, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5, 0.5, 0.25, 0.1, 0.5],
             scenes.Select(scene => scene!["pace"]!.GetValue<double>())
         );
         Assert.Equal("boot", scenes[1]!["failedAt"]!["name"]!.GetValue<string>());
@@ -102,7 +104,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         JsonArray scenes = result["scenes"]!.AsArray();
         Assert.Null(scenes[1]!["alone"]);
         Assert.False(scenes[2]!["alone"]!.GetValue<bool>());
-        Assert.Null(scenes[9]!["alone"]);
+        Assert.Null(scenes[10]!["alone"]);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -135,7 +137,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal(FolderVerdicts, scenes.Select(scene => scene!["verdict"]!.GetValue<string>()));
         Assert.Equal(FolderScenes.Select(name => "InputProbe.scratch-" + name), scenes.Select(scene => scene!["session"]!.GetValue<string>()));
         Assert.False(result["passed"]!.GetValue<bool>());
-        Assert.Equal((5, 8, 1, 1, 1), Counts(result));
+        Assert.Equal((5, 9, 1, 1, 1), Counts(result));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -233,7 +235,8 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         JsonArray details = scene["details"]!.AsArray();
         Assert.Equal(2, details.Count);
         Assert.True(details[0]!["ok"]!.GetValue<bool>());
-        Assert.Contains("[scratch] calm", details[0]!["lines"]!.AsArray().Select(line => line!.GetValue<string>()));
+        Assert.Null(details[0]!["lines"]);
+        Assert.Contains("[scratch] about to fail", details[1]!["lines"]!.AsArray().Select(line => line!.GetValue<string>()));
         JsonNode error = Assert.Single(details[1]!["errors"]!.AsArray())!;
         Assert.Equal("scratch step two failed", error["message"]!.GetValue<string>());
         Assert.EndsWith("scratch_push_error.gd", error["file"]!.GetValue<string>(), StringComparison.Ordinal);
@@ -278,6 +281,25 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         JsonNode failure = Assert.Single(scene["failures"]!.AsArray())!;
         Assert.Equal(1, failure["index"]!.GetValue<int>());
         Assert.Equal(["calm", "quit"], scene["details"]!.AsArray().Select(step => step!["name"]!.GetValue<string>()));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStepThatErrorsEveryFrameListsItOnceWithItsCount()
+    {
+        string raw = await _scratch.RunScratchesAsync(
+            _probe.Directory,
+            ["ScratchFlood"],
+            new ScratchOptions(Details: true),
+            TestContext.Current.CancellationToken
+        );
+
+        JsonObject scene = Single(JsonNode.Parse(raw)!.AsObject());
+        Assert.Equal("red", scene["verdict"]!.GetValue<string>());
+        Assert.Equal((1, "floods"), (scene["failedAt"]!["index"]!.GetValue<int>(), scene["failedAt"]!["name"]!.GetValue<string>()));
+        JsonNode error = Assert.Single(scene["details"]![1]!["errors"]!.AsArray())!;
+        Assert.StartsWith("the same error every frame", error["message"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.True(error["count"]!.GetValue<int>() > 1, error.ToJsonString());
+        Assert.True(raw.Length < 60_000, $"{raw.Length} characters");
     }
 
     [Fact(Timeout = TestTimeoutMs)]

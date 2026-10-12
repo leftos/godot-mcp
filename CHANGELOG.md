@@ -14,6 +14,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Changed
 
 - `capture_frames` with `every` always takes a point at 0, which counts against the 1000-point cap.
+- `run_scratches` lists every step by its status line and keeps a failing step's detail short and folded unless `options.details` is set.
 
 ### Fixed
 
