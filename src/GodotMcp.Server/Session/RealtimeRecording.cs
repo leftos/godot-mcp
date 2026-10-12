@@ -417,7 +417,8 @@ internal sealed class RealtimeRecording
 
     /// <summary>
     /// Tries the chosen encoder, then each later one in preference order that probes usable, until one gets past its start;
-    /// each that fails at its start is marked unusable in the server's probe cache, so later starts skip it.
+    /// each that fails at its start is marked unusable in the server's probe cache, so later starts skip it for
+    /// <see cref="EncoderProbeCache.StartFailureCooldown"/> and then probe it again.
     /// </summary>
     /// <exception cref="SessionException">
     /// The helper failed, no frame came, ffmpeg could not be run, or every encoder failed at its start.

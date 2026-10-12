@@ -1,4 +1,5 @@
 using GodotMcp.Server.Session;
+using Microsoft.Extensions.Time.Testing;
 
 namespace GodotMcp.Tests.Session;
 
@@ -166,7 +167,7 @@ public sealed class RealtimeEncodeTests
     [Fact]
     public async Task TheProbeStopsAtTheFirstEncoderThatPasses()
     {
-        EncoderProbeCache cache = new();
+        EncoderProbeCache cache = new(TimeProvider.System);
         List<string> ran = [];
         Task<ToolProcessResult> Run(ToolProcessRequest request, CancellationToken _)
         {
@@ -183,7 +184,7 @@ public sealed class RealtimeEncodeTests
     [Fact]
     public async Task AFaultedProbeIsForgottenAndRetried()
     {
-        EncoderProbeCache cache = new();
+        EncoderProbeCache cache = new(TimeProvider.System);
         int runs = 0;
         Task<ToolProcessResult> Run(ToolProcessRequest _, CancellationToken __)
         {
@@ -204,7 +205,7 @@ public sealed class RealtimeEncodeTests
     [Fact]
     public async Task ACancelledWaiterLeavesTheProbeRunningAndCached()
     {
-        EncoderProbeCache cache = new();
+        EncoderProbeCache cache = new(TimeProvider.System);
         TaskCompletionSource<object?> started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         TaskCompletionSource<ToolProcessResult> finished = new(TaskCreationOptions.RunContinuationsAsynchronously);
         int runs = 0;
@@ -223,6 +224,68 @@ public sealed class RealtimeEncodeTests
         finished.SetResult(new ToolProcessResult(0, TimeSpan.Zero, KillReason.None));
 
         Assert.True(await cache.IsUsableAsync(Ffmpeg, Log, RealtimeEncode.H264Nvenc, Run, TestContext.Current.CancellationToken));
+        Assert.Equal(1, runs);
+    }
+
+    [Fact]
+    public async Task AStartFailureIsSkippedWithoutAProbeInsideItsCooldown()
+    {
+        FakeTimeProvider time = new();
+        EncoderProbeCache cache = new(time);
+        int runs = 0;
+        Task<ToolProcessResult> Run(ToolProcessRequest _, CancellationToken __)
+        {
+            runs++;
+            return Task.FromResult(new ToolProcessResult(0, TimeSpan.Zero, KillReason.None));
+        }
+
+        Assert.True(await cache.IsUsableAsync(Ffmpeg, Log, RealtimeEncode.H264Nvenc, Run, TestContext.Current.CancellationToken));
+        cache.MarkUnusable(Ffmpeg, RealtimeEncode.H264Nvenc, Log);
+        time.Advance(TimeSpan.FromSeconds(59));
+
+        Assert.False(await cache.IsUsableAsync(Ffmpeg, Log, RealtimeEncode.H264Nvenc, Run, TestContext.Current.CancellationToken));
+        Assert.Equal(1, runs);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AStartFailureIsProbedAgainOnceItsCooldownHasPassed(bool usableAgain)
+    {
+        FakeTimeProvider time = new();
+        EncoderProbeCache cache = new(time);
+        int runs = 0;
+        Task<ToolProcessResult> Run(ToolProcessRequest _, CancellationToken __)
+        {
+            runs++;
+            return Task.FromResult(new ToolProcessResult(runs == 1 || usableAgain ? 0 : 1, TimeSpan.Zero, KillReason.None));
+        }
+
+        Assert.True(await cache.IsUsableAsync(Ffmpeg, Log, RealtimeEncode.H264Nvenc, Run, TestContext.Current.CancellationToken));
+        cache.MarkUnusable(Ffmpeg, RealtimeEncode.H264Nvenc, Log);
+        time.Advance(TimeSpan.FromSeconds(61));
+
+        Assert.Equal(usableAgain, await cache.IsUsableAsync(Ffmpeg, Log, RealtimeEncode.H264Nvenc, Run, TestContext.Current.CancellationToken));
+        Assert.Equal(usableAgain, await cache.IsUsableAsync(Ffmpeg, Log, RealtimeEncode.H264Nvenc, Run, TestContext.Current.CancellationToken));
+        Assert.Equal(2, runs);
+    }
+
+    [Fact]
+    public async Task AFailedProbeIsNotProbedAgainAfterTheCooldown()
+    {
+        FakeTimeProvider time = new();
+        EncoderProbeCache cache = new(time);
+        int runs = 0;
+        Task<ToolProcessResult> Run(ToolProcessRequest _, CancellationToken __)
+        {
+            runs++;
+            return Task.FromResult(new ToolProcessResult(1, TimeSpan.Zero, KillReason.None));
+        }
+
+        Assert.False(await cache.IsUsableAsync(Ffmpeg, Log, RealtimeEncode.H264Nvenc, Run, TestContext.Current.CancellationToken));
+        time.Advance(TimeSpan.FromSeconds(61));
+
+        Assert.False(await cache.IsUsableAsync(Ffmpeg, Log, RealtimeEncode.H264Nvenc, Run, TestContext.Current.CancellationToken));
         Assert.Equal(1, runs);
     }
 
@@ -298,7 +361,7 @@ public sealed class RealtimeEncodeTests
 
     /// <summary>Chooses an encoder for <paramref name="crop"/> over a fresh cache whose ffmpeg passes exactly <paramref name="usable"/>.</summary>
     private static Task<string> ChooseWith(PixelRect crop, params string[] usable) =>
-        new EncoderProbeCache().ChooseAsync(
+        new EncoderProbeCache(TimeProvider.System).ChooseAsync(
             Ffmpeg,
             Log,
             crop,

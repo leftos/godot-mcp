@@ -138,15 +138,21 @@ internal static class RealtimeEncode
 /// Each ffmpeg's encoder probes, one per (ffmpeg path, encoder), run once for the cache's life; the server keeps one. A probe
 /// runs to its end whoever waits for it, bounded by <see cref="RealtimeEncode.ProbeCeiling"/>, so one caller's cancel does
 /// not cancel it for the next; a probe that ended faulted or cancelled is forgotten, so the next call runs it again. An
-/// encoder that probed usable but failed at a recording's start is marked unusable for the cache's life.
+/// encoder that probed usable but failed at a recording's start is skipped for <see cref="StartFailureCooldown"/> on
+/// <paramref name="time"/>, then probed again.
 /// </summary>
-internal sealed class EncoderProbeCache
+internal sealed class EncoderProbeCache(TimeProvider time)
 {
+    /// <summary>How long an encoder that failed at a recording's start is skipped before it is probed again.</summary>
+    public static readonly TimeSpan StartFailureCooldown = TimeSpan.FromSeconds(60);
+
     private readonly ConcurrentDictionary<(string FfmpegPath, string Encoder), Verdict> _probes = new();
+    private readonly TimeProvider _time = time;
 
     /// <summary>
     /// Whether the ffmpeg at <paramref name="ffmpegPath"/> test-encodes one frame with <paramref name="encoder"/>. The probe
-    /// runs once, its output going to <paramref name="logPath"/>, and its result stays cached with that log; cancelling
+    /// runs once, its output going to <paramref name="logPath"/>, and its result stays cached with that log; a start
+    /// failure's mark answers false until its cooldown has passed, then a fresh probe replaces it. Cancelling
     /// <paramref name="cancellationToken"/> ends only this wait, leaving the probe running for the next caller.
     /// </summary>
     public async Task<bool> IsUsableAsync(
@@ -158,13 +164,13 @@ internal sealed class EncoderProbeCache
     )
     {
         (string FfmpegPath, string Encoder) key = (ffmpegPath, encoder);
-        Verdict verdict = _probes.GetOrAdd(
-            key,
-            _ => new Verdict(
-                logPath,
-                new Lazy<Task<bool>>(() => RealtimeEncode.ProbeAsync(ffmpegPath, encoder, logPath, run, CancellationToken.None))
-            )
-        );
+        Verdict verdict = _probes.GetOrAdd(key, _ => NewProbe(ffmpegPath, logPath, encoder, run));
+        if (verdict.RetryAt is { } retryAt && _time.GetUtcNow() >= retryAt)
+        {
+            Verdict fresh = NewProbe(ffmpegPath, logPath, encoder, run);
+            verdict = _probes.TryUpdate(key, fresh, verdict) ? fresh : _probes.GetOrAdd(key, fresh);
+        }
+
         Task<bool> probe = verdict.Usable.Value;
         try
         {
@@ -178,11 +184,16 @@ internal sealed class EncoderProbeCache
     }
 
     /// <summary>
-    /// Marks <paramref name="encoder"/> unusable with the ffmpeg at <paramref name="ffmpegPath"/> for the cache's life, as
-    /// <paramref name="logPath"/> shows: it probed usable but failed when a recording started with it.
+    /// Marks <paramref name="encoder"/> unusable with the ffmpeg at <paramref name="ffmpegPath"/> for
+    /// <see cref="StartFailureCooldown"/>, as <paramref name="logPath"/> shows: it probed usable but failed when a recording
+    /// started with it. The first call after the cooldown probes it again.
     /// </summary>
     public void MarkUnusable(string ffmpegPath, string encoder, string logPath) =>
-        _probes[(ffmpegPath, encoder)] = new Verdict(logPath, new Lazy<Task<bool>>(() => Task.FromResult(false)));
+        _probes[(ffmpegPath, encoder)] = new Verdict(
+            logPath,
+            new Lazy<Task<bool>>(() => Task.FromResult(false)),
+            _time.GetUtcNow() + StartFailureCooldown
+        );
 
     /// <summary>
     /// The encoder for a clip of <paramref name="crop"/>: the size class's <see cref="RealtimeEncode.Preference"/>, each
@@ -217,6 +228,18 @@ internal sealed class EncoderProbeCache
         );
     }
 
-    /// <summary>An encoder's probe, or its failure at a start, and the log that shows it.</summary>
-    private sealed record Verdict(string LogPath, Lazy<Task<bool>> Usable);
+    /// <summary>A probe of <paramref name="encoder"/> not yet run, its output going to <paramref name="logPath"/>.</summary>
+    private static Verdict NewProbe(
+        string ffmpegPath,
+        string logPath,
+        string encoder,
+        Func<ToolProcessRequest, CancellationToken, Task<ToolProcessResult>> run
+    ) =>
+        new(logPath, new Lazy<Task<bool>>(() => RealtimeEncode.ProbeAsync(ffmpegPath, encoder, logPath, run, CancellationToken.None)), RetryAt: null);
+
+    /// <summary>
+    /// An encoder's probe, or its failure at a start, and the log that shows it; a start failure carries the time from which
+    /// it is probed again, a probe none.
+    /// </summary>
+    private sealed record Verdict(string LogPath, Lazy<Task<bool>> Usable, DateTimeOffset? RetryAt);
 }

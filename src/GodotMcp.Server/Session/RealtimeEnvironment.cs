@@ -45,6 +45,8 @@ internal sealed class ToolRealtimeProcess(ToolProcess.Running run) : IRealtimePr
 /// </summary>
 internal sealed class RealtimeEnvironment
 {
+    private EncoderProbeCache? _encoders;
+
     /// <summary>Where ffmpeg is: <c>FFMPEG_PATH</c>, else <c>PATH</c>.</summary>
     public required Func<FfmpegLookup> FindFfmpeg { get; init; }
 
@@ -72,8 +74,8 @@ internal sealed class RealtimeEnvironment
     /// <summary>Runs a process to its end: an encoder probe, or the remux.</summary>
     public required Func<ToolProcessRequest, CancellationToken, Task<ToolProcessResult>> Run { get; init; }
 
-    /// <summary>The encoder probes, run once each for the environment's life.</summary>
-    public EncoderProbeCache Encoders { get; } = new();
+    /// <summary>The encoder probes, kept for the environment's life; a start failure's cooldown runs on <see cref="Time"/>.</summary>
+    public EncoderProbeCache Encoders => LazyInitializer.EnsureInitialized(ref _encoders, () => new EncoderProbeCache(Time));
 
     /// <summary>The machine's: ffmpeg and the helper where the server finds them, the window read through Win32, real processes.</summary>
     public static RealtimeEnvironment System(ILogger logger) =>
