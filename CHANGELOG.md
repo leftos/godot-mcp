@@ -23,6 +23,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - A refused node-typed export in `add_node` or `set_node_properties` now says why: not a path from the scene root, no such node, or the wrong class.
 - `batch_scene_operations` describes each step's argument shape, and an unknown step argument's refusal ends with that tool's shape.
 - Every recording result, movie or real-time, carries `mode`, and a real-time one carries `startedSeconds` and any `warning` or `error`.
+- `save_screenshot` also accepts a path in the git checkout's `.tmp` folder above the project.
 
 ### Fixed
 

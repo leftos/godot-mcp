@@ -70,14 +70,18 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     [Description(
         "Captures the running game's next drawn frame as take_screenshot does and writes the PNG straight to path, a file "
             + "in the project such as a tracked picture, in one call; take_screenshot is the read-only way, saving only under "
-            + ".godot/. path is project-relative, res:// or absolute; it must end in .png, resolve inside the project and not "
-            + "lie under .godot/. Missing folders are created, and an existing file is refused unless options.overwrite is "
+            + ".godot/. path is project-relative, res:// or absolute; it must end in .png, resolve inside the project or the "
+            + "git checkout's .tmp folder above it, and not lie under .godot/. Missing folders are created, and an existing file is "
             + "true; the path is checked before the shot is taken. Returns take_screenshot's result with path the named file "
             + "and capturePath the copy under .godot/godot-mcp/screenshots/, beside which any preview stays, plus an image "
             + "unless options.responseMode is path_only."
     )]
     public async Task<IEnumerable<ContentBlock>> SaveScreenshotAsync(
-        [Description("The PNG to write: project-relative, res:// or absolute, inside the project, outside .godot/, ending in .png.")] string path,
+        [Description(
+            "The PNG to write: project-relative, res:// or absolute, inside the project or the git checkout's .tmp folder "
+                + "above it, outside .godot/, ending in .png."
+        )]
+            string path,
         [Description("A rectangle to keep, in viewport coordinates, as take_screenshot takes it.")] ScreenshotCrop? crop = null,
         [Description("{overwrite, responseMode, previewMaxWidth}: responseMode and previewMaxWidth as take_screenshot takes them.")]
             SaveScreenshotOptions? options = null,

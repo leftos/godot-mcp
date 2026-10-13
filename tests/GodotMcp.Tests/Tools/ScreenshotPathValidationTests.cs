@@ -78,6 +78,217 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     }
 
     [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AnAbsolutePathInTheCheckoutsTmpFolderIsAccepted(bool dotGitIsFile)
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile);
+        string tmp = Path.Combine(CheckoutTmp, "dim", "dimmed.png");
+
+        Assert.Equal(tmp, ScreenshotTarget.Resolve(project, tmp, overwrite: false));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AProjectRelativePathIntoTheCheckoutsTmpFolderIsAccepted(bool dotGitIsFile)
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile);
+        string tmp = Path.Combine(CheckoutTmp, "dim", "dimmed.png");
+
+        Assert.Equal(tmp, ScreenshotTarget.Resolve(project, "../../.tmp/dim/dimmed.png", overwrite: false));
+    }
+
+    [Fact]
+    public void AnAbsolutePathOutsideTheProjectAndTheCheckoutsTmpFolderIsRefused()
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        string elsewhere = Path.Combine(_temp.Path, "elsewhere", "shot.png");
+
+        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, elsewhere, overwrite: false));
+
+        Assert.Equal(
+            $"path {elsewhere} resolves outside the project {project} and the checkout's .tmp folder {CheckoutTmp}; save inside either",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public void AResPathLeavingTheProjectStaysRefusedUnderACheckout()
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+
+        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, "res://../../.tmp/x.png", overwrite: false));
+
+        Assert.Equal($"path res://../../.tmp/x.png resolves outside the project {project}; save inside the project", refused.Message);
+    }
+
+    [Fact]
+    public void APathNamingAStreamUnderTheCheckoutsTmpFolderIsRefused()
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+
+        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, "../../.tmp/a.txt:x.png", overwrite: false));
+
+        Assert.Equal("path must not contain ':' after the drive: ../../.tmp/a.txt:x.png", refused.Message);
+    }
+
+    [Fact]
+    public void AnExistingFileInTheCheckoutsTmpFolderIsRefusedWithoutOverwriteAndAcceptedWithIt()
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        string existing = Path.Combine(CheckoutTmp, "dim", "dimmed.png");
+        Directory.CreateDirectory(Path.GetDirectoryName(existing)!);
+        File.WriteAllBytes(existing, PngBytes);
+
+        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, existing, overwrite: false));
+
+        Assert.Equal($"{existing} exists; pass options.overwrite true to replace it", refused.Message);
+        Assert.Equal(existing, ScreenshotTarget.Resolve(project, existing, overwrite: true));
+    }
+
+    [Fact]
+    public void AJunctionUnderTheCheckoutsTmpFolderLeadingOutsideBothIsRefused()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        string elsewhere = Directory.CreateDirectory(Path.Combine(_temp.Path, "elsewhere")).FullName;
+        Directory.CreateDirectory(CheckoutTmp);
+        MakeJunction(Path.Combine(CheckoutTmp, "out"), elsewhere);
+
+        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, "../../.tmp/out/shot.png", overwrite: false));
+
+        Assert.Equal(
+            $"path ../../.tmp/out/shot.png leads through a link to {elsewhere}, outside the project {project} "
+                + $"and the checkout's .tmp folder {CheckoutTmp}; save inside either",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public void AJunctionUnderTheCheckoutsTmpFolderLeadingInsideTheProjectIsAccepted()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        string docs = Directory.CreateDirectory(Path.Combine(project, "docs")).FullName;
+        Directory.CreateDirectory(CheckoutTmp);
+        MakeJunction(Path.Combine(CheckoutTmp, "docs"), docs);
+
+        Assert.Equal(Path.Combine(CheckoutTmp, "docs", "shot.png"), ScreenshotTarget.Resolve(project, "../../.tmp/docs/shot.png", overwrite: false));
+    }
+
+    [Fact]
+    public void AJunctionTmpFolderLeadingOutsideBothIsRefused()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        string elsewhere = Directory.CreateDirectory(Path.Combine(_temp.Path, "elsewhere")).FullName;
+        MakeJunction(CheckoutTmp, elsewhere);
+
+        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, "../../.tmp/x.png", overwrite: false));
+
+        Assert.Equal(
+            $"path ../../.tmp/x.png leads through a link to {elsewhere}, outside the project {project} "
+                + $"and the checkout's .tmp folder {CheckoutTmp}; save inside either",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public void AJunctionUnderTmpToTheProjectsDotGodotIsRefused()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        string dotGodot = Directory.CreateDirectory(Path.Combine(project, ".godot")).FullName;
+        Directory.CreateDirectory(CheckoutTmp);
+        MakeJunction(Path.Combine(CheckoutTmp, "g"), dotGodot);
+
+        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, "../../.tmp/g/x.png", overwrite: false));
+
+        Assert.Equal(
+            $"path ../../.tmp/g/x.png leads through a link to {dotGodot}, under .godot/, which the editor owns; pick a tracked folder",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public void AJunctionUnderTmpToTheProjectRefusesAPathIntoDotGodot()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        Directory.CreateDirectory(CheckoutTmp);
+        MakeJunction(Path.Combine(CheckoutTmp, "p"), project);
+
+        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, "../../.tmp/p/.godot/x.png", overwrite: false));
+
+        Assert.Equal(
+            $"path ../../.tmp/p/.godot/x.png leads through a link to {Path.Combine(project, ".godot")}, under .godot/, "
+                + "which the editor owns; pick a tracked folder",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public void AJunctionUnderTmpToTheProjectAcceptsAPathInsideTheProject()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        Directory.CreateDirectory(Path.Combine(project, "docs"));
+        Directory.CreateDirectory(CheckoutTmp);
+        MakeJunction(Path.Combine(CheckoutTmp, "p"), project);
+
+        Assert.Equal(Path.Combine(CheckoutTmp, "p", "docs", "x.png"), ScreenshotTarget.Resolve(project, "../../.tmp/p/docs/x.png", overwrite: false));
+    }
+
+    [Fact]
+    public void AJunctionUnderTmpLeadingInsideTmpIsAccepted()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        string real = Directory.CreateDirectory(Path.Combine(CheckoutTmp, "real")).FullName;
+        MakeJunction(Path.Combine(CheckoutTmp, "inner"), real);
+
+        Assert.Equal(Path.Combine(CheckoutTmp, "inner", "x.png"), ScreenshotTarget.Resolve(project, "../../.tmp/inner/x.png", overwrite: false));
+    }
+
+    [Fact]
+    public void TheNearestGitEntryAboveTheProjectFixesTheTmpFolder()
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile: false);
+        Directory.CreateDirectory(Path.Combine(_temp.Path, "src", ".git"));
+        string innerTmp = Path.Combine(_temp.Path, "src", ".tmp");
+
+        Assert.Equal(Path.Combine(innerTmp, "x.png"), ScreenshotTarget.Resolve(project, "../.tmp/x.png", overwrite: false));
+
+        string outer = Path.Combine(CheckoutTmp, "x.png");
+        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, outer, overwrite: false));
+
+        Assert.Equal(
+            $"path {outer} resolves outside the project {project} and the checkout's .tmp folder {innerTmp}; save inside either",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public void APathWithAShortNameOnTheCheckoutsTmpRouteIsRefused()
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        const string path = "../../.tmp/SCREEN~2/shot.png";
+
+        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, path, overwrite: false));
+
+        Assert.Equal($"path {path} uses a short (8.3) name; use the folder's full name", refused.Message);
+    }
+
+    [Fact]
+    public void ADotGodotFolderInsideTheCheckoutsTmpIsAccepted()
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+
+        Assert.Equal(Path.Combine(CheckoutTmp, ".godot", "x.png"), ScreenshotTarget.Resolve(project, "../../.tmp/.godot/x.png", overwrite: false));
+    }
+
+    [Theory]
     [InlineData(".godot/shot.png")]
     [InlineData(".godot/godot-mcp/screenshots/shot.png")]
     [InlineData(".GODOT/shot.png")]
@@ -237,6 +448,27 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         Assert.StartsWith($"saving the screenshot to {destination} failed: ", refused.Message, StringComparison.Ordinal);
         Assert.Equal([1, 2], File.ReadAllBytes(destination));
     }
+
+    /// <summary>
+    /// A project at &lt;temp&gt;/src/Game under a checkout at &lt;temp&gt;, whose .git is a folder, or the file a
+    /// linked worktree has.
+    /// </summary>
+    private string ProjectUnderACheckout(bool dotGitIsFile)
+    {
+        string dotGit = Path.Combine(_temp.Path, ".git");
+        if (dotGitIsFile)
+        {
+            File.WriteAllText(dotGit, "gitdir: ../elsewhere/.git/worktrees/game\n");
+        }
+        else
+        {
+            Directory.CreateDirectory(dotGit);
+        }
+
+        return Directory.CreateDirectory(Path.Combine(_temp.Path, "src", "Game")).FullName;
+    }
+
+    private string CheckoutTmp => Path.Combine(_temp.Path, ".tmp");
 
     // A junction needs no privilege, unlike a directory symbolic link, and .NET has no API that makes one.
     private static void MakeJunction(string link, string target)
