@@ -179,13 +179,14 @@ internal sealed class SessionHarness : IAsyncDisposable
 
     /// <summary>
     /// Whether the session's hello has arrived and the run is done with: the hello must name the game found for the run and,
-    /// once one is restored, its window.
+    /// once one is restored, its window. A session still starting is checked once its launch or restart has returned.
     /// </summary>
     /// <exception cref="InvalidOperationException">The hello names another game or window than the ones found for the run.</exception>
     private bool HelloAgrees(string session, int run, int game, nint window)
     {
         GodotSession hello = Sessions.Resolve(session);
-        if (hello.GameProcessId is not int helloGame)
+        // A restart's new run is the session's before its hello is: until the restart returns, the pid is the old game's.
+        if (hello.IsStarting || hello.GameProcessId is not int helloGame)
         {
             return false;
         }

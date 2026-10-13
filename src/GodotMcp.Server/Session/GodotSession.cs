@@ -144,8 +144,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>
     /// Pings the game first: one silent for 2 s is stuck and is killed at once, without the shutdown command. One that answers
-    /// is asked to quit and killed if it has not within 3 s, or 30 s while it records. Either way the override file is
-    /// released, after a recording's clips are cut. An attached game is ended the same way (see <see cref="StopAttachedAsync"/>),
+    /// is asked to quit and killed if it has not within 3 s, or 30 s while it records. A real-time recording's capture is ended
+    /// first, so its clip ends at the stop. Either way the override file is released, after a recording's clips are cut or its
+    /// real-time clip finished. An attached game is ended the same way (see <see cref="StopAttachedAsync"/>),
     /// and its session is dropped.
     /// </summary>
     /// <exception cref="SessionException">No run was ever launched, or the attached session has no game.</exception>
@@ -162,11 +163,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             GodotRun run =
                 _run ?? throw new SessionException("No Godot session has been started, so there is nothing to stop. Start one with run_project.");
             bool alreadyExited = !run.IsRunning;
+            await EndRealtimeCaptureAsync();
             RunEnd ended = await EndRunAsync(run);
             int? gameExitCode = await run.ReleaseGameAsync();
             Snapshots.Clear();
             registry.Captures.End(Name, CaptureStore.EndedByStop);
-            RecordingResult? recording = await FinishRecordingAsync();
+            RecordingResult? recording = await FinishRecordingAsync() ?? await TakeRealtimeResultAsync();
             bool removed = registry.ReleaseFolder(this);
             return new StopResult(Name, run.ProjectDir, run.ExitCode, ended.Killed, removed)
             {
@@ -431,6 +433,25 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     private readonly record struct RunEnd(bool Killed, string? Warning, string? KillReason, IReadOnlyList<string> LeftRunning, int? QuitMs);
 
     /// <summary>
+    /// A run <see cref="PrepareAndStartAsync"/> started: the run, its prep, the token its bridge's hello must carry and the
+    /// Godot it runs, plus, for a restart, how the run it replaced ended and how that run's recording ended.
+    /// </summary>
+    private sealed record PreparedRun
+    {
+        public required GodotRun Run { get; init; }
+
+        public required PrepResult Prep { get; init; }
+
+        public required string Token { get; init; }
+
+        public required string Godot { get; init; }
+
+        public required RunEnd? Previous { get; init; }
+
+        public required RecordingResult? PreviousRecording { get; init; }
+    }
+
+    /// <summary>
     /// The warning stop_project and restart_project carry when they end a game still <paramref name="running"/> that a debugger
     /// is attached to; null otherwise.
     /// </summary>
@@ -491,11 +512,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <exception cref="SessionException">
     /// Godot was not found, the prep failed, the project has its own override.cfg, or Godot could not start.
     /// </exception>
-    private async Task<(GodotRun Run, PrepResult Prep, string Token, RunEnd? Previous, string Godot)> PrepareAndStartAsync(
-        LaunchRequest request,
-        GodotRun? previous,
-        CancellationToken cancellationToken
-    )
+    private async Task<PreparedRun> PrepareAndStartAsync(LaunchRequest request, GodotRun? previous, CancellationToken cancellationToken)
     {
         SemaphoreSlim folderLock = registry.PrepLock(ProjectDir);
         await folderLock.WaitAsync(cancellationToken);
@@ -513,15 +530,17 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             // A shutdown that began during the prep refuses the start before a restart's old game is stopped.
             registry.RefuseStartAtShutdown();
             RunEnd? previousEnd = null;
+            RecordingResult? previousRecording = null;
             if (previous is not null)
             {
                 // A restart cancelled by now must not stop a healthy game that the handshake wait would then kill.
                 cancellationToken.ThrowIfCancellationRequested();
+                await EndRealtimeCaptureAsync();
                 previousEnd = await EndRunAsync(previous);
                 Snapshots.Clear();
                 registry.Captures.End(Name, CaptureStore.EndedByRestart);
                 StopOutputCapture(previous);
-                await FinishRecordingAsync();
+                previousRecording = await FinishRecordingAsync() ?? await TakeRealtimeResultAsync();
             }
 
             registry.WriteOverride(this, bridgeScript);
@@ -532,10 +551,19 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(godotPath, request, bridge, moviePath);
             GodotRun run = new(ProjectDir, CreateRunProcess(startInfo, request.Quiet), previous);
             StartProcess(run, previous is null ? null : ProcessId);
+            MarkGameStarted();
             _run = run;
             _recording = moviePath is null ? null : new Recording(moviePath) { DropIdle = request.DropIdle };
             ProcessId = run.Process.Id;
-            return (run, prep, token, previousEnd, godotPath);
+            return new PreparedRun
+            {
+                Run = run,
+                Prep = prep,
+                Token = token,
+                Previous = previousEnd,
+                PreviousRecording = previousRecording,
+                Godot = godotPath,
+            };
         }
         finally
         {
@@ -543,21 +571,21 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
-    /// <returns>The launch, and how the run it replaced ended; that end is null for a launch.</returns>
-    private async Task<(LaunchResult Started, RunEnd? Previous)> StartRunAsync(
+    /// <returns>
+    /// The launch, how the run it replaced ended and how that run's recording ended; both are null for a launch, and the
+    /// recording also for a replaced run that recorded nothing.
+    /// </returns>
+    private async Task<(LaunchResult Started, RunEnd? Previous, RecordingResult? PreviousRecording)> StartRunAsync(
         LaunchRequest request,
         GodotRun? previous,
         CancellationToken cancellationToken
     )
     {
         registry.RefuseStartAtShutdown();
-        (GodotRun run, PrepResult prep, string token, RunEnd? previousEnd, string godot) = await PrepareAndStartAsync(
-            request,
-            previous,
-            cancellationToken
-        );
+        PreparedRun prepared = await PrepareAndStartAsync(request, previous, cancellationToken);
+        GodotRun run = prepared.Run;
         int processId = run.Process.Id;
-        BridgeConnection connection = await WaitForHandshakeAsync(run, new HandshakeExpectation(token, ProjectDir), cancellationToken);
+        BridgeConnection connection = await WaitForHandshakeAsync(run, new HandshakeExpectation(prepared.Token, ProjectDir), cancellationToken);
         connection.OnErrors(Errors.Receive);
         connection.OnCaptured(ReceiveCaptured);
         run.Connection = connection;
@@ -572,13 +600,13 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
         Log.RunStarted(_logger, processId, run.ProjectDir);
         LastLaunch = request;
-        LaunchResult started = new(Name, run.ProjectDir, processId, request.Quiet, prep, godot)
+        LaunchResult started = new(Name, run.ProjectDir, processId, request.Quiet, prepared.Prep, prepared.Godot)
         {
-            Recording = _recording is { } recording ? new RecordingResult { Path = recording.Path } : null,
+            Recording = _recording is { } recording ? new RecordingResult { Mode = Recording.MovieMode, Path = recording.Path } : null,
             Window = connection.Window,
             Warning = GodotCommandLine.DescribeWindowMismatch(GodotCommandLine.RequestedWindowSize(request.EngineArgs), connection.Window),
         };
-        return (started, previousEnd);
+        return (started, prepared.Previous, prepared.PreviousRecording);
     }
 
     /// <summary>
@@ -946,6 +974,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             Snapshots.Clear();
             registry.Captures.End(Name, CaptureStore.EndedByExit);
             await FinishRecordingAsync();
+            await KeepRealtimeResultAsync();
             if (registry.ReleaseFolder(this))
             {
                 Log.OverrideRemovedAfterExit(_logger, run.ProjectDir);

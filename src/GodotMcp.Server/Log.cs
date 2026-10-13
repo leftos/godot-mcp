@@ -237,4 +237,10 @@ internal static partial class Log
         Message = "Opening the warm headless host's own Godot process {Pid} for {Project} failed; its kill waits for the console wrapper only."
     )]
     public static partial void HeadlessHostGameHandleFailed(ILogger logger, Exception exception, int pid, string project);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Finishing the real-time recording on {Project} failed; the session reports it as the recording's error and goes on."
+    )]
+    public static partial void RealtimeFinishFailed(ILogger logger, Exception exception, string project);
 }

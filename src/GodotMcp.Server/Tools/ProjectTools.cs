@@ -197,7 +197,11 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     [Description(
         "Ends a session attach_project started: closes the connection and removes the injected override.cfg, unless another "
             + "live session uses the project folder or it is armed. The game keeps running; its bridge goes idle, or dormant "
-            + "again on an armed folder, where attach_project can join it again."
+            + "again on an armed folder, where attach_project can join it again. A real-time recording (record_mark) of the game "
+            + "is ended at the detach and its clip finished before it returns, reported as recording {mode: realtime, clips: "
+            + "[path], startedSeconds, warning?, error?} as stop_project reports it; one that ended on its own (maxSeconds) and "
+            + "was not yet returned is reported the same way. recording is left out when no real-time recording ran, its clip "
+            + "was already returned, or its start was still in flight."
     )]
     public async Task<string> DetachProjectAsync(
         [Description(SessionDescription)] string? session = null,
@@ -219,9 +223,15 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "shutting down when the time ran out); quitMs is how long a game that quit took to exit after the request, against "
             + "that 3 s grace. A game that quit but left processes it started running (on Windows, which "
             + "keeps the console wrapper waiting on them) is not killed: those processes are ended with the wrapper and listed "
-            + "in leftRunning as \"name (pid N)\". For a recording run the result's recording is {path} (the full movie, kept when there were no "
-            + "marks), or {clips} (one file per record_mark start-stop pair, cut with ffmpeg; the full movie is then deleted), "
-            + "plus error with path when the cut could not be made. A game a debugger is attached to is stopped all the same, and "
+            + "in leftRunning as \"name (pid N)\". For a recording run the result's recording is {mode: movie, path} (the full "
+            + "movie, kept when there were no marks), or {mode: movie, clips} (one file per record_mark start-stop pair, cut "
+            + "with ffmpeg; the full movie is then deleted), plus error with path when the cut could not be made. In any other "
+            + "session a real-time recording (record_mark) is ended at the stop, before the game is asked to quit, and its clip "
+            + "finished: recording is {mode: realtime, clips: [path], startedSeconds (whole seconds from the launch or attach "
+            + "to the recording's start), warning?}, or {mode: realtime, startedSeconds, error} when the clip could not be "
+            + "finished, which does not fail the stop. One that ended on its own (maxSeconds, or the game quitting) is "
+            + "returned by the next stop_project, unless record_mark stop took it first. A game a debugger is attached to is "
+            + "stopped all the same, and "
             + "the result's warning says its debug session ended with it. An attached session's game is asked to quit and killed "
             + "after 3 s in the same way; its exitCode is null, gameExitCode is the game's own, and the session is gone afterwards. "
             + "detach_project leaves an attached game running instead. Stopping a session also stops the warm headless host "
@@ -266,7 +276,9 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "To change the scene or arguments, use "
             + "stop_project then run_project. A recording run "
             + "records the new game to a new file (recording.path); the old game's recording is finished as stop_project "
-            + "finishes it and returned as previousRecording. An attached session cannot be restarted."
+            + "finishes it and returned as previousRecording. A real-time recording (record_mark) of the old game is ended "
+            + "before it is stopped and its clip returned as previousRecording {mode: realtime, clips: [path], startedSeconds, "
+            + "warning?, error?}; the new game does not record until record_mark start. An attached session cannot be restarted."
     )]
     public async Task<string> RestartProjectAsync(
         [Description(
@@ -318,8 +330,10 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         "Lists the server's live sessions, ordered by name: each one's name, project folder, kind (run or attach), whether it "
             + "is live, its processId (the process run_project started, on Windows the Godot_console wrapper that stop_project "
             + "ends; null for an attached game) and its gameProcessId (the game's own process, the one a debugger attaches to; "
-            + "null until the game's bridge has connected), plus for a recording run its recording: {path} while it runs, and "
-            + "once it has ended, stopped or quit, what stop_project returns for it. A session whose run has ended is kept, "
+            + "null until the game's bridge has connected), plus for a recording run its recording: {mode: movie, path} while it "
+            + "runs, and once it has ended, stopped or quit, what stop_project returns for it. A real-time recording (record_mark) "
+            + "shows as {mode: realtime, path, startedSeconds} while it runs (none while its start is still in flight), and "
+            + "once it has ended on its own as what stop_project will return for it, until a stop returns it. A session whose run has ended is kept, "
             + "until its name is reused (detach_project and stop_project remove an attached one), and is listed only with includeStopped. armed "
             + "lists the folders this server has armed (arm_project), ordered by path: each one's projectPath, quiet, "
             + "shutOutRealGamepads, mute and dormant, the games waiting there to be joined, each {pid, startedAt}. "

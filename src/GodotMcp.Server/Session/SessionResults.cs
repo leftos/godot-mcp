@@ -30,17 +30,28 @@ internal sealed record WindowSize(int Width, int Height)
 }
 
 /// <summary>
-/// A recording run's file: <see cref="Path"/> is the full movie while it is kept (during the run, and after it when there were
-/// no marks or the cut failed), <see cref="Clips"/> the files cut from the marks, <see cref="Error"/> why the cut did not
-/// finish.
+/// A session's recording, by its <see cref="Mode"/>. A Movie Maker run's (movie): <see cref="Path"/> is the full movie while it
+/// is kept (during the run, and after it when there were no marks or the cut failed), <see cref="Clips"/> the files cut from the
+/// marks, <see cref="Error"/> why the cut did not finish. A real-time recording's (realtime): <see cref="Path"/> while it runs,
+/// then <see cref="Clips"/>, the one .mp4 it finished as, or <see cref="Error"/> when it could not be finished, and the
+/// <see cref="Warning"/> its clip carries; <see cref="StartedSeconds"/> is when it started, in whole seconds from the game's
+/// launch or attach.
 /// </summary>
 internal sealed record RecordingResult
 {
+    public required string Mode { get; init; }
+
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Path { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<string>? Clips { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? StartedSeconds { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Warning { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Error { get; init; }
@@ -134,7 +145,10 @@ internal sealed record RestartResult(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public WindowSize? Window { get; init; }
 
-    /// <summary>How the replaced game's recording ended: its full file or its clips.</summary>
+    /// <summary>
+    /// How the replaced game's recording ended: a Movie Maker run's full file or clips, or the clip of the real-time recording
+    /// the restart ended.
+    /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? PreviousRecording { get; init; }
 
@@ -180,6 +194,10 @@ internal sealed record StopResult(string Session, string ProjectPath, int? ExitC
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<string>? LeftRunning { get; init; }
 
+    /// <summary>
+    /// A Movie Maker run's full file or clips, or the clip of the real-time recording the stop ended or the game's quit left;
+    /// left out when there was none.
+    /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? Recording { get; init; }
 
@@ -212,8 +230,19 @@ internal sealed record AttachResult(string Session, string ProjectPath, bool Qui
     public int? JoinedPid { get; init; }
 }
 
-/// <summary>How detach_project left the project: the game still runs; whether the server's override.cfg was deleted.</summary>
-internal sealed record DetachResult(string Session, string ProjectPath, bool OverrideRemoved);
+/// <summary>
+/// How detach_project left the project: the game still runs; whether the server's override.cfg was deleted, and the real-time
+/// recording the detach ended.
+/// </summary>
+internal sealed record DetachResult(string Session, string ProjectPath, bool OverrideRemoved)
+{
+    /// <summary>
+    /// The real-time recording the detach ended, or one that ended on its own, its clip finished; left out when there was none,
+    /// its clip was already returned, or its start was still in flight.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public RecordingResult? Recording { get; init; }
+}
 
 /// <summary>An armed folder, as arm_project and list_sessions report it: its settings and the dormant games waiting on it.</summary>
 internal sealed record ArmState(string ProjectPath, bool Quiet, bool ShutOutRealGamepads, bool Mute, IReadOnlyList<DormantGame> Dormant);

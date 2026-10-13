@@ -41,7 +41,7 @@ public sealed class RecordingTests : IAsyncDisposable
         Assert.Equal(recordings, Path.GetDirectoryName(movie));
         Assert.EndsWith("-InputProbe.avi", movie, StringComparison.Ordinal);
         Assert.False(stopped.Killed);
-        Assert.Equal(new RecordingResult { Path = movie }, stopped.Recording);
+        Assert.Equal(new RecordingResult { Mode = Recording.MovieMode, Path = movie }, stopped.Recording);
         IReadOnlyList<ProbedStream> streams = await ProbeAsync(movie);
         ProbedStream video = Assert.Single(streams, stream => stream.Type == "video");
         Assert.Equal("60/1", video.FrameRate);
@@ -165,7 +165,7 @@ public sealed class RecordingTests : IAsyncDisposable
         Assert.Equal([RecordingCut.ClipPath(launched.Recording!.Path!, 1)], previous.Clips);
         string movie = restarted.Recording?.Path ?? throw new InvalidOperationException("restart returned no recording path.");
         Assert.NotEqual(launched.Recording.Path, movie);
-        Assert.Equal(new RecordingResult { Path = movie }, stopped.Recording);
+        Assert.Equal(new RecordingResult { Mode = Recording.MovieMode, Path = movie }, stopped.Recording);
         Assert.True(File.Exists(movie));
     }
 
@@ -196,6 +196,7 @@ public sealed class RecordingTests : IAsyncDisposable
         Assert.Equal(
             new RecordingResult
             {
+                Mode = Recording.MovieMode,
                 Path = movie,
                 Error =
                     $"FFMPEG_PATH is '{missing}', which does not exist, so the recording was not cut; the full file is kept. "

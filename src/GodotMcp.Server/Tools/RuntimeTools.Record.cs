@@ -28,8 +28,12 @@ internal sealed partial class RuntimeTools
             + "is ending is not kept. In any other session with a window, start records the window in real time, as a player sees "
             + "it, until stop or options.maxSeconds, and answers once the first frame is in: {mark, mode: realtime, path, width, "
             + "height, fps, encoder, warning?}, path being the .mp4 the clip becomes. stop ends it and returns {mark, mode, clip: "
-            + "{path, seconds, frames, averageFps, width, height}, warning?}; a recording that ended on its own is returned by the "
-            + "next stop. One real-time recording runs per session. The window must stay unminimized (a minimized window holds its "
+            + "{path, seconds, frames, averageFps, width, height}, warning?}. The session's end ends a running one at that call "
+            + "and reports its clip as recording {mode: realtime, clips: [path], startedSeconds, warning?, error?}: stop_project "
+            + "and detach_project, and restart_project as previousRecording. One that ended on its own (maxSeconds, or the game "
+            + "quitting) is returned once, by whichever comes first of record_mark stop, stop_project, detach_project and "
+            + "restart_project (as previousRecording). One real-time recording "
+            + "runs per session. The window must stay unminimized (a minimized window holds its "
             + "last frame); quiet and headless sessions are refused, and it needs ffmpeg."
     )]
     public async Task<string> RecordMarkAsync(

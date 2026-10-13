@@ -55,11 +55,17 @@ internal sealed partial class GodotSession
             throw new SessionException(NoneRunning);
         }
 
-        Recording? replaced = _recording;
         bool previousAlreadyExited = !previous.IsRunning;
         try
         {
-            (LaunchResult started, RunEnd? previousEnd) = await StartRunAsync(launched with { Prepare = prepare }, previous, cancellationToken);
+            (LaunchResult started, RunEnd? previousEnd, RecordingResult? previousRecording) = await StartRunAsync(
+                launched with
+                {
+                    Prepare = prepare,
+                },
+                previous,
+                cancellationToken
+            );
             int? previousGameExitCode = await previous.ReleaseGameAsync();
             Log.RunRestarted(_logger, ProjectDir, previousProcessId, started.ProcessId);
             return new RestartResult(Name, started.ProjectPath, started.ProcessId, previousProcessId, previous.ExitCode, started.Prep, started.Godot)
@@ -71,7 +77,7 @@ internal sealed partial class GodotSession
                 PreviousLeftRunning = LeftRunning(previousEnd),
                 Recording = started.Recording,
                 Window = started.Window,
-                PreviousRecording = replaced?.Outcome,
+                PreviousRecording = previousRecording,
                 Warning = JoinWarnings(previousEnd?.Warning, started.Warning),
             };
         }

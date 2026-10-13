@@ -250,12 +250,13 @@ public sealed class RecordValidationTests : IAsyncDisposable
         Task<string> start = _tools.RecordMarkAsync("start", cancellationToken: Token);
         await probing.Task.WaitAsync(TimeSpan.FromSeconds(10), Token);
 
-        await _harness.Sessions.DetachAsync(Game, Token);
+        DetachResult result = await _harness.Sessions.DetachAsync(Game, Token);
         detached.TrySetResult();
 
         string path = JsonNode.Parse(await start)!["path"]!.GetValue<string>();
         await RegistryHarness.WaitUntilAsync(() => File.Exists(path));
         Assert.NotNull(_fake.DeadlineAtHelperEnd);
+        Assert.Null(result.Recording);
     }
 
     [Fact]

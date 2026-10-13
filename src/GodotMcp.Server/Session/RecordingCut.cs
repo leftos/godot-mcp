@@ -111,13 +111,18 @@ internal static class RecordingCut
 
         if (recording.Clips().Count == 0)
         {
-            return new RecordingResult { Path = recording.Path };
+            return new RecordingResult { Mode = Recording.MovieMode, Path = recording.Path };
         }
 
         string? error = FindFfmpegError(out string ffmpeg);
         if (error is not null)
         {
-            return new RecordingResult { Path = recording.Path, Error = error };
+            return new RecordingResult
+            {
+                Mode = Recording.MovieMode,
+                Path = recording.Path,
+                Error = error,
+            };
         }
 
         return await CutClipsAsync(recording, ffmpeg, (request, token) => ToolProcess.RunAsync(request, logger, token), cancellationToken);
@@ -146,6 +151,7 @@ internal static class RecordingCut
             {
                 return new RecordingResult
                 {
+                    Mode = Recording.MovieMode,
                     Path = recording.Path,
                     Clips = clips.Count > 0 ? clips : null,
                     Error = string.Join(" ", notes),
@@ -168,11 +174,19 @@ internal static class RecordingCut
         {
             return new RecordingResult
             {
+                Mode = Recording.MovieMode,
                 Error = $"The recording {moviePath} was not written (the game may have failed before its first frame), so there is nothing to cut.",
             };
         }
 
-        return killed ? new RecordingResult { Path = moviePath, Error = KilledMovie } : null;
+        return killed
+            ? new RecordingResult
+            {
+                Mode = Recording.MovieMode,
+                Path = moviePath,
+                Error = KilledMovie,
+            }
+            : null;
     }
 
     /// <summary>
@@ -280,12 +294,18 @@ internal static class RecordingCut
         try
         {
             File.Delete(moviePath);
-            return new RecordingResult { Clips = clips, Error = error };
+            return new RecordingResult
+            {
+                Mode = Recording.MovieMode,
+                Clips = clips,
+                Error = error,
+            };
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return new RecordingResult
             {
+                Mode = Recording.MovieMode,
                 Path = moviePath,
                 Clips = clips,
                 Error = string.Join(" ", [.. notes, $"Every clip was cut, but the full file could not be deleted: {e.Message}"]),

@@ -53,6 +53,7 @@ internal sealed partial class GodotSession
                 _attached = await InjectAndAwaitBridgeAsync(bridgeScript, wait, cancellationToken);
                 GameProcessId = _attached.GameProcessId;
                 WindowHandle = _attached.WindowHandle;
+                MarkGameStarted();
                 _ = ClearSnapshotsWhenClosedAsync(_attached);
                 // Last, since it cannot fail: an attach that fails after it would leave the handle open.
                 KeepAttachedGameHandle();
@@ -84,7 +85,10 @@ internal sealed partial class GodotSession
         return new AttachResult(Name, ProjectDir, Quiet) { Window = _attached?.Window, JoinedPid = JoinPid };
     }
 
-    /// <summary>Closes the attached game's connection, drops the session and releases the override file; the game keeps running.</summary>
+    /// <summary>
+    /// Ends a real-time recording of the game's window and waits for its clip, closes the attached game's connection, drops the
+    /// session and releases the override file; the game keeps running.
+    /// </summary>
     /// <exception cref="SessionException">The session is not an attached one.</exception>
     public async Task<DetachResult> DetachAsync(CancellationToken cancellationToken)
     {
@@ -92,10 +96,10 @@ internal sealed partial class GodotSession
         try
         {
             BridgeConnection attached = _attached ?? throw new SessionException(DescribeNothingToDetach());
-            await EndAttachmentAsync(attached);
+            RecordingResult? recording = await EndAttachmentAsync(attached);
             bool removed = registry.ReleaseFolder(this);
             Log.Detached(_logger, ProjectDir);
-            return new DetachResult(Name, ProjectDir, removed);
+            return new DetachResult(Name, ProjectDir, removed) { Recording = recording };
         }
         finally
         {
@@ -116,12 +120,13 @@ internal sealed partial class GodotSession
         Process? game = _attachedGame;
         bool alreadyExited = !attached.IsOpen || HasExited(game);
         string? debugged = WarnIfDebugged(!alreadyExited);
+        await EndRealtimeCaptureAsync();
         RunEnd ended = alreadyExited
             ? new RunEnd(Killed: false, Warning: null, KillReason: null, LeftRunning: [], QuitMs: null)
             : await QuitAttachedGameAsync(attached, game);
         // Read before the handle goes with the session; the code read after a kill is not the game's own.
         int? gameExitCode = ended.Killed ? null : ExitCodeOf(game);
-        await EndAttachmentAsync(attached);
+        RecordingResult? recording = await EndAttachmentAsync(attached);
         bool removed = registry.ReleaseFolder(this);
         return new StopResult(Name, ProjectDir, ExitCode: null, ended.Killed, removed)
         {
@@ -129,6 +134,7 @@ internal sealed partial class GodotSession
             GameExitCode = gameExitCode,
             KillReason = ended.KillReason,
             QuitMs = ended.QuitMs,
+            Recording = recording,
             Warning = debugged ?? ended.Warning,
         };
     }
@@ -165,19 +171,21 @@ internal sealed partial class GodotSession
             : $"The game's bridge sent no process id, so the game could not be killed if it did not quit; it may still be running{stillOpen}.";
 
     /// <summary>
-    /// Lets go of the attached game, as a detach and a stop both do: its connection, its snapshots, its capture and the handle
-    /// on its process, and drops the session from the registry; a real-time recording of its window ends now and finishes on
-    /// its own, since a detached game keeps its window open. The caller releases the folder.
+    /// Lets go of the attached game, as a detach and a stop both do: a real-time recording of its window, ended now and its
+    /// clip waited for, its connection, its snapshots, its capture and the handle on its process, and drops the session from
+    /// the registry. The caller releases the folder.
     /// </summary>
-    private async Task EndAttachmentAsync(BridgeConnection attached)
+    /// <returns>The real-time recording's outcome; null when there was none, or another call took it.</returns>
+    private async Task<RecordingResult?> EndAttachmentAsync(BridgeConnection attached)
     {
-        await EndRealtimeCaptureAsync();
+        RecordingResult? recording = await TakeRealtimeResultAsync();
         _attached = null;
         Snapshots.Clear();
         registry.Captures.End(Name, CaptureStore.EndedByStop);
         await attached.DisposeAsync();
         DisposeAttachedGame();
         registry.Forget(this);
+        return recording;
     }
 
     /// <summary>
@@ -215,13 +223,14 @@ internal sealed partial class GodotSession
     /// <summary>
     /// Drops the session's snapshots once the attached game's connection ends (the game quit, or a detach closed it), as a
     /// run's exit does: their ids name a game that is gone. A capture still running ends as an exit (a detach has already ended
-    /// it as a stop).
+    /// it as a stop), and a real-time recording still running is ended and its clip kept for the next stop.
     /// </summary>
     private async Task ClearSnapshotsWhenClosedAsync(BridgeConnection connection)
     {
         await connection.Closed.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         Snapshots.Clear();
         registry.Captures.End(Name, CaptureStore.EndedByExit);
+        await KeepRealtimeResultAsync();
     }
 
     /// <summary>

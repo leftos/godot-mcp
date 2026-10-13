@@ -1441,7 +1441,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 /// <summary>
 /// One entry of list_sessions: <see cref="ProcessId"/> is the process the server started (the Godot_console.exe wrapper on
 /// Windows; null for an attach), <see cref="GameProcessId"/> the game's own, from its bridge's hello (null until then);
-/// <see cref="Recording"/> is set for a session whose latest run records.
+/// <see cref="Recording"/> is set for a session whose latest run records with Movie Maker, and for one with a real-time
+/// recording running, or finished and not yet returned by a stop (<see cref="GodotSession.RecordingState"/>).
 /// </summary>
 internal sealed record SessionInfo(string Name, string ProjectPath, string Kind, bool Live, int? ProcessId, int? GameProcessId)
 {

@@ -70,11 +70,22 @@ public sealed class RecordingMarksTests
         string notWritten = $"The recording {Movie} was not written (the game may have failed before its first frame), so there is nothing to cut.";
 
         Assert.Equal(
-            new RecordingResult { Path = Movie, Error = RecordingCut.KilledMovie },
+            new RecordingResult
+            {
+                Mode = Recording.MovieMode,
+                Path = Movie,
+                Error = RecordingCut.KilledMovie,
+            },
             RecordingCut.Unusable(Movie, exists: true, killed: true)
         );
-        Assert.Equal(new RecordingResult { Error = notWritten }, RecordingCut.Unusable(Movie, exists: false, killed: true));
-        Assert.Equal(new RecordingResult { Error = notWritten }, RecordingCut.Unusable(Movie, exists: false, killed: false));
+        Assert.Equal(
+            new RecordingResult { Mode = Recording.MovieMode, Error = notWritten },
+            RecordingCut.Unusable(Movie, exists: false, killed: true)
+        );
+        Assert.Equal(
+            new RecordingResult { Mode = Recording.MovieMode, Error = notWritten },
+            RecordingCut.Unusable(Movie, exists: false, killed: false)
+        );
         Assert.Null(RecordingCut.Unusable(Movie, exists: true, killed: false));
     }
 
@@ -227,6 +238,7 @@ public sealed class RecordingMarksTests
             Assert.Equal(
                 new RecordingResult
                 {
+                    Mode = Recording.MovieMode,
                     Path = movie,
                     Error =
                         $"ffmpeg failed (exit code 1) encoding {RecordingCut.ClipPath(movie, 1)}. See {log}. ffmpeg failed (exit code 1) "

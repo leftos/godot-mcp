@@ -28,10 +28,11 @@ internal sealed partial class GodotSession
     public Recording? ActiveRecording => _recording is { Outcome: null } recording && HasGame ? recording : null;
 
     /// <summary>
-    /// The latest run's recording as list_sessions shows it: its file while the run goes on, how it ended afterwards; null
-    /// when the run does not record.
+    /// The session's recording as list_sessions shows it: a Movie Maker run's file while the run goes on and how it ended
+    /// afterwards, or else the session's real-time recording (<see cref="RealtimeState"/>); null when there is neither.
     /// </summary>
-    public RecordingResult? RecordingState => _recording is { } recording ? recording.Outcome ?? new RecordingResult { Path = recording.Path } : null;
+    public RecordingResult? RecordingState =>
+        _recording is { } recording ? recording.Outcome ?? new RecordingResult { Mode = Recording.MovieMode, Path = recording.Path } : RealtimeState;
 
     /// <summary>The grace a stop gives the current run to quit before it is killed: longer while a recording is being written.</summary>
     private TimeSpan CurrentExitGrace => _recording is { Outcome: null } ? RecordingExitGrace : ExitGrace;

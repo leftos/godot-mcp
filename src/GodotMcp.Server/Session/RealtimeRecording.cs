@@ -38,7 +38,11 @@ internal sealed record RealtimeOutcome(RealtimeStopped? Stopped, string? Error);
 internal sealed record RealtimeTarget(string Ffmpeg, string Helper, long Hwnd, PixelRect Crop, string? Warning);
 
 /// <summary>A real-time recording's start: the session, its project folder, the target, the rate, the cap and when it was asked for.</summary>
-internal sealed record RealtimeStart(string Session, string ProjectDir, RealtimeTarget Target, int Fps, int MaxSeconds, DateTimeOffset RequestedAt);
+internal sealed record RealtimeStart(string Session, string ProjectDir, RealtimeTarget Target, int Fps, int MaxSeconds, DateTimeOffset RequestedAt)
+{
+    /// <summary>The whole seconds from the session's game's launch or attach to this start, as the session's end reports them.</summary>
+    public required int StartedSeconds { get; init; }
+}
 
 /// <summary>
 /// A real-time recording's files under <c>&lt;project&gt;/.godot/godot-mcp/recordings/</c>, all named from one stem,
@@ -95,6 +99,9 @@ internal sealed class RealtimeRecording
 
     private const int LastLineCount = 3;
 
+    /// <summary>How long a session's end waits for the helper to exit once the capture is ended, in load-adjusted time, before it kills it.</summary>
+    private static readonly TimeSpan HelperExitCeiling = TimeSpan.FromSeconds(10);
+
     /// <summary>How long past their deadline the helper and ffmpeg may run before their ceiling kills them.</summary>
     private static readonly TimeSpan FinishMargin = TimeSpan.FromSeconds(60);
 
@@ -113,6 +120,9 @@ internal sealed class RealtimeRecording
     // Whether the server killed the helper itself, when the deadline could not be moved, so its exit is no failure; under _lock.
     private bool _helperKilled;
     private string? _endNote;
+
+    // Whether a caller has taken the logging of the finish's fault; under _lock.
+    private bool _faultLogTaken;
 
     private RealtimeRecording(StartContext context, RealtimePipeline pipeline, RealtimeStarted started)
     {
@@ -133,10 +143,16 @@ internal sealed class RealtimeRecording
     /// <summary>When the start was asked for.</summary>
     public DateTimeOffset StartedAt => _start.RequestedAt;
 
+    /// <summary>The whole seconds from the session's game's launch or attach to the start, fixed when it started.</summary>
+    public int StartedSeconds => _start.StartedSeconds;
+
     /// <summary>Whether the capture, the encode or the remux is still going on.</summary>
     public bool IsRunning => !Finished.IsCompleted;
 
-    /// <summary>The recording's end, however it came; it never throws.</summary>
+    /// <summary>
+    /// The recording's end, however it came. A failure the recording does not expect faults it, and the session's end reports
+    /// that as the outcome's error.
+    /// </summary>
     public Task<RealtimeOutcome> Finished { get; }
 
     /// <summary>
@@ -237,6 +253,48 @@ internal sealed class RealtimeRecording
         }
 
         await _pipeline.KillHelperAsync();
+    }
+
+    /// <summary>
+    /// Ends the capture, as <see cref="EndCaptureAsync"/> does, and gives the helper 10 s of load-adjusted time to exit. One that
+    /// has not exited by then is killed, which the clip's warning says, and the clip is finished from what was written.
+    /// </summary>
+    public async Task EndCaptureWithinCeilingAsync()
+    {
+        await EndCaptureAsync();
+        using (LoadDeadline ceiling = _environment.Clock.Start(HelperExitCeiling))
+        {
+            var expired = Task.Delay(Timeout.InfiniteTimeSpan, ceiling.Token);
+            await Task.WhenAny(_pipeline.HelperExit, expired);
+        }
+
+        lock (_lock)
+        {
+            if (_helperGone || _helperKilled || _pipeline.HelperExit.IsCompleted)
+            {
+                return;
+            }
+
+            _helperKilled = true;
+            _endNote =
+                FormattableString.Invariant(
+                    $"the capture helper did not exit within {HelperExitCeiling.TotalSeconds:0} s of the recording's end and was killed; "
+                ) + "the clip may end earlier or later than the recording did";
+        }
+
+        await _pipeline.KillHelperAsync();
+    }
+
+    /// <summary>Takes the logging of the finish's fault, so it is logged once however many callers see it.</summary>
+    /// <returns>Whether this call took it: true for the first call only.</returns>
+    public bool TakeFaultLog()
+    {
+        lock (_lock)
+        {
+            bool first = !_faultLogTaken;
+            _faultLogTaken = true;
+            return first;
+        }
     }
 
     /// <summary>The last lines of a log, joined by " | ", for a message; what went wrong when it cannot be read.</summary>

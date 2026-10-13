@@ -1,0 +1,605 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using GodotMcp.Server.Session;
+using GodotMcp.Server.Tools;
+using GodotMcp.Tests.Wire;
+using Microsoft.Extensions.Time.Testing;
+using ModelContextProtocol;
+
+namespace GodotMcp.Tests.Session;
+
+/// <summary>
+/// A real-time recording ended with its session: a stop ends the capture before the game is told to quit, a detach waits for
+/// the clip, a game that quits keeps its clip for one stop, a clip that could not be finished is an error the stop reports,
+/// what list_sessions shows, and the result's JSON. On fake games attached to a real registry whose real-time environment is
+/// fake; a run's stop and restart need a real Godot and are integration tests (RealtimeRecordingTests).
+/// </summary>
+public sealed class RealtimeSessionEndTests : IAsyncDisposable
+{
+    private const string Game = "game";
+
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    private readonly RegistryHarness _harness = new();
+    private readonly FakeRealtime _fake = new();
+    private readonly List<FakeBridge> _games = [];
+    private readonly RuntimeTools _tools;
+
+    public RealtimeSessionEndTests()
+    {
+        _harness.Sessions.Realtime = _fake.Environment;
+        _tools = new RuntimeTools(_harness.Sessions, TestCSharp.Unused());
+    }
+
+    private static CancellationToken Token => TestContext.Current.CancellationToken;
+
+    public async ValueTask DisposeAsync()
+    {
+        await _harness.DisposeAsync();
+        foreach (FakeBridge game in _games)
+        {
+            game.Dispose();
+        }
+
+        _fake.Dispose();
+    }
+
+    [Fact]
+    public async Task AStopEndsTheCaptureBeforeTheGameIsToldToQuitAndReturnsTheClip()
+    {
+        FakeBridge game = await AttachAsync();
+        string path = await StartAsync();
+        Task<bool> endedFirst = CaptureEndedAtFirstRequestAsync(game, Path.ChangeExtension(path, ".deadline"));
+
+        StopResult stopped = await _harness.Sessions.StopAsync(Game, Token);
+
+        Assert.True(await endedFirst, "the game was told to quit while the capture still ran");
+        RecordingResult recording = stopped.Recording ?? throw new InvalidOperationException("stop_project returned no recording.");
+        Assert.Equal("realtime", recording.Mode);
+        Assert.Equal(path, Assert.Single(recording.Clips!));
+        Assert.Null(recording.Path);
+        Assert.Null(recording.Error);
+        Assert.True(File.Exists(path), $"the clip {path} was not finished when the stop returned");
+    }
+
+    [Fact]
+    public async Task ADetachWaitsForTheClipAndReportsIt()
+    {
+        await AttachAsync();
+        string path = await StartAsync();
+
+        DetachResult detached = await _harness.Sessions.DetachAsync(Game, Token);
+
+        RecordingResult recording = detached.Recording ?? throw new InvalidOperationException("detach_project returned no recording.");
+        Assert.Equal("realtime", recording.Mode);
+        Assert.Equal(path, Assert.Single(recording.Clips!));
+        Assert.True(File.Exists(path), $"the clip {path} was not finished when the detach returned");
+        Assert.False(File.Exists(Path.ChangeExtension(path, ".mkv")), "the .mkv was left behind");
+    }
+
+    [Fact]
+    public async Task ADetachWithNoRecordingReportsNone()
+    {
+        await AttachAsync();
+
+        DetachResult detached = await _harness.Sessions.DetachAsync(Game, Token);
+
+        Assert.Null(detached.Recording);
+        Assert.DoesNotContain("recording", JsonSerializer.Serialize(detached, Json), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AGameThatQuitsKeepsItsClipForOneStop()
+    {
+        FakeBridge game = await AttachAsync();
+        string path = await StartAsync();
+
+        game.Dispose();
+        await RegistryHarness.WaitUntilAsync(() => ListedRecording()?.Clips is not null);
+        RecordingResult listed = ListedRecording()!;
+        JsonNode taken = JsonNode.Parse(await _tools.RecordMarkAsync("stop", session: Game, cancellationToken: Token))!;
+        StopResult stopped = await _harness.Sessions.StopAsync(Game, Token);
+
+        Assert.Equal(path, Assert.Single(listed.Clips!));
+        Assert.Equal(path, taken["clip"]!["path"]!.GetValue<string>());
+        Assert.Null(stopped.Recording);
+    }
+
+    [Fact]
+    public async Task AGameThatQuitsGivesItsClipToTheNextStop()
+    {
+        FakeBridge game = await AttachAsync();
+        string path = await StartAsync();
+
+        game.Dispose();
+        await RegistryHarness.WaitUntilAsync(() => ListedRecording()?.Clips is not null);
+        StopResult stopped = await _harness.Sessions.StopAsync(Game, Token);
+
+        RecordingResult recording = stopped.Recording ?? throw new InvalidOperationException("stop_project returned no recording.");
+        Assert.Equal(path, Assert.Single(recording.Clips!));
+    }
+
+    [Fact]
+    public async Task AClipThatCouldNotBeFinishedIsAnErrorAndTheDetachGoesOn()
+    {
+        _fake.FfmpegExit = 1;
+        await AttachAsync();
+        string path = await StartAsync();
+
+        DetachResult detached = await _harness.Sessions.DetachAsync(Game, Token);
+
+        RecordingResult recording = detached.Recording ?? throw new InvalidOperationException("detach_project returned no recording.");
+        Assert.Equal("realtime", recording.Mode);
+        Assert.Null(recording.Clips);
+        Assert.StartsWith("ffmpeg exited with code 1 while it encoded the recording: ", recording.Error, StringComparison.Ordinal);
+        Assert.Contains(Path.ChangeExtension(path, ".mkv"), recording.Error, StringComparison.Ordinal);
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
+    }
+
+    [Fact]
+    public async Task ListSessionsShowsARunningRecordingWithItsStartFromTheAttach()
+    {
+        await AttachAsync();
+        // Only a lower bound: a busy machine lengthens the gap between the attach and the start, never shortens it.
+        await Task.Delay(TimeSpan.FromMilliseconds(1100), Token);
+        string path = await StartAsync();
+
+        RecordingResult running = ListedRecording() ?? throw new InvalidOperationException("list_sessions showed no recording.");
+        DetachResult detached = await _harness.Sessions.DetachAsync(Game, Token);
+
+        Assert.Equal(
+            new RecordingResult
+            {
+                Mode = "realtime",
+                Path = path,
+                StartedSeconds = running.StartedSeconds,
+            },
+            running
+        );
+        Assert.True(running.StartedSeconds >= 1, $"startedSeconds is {running.StartedSeconds}; the start came over 1 s after the attach");
+        Assert.Equal(running.StartedSeconds, detached.Recording?.StartedSeconds);
+    }
+
+    [Fact]
+    public async Task ListSessionsShowsNoRecordingWhileItsStartIsInFlight()
+    {
+        await AttachAsync();
+        TaskCompletionSource probing = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource listed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _fake.BeforeProbe = async _ =>
+        {
+            probing.TrySetResult();
+            await listed.Task.WaitAsync(TimeSpan.FromSeconds(60), Token);
+        };
+        Task<string> start = _tools.RecordMarkAsync("start", cancellationToken: Token);
+        await probing.Task.WaitAsync(TimeSpan.FromSeconds(60), Token);
+
+        RecordingResult? whileStarting = ListedRecording();
+        listed.TrySetResult();
+        await start;
+
+        Assert.Null(whileStarting);
+        Assert.Equal("realtime", ListedRecording()?.Mode);
+    }
+
+    [Fact]
+    public async Task AStartAskedForWhileADetachWaitsForTheClipIsRefusedOrEndedAndNotReported()
+    {
+        await AttachAsync();
+        string first = await StartAsync();
+        GodotSession session = _harness.Sessions.Resolve(Game);
+        (TaskCompletionSource remuxing, TaskCompletionSource release) = HoldRemux();
+        // A record_mark stop ends the capture and waits on the clip before the detach does, and the second start is asked for
+        // as soon as it returns: after the first recording has finished, most often while the detach is still taking the clip,
+        // which refuses it as the session is ending, else once the detach has let go of the game. One that came before the
+        // detach began is ended as it starts.
+        Task<RealtimeStopped> stopMark = await RunUntilItWaitsAsync(() => session.StopRealtimeAsync(Token));
+        Task<RealtimeStarted> second = stopMark
+            .ContinueWith(
+                _ => session.StartRealtimeAsync(30, 600, Token),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default
+            )
+            .Unwrap();
+        await remuxing.Task.WaitAsync(TimeSpan.FromSeconds(60), Token);
+        Task<DetachResult> detach = await RunUntilItWaitsAsync(() => _harness.Sessions.DetachAsync(Game, Token));
+
+        release.TrySetResult();
+        await detach;
+        // The first clip goes to whichever of the two calls takes it first; ARecordMarkStopAndAStopProjectAtOnceReturnTheClipOnce
+        // checks that it goes to one only.
+        Exception? stopped = await Record.ExceptionAsync(() => stopMark);
+        Exception? refused = await Record.ExceptionAsync(() => second);
+
+        Assert.True(stopped is null or SessionException, $"record_mark stop failed: {stopped}");
+        if (refused is null)
+        {
+            string secondPath = (await second).Path;
+            Assert.NotEqual(first, secondPath);
+            // Its capture was ended as it started, so its clip is finished within moments rather than at maxSeconds.
+            await RegistryHarness.WaitUntilAsync(() => File.Exists(secondPath));
+        }
+        else
+        {
+            string[] refusals =
+            [
+                "Session 'game' is ending, so a real-time recording cannot start now; start it once the game has restarted.",
+                "Session 'game' is not running, so there is no window to record.",
+            ];
+            Assert.Contains(refused.Message, refusals);
+        }
+    }
+
+    [Fact]
+    public async Task ARecordMarkStopAndAStopProjectAtOnceReturnTheClipOnce()
+    {
+        FakeBridge game = await AttachAsync();
+        string path = await StartAsync();
+        (TaskCompletionSource remuxing, TaskCompletionSource release) = HoldRemux();
+        game.Dispose();
+        await remuxing.Task.WaitAsync(TimeSpan.FromSeconds(60), Token);
+        // Both wait on the clip when it is finished; which takes it first is the thread pool's choice.
+        Task<StopResult> stop = await RunUntilItWaitsAsync(() => _harness.Sessions.StopAsync(Game, Token));
+        Task<string> mark = await RunUntilItWaitsAsync(() => _tools.RecordMarkAsync("stop", session: Game, cancellationToken: Token));
+
+        release.TrySetResult();
+        StopResult stopped = await stop;
+        Exception? refused = await Record.ExceptionAsync(() => mark);
+
+        if (stopped.Recording is { } recording)
+        {
+            Assert.Equal(path, Assert.Single(recording.Clips!));
+            Assert.Equal(
+                "The real-time recording's clip in session 'game' was already returned by another call (stop_project, "
+                    + "restart_project, detach_project or another record_mark stop).",
+                Assert.IsType<McpException>(refused).Message
+            );
+        }
+        else
+        {
+            Assert.Null(refused);
+            Assert.Equal(path, JsonNode.Parse(await mark)!["clip"]!["path"]!.GetValue<string>());
+        }
+    }
+
+    [Fact]
+    public async Task AStopWhoseClipCouldNotBeFinishedReportsTheErrorAndStillStops()
+    {
+        const string Broke = "the remux broke in a way the recording does not expect";
+        _fake.RemuxFailure = new InvalidOperationException(Broke);
+        FakeBridge game = await AttachAsync();
+        await StartAsync();
+        Task quit = QuitOnFirstRequestAsync(game);
+
+        StopResult stopped = await _harness.Sessions.StopAsync(Game, Token);
+        await quit;
+
+        RecordingResult recording = stopped.Recording ?? throw new InvalidOperationException("stop_project returned no recording.");
+        Assert.Equal("realtime", recording.Mode);
+        Assert.Null(recording.Clips);
+        Assert.NotNull(recording.StartedSeconds);
+        Assert.Equal(Broke, recording.Error);
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
+    }
+
+    [Fact]
+    public async Task AFinishThatThrowsShowsAsAnErrorInListSessionsUntilTheNextStop()
+    {
+        const string Broke = "the remux broke in a way the recording does not expect";
+        _fake.RemuxFailure = new InvalidOperationException(Broke);
+        FakeBridge game = await AttachAsync();
+        await StartAsync();
+
+        game.Dispose();
+        await RegistryHarness.WaitUntilAsync(() => ListedRecording()?.Error is not null);
+        RecordingResult listed = ListedRecording()!;
+        StopResult stopped = await _harness.Sessions.StopAsync(Game, Token);
+
+        Assert.Equal(Broke, listed.Error);
+        Assert.Equal(listed, stopped.Recording);
+    }
+
+    [Fact]
+    public async Task AStopDuringAStartReportsNoRecordingAndEndsTheCapture()
+    {
+        FakeBridge game = await AttachAsync();
+        TaskCompletionSource probing = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _fake.BeforeProbe = async _ =>
+        {
+            probing.TrySetResult();
+            await stopped.Task.WaitAsync(TimeSpan.FromSeconds(60), Token);
+        };
+        Task<string> start = _tools.RecordMarkAsync("start", session: Game, cancellationToken: Token);
+        await probing.Task.WaitAsync(TimeSpan.FromSeconds(60), Token);
+        Task quit = QuitOnFirstRequestAsync(game);
+
+        StopResult result = await _harness.Sessions.StopAsync(Game, Token);
+        stopped.TrySetResult();
+        string path = JsonNode.Parse(await start)!["path"]!.GetValue<string>();
+        await quit;
+
+        Assert.Null(result.Recording);
+        await RegistryHarness.WaitUntilAsync(() => File.Exists(path));
+    }
+
+    [Fact]
+    public async Task AStopDuringItsEndRefusesAStartAndStillReportsTheClipThatEndedOnItsOwn()
+    {
+        FakeBridge game = await AttachAsync();
+        string path = await StartAsync();
+        // Set once the start has returned, so the helper ends on its own at its next frame, as one whose window closed does.
+        _fake.HelperFrameLimit = 0;
+        await RegistryHarness.WaitUntilAsync(() => ListedRecording()?.Clips is not null);
+        Task<string?> startDuringEnd = StartOnFirstRequestAsync(game);
+
+        StopResult stopped = await _harness.Sessions.StopAsync(Game, Token);
+
+        Assert.Equal(
+            "Session 'game' is ending, so a real-time recording cannot start now; start it once the game has restarted.",
+            await startDuringEnd
+        );
+        RecordingResult recording = stopped.Recording ?? throw new InvalidOperationException("stop_project returned no recording.");
+        Assert.Equal(path, Assert.Single(recording.Clips!));
+    }
+
+    [Fact]
+    public async Task AStopWhoseFinishIsCancelledByAFaultReportsAnErrorAndStillStops()
+    {
+        // Nothing on the finish's path takes a token, so a cancellation there is a fault like any other.
+        _fake.RemuxFailure = new OperationCanceledException("a fault cancelled the remux");
+        FakeBridge game = await AttachAsync();
+        await StartAsync();
+        Task quit = QuitOnFirstRequestAsync(game);
+
+        StopResult stopped = await _harness.Sessions.StopAsync(Game, Token);
+        await quit;
+
+        RecordingResult recording = stopped.Recording ?? throw new InvalidOperationException("stop_project returned no recording.");
+        Assert.Null(recording.Clips);
+        Assert.Equal("The real-time recording ended without a clip.", recording.Error);
+        Assert.Empty(_harness.Sessions.List(includeStopped: true));
+    }
+
+    [Fact]
+    public async Task ARecordMarkStopWhoseFinishThrowsIsRefusedWithItsErrorOnce()
+    {
+        const string Broke = "the remux broke in a way the recording does not expect";
+        _fake.RemuxFailure = new InvalidOperationException(Broke);
+        await AttachAsync();
+        await StartAsync();
+        GodotSession session = _harness.Sessions.Resolve(Game);
+
+        Exception? first = await Record.ExceptionAsync(() => session.StopRealtimeAsync(Token));
+        Exception? second = await Record.ExceptionAsync(() => session.StopRealtimeAsync(Token));
+
+        Assert.Equal(Broke, Assert.IsType<SessionException>(first).Message);
+        // The first stop took the recording off the session, so the second finds none, as one after a clip does.
+        Assert.Equal(
+            "No real-time recording is running in session 'game'; record_mark start first.",
+            Assert.IsType<SessionException>(second).Message
+        );
+    }
+
+    [Fact]
+    public async Task AStopKillsAHelperThatHasNotExitedTenSecondsAfterItsCaptureEnded()
+    {
+        FakeTimeProvider clockTime = new();
+        TimerWatch watched = new(clockTime);
+        using FakeRealtime fake = new(watched);
+        _harness.Sessions.Realtime = fake.Environment;
+        FakeBridge game = await AttachAsync();
+        // At 1 fps the fake's frames never fall below the rate a low-rate warning needs, so the kill's is the only warning.
+        string answer = await _tools.RecordMarkAsync("start", new RecordMarkOptions(Fps: 1), Game, Token);
+        string path = JsonNode.Parse(answer)!["path"]!.GetValue<string>();
+        fake.HelperIgnoresDeadline = true;
+        // The start's timers are all made by now, so the next timer made on the fake clock is the ceiling's.
+        Task armed = watched.NextTimerAsync();
+        Task quit = QuitOnFirstRequestAsync(game);
+        try
+        {
+            Task<StopResult> stop = _harness.Sessions.StopAsync(Game, Token);
+            // The fake clock stands still until the ceiling is armed, so every second it advances counts against the ceiling. A
+            // stop that kills without arming one returns first.
+            await Task.WhenAny(armed, stop);
+            DateTimeOffset armedAt = clockTime.GetUtcNow();
+            while (!stop.IsCompleted)
+            {
+                clockTime.Advance(TimeSpan.FromMilliseconds(500));
+                await Task.Delay(10, Token);
+            }
+
+            RecordingResult recording = (await stop).Recording ?? throw new InvalidOperationException("stop_project returned no recording.");
+            TimeSpan killedAfter = (fake.HelperKilledAt ?? throw new InvalidOperationException("the helper was never killed.")) - armedAt;
+            Assert.True(killedAfter >= TimeSpan.FromSeconds(10), $"the helper was killed {killedAfter.TotalSeconds} s after its ceiling was armed");
+            Assert.Equal(path, Assert.Single(recording.Clips!));
+            Assert.Equal(
+                "the capture helper did not exit within 10 s of the recording's end and was killed; the clip may end earlier or later "
+                    + "than the recording did",
+                recording.Warning
+            );
+        }
+        finally
+        {
+            // A helper the stop never killed is let go here, so the session's end finishes and the test's cleanup does not hang.
+            fake.HelperIgnoresDeadline = false;
+            await quit;
+        }
+    }
+
+    [Fact]
+    public void AMovieResultCarriesItsModeAndNoRealtimeField()
+    {
+        Assert.Equal(
+            """{"mode":"movie","path":"m.avi"}""",
+            JsonSerializer.Serialize(new RecordingResult { Mode = Recording.MovieMode, Path = "m.avi" }, Json)
+        );
+        Assert.Equal(
+            """{"mode":"movie","clips":["a.mp4"],"error":"e"}""",
+            JsonSerializer.Serialize(
+                new RecordingResult
+                {
+                    Mode = Recording.MovieMode,
+                    Clips = ["a.mp4"],
+                    Error = "e",
+                },
+                Json
+            )
+        );
+    }
+
+    [Fact]
+    public void ARealtimeResultLeavesOutWhatItDoesNotHave()
+    {
+        Assert.Equal(
+            """{"mode":"realtime","clips":["c.mp4"],"startedSeconds":3}""",
+            JsonSerializer.Serialize(
+                new RecordingResult
+                {
+                    Mode = "realtime",
+                    Clips = ["c.mp4"],
+                    StartedSeconds = 3,
+                },
+                Json
+            )
+        );
+        Assert.Equal(
+            """{"mode":"realtime","clips":["c.mp4"],"startedSeconds":3,"warning":"w"}""",
+            JsonSerializer.Serialize(
+                new RecordingResult
+                {
+                    Mode = "realtime",
+                    Clips = ["c.mp4"],
+                    StartedSeconds = 3,
+                    Warning = "w",
+                },
+                Json
+            )
+        );
+        Assert.Equal(
+            """{"mode":"realtime","startedSeconds":3,"error":"e"}""",
+            JsonSerializer.Serialize(
+                new RecordingResult
+                {
+                    Mode = "realtime",
+                    StartedSeconds = 3,
+                    Error = "e",
+                },
+                Json
+            )
+        );
+        Assert.Equal(
+            """{"mode":"realtime","path":"r.mp4","startedSeconds":0}""",
+            JsonSerializer.Serialize(
+                new RecordingResult
+                {
+                    Mode = "realtime",
+                    Path = "r.mp4",
+                    StartedSeconds = 0,
+                },
+                Json
+            )
+        );
+    }
+
+    /// <summary>
+    /// Reads the first request the server sends the game after the stop began, then closes the game as one that quit does:
+    /// true when the capture had already been ended by then, its deadline moved to the past or its recording finished.
+    /// </summary>
+    private static async Task<bool> CaptureEndedAtFirstRequestAsync(FakeBridge game, string deadline)
+    {
+        using (game)
+        {
+            await game.ReadRequestAsync(Token);
+            return !FakeRealtime.TryReadDeadline(deadline, out DateTimeOffset at) || at <= DateTimeOffset.UtcNow;
+        }
+    }
+
+    /// <summary>Reads the first request the server sends the game, then closes the game as one that quit does.</summary>
+    private static async Task QuitOnFirstRequestAsync(FakeBridge game)
+    {
+        using (game)
+        {
+            await game.ReadRequestAsync(Token);
+        }
+    }
+
+    /// <summary>
+    /// Reads the first request the server sends the game, asks for a record_mark start while the game is still there, then
+    /// closes the game as one that quit does.
+    /// </summary>
+    /// <returns>The start's refusal; null when it started.</returns>
+    private async Task<string?> StartOnFirstRequestAsync(FakeBridge game)
+    {
+        using (game)
+        {
+            await game.ReadRequestAsync(Token);
+            Exception? refused = await Record.ExceptionAsync(() => _tools.RecordMarkAsync("start", session: Game, cancellationToken: Token));
+            return refused?.Message;
+        }
+    }
+
+    /// <summary>
+    /// Runs <paramref name="call"/> on the thread pool, where no synchronization context is, up to its first wait, and returns
+    /// its task: its wait is registered by then, and resumes on the thread that completes what it waits on, in the order the
+    /// waits were registered.
+    /// </summary>
+    private static Task<T> RunUntilItWaitsAsync<T>(Func<T> call) =>
+        Task.Factory.StartNew(call, CancellationToken.None, TaskCreationOptions.DenyChildAttach, TaskScheduler.Default);
+
+    /// <summary>Holds the remux, the recording's last step, until the test releases it.</summary>
+    /// <returns>What completes once the remux is held, and what releases it.</returns>
+    private (TaskCompletionSource Remuxing, TaskCompletionSource Release) HoldRemux()
+    {
+        TaskCompletionSource remuxing = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _fake.BeforeRemux = async () =>
+        {
+            remuxing.TrySetResult();
+            await release.Task.WaitAsync(TimeSpan.FromSeconds(60), Token);
+        };
+        return (remuxing, release);
+    }
+
+    private async Task<string> StartAsync() =>
+        JsonNode.Parse(await _tools.RecordMarkAsync("start", cancellationToken: Token))!["path"]!.GetValue<string>();
+
+    private RecordingResult? ListedRecording() => Assert.Single(_harness.Sessions.List(includeStopped: true)).Recording;
+
+    private async Task<FakeBridge> AttachAsync()
+    {
+        FakeBridge game = await _harness.AttachFakeGameAsync(_harness.Project(Game), Game, new FakeHello { WindowHandle = FakeRealtime.Hwnd });
+        _games.Add(game);
+        return game;
+    }
+
+    /// <summary>A fake clock that says when the next timer is made on it, once that timer is made.</summary>
+    private sealed class TimerWatch(FakeTimeProvider time) : TimeProvider
+    {
+        private TaskCompletionSource? _next;
+
+        public override long TimestampFrequency => time.TimestampFrequency;
+
+        public override TimeZoneInfo LocalTimeZone => time.LocalTimeZone;
+
+        /// <summary>Completes once the next timer is made on this clock.</summary>
+        public Task NextTimerAsync()
+        {
+            TaskCompletionSource next = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref _next, next);
+            return next.Task;
+        }
+
+        public override DateTimeOffset GetUtcNow() => time.GetUtcNow();
+
+        public override long GetTimestamp() => time.GetTimestamp();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            ITimer timer = time.CreateTimer(callback, state, dueTime, period);
+            Interlocked.Exchange(ref _next, null)?.TrySetResult();
+            return timer;
+        }
+    }
+}

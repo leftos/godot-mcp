@@ -129,11 +129,13 @@ public sealed partial class RealtimeRecordingTests : IDisposable
     [Fact]
     public async Task ANaturalEndFinishesTheClipWithoutAStop()
     {
-        RealtimeRecording recording = await _fake.StartAsync(maxSeconds: 1);
+        // At 1 fps the fake's frames, 20 ms apart, never fall below the rate a low-rate warning needs, so no warning may come.
+        RealtimeRecording recording = await _fake.StartAsync(fps: 1, maxSeconds: 1);
 
         RealtimeOutcome outcome = await recording.Finished.WaitAsync(TimeSpan.FromSeconds(20), Token);
 
         Assert.Null(outcome.Error);
+        Assert.Null(outcome.Stopped?.Warning);
         Assert.True(File.Exists(recording.Paths.Mp4), "the .mp4 was not written at the natural end");
         Assert.False(recording.IsRunning);
         RealtimeStopped stopped = await recording.StopAsync(Token);
@@ -444,6 +446,7 @@ internal sealed class FakeRealtime : IDisposable
     private readonly TempDirectory _temp = new();
     private readonly LoadClock _clock;
     private readonly List<FakeHelper> _helpers = [];
+    private readonly Lock _killLock = new();
     private long _helperFrames;
     private long _ffmpegBytes;
     private int _windowReads;
@@ -504,6 +507,28 @@ internal sealed class FakeRealtime : IDisposable
     /// <summary>The helper writes no frame, running until its deadline passes or it is killed.</summary>
     public bool HelperSilent { get; set; }
 
+    /// <summary>The helper writes frames past its deadline, as a hung helper does, until it is killed or this is cleared.</summary>
+    public bool HelperIgnoresDeadline { get; set; }
+
+    /// <summary>When a helper was first killed, on the time the processes' ceilings run on; null before any was.</summary>
+    public DateTimeOffset? HelperKilledAt
+    {
+        get
+        {
+            lock (_killLock)
+            {
+                return field;
+            }
+        }
+        private set;
+    }
+
+    /// <summary>Awaited by the remux before it writes the .mp4, so a test can hold a recording at its last step.</summary>
+    public Func<Task>? BeforeRemux { get; set; }
+
+    /// <summary>What the remux's run throws, as a failure the recording does not expect does.</summary>
+    public Exception? RemuxFailure { get; set; }
+
     /// <summary>The helper's probe's exit status; any but 0 writes no size and logs <see cref="ProbeLines"/>.</summary>
     public int ProbeExit { get; set; }
 
@@ -539,7 +564,7 @@ internal sealed class FakeRealtime : IDisposable
     ) =>
         RealtimeRecording.StartAsync(
             Environment,
-            new RealtimeStart(session, ProjectDir, Target(ffmpeg ?? Ffmpeg.Path!), fps, maxSeconds, DateTimeOffset.UtcNow),
+            new RealtimeStart(session, ProjectDir, Target(ffmpeg ?? Ffmpeg.Path!), fps, maxSeconds, DateTimeOffset.UtcNow) { StartedSeconds = 0 },
             cancellationToken ?? TestContext.Current.CancellationToken
         );
 
@@ -617,6 +642,15 @@ internal sealed class FakeRealtime : IDisposable
 
     internal void CountHelperFrame() => Interlocked.Increment(ref _helperFrames);
 
+    /// <summary>Notes a helper's kill, at the time the processes' ceilings run on, unless one was noted already.</summary>
+    internal void NoteHelperKill()
+    {
+        lock (_killLock)
+        {
+            HelperKilledAt ??= _clock.Time.GetUtcNow();
+        }
+    }
+
     internal void CountFfmpegBytes(int count) => Interlocked.Add(ref _ffmpegBytes, count);
 
     internal static void Log(ToolProcessRequest request, IEnumerable<string> lines)
@@ -686,6 +720,16 @@ internal sealed class FakeRealtime : IDisposable
         }
 
         Events.Enqueue("run:remux");
+        if (BeforeRemux is { } hold)
+        {
+            await hold();
+        }
+
+        if (RemuxFailure is { } remuxFailure)
+        {
+            throw remuxFailure;
+        }
+
         File.Copy(arguments[arguments.IndexOf("-i") + 1], arguments[^1], overwrite: true);
         return Exit(0);
     }
@@ -902,6 +946,7 @@ internal sealed class FakeHelper : IRealtimeProcess
 
     public async Task KillAsync()
     {
+        _owner.NoteHelperKill();
         await _killed.CancelAsync();
         await _exit.Task;
     }
@@ -934,7 +979,7 @@ internal sealed class FakeHelper : IRealtimeProcess
                     deadline = read;
                 }
 
-                if (deadline <= DateTimeOffset.UtcNow)
+                if (deadline <= DateTimeOffset.UtcNow && !_owner.HelperIgnoresDeadline)
                 {
                     _owner.DeadlineAtHelperEnd = deadline;
                     break;
