@@ -207,7 +207,9 @@ internal static class Program
     }
 
     /// <summary>
-    /// Writes a frame on every timer tick until the deadline passes or the window closes, and always closes stdout before
+    /// Writes the first frame, already in <paramref name="frame"/>, at once: ffmpeg puts the video's time zero at its
+    /// arrival and the audio clock started with it, so holding it back for a tick would put every sound that much late.
+    /// Then writes a frame on every timer tick until the deadline passes or the window closes, and always closes stdout before
     /// the caller waits for the audio: the EOF is what makes ffmpeg flush the frames its encoder still holds (h264_nvenc
     /// keeps a few) and end the video stream, so ffmpeg is never left waiting on a video input that has stopped sending
     /// while the audio drains. A resize, a lost device or a reader gone ends the video with its own end and line.
@@ -221,9 +223,11 @@ internal static class Program
             // Unbuffered: a frame is one write, so a reader gone fails that write and nothing is left to flush at dispose.
             await using Stream stdout = StandardOutput.Open();
             using PeriodicTimer timer = new(TimeSpan.FromSeconds(1.0 / fps));
+            clock.Start();
+            await stdout.WriteAsync(frame).ConfigureAwait(false);
+            written++;
             while (await timer.WaitForNextTickAsync().ConfigureAwait(false) && !deadline.HasPassed() && !capture.IsClosed)
             {
-                clock.Start();
                 capture.TryCopyLatestFrame(frame);
                 await stdout.WriteAsync(frame).ConfigureAwait(false);
                 written++;

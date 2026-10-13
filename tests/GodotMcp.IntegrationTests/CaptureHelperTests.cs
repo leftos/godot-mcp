@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Pipes;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using GodotMcp.IntegrationTests.Fixtures;
@@ -302,6 +303,69 @@ public sealed class CaptureHelperTests : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// The first frame leaves with the audio clock's start: ffmpeg puts video time zero at the first frame's arrival, so audio
+    /// written before it plays that much late against the picture. At 1 fps a first frame held back for one timer tick lets
+    /// about a second of audio through first; the bar is a quarter of that and four times the tick at 30 fps. The amount is
+    /// read from the bytes on the pipe when the frame arrives, not from elapsed time, and the deadline is a minute out, a hang
+    /// guard the test never reaches: it stops the helper once it has its answer.
+    /// </summary>
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task TheFirstFrameLeavesWithTheAudioClocksStart()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string hwnd = await LaunchVisibleAsync(cancellation);
+        int game = _harness.Sessions.Resolve(null).GameProcessId ?? throw new InvalidOperationException("the hello carried no game pid.");
+        string deadline = _temp.Combine("deadline.txt");
+        WriteDeadline(deadline, DateTime.UtcNow.AddMinutes(1));
+        string pipe = "gmcp-test-" + Guid.NewGuid().ToString("N");
+        using var ceiling = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        ceiling.CancelAfter(HelperCeiling);
+        string[] arguments =
+        [
+            "--hwnd",
+            hwnd,
+            "--fps",
+            "1",
+            "--until-file",
+            deadline,
+            "--audio-pid",
+            game.ToString(CultureInfo.InvariantCulture),
+            "--audio-pipe",
+            pipe,
+        ];
+        using Process helper = Start(HelperPath(), arguments, redirectInput: false);
+        try
+        {
+            Task<string> errors = helper.StandardError.ReadToEndAsync(ceiling.Token);
+            byte[] frame = new byte[1 << 20];
+            Task<int> firstFrame = helper.StandardOutput.BaseStream.ReadAsync(frame, ceiling.Token).AsTask();
+            using NamedPipeClientStream audio = new(".", pipe, PipeDirection.In, PipeOptions.Asynchronous);
+            Task connecting = audio.ConnectAsync(ceiling.Token);
+            Task exited = helper.WaitForExitAsync(ceiling.Token);
+            if (await Task.WhenAny(connecting, exited) != connecting)
+            {
+                Assert.Fail($"the helper exited before its audio pipe opened: {await errors}");
+            }
+            await connecting;
+            Assert.False(firstFrame.IsCompleted, "the first frame arrived before the audio pipe connected, so the audio before it went uncounted");
+            long audioBytes = await CountAudioBeforeAsync(audio, firstFrame, ceiling.Token);
+            if (await firstFrame == 0)
+            {
+                Assert.Fail($"the helper closed its stdout without writing a frame: {await errors}");
+            }
+            double audioMs = audioBytes / 4 / 48.0;
+            Assert.True(
+                audioMs < 250,
+                FormattableString.Invariant($"{audioMs:F0} ms of audio preceded the first frame at 1 fps; the tracks must start together")
+            );
+        }
+        finally
+        {
+            Stop(helper);
+        }
+    }
+
     /// <summary>Launches the probe on this desktop, not quiet but unfocused, and returns its game window's handle as a decimal.</summary>
     private async Task<string> LaunchVisibleAsync(CancellationToken cancellationToken)
     {
@@ -525,6 +589,26 @@ public sealed class CaptureHelperTests : IAsyncDisposable
         while (await frames.ReadAsync(buffer, cancellationToken) > 0)
         {
             firstFrame.TrySetResult();
+        }
+    }
+
+    /// <summary>
+    /// Counts the audio bytes read before <paramref name="firstFrame"/> completes. Audio arrives every 10 ms, so a read
+    /// completes soon after the frame does; a read that completes after it is not counted. Reads are small, so one read
+    /// in flight when the frame lands moves the count by at most 21 ms of audio.
+    /// </summary>
+    private static async Task<long> CountAudioBeforeAsync(Stream audio, Task firstFrame, CancellationToken cancellationToken)
+    {
+        byte[] buffer = new byte[4096];
+        long bytes = 0;
+        while (true)
+        {
+            int read = await audio.ReadAsync(buffer, cancellationToken);
+            if (read == 0 || firstFrame.IsCompleted)
+            {
+                return bytes;
+            }
+            bytes += read;
         }
     }
 

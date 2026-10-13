@@ -192,7 +192,7 @@ internal sealed class RealtimeRecording
         string helper =
             environment.FindCaptureHelper()
             ?? throw new SessionException(
-                "A real-time recording needs Windows 10 1903 or later and capture/godot-mcp-capture.exe beside the server "
+                "A real-time recording needs Windows 10 2004 (build 19041) or later and capture/godot-mcp-capture.exe beside the server "
                     + $"({environment.ExpectedCaptureHelper}); reinstall godot-mcp."
             );
         WindowReading reading = environment.ReadWindow(hwnd);

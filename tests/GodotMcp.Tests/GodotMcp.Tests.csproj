@@ -27,6 +27,7 @@
     <Compile Include="..\..\src\GodotMcp.Capture\AudioActivationException.cs" Link="Capture\AudioActivationException.cs" />
     <Compile Include="..\..\src\GodotMcp.Capture\AudioPipe.cs" Link="Capture\AudioPipe.cs" />
     <Compile Include="..\..\src\GodotMcp.Capture\AudioPipeException.cs" Link="Capture\AudioPipeException.cs" />
+    <Compile Include="..\..\src\GodotMcp.Capture\AudioTimeline.cs" Link="Capture\AudioTimeline.cs" />
     <Compile Include="..\..\src\GodotMcp.Capture\CaptureArgs.cs" Link="Capture\CaptureArgs.cs" />
     <Compile Include="..\..\src\GodotMcp.Capture\CaptureEnd.cs" Link="Capture\CaptureEnd.cs" />
     <Compile Include="..\..\src\GodotMcp.Capture\CaptureExit.cs" Link="Capture\CaptureExit.cs" />

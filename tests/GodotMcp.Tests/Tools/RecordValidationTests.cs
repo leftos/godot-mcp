@@ -182,7 +182,7 @@ public sealed class RecordValidationTests : IAsyncDisposable
         McpException refused = await StartRefusedAsync();
 
         Assert.Equal(
-            "A real-time recording needs Windows 10 1903 or later and capture/godot-mcp-capture.exe beside the server "
+            "A real-time recording needs Windows 10 2004 (build 19041) or later and capture/godot-mcp-capture.exe beside the server "
                 + $"({FakeRealtime.ExpectedHelper}); reinstall godot-mcp.",
             refused.Message
         );

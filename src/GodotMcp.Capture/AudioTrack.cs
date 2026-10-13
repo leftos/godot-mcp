@@ -41,7 +41,7 @@ internal sealed class AudioTrack(int processId, ProcessAudioCapture capture, Nam
         await Console
             .Error.WriteLineAsync($"godot-mcp-capture: audio of process {processId} and its children, {format} {deadline.Describe()}")
             .ConfigureAwait(false);
-        Task<long> capturing = Task.Factory.StartNew(
+        Task<ProcessAudioCapture.CaptureCounts> capturing = Task.Factory.StartNew(
             () => capture.Run(deadline, _chunks.Writer),
             CancellationToken.None,
             TaskCreationOptions.LongRunning,
@@ -49,10 +49,10 @@ internal sealed class AudioTrack(int processId, ProcessAudioCapture capture, Nam
         );
         bool connected = await connecting.ConfigureAwait(false);
         long written = connected ? await CopyAsync(output).ConfigureAwait(false) : 0;
-        long captured;
+        ProcessAudioCapture.CaptureCounts counts;
         try
         {
-            captured = await capturing.ConfigureAwait(false);
+            counts = await capturing.ConfigureAwait(false);
         }
         catch (COMException failure)
         {
@@ -63,7 +63,9 @@ internal sealed class AudioTrack(int processId, ProcessAudioCapture capture, Nam
         }
         await Console
             .Error.WriteLineAsync(
-                $"godot-mcp-capture: audio {written} frames written; {captured} came from the loopback stream and the rest is silence filling"
+                $"godot-mcp-capture: audio {written} frames written; {counts.Captured} came from the loopback stream "
+                    + $"and the rest is silence filling; {counts.Discontinuities} packets were flagged as a discontinuity "
+                    + $"and {counts.TimestampErrors} as having an uncertain timestamp"
             )
             .ConfigureAwait(false);
         return connected;

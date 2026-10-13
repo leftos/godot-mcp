@@ -12,7 +12,13 @@ internal static class AudioInterop
     public const uint StreamFlagsLoopback = 0x0002_0000;
     public const uint StreamFlagsEventCallback = 0x0004_0000;
     public const uint StreamFlagsAutoConvertPcm = 0x8000_0000;
+
+    /// <summary>AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY: the packet does not follow on from the one before it.</summary>
+    public const uint BufferFlagsDataDiscontinuity = 0x1;
     public const uint BufferFlagsSilent = 0x2;
+
+    /// <summary>AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR: the instant the packet's position was recorded is uncertain.</summary>
+    public const uint BufferFlagsTimestampError = 0x4;
     public static readonly Guid AudioCaptureClientIid = new("C8ADBD64-E71E-48A0-A4DE-185C395CD317");
 
     private const string ProcessLoopbackDevice = @"VAD\Process_Loopback";
