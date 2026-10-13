@@ -5,8 +5,11 @@ using System.Text.Json.Serialization;
 
 namespace GodotMcp.Server.Session;
 
-/// <summary>What record_mark start returns for a real-time recording: the .mp4 it will finish as, the frame size, rate and encoder.</summary>
-internal sealed record RealtimeStarted(string Path, int Width, int Height, int Fps, string Encoder, string? Warning)
+/// <summary>
+/// What record_mark start returns for a real-time recording: the .mp4 it will finish as, the frame size, rate, whether the clip
+/// has the game's sound as an audio track, and the encoder.
+/// </summary>
+internal sealed record RealtimeStarted(string Path, int Width, int Height, int Fps, bool Audio, string Encoder, string? Warning)
 {
     [JsonPropertyOrder(-2)]
     public string Mark { get; } = Recording.StartMark;
@@ -15,8 +18,11 @@ internal sealed record RealtimeStarted(string Path, int Width, int Height, int F
     public string Mode { get; } = RealtimeRecording.Mode;
 }
 
-/// <summary>A finished real-time clip: its file, its length from the first frame to the capture's end, and its frames.</summary>
-internal sealed record RealtimeClip(string Path, double Seconds, long Frames, double AverageFps, int Width, int Height);
+/// <summary>
+/// A finished real-time clip: its file, its length from the first frame to the capture's end, its frames, and whether it has
+/// an audio track.
+/// </summary>
+internal sealed record RealtimeClip(string Path, double Seconds, long Frames, double AverageFps, int Width, int Height, bool Audio);
 
 /// <summary>What record_mark stop returns for a real-time recording.</summary>
 internal sealed record RealtimeStopped(RealtimeClip Clip, string? Warning)
@@ -42,6 +48,12 @@ internal sealed record RealtimeStart(string Session, string ProjectDir, Realtime
 {
     /// <summary>The whole seconds from the session's game's launch or attach to this start, as the session's end reports them.</summary>
     public required int StartedSeconds { get; init; }
+
+    /// <summary>The game process whose sound is recorded as the clip's audio track; null for no track.</summary>
+    public required int? AudioPid { get; init; }
+
+    /// <summary>Why a track that was asked for is not recorded, which the start and the clip warn of; null otherwise.</summary>
+    public required string? AudioWarning { get; init; }
 }
 
 /// <summary>
@@ -94,6 +106,15 @@ internal sealed class RealtimeRecording
     /// <summary>The helper's exit status when the window changed size: the clip ends there and is kept.</summary>
     private const int ResizeExit = 3;
 
+    /// <summary>The helper's exit status when process-loopback audio could not start, which its probe with audio reports.</summary>
+    private const int AudioActivationExit = 4;
+
+    /// <summary>
+    /// The helper's exit status when the game's audio did not reach ffmpeg in full: nothing opened the audio pipe, or the audio
+    /// capture failed during the recording.
+    /// </summary>
+    private const int AudioUnreadExit = 5;
+
     /// <summary>The share of the asked rate below which the clip is warned to repeat frames.</summary>
     private const double LowRateShare = 0.9;
 
@@ -114,6 +135,9 @@ internal sealed class RealtimeRecording
     private readonly RealtimeStart _start;
     private readonly RealtimePipeline _pipeline;
     private readonly long _frameBytes;
+
+    // Why the clip has no audio track though one was asked for, which leads its warnings; null otherwise.
+    private readonly string? _audioNote;
     private readonly Lock _lock = new();
     private bool _helperGone;
 
@@ -129,6 +153,7 @@ internal sealed class RealtimeRecording
         _environment = context.Environment;
         _start = context.Start;
         _frameBytes = context.FrameBytes;
+        _audioNote = context.AudioNote;
         _pipeline = pipeline;
         Paths = context.Paths;
         Started = started;
@@ -186,7 +211,8 @@ internal sealed class RealtimeRecording
 
     /// <summary>
     /// Starts the recording and returns once ffmpeg has opened its encoder on the first frame: the helper's probe gives the
-    /// frame size, the encoder is chosen, then the deadline file is written, ffmpeg and the helper started and the encoder's
+    /// frame size and, for a start with audio, activates process-loopback audio, whose failure leaves the clip with video
+    /// only and a warning; the encoder is chosen, then the deadline file is written, ffmpeg and the helper started and the encoder's
     /// opening waited for. An encoder that fails at its start is marked unusable and followed by the next usable one in
     /// <see cref="RealtimeEncode.Preference"/> order. A start that does not go ahead, refused, failed or cancelled, deletes the
     /// deadline file and the .mkv and keeps its logs.
@@ -362,7 +388,13 @@ internal sealed class RealtimeRecording
     )
     {
         RealtimeTarget target = start.Target;
-        (int width, int height) = await ProbeSizeAsync(environment, target, paths.CaptureLog, cancellationToken);
+        (int width, int height, string? audioFailure) = await ProbeSizeAsync(
+            environment,
+            target,
+            paths.CaptureLog,
+            start.AudioPid,
+            cancellationToken
+        );
         (int cropWidth, int cropHeight) = WindowRect.OutputSize(target.Crop);
         if ((width, height) != (cropWidth, cropHeight))
         {
@@ -378,9 +410,20 @@ internal sealed class RealtimeRecording
             paths.ProbeLog,
             () => environment.Encoders.ChooseAsync(target.Ffmpeg, paths.ProbeLog, target.Crop, environment.Run, cancellationToken)
         );
-        StartContext context = new(environment, start, paths, (long)width * height * 4);
-        (RealtimePipeline pipeline, string encoder) = await StartWithFallbackAsync(context, chosen, cancellationToken);
-        return new RealtimeRecording(context, pipeline, new RealtimeStarted(paths.Mp4, width, height, start.Fps, encoder, target.Warning));
+        int? audioPid = audioFailure is null ? start.AudioPid : null;
+        string? audioNote = audioFailure is null ? start.AudioWarning : RealtimeAudio.ActivationFailed(audioFailure);
+        StartContext probed = new(environment, start, paths, (long)width * height * 4, audioPid, audioNote);
+        (RealtimePipeline pipeline, string encoder, StartContext context) = await StartWithFallbackAsync(probed, chosen, cancellationToken);
+        RealtimeStarted started = new(
+            paths.Mp4,
+            width,
+            height,
+            start.Fps,
+            context.AudioPid is not null,
+            encoder,
+            Join("; ", [context.AudioNote, target.Warning])
+        );
+        return new RealtimeRecording(context, pipeline, started);
     }
 
     /// <summary>Runs encoder probes, an ffmpeg that cannot be run or a probe log that cannot be opened named as the start's refusal.</summary>
@@ -416,18 +459,55 @@ internal sealed class RealtimeRecording
         );
     }
 
-    /// <summary>The frame size the helper writes for the target's crop, from its probe, which refuses a window it cannot capture.</summary>
+    /// <summary>
+    /// The frame size the helper writes for the target's crop, from its probe, which refuses a window it cannot capture. With
+    /// <paramref name="audioPid"/> the probe activates process-loopback audio too; when that cannot start, the window is probed
+    /// again without it, appending to the same log, and the helper's line about the audio is returned.
+    /// </summary>
+    /// <returns>The frame size, and the helper's last line when audio was asked for and could not start; null otherwise.</returns>
     /// <exception cref="SessionException">The probe refused the window or said no size; the message ends with its last line.</exception>
-    private static async Task<(int Width, int Height)> ProbeSizeAsync(
+    private static async Task<(int Width, int Height, string? AudioFailure)> ProbeSizeAsync(
         RealtimeEnvironment environment,
         RealtimeTarget target,
         string logPath,
+        int? audioPid,
         CancellationToken cancellationToken
     )
     {
+        (ToolProcessResult result, string output) = await RunProbeAsync(environment, target, logPath, audioPid, append: false, cancellationToken);
+        string? audioFailure = null;
+        if (audioPid is not null && result is { WasKilled: false, ExitCode: AudioActivationExit })
+        {
+            audioFailure = LastLine(logPath);
+            (result, output) = await RunProbeAsync(environment, target, logPath, audioPid: null, append: true, cancellationToken);
+        }
+
+        if (result is { WasKilled: false, ExitCode: 0 } && TryParseSize(output, out (int Width, int Height) size))
+        {
+            return (size.Width, size.Height, audioFailure);
+        }
+
+        string said = result.WasKilled ? $"its probe did not finish {result.KillPhrase}" : LastLine(logPath);
+        throw new SessionException($"The capture helper cannot record the game's window: {said} (see {logPath}).");
+    }
+
+    /// <summary>
+    /// One run of the helper's probe, with process-loopback audio when <paramref name="audioPid"/> is given.
+    /// </summary>
+    /// <param name="append">Whether to append to the start's capture log, as the probe again after an audio failure does.</param>
+    private static async Task<(ToolProcessResult Result, string Output)> RunProbeAsync(
+        RealtimeEnvironment environment,
+        RealtimeTarget target,
+        string logPath,
+        int? audioPid,
+        bool append,
+        CancellationToken cancellationToken
+    )
+    {
+        string[] audio = audioPid is int pid ? ["--audio-pid", pid.ToString(CultureInfo.InvariantCulture)] : [];
         ToolProcessRequest request = new(
             target.Helper,
-            [.. WindowArguments(target), "--probe"],
+            [.. WindowArguments(target), .. audio, "--probe"],
             Path.GetDirectoryName(logPath)!,
             logPath,
             HelperProbeCeiling
@@ -435,6 +515,7 @@ internal sealed class RealtimeRecording
         {
             PipeStandardOutput = true,
             FlushEachLine = true,
+            AppendToLog = append,
             Clock = environment.Clock,
         };
         using IRealtimeProcess probe = RealtimePipeline.StartProcess(environment, request, "The capture helper");
@@ -446,15 +527,11 @@ internal sealed class RealtimeRecording
             output = await reader.ReadToEndAsync(CancellationToken.None);
         }
 
-        ToolProcessResult result = await exited;
-        if (result is { WasKilled: false, ExitCode: 0 } && TryParseSize(output, out (int Width, int Height) size))
-        {
-            return size;
-        }
-
-        string said = result.WasKilled ? $"its probe did not finish {result.KillPhrase}" : LastLines(logPath).Split(" | ")[^1];
-        throw new SessionException($"The capture helper cannot record the game's window: {said} (see {logPath}).");
+        return (await exited, output);
     }
+
+    /// <summary>The last line of a log, for a message; what went wrong when it cannot be read.</summary>
+    private static string LastLine(string logPath) => LastLines(logPath).Split(" | ")[^1];
 
     private static bool TryParseSize(string output, out (int Width, int Height) size)
     {
@@ -478,15 +555,17 @@ internal sealed class RealtimeRecording
     /// each that fails at its start is marked unusable in the server's probe cache, so later starts skip it for
     /// <see cref="EncoderProbeCache.StartFailureCooldown"/> and then probe it again.
     /// </summary>
+    /// <returns>The running pipeline, its encoder, and the context it started in, which has no audio once the audio failed.</returns>
     /// <exception cref="SessionException">
     /// The helper failed, no frame came, ffmpeg could not be run, or every encoder failed at its start.
     /// </exception>
-    private static async Task<(RealtimePipeline Pipeline, string Encoder)> StartWithFallbackAsync(
-        StartContext context,
+    private static async Task<(RealtimePipeline Pipeline, string Encoder, StartContext Context)> StartWithFallbackAsync(
+        StartContext probed,
         string chosen,
         CancellationToken cancellationToken
     )
     {
+        StartContext context = probed;
         RealtimeTarget target = context.Start.Target;
         EncoderProbeCache encoders = context.Environment.Encoders;
         string probeLog = context.Paths.ProbeLog;
@@ -505,9 +584,10 @@ internal sealed class RealtimeRecording
                 continue;
             }
 
-            if (await TryStartAsync(context, encoder, append: failed.Count > 0, cancellationToken) is { } pipeline)
+            (RealtimePipeline? pipeline, context) = await TryStartAsync(context, encoder, append: failed.Count > 0, cancellationToken);
+            if (pipeline is not null)
             {
-                return (pipeline, encoder);
+                return (pipeline, encoder, context);
             }
 
             encoders.MarkUnusable(target.Ffmpeg, encoder, context.Paths.FfmpegLog);
@@ -521,20 +601,55 @@ internal sealed class RealtimeRecording
     }
 
     /// <summary>
-    /// One start with <paramref name="encoder"/>: the deadline at now plus the first-frame allowance plus the cap, ffmpeg, then
-    /// the helper; once ffmpeg has opened its encoder on the first frame, the deadline moves to the first bytes' time plus the
-    /// cap. ffmpeg ending, or refusing frames, before that is the encoder failing at its start.
+    /// One start with <paramref name="encoder"/>, made once more without audio when the helper's process-loopback audio could
+    /// not start though its probe's did: the recording then goes on with video only, the helper's line in its warning.
     /// </summary>
-    /// <returns>The running pipeline; null when the encoder failed at its start, both processes gone.</returns>
+    /// <returns>
+    /// The running pipeline, null when the encoder failed at its start, both processes gone; and the context it ran in, which
+    /// has no audio after the second try.
+    /// </returns>
     /// <exception cref="SessionException">The helper ended or no frame came; both processes are gone.</exception>
-    private static async Task<RealtimePipeline?> TryStartAsync(StartContext context, string encoder, bool append, CancellationToken cancellationToken)
+    private static async Task<(RealtimePipeline? Pipeline, StartContext Context)> TryStartAsync(
+        StartContext context,
+        string encoder,
+        bool append,
+        CancellationToken cancellationToken
+    )
+    {
+        (RealtimePipeline? pipeline, string? audioFailure) = await TryStartOnceAsync(context, encoder, append, cancellationToken);
+        if (audioFailure is null)
+        {
+            return (pipeline, context);
+        }
+
+        StartContext withoutAudio = context with { AudioPid = null, AudioNote = RealtimeAudio.ActivationFailed(audioFailure) };
+        return ((await TryStartOnceAsync(withoutAudio, encoder, append: true, cancellationToken)).Pipeline, withoutAudio);
+    }
+
+    /// <summary>
+    /// One try of a start: the deadline at now plus the first-frame allowance plus the cap, ffmpeg, then the helper; once
+    /// ffmpeg has opened its encoder on the first frame, the deadline moves to the first bytes' time plus the cap. ffmpeg
+    /// ending, or refusing frames, before that is the encoder failing at its start.
+    /// </summary>
+    /// <returns>
+    /// The running pipeline, null when the encoder failed at its start or the audio could not start, both processes gone; and,
+    /// when the helper's process-loopback audio could not start, its last line.
+    /// </returns>
+    /// <exception cref="SessionException">The helper ended or no frame came; both processes are gone.</exception>
+    private static async Task<(RealtimePipeline? Pipeline, string? AudioFailure)> TryStartOnceAsync(
+        StartContext context,
+        string encoder,
+        bool append,
+        CancellationToken cancellationToken
+    )
     {
         var cap = TimeSpan.FromSeconds(context.Start.MaxSeconds);
         WriteDeadline(context.Paths.Deadline, context.Environment.Time.GetUtcNow() + FirstFrameAllowance + cap);
+        string? audioPipe = context.AudioPid is null ? null : RealtimeAudio.NewPipeName();
         RealtimePipeline pipeline = await RealtimePipeline.StartAsync(
             context.Environment,
-            EncodeRequest(context, encoder, append),
-            CaptureRequest(context)
+            EncodeRequest(context, encoder, append, audioPipe),
+            CaptureRequest(context, audioPipe)
         );
         try
         {
@@ -542,12 +657,17 @@ internal sealed class RealtimeRecording
             if (end == FirstFrameEnd.Opened)
             {
                 WriteDeadline(context.Paths.Deadline, pipeline.Pump.FirstBytesUtc + cap);
-                return pipeline;
+                return (pipeline, null);
             }
 
             (ToolProcessResult helper, _) = await pipeline.AbandonAsync();
-            return end == FirstFrameEnd.EncoderFailed
-                ? null
+            if (end == FirstFrameEnd.EncoderFailed)
+            {
+                return (null, null);
+            }
+
+            return AudioActivationFailure(context, end, helper) is { } audioFailure
+                ? (null, audioFailure)
                 : throw new SessionException(DescribeNoStart(end, helper, context.Paths, framesCame: pipeline.Pump.Bytes > 0));
         }
         catch (Exception e) when (e is OperationCanceledException or SessionException)
@@ -556,6 +676,15 @@ internal sealed class RealtimeRecording
             throw;
         }
     }
+
+    /// <summary>
+    /// The helper's last line when it ended before its first frame because its process-loopback audio could not start, as when
+    /// the game exited after the probe; null when the start had no audio or ended otherwise.
+    /// </summary>
+    private static string? AudioActivationFailure(StartContext context, FirstFrameEnd end, ToolProcessResult helper) =>
+        end == FirstFrameEnd.HelperEnded && context.AudioPid is not null && helper is { WasKilled: false, ExitCode: AudioActivationExit }
+            ? LastLine(context.Paths.CaptureLog)
+            : null;
 
     /// <summary>Waits for ffmpeg to open its encoder, the end of either process, or the allowance, whichever comes first.</summary>
     /// <exception cref="OperationCanceledException">The start was cancelled.</exception>
@@ -590,13 +719,22 @@ internal sealed class RealtimeRecording
     private static string Describe(ToolProcessResult result) =>
         result.WasKilled ? $"did not finish {result.KillPhrase}" : FormattableString.Invariant($"exited with code {result.ExitCode}");
 
-    /// <summary>ffmpeg's encode, its progress reports on stdout for the start to see the encoder open, its errors to its log.</summary>
-    private static ToolProcessRequest EncodeRequest(StartContext context, string encoder, bool append) =>
+    /// <summary>
+    /// ffmpeg's encode, its progress reports on stdout for the start to see the encoder open, its errors to its log; with
+    /// <paramref name="audioPipe"/>, the audio read from that pipe too.
+    /// </summary>
+    private static ToolProcessRequest EncodeRequest(StartContext context, string encoder, bool append, string? audioPipe) =>
         new(
             context.Start.Target.Ffmpeg,
             [
                 .. RealtimePipeline.ProgressArguments,
-                .. RealtimeEncode.EncodeArguments(encoder, context.Start.Target.Crop, context.Start.Fps, context.Paths.Mkv),
+                .. RealtimeEncode.EncodeArguments(
+                    encoder,
+                    context.Start.Target.Crop,
+                    context.Start.Fps,
+                    context.Paths.Mkv,
+                    audioPipe is null ? null : RealtimeAudio.PipePath(audioPipe)
+                ),
             ],
             context.Paths.Folder,
             context.Paths.FfmpegLog,
@@ -610,7 +748,11 @@ internal sealed class RealtimeRecording
             Clock = context.Environment.Clock,
         };
 
-    private static ToolProcessRequest CaptureRequest(StartContext context) =>
+    /// <summary>
+    /// The helper's capture until the deadline file says stop; with <paramref name="audioPipe"/>, the game's audio onto that
+    /// pipe too.
+    /// </summary>
+    private static ToolProcessRequest CaptureRequest(StartContext context, string? audioPipe) =>
         new(
             context.Start.Target.Helper,
             [
@@ -619,6 +761,7 @@ internal sealed class RealtimeRecording
                 context.Start.Fps.ToString(CultureInfo.InvariantCulture),
                 "--until-file",
                 context.Paths.Deadline,
+                .. AudioArguments(context.AudioPid, audioPipe),
             ],
             context.Paths.Folder,
             context.Paths.CaptureLog,
@@ -638,6 +781,9 @@ internal sealed class RealtimeRecording
             "--crop",
             FormattableString.Invariant($"{target.Crop.X},{target.Crop.Y},{target.Crop.Width},{target.Crop.Height}"),
         ];
+
+    private static string[] AudioArguments(int? audioPid, string? audioPipe) =>
+        audioPid is int pid && audioPipe is not null ? ["--audio-pid", pid.ToString(CultureInfo.InvariantCulture), "--audio-pipe", audioPipe] : [];
 
     /// <summary>How long the helper and ffmpeg may run: the first-frame allowance, the cap and a margin to finish in.</summary>
     private static TimeSpan RunCeiling(RealtimeStart start) => FirstFrameAllowance + TimeSpan.FromSeconds(start.MaxSeconds) + FinishMargin;
@@ -702,6 +848,12 @@ internal sealed class RealtimeRecording
             killedOnPurpose = _helperKilled;
         }
 
+        if (!killedOnPurpose && helper is { WasKilled: false, ExitCode: AudioUnreadExit })
+        {
+            return $"The capture helper {Describe(helper)} during the recording: the game's audio did not reach ffmpeg in full: "
+                + $"{LastLines(Paths.CaptureLog)}. The frames recorded are kept in {Paths.Mkv}; see {Paths.CaptureLog} and {Paths.FfmpegLog}.";
+        }
+
         if (!killedOnPurpose && (helper.WasKilled || helper.ExitCode is not (0 or ResizeExit)))
         {
             return $"The capture helper {Describe(helper)} during the recording: {LastLines(Paths.CaptureLog)}. The frames recorded before it "
@@ -756,12 +908,12 @@ internal sealed class RealtimeRecording
         long frames = _pipeline.Pump.Bytes / _frameBytes;
         double seconds = length.TotalSeconds;
         double averageFps = seconds > 0 ? frames / seconds : 0;
-        return new RealtimeClip(Paths.Mp4, Math.Round(seconds, 3), frames, Math.Round(averageFps, 1), Started.Width, Started.Height);
+        return new RealtimeClip(Paths.Mp4, Math.Round(seconds, 3), frames, Math.Round(averageFps, 1), Started.Width, Started.Height, Started.Audio);
     }
 
     private string? Warnings(ToolProcessResult helper, RealtimeClip clip, IEnumerable<string?> notes)
     {
-        List<string?> warnings = [];
+        List<string?> warnings = [_audioNote];
         if (helper.ExitCode == ResizeExit)
         {
             warnings.Add(FormattableString.Invariant($"the window changed size at {clip.Seconds:0.0} s; the clip ends there"));
@@ -785,6 +937,16 @@ internal sealed class RealtimeRecording
         return present.Length == 0 ? null : string.Join(separator, present);
     }
 
-    /// <summary>One start's environment, request, files and frame size in bytes.</summary>
-    private sealed record StartContext(RealtimeEnvironment Environment, RealtimeStart Start, RealtimePaths Paths, long FrameBytes);
+    /// <summary>
+    /// One start's environment, request, files and frame size in bytes, the game process whose sound it records (null for no
+    /// track, as when its audio could not start) and why a track asked for is not recorded.
+    /// </summary>
+    private sealed record StartContext(
+        RealtimeEnvironment Environment,
+        RealtimeStart Start,
+        RealtimePaths Paths,
+        long FrameBytes,
+        int? AudioPid,
+        string? AudioNote
+    );
 }

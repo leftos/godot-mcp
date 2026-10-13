@@ -5,8 +5,9 @@ namespace GodotMcp.Server.Session;
 
 /// <summary>
 /// A real-time recording's ffmpeg command lines: the encode of the capture helper's raw BGRA frames from stdin, stamped by
-/// the wall clock so a slow capture keeps its real length, into a Matroska file; the remux of that file to an .mp4; and the
-/// one-frame test encodes that tell which encoders an ffmpeg can run.
+/// the wall clock so a slow capture keeps its real length, and of the game's audio from the helper's pipe when there is a
+/// track, into a Matroska file; the remux of that file to an .mp4; and the one-frame test encodes that tell which encoders
+/// an ffmpeg can run.
 /// </summary>
 internal static class RealtimeEncode
 {
@@ -40,9 +41,13 @@ internal static class RealtimeEncode
     /// stamped with the wall clock as it arrives, encoded with <paramref name="encoder"/> to <paramref name="outputPath"/> at
     /// a variable frame rate. An nvenc encoder takes BGRA as it is: a <c>-pix_fmt yuv420p</c> before it would move the
     /// conversion onto the CPU. The software encoders get yuv420p. No <c>-nostdin</c>, since the video comes on stdin.
+    /// With <paramref name="audioPipe"/>, the helper's 48 kHz stereo s16le audio on that pipe is a second input, after the
+    /// video so ffmpeg opens it only once the video has delivered data, by which time the helper has made the pipe; it is
+    /// encoded to AAC, and the wall-clock stamps stay on the video input only.
     /// </summary>
+    /// <param name="audioPipe">The audio pipe's path, <c>\\.\pipe\&lt;name&gt;</c>; null for a clip with no audio track.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="encoder"/> is not one of the recording's encoders.</exception>
-    public static List<string> EncodeArguments(string encoder, PixelRect crop, int fps, string outputPath)
+    public static List<string> EncodeArguments(string encoder, PixelRect crop, int fps, string outputPath, string? audioPipe)
     {
         (int width, int height) = WindowRect.OutputSize(crop);
         List<string> arguments = ["-hide_banner", "-v", "error", "-use_wallclock_as_timestamps", "1", "-f", "rawvideo", "-pix_fmt", "bgra"];
@@ -51,8 +56,15 @@ internal static class RealtimeEncode
             FormattableString.Invariant($"{width}x{height}"),
             "-framerate",
             fps.ToString(CultureInfo.InvariantCulture),
+            "-i",
+            "-",
         ]);
-        arguments.AddRange(["-i", "-", "-c:v", encoder, .. EncoderOptions(encoder), "-fps_mode", "vfr", "-y", outputPath]);
+        if (audioPipe is not null)
+        {
+            arguments.AddRange(["-f", "s16le", "-ar", "48000", "-ac", "2", "-i", audioPipe, "-c:a", "aac", "-b:a", "192k"]);
+        }
+
+        arguments.AddRange(["-c:v", encoder, .. EncoderOptions(encoder), "-fps_mode", "vfr", "-y", outputPath]);
         return arguments;
     }
 

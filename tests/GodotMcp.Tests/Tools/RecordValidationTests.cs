@@ -78,12 +78,15 @@ public sealed class RecordValidationTests : IAsyncDisposable
     }
 
     [Fact]
-    public void AnAudioOptionIsRefusedAsUnknown()
+    public void TheAudioOptionDeserialisesAndDefaultsToTrue()
     {
         RecordMarkOptions? bound = JsonSerializer.Deserialize<RecordMarkOptions>("""{"fps":24,"maxSeconds":5}""", ToolJson.Options);
+        RecordMarkOptions? on = JsonSerializer.Deserialize<RecordMarkOptions>("""{"fps":24,"audio":true}""", ToolJson.Options);
+        RecordMarkOptions? off = JsonSerializer.Deserialize<RecordMarkOptions>("""{"fps":24,"audio":false}""", ToolJson.Options);
 
-        Assert.Equal(new RecordMarkOptions(24, 5), bound);
-        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<RecordMarkOptions>("""{"fps":24,"audio":true}""", ToolJson.Options));
+        Assert.Equal(new RecordMarkOptions(24, 5, Audio: true), bound);
+        Assert.Equal(new RecordMarkOptions(24, Audio: true), on);
+        Assert.Equal(new RecordMarkOptions(24, Audio: false), off);
     }
 
     [Fact]

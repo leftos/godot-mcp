@@ -7,7 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - `click`, `mouse_button`, `drag`, `key` and `type_text` answer `fired`, the signals the gesture set off on its node or focus chain, with listener counts.
-- `record_mark` records a windowed session without `options.record` in real time into an MP4 clip, which `stop`, `stop_project`, `restart_project` or `detach_project` returns.
+- `record_mark` records a windowed session without `options.record` in real time into an MP4 clip with the game's sound, which `stop`, `stop_project`, `restart_project` or `detach_project` returns.
 - `frame_control` step takes `options.input`, raw events sent inside chosen stepped frames, and reports what stays held and what went unsent.
 - `capture_frames` takes `options.start.call`, run after the start's first check, so an edge start sees the change its own call makes.
 - `run_scratches` takes `options.steps`, indices, names or ranges, and plays only those steps, reporting them as `selected`.

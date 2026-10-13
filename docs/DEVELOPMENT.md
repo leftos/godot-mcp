@@ -79,6 +79,9 @@ Everything runs from the repo root through `run.ps1`, and every command but `ite
   Itest `RealtimeRecordingTests` (the `capture` group, visible desktop, light slot) records a not-quiet InputProbe window: the hello's handle is the game's main window, a `drag` of known `durationMs` between the marks makes a clip within `gap - 0.2 s` to `gap + 0.45 s` (the helper reads its deadline every 200 ms), the clip is the size `run_project` reported with an odd side rounded up to even,
   a frame matches a `take_screenshot` of the same moment within a mean channel difference of 6 (lossy H.264 cannot meet the baseline's 2),
   a quiet run is refused with the fix, and the `.mkv` is gone and the path an `.mp4`; each end of the session returns the clip: `stop_project`, `restart_project` (as `previousRecording`), a game that quits, a `maxSeconds` end and `detach_project`.
+  The audio track: InputProbe's `ToneButton` plays `TonePlayer` (a 440 Hz tone built in code, `volume_db` -12). A visible run that clicks it records a clip with an audio stream whose `volumedetect` `max_volume` is above -60 dB (a tone sent at about -18 dBFS came back at -31.1 dB) and `audio: true` in the start and the clip; a `Mute` run gives `audio: false`, the no-audio warning and no audio stream; `options.audio: false` gives no stream and no warning.
+
+  Unit `RealtimeAudioTests` covers the choice (not requested, muted, no pid, a pid), `RealtimeEncodeTests` the arguments with and without the pipe input per encoder, and unit `RealtimeRecordingTests` the helper's `--audio-pid` and `--audio-pipe` only with audio, the pipe input to ffmpeg, and the muted, no-pid and exit-4 warnings.
 
   It needs ffmpeg and ffprobe on `PATH`. `run.ps1`'s `$itestRules` row for `RuntimeTools.Record*.cs` selects the `recording` and `capture` groups.
 - **C# line length** (`tools/linelength.py`, tested by `tests/tools/test_linelength.py`): a line's characters without its ending (`\n` or `\r\n`), a byte-order mark not counted; a file that is not UTF-8 fails the check.
@@ -95,6 +98,9 @@ Everything runs from the repo root through `run.ps1`, and every command but `ite
 
 ## Footguns
 
+- **The recording and capture itest groups need an OpenGL window that shows its picture.** When the graphics driver drops a Compatibility-renderer (OpenGL) window's presents, every real-time clip is a flat grey window and `AFrameMatchesATakeScreenshotOfTheSameMoment` fails saying the frame is one flat colour. Check by running plain `Godot_console.exe --path <probe> --position 100,100` and looking at the window; a graphics-driver reset (Win+Ctrl+Shift+B) or a reboot is the usual cure.
+- **`run.ps1 itest -Filter` takes a class name.** A full test name runs zero tests (exit 8).
+- **A fresh worktree may need a local `dotnet restore` of the itest project.** The build can run on the remote build box and leave no restore output on this machine.
 - **A folder renamed right after its files are written can be refused.** An on-write scanner (Defender real-time protection) holds a fresh file for 5-55 ms, longer under load, invisibly to an exclusive open or the Restart Manager, and NTFS refuses the folder's rename meanwhile; .NET reports it as `IOException` "Access to the path … is denied", not `UnauthorizedAccessException` (measured: 2-7.6% of copies of `bin/dotnet`). `HelperCache` retries its rename and its delete every 20 ms for 2 s, and the tests' `TempDirectory` its delete, which a killed game's folder also needs. `handle.exe` unelevated takes about 160 s a call here, too slow to catch such a hold.
 - **A playback's instance id is negative in GDScript.** `AudioStreamPlayback` is a `RefCounted`, whose id has bit 63 set, so `get_instance_id()` reads as a negative int64 that grows with creation order; the watch's voice poll starts from `NO_VOICE` (INT64_MIN), because 0 sits above every playback id and no voice would ever read as new.
 

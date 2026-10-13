@@ -17,6 +17,13 @@ namespace GodotMcp.Tests.Session;
 /// </summary>
 public sealed partial class RealtimeRecordingTests : IDisposable
 {
+    /// <summary>The game process whose sound a start with audio records.</summary>
+    private const int GamePid = 77;
+
+    /// <summary>The warning of a start whose audio could not start, quoting the fake helper's line without its prefix and period.</summary>
+    private const string ActivationWarning =
+        "no audio: process-loopback audio for process 77 could not start: the device is gone, so the clip has no audio track";
+
     private static readonly TimeSpan Slack = TimeSpan.FromSeconds(2);
 
     private readonly FakeRealtime _fake = new();
@@ -150,15 +157,22 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         _fake.HelperFrameLimit = 3;
         _fake.HelperExit = 5;
         _fake.HelperLines = ["capturing", "the game's audio could not be read: the stream was never opened."];
-        RealtimeRecording recording = await _fake.StartAsync();
+        RealtimeRecording recording = await _fake.StartAsync(audioPid: GamePid);
         await recording.Finished.WaitAsync(TimeSpan.FromSeconds(20), Token);
 
         SessionException failed = await Assert.ThrowsAsync<SessionException>(() => recording.StopAsync(Token));
 
-        Assert.StartsWith("The capture helper exited with code 5 during the recording: ", failed.Message, StringComparison.Ordinal);
+        Assert.StartsWith(
+            "The capture helper exited with code 5 during the recording: the game's audio did not reach ffmpeg in full: ",
+            failed.Message,
+            StringComparison.Ordinal
+        );
         Assert.Contains("the game's audio could not be read: the stream was never opened.", failed.Message, StringComparison.Ordinal);
-        Assert.Contains(recording.Paths.CaptureLog, failed.Message, StringComparison.Ordinal);
-        Assert.Contains(recording.Paths.Mkv, failed.Message, StringComparison.Ordinal);
+        Assert.EndsWith(
+            $". The frames recorded are kept in {recording.Paths.Mkv}; see {recording.Paths.CaptureLog} and {recording.Paths.FfmpegLog}.",
+            failed.Message,
+            StringComparison.Ordinal
+        );
         Assert.True(File.Exists(recording.Paths.Mkv), "the .mkv was not kept");
     }
 
@@ -411,6 +425,136 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         Assert.DoesNotContain(_fake.Events, entry => entry.StartsWith("start:ffmpeg", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task WithAudioTheHelperGetsThePidAndAFreshPipeThatFfmpegReads()
+    {
+        RealtimeRecording first = await _fake.StartAsync(session: "first", audioPid: GamePid);
+        RealtimeStopped stopped = await first.StopAsync(Token);
+        RealtimeRecording second = await _fake.StartAsync(session: "second", audioPid: GamePid);
+        await second.StopAsync(Token);
+
+        List<ToolProcessRequest> captures = [.. _fake.Starts.Where(IsCapture)];
+        List<string> pipes = [.. captures.Select(capture => ValueAfter(capture, "--audio-pipe"))];
+        Assert.Equal(2, pipes.Count);
+        Assert.All(captures, capture => Assert.Equal("77", ValueAfter(capture, "--audio-pid")));
+        Assert.All(pipes, pipe => Assert.Matches(PipeName(), pipe));
+        Assert.NotEqual(pipes[0], pipes[1]);
+        Assert.Equal(
+            pipes.Select(pipe => $@"\\.\pipe\{pipe}"),
+            _fake.Starts.Where(IsEncode).Select(encode => encode.Arguments[encode.Arguments.ToList().LastIndexOf("-i") + 1])
+        );
+        Assert.All(_fake.Starts.Where(IsProbe), probe => Assert.Equal("77", ValueAfter(probe, "--audio-pid")));
+        Assert.True(first.Started.Audio);
+        Assert.True(stopped.Clip.Audio);
+        Assert.Null(first.Started.Warning);
+    }
+
+    [Fact]
+    public async Task WithoutAudioNoProcessGetsAnAudioArgument()
+    {
+        RealtimeRecording recording = await _fake.StartAsync();
+        RealtimeStopped stopped = await recording.StopAsync(Token);
+
+        Assert.All(
+            _fake.Starts,
+            request => Assert.DoesNotContain(request.Arguments, argument => argument is "--audio-pid" or "--audio-pipe" or "-c:a")
+        );
+        Assert.False(recording.Started.Audio);
+        Assert.False(stopped.Clip.Audio);
+    }
+
+    [Theory]
+    [InlineData(true, 77)]
+    [InlineData(false, null)]
+    public async Task ANoTrackStartWarnsInTheStartAndTheClip(bool muted, int? gameProcessId)
+    {
+        (int? audioPid, string? warning) = RealtimeAudio.Choose("game", requested: true, muted, gameProcessId);
+        RealtimeRecording recording = await _fake.StartAsync(audioPid: audioPid, audioWarning: warning);
+        RealtimeStopped stopped = await recording.StopAsync(Token);
+
+        Assert.NotNull(warning);
+        Assert.Equal(warning, recording.Started.Warning);
+        Assert.Contains(warning, (stopped.Warning ?? "").Split("; "));
+        Assert.False(recording.Started.Audio);
+        Assert.False(stopped.Clip.Audio);
+        Assert.DoesNotContain(_fake.Starts, request => request.Arguments.Contains("--audio-pid"));
+    }
+
+    [Fact]
+    public async Task AnAudioActivationFailureAtTheProbeRecordsVideoOnlyWithTheHelpersLine()
+    {
+        _fake.AudioActivationFails = true;
+        RealtimeRecording recording = await _fake.StartAsync(audioPid: GamePid);
+        RealtimeStopped stopped = await recording.StopAsync(Token);
+
+        Assert.Equal(ActivationWarning, recording.Started.Warning);
+        Assert.Contains(ActivationWarning, (stopped.Warning ?? "").Split("; "));
+        Assert.False(recording.Started.Audio);
+        Assert.False(stopped.Clip.Audio);
+        Assert.True(File.Exists(stopped.Clip.Path), "the video-only clip was not finished");
+        Assert.Equal(["start:probe:audio", "start:probe"], _fake.Events.Where(entry => entry.StartsWith("start:probe", StringComparison.Ordinal)));
+        Assert.DoesNotContain(
+            _fake.Starts.Where(request => !IsProbe(request)),
+            request => request.Arguments.Contains("--audio-pid") || request.Arguments.Contains("-c:a")
+        );
+    }
+
+    [Fact]
+    public async Task AnAudioActivationFailureAtTheCaptureStartsOnceMoreWithVideoOnly()
+    {
+        _fake.CaptureAudioActivationFails = true;
+        RealtimeRecording recording = await _fake.StartAsync(audioPid: GamePid);
+        RealtimeStopped stopped = await recording.StopAsync(Token);
+
+        Assert.Equal(ActivationWarning, recording.Started.Warning);
+        Assert.Contains(ActivationWarning, (stopped.Warning ?? "").Split("; "));
+        Assert.False(recording.Started.Audio);
+        Assert.False(stopped.Clip.Audio);
+        Assert.Equal("h264_nvenc", recording.Started.Encoder);
+        Assert.True(File.Exists(stopped.Clip.Path), "the video-only clip was not finished");
+        Assert.Equal(
+            ["start:probe", "start:ffmpeg:h264_nvenc", "start:helper:audio", "start:ffmpeg:h264_nvenc", "start:helper"],
+            _fake.Events.Where(entry => entry.StartsWith("start:", StringComparison.Ordinal))
+        );
+        ToolProcessRequest[] started = [.. _fake.Starts.Where(request => !IsProbe(request))];
+        Assert.Equal(GamePid.ToString(CultureInfo.InvariantCulture), ValueAfter(started[1], "--audio-pid"));
+        Assert.DoesNotContain(started[2].Arguments, argument => argument is "s16le" or "-c:a");
+        Assert.Single(started[2].Arguments, argument => argument == "-i");
+        Assert.DoesNotContain(started[3].Arguments, argument => argument is "--audio-pid" or "--audio-pipe");
+    }
+
+    [Fact]
+    public async Task EachEncoderTriedWithAudioReadsThePipeOfTheHelperStartedWithIt()
+    {
+        _fake.EncodersFailingAtStart.Add("h264_nvenc");
+
+        RealtimeRecording recording = await _fake.StartAsync(audioPid: GamePid);
+        await recording.StopAsync(Token);
+
+        ToolProcessRequest[] started = [.. _fake.Starts.Where(request => !IsProbe(request))];
+        Assert.Equal([true, false, true, false], started.Select(IsEncode));
+        string[] pipes = [ValueAfter(started[1], "--audio-pipe"), ValueAfter(started[3], "--audio-pipe")];
+        Assert.NotEqual(pipes[0], pipes[1]);
+        Assert.Equal(pipes.Select(pipe => $@"\\.\pipe\{pipe}"), [LastInput(started[0]), LastInput(started[2])]);
+        Assert.Equal("libx264", recording.Started.Encoder);
+        Assert.True(recording.Started.Audio);
+    }
+
+    private static string LastInput(ToolProcessRequest encode) => encode.Arguments[encode.Arguments.ToList().LastIndexOf("-i") + 1];
+
+    private static bool IsProbe(ToolProcessRequest request) => request.Arguments.Contains("--probe");
+
+    private static bool IsCapture(ToolProcessRequest request) => request.Arguments.Contains("--until-file");
+
+    private static bool IsEncode(ToolProcessRequest request) => !request.Arguments.Contains("--hwnd");
+
+    private static string ValueAfter(ToolProcessRequest request, string name)
+    {
+        List<string> arguments = [.. request.Arguments];
+        int at = arguments.IndexOf(name);
+        return at >= 0 ? arguments[at + 1] : throw new InvalidOperationException($"{name} not in: {string.Join(' ', arguments)}");
+    }
+
     private static string LogNamedIn(string message) =>
         SeeLog().Match(message) is { Success: true } match
             ? match.Groups[1].Value
@@ -418,6 +562,9 @@ public sealed partial class RealtimeRecordingTests : IDisposable
 
     [GeneratedRegex(@"; see (.+)\.$")]
     private static partial Regex SeeLog();
+
+    [GeneratedRegex("^godot-mcp-audio-[0-9a-f]{32}$")]
+    private static partial Regex PipeName();
 
     // Each matches its warning as one whole part of the "; "-joined warnings, so another a busy machine adds beside it does
     // not fail the match; the resize warning holds a "; " of its own, so the warnings are not split.
@@ -440,6 +587,12 @@ internal sealed class FakeRealtime : IDisposable
     public const long Hwnd = 4242;
     public const long FrameBytes = Width * Height * 4;
     public const string ExpectedHelper = @"C:\server\capture\godot-mcp-capture.exe";
+
+    /// <summary>The line a probe whose process-loopback audio cannot start writes last, when <see cref="AudioActivationFails"/>.</summary>
+    public const string AudioActivationLine = "godot-mcp-capture: process-loopback audio for process 77 could not start: the device is gone.";
+
+    /// <summary>The helper's exit status when process-loopback audio could not start.</summary>
+    private const int AudioActivationExit = 4;
 
     private static readonly Lock LogLock = new();
 
@@ -534,6 +687,15 @@ internal sealed class FakeRealtime : IDisposable
 
     public string[] ProbeLines { get; set; } = ["godot-mcp-capture: the window cannot be captured."];
 
+    /// <summary>A probe given <c>--audio-pid</c> exits 4 with <see cref="AudioActivationLine"/>, as one whose audio cannot start does.</summary>
+    public bool AudioActivationFails { get; set; }
+
+    /// <summary>
+    /// A capture given <c>--audio-pid</c> exits 4 with <see cref="AudioActivationLine"/> before its first frame, as one does
+    /// whose audio stops being able to start after its probe's did.
+    /// </summary>
+    public bool CaptureAudioActivationFails { get; set; }
+
     /// <summary>What an encoder probe's run throws, as an ffmpeg that cannot be started does.</summary>
     public Exception? FfmpegRunFailure { get; set; }
 
@@ -544,6 +706,9 @@ internal sealed class FakeRealtime : IDisposable
     public ConcurrentQueue<string> Events { get; } = new();
 
     public ConcurrentQueue<ToolProcessRequest> Runs { get; } = new();
+
+    /// <summary>Every process started: the helper's probes and captures and ffmpeg's encodes, in start order.</summary>
+    public ConcurrentQueue<ToolProcessRequest> Starts { get; } = new();
 
     public bool DeadlineExistedAtProbe { get; private set; }
 
@@ -560,11 +725,18 @@ internal sealed class FakeRealtime : IDisposable
         int maxSeconds = 600,
         string session = "game",
         string? ffmpeg = null,
-        CancellationToken? cancellationToken = null
+        CancellationToken? cancellationToken = null,
+        int? audioPid = null,
+        string? audioWarning = null
     ) =>
         RealtimeRecording.StartAsync(
             Environment,
-            new RealtimeStart(session, ProjectDir, Target(ffmpeg ?? Ffmpeg.Path!), fps, maxSeconds, DateTimeOffset.UtcNow) { StartedSeconds = 0 },
+            new RealtimeStart(session, ProjectDir, Target(ffmpeg ?? Ffmpeg.Path!), fps, maxSeconds, DateTimeOffset.UtcNow)
+            {
+                StartedSeconds = 0,
+                AudioPid = audioPid,
+                AudioWarning = audioWarning,
+            },
             cancellationToken ?? TestContext.Current.CancellationToken
         );
 
@@ -587,7 +759,7 @@ internal sealed class FakeRealtime : IDisposable
     public ToolProcessRequest EncodeRequest(string mkv) =>
         new(
             Ffmpeg.Path!,
-            RealtimeEncode.EncodeArguments(RealtimeEncode.Libx264, Target(Ffmpeg.Path!).Crop, 30, mkv),
+            RealtimeEncode.EncodeArguments(RealtimeEncode.Libx264, Target(Ffmpeg.Path!).Crop, 30, mkv, audioPipe: null),
             ProjectDir,
             Path.Combine(ProjectDir, "ffmpeg.log"),
             TimeSpan.FromMinutes(1)
@@ -671,6 +843,7 @@ internal sealed class FakeRealtime : IDisposable
             File.WriteAllText(request.LogPath, "");
         }
 
+        Starts.Enqueue(request);
         if (!request.Arguments.Contains("--hwnd"))
         {
             string encoder = request.Arguments[request.Arguments.ToList().IndexOf("-c:v") + 1];
@@ -680,9 +853,14 @@ internal sealed class FakeRealtime : IDisposable
 
         if (request.Arguments.Contains("--probe"))
         {
-            Events.Enqueue("start:probe");
-            Log(request, ProbeExit == 0 ? ["item 66x63, crop 1,31,64,32"] : ProbeLines);
-            return new FakeProbe(ProbeExit == 0 ? FormattableString.Invariant($"{Width}x{Height}\n") : "", ProbeExit);
+            return StartProbe(request);
+        }
+
+        if (CaptureAudioActivationFails && request.Arguments.Contains("--audio-pid"))
+        {
+            Events.Enqueue("start:helper:audio");
+            Log(request, [AudioActivationLine]);
+            return new FakeProbe("", AudioActivationExit);
         }
 
         Events.Enqueue("start:helper");
@@ -693,6 +871,21 @@ internal sealed class FakeRealtime : IDisposable
         }
 
         return helper;
+    }
+
+    /// <summary>The helper's probe: exit 4 when its audio is asked for and fails to start, else the size or the probe's refusal.</summary>
+    private FakeProbe StartProbe(ToolProcessRequest request)
+    {
+        if (request.Arguments.Contains("--audio-pid") && AudioActivationFails)
+        {
+            Events.Enqueue("start:probe:audio");
+            Log(request, [AudioActivationLine]);
+            return new FakeProbe("", AudioActivationExit);
+        }
+
+        Events.Enqueue("start:probe");
+        Log(request, ProbeExit == 0 ? ["item 66x63, crop 1,31,64,32"] : ProbeLines);
+        return new FakeProbe(ProbeExit == 0 ? FormattableString.Invariant($"{Width}x{Height}\n") : "", ProbeExit);
     }
 
     private async Task<ToolProcessResult> RunAsync(ToolProcessRequest request, CancellationToken cancellationToken)

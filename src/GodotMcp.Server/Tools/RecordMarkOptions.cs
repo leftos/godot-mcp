@@ -12,5 +12,7 @@ internal sealed record RecordMarkOptions(
     [property: Description(
         "The longest the recording runs, in seconds, 1 to 600; 600 by default. It ends there on its own, and record_mark stop then returns the clip."
     )]
-        int MaxSeconds = 600
+        int MaxSeconds = 600,
+    [property: Description("Record the game's own sound as the clip's audio track, default true; none when the session is muted or quiet.")]
+        bool Audio = true
 );

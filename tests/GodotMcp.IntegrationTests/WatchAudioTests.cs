@@ -51,7 +51,8 @@ public sealed class WatchAudioTests(SharedProbeSession shared) : IAsyncLifetime,
         string tone = $"{rig}/Tone";
 
         JsonObject started = await StartAsync(rig, cancellation);
-        await _tools.ClickAsync(new InputTarget("ToneButton"), "left", false, cancellationToken: cancellation);
+        // The full path, since the probe's own scene has a ToneButton too.
+        await _tools.ClickAsync(new InputTarget("/root/ToneButton"), "left", false, cancellationToken: cancellation);
         // The press plays the tone before the click answers, so the tone's end is read from its state, which a slow round
         // trip cannot miss as it could miss the finished signal.
         await _tools.WaitForAsync(new WaitCondition(Node: tone, Expression: "not node.has_stream_playback()"), cancellationToken: cancellation);

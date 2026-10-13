@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
@@ -14,13 +15,20 @@ namespace GodotMcp.IntegrationTests;
 /// <summary>
 /// record_mark's real-time recording of a visible InputProbe's window: the hello's window handle, a clip as long as the wall
 /// time between its marks and as large as the window, a frame that matches a screenshot of the same still, the .mp4 it
-/// finishes as, and the refusal of a quiet run. It runs on the user's desktop (the capture group skips the hidden desktop,
-/// which Windows.Graphics.Capture cannot see), its games launched unfocused so they leave the foreground alone, with the
-/// capture helper the group's gate publishes into bin/capture; the
-/// clips are read back with ffprobe and ffmpeg, found beside ffmpeg.
+/// finishes as, the refusal of a quiet run, and the game's own sound as the clip's audio track, absent with a warning on a
+/// muted run and absent without one when options.audio is false. It runs on the user's desktop (the capture group skips the
+/// hidden desktop, which Windows.Graphics.Capture cannot see), its games launched unfocused so they leave the foreground
+/// alone, with the capture helper the group's gate publishes into bin/capture; the clips are read back with ffprobe and
+/// ffmpeg, found beside ffmpeg.
 /// </summary>
-public sealed class RealtimeRecordingTests : IAsyncDisposable
+public sealed partial class RealtimeRecordingTests : IAsyncDisposable
 {
+    /// <summary>
+    /// The loudest the clip's audio may peak and still count as silence: the tone is sent at about -18 dBFS (half of full
+    /// scale through a -12 dB player), and the spike measured a muted run's track at -96.7 dB.
+    /// </summary>
+    private const double SilenceDb = -60;
+
     /// <summary>How long after a stop the helper may still capture: it reads its deadline file every 200 ms.</summary>
     private const double DeadlinePollSeconds = 0.2;
 
@@ -175,6 +183,12 @@ public sealed class RealtimeRecordingTests : IAsyncDisposable
         byte[] shot = await RawFrameAsync(["-i", screenshot, "-frames:v", "1", "-vf", $"scale={size}"]);
 
         Assert.Equal(shot.Length, frame.Length);
+        (int R, int G, int B)? flat = FlatColour(frame);
+        Assert.True(
+            flat is null,
+            $"the clip's frame is one flat colour ({flat?.R},{flat?.G},{flat?.B}): the game window drew nothing on screen; "
+                + "check that a Compatibility-renderer window shows its picture on this machine"
+        );
         double mean = MeanDifference(frame, shot);
         Assert.True(
             mean <= FrameTolerance,
@@ -390,15 +404,73 @@ public sealed class RealtimeRecordingTests : IAsyncDisposable
         }
     }
 
-    /// <summary>Launches the probe; a visible launch is handed over only once its window is restored behind the user's windows.</summary>
-    private async Task<LaunchResult> LaunchAsync(bool quiet, CancellationToken cancellationToken)
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AToneTheGamePlaysIsInTheClipsAudioTrack()
     {
-        LaunchResult launched = await _harness.Sessions.LaunchAsync(
-            new LaunchRequest(_probe.Directory, null, [], [], quiet, false, Prepare: true),
-            null,
-            cancellationToken
+        await LaunchAsync(quiet: false, TestContext.Current.CancellationToken);
+        JsonNode started = await MarkAsync("start");
+        await _tools.ClickAsync(new InputTarget("ToneButton"), cancellationToken: Token);
+        await Task.Delay(2500, Token);
+        JsonNode stopped = await MarkAsync("stop");
+
+        string clip = ClipPath(stopped);
+        Assert.True(started["audio"]!.GetValue<bool>(), $"start says the clip has no audio track: {started.ToJsonString()}");
+        Assert.True(stopped["clip"]!["audio"]!.GetValue<bool>(), $"stop says the clip has no audio track: {stopped.ToJsonString()}");
+        Assert.Equal(1, await AudioStreamCountAsync(clip));
+        double maxVolume = await MaxVolumeAsync(clip);
+        TestContext.Current.TestOutputHelper?.WriteLine(FormattableString.Invariant($"the clip's audio peaks at {maxVolume:F1} dB"));
+        Assert.True(
+            maxVolume > SilenceDb,
+            FormattableString.Invariant($"the clip's audio peaks at {maxVolume:F1} dB, no louder than {SilenceDb} dB: the tone is not in it")
         );
-        if (!quiet)
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AMutedRunRecordsNoAudioTrackAndSaysWhy()
+    {
+        const string NoTrack = $"no audio: session '{Session}' renders no sound (options.mute or a quiet run), so the clip has no audio track";
+        await LaunchAsync(
+            new LaunchRequest(_probe.Directory, null, [], [], false, false, Prepare: true) { Mute = true },
+            TestContext.Current.CancellationToken
+        );
+        JsonNode started = await MarkAsync("start");
+        await Task.Delay(500, Token);
+        JsonNode stopped = await MarkAsync("stop");
+
+        Assert.False(started["audio"]!.GetValue<bool>());
+        Assert.Contains(NoTrack, Warnings(started));
+        Assert.False(stopped["clip"]!["audio"]!.GetValue<bool>());
+        Assert.Contains(NoTrack, Warnings(stopped));
+        Assert.Equal(0, await AudioStreamCountAsync(ClipPath(stopped)));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AudioFalseRecordsNoAudioTrackAndWarnsOfNone()
+    {
+        await LaunchAsync(quiet: false, TestContext.Current.CancellationToken);
+        string answer = await _tools.RecordMarkAsync("start", new RecordMarkOptions(Audio: false), cancellationToken: Token);
+        _recording = true;
+        JsonNode started = JsonNode.Parse(answer)!;
+        await Task.Delay(500, Token);
+        JsonNode stopped = await MarkAsync("stop");
+
+        Assert.False(started["audio"]!.GetValue<bool>());
+        Assert.False(stopped["clip"]!["audio"]!.GetValue<bool>());
+        // Only the audio's warnings are ruled out: a busy machine may warn of a low frame rate.
+        Assert.DoesNotContain(Warnings(started), warning => warning.StartsWith("no audio", StringComparison.Ordinal));
+        Assert.DoesNotContain(Warnings(stopped), warning => warning.StartsWith("no audio", StringComparison.Ordinal));
+        Assert.Equal(0, await AudioStreamCountAsync(ClipPath(stopped)));
+    }
+
+    /// <summary>Launches the probe; a visible launch is handed over only once its window is restored behind the user's windows.</summary>
+    private Task<LaunchResult> LaunchAsync(bool quiet, CancellationToken cancellationToken) =>
+        LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], quiet, false, Prepare: true), cancellationToken);
+
+    /// <summary>Launches the probe as <paramref name="request"/> asks, handed over as the other launch is.</summary>
+    private async Task<LaunchResult> LaunchAsync(LaunchRequest request, CancellationToken cancellationToken)
+    {
+        LaunchResult launched = await _harness.Sessions.LaunchAsync(request, null, cancellationToken);
+        if (!request.Quiet)
         {
             await AssertWindowRestoredAsync(cancellationToken);
         }
@@ -448,6 +520,9 @@ public sealed class RealtimeRecordingTests : IAsyncDisposable
 
     private static string ClipPath(JsonNode stopped) => stopped["clip"]!["path"]!.GetValue<string>();
 
+    /// <summary>A start's or stop's warnings, each one part of its "; "-joined warning; none when it has no warning.</summary>
+    private static string[] Warnings(JsonNode marked) => marked["warning"]?.GetValue<string>().Split("; ") ?? [];
+
     private RecordingResult? ListedRecording() => Assert.Single(_harness.Sessions.List(includeStopped: true)).Recording;
 
     /// <summary>
@@ -488,6 +563,40 @@ public sealed class RealtimeRecordingTests : IAsyncDisposable
         return (double)total / first.Length;
     }
 
+    /// <summary>
+    /// The colour an rgb24 frame is flat in: its most common colour when at least 99% of its pixels are within 2 levels of it,
+    /// channel by channel (a blank clip still carries a few stray pixels); null when the frame shows a picture.
+    /// </summary>
+    private static (int R, int G, int B)? FlatColour(byte[] rgb)
+    {
+        (int R, int G, int B) top = MostCommonColour(rgb);
+        long pixels = rgb.Length / 3;
+        long near = 0;
+        for (int i = 0; i + 2 < rgb.Length; i += 3)
+        {
+            if (Math.Abs(rgb[i] - top.R) <= 2 && Math.Abs(rgb[i + 1] - top.G) <= 2 && Math.Abs(rgb[i + 2] - top.B) <= 2)
+            {
+                near++;
+            }
+        }
+
+        return near * 100 >= pixels * 99 ? top : null;
+    }
+
+    /// <summary>The colour the most pixels of an rgb24 frame have.</summary>
+    private static (int R, int G, int B) MostCommonColour(byte[] rgb)
+    {
+        Dictionary<int, int> counts = [];
+        for (int i = 0; i + 2 < rgb.Length; i += 3)
+        {
+            int key = (rgb[i] << 16) | (rgb[i + 1] << 8) | rgb[i + 2];
+            counts[key] = counts.GetValueOrDefault(key) + 1;
+        }
+
+        int colour = counts.MaxBy(pair => pair.Value).Key;
+        return (colour >> 16, (colour >> 8) & 0xFF, colour & 0xFF);
+    }
+
     /// <summary>One frame as raw rgb24 bytes, through ffmpeg with <paramref name="input"/>'s input and filter arguments.</summary>
     private static async Task<byte[]> RawFrameAsync(IReadOnlyList<string> input)
     {
@@ -499,28 +608,54 @@ public sealed class RealtimeRecordingTests : IAsyncDisposable
         return output;
     }
 
-    /// <summary>The clip's length in seconds and its frame size, as ffprobe reads them.</summary>
+    /// <summary>
+    /// The length in seconds of the clip's video stream, not the container's, which an audio track may make longer, and its
+    /// frame size, as ffprobe reads them.
+    /// </summary>
     private static async Task<(double Seconds, int Width, int Height)> ProbeClipAsync(string clip)
     {
-        string ffmpeg = FfmpegPath();
-        string ffprobe = Path.Combine(
-            Path.GetDirectoryName(ffmpeg)!,
-            Path.GetFileName(ffmpeg).Replace("ffmpeg", "ffprobe", StringComparison.Ordinal)
-        );
         (byte[] output, string errors, int exitCode) = await RunAsync(
-            ffprobe,
-            ["-v", "error", "-select_streams", "v:0", "-show_entries", "format=duration:stream=width,height", "-of", "json", clip]
+            FfprobePath(),
+            ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=duration,width,height", "-of", "json", clip]
         );
         Assert.True(exitCode == 0, $"ffprobe failed on {clip}: {errors}");
         using var probed = JsonDocument.Parse(output);
         JsonElement stream = probed.RootElement.GetProperty("streams")[0];
-        string duration = probed.RootElement.GetProperty("format").GetProperty("duration").GetString()!;
+        string duration = stream.GetProperty("duration").GetString()!;
         return (
             double.Parse(duration, CultureInfo.InvariantCulture),
             stream.GetProperty("width").GetInt32(),
             stream.GetProperty("height").GetInt32()
         );
     }
+
+    /// <summary>The clip's audio streams, as ffprobe counts them.</summary>
+    private static async Task<int> AudioStreamCountAsync(string clip)
+    {
+        (byte[] output, string errors, int exitCode) = await RunAsync(
+            FfprobePath(),
+            ["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_name", "-of", "json", clip]
+        );
+        Assert.True(exitCode == 0, $"ffprobe failed on {clip}: {errors}");
+        using var probed = JsonDocument.Parse(output);
+        return probed.RootElement.TryGetProperty("streams", out JsonElement streams) ? streams.GetArrayLength() : 0;
+    }
+
+    /// <summary>The loudest sample of the clip's first audio stream, in dB, as ffmpeg's volumedetect reads it.</summary>
+    private static async Task<double> MaxVolumeAsync(string clip)
+    {
+        (_, string errors, int exitCode) = await RunAsync(
+            FfmpegPath(),
+            ["-hide_banner", "-nostats", "-i", clip, "-map", "0:a:0", "-af", "volumedetect", "-f", "null", "-"]
+        );
+        Assert.True(exitCode == 0, $"ffmpeg's volumedetect failed on {clip}: {errors}");
+        Match peak = MaxVolumeLine().Match(errors);
+        Assert.True(peak.Success, $"volumedetect reported no max_volume for {clip}: {errors}");
+        return double.Parse(peak.Groups[1].Value, CultureInfo.InvariantCulture);
+    }
+
+    [GeneratedRegex(@"max_volume: (-?\d+(?:\.\d+)?) dB")]
+    private static partial Regex MaxVolumeLine();
 
     private static async Task<(byte[] Output, string Errors, int ExitCode)> RunAsync(string program, IReadOnlyList<string> arguments)
     {
@@ -544,6 +679,12 @@ public sealed class RealtimeRecordingTests : IAsyncDisposable
         await process.StandardOutput.BaseStream.CopyToAsync(output, Token);
         await process.WaitForExitAsync(Token);
         return (output.ToArray(), await errors, process.ExitCode);
+    }
+
+    private static string FfprobePath()
+    {
+        string ffmpeg = FfmpegPath();
+        return Path.Combine(Path.GetDirectoryName(ffmpeg)!, Path.GetFileName(ffmpeg).Replace("ffmpeg", "ffprobe", StringComparison.Ordinal));
     }
 
     private static string FfmpegPath() =>

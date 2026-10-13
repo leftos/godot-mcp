@@ -27,8 +27,10 @@ internal sealed partial class RuntimeTools
             + "mode: movie, frame, seconds}, frame counted from the movie's first and seconds = frame / 60; a mark made while the run "
             + "is ending is not kept. In any other session with a window, start records the window in real time, as a player sees "
             + "it, until stop or options.maxSeconds, and answers once the first frame is in: {mark, mode: realtime, path, width, "
-            + "height, fps, encoder, warning?}, path being the .mp4 the clip becomes. stop ends it and returns {mark, mode, clip: "
-            + "{path, seconds, frames, averageFps, width, height}, warning?}. The session's end ends a running one at that call "
+            + "height, fps, audio, encoder, warning?}, path being the .mp4 the clip becomes and audio whether it has the game's "
+            + "own sound as its audio track (options.audio; none, with a warning, when the session is muted or the sound cannot be "
+            + "captured). stop ends it and returns {mark, mode, clip: {path, seconds, frames, averageFps, width, height, audio}, "
+            + "warning?}. The session's end ends a running one at that call "
             + "and reports its clip as recording {mode: realtime, clips: [path], startedSeconds, warning?, error?}: stop_project "
             + "and detach_project, and restart_project as previousRecording. One that ended on its own (maxSeconds, or the game "
             + "quitting) is returned once, by whichever comes first of record_mark stop, stop_project, detach_project and "
@@ -38,7 +40,7 @@ internal sealed partial class RuntimeTools
     )]
     public async Task<string> RecordMarkAsync(
         [Description("start or stop.")] string mark,
-        [Description("A real-time recording's frame rate and length cap, on start only; a Movie Maker recording's marks take none.")]
+        [Description("A real-time recording's frame rate, length cap and audio track, on start only; a Movie Maker recording's marks take none.")]
             RecordMarkOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
@@ -58,7 +60,7 @@ internal sealed partial class RuntimeTools
         try
         {
             object marked = realtime is not null
-                ? await target.StartRealtimeAsync(realtime.Fps, realtime.MaxSeconds, cancellationToken)
+                ? await target.StartRealtimeAsync(realtime.Fps, realtime.MaxSeconds, realtime.Audio, cancellationToken)
                 : await target.StopRealtimeAsync(cancellationToken);
             return JsonSerializer.Serialize(marked, Json);
         }

@@ -115,3 +115,15 @@ color = Color(0.3, 0.5, 0.8, 1)
 
 [node name="PadProbe" type="Node" parent="."]
 script = ExtResource("5_pad")
+
+[node name="ToneButton" type="Button" parent="."]
+layout_mode = 0
+offset_left = 40.0
+offset_top = 310.0
+offset_right = 160.0
+offset_bottom = 345.0
+focus_mode = 0
+text = "Tone"
+
+[node name="TonePlayer" type="AudioStreamPlayer" parent="."]
+volume_db = -12.0

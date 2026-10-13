@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
@@ -17,6 +18,8 @@ namespace GodotMcp.Tests.Session;
 public sealed class RealtimeSessionEndTests : IAsyncDisposable
 {
     private const string Game = "game";
+
+    private const string MutedWarning = "no audio: session 'game' renders no sound (options.mute or a quiet run), so the clip has no audio track";
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -196,7 +199,7 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
         Task<RealtimeStopped> stopMark = await RunUntilItWaitsAsync(() => session.StopRealtimeAsync(Token));
         Task<RealtimeStarted> second = stopMark
             .ContinueWith(
-                _ => session.StartRealtimeAsync(30, 600, Token),
+                _ => session.StartRealtimeAsync(30, 600, audio: true, Token),
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default
@@ -390,8 +393,9 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
         using FakeRealtime fake = new(watched);
         _harness.Sessions.Realtime = fake.Environment;
         FakeBridge game = await AttachAsync();
-        // At 1 fps the fake's frames never fall below the rate a low-rate warning needs, so the kill's is the only warning.
-        string answer = await _tools.RecordMarkAsync("start", new RecordMarkOptions(Fps: 1), Game, Token);
+        // At 1 fps the fake's frames never fall below the rate a low-rate warning needs, and no audio is asked for, so the kill's
+        // is the only warning.
+        string answer = await _tools.RecordMarkAsync("start", new RecordMarkOptions(Fps: 1, Audio: false), Game, Token);
         string path = JsonNode.Parse(answer)!["path"]!.GetValue<string>();
         fake.HelperIgnoresDeadline = true;
         // The start's timers are all made by now, so the next timer made on the fake clock is the ceiling's.
@@ -426,6 +430,57 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
             fake.HelperIgnoresDeadline = false;
             await quit;
         }
+    }
+
+    [Fact]
+    public async Task AnAttachAskedToMuteRecordsNoTrackAndSaysWhy()
+    {
+        AttachRequest request = new(_harness.Project(Game), Game, RegistryHarness.LongWait, false, false, null) { Mute = true };
+        (bool toldToMute, _) = await AttachWithPidAsync(request);
+
+        JsonNode started = await StartAndStopAsync();
+
+        Assert.True(toldToMute, "the attach file did not tell the game to mute");
+        AssertNoTrack(started, MutedWarning);
+    }
+
+    [Fact]
+    public async Task AnAttachOnAFolderArmedMutedRecordsNoTrackAndSaysWhy()
+    {
+        string project = _harness.Project(Game);
+        await _harness.Sessions.ArmAsync(project, new ArmSettings(Quiet: false, ShutOutRealGamepads: false, Mute: true), Token);
+        (bool toldToMute, _) = await AttachWithPidAsync(new AttachRequest(project, Game, RegistryHarness.LongWait, null, null, null));
+
+        JsonNode started = await StartAndStopAsync();
+
+        Assert.True(toldToMute, "the attach file did not tell the game to mute");
+        AssertNoTrack(started, MutedWarning);
+    }
+
+    [Fact]
+    public async Task AGameWhoseHelloHasNoPidRecordsNoTrackAndSaysWhy()
+    {
+        await AttachAsync();
+
+        JsonNode started = await StartAndStopAsync();
+
+        AssertNoTrack(started, "no audio: the game's bridge sent no process id, so the clip has no audio track");
+    }
+
+    [Fact]
+    public async Task AGameWhoseHelloHasAPidRecordsThatProcessesSound()
+    {
+        (bool toldToMute, int pid) = await AttachWithPidAsync(
+            new AttachRequest(_harness.Project(Game), Game, RegistryHarness.LongWait, false, false, null)
+        );
+
+        JsonNode started = await StartAndStopAsync();
+
+        Assert.False(toldToMute, "the attach file told a game that was not asked to mute to mute");
+        Assert.True(started["audio"]!.GetValue<bool>(), $"the start has no audio track: {started.ToJsonString()}");
+        Assert.Null(started["warning"]);
+        List<string> capture = [.. Assert.Single(_fake.Starts, request => request.Arguments.Contains("--until-file")).Arguments];
+        Assert.Equal(pid.ToString(CultureInfo.InvariantCulture), capture[capture.IndexOf("--audio-pid") + 1]);
     }
 
     [Fact]
@@ -572,6 +627,42 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
         FakeBridge game = await _harness.AttachFakeGameAsync(_harness.Project(Game), Game, new FakeHello { WindowHandle = FakeRealtime.Hwnd });
         _games.Add(game);
         return game;
+    }
+
+    /// <summary>
+    /// Attaches as <paramref name="request"/> asks to a fake game whose hello carries the fake window and the pid of a stand-in
+    /// game the harness ends.
+    /// </summary>
+    /// <returns>Whether the attach file the game read told it to mute, and the pid its hello carried.</returns>
+    private async Task<(bool ToldToMute, int Pid)> AttachWithPidAsync(AttachRequest request)
+    {
+        string attachFile = AttachFile.PathIn(request.ProjectPath);
+        Task<AttachResult> attach = _harness.Sessions.AttachAsync(request, Token);
+        await RegistryHarness.WaitUntilAsync(() => File.Exists(attachFile));
+        JsonNode written = JsonNode.Parse(File.ReadAllText(attachFile))!;
+        int pid = _harness.StartOwnedGame().Id;
+        FakeHello hello = new() { ProcessId = pid, WindowHandle = FakeRealtime.Hwnd };
+        FakeBridge game = await FakeBridge.DialAsync(_harness.Listener.Port, written["token"]!.GetValue<string>(), request.ProjectPath, hello, Token);
+        _games.Add(game);
+        await attach;
+        return (written["mute"]!.GetValue<bool>(), pid);
+    }
+
+    /// <summary>A record_mark start with the default options, then its stop.</summary>
+    /// <returns>The start's result.</returns>
+    private async Task<JsonNode> StartAndStopAsync()
+    {
+        JsonNode started = JsonNode.Parse(await _tools.RecordMarkAsync("start", session: Game, cancellationToken: Token))!;
+        await _tools.RecordMarkAsync("stop", session: Game, cancellationToken: Token);
+        return started;
+    }
+
+    /// <summary>Asserts the start has no audio track, says <paramref name="warning"/>, and gave the helper no game to record.</summary>
+    private void AssertNoTrack(JsonNode started, string warning)
+    {
+        Assert.False(started["audio"]!.GetValue<bool>(), $"the start has an audio track: {started.ToJsonString()}");
+        Assert.Equal(warning, started["warning"]?.GetValue<string>());
+        Assert.DoesNotContain(_fake.Starts, request => request.Arguments.Contains("--audio-pid"));
     }
 
     /// <summary>A fake clock that says when the next timer is made on it, once that timer is made.</summary>

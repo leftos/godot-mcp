@@ -36,13 +36,14 @@ internal sealed partial class GodotSession
 
     /// <summary>
     /// Starts a real-time recording of the game's window at <paramref name="fps"/>, ending on its own after
-    /// <paramref name="maxSeconds"/>, and returns once its encoder has opened on the first frame. Every refusal comes before a
-    /// process starts: no game, the session's end begun, one running, no window, a quiet session, then what
-    /// <see cref="RealtimeRecording.Locate"/> refuses. When the session's end begins while the start runs, the capture is ended
-    /// as soon as it has started.
+    /// <paramref name="maxSeconds"/>, and returns once its encoder has opened on the first frame. With
+    /// <paramref name="audio"/> the clip records the game's own sound, unless the session is muted or the game's hello sent no
+    /// process id, which the start and the clip warn of. Every refusal comes before a process starts: no game, the session's
+    /// end begun, one running, no window, a quiet session, then what <see cref="RealtimeRecording.Locate"/> refuses. When the
+    /// session's end begins while the start runs, the capture is ended as soon as it has started.
     /// </summary>
     /// <exception cref="SessionException">The start is refused or failed; nothing is left running.</exception>
-    public async Task<RealtimeStarted> StartRealtimeAsync(int fps, int maxSeconds, CancellationToken cancellationToken)
+    public async Task<RealtimeStarted> StartRealtimeAsync(int fps, int maxSeconds, bool audio, CancellationToken cancellationToken)
     {
         RealtimeEnvironment environment = registry.Realtime;
         DateTimeOffset requested = environment.Time.GetUtcNow();
@@ -50,11 +51,14 @@ internal sealed partial class GodotSession
         try
         {
             RealtimeTarget target = RealtimeRecording.Locate(environment, Name, hwnd);
-            RealtimeRecording recording = await RealtimeRecording.StartAsync(
-                environment,
-                new RealtimeStart(Name, ProjectDir, target, fps, maxSeconds, requested) { StartedSeconds = startedSeconds },
-                cancellationToken
-            );
+            (int? audioPid, string? audioWarning) = RealtimeAudio.Choose(Name, audio, Mute, GameProcessId);
+            RealtimeStart start = new(Name, ProjectDir, target, fps, maxSeconds, requested)
+            {
+                StartedSeconds = startedSeconds,
+                AudioPid = audioPid,
+                AudioWarning = audioWarning,
+            };
+            RealtimeRecording recording = await RealtimeRecording.StartAsync(environment, start, cancellationToken);
             bool ended;
             lock (_realtimeLock)
             {

@@ -10,6 +10,7 @@ public sealed class RealtimeEncodeTests
     private const string Log = @"C:\Games\Probe\.godot\godot-mcp\recordings\realtime-Probe-ffmpeg.log";
     private const string Mkv = @"C:\Games\Probe\.godot\godot-mcp\recordings\20261009-120000-000-Probe-realtime.mkv";
     private const string Mp4 = @"C:\Games\Probe\.godot\godot-mcp\recordings\20261009-120000-000-Probe-realtime.mp4";
+    private const string AudioPipe = @"\\.\pipe\godot-mcp-audio-0123456789abcdef0123456789abcdef";
 
     /// <summary>The spike's crop; 1280x720 is already even, so the encode's stream size is the crop's own.</summary>
     private static readonly PixelRect Crop = new(1, 31, 1280, 720);
@@ -32,6 +33,9 @@ public sealed class RealtimeEncodeTests
         "-i",
         "-",
     ];
+
+    /// <summary>The helper's audio, 48 kHz stereo s16le on its pipe, read after the video and encoded to AAC.</summary>
+    private static readonly string[] AudioInput = ["-f", "s16le", "-ar", "48000", "-ac", "2", "-i", AudioPipe, "-c:a", "aac", "-b:a", "192k"];
 
     private static readonly string[] Tail = ["-fps_mode", "vfr", "-y", Mkv];
 
@@ -67,7 +71,7 @@ public sealed class RealtimeEncodeTests
     [InlineData(RealtimeEncode.HevcNvenc)]
     public void NvencTakesBgraWithoutAPixelFormat(string encoder)
     {
-        List<string> arguments = RealtimeEncode.EncodeArguments(encoder, Crop, 30, Mkv);
+        List<string> arguments = RealtimeEncode.EncodeArguments(encoder, Crop, 30, Mkv, audioPipe: null);
 
         Assert.Equal([.. Input, "-c:v", encoder, .. Tail], arguments);
     }
@@ -75,7 +79,7 @@ public sealed class RealtimeEncodeTests
     [Fact]
     public void LibxFourSixFourUsesUltrafastAndYuvFourTwoZero()
     {
-        List<string> arguments = RealtimeEncode.EncodeArguments(RealtimeEncode.Libx264, Crop, 30, Mkv);
+        List<string> arguments = RealtimeEncode.EncodeArguments(RealtimeEncode.Libx264, Crop, 30, Mkv, audioPipe: null);
 
         Assert.Equal([.. Input, "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", .. Tail], arguments);
     }
@@ -83,7 +87,7 @@ public sealed class RealtimeEncodeTests
     [Fact]
     public void HFourMfUsesYuvFourTwoZero()
     {
-        List<string> arguments = RealtimeEncode.EncodeArguments(RealtimeEncode.H264Mf, Crop, 30, Mkv);
+        List<string> arguments = RealtimeEncode.EncodeArguments(RealtimeEncode.H264Mf, Crop, 30, Mkv, audioPipe: null);
 
         Assert.Equal([.. Input, "-c:v", "h264_mf", "-pix_fmt", "yuv420p", .. Tail], arguments);
     }
@@ -93,7 +97,7 @@ public sealed class RealtimeEncodeTests
     {
         foreach (string encoder in AllEncoders)
         {
-            List<string> arguments = RealtimeEncode.EncodeArguments(encoder, Crop, 30, Mkv);
+            List<string> arguments = RealtimeEncode.EncodeArguments(encoder, Crop, 30, Mkv, audioPipe: null);
             int input = arguments.IndexOf("-i");
             int wallClock = arguments.IndexOf("-use_wallclock_as_timestamps");
             int fpsMode = arguments.IndexOf("-fps_mode");
@@ -105,11 +109,43 @@ public sealed class RealtimeEncodeTests
         }
     }
 
+    [Theory]
+    [InlineData(RealtimeEncode.H264Nvenc)]
+    [InlineData(RealtimeEncode.HevcNvenc)]
+    [InlineData(RealtimeEncode.Libx264)]
+    [InlineData(RealtimeEncode.H264Mf)]
+    public void TheAudioPipeIsASecondInputEncodedToAac(string encoder)
+    {
+        List<string> without = RealtimeEncode.EncodeArguments(encoder, Crop, 30, Mkv, audioPipe: null);
+        List<string> with = RealtimeEncode.EncodeArguments(encoder, Crop, 30, Mkv, AudioPipe);
+
+        Assert.Equal([.. Input, .. AudioInput, .. without.Skip(Input.Length)], with);
+        Assert.DoesNotContain("s16le", without);
+        Assert.DoesNotContain("-c:a", without);
+        Assert.Single(without, argument => argument == "-i");
+    }
+
+    [Fact]
+    public void WallClockTimestampsStayOnTheVideoInputOnly()
+    {
+        foreach (string encoder in AllEncoders)
+        {
+            List<string> arguments = RealtimeEncode.EncodeArguments(encoder, Crop, 30, Mkv, AudioPipe);
+
+            Assert.Single(arguments, argument => argument == "-use_wallclock_as_timestamps");
+            Assert.True(
+                arguments.IndexOf("-use_wallclock_as_timestamps") < arguments.IndexOf("-i"),
+                $"{encoder}: wall-clock stamps after the video input"
+            );
+            Assert.Equal(AudioPipe, arguments[arguments.LastIndexOf("-i") + 1]);
+        }
+    }
+
     // The caller passes the crop, never a size of its own, so an odd crop cannot reach ffmpeg as an odd stream size.
     [Fact]
     public void AnOddCropIsEncodedAtItsEvenSize()
     {
-        List<string> arguments = RealtimeEncode.EncodeArguments(RealtimeEncode.Libx264, new PixelRect(1, 31, 641, 359), 60, Mkv);
+        List<string> arguments = RealtimeEncode.EncodeArguments(RealtimeEncode.Libx264, new PixelRect(1, 31, 641, 359), 60, Mkv, audioPipe: null);
 
         Assert.Equal(["-hide_banner", "-v", "error", "-use_wallclock_as_timestamps", "1", "-f", "rawvideo", "-pix_fmt", "bgra"], arguments.Take(9));
         Assert.Equal(["-video_size", "642x360", "-framerate", "60", "-i", "-"], arguments.Skip(9).Take(6));
@@ -120,7 +156,7 @@ public sealed class RealtimeEncodeTests
     {
         foreach (string encoder in AllEncoders)
         {
-            List<string> arguments = RealtimeEncode.EncodeArguments(encoder, Crop, 30, Mkv);
+            List<string> arguments = RealtimeEncode.EncodeArguments(encoder, Crop, 30, Mkv, audioPipe: null);
 
             Assert.DoesNotContain("-nostdin", arguments);
             Assert.Equal("-", arguments[arguments.IndexOf("-i") + 1]);
