@@ -309,6 +309,29 @@ public sealed class StateTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
         Assert.Equal(0, diff["changedCount"]!.GetValue<int>());
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task BatchDriveStateAssertionPassesAndFailsWithTheConditionText()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await MarkAsync(cancellation, ("Main", "Hud", SeatSource));
+        BatchStep holds = new(Assert: "state", Node: "/root/Main/Hud", EqualsValue: JsonSerializer.SerializeToElement(3), State: "seat.hp");
+        BatchStep differs = holds with { EqualsValue = JsonSerializer.SerializeToElement(4) };
+
+        JsonObject passed = JsonNode.Parse(await _tools.BatchDriveAsync([holds], _server, cancellationToken: cancellation))!.AsObject();
+        JsonObject failed = JsonNode.Parse(await _tools.BatchDriveAsync([differs], _server, cancellationToken: cancellation))!.AsObject();
+
+        Assert.True(passed["passed"]!.GetValue<bool>(), passed.ToJsonString());
+        Assert.Equal(3, passed["steps"]![0]!["result"]!["value"]!.GetValue<int>());
+        Assert.False(failed["passed"]!.GetValue<bool>(), failed.ToJsonString());
+        string reason = failed["failedAt"]!["reason"]!.GetValue<string>();
+        Assert.StartsWith(
+            """the state assertion {"node":"/root/Main/Hud","equals":4,"state":"seat.hp"} was not met when checked; wait_for returned """,
+            reason,
+            StringComparison.Ordinal
+        );
+        Assert.Contains("\"last\":3", reason, StringComparison.Ordinal);
+    }
+
     /// <summary>Sets the Hud node's hp, which SeatSource's state reports as seat.hp.</summary>
     private async Task SetHpAsync(int hp, CancellationToken cancellation)
     {

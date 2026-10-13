@@ -2,13 +2,14 @@ extends Node
 ## The godot-mcp bridge's conditions, a child of the bridge: parses a condition Expression and
 ## builds the checks wait_for polls each frame (a node existing, a property's value, an
 ## expression, the UI changed since the last gesture, a Control showing a text, a node's rect,
-## transform or property holding still).
+## transform or property holding still, a key of a marked node's state).
 ## The watch parses its expression tracks through parse_condition too.
 ##
 ## A check returns [met, value], or [false, null, error] when its condition cannot be met.
 
 const TextTargets := preload("godot_mcp_text_targets.gd")
 const Clock := preload("godot_mcp_time.gd")
+const State := preload("godot_mcp_state.gd")
 
 ## An expression's inputs besides node. Expression resolves only its inputs and its base
 ## instance's members, not singletons (core/math/expression.cpp L707-734 in 4.7.2).
@@ -24,6 +25,14 @@ const NO_UI_BASELINE := (
 # gdformat joins any split of this text back into one line past gdlint's 100 characters.
 # gdlint: ignore=max-line-length
 const NO_PLACEMENT := "'%s' is a %s, which has no rect or transform to watch; name a property with stable."
+## A state check's node outside the mcp_state group, %s its path.
+const NOT_MARKED := "'%s' is not in the mcp_state group; add it to the group to read its state."
+## A state check's node whose state cannot be read: its path, then the read's error.
+const NO_STATE := "'%s' has no state: %s"
+## The state path naming the whole state, as the kept read's flattener keys it.
+const WHOLE_STATE := "$"
+## The most digits a state path's list index has: int.MaxValue's 10, the server's limit.
+const MAX_INDEX_DIGITS := 10
 
 ## The bridge these conditions belong to, for its node lookup, JSON conversion, input module and
 ## clock's JSON comparison.
@@ -70,6 +79,7 @@ func _kind_probe(kind: String, params: Dictionary, failures: Dictionary) -> Vari
 		"uiChanged": _ui_changed_probe,
 		"text": _text_probe,
 		"settled": _settled_probe,
+		"state": _state_probe,
 	}
 	if not builders.has(kind):
 		return "unknown condition kind '%s'" % kind
@@ -103,6 +113,106 @@ func _settled_probe(params: Dictionary, _failures: Dictionary) -> Variant:
 	var needed: int = int(params.get("stable", 1))
 	var property: String = _text(params, "property")
 	return _check_settled.bind(node_name, property, needed, settled_state())
+
+
+func _state_probe(params: Dictionary, _failures: Dictionary) -> Variant:
+	var helper: Dictionary = {
+		"extension": _text(params, "extension"), "csharpError": _text(params, "csharpError")
+	}
+	var key: String = _text(params, "state")
+	return _check_state.bind(_text(params, "node"), key, params.get("equals"), helper)
+
+
+## The value at key in the node's state as get_game_state reads it (State.read_one at its default
+## depth, then state_at), compared in JSON space as check_property compares; not met while the node
+## is missing or its state lacks key, and failed for a node outside the mcp_state group or one
+## whose state cannot be read. helper carries the C# helper's extension, or csharpError.
+func _check_state(node_name: String, key: String, wanted: Variant, helper: Dictionary) -> Array:
+	var node: Node = bridge._find_node(node_name)
+	if node == null:
+		return _missing(node_name)
+	var reader: Node = bridge._state
+	if not node.is_in_group(State.GROUP):
+		return [false, null, NOT_MARKED % reader.path_of.call(node)]
+	var entry: Dictionary = reader.read_one(
+		node, State.DEFAULT_MAX_DEPTH, helper["extension"], helper["csharpError"]
+	)
+	if entry.has("error"):
+		return [false, null, NO_STATE % [entry["path"], entry["error"]]]
+	var found: Array = state_at(entry.get("state"), key)
+	if not found[0]:
+		return found
+	return [Clock.json_equal(found[1], wanted), found[1]]
+
+
+## The value at path in state as get_game_state's keys find it (the server's StateMerge.TryFind):
+## [true, value], or [false, null] when a step of it is missing. path is WHOLE_STATE, or names
+## split on dots, each a member name followed by any [n] list indexes (an empty name only before
+## an index); a cut marker the read wrote ("<depth limit: ...>", "<size limit>") reached on the way
+## ends the walk with the marker as the value.
+static func state_at(state: Variant, path: String) -> Array:
+	if path == WHOLE_STATE:
+		return [true, state]
+	var at: Variant = state
+	for part: String in path.split("."):
+		if _is_cut_marker(at):
+			return [true, at]
+		var bracket: int = part.find("[")
+		var name_part: String = part if bracket < 0 else part.substr(0, bracket)
+		var stepped: Array = _state_member(at, name_part, bracket >= 0)
+		if stepped[0]:
+			stepped = _state_indexes(stepped[1], "" if bracket < 0 else part.substr(bracket))
+		if not stepped[0]:
+			return [false, null]
+		at = stepped[1]
+	return [true, at]
+
+
+## Whether value is a cut marker the state reader writes for a value it did not write.
+static func _is_cut_marker(value: Variant) -> bool:
+	if not value is String:
+		return false
+	var text: String = value
+	return text.begins_with("<depth limit: ") or text == State.SIZE_LIMIT
+
+
+## [true, at's member name], or [true, at] for an empty name when allow_empty (one before an
+## index); [false, null] when at is no Dictionary or lacks it.
+static func _state_member(at: Variant, name_part: String, allow_empty: bool) -> Array:
+	if name_part.is_empty():
+		return [allow_empty, at if allow_empty else null]
+	if at is Dictionary and (at as Dictionary).has(name_part):
+		return [true, at[name_part]]
+	return [false, null]
+
+
+## [true, the item] after stepping through each [n] of indexes into a list; [false, null] on a
+## malformed index (digits only, as the server parses it) or one past its list's end.
+static func _state_indexes(at: Variant, indexes: String) -> Array:
+	var item: Variant = at
+	var rest: String = indexes
+	while not rest.is_empty():
+		var close: int = rest.find("]")
+		var digits: String = (
+			rest.substr(1, close - 1) if rest.begins_with("[") and close > 0 else ""
+		)
+		if not _is_index(digits):
+			return [false, null]
+		if not item is Array or int(digits) >= (item as Array).size():
+			return [false, null]
+		item = item[int(digits)]
+		rest = rest.substr(close + 1)
+	return [true, item]
+
+
+## Whether digits is a list index the server's int.TryParse takes: digits only, and at most
+## MAX_INDEX_DIGITS of them, so a longer one is not found without int() logging an engine error.
+static func _is_index(digits: String) -> bool:
+	return (
+		not digits.is_empty()
+		and digits.length() <= MAX_INDEX_DIGITS
+		and digits.lstrip("0123456789").is_empty()
+	)
 
 
 ## A settled check's count before its first reading: held -1 until a value has been read, then

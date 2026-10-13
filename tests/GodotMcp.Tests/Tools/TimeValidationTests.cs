@@ -13,7 +13,7 @@ public sealed class TimeValidationTests : IDisposable
 {
     private const string ConditionMessage =
         "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
-        + "{gameMs}, {frames}, {text}, {node, stable}.";
+        + "{gameMs}, {frames}, {text}, {node, stable}, {node, state, equals}.";
     private const string ScaleMessage = "time_scale needs scale, greater than 0 and at most 100.";
 
     // The refusals of an options.call of neither form, both, or args of the other form's shape, after the option's path.
@@ -416,6 +416,126 @@ public sealed class TimeValidationTests : IDisposable
     }
 
     [Fact]
+    public void ANodeWithStateAndEqualsIsOfTheStateKindAndNotTheProperty()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(
+            new WaitCondition(Node: "Board", EqualsValue: Json("7"), State: "seats[0].hp"),
+            1000
+        );
+
+        Assert.Equal("state", parameters["kind"]!.GetValue<string>());
+        Assert.Equal("seats[0].hp", parameters["state"]!.GetValue<string>());
+        Assert.Equal(7, parameters["equals"]!.GetValue<int>());
+        Assert.False(parameters.ContainsKey("property"), parameters.ToJsonString());
+    }
+
+    [Fact]
+    public void APropertyConditionWithEqualsIsStillOfThePropertyKind()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(
+            new WaitCondition(Node: "Main", Property: "state", EqualsValue: Json("\"done\"")),
+            1000
+        );
+
+        Assert.Equal("property", parameters["kind"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("  ")]
+    public void ABlankStateIsRefused(string state)
+    {
+        WaitCondition condition = new(Node: "Board", EqualsValue: Json("7"), State: state);
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildWaitParameters(condition, 1000));
+
+        Assert.Equal(
+            "condition.state is blank; give a key path into the node's state, such as seats[0].hp, or $ for the whole state.",
+            refused.Message
+        );
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("null")]
+    public void AStateWithoutEqualsIsRefused(string? equals)
+    {
+        WaitCondition condition = new(Node: "Board", EqualsValue: equals is null ? null : Json(equals), State: "turn");
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildWaitParameters(condition, 1000));
+
+        Assert.Equal("a state condition needs equals, the JSON value the key must equal; null is not supported.", refused.Message);
+    }
+
+    [Fact]
+    public void AStateWithoutANodeIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildWaitParameters(new WaitCondition(EqualsValue: Json("2"), State: "turn"), 1000)
+        );
+
+        Assert.Equal(ConditionMessage, refused.Message);
+    }
+
+    [Theory]
+    [InlineData("property")]
+    [InlineData("stable")]
+    public void AStateWithAPropertyOrStableIsRefused(string companion)
+    {
+        WaitCondition condition =
+            companion == "property"
+                ? new(Node: "Board", Property: "turn", EqualsValue: Json("2"), State: "turn")
+                : new(Node: "Board", EqualsValue: Json("2"), Stable: 10, State: "turn");
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildWaitParameters(condition, 1000));
+
+        Assert.Equal("a state condition takes no property or stable; state names the key path to read.", refused.Message);
+    }
+
+    [Fact]
+    public void ACheckOnceStateWaitIsAccepted()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Node: "Board", EqualsValue: Json("2"), State: "turn"), 0);
+
+        Assert.Equal("state", parameters["kind"]!.GetValue<string>());
+        Assert.Equal(0, parameters["timeoutMs"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void AStateWaitWithoutATimeoutGetsTheDefault()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Node: "Board", EqualsValue: Json("2"), State: "turn"), null);
+
+        Assert.Equal(10_000, parameters["timeoutMs"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void AStateWaitTakesACallAndEdge()
+    {
+        WaitOptions options = new(Call: new MethodCall("Board", "next_turn"), Edge: true);
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(
+            new WaitCondition(Node: "Board", EqualsValue: Json("2"), State: "turn"),
+            1000,
+            options
+        );
+
+        Assert.Equal("next_turn", parameters["call"]!["method"]!.GetValue<string>());
+        Assert.True(parameters["edge"]!.GetValue<bool>(), parameters.ToJsonString());
+    }
+
+    [Fact]
+    public void AStepUntilTakesAStateCondition()
+    {
+        StepOptions options = new(Until: new WaitCondition(Node: "Board", EqualsValue: Json("2"), State: "turn"));
+
+        JsonObject parameters = RuntimeTools.BuildFrameParameters("step", null, null, options);
+
+        Assert.Equal("state", parameters["until"]!["kind"]!.GetValue<string>());
+        Assert.Equal("turn", parameters["until"]!["state"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task WaitForRefusesAMissingCondition()
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
@@ -657,7 +777,7 @@ public sealed class TimeValidationTests : IDisposable
         );
 
         Assert.Equal(
-            $"options.call is taken only by a gameMs, frames, exists, property, expression, text or settled wait; this condition is {kind}.",
+            $"options.call is taken only by a gameMs, frames, exists, property, expression, text, settled or state wait; this condition is {kind}.",
             refused.Message
         );
     }
@@ -887,7 +1007,7 @@ public sealed class TimeValidationTests : IDisposable
 
         McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildWaitParameters(condition, 1000, new WaitOptions(Edge: true)));
 
-        Assert.Equal($"options.edge applies to exists, property, expression and text waits; this condition is {kind}.", refused.Message);
+        Assert.Equal($"options.edge applies to exists, property, expression, text and state waits; this condition is {kind}.", refused.Message);
     }
 
     [Fact]

@@ -494,6 +494,32 @@ func test_the_helper_is_not_called_without_a_csharp_node_to_read() -> void:
 	_free(rig)
 
 
+func test_read_one_matches_the_entry_of_the_full_read() -> void:
+	var rig: Dictionary = _rig()
+	var hud: Node = _add(rig["game"], "Hud", STATE_SOURCE, true)
+	hud.state = {"hp": 3, "deep": {"a": {"b": {"c": 1}}}}
+	var plain: Node = _add(rig["game"], "Plain", "", true)
+	var bare: Node = _add_csharp(rig["game"], "Bare", "")
+	var nodes: Array = rig["state"].handle({"maxDepth": 2}).get("result", {}).get("nodes", [])
+	assert_eq(rig["state"].read_one(hud, 2, "", ""), nodes[0], "a state, cut as the read cuts it")
+	assert_eq(rig["state"].read_one(plain, 2, "", ""), nodes[1], "a node with no state method")
+	assert_eq(rig["state"].read_one(bare, 2, "", ""), nodes[2], "a C# node with no helper build")
+	var id: String = str(bare.get_instance_id())
+	var reply: String = '{"ok":true,"result":{"nodes":[{"id":"%s","state":{"Turn":3}}]}}' % id
+	var calls: Dictionary = _helper(rig, GDExtensionManager.LOAD_STATUS_OK, reply)
+	assert_eq(
+		rig["state"].read_one(bare, 4, EXTENSION, ""),
+		{"path": "/root/Game/Bare", "class": "Node", "state": {"Turn": 3.0}},
+		"a C# node read by the helper, its entry filled from the helper's as the server fills it"
+	)
+	assert_eq(
+		calls["requests"],
+		['{"ids":["%s"],"maxDepth":4,"op":"state"}' % id],
+		"one state call for the node"
+	)
+	_free(rig)
+
+
 ## {top, game, bridge, state}: a stand-in root named root holding Game and the stand-in bridge
 ## GodotMcpBridge, and a state reader whose marked and path_of read that tree and whose is_csharp
 ## takes a node with the csharp meta for a C# one.

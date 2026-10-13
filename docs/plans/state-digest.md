@@ -2,7 +2,7 @@
 
 Design draft for the plan item "State digest: game nodes opt in for a compact state read in place of a screenshot" from idea 4 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L115-118). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../DECISIONS.md) decision 27, which wins where this file differs.
 
-Status: steps 1 to 4 of section 7 have landed (the GDScript read 5fcd5a0, the C# read 71b6c5e, kept reads and diffs 1134e20). Next is step 5, a `state` condition in `wait_for` and its `batch_drive` assertion, under GMCP-17 (State digest: wait_for on a state key, then tell the game repos); step 6 follows the release that carries it.
+Status: steps 1 to 5 of section 7 have landed (the GDScript read 5fcd5a0, the C# read 71b6c5e, kept reads and diffs 1134e20, the `state` condition in `wait_for` and its `batch_drive` assertion under GMCP-143). Next is step 6, telling the game repos after the release that carries them, under GMCP-17 (State digest: tell the game repos).
 
 ## 1. Problem
 
@@ -161,7 +161,7 @@ Each step lands on its own with its tests, docs and changelog bullet, and passes
 2. **Landed: GDScript read**: the `State` module, the `state` command, `get_game_state` with `node`, `keys`, `maxNodes`, `maxDepth`, the budgets, `frame`, per-node errors and the hint; `test_state.gd`, `StateValidationTests`, `StateMergeTests`, `StateTests`; TOOLS.md, SKILL.md, ARCHITECTURE.md, glossary, README, changelog.
 3. **Landed: C# read** (every marked C# node goes to the helper, a `missing` answer falls back to Godot's `_mcp_state` in the same frame, a 5000-value budget per node, `csharpError` when the project has C# the helper cannot serve, the helper copy cached per build): `StateMethods`, the helper's `state` op, `call_now` on the `Dotnet` child, the inline call and the merge (question 7); the CsProbe fixture's `CsState.cs`, `StateMethodsTests`, `CSharpStateTests`; docs for the C# convention.
 4. **Landed: kept reads and diffs** (the flattener is the server's `StateFlatten.cs`, no Core file, since the helper never needs it; `$` keys a whole state that is not a non-empty Dictionary or Array; an errored node is the one leaf `error`; the mixed-kind refusal is `CheckSameKind`, unit-tested in `SnapshotDiffTests`; `diff_snapshots` became destructive with a `read` override, user 2026-09-30, since its live re-read runs state methods): `options.keep`, the flattening, `Snapshot`'s kind and the live re-read in `diff_snapshots`, the mixed-kind refusal; `StateFlattenTests`, `SnapshotDiffTests`, `StateTests` and `CSharpStateTests` additions.
-5. **Waiting on a state key** (question 8): the `wait_for` state condition and its `batch_drive` assertion.
+5. **Done: waiting on a state key** (question 8): the `wait_for` state condition and its `batch_drive` assertion.
 6. **After the release that carries them**: delve and opening-hand opt in through their own plans, and their DEVELOPMENT.md sampling-script and `snapshot_subtree` prose (delve L73, opening-hand L61) is rewritten through `godot-mcp-docs-sync`.
 
 ## 8. Spike results (step 1, 2026-09-30)

@@ -11,10 +11,10 @@ namespace GodotMcp.Server.Tools;
 internal sealed record BatchStep(
     [property: Description("A runtime tool's name, e.g. click or take_screenshot; leave out for an assertion.")] string? Tool = null,
     [property: Description("The tool's arguments, as the tool takes them on its own.")] JsonObject? Args = null,
-    [property: Description("An assertion: property, expression, wait, no_errors, screenshot or fired; leave out for a tool step.")]
+    [property: Description("An assertion: property, expression, state, wait, no_errors, screenshot or fired; leave out for a tool step.")]
         string? Assert = null,
     [property: Description(
-        "property, wait: the node, as wait_for takes it; expression: its node input, optional; fired: the node the nearest "
+        "property, state, wait: the node, as wait_for takes it; expression: its node input, optional; fired: the node the nearest "
             + "earlier tool step's fired list must carry the signal on, its absolute path or a path tail."
     )]
         string? Node = null,
@@ -26,7 +26,8 @@ internal sealed record BatchStep(
     [property: Description("property, wait: the property to compare; a subproperty path such as position:x works too.")] string? Property = null,
     [property: JsonPropertyName("equals")]
     [property: Description(
-        "property, wait: the JSON value the property must equal, as wait_for compares it; null is not supported; fired: the "
+        "property, state, wait: the JSON value the property or state key must equal, as wait_for compares it; null is not "
+            + "supported; fired: the "
             + "array of arguments the emission must have carried, any arguments matching when left out."
     )]
         JsonElement? EqualsValue = null,
@@ -44,7 +45,7 @@ internal sealed record BatchStep(
     [property: Description("wait: alone, the milliseconds of game time to wait for, 1 to 120000, as wait_for's gameMs.")] int? GameMs = null,
     [property: Description("wait: alone, the unpaused process frames to wait for, 1 to 7200, as wait_for's frames.")] int? Frames = null,
     [property: Description(
-        "property, expression: 0 by default, checked once, now, even while paused; wait: 10000 by default (gameMs + 10000 for "
+        "property, expression, state: 0 by default, checked once, now, even while paused; wait: 10000 by default (gameMs + 10000 for "
             + "gameMs, 10 s + 100 ms a frame for frames). 0 to 120000, load-adjusted, as wait_for takes it."
     )]
         int? TimeoutMs = null,
@@ -57,5 +58,10 @@ internal sealed record BatchStep(
     [property: Description("wait: without node, the text exactly one visible Control must show, as wait_for's condition.text.")] string? Text = null,
     [property: Description("wait: with text, the node whose visible Controls are scanned, as wait_for's condition.under.")] string? Under = null,
     [property: Description("wait: with node, the frames the node's rect, transform or property must hold unchanged, as wait_for's condition.stable.")]
-        int? Stable = null
+        int? Stable = null,
+    [property: Description(
+        "state, wait: with node and equals, the key path into the node's state to compare (seats[0].hp, or $ for the whole "
+            + "state), as wait_for's condition.state."
+    )]
+        string? State = null
 );

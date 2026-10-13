@@ -45,6 +45,8 @@ const CSHARP_CANNOT_RUN := (
 ## A C# node the helper read through _McpState that has a Godot-visible _mcp_state too.
 const BOTH_NAMES := "reads _McpState; its _mcp_state is not read"
 const HELPER_REFUSED := "the C# helper refused the state read: %s"
+## A C# node's error when the helper's reply has no entry for it (the server's NoHelperEntry).
+const NO_HELPER_ENTRY := "the C# helper's reply has no entry for this node"
 
 ## The bridge (godot_mcp_bridge.gd), set by it before this node enters the tree.
 var bridge: Node
@@ -92,6 +94,38 @@ func handle(params: Dictionary) -> Dictionary:
 	if members.size() > max_nodes:
 		result["omitted"] = _omitted(members.slice(max_nodes))
 	return {"result": result}
+
+
+## One node's entry, read now as handle reads it and as the server then fills it: {path, class,
+## state} or {path, class, error} (warning kept), a C# node read through the helper at extension
+## in this call, the helper's entry for it in place of its id, or failing with csharp_error, why
+## the server sent no extension. wait_for's state condition reads its node through it each check.
+func read_one(node: Node, max_depth: int, extension: String, csharp_error: String) -> Dictionary:
+	var reading: Dictionary = {
+		"maxDepth": max_depth, "extension": extension, "csharpError": csharp_error, "csharp": {}
+	}
+	var nodes: Array = [_entry(node, reading, 0)]
+	if not (reading["csharp"] as Dictionary).is_empty():
+		_read_csharp(reading, nodes, {})
+	return _filled(nodes[0], reading.get("answers", {}))
+
+
+## A C# node's entry with the helper's answer in place of its id, as the server's StateMerge.Filled
+## puts it: the answer's error, or its state; NO_HELPER_ENTRY when the helper has none for the id.
+## An entry with no id, read here, is answered as it is.
+static func _filled(entry: Dictionary, answers: Dictionary) -> Dictionary:
+	if not entry.has("id"):
+		return entry
+	var answer: Variant = answers.get(entry["id"])
+	var filled: Dictionary = entry.duplicate()
+	filled.erase("id")
+	if not answer is Dictionary:
+		filled["error"] = NO_HELPER_ENTRY
+	elif (answer as Dictionary).has("error"):
+		filled["error"] = str(answer["error"])
+	else:
+		filled["state"] = (answer as Dictionary).get("state")
+	return filled
 
 
 ## The marked nodes outside the bridge, those at or under the node node_name names when it is not
@@ -178,10 +212,11 @@ static func _cannot_run(node: Node, csharp_error: String) -> String:
 
 
 ## Reads the C# nodes collected in reading.csharp with one call of the helper's state op, in this
-## frame, and puts its reply string into result.csharp. A node the helper finds no _McpState on is
-## read here through _mcp_state when Godot sees one, and one it read that has _mcp_state too is
-## warned. When the helper cannot load or refuses, each node is read as with no extension, the
-## helper's error in place of the no-build one, and result has no csharp.
+## frame, and puts its reply string into result.csharp and its entries by id into
+## reading.answers. A node the helper finds no _McpState on is read here through _mcp_state when
+## Godot sees one, and one it read that has _mcp_state too is warned. When the helper cannot load
+## or refuses, each node is read as with no extension, the helper's error in place of the no-build
+## one, and result has no csharp.
 func _read_csharp(reading: Dictionary, nodes: Array, result: Dictionary) -> void:
 	var at: Dictionary = reading["csharp"]
 	var request: String = JSON.stringify(
@@ -196,6 +231,7 @@ func _read_csharp(reading: Dictionary, nodes: Array, result: Dictionary) -> void
 			_refill(nodes, at[id], id, reading["maxDepth"], failure)
 		return
 	var answers: Dictionary = _answers(parsed)
+	reading["answers"] = answers
 	for id: String in at:
 		_settle(nodes, at[id], id, answers.get(id, {}), reading["maxDepth"])
 	result["csharp"] = reply

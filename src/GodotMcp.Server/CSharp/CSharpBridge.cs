@@ -127,7 +127,8 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
     }
 
     /// <summary>
-    /// The helper for a request that reads C# only when the project has some (get_game_state's), never a refusal: nothing
+    /// The helper for a request that reads C# only when the project has some (get_game_state's, and a state wait's or step
+    /// until's), never a refusal: nothing
     /// for a project with no csproj; the path of the helper's copy, made when it is not there yet; or, in a project with
     /// C#, why the helper cannot run: what <see cref="Refusal"/> names (several csprojs, an unbuilt assembly, no helper
     /// build) or why the copy could not be made, which is logged too. The copy is found again without hashing the helper
@@ -153,7 +154,7 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
         }
         catch (InvalidOperationException e)
         {
-            Console.Error.WriteLine($"godot-mcp: get_game_state reads no C# state: {e.Message}");
+            Console.Error.WriteLine($"godot-mcp: the state read reads no C# state: {e.Message}");
             return new StateHelper(null, e.Message);
         }
     }

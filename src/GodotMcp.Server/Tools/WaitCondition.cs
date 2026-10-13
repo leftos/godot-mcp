@@ -6,8 +6,8 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// What wait_for waits for, exactly one kind: {node, exists}, {node, property, equals}, {node, signal}, {expression}
-/// (node optional), {uiChanged: true}, {gameMs}, {frames}, {text} (under and exists optional) or {node, stable} (property
-/// optional).
+/// (node optional), {uiChanged: true}, {gameMs}, {frames}, {text} (under and exists optional), {node, stable} (property
+/// optional) or {node, state, equals}.
 /// </summary>
 internal sealed record WaitCondition(
     [property: Description(
@@ -27,7 +27,8 @@ internal sealed record WaitCondition(
         string? Property = null,
     [property: JsonPropertyName("equals")]
     [property: Description(
-        "The JSON value the property must equal, compared as run_script returns values (Vector2 as {x, y}, and so on); "
+        "The JSON value the property, or with state the state's key, must equal, compared as run_script returns values "
+            + "(Vector2 as {x, y}, and so on); "
             + "numbers match within 1e-6. null is not supported: to wait for a reference to clear, use {expression}, e.g. "
             + "node.target == null."
     )]
@@ -71,5 +72,12 @@ internal sealed record WaitCondition(
             + "unchanged for this many process frames, 1 to 600, so a press can wait for a layout to settle. Met, value is "
             + "{frames, value}; while it moves, last shows the value so far."
     )]
-        int? Stable = null
+        int? Stable = null,
+    [property: Description(
+        "With node and equals: a key path into the state get_game_state reads for the node, which must be in the mcp_state "
+            + "group, read each frame: a key, or a dotted path with list indexes (seats[0].hp), as get_game_state's keys take "
+            + "it; $ is the whole state. A path the state lacks is not met, its last null; a node outside the group, or one "
+            + "whose state cannot be read, fails the wait."
+    )]
+        string? State = null
 );

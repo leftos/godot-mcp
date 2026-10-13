@@ -157,7 +157,8 @@ internal sealed partial class RuntimeTools
             Frames: start.Frames,
             Text: start.Text,
             Under: start.Under,
-            Stable: start.Stable
+            Stable: start.Stable,
+            State: start.State
         );
         string kind = StartKindOf(condition);
         if (kind is not ("exists" or "property" or "expression"))
@@ -185,12 +186,14 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>
-    /// A start's kind as <see cref="CheckCondition"/> gives it, but text whenever text or under is given and settled whenever
-    /// stable is, so a start of either kind gets the start refusal rather than that kind's own refusals.
+    /// A start's kind as <see cref="CheckCondition"/> gives it, but text whenever text or under is given, settled whenever
+    /// stable is and state whenever state is, so a start of any of these kinds gets the start refusal rather than that kind's
+    /// own refusals.
     /// </summary>
     private static string StartKindOf(WaitCondition condition) =>
         condition.Text is not null || condition.Under is not null ? "text"
         : condition.Stable is not null ? "settled"
+        : condition.State is not null ? "state"
         : CheckCondition(condition);
 
     /// <summary>

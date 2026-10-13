@@ -37,6 +37,25 @@ const SHARED_UNDER := "'Lobby' names 2 nodes"
 # gdlint: ignore=max-line-length
 const PLACING_TARGETS_SOURCE := "extends Node\n\nvar bridge: Node\nvar resolver: GDScript\n\n\nfunc viewport_rect(_control: Control) -> Rect2:\n\treturn Rect2(10, 20, 120, 40)\n\n\nfunc rect_text(rect: Rect2) -> String:\n\treturn resolver.rect_text(rect)\n"
 
+## A marked node's script whose _mcp_state returns its state variable.
+const STATE_SOURCE := (
+	"extends Node\n\nvar state: Variant = {}\n\n\n"
+	+ "func _mcp_state() -> Variant:\n\treturn state\n"
+)
+## The state rig's stand-in bridge: the modules the state reader uses, and a node lookup by name
+## under top.
+const STATE_BRIDGE_SOURCE := (
+	"extends Node\n\nvar _json: GDScript\nvar _logger: Logger\nvar _inspect: Node\n"
+	+ "var _state: Node\nvar top: Node\n\n\nfunc _find_node(element: String) -> Node:\n"
+	+ "\treturn top.find_child(element, true, false)\n"
+)
+## A state the key path tests read.
+const SEATED := {
+	"turn": 2,
+	"seats": [{"name": "alex", "hp": 7}, {"name": "sam", "hp": 9}],
+	"grid": [[1, 2], [3, 4]],
+}
+
 var _conditions_script: GDScript = load_bridge_script("godot_mcp_conditions.gd")
 var _text_targets: GDScript = load_bridge_script("godot_mcp_text_targets.gd")
 
@@ -567,6 +586,131 @@ func test_a_settled_reading_of_a_node_with_no_rect_or_transform_fails_naming_it(
 	conditions.free()
 
 
+func test_a_state_path_reads_keys_dotted_paths_and_indexes_as_get_game_states_keys() -> void:
+	assert_eq(_conditions_script.state_at(SEATED, "turn"), [true, 2], "a key")
+	assert_eq(_conditions_script.state_at(SEATED, "seats[1].hp"), [true, 9], "a dotted path")
+	assert_eq(_conditions_script.state_at(SEATED, "grid[1][0]"), [true, 3], "two indexes")
+	assert_eq(
+		_conditions_script.state_at(SEATED, "seats[0]"),
+		[true, {"name": "alex", "hp": 7}],
+		"a list item whole"
+	)
+	assert_eq(_conditions_script.state_at(SEATED, "$"), [true, SEATED], "$ is the whole state")
+	assert_eq(_conditions_script.state_at(5, "$"), [true, 5], "and a state that is no Dictionary")
+
+
+func test_a_state_path_the_state_lacks_is_not_found() -> void:
+	for path: String in [
+		"nope",
+		"seats[2].hp",
+		"seats[0].mp",
+		"turn.x",
+		"turn[0]",
+		"seats[x]",
+		"seats[-1]",
+		"seats[+1]",
+		"seats[0",
+		"seats.",
+		"",
+	]:
+		assert_eq(_conditions_script.state_at(SEATED, path), [false, null], path)
+
+
+func test_an_index_past_any_list_length_is_not_found_without_parsing_it() -> void:
+	for path: String in ["seats[99999999999999999999]", "seats[12345678901]"]:
+		assert_eq(_conditions_script.state_at(SEATED, path), [false, null], path)
+
+
+func test_a_state_path_reaching_a_cut_marker_reads_the_marker() -> void:
+	var state: Dictionary = {"deep": "<depth limit: Dictionary>", "big": "<size limit>"}
+	assert_eq(
+		_conditions_script.state_at(state, "deep.a[0].b"),
+		[true, "<depth limit: Dictionary>"],
+		"a depth cut"
+	)
+	assert_eq(_conditions_script.state_at(state, "big.a"), [true, "<size limit>"], "a size cut")
+
+
+func test_a_state_wait_is_met_when_its_key_equals_the_value_and_shows_last_otherwise() -> void:
+	var rig: Dictionary = _state_rig()
+	var board: Node = _add_state_node(rig["game"], "Board", STATE_SOURCE, true)
+	board.state = SEATED.duplicate(true)
+	var params: Dictionary = {"node": "Board", "state": "seats[0].hp", "equals": 7.0}
+	var probe: Callable = rig["conditions"].make_probe("state", params, {})
+	assert_eq(probe.call(), [true, 7], "met, the key's value as its value")
+	board.state["seats"][0]["hp"] = 6
+	assert_eq(probe.call(), [false, 6], "not met, its value as last")
+	_free_state_rig(rig)
+
+
+func test_a_state_wait_on_a_path_the_state_lacks_or_a_missing_node_is_not_met() -> void:
+	var rig: Dictionary = _state_rig()
+	var board: Node = _add_state_node(rig["game"], "Board", STATE_SOURCE, true)
+	board.state = SEATED.duplicate(true)
+	var lacking: Dictionary = {"node": "Board", "state": "seats[2].hp", "equals": 7.0}
+	var nowhere: Dictionary = {"node": "Nowhere", "state": "turn", "equals": 2.0}
+	assert_eq(rig["conditions"].make_probe("state", lacking, {}).call(), [false, null], "no seat 2")
+	assert_eq(rig["conditions"].make_probe("state", nowhere, {}).call(), [false, null], "no node")
+	_free_state_rig(rig)
+
+
+func test_a_state_key_past_the_reads_depth_reads_the_cut_marker_and_is_not_met() -> void:
+	var rig: Dictionary = _state_rig()
+	var deep: Node = _add_state_node(rig["game"], "Deep", STATE_SOURCE, true)
+	deep.state = {"a": {"b": {"c": {"d": {"e": 1}}}}}
+	var params: Dictionary = {"node": "Deep", "state": "a.b.c.d.e", "equals": 1.0}
+	assert_eq(
+		rig["conditions"].make_probe("state", params, {}).call(),
+		[false, "<depth limit: Dictionary>"],
+		"d sits at the read's depth of 4, so e is out of reach"
+	)
+	_free_state_rig(rig)
+
+
+func test_a_state_wait_on_the_whole_state_compares_it() -> void:
+	var rig: Dictionary = _state_rig()
+	var counter: Node = _add_state_node(rig["game"], "Counter", STATE_SOURCE, true)
+	counter.state = 5
+	var params: Dictionary = {"node": "Counter", "state": "$", "equals": 5.0}
+	assert_eq(rig["conditions"].make_probe("state", params, {}).call(), [true, 5], "$ reads 5")
+	_free_state_rig(rig)
+
+
+func test_a_state_wait_on_a_node_outside_the_group_fails_naming_the_group() -> void:
+	var rig: Dictionary = _state_rig()
+	_add_state_node(rig["game"], "Loose", STATE_SOURCE, false)
+	var params: Dictionary = {"node": "Loose", "state": "turn", "equals": 2.0}
+	assert_eq(
+		rig["conditions"].make_probe("state", params, {}).call(),
+		[
+			false,
+			null,
+			(
+				"'/root/Game/Loose' is not in the mcp_state group; "
+				+ "add it to the group to read its state."
+			)
+		],
+		"a node outside the group fails the check"
+	)
+	_free_state_rig(rig)
+
+
+func test_a_state_wait_on_a_node_with_no_state_fails_with_the_reads_error() -> void:
+	var rig: Dictionary = _state_rig()
+	_add_state_node(rig["game"], "Plain", "", true)
+	var params: Dictionary = {"node": "Plain", "state": "turn", "equals": 2.0}
+	assert_eq(
+		rig["conditions"].make_probe("state", params, {}).call(),
+		[
+			false,
+			null,
+			"'/root/Game/Plain' has no state: in the mcp_state group but has no _mcp_state method"
+		],
+		"a marked node without _mcp_state fails the check"
+	)
+	_free_state_rig(rig)
+
+
 ## Conditions whose bridge is a stand-in finding no node, its input player's target resolver a
 ## stand-in whose bare-name lookup is resolver_body.
 func _under_rig(resolver_body: String) -> Dictionary:
@@ -677,6 +821,51 @@ func _free_expression_rig(rig: Dictionary) -> void:
 	rig["conditions"].free()
 	rig["holder"].free()
 	rig["bridge"].free()
+
+
+## {top, game, bridge, conditions}: a stand-in root named root holding Game, and conditions whose
+## stand-in bridge (STATE_BRIDGE_SOURCE) finds nodes under it by name and holds a state reader
+## naming a node by its path from that root, the JSON module, an unregistered logger and the
+## inspector. The nodes are in no tree, as the state reader's own tests read them.
+func _state_rig() -> Dictionary:
+	var top := Node.new()
+	top.name = "root"
+	var game := Node.new()
+	game.name = "Game"
+	top.add_child(game)
+	var bridge: Node = _compile(STATE_BRIDGE_SOURCE)
+	bridge.top = top
+	bridge._json = load_bridge_script("godot_mcp_json.gd")
+	bridge._logger = load_bridge_script("godot_mcp_logger.gd").new()
+	var inspect: Node = load_bridge_script("godot_mcp_inspect.gd").new()
+	inspect._bridge = bridge
+	bridge._inspect = inspect
+	var state: Node = load_bridge_script("godot_mcp_state.gd").new()
+	state.bridge = bridge
+	state.path_of = func(node: Node) -> String: return "/root/%s" % top.get_path_to(node)
+	bridge._state = state
+	var conditions: Node = _conditions_script.new()
+	conditions.bridge = bridge
+	return {"top": top, "game": game, "bridge": bridge, "conditions": conditions}
+
+
+func _free_state_rig(rig: Dictionary) -> void:
+	rig["conditions"].free()
+	rig["bridge"]._state.free()
+	rig["bridge"]._inspect.free()
+	rig["bridge"].free()
+	rig["top"].free()
+
+
+## A node named node_name under parent, with a script compiled from source when it is not empty,
+## and in the mcp_state group when marked.
+func _add_state_node(parent: Node, node_name: String, source: String, marked: bool) -> Node:
+	var node: Node = Node.new() if source.is_empty() else _compile(source)
+	node.name = node_name
+	if marked:
+		node.add_to_group("mcp_state")
+	parent.add_child(node)
+	return node
 
 
 ## The messages of the entries logger holds, taking them.

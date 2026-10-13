@@ -95,6 +95,13 @@ internal sealed partial class RuntimeTools
             ["maxNodes"] = request.MaxNodes,
             ["maxDepth"] = request.MaxDepth,
         };
+        AddStateHelper(parameters, helper);
+        return parameters;
+    }
+
+    /// <summary>Adds extension when the C# helper reads the C# nodes, or csharpError, why it cannot, to a state read's params.</summary>
+    internal static void AddStateHelper(JsonObject parameters, StateHelper helper)
+    {
         if (helper.Extension is { } extension)
         {
             parameters["extension"] = extension;
@@ -104,8 +111,6 @@ internal sealed partial class RuntimeTools
         {
             parameters["csharpError"] = error;
         }
-
-        return parameters;
     }
 
     /// <exception cref="McpException">node or a key is empty, or maxNodes or maxDepth is out of its range.</exception>

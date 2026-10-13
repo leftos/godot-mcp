@@ -1,6 +1,8 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Tools;
+using ModelContextProtocol.Protocol;
 
 namespace GodotMcp.IntegrationTests;
 
@@ -9,6 +11,7 @@ namespace GodotMcp.IntegrationTests;
 /// C# children each carry a different state method, with a GDScript node the test puts second among them and one returning
 /// the process frame last, all read in one call:
 /// the C# nodes by the helper, merged with the GDScript node in tree order. The States node is added once for the class.
+/// A wait_for state condition reads its C# Counter through the helper at each check.
 /// </summary>
 public sealed class CSharpStateTests(SharedCsProbeSession shared) : IClassFixture<SharedCsProbeSession>
 {
@@ -60,6 +63,7 @@ public sealed class CSharpStateTests(SharedCsProbeSession shared) : IClassFixtur
         "Broken",
         "Visible",
         "Frame",
+        "Counter",
         "GdFrame",
     ];
 
@@ -98,7 +102,58 @@ public sealed class CSharpStateTests(SharedCsProbeSession shared) : IClassFixtur
         Assert.False(nodes[8]!.AsObject().ContainsKey("warning"), nodes[8]!.ToJsonString());
         // Both languages read in the frame the result names, so a read that waited a frame would show here.
         long frame = result["frame"]!.GetValue<long>();
-        Assert.Equal((frame, frame), (nodes[9]!["state"]!.GetValue<long>(), nodes[10]!["state"]!.GetValue<long>()));
+        Assert.Equal((frame, frame), (nodes[9]!["state"]!.GetValue<long>(), nodes[11]!["state"]!.GetValue<long>()));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStateWaitOnACSharpNodeIsMetThroughTheHelper()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddStatesAsync(cancellation);
+        const string Counter = $"{States}/Counter";
+        JsonObject read = JsonNode
+            .Parse(await _tools.GetGameStateAsync(Counter, new StateOptions(Keys: ["Turn"]), cancellationToken: cancellation))!
+            .AsObject();
+        int turn = read["nodes"]![0]!["state"]!["Turn"]!.GetValue<int>();
+        WaitCondition condition = new(Node: Counter, EqualsValue: JsonSerializer.SerializeToElement(7 + turn + 1), State: "Seats[0].Hp");
+        WaitOptions options = new(Call: new MethodCall(Counter, "Arm"));
+
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(condition, 10_000, options, cancellationToken: cancellation);
+        JsonObject waited = JsonNode.Parse(string.Concat(blocks.OfType<TextContentBlock>().Select(block => block.Text)))!.AsObject();
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Equal(7 + turn + 1, waited["value"]!.GetValue<double>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStepUntilAStateConditionOnACSharpNodeStopsOnTheFrameItsKeyChanges()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddStatesAsync(cancellation);
+        const string Counter = $"{States}/Counter";
+        JsonObject read = JsonNode
+            .Parse(await _tools.GetGameStateAsync(Counter, new StateOptions(Keys: ["Turn"]), cancellationToken: cancellation))!
+            .AsObject();
+        int turn = read["nodes"]![0]!["state"]!["Turn"]!.GetValue<int>();
+        StepOptions options = new(Until: new WaitCondition(Node: Counter, EqualsValue: JsonSerializer.SerializeToElement(turn + 1), State: "Turn"));
+        await _tools.FrameControlAsync("pause", cancellationToken: cancellation);
+        try
+        {
+            await RunBodyAsync($"scene_tree.root.get_node(\"{Counter}\").Arm()\n\treturn true", cancellation);
+
+            IEnumerable<ContentBlock> blocks = await _tools.FrameControlAsync("step", count: 100, options: options, cancellationToken: cancellation);
+            JsonObject stepped = JsonNode.Parse(string.Concat(blocks.OfType<TextContentBlock>().Select(block => block.Text)))!.AsObject();
+
+            Assert.True(stepped["met"]!.GetValue<bool>(), stepped.ToJsonString());
+            Assert.Equal(turn + 1, stepped["value"]!.GetValue<double>());
+            // Arm leaves three frames to count down; the third stepped frame's _Process advances the turn, and its check meets it.
+            Assert.Equal(3, stepped["processFrames"]!.GetValue<int>());
+        }
+        finally
+        {
+            // The class shares one game, whose other tests need it running.
+            await _tools.FrameControlAsync("resume", cancellationToken: cancellation);
+        }
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -157,6 +212,14 @@ public sealed class CSharpStateTests(SharedCsProbeSession shared) : IClassFixtur
 
     private async Task<JsonObject> ReadAsync(CancellationToken cancellation, StateOptions? options = null) =>
         JsonNode.Parse(await _tools.GetGameStateAsync(null, options, cancellationToken: cancellation))!.AsObject();
+
+    /// <summary>Runs <paramref name="body"/> as the body of a run_script execute, which must answer true.</summary>
+    private async Task RunBodyAsync(string body, CancellationToken cancellation)
+    {
+        string script = $"extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t{body}\n";
+        JsonNode reply = JsonNode.Parse(await _tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: cancellation))!;
+        Assert.True(reply["value"]?.GetValue<bool>() == true, reply.ToJsonString());
+    }
 
     /// <summary>Adds the States node with its C# children and the GDScript node second among them, once for the game.</summary>
     private async Task AddStatesAsync(CancellationToken cancellation)

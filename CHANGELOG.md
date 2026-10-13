@@ -16,6 +16,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `run_csharp` snippets take `Log(value)`, returned as `log` with the result and inside a thrown exception's error, beside the game's errors.
 - `wait_for`, `frame_control` until and `batch_drive` waits take `{text, under?}`, met when exactly one visible Control shows that text, or none with `exists: false`.
 - `wait_for`, `frame_control` until and `batch_drive` waits take `{node, stable}`, met once the node's rect, transform or named property has held still that many frames.
+- `wait_for`, `frame_control` until and `batch_drive` take `{node, state, equals}`, met when a key of the node's `get_game_state` state equals the value.
 
 ### Changed
 

@@ -26,7 +26,7 @@ internal sealed partial class RuntimeTools
     private const int CapturePreviewMaxWidth = 480;
     private const string ConditionMessage =
         "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
-        + "{gameMs}, {frames}, {text}, {node, stable}.";
+        + "{gameMs}, {frames}, {text}, {node, stable}, {node, state, equals}.";
     private const string UntilFramesRefusal =
         "frame_control step's until takes any wait_for condition but frames: count is the most frames a step runs.";
     private const string EmptyThenRefusal = "options.then needs call, timeScale, pause or a mix.";
@@ -45,6 +45,7 @@ internal sealed partial class RuntimeTools
         new("frames", condition => condition.Frames is not null, condition => condition.Node is null),
         new("text", condition => condition.Text is not null, _ => true),
         new("settled", condition => condition.Stable is not null, HasNode),
+        new("state", condition => condition.State is not null, HasStateCompanions),
     ];
 
     // What a step's reply carries beyond its counts: the frame it stopped on, its until's answer as wait_for gives one, and
@@ -108,6 +109,7 @@ internal sealed partial class RuntimeTools
         TimeSpan allowance = StepAllowance(parameters["count"]?.GetValue<int>() ?? 1);
         BridgeCall call = new("frame_control", "frame", parameters, allowance + WaitReplyAllowance, action == "step" ? allowance : null);
         GodotSession target = Find(session);
+        AddConditionStateHelper(parameters["until"] as JsonObject, target);
         BridgeResult result = parameters.ContainsKey("input")
             ? await CallUnderInputGateAsync(target, call, cancellationToken)
             : await CallWithErrorsAsync(target, call, cancellationToken);
@@ -138,6 +140,10 @@ internal sealed partial class RuntimeTools
             + "shown by several Controls fails the wait with their list, so narrow it with under. {node, stable: N} waits "
             + "until the node's global rect (a Control), global_transform (a Node2D or Node3D) or the property named holds "
             + "unchanged for N process frames, so a press can wait for a layout to settle; met, its value is {frames, value}. "
+            + "{node, state, equals} reads the node's state as get_game_state does each frame (the node must be in the mcp_state "
+            + "group; its state method runs at every check) and waits until the value at the key path state (seats[0].hp, or $ for "
+            + "the whole state) equals equals, compared as a property is; a path the state lacks is not met, and a node with no "
+            + "state to read fails the call. "
             + "Returns "
             + "{met, elapsedMs, frames, value} (args instead of value for a signal; the game ms or frames reached for gameMs and "
             + "frames); on timeout {met: false, elapsedMs, frames, last}, the last "
@@ -167,14 +173,15 @@ internal sealed partial class RuntimeTools
             + "_process (a shader, an animation) may still show the previous frame; screenshot: true pauses after the met frame is "
             + "drawn, so a picture matches the values. The result adds then: {frame, call?: "
             + "{value}, timeScale?, paused?}. A refused or failing call fails the wait and leaves timeScale unset and the game "
-            + "running; a timeout runs nothing. options.edge: true, with an exists, property, expression or text wait and a "
+            + "running; a timeout runs nothing. options.edge: true, with an exists, property, expression, text or state wait and a "
             + "timeout above 0, meets it only on a check that finds the condition true after one that found it false, so a "
             + "condition already true waits for its next rise (for a text wait with exists: false, the text's next going)."
     )]
     public async Task<IEnumerable<ContentBlock>> WaitForAsync(
         [Description(
             "Exactly one of {node, exists}, {node, property, equals}, {node, signal}, {expression} (with node optional), {uiChanged: true}, "
-                + "{gameMs}, {frames}, {text} (with under and exists optional), {node, stable} (with property optional)."
+                + "{gameMs}, {frames}, {text} (with under and exists optional), {node, stable} (with property optional), "
+                + "{node, state, equals}."
         )]
             WaitCondition condition,
         [Description(
@@ -327,18 +334,19 @@ internal sealed partial class RuntimeTools
         parameters["call"] = kind is not ("signal" or "uiChanged")
             ? CallOptionParameters(call, "options.call")
             : throw new McpException(
-                $"options.call is taken only by a gameMs, frames, exists, property, expression, text or settled wait; this condition is {kind}."
+                "options.call is taken only by a gameMs, frames, exists, property, expression, text, settled or state wait; "
+                    + $"this condition is {kind}."
             );
     }
 
-    /// <summary>Adds edge: true to an exists, property, expression or text wait's parameters.</summary>
+    /// <summary>Adds edge: true to an exists, property, expression, text or state wait's parameters.</summary>
     /// <exception cref="McpException">The wait is of another kind, or checks once (timeoutMs 0).</exception>
     private static void AddEdge(JsonObject parameters)
     {
         string kind = parameters["kind"]!.GetValue<string>();
-        if (kind is not ("exists" or "property" or "expression" or "text"))
+        if (kind is not ("exists" or "property" or "expression" or "text" or "state"))
         {
-            throw new McpException($"options.edge applies to exists, property, expression and text waits; this condition is {kind}.");
+            throw new McpException($"options.edge applies to exists, property, expression, text and state waits; this condition is {kind}.");
         }
 
         if (parameters["timeoutMs"]!.GetValue<int>() == 0)
@@ -437,10 +445,24 @@ internal sealed partial class RuntimeTools
     {
         await PrepareGameToolCallsAsync("wait_for", parameters, session, cancellationToken);
         GodotSession target = Find(session);
+        AddConditionStateHelper(parameters, target);
         int timeoutMs = parameters["timeoutMs"]!.GetValue<int>();
         TimeSpan release = WaitRelease(parameters, timeoutMs, target.ActiveRecording is not null);
         BridgeCall call = new("wait_for", "wait_for", parameters, release + WaitReplyAllowance, timeoutMs > 0 ? release : null);
         return await CallWithErrorsAsync(target, call, cancellationToken);
+    }
+
+    /// <summary>
+    /// Adds to a state condition's parameters the C# helper's extension, or csharpError, why it cannot run, as a state read
+    /// takes them (<see cref="AddStateHelper"/>), so the bridge reads a C# node's _McpState at each check; any other condition,
+    /// or none, is left as it is.
+    /// </summary>
+    private void AddConditionStateHelper(JsonObject? condition, GodotSession target)
+    {
+        if (condition?["kind"]?.GetValue<string>() == "state")
+        {
+            AddStateHelper(condition, csharp.PrepareForState(target.ProjectDir));
+        }
     }
 
     /// <summary>
@@ -557,6 +579,7 @@ internal sealed partial class RuntimeTools
     private static string CheckCondition(WaitCondition? condition)
     {
         CheckTextFields(condition);
+        CheckStateFields(condition);
         CheckSettledFields(condition);
         ConditionKind[] given = condition is null ? [] : [.. ConditionKinds.Where(kind => kind.Given(condition))];
         return given is [var kind] && kind.HasCompanions(condition!) ? kind.Name : throw new McpException(ConditionMessage);
@@ -595,17 +618,40 @@ internal sealed partial class RuntimeTools
         }
     }
 
+    /// <exception cref="McpException">state is blank, comes with property or stable, or comes without equals.</exception>
+    private static void CheckStateFields(WaitCondition? condition)
+    {
+        string? refusal = condition switch
+        {
+            { State: { } state } when string.IsNullOrWhiteSpace(state) =>
+                "condition.state is blank; give a key path into the node's state, such as seats[0].hp, or $ for the whole state.",
+            { State: not null, Property: not null } or { State: not null, Stable: not null } =>
+                "a state condition takes no property or stable; state names the key path to read.",
+            { State: not null } when !HasEquals(condition) =>
+                "a state condition needs equals, the JSON value the key must equal; null is not supported.",
+            _ => null,
+        };
+        if (refusal is not null)
+        {
+            throw new McpException(refusal);
+        }
+    }
+
     // exists names the exists kind only without text, where it says whether the text is to show or to go.
     private static bool IsExistsGiven(WaitCondition condition) => condition.Exists is not null && condition.Text is null;
 
-    // property names the property kind only without stable, where it names the value a settled wait watches.
+    // property names the property kind only without stable, where it names the value a settled wait watches; equals names it
+    // only without state, where it is the value the state key must equal.
     private static bool IsPropertyGiven(WaitCondition condition) =>
-        (condition.Property is not null && condition.Stable is null) || HasEquals(condition);
+        (condition.Property is not null && condition.Stable is null) || (HasEquals(condition) && condition.State is null);
 
     private static bool HasNode(WaitCondition condition) => !string.IsNullOrEmpty(condition.Node);
 
     private static bool HasPropertyCompanions(WaitCondition condition) =>
         HasNode(condition) && !string.IsNullOrEmpty(condition.Property) && HasEquals(condition);
+
+    // CheckStateFields has already refused a state with property or stable, or without equals.
+    private static bool HasStateCompanions(WaitCondition condition) => HasNode(condition) && HasEquals(condition);
 
     // Only true is a kind, and it takes no node: the other kinds' fields already make a second kind.
     private static bool IsUiChangedAlone(WaitCondition condition) => condition.UiChanged is true && condition.Node is null;

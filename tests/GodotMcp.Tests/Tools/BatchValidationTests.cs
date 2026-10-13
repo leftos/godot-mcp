@@ -117,7 +117,7 @@ public sealed class BatchValidationTests : IDisposable
     {
         McpException refused = await RefusedAsync([new BatchStep(Assert: "equals")]);
 
-        Assert.Equal("step 0: assert 'equals' is not one of property, expression, wait, no_errors, screenshot, fired.", refused.Message);
+        Assert.Equal("step 0: assert 'equals' is not one of property, expression, state, wait, no_errors, screenshot, fired.", refused.Message);
     }
 
     [Fact]
@@ -193,7 +193,7 @@ public sealed class BatchValidationTests : IDisposable
     [InlineData(
         "wait",
         "step 0: condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
-            + "{gameMs}, {frames}, {text}, {node, stable}."
+            + "{gameMs}, {frames}, {text}, {node, stable}, {node, state, equals}."
     )]
     public async Task AnAssertionMissingAFieldIsRefused(string assert, string message)
     {
@@ -284,6 +284,60 @@ public sealed class BatchValidationTests : IDisposable
         McpException refused = await RefusedAsync([new BatchStep(Tool: "click"), fired]);
 
         Assert.Equal("step 1: the fired assertion takes node, signal and equals; got stable.", refused.Message);
+    }
+
+    [Fact]
+    public void AStateAssertionIsAcceptedAndDefaultsToCheckOnce()
+    {
+        BatchStep step = new(Assert: "state", Node: "Board", EqualsValue: JsonSerializer.Deserialize<JsonElement>("2"), State: "seats[0].hp");
+
+        RuntimeTools.CheckBatch([step]);
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(RuntimeTools.ConditionOf(step), RuntimeTools.TimeoutOf(step));
+
+        Assert.Equal("state", parameters["kind"]?.GetValue<string>());
+        Assert.Equal("seats[0].hp", parameters["state"]?.GetValue<string>());
+        Assert.Equal(0, parameters["timeoutMs"]?.GetValue<int>());
+    }
+
+    [Theory]
+    [InlineData("node")]
+    [InlineData("state")]
+    [InlineData("equals")]
+    public async Task AStateAssertionWithoutNodeStateOrEqualsIsRefused(string missing)
+    {
+        JsonElement two = JsonSerializer.Deserialize<JsonElement>("2");
+        BatchStep step = new(
+            Assert: "state",
+            Node: missing == "node" ? null : "Board",
+            EqualsValue: missing == "equals" ? null : two,
+            State: missing == "state" ? null : "turn"
+        );
+
+        McpException refused = await RefusedAsync([step]);
+
+        Assert.Equal("step 0: the state assertion needs node, state and equals.", refused.Message);
+    }
+
+    [Fact]
+    public void AWaitAssertionTakesAStateCondition()
+    {
+        BatchStep step = new(Assert: "wait", Node: "Board", EqualsValue: JsonSerializer.Deserialize<JsonElement>("2"), State: "turn");
+
+        RuntimeTools.CheckBatch([step]);
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(RuntimeTools.ConditionOf(step), step.TimeoutMs);
+
+        Assert.Equal("state", parameters["kind"]?.GetValue<string>());
+        Assert.Equal("turn", parameters["state"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task AFiredAssertionWithStateIsRefused()
+    {
+        BatchStep fired = new(Assert: "fired", Node: "Ready", Signal: "pressed", State: "turn");
+
+        McpException refused = await RefusedAsync([new BatchStep(Tool: "click"), fired]);
+
+        Assert.Equal("step 1: the fired assertion takes node, signal and equals; got state.", refused.Message);
     }
 
     [Fact]

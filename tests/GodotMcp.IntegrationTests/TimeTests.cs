@@ -57,6 +57,14 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         + "var mover: Control = get_node('Mover')\\n\\tmover.position.x += 8\\n\\tmoved_frame = Engine.get_process_frames()\\n";
     private const string Settler = "scene_tree.root.get_node(\"SettleBox\")";
     private const string Mover = "SettleBox/Mover";
+
+    // A state of a turn and a seat whose hp falls as the turn rises; once armed, the next turn comes three process frames later.
+    private const string KeeperScript =
+        "extends Node\\n\\nvar turn := 0\\nvar hp := 7\\nvar frames_left := 0\\n\\n\\nfunc arm() -> void:\\n\\tframes_left = 3\\n\\n\\n"
+        + "func _process(_delta: float) -> void:\\n\\tif frames_left <= 0:\\n\\t\\treturn\\n\\tframes_left -= 1\\n\\t"
+        + "if frames_left == 0:\\n\\t\\tturn += 1\\n\\t\\thp -= 1\\n\\n\\n"
+        + "func _mcp_state() -> Dictionary:\\n\\treturn {'turn': turn, 'seats': [{'name': 'alex', 'hp': hp}]}\\n";
+    private const string Keeper = "scene_tree.root.get_node(\"Keeper\")";
     private static readonly WaitCondition UiChangedCondition = new(UiChanged: true);
     private static readonly InputTarget OpenButton = new("OpenButton");
     private readonly SharedProbeSession _shared = shared;
@@ -839,6 +847,101 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         // A step checks its until at each stepped frame's draw, after its _process: the last move's frame reads the final
         // rect first, and each of the next three stepped frames counts once.
         Assert.Equal(movedFrame + 3, stepped["frame"]!.GetValue<long>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStateWaitIsMetOnceAMarkedNodesKeyReachesTheValue()
+    {
+        await AddKeeperAsync(marked: true, TestContext.Current.CancellationToken);
+        WaitOptions options = new(Call: new MethodCall("Keeper", "arm"));
+
+        JsonObject waited = await WaitAsync(new WaitCondition(Node: "Keeper", EqualsValue: Json("6"), State: "seats[0].hp"), options);
+        long turn = (await RunAsync($"return {Keeper}.turn")).GetValue<long>();
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Equal(6, waited["value"]!.GetValue<int>());
+        Assert.Equal(1, turn);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStateWaitOnAPathTheStateLacksTimesOutWithANullLast()
+    {
+        await AddKeeperAsync(marked: true, TestContext.Current.CancellationToken);
+
+        JsonObject waited = await WaitAsync(new WaitCondition(Node: "Keeper", EqualsValue: Json("7"), State: "seats[1].hp"), 300);
+
+        Assert.False(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.True(waited.ContainsKey("last") && waited["last"] is null, waited.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStateWaitOnANodeOutsideTheGroupFailsNamingTheGroup()
+    {
+        await AddKeeperAsync(marked: false, TestContext.Current.CancellationToken);
+
+        McpException failed = await Assert.ThrowsAsync<McpException>(() =>
+            WaitAsync(new WaitCondition(Node: "Keeper", EqualsValue: Json("0"), State: "turn"))
+        );
+
+        Assert.Contains(
+            "'/root/Keeper' is not in the mcp_state group; add it to the group to read its state.",
+            failed.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnEdgeStateWaitIsMetOnlyByARise()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddKeeperAsync(marked: true, cancellation);
+        WaitCondition turnZero = new(Node: "Keeper", EqualsValue: Json("0"), State: "turn");
+        WaitCondition turnOne = new(Node: "Keeper", EqualsValue: Json("1"), State: "turn");
+
+        JsonObject held = JsonNode
+            .Parse(Text(await _tools.WaitForAsync(turnZero, 300, new WaitOptions(Edge: true), cancellationToken: cancellation)))!
+            .AsObject();
+        JsonObject rose = await WaitAsync(turnOne, new WaitOptions(Call: new MethodCall("Keeper", "arm"), Edge: true));
+
+        // turn is 0 throughout the first wait: true at its first check, it never rises.
+        Assert.False(held["met"]!.GetValue<bool>(), held.ToJsonString());
+        Assert.Equal(0, held["last"]!.GetValue<int>());
+        Assert.True(rose["met"]!.GetValue<bool>(), rose.ToJsonString());
+        Assert.Equal(1, rose["value"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACheckOnceStateWaitIsAnsweredWhilePaused()
+    {
+        await AddKeeperAsync(marked: true, TestContext.Current.CancellationToken);
+        await FrameAsync("pause");
+
+        JsonObject met = await WaitAsync(new WaitCondition(Node: "Keeper", EqualsValue: Json("7"), State: "seats[0].hp"), 0);
+        JsonObject missed = await WaitAsync(new WaitCondition(Node: "Keeper", EqualsValue: Json("1"), State: "turn"), 0);
+
+        Assert.True(met["met"]!.GetValue<bool>(), met.ToJsonString());
+        Assert.False(missed["met"]!.GetValue<bool>(), missed.ToJsonString());
+        Assert.Equal(0, missed["last"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task StepUntilAStateConditionStopsOnTheFrameTheKeyChanges()
+    {
+        await AddKeeperAsync(marked: true, TestContext.Current.CancellationToken);
+        await FrameAsync("pause");
+        await RunAsync($"{Keeper}.arm()\n\treturn true");
+
+        JsonObject stepped = await FrameAsync(
+            "step",
+            count: 100,
+            options: new StepOptions(Until: new WaitCondition(Node: "Keeper", EqualsValue: Json("1"), State: "turn"))
+        );
+
+        Assert.True(stepped["met"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.Equal(1, stepped["value"]!.GetValue<int>());
+        Assert.True(stepped["paused"]!.GetValue<bool>(), stepped.ToJsonString());
+        // arm leaves three frames to count down; the third stepped frame's _process changes the turn, and its check meets it.
+        Assert.Equal(3, stepped["processFrames"]!.GetValue<int>());
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -1980,6 +2083,17 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
                 + "var mover := Button.new()\n\tmover.name = \"Mover\"\n\tmover.text = \"Settle\"\n\t"
                 + "mover.position = Vector2(100, 300)\n\tmover.size = Vector2(120, 40)\n\tbox.add_child(mover)\n\t"
                 + "scene_tree.root.add_child(box)\n\treturn true",
+            cancellationToken
+        );
+
+    /// <summary>Adds Keeper, a Node under the root with <see cref="KeeperScript"/>, unarmed, in the mcp_state group when
+    /// <paramref name="marked"/>.</summary>
+    private Task<JsonNode> AddKeeperAsync(bool marked, CancellationToken cancellationToken) =>
+        RunBodyAsync(
+            "var keeper := Node.new()\n\tkeeper.name = \"Keeper\"\n\tvar script := GDScript.new()\n\t"
+                + $"script.source_code = \"{KeeperScript}\"\n\tscript.reload()\n\tkeeper.set_script(script)\n\t"
+                + (marked ? "keeper.add_to_group(\"mcp_state\")\n\t" : "")
+                + "scene_tree.root.add_child(keeper)\n\treturn true",
             cancellationToken
         );
 

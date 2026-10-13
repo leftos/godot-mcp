@@ -26,7 +26,7 @@ internal sealed partial class RuntimeTools
     internal static readonly TimeSpan DefaultBatchDeadline = TimeSpan.FromSeconds(300);
     private const int DefaultTolerance = 2;
     private const int MaxFiredFailureEntries = 10;
-    private const string AssertionKindList = "property, expression, wait, no_errors, screenshot, fired";
+    private const string AssertionKindList = "property, expression, state, wait, no_errors, screenshot, fired";
 
     /// <summary>
     /// The tools a batch step may name: every tool declared on this class but batch_drive itself and save_screenshot, which
@@ -43,6 +43,7 @@ internal sealed partial class RuntimeTools
             CheckWaitAssertion,
             (tools, call) => tools.AssertWaitAsync(call)
         ),
+        ["state"] = new("node, state and equals", HasStateFields, CheckWaitAssertion, (tools, call) => tools.AssertWaitAsync(call)),
         ["wait"] = new("a wait_for condition", _ => true, CheckWaitAssertion, (tools, call) => tools.AssertWaitAsync(call)),
         ["no_errors"] = new("nothing", _ => true, _ => { }, (tools, call) => Task.FromResult(tools.AssertNoErrors(call))),
         ["screenshot"] = new(
@@ -77,6 +78,7 @@ internal sealed partial class RuntimeTools
         ("text", step => step.Text is not null),
         ("under", step => step.Under is not null),
         ("stable", step => step.Stable is not null),
+        ("state", step => step.State is not null),
     ];
 
     [McpServerTool(Name = BatchToolName, ReadOnly = false, Destructive = true, OpenWorld = false)]
@@ -84,8 +86,10 @@ internal sealed partial class RuntimeTools
         "Plays a list of steps against a running game in one call, in order, and stops at the first failed assertion or "
             + "failed tool step. A step is either {tool, args}: a runtime tool by its name with the arguments it takes on its "
             + "own (take_screenshot and compare_screenshot are forced to path_only; image blocks are dropped), or an assertion "
-            + "{assert, ...}: property {node, property, equals, timeoutMs?}, expression {expression, timeoutMs?} (timeoutMs "
-            + "defaults to 0: checked once, now, even while paused), wait {any wait_for condition, gameMs and frames included, "
+            + "{assert, ...}: property {node, property, equals, timeoutMs?}, expression {expression, timeoutMs?} and state {node, "
+            + "state, equals, timeoutMs?}, the value at a key path of the node's state as wait_for's state condition reads it (for "
+            + "all three, timeoutMs defaults to 0: checked once, now, even while paused), wait {any wait_for condition, gameMs "
+            + "and frames included, "
             + "timeoutMs?} (default 10000; gameMs + 10000 for gameMs, 10 s + 100 ms a frame for frames, 10 s + 100 ms for each "
             + "of the stable + 1 frames a settled wait reads), no_errors {} (no "
             + "errors since the previous no_errors, or since the batch started), screenshot {name, "
@@ -255,6 +259,9 @@ internal sealed partial class RuntimeTools
     private static bool HasPropertyFields(BatchStep step) =>
         !string.IsNullOrEmpty(step.Node) && !string.IsNullOrEmpty(step.Property) && step.EqualsValue is { ValueKind: not JsonValueKind.Null };
 
+    private static bool HasStateFields(BatchStep step) =>
+        !string.IsNullOrEmpty(step.Node) && step.State is not null && step.EqualsValue is { ValueKind: not JsonValueKind.Null };
+
     private static bool HasFiredFields(BatchStep step) => !string.IsNullOrEmpty(step.Node) && !string.IsNullOrEmpty(step.Signal);
 
     /// <summary>Refuses a fired assertion's equals that is not an array, and any field the kind does not take.</summary>
@@ -288,12 +295,13 @@ internal sealed partial class RuntimeTools
         _ = CheckCompareArguments(null, step.Tolerance ?? DefaultTolerance, CompareOptionsOf(step));
     }
 
-    /// <summary>The wait_for condition an assertion checks: only its own kind's fields for property and expression.</summary>
+    /// <summary>The wait_for condition an assertion checks: only its own kind's fields for property, expression and state.</summary>
     internal static WaitCondition ConditionOf(BatchStep step) =>
         step.Assert switch
         {
             "property" => new WaitCondition(Node: step.Node, Property: step.Property, EqualsValue: step.EqualsValue),
             "expression" => new WaitCondition(Node: step.Node, Expression: step.Expression),
+            "state" => new WaitCondition(Node: step.Node, EqualsValue: step.EqualsValue, State: step.State),
             _ => new WaitCondition(
                 step.Node,
                 step.Exists,
@@ -306,12 +314,13 @@ internal sealed partial class RuntimeTools
                 step.Frames,
                 step.Text,
                 step.Under,
-                step.Stable
+                step.Stable,
+                step.State
             ),
         };
 
-    /// <summary>The step's timeoutMs; left out, 0 for property and expression, and wait_for's own default for wait.</summary>
-    private static int? TimeoutOf(BatchStep step) => step.Assert == "wait" ? step.TimeoutMs : step.TimeoutMs ?? 0;
+    /// <summary>The step's timeoutMs; left out, 0 for property, expression and state, and wait_for's own default for wait.</summary>
+    internal static int? TimeoutOf(BatchStep step) => step.Assert == "wait" ? step.TimeoutMs : step.TimeoutMs ?? 0;
 
     private static CompareOptions CompareOptionsOf(BatchStep step) => new(step.MaxChangedRatio ?? 0, "path_only");
 

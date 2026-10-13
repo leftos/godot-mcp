@@ -86,5 +86,6 @@ internal sealed record CaptureStart(
         MethodCall? Call = null,
     [property: Description("Refused: options.start takes an exists, property or expression condition.")] string? Text = null,
     [property: Description("Refused: options.start takes an exists, property or expression condition.")] string? Under = null,
-    [property: Description("Refused: options.start takes an exists, property or expression condition.")] int? Stable = null
+    [property: Description("Refused: options.start takes an exists, property or expression condition.")] int? Stable = null,
+    [property: Description("Refused: options.start takes an exists, property or expression condition.")] string? State = null
 );

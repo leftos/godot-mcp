@@ -8,7 +8,8 @@ namespace CsProbe;
 /// The C# nodes get_game_state's tests read: added as this node's children when it enters the tree, each in the mcp_state
 /// group, in this order: a private _McpState returning a record, an internal one returning a Godot Dictionary, one that
 /// throws, one returning a Task, one with both _McpState and a Godot-visible _mcp_state, one with neither, one whose
-/// call throws (a Span return), one with only a Godot-visible _mcp_state, and one returning the process frame it is read in.
+/// call throws (a Span return), one with only a Godot-visible _mcp_state, one returning the process frame it is read in, and
+/// one whose turn Arm advances three process frames later.
 /// </summary>
 public partial class CsState : Node
 {
@@ -23,6 +24,7 @@ public partial class CsState : Node
         Mark(new BrokenState(), "Broken");
         Mark(new VisibleState(), "Visible");
         Mark(new FrameState(), "Frame");
+        Mark(new CounterState(), "Counter");
     }
 
     private void Mark(Node node, string name)
@@ -96,4 +98,32 @@ public partial class VisibleState : Node
 public partial class FrameState : Node
 {
     private ulong _McpState() => Engine.GetProcessFrames();
+}
+
+/// <summary>
+/// An anonymous-type state of a turn and a seat whose hp follows it, which changes only when armed: Arm advances the turn
+/// three process frames later, so a wait can watch the change happen while the game runs.
+/// </summary>
+public partial class CounterState : Node
+{
+    private int _turn;
+    private int _framesLeft;
+
+    public void Arm() => _framesLeft = 3;
+
+    public override void _Process(double delta)
+    {
+        if (_framesLeft == 0)
+        {
+            return;
+        }
+
+        _framesLeft--;
+        if (_framesLeft == 0)
+        {
+            _turn++;
+        }
+    }
+
+    private object _McpState() => new { Turn = _turn, Seats = new[] { new Seat("alex", 7 + _turn) } };
 }
