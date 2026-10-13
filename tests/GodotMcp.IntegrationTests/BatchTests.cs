@@ -19,6 +19,13 @@ public sealed class BatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
 {
     private const int TestTimeoutMs = 45_000;
     private const string SmallButton = "Main/SmallButton";
+
+    // A Button named Ready at (400, 250) under the root, drawn before a click picks it.
+    private const string ReadyButtonScript =
+        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t"
+        + "var ready := Button.new()\n\tready.name = \"Ready\"\n\tready.text = \"Ready\"\n\t"
+        + "ready.position = Vector2(400, 250)\n\tready.size = Vector2(120, 40)\n\t"
+        + "scene_tree.root.add_child(ready)\n\tawait scene_tree.process_frame\n\tawait scene_tree.process_frame\n\treturn true\n";
     private readonly SharedProbeSession _shared;
     private readonly ServiceProvider _services;
     private readonly McpServer _server;
@@ -251,6 +258,76 @@ public sealed class BatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
         Assert.Equal(0.5, step["result"]!["then"]!["timeScale"]!.GetValue<double>());
         Assert.True(step["result"]!["then"]!["frame"]!.GetValue<long>() > 0, step.ToJsonString());
     }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AFiredAssertionPassesOnThePressedButtonsSignalAndFailsOnAnother()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await _tools.RunScriptAsync(ReadyButtonScript, 10_000, cancellationToken: cancellation);
+
+        JsonObject passed = await BatchAsync(
+            cancellation,
+            ClickReady(),
+            new BatchStep(Assert: "no_errors"),
+            new BatchStep(Assert: "fired", Node: "Ready", Signal: "pressed")
+        );
+
+        Assert.True(passed["passed"]!.GetValue<bool>(), passed.ToJsonString());
+        JsonObject fired = passed["steps"]![2]!["result"]!["fired"]!.AsObject();
+        Assert.Equal("pressed", fired["signal"]!.GetValue<string>());
+        Assert.EndsWith("/Ready", fired["node"]!.GetValue<string>(), StringComparison.Ordinal);
+
+        JsonObject failed = await BatchAsync(
+            cancellation,
+            ClickReady(),
+            new BatchStep(Assert: "no_errors"),
+            new BatchStep(Assert: "fired", Node: "Ready", Signal: "toggled")
+        );
+
+        Assert.False(failed["passed"]!.GetValue<bool>(), failed.ToJsonString());
+        Assert.Equal(2, failed["failedAt"]!["index"]!.GetValue<int>());
+        Assert.StartsWith(
+            "the fired assertion wanted Ready.toggled but step 0 fired: ",
+            failed["failedAt"]!["reason"]!.GetValue<string>(),
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AFiredAssertionChecksTheNearestEarlierToolStep()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await _tools.RunScriptAsync(ReadyButtonScript, 10_000, cancellationToken: cancellation);
+
+        JsonObject nearest = await BatchAsync(
+            cancellation,
+            ClickSmallButton(),
+            ClickReady(),
+            new BatchStep(Assert: "fired", Node: "Ready", Signal: "pressed")
+        );
+
+        Assert.True(nearest["passed"]!.GetValue<bool>(), nearest.ToJsonString());
+
+        JsonObject first = await BatchAsync(
+            cancellation,
+            ClickSmallButton(),
+            ClickReady(),
+            new BatchStep(Assert: "fired", Node: SmallButton, Signal: "pressed")
+        );
+
+        Assert.False(first["passed"]!.GetValue<bool>(), first.ToJsonString());
+        Assert.Equal(2, first["failedAt"]!["index"]!.GetValue<int>());
+        Assert.StartsWith(
+            $"the fired assertion wanted {SmallButton}.pressed but step 1 fired: ",
+            first["failedAt"]!["reason"]!.GetValue<string>(),
+            StringComparison.Ordinal
+        );
+    }
+
+    private static BatchStep ClickReady() => new(Tool: "click", Args: new JsonObject { ["target"] = new JsonObject { ["element"] = "Ready" } });
+
+    private static BatchStep ClickSmallButton() =>
+        new(Tool: "click", Args: new JsonObject { ["target"] = new JsonObject { ["element"] = "SmallButton" } });
 
     private static BatchStep PressCount(int count) =>
         new(Assert: "property", Node: SmallButton, Property: "press_count", EqualsValue: JsonSerializer.SerializeToElement(count));

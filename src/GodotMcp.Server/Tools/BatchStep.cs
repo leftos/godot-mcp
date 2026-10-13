@@ -11,14 +11,26 @@ namespace GodotMcp.Server.Tools;
 internal sealed record BatchStep(
     [property: Description("A runtime tool's name, e.g. click or take_screenshot; leave out for an assertion.")] string? Tool = null,
     [property: Description("The tool's arguments, as the tool takes them on its own.")] JsonObject? Args = null,
-    [property: Description("An assertion: property, expression, wait, no_errors or screenshot; leave out for a tool step.")] string? Assert = null,
-    [property: Description("property, wait: the node, as wait_for takes it; expression: its node input, optional.")] string? Node = null,
+    [property: Description("An assertion: property, expression, wait, no_errors, screenshot or fired; leave out for a tool step.")]
+        string? Assert = null,
+    [property: Description(
+        "property, wait: the node, as wait_for takes it; expression: its node input, optional; fired: the node the nearest "
+            + "earlier tool step's fired list must carry the signal on, its absolute path or a path tail."
+    )]
+        string? Node = null,
     [property: Description("wait: with node, the node present (true) or absent (false).")] bool? Exists = null,
     [property: Description("property, wait: the property to compare; a subproperty path such as position:x works too.")] string? Property = null,
     [property: JsonPropertyName("equals")]
-    [property: Description("property, wait: the JSON value the property must equal, as wait_for compares it; null is not supported.")]
+    [property: Description(
+        "property, wait: the JSON value the property must equal, as wait_for compares it; null is not supported; fired: the "
+            + "array of arguments the emission must have carried, any arguments matching when left out."
+    )]
         JsonElement? EqualsValue = null,
-    [property: Description("wait: with node, the signal whose next emission is waited for.")] string? Signal = null,
+    [property: Description(
+        "wait: with node, the signal whose next emission is waited for; fired: the signal the nearest earlier tool step's "
+            + "fired list must carry for that node."
+    )]
+        string? Signal = null,
     [property: Description("expression, wait: a Godot Expression that must return true, as wait_for evaluates it.")] string? Expression = null,
     [property: Description(
         "wait: true, alone, to wait for the UI to change from the snapshot taken when the first input gesture since launch, or "

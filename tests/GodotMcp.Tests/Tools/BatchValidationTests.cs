@@ -117,7 +117,73 @@ public sealed class BatchValidationTests : IDisposable
     {
         McpException refused = await RefusedAsync([new BatchStep(Assert: "equals")]);
 
-        Assert.Equal("step 0: assert 'equals' is not one of property, expression, wait, no_errors, screenshot.", refused.Message);
+        Assert.Equal("step 0: assert 'equals' is not one of property, expression, wait, no_errors, screenshot, fired.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AFiredAssertionWithoutAToolStepBeforeItIsRefused()
+    {
+        McpException refused = await RefusedAsync([new BatchStep(Assert: "fired", Node: "Ready", Signal: "pressed")]);
+
+        Assert.Equal("step 0: assert 'fired' needs a tool step before it, whose fired list it checks.", refused.Message);
+    }
+
+    [Fact]
+    public void AFiredAssertionIsAcceptedAfterAToolStepWithAnAssertionInBetween() =>
+        RuntimeTools.CheckBatch([
+            new BatchStep(Tool: "click"),
+            new BatchStep(Assert: "no_errors"),
+            new BatchStep(Assert: "fired", Node: "Ready", Signal: "pressed"),
+        ]);
+
+    [Theory]
+    [InlineData(null, "pressed")]
+    [InlineData("Ready", null)]
+    [InlineData("", "pressed")]
+    [InlineData("Ready", "")]
+    public async Task AFiredAssertionWithoutANodeOrSignalIsRefused(string? node, string? signal)
+    {
+        McpException refused = await RefusedAsync([new BatchStep(Tool: "click"), new BatchStep(Assert: "fired", Node: node, Signal: signal)]);
+
+        Assert.Equal("step 1: the fired assertion needs node and signal.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AFiredAssertionsEqualsThatIsNotAnArrayIsRefused()
+    {
+        BatchStep fired = new(Assert: "fired", Node: "Ready", Signal: "pressed", EqualsValue: JsonSerializer.SerializeToElement(5));
+
+        McpException refused = await RefusedAsync([new BatchStep(Tool: "click"), fired]);
+
+        Assert.Equal("step 1: equals must be an array of the emission's arguments; got 5.", refused.Message);
+    }
+
+    [Fact]
+    public void AFiredAssertionsEqualsMayBeAnArrayOrJsonNull() =>
+        RuntimeTools.CheckBatch([
+            new BatchStep(Tool: "click"),
+            new BatchStep(Assert: "fired", Node: "Ready", Signal: "pressed", EqualsValue: JsonSerializer.Deserialize<JsonElement>("[true]")),
+            new BatchStep(Assert: "fired", Node: "Ready", Signal: "pressed", EqualsValue: JsonSerializer.Deserialize<JsonElement>("null")),
+        ]);
+
+    [Fact]
+    public async Task AFiredAssertionWithToolArgsIsRefused()
+    {
+        BatchStep fired = new(Assert: "fired", Node: "Ready", Signal: "pressed", Args: new JsonObject { ["element"] = "Ready" });
+
+        McpException refused = await RefusedAsync([new BatchStep(Tool: "click"), fired]);
+
+        Assert.Equal("step 1: the fired assertion takes node, signal and equals; got args.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AFiredAssertionWithFieldsItDoesNotTakeIsRefused()
+    {
+        BatchStep fired = new(Assert: "fired", Node: "Ready", Signal: "pressed", GameMs: 5, Name: "menu");
+
+        McpException refused = await RefusedAsync([new BatchStep(Tool: "click"), fired]);
+
+        Assert.Equal("step 1: the fired assertion takes node, signal and equals; got gameMs, name.", refused.Message);
     }
 
     [Theory]

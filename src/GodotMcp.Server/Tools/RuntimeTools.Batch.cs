@@ -25,7 +25,8 @@ internal sealed partial class RuntimeTools
     internal const string BatchToolName = "batch_drive";
     internal static readonly TimeSpan DefaultBatchDeadline = TimeSpan.FromSeconds(300);
     private const int DefaultTolerance = 2;
-    private const string AssertionKindList = "property, expression, wait, no_errors, screenshot";
+    private const int MaxFiredFailureEntries = 10;
+    private const string AssertionKindList = "property, expression, wait, no_errors, screenshot, fired";
 
     /// <summary>
     /// The tools a batch step may name: every tool declared on this class but batch_drive itself and save_screenshot, which
@@ -50,7 +51,30 @@ internal sealed partial class RuntimeTools
             CheckScreenshotAssertion,
             (tools, call) => tools.AssertScreenshotAsync(call)
         ),
+        ["fired"] = new(
+            "node and signal",
+            HasFiredFields,
+            CheckFiredAssertion,
+            (_, call) => Task.FromResult(AssertFired(call)),
+            NeedsToolBefore: true
+        ),
     }.ToFrozenDictionary();
+
+    /// <summary>How a step shows that each field a fired assertion does not take was given.</summary>
+    private static readonly (string Name, Func<BatchStep, bool> Given)[] FiredForeignStepFields =
+    [
+        ("args", step => step.Args is not null),
+        ("exists", step => step.Exists is not null),
+        ("property", step => !string.IsNullOrEmpty(step.Property)),
+        ("expression", step => !string.IsNullOrEmpty(step.Expression)),
+        ("uiChanged", step => step.UiChanged is not null),
+        ("gameMs", step => step.GameMs is not null),
+        ("frames", step => step.Frames is not null),
+        ("timeoutMs", step => step.TimeoutMs is not null),
+        ("name", step => !string.IsNullOrEmpty(step.Name)),
+        ("tolerance", step => step.Tolerance is not null),
+        ("maxChangedRatio", step => step.MaxChangedRatio is not null),
+    ];
 
     [McpServerTool(Name = BatchToolName, ReadOnly = false, Destructive = true, OpenWorld = false)]
     [Description(
@@ -61,7 +85,9 @@ internal sealed partial class RuntimeTools
             + "defaults to 0: checked once, now, even while paused), wait {any wait_for condition, gameMs and frames included, "
             + "timeoutMs?} (default 10000; gameMs + 10000 for gameMs, 10 s + 100 ms a frame for frames), no_errors {} (no "
             + "errors since the previous no_errors, or since the batch started), screenshot {name, "
-            + "tolerance?, maxChangedRatio?} (compare_screenshot must match). Any step may carry session. At most 100 steps; "
+            + "tolerance?, maxChangedRatio?} (compare_screenshot must match), fired {node, signal, equals?} (the nearest "
+            + "earlier tool step's fired list has that node's signal, with those arguments when equals is given). Any step may "
+            + "carry session. At most 100 steps; "
             + "the whole batch stops after 300 s of load-adjusted time. Returns {passed, steps: [{index, tool or assert, ok, result or error}], "
             + "failedAt?: {index, reason}}."
     )]
@@ -80,6 +106,7 @@ internal sealed partial class RuntimeTools
         for (int index = 0; index < steps.Count && failedAt is null; index++)
         {
             StepOutcome outcome = await RunStepOrDeadlineAsync(run, index, steps[index], cancellationToken);
+            RecordToolStep(run, index, steps[index], outcome);
             entries.Add(outcome.ToEntry(index, steps[index]));
             failedAt = outcome.Ok ? null : new JsonObject { ["index"] = index, ["reason"] = outcome.Error };
         }
@@ -91,6 +118,15 @@ internal sealed partial class RuntimeTools
         }
 
         return result.ToJsonString();
+    }
+
+    /// <summary>Keeps the step's result for a later fired assertion to check it, when the step runs a tool.</summary>
+    private static void RecordToolStep(BatchRun run, int index, BatchStep step, StepOutcome outcome)
+    {
+        if (step.Tool is { } tool)
+        {
+            run.LastTool = (index, tool, outcome.Result as JsonObject);
+        }
     }
 
     /// <summary>How long a whole batch may run; <see cref="DefaultBatchDeadline"/> but in tests.</summary>
@@ -113,9 +149,11 @@ internal sealed partial class RuntimeTools
             throw new McpException($"a batch takes at most {MaxBatchSteps} steps; split it.");
         }
 
+        bool toolStepBefore = false;
         for (int index = 0; index < steps.Count; index++)
         {
-            CheckStep(index, steps[index]);
+            CheckStep(index, steps[index], toolStepBefore);
+            toolStepBefore |= steps[index]?.Tool is not null;
         }
     }
 
@@ -160,7 +198,7 @@ internal sealed partial class RuntimeTools
             .Where(name => name is not (BatchToolName or SaveScreenshotToolName))
             .ToFrozenSet();
 
-    private static void CheckStep(int index, BatchStep? step)
+    private static void CheckStep(int index, BatchStep? step, bool toolStepBefore)
     {
         if (step is null || (step.Tool is null) == (step.Assert is null))
         {
@@ -180,14 +218,19 @@ internal sealed partial class RuntimeTools
             return;
         }
 
-        CheckAssertion(index, step);
+        CheckAssertion(index, step, toolStepBefore);
     }
 
-    private static void CheckAssertion(int index, BatchStep step)
+    private static void CheckAssertion(int index, BatchStep step, bool toolStepBefore)
     {
         if (!AssertionKinds.TryGetValue(step.Assert!, out AssertionKind? kind))
         {
             throw new McpException($"step {index}: assert '{step.Assert}' is not one of {AssertionKindList}.");
+        }
+
+        if (kind.NeedsToolBefore && !toolStepBefore)
+        {
+            throw new McpException(NeedsToolStepRefusal(index, step.Assert!));
         }
 
         if (!kind.IsComplete(step))
@@ -207,6 +250,31 @@ internal sealed partial class RuntimeTools
 
     private static bool HasPropertyFields(BatchStep step) =>
         !string.IsNullOrEmpty(step.Node) && !string.IsNullOrEmpty(step.Property) && step.EqualsValue is { ValueKind: not JsonValueKind.Null };
+
+    private static bool HasFiredFields(BatchStep step) => !string.IsNullOrEmpty(step.Node) && !string.IsNullOrEmpty(step.Signal);
+
+    /// <summary>Refuses a fired assertion's equals that is not an array, and any field the kind does not take.</summary>
+    private static void CheckFiredAssertion(BatchStep step)
+    {
+        if (step.EqualsValue is { ValueKind: not (JsonValueKind.Null or JsonValueKind.Array) } equals)
+        {
+            throw new McpException($"equals must be an array of the emission's arguments; got {equals.GetRawText()}.");
+        }
+
+        string[] foreign = ForeignFieldsOf(step);
+        if (foreign.Length > 0)
+        {
+            throw new McpException($"the fired assertion takes node, signal and equals; got {string.Join(", ", foreign)}.");
+        }
+    }
+
+    /// <summary>The step's fields a fired assertion was given but does not take, in the step record's order.</summary>
+    private static string[] ForeignFieldsOf(BatchStep step) =>
+        [.. FiredForeignStepFields.Where(field => field.Given(step)).Select(field => field.Name)];
+
+    /// <summary>The refusal of a fired assertion no tool step comes before; validation raises it before the batch runs.</summary>
+    private static string NeedsToolStepRefusal(int index, string assert) =>
+        $"step {index}: assert '{assert}' needs a tool step before it, whose fired list it checks.";
 
     private static void CheckWaitAssertion(BatchStep step) => _ = BuildWaitParameters(ConditionOf(step), TimeoutOf(step));
 
@@ -274,7 +342,7 @@ internal sealed partial class RuntimeTools
         try
         {
             run.Cancellation.ThrowIfCancellationRequested();
-            return await RunStepAsync(run, step);
+            return await RunStepAsync(run, index, step);
         }
         catch (OperationCanceledException) when (DeadlinePassed(run, clientCancellation))
         {
@@ -306,12 +374,12 @@ internal sealed partial class RuntimeTools
         return StepOutcome.Failed($"{exception.GetType().Name}: {exception.Message}");
     }
 
-    private Task<StepOutcome> RunStepAsync(BatchRun run, BatchStep step)
+    private Task<StepOutcome> RunStepAsync(BatchRun run, int index, BatchStep step)
     {
         string? session = step.Session ?? run.Session;
         return step.Tool is not null
             ? RunToolStepAsync(run, step.Tool, ToolArguments(step.Tool, step.Args, session))
-            : AssertionKinds[step.Assert!].RunAsync(this, new AssertionCall(step, session, run));
+            : AssertionKinds[step.Assert!].RunAsync(this, new AssertionCall(step, session, run, index));
     }
 
     /// <summary>Invokes a tool from the server's own collection, as a client's call would, and keeps its text as JSON.</summary>
@@ -419,6 +487,131 @@ internal sealed partial class RuntimeTools
 
     private static string TextOf(IEnumerable<ContentBlock> blocks) => string.Concat(blocks.OfType<TextContentBlock>().Select(block => block.Text));
 
+    /// <summary>
+    /// The fired assertion: the nearest earlier tool step's result lists an entry for the step's node and signal, with the
+    /// step's arguments when it gives equals.
+    /// </summary>
+    private static StepOutcome AssertFired(AssertionCall call)
+    {
+        (int Index, string Tool, JsonObject? Result) toolStep =
+            call.Run.LastTool ?? throw new McpException(NeedsToolStepRefusal(call.Index, call.Step.Assert!));
+        FiredCheck check = CheckFired(call.Step, call.Index, toolStep.Index, toolStep.Tool, toolStep.Result);
+        return check.Reason is { } reason ? StepOutcome.Failed(reason) : StepOutcome.Passed(check.Result);
+    }
+
+    /// <summary>
+    /// Checks a fired assertion against a tool step's result: the entry whose node is the step's or ends with it on a path
+    /// segment boundary, whose signal is the step's, and whose arguments equal the step's equals when it gives one. A
+    /// passing check answers {fired: entry}, a failing one the reason.
+    /// </summary>
+    internal static FiredCheck CheckFired(BatchStep step, int index, int toolIndex, string tool, JsonObject? result)
+    {
+        if (result?["fired"] is not JsonArray fired)
+        {
+            return FiredCheck.Failed(
+                $"step {index}: the fired assertion checks step {toolIndex} ({tool}), whose result has no fired list, so "
+                    + "there is nothing to check."
+            );
+        }
+
+        JsonObject? matched = fired.OfType<JsonObject>().FirstOrDefault(entry => MatchesFiredEntry(step, entry));
+        return matched is not null
+            ? FiredCheck.Passed(new JsonObject { ["fired"] = matched.DeepClone() })
+            : FiredCheck.Failed(FiredFailure(step, toolIndex, result, fired));
+    }
+
+    /// <summary>Whether an entry is the step's node and signal, its arguments equal to equals when the step gives one.</summary>
+    private static bool MatchesFiredEntry(BatchStep step, JsonObject entry) =>
+        NodeMatches(EntryText(entry["node"]), step.Node!) && EntryText(entry["signal"]) == step.Signal && ArgsMatch(step.EqualsValue, entry["args"]);
+
+    /// <summary>Whether an entry's node is the wanted path, or ends with it on a path segment boundary.</summary>
+    private static bool NodeMatches(string? entryNode, string wanted) =>
+        entryNode == wanted || (entryNode?.EndsWith("/" + wanted, StringComparison.Ordinal) ?? false);
+
+    /// <summary>
+    /// Whether an entry's arguments equal the step's equals, the whole array. An entry with none reads as an empty array,
+    /// and a step that gives no equals matches any arguments.
+    /// </summary>
+    private static bool ArgsMatch(JsonElement? equals, JsonNode? args)
+    {
+        if (equals is not { } expected || expected.ValueKind == JsonValueKind.Null)
+        {
+            return true;
+        }
+
+        return JsonNode.DeepEquals(JsonNode.Parse(expected.GetRawText()), args ?? new JsonArray());
+    }
+
+    /// <summary>The text of a fired assertion that matched no entry.</summary>
+    private static string FiredFailure(BatchStep step, int toolIndex, JsonObject result, JsonArray fired)
+    {
+        string wanted = $"{step.Node}.{step.Signal}";
+        if (step.EqualsValue is { ValueKind: not JsonValueKind.Null } equals)
+        {
+            wanted += $" with args {equals.GetRawText()}";
+        }
+
+        string summary = FiredSummary(step, result, fired);
+        return $"the fired assertion wanted {wanted} but step {toolIndex} fired: {summary}{DroppedClause(result)}";
+    }
+
+    /// <summary>What a failed fired assertion says the step before fired: ten entries as node.signal, else what was listened on.</summary>
+    private static string FiredSummary(BatchStep step, JsonObject result, JsonArray fired)
+    {
+        if (fired.Count == 0)
+        {
+            string[] listenedOn = [.. (result["listenedOn"] as JsonArray ?? []).Select(EntryText).OfType<string>()];
+            return listenedOn.Length == 0 ? "nothing fired and nothing was listened on" : $"nothing fired on {string.Join(", ", listenedOn)}";
+        }
+
+        string[] shown = [.. fired.Take(MaxFiredFailureEntries).Select(entry => EntryName(entry, step))];
+        return fired.Count <= MaxFiredFailureEntries
+            ? string.Join(", ", shown)
+            : $"{string.Join(", ", shown)}, … ({fired.Count - MaxFiredFailureEntries} more)";
+    }
+
+    /// <summary>The clause a failure adds when the step's fired list was cut, empty when nothing was dropped.</summary>
+    private static string DroppedClause(JsonObject result)
+    {
+        int dropped = DroppedCount(result);
+        return dropped > 0 ? $"; {dropped} more were dropped from the fired list" : "";
+    }
+
+    /// <summary>The entries the step's result dropped past its fired list, 0 when it carries none or not a number.</summary>
+    private static int DroppedCount(JsonObject result)
+    {
+        if (result["firedDropped"] is not JsonValue value)
+        {
+            return 0;
+        }
+
+        return value.TryGetValue(out int dropped) ? dropped
+            : value.TryGetValue(out double number) ? (int)number
+            : 0;
+    }
+
+    /// <summary>
+    /// An entry as node.signal for a failure's list, with its arguments when it is the node and signal the assertion wanted
+    /// (so equals is what failed); "?" for an entry that is not an object.
+    /// </summary>
+    private static string EntryName(JsonNode? entry, BatchStep step)
+    {
+        if (entry is not JsonObject item)
+        {
+            return "?";
+        }
+
+        string name = $"{EntryText(item["node"])}.{EntryText(item["signal"])}";
+        bool wanted = NodeMatches(EntryText(item["node"]), step.Node!) && EntryText(item["signal"]) == step.Signal;
+        return wanted ? $"{name} with args {CompactArgs(item["args"])}" : name;
+    }
+
+    /// <summary>An entry's arguments as compact JSON, an empty array when it carries none.</summary>
+    private static string CompactArgs(JsonNode? args) => args?.ToJsonString() ?? "[]";
+
+    /// <summary>The string a node holds, or null when it is not a string.</summary>
+    private static string? EntryText(JsonNode? node) => node is JsonValue value && value.TryGetValue(out string? text) ? text : null;
+
     /// <summary>A tool's text as JSON when it parses, else as a JSON string.</summary>
     private static JsonNode? ParseText(string text)
     {
@@ -437,21 +630,33 @@ internal sealed partial class RuntimeTools
     {
         /// <summary>Cancelled when the batch's deadline passes or the client cancels the call.</summary>
         public CancellationToken Cancellation => Deadline.Token;
+
+        /// <summary>The nearest earlier tool step's index, tool and result, whose fired list a fired assertion checks.</summary>
+        public (int Index, string Tool, JsonObject? Result)? LastTool { get; set; }
     }
 
-    /// <summary>One assertion step as it runs: the step, the session it addresses, and its batch.</summary>
-    private sealed record AssertionCall(BatchStep Step, string? Session, BatchRun Run);
+    /// <summary>One assertion step as it runs: the step, its index, the session it addresses, and its batch.</summary>
+    private sealed record AssertionCall(BatchStep Step, string? Session, BatchRun Run, int Index);
 
     /// <summary>
     /// An assertion kind: the fields it needs (for the refusal), whether a step has them, its further checks before the batch
-    /// runs, and how it runs.
+    /// runs, how it runs, and whether it checks an earlier tool step.
     /// </summary>
     private sealed record AssertionKind(
         string Needs,
         Func<BatchStep, bool> IsComplete,
         Action<BatchStep> Check,
-        Func<RuntimeTools, AssertionCall, Task<StepOutcome>> RunAsync
+        Func<RuntimeTools, AssertionCall, Task<StepOutcome>> RunAsync,
+        bool NeedsToolBefore = false
     );
+
+    /// <summary>A fired assertion's check: what it answers when it matches ({fired: entry}), or why it did not.</summary>
+    internal sealed record FiredCheck(JsonNode? Result, string? Reason)
+    {
+        public static FiredCheck Passed(JsonNode result) => new(result, null);
+
+        public static FiredCheck Failed(string reason) => new(null, reason);
+    }
 
     /// <summary>A step's outcome: its result when it passed, the reason when it failed.</summary>
     private sealed record StepOutcome(bool Ok, JsonNode? Result, string? Error)
