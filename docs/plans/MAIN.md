@@ -5,7 +5,7 @@
 ## Ideas from the survey and the projects
 
 - [ ] GMCP-6 record: only Movie Maker, which runs faster than real time
-- [ ] GMCP-47 Drives across several processes · release vNext+1
+- [ ] GMCP-47 Drives across several processes · release vNext
 - [ ] GMCP-43 Report the signals a gesture fired
 - [ ] GMCP-44 Step-until: frame_control until and input
 - [ ] GMCP-46 Audio tracks in the watch: voices and buses
@@ -76,3 +76,9 @@
 - [ ] GMCP-101 Sort the docs/README.md glossary alphabetically
 - [ ] GMCP-118 Quote the current then refusal text in TOOLS.md
 - [ ] GMCP-117 Add a docs-owner map to the godot-mcp nextup profile
+
+## No project
+
+- [ ] GMCP-166 Real-time recording with the display off records a flat frame without saying why
+- [ ] GMCP-167 Scratch runner itest's wall-clock xunit timeout trips on a busy machine
+- [ ] GMCP-168 Size itest group ceilings for the local build a routed build now forces
