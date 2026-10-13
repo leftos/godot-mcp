@@ -5,14 +5,11 @@
 ## Ideas from the survey and the projects
 
 - [ ] GMCP-6 record: only Movie Maker, which runs faster than real time
-  - [/] GMCP-138 Real-time recording step 5: the game's audio track · release vNext
-  - [ ] GMCP-139 Real-time recording step 6: docs for the real-time route · release vNext
 - [ ] GMCP-47 Drives across several processes · release vNext+1
 - [ ] GMCP-43 Report the signals a gesture fired
 - [ ] GMCP-44 Step-until: frame_control until and input
 - [ ] GMCP-46 Audio tracks in the watch: voices and buses
 - [ ] GMCP-17 State digest: wait_for on a state key, then tell the game repos
-  - [ ] GMCP-143 State digest step 5: wait_for on a state key and its batch_drive assertion · release vNext
 - [ ] GMCP-68 Adopt driving lessons from the sibling projects
   - [ ] GMCP-69 Probe h264_nvenc with a real 256x256 encode before cutting clips
   - [ ] GMCP-70 Give each launch a scratch user:// folder so drives never touch real saves
@@ -27,8 +24,6 @@
 
 - [ ] GMCP-92 capture_frames on a windowed run stretches each captured frame to ~140 ms
 - [ ] GMCP-65 hover: the per-frame re-pick hides whether the game re-picked the hover
-- [/] GMCP-127 save_screenshot: refuses a path in the repo's .tmp above the project folder · release vNext
-- [/] GMCP-113 wait_for: cannot wait for a Control's layout to settle before a press · release vNext
 - [ ] GMCP-24 Fall back to a full save when a splice leaves two nodes one unique_id
 - [ ] GMCP-26 Give the bridge's mouse motions a velocity
 - [ ] GMCP-63 Name a Control's rect when its centre lies outside its SubViewport or embedded window
@@ -54,7 +49,6 @@
 - [ ] GMCP-107 Fix ScratchRunnerTests' ceiling-kill flake: a step past its ceiling read red, not killed
 - [ ] GMCP-114 hover: the paused-tooltip warning fires on a disabled-process Control in a running game
 - [ ] GMCP-116 Find whether a real-time recording's helper and ffmpeg stretch load-adjusted waits
-- [ ] GMCP-131 Measure where the 16-minute itest run goes and propose cuts · release vNext
 - [ ] GMCP-145 Fail a launch fast on Godot's no-GL ANGLE error, and keep windowed heavy itest groups local
 - [ ] GMCP-147 Load-proof the capture group's helper-exit and drag-clip itests
 - [ ] GMCP-149 Keep run_scratches' exit lines as short as a failing step's
@@ -65,6 +59,14 @@
 - [ ] GMCP-154 Stop parallel itest lanes colliding on the server's obj output (CS2012)
 - [ ] GMCP-155 Load-proof the real-time unit tests that set a helper frame limit before the start
 - [ ] GMCP-156 Close save_screenshot's link holes: .godot through a project junction, short-name targets, the checkout walk
+- [ ] GMCP-158 Give transforms a structured JSON form in tool results, and compare settled transforms as numbers
+- [ ] GMCP-159 itest: move scratch and reads out of the timing lane
+- [ ] GMCP-160 itest: build the itest project locally so no group rebuilds
+- [ ] GMCP-161 TimeTests: step 10 frames, not 120, in the no-draw deadline test
+- [ ] GMCP-162 itest: give prep, headless, scene, nodes and scratch light gate slots
+- [ ] GMCP-163 itest: one shared Godot fixture per group instead of per class
+- [ ] GMCP-164 WatchdogTests: shorten the 20 s stuck-game block
+- [ ] GMCP-165 itest headless: reuse one probe copy and warm host per class
 
 ## Docs
 
