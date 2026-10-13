@@ -201,7 +201,7 @@ All input tools answer `{pointer, heldButtonMask}` once the gesture has ended an
 
 A run of one signal on one node folds into one entry with `count`, the run's first `frame` and its last `args`; `args` is left out when empty, and an argument over 200 characters of JSON becomes `{valuePreview, valueLength}`.
 
-`listeners` counts the Godot connections the signal had besides the bridge's and the engine's own wiring, and is null for a C# `[Signal]` (its `+=` handlers are invisible to Godot): `listeners: 0` on an engine signal means no connection, not that nothing reacts, since a game may poll `button_pressed`. Layout, drawing and pointer signals (the noise list), signals whose names start with `_`, tree signals and an `input_event` carrying a mouse motion are not listed.
+`listeners` counts the Godot connections the signal had besides the bridge's and the engine's own wiring, and is null for a C# `[Signal]` (its `+=` handlers are invisible to Godot); a C# `+=` on an engine signal such as `Pressed` is a Godot connection and is counted. `listeners: 0` on an engine signal means no connection, not that nothing reacts, since a game may poll `button_pressed`. Layout, drawing and pointer signals (the noise list), signals whose names start with `_`, tree signals and an `input_event` carrying a mouse motion are not listed.
 
 `firedDropped` is the number of entries past the first 50 (and past 200 raw ones), present only above 0; `listenedOn` always names the bottom node of each chain listened on (`[]` when none), so an empty `fired` says where nobody emitted; `leftTree` (only when non-empty) names the topmost listened nodes that left the tree, such as a screen swap.
 

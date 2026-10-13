@@ -184,7 +184,7 @@ $itestGroups = [ordered]@{
     headless  = @('HeadlessTests', 'HeadlessMeshTests', 'WarmHeadlessTests')
     scene     = @('HeadlessSceneTests', 'HeadlessBatchTests')
     nodes     = @('HeadlessPropertyTests', 'HeadlessSignalTests')
-    csharp    = @('CSharpToolTests', 'GameToolTests', 'CSharpStateTests', 'CSharpWatchTests')
+    csharp    = @('CSharpToolTests', 'GameToolTests', 'CSharpStateTests', 'CSharpWatchTests', 'CSharpFiredSignalsTests')
     scratch   = @('ScratchRunnerTests')
 }
 # The lanes the groups run in: each lane's groups one at a time in this order, the lanes at once. The timing lane keeps
