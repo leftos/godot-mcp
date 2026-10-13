@@ -5,14 +5,12 @@
 ## Ideas from the survey and the projects
 
 - [ ] GMCP-6 record: only Movie Maker, which runs faster than real time
-  - [/] GMCP-137 Real-time recording step 4: end the recording with its session · release vNext
-  - [ ] GMCP-138 Real-time recording step 5: the game's audio track · release vNext
+  - [/] GMCP-138 Real-time recording step 5: the game's audio track · release vNext
   - [ ] GMCP-139 Real-time recording step 6: docs for the real-time route · release vNext
 - [ ] GMCP-47 Drives across several processes · release vNext+1
 - [ ] GMCP-43 Report the signals a gesture fired
 - [ ] GMCP-44 Step-until: frame_control until and input
 - [ ] GMCP-46 Audio tracks in the watch: voices and buses
-  - [ ] GMCP-136 Audio step 3: bus tracks in the watch (tracks.audio.buses) · release vNext
 - [ ] GMCP-17 State digest: wait_for on a state key, then tell the game repos
   - [ ] GMCP-143 State digest step 5: wait_for on a state key and its batch_drive assertion · release vNext
 - [ ] GMCP-68 Adopt driving lessons from the sibling projects
@@ -29,10 +27,8 @@
 
 - [ ] GMCP-92 capture_frames on a windowed run stretches each captured frame to ~140 ms
 - [ ] GMCP-65 hover: the per-frame re-pick hides whether the game re-picked the hover
-- [/] GMCP-126 run_csharp: an ambiguous %UniqueName throws mid-snippet and loses its log · release vNext
-- [ ] GMCP-127 save_screenshot: refuses a path in the repo's .tmp above the project folder · release vNext
-- [ ] GMCP-111 wait_for: no condition waits for a Control by the text it shows · release vNext
-- [ ] GMCP-113 wait_for: cannot wait for a Control's layout to settle before a press · release vNext
+- [/] GMCP-127 save_screenshot: refuses a path in the repo's .tmp above the project folder · release vNext
+- [/] GMCP-113 wait_for: cannot wait for a Control's layout to settle before a press · release vNext
 - [ ] GMCP-24 Fall back to a full save when a splice leaves two nodes one unique_id
 - [ ] GMCP-26 Give the bridge's mouse motions a velocity
 - [ ] GMCP-63 Name a Control's rect when its centre lies outside its SubViewport or embedded window
@@ -65,6 +61,10 @@
 - [ ] GMCP-150 Load-proof WatchdogTests' stop-kills-a-stuck-game itest
 - [ ] GMCP-151 Load-proof SessionLifecycleTests' two slow-to-quit itests
 - [ ] GMCP-152 Give GodotSession a run-launch seam so unit tests pin restart's capture-before-quit order
+- [ ] GMCP-153 Give the scratch itest group room under its gate ceiling (253 s alone, 300 s ceiling)
+- [ ] GMCP-154 Stop parallel itest lanes colliding on the server's obj output (CS2012)
+- [ ] GMCP-155 Load-proof the real-time unit tests that set a helper frame limit before the start
+- [ ] GMCP-156 Close save_screenshot's link holes: .godot through a project junction, short-name targets, the checkout walk
 
 ## Docs
 
