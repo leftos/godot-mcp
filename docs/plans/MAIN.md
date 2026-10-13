@@ -10,10 +10,7 @@
   - [ ] GMCP-139 Real-time recording step 6: docs for the real-time route · release vNext
 - [ ] GMCP-47 Drives across several processes · release vNext+1
 - [ ] GMCP-43 Report the signals a gesture fired
-  - [ ] GMCP-141 Fired signals step 4: C# signal listeners · release vNext
-  - [/] GMCP-142 Fired signals step 5: the fired assertion in batch_drive · release vNext
 - [ ] GMCP-44 Step-until: frame_control until and input
-- [/] GMCP-128 frame_control: an until expression on a child not yet made logs an error every frame · release vNext
 - [ ] GMCP-46 Audio tracks in the watch: voices and buses
   - [ ] GMCP-136 Audio step 3: bus tracks in the watch (tracks.audio.buses) · release vNext
 - [ ] GMCP-17 State digest: wait_for on a state key, then tell the game repos
@@ -32,9 +29,7 @@
 
 - [ ] GMCP-92 capture_frames on a windowed run stretches each captured frame to ~140 ms
 - [ ] GMCP-65 hover: the per-frame re-pick hides whether the game re-picked the hover
-- [ ] GMCP-126 run_csharp: an ambiguous %UniqueName throws mid-snippet and loses its log · release vNext
-- [ ] GMCP-129 batch_scene_operations: add_node refuses a Node-typed export given as a node path · release vNext
-- [ ] GMCP-130 batch_scene_operations: the description does not give each step's argument shape · release vNext
+- [/] GMCP-126 run_csharp: an ambiguous %UniqueName throws mid-snippet and loses its log · release vNext
 - [ ] GMCP-127 save_screenshot: refuses a path in the repo's .tmp above the project folder · release vNext
 - [ ] GMCP-111 wait_for: no condition waits for a Control by the text it shows · release vNext
 - [ ] GMCP-113 wait_for: cannot wait for a Control's layout to settle before a press · release vNext
@@ -57,7 +52,6 @@
 - [ ] GMCP-82 Let run.ps1 drive run twice in one tree under its own log names
 - [ ] GMCP-83 Name the scroll that reaches a list item scrolled out of view
 - [ ] GMCP-85 Fix SessionAttachTests' folder-list attach flake under load
-- [ ] GMCP-102 Keep engine errors from a wait_for expression out of the call's errors · release vNext
 - [ ] GMCP-103 Map scratch fixture changes to the scratch itest group alone
 - [ ] GMCP-105 Keep a moved node's unique_id state in a headless edit
 - [ ] GMCP-106 Count capture_frames' start timeout as wait_for counts its timeout
@@ -66,10 +60,11 @@
 - [ ] GMCP-116 Find whether a real-time recording's helper and ffmpeg stretch load-adjusted waits
 - [ ] GMCP-131 Measure where the 16-minute itest run goes and propose cuts · release vNext
 - [ ] GMCP-145 Fail a launch fast on Godot's no-GL ANGLE error, and keep windowed heavy itest groups local
-- [ ] GMCP-146 Load-proof TimeTests' then.pause met-frame test
 - [ ] GMCP-147 Load-proof the capture group's helper-exit and drag-clip itests
 - [ ] GMCP-149 Keep run_scratches' exit lines as short as a failing step's
 - [ ] GMCP-150 Load-proof WatchdogTests' stop-kills-a-stuck-game itest
+- [ ] GMCP-151 Load-proof SessionLifecycleTests' two slow-to-quit itests
+- [ ] GMCP-152 Give GodotSession a run-launch seam so unit tests pin restart's capture-before-quit order
 
 ## Docs
 
