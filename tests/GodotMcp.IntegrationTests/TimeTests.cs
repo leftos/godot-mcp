@@ -1457,14 +1457,15 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         await AddTimeProbeAsync(cancellation);
         await RunAsync($"{Probe}.n = {Probe}.process_frames + 3\n\treturn true");
         long n = (await RunAsync($"return {Probe}.n")).GetValue<long>();
+        // The met frame's counter is read by the then itself: an expression condition reports its boolean as the wait's value,
+        // and the then runs in the met frame, before the pause, so get reads the counter the pause then holds. Under load the
+        // game is already past n at the wait's first check, and the wait is met there, not at n.
+        WaitOptions options = new(Then: new WaitThen(Call: new MethodCall("TimeProbe", "get", Json("[\"process_frames\"]")), Pause: true));
 
         JsonObject waited = JsonNode
-            .Parse(
-                Text(
-                    await _tools.WaitForAsync(FramesReach(n), null, new WaitOptions(Then: new WaitThen(Pause: true)), cancellationToken: cancellation)
-                )
-            )!
+            .Parse(Text(await _tools.WaitForAsync(FramesReach(n), null, options, cancellationToken: cancellation)))!
             .AsObject();
+        long reported = waited["then"]!["call"]!["value"]!.GetValue<long>();
 
         long met = await ReadIntAsync("process_frames");
         await Task.Delay(300, cancellation);
@@ -1477,7 +1478,8 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         // read made 300 ms later: it cannot drift while the game is paused. A resume lets it run on.
         Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
         Assert.True(waited["then"]!["paused"]!.GetValue<bool>(), waited.ToJsonString());
-        Assert.Equal(n, met);
+        Assert.True(met >= n, $"the wait was met at {met}, before the frame it waited for: {n}");
+        Assert.Equal(reported, met);
         Assert.Equal(met, later);
         Assert.False(resumed["paused"]!.GetValue<bool>(), resumed.ToJsonString());
         Assert.True(running > later, $"the probe did not run again after resume: {later} then {running}");
