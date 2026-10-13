@@ -1,10 +1,12 @@
 extends Node
 ## The godot-mcp bridge's conditions, a child of the bridge: parses a condition Expression and
 ## builds the checks wait_for polls each frame (a node existing, a property's value, an
-## expression, the UI changed since the last gesture).
+## expression, the UI changed since the last gesture, a Control showing a text).
 ## The watch parses its expression tracks through parse_condition too.
 ##
 ## A check returns [met, value], or [false, null, error] when its condition cannot be met.
+
+const TextTargets := preload("godot_mcp_text_targets.gd")
 
 ## An expression's inputs besides node. Expression resolves only its inputs and its base
 ## instance's members, not singletons (core/math/expression.cpp L707-734 in 4.7.2).
@@ -53,20 +55,98 @@ static func _check_edge(probe: Callable, failures: Dictionary, state: Dictionary
 	return [false, seen[1]]
 
 
+## The probe kind's builder makes from params and failures, or a String refusing a kind with no
+## builder. A builder returns its probe, or a String saying why there is none.
 func _kind_probe(kind: String, params: Dictionary, failures: Dictionary) -> Variant:
-	var node_name: String = _text(params, "node")
-	var probe: Variant = "unknown condition kind '%s'" % kind
-	match kind:
-		"exists":
-			probe = _check_exists.bind(node_name, bool(params.get("exists", true)))
-		"property":
-			var property: String = _text(params, "property")
-			probe = check_property.bind(node_name, property, params.get("equals"))
-		"expression":
-			probe = parse_expression(_text(params, "expression"), node_name, failures)
-		"uiChanged":
-			probe = _check_ui_changed if bridge._gestures.has_ui_baseline() else NO_UI_BASELINE
-	return probe
+	var builders: Dictionary = {
+		"exists": _exists_probe,
+		"property": _property_probe,
+		"expression": _expression_probe,
+		"uiChanged": _ui_changed_probe,
+		"text": _text_probe,
+	}
+	if not builders.has(kind):
+		return "unknown condition kind '%s'" % kind
+	return (builders[kind] as Callable).call(params, failures)
+
+
+func _exists_probe(params: Dictionary, _failures: Dictionary) -> Variant:
+	return _check_exists.bind(_text(params, "node"), bool(params.get("exists", true)))
+
+
+func _property_probe(params: Dictionary, _failures: Dictionary) -> Variant:
+	var property: String = _text(params, "property")
+	return check_property.bind(_text(params, "node"), property, params.get("equals"))
+
+
+func _expression_probe(params: Dictionary, failures: Dictionary) -> Variant:
+	return parse_expression(_text(params, "expression"), _text(params, "node"), failures)
+
+
+func _ui_changed_probe(_params: Dictionary, _failures: Dictionary) -> Variant:
+	return _check_ui_changed if bridge._gestures.has_ui_baseline() else NO_UI_BASELINE
+
+
+func _text_probe(params: Dictionary, _failures: Dictionary) -> Variant:
+	var text: String = _text(params, "text").strip_edges()
+	return _check_text.bind(text, _text(params, "under"), bool(params.get("exists", true)))
+
+
+## Whether text (trimmed) shows on the visible Controls at or under under, the root when empty,
+## matched as a {text} target is (TextTargets.matching), answered by text_answer. Nothing shows
+## under an under no node has, or one hidden or being freed; one that several nodes have fails the
+## check. Each check walks the Controls afresh.
+func _check_text(text: String, under: String, wanted: bool) -> Array:
+	var targets: Node = bridge._gestures._targets
+	var scope: Variant = _text_scope(targets, under)
+	if scope is String:
+		return [false, null, scope]
+	var entries: Array[Dictionary] = []
+	if scope != null:
+		entries = TextTargets.entries_under(bridge, scope)
+	return text_answer(text, TextTargets.matching(entries, text), wanted, targets)
+
+
+## A text check's answer from the entries showing text, placing through targets, the resolver,
+## only the entries it reports. An appear (wanted true) is met by exactly one, its value {path,
+## shown, rect}, rect its viewport rect as get_ui_elements writes a rect; several showing it fail
+## the check with TextTargets' ambiguity listing, the listed ones placed. A leave (wanted false)
+## is met when none does and holds while any does, the first one's value as its value.
+static func text_answer(
+	text: String, matches: Array[Dictionary], wanted: bool, targets: Node
+) -> Array:
+	if matches.is_empty():
+		return [not wanted, null]
+	if wanted and matches.size() > 1:
+		var listed: Array[Dictionary] = TextTargets.placed(targets, matches)
+		return [false, null, TextTargets.ambiguity_refusal(text, listed)]
+	var entry: Dictionary = matches[0]
+	var rect: Variant = targets.bridge._json.to_json(targets.viewport_rect(entry["control"]))
+	return [wanted, {"path": entry["path"], "shown": entry["shown"], "rect": rect}]
+
+
+## The node a text check scans: the root when under is empty, else the one node under names as an
+## element target names it (_node_at_path for a path or a unique name); null when no node has it,
+## or a String when several nodes have that bare name.
+func _text_scope(targets: Node, under: String) -> Variant:
+	if under.is_empty():
+		return targets.get_tree().root
+	if under.contains("/") or under.begins_with("%"):
+		return _node_at_path(under)
+	var named: Array[Node] = targets._nodes_named(under)
+	if named.size() > 1:
+		return targets._ambiguous(under, named)
+	return named[0] if named.size() == 1 else null
+
+
+## The node a path or a unique name names; null while it is missing, or _missing's failure text
+## when it starts with a unique name more than one scene holds.
+func _node_at_path(node_name: String) -> Variant:
+	var found: Node = bridge._find_node(node_name)
+	if found != null:
+		return found
+	var missing: Array = _missing(node_name)
+	return missing[2] if missing.size() > 2 else null
 
 
 ## Met on the first check whose UI differs from the input module's baseline, with the change as

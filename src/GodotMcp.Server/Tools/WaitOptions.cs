@@ -31,7 +31,7 @@ internal sealed record WaitOptions(
     )]
         WaitThen? Then = null,
     [property: Description(
-        "exists, property and expression waits only: true meets the wait only on a check that finds the condition true after "
+        "exists, property, expression and text waits only: true meets the wait only on a check that finds the condition true after "
             + "a check that found it false, so a condition already true when the wait starts waits for its next rise, and one "
             + "true throughout times out with met: false. A check whose expression fails to run does not count as false. "
             + "Refused with timeoutMs 0."

@@ -6,7 +6,7 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// What wait_for waits for, exactly one kind: {node, exists}, {node, property, equals}, {node, signal}, {expression}
-/// (node optional), {uiChanged: true}, {gameMs} or {frames}.
+/// (node optional), {uiChanged: true}, {gameMs}, {frames} or {text} (under and exists optional).
 /// </summary>
 internal sealed record WaitCondition(
     [property: Description(
@@ -15,7 +15,11 @@ internal sealed record WaitCondition(
             + "or after its owner's path)."
     )]
         string? Node = null,
-    [property: Description("With node: wait until the node is present (true) or absent (false).")] bool? Exists = null,
+    [property: Description(
+        "With node or text: wait until the node is present, or a visible Control shows the text (true), or until the node is "
+            + "absent, or no visible Control shows the text (false); with text, true when left out."
+    )]
+        bool? Exists = null,
     [property: Description("With node and equals: the property to read each frame; a subproperty path such as position:x works too.")]
         string? Property = null,
     [property: JsonPropertyName("equals")]
@@ -46,5 +50,17 @@ internal sealed record WaitCondition(
     [property: Description(
         "Alone: wait until this many process frames, 1 to 7200, have run unpaused since the wait started. Met, value is the frames counted."
     )]
-        int? Frames = null
+        int? Frames = null,
+    [property: Description(
+        "Without node: wait until exactly one visible Control shows this text, matched as a click's {text} target matches it: "
+            + "the shown text trimmed equals this text trimmed, case kept. Met, value is {path, shown, rect}, rect in viewport "
+            + "coordinates, as get_ui_elements gives it. Several Controls showing it fail the wait with their list; narrow it with "
+            + "under. With exists: false, wait until no visible Control shows it."
+    )]
+        string? Text = null,
+    [property: Description(
+        "With text: the node whose visible Controls are scanned, named as node is; the whole tree when left out. While it is "
+            + "missing, hidden or being freed, no Control under it shows the text."
+    )]
+        string? Under = null
 );

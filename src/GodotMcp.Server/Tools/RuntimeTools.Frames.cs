@@ -154,9 +154,11 @@ internal sealed partial class RuntimeTools
             Expression: start.Expression,
             UiChanged: start.UiChanged,
             GameMs: start.GameMs,
-            Frames: start.Frames
+            Frames: start.Frames,
+            Text: start.Text,
+            Under: start.Under
         );
-        string kind = CheckCondition(condition);
+        string kind = StartKindOf(condition);
         if (kind is not ("exists" or "property" or "expression"))
         {
             throw new McpException($"options.start takes an exists, property or expression condition; this condition is {kind}.");
@@ -180,6 +182,13 @@ internal sealed partial class RuntimeTools
 
         return parameters;
     }
+
+    /// <summary>
+    /// A start's kind as <see cref="CheckCondition"/> gives it, but text whenever text or under is given, so a start of the
+    /// text kind gets the start refusal rather than a text condition's own refusals.
+    /// </summary>
+    private static string StartKindOf(WaitCondition condition) =>
+        condition.Text is not null || condition.Under is not null ? "text" : CheckCondition(condition);
 
     /// <summary>
     /// How long capture_frames may run: the capture's own allowance (<see cref="CaptureOwnAllowance"/>), plus the start's

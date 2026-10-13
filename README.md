@@ -22,7 +22,7 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 - Press InputMap actions, and drive virtual gamepad buttons, sticks and triggers.
 - Replay arbitrary input event sequences, record what a person played and replay it, and throw random input at the game to find what breaks it.
 - Pause, step single frames and change the time scale, so a check lands on an exact frame.
-- Wait for a condition (a node appears, a property changes, a signal fires) instead of sleeping.
+- Wait for a condition (a node appears, a property changes, a signal fires, a caption shows) instead of sleeping.
 
 **Look inside it while it runs**
 

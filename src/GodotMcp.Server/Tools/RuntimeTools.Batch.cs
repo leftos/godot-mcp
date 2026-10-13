@@ -74,6 +74,8 @@ internal sealed partial class RuntimeTools
         ("name", step => !string.IsNullOrEmpty(step.Name)),
         ("tolerance", step => step.Tolerance is not null),
         ("maxChangedRatio", step => step.MaxChangedRatio is not null),
+        ("text", step => step.Text is not null),
+        ("under", step => step.Under is not null),
     ];
 
     [McpServerTool(Name = BatchToolName, ReadOnly = false, Destructive = true, OpenWorld = false)]
@@ -285,7 +287,7 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>The wait_for condition an assertion checks: only its own kind's fields for property and expression.</summary>
-    private static WaitCondition ConditionOf(BatchStep step) =>
+    internal static WaitCondition ConditionOf(BatchStep step) =>
         step.Assert switch
         {
             "property" => new WaitCondition(Node: step.Node, Property: step.Property, EqualsValue: step.EqualsValue),
@@ -299,7 +301,9 @@ internal sealed partial class RuntimeTools
                 step.Expression,
                 step.UiChanged,
                 step.GameMs,
-                step.Frames
+                step.Frames,
+                step.Text,
+                step.Under
             ),
         };
 

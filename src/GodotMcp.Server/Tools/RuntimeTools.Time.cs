@@ -25,11 +25,25 @@ internal sealed partial class RuntimeTools
     private const int CapturePreviewMaxWidth = 480;
     private const string ConditionMessage =
         "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
-        + "{gameMs}, {frames}.";
+        + "{gameMs}, {frames}, {text}.";
     private const string UntilFramesRefusal =
         "frame_control step's until takes any wait_for condition but frames: count is the most frames a step runs.";
     private const string EmptyThenRefusal = "options.then needs call, timeScale, pause or a mix.";
     private static readonly string[] FrameActions = ["pause", "resume", "step", "time_scale"];
+
+    // Each condition kind: its name, whether a condition gives the kind's own field, and whether it gives the fields that
+    // kind needs with it and none it refuses. A condition is of a kind when exactly one row's field is given.
+    private static readonly ConditionKind[] ConditionKinds =
+    [
+        new("exists", IsExistsGiven, HasNode),
+        new("property", IsPropertyGiven, HasPropertyCompanions),
+        new("signal", condition => condition.Signal is not null, HasNode),
+        new("expression", condition => condition.Expression is not null, _ => true),
+        new("uiChanged", condition => condition.UiChanged is not null, IsUiChangedAlone),
+        new("gameMs", condition => condition.GameMs is not null, condition => condition.Node is null),
+        new("frames", condition => condition.Frames is not null, condition => condition.Node is null),
+        new("text", condition => condition.Text is not null, _ => true),
+    ];
 
     // What a step's reply carries beyond its counts: the frame it stopped on, its until's answer as wait_for gives one, and
     // what its riding input left: the events not sent, what is still held and the real-pad warning.
@@ -117,7 +131,9 @@ internal sealed partial class RuntimeTools
     [Description(
         "Waits in the running game until a condition holds, checking it each frame: a node present or absent, a property "
             + "equal to a value, a signal's next emission, a Godot Expression returning true, gameMs milliseconds of game time "
-            + "(process delta over unpaused frames, so it follows Engine.time_scale) or frames unpaused process frames. Returns "
+            + "(process delta over unpaused frames, so it follows Engine.time_scale), frames unpaused process frames, or a "
+            + "visible Control showing a text, matched as a click's {text} target is, or none showing it (exists: false); a text "
+            + "shown by several Controls fails the wait with their list, so narrow it with under. Returns "
             + "{met, elapsedMs, frames, value} (args instead of value for a signal; the game ms or frames reached for gameMs and "
             + "frames); on timeout {met: false, elapsedMs, frames, last}, the last "
             + "value seen (a signal wait's timeout has no last), which is not an error. elapsedMs is real time; in a recording "
@@ -146,14 +162,14 @@ internal sealed partial class RuntimeTools
             + "_process (a shader, an animation) may still show the previous frame; screenshot: true pauses after the met frame is "
             + "drawn, so a picture matches the values. The result adds then: {frame, call?: "
             + "{value}, timeScale?, paused?}. A refused or failing call fails the wait and leaves timeScale unset and the game "
-            + "running; a timeout runs nothing. options.edge: true, with an exists, property or expression wait and a "
+            + "running; a timeout runs nothing. options.edge: true, with an exists, property, expression or text wait and a "
             + "timeout above 0, meets it only on a check that finds the condition true after one that found it false, so a "
-            + "condition already true waits for its next rise."
+            + "condition already true waits for its next rise (for a text wait with exists: false, the text's next going)."
     )]
     public async Task<IEnumerable<ContentBlock>> WaitForAsync(
         [Description(
             "Exactly one of {node, exists}, {node, property, equals}, {node, signal}, {expression} (with node optional), {uiChanged: true}, "
-                + "{gameMs}, {frames}."
+                + "{gameMs}, {frames}, {text} (with under and exists optional)."
         )]
             WaitCondition condition,
         [Description(
@@ -300,18 +316,18 @@ internal sealed partial class RuntimeTools
         parameters["call"] = kind is not ("signal" or "uiChanged")
             ? CallOptionParameters(call, "options.call")
             : throw new McpException(
-                $"options.call is taken only by a gameMs, frames, exists, property or expression wait; this condition is {kind}."
+                $"options.call is taken only by a gameMs, frames, exists, property, expression or text wait; this condition is {kind}."
             );
     }
 
-    /// <summary>Adds edge: true to an exists, property or expression wait's parameters.</summary>
+    /// <summary>Adds edge: true to an exists, property, expression or text wait's parameters.</summary>
     /// <exception cref="McpException">The wait is of another kind, or checks once (timeoutMs 0).</exception>
     private static void AddEdge(JsonObject parameters)
     {
         string kind = parameters["kind"]!.GetValue<string>();
-        if (kind is not ("exists" or "property" or "expression"))
+        if (kind is not ("exists" or "property" or "expression" or "text"))
         {
-            throw new McpException($"options.edge applies to exists, property and expression waits; this condition is {kind}.");
+            throw new McpException($"options.edge applies to exists, property, expression and text waits; this condition is {kind}.");
         }
 
         if (parameters["timeoutMs"]!.GetValue<int>() == 0)
@@ -523,38 +539,42 @@ internal sealed partial class RuntimeTools
         }
     }
 
-    /// <summary>The condition's one kind: exists, property, signal, expression, uiChanged, gameMs or frames.</summary>
+    /// <summary>The condition's one kind: the name of the one <see cref="ConditionKinds"/> row whose field is given, when its
+    /// companions are given too.</summary>
     private static string CheckCondition(WaitCondition? condition)
     {
-        string? kind = condition is null ? null : KindOf(condition);
-        return kind is not null && HasCompanions(kind, condition!) ? kind : throw new McpException(ConditionMessage);
+        CheckTextFields(condition);
+        ConditionKind[] given = condition is null ? [] : [.. ConditionKinds.Where(kind => kind.Given(condition))];
+        return given is [var kind] && kind.HasCompanions(condition!) ? kind.Name : throw new McpException(ConditionMessage);
     }
 
-    private static string? KindOf(WaitCondition condition)
+    /// <exception cref="McpException">under is given without text, text or under is blank, or text comes with a node.</exception>
+    private static void CheckTextFields(WaitCondition? condition)
     {
-        (string Kind, bool Given)[] kinds =
-        [
-            ("exists", condition.Exists is not null),
-            ("property", condition.Property is not null || HasEquals(condition)),
-            ("signal", condition.Signal is not null),
-            ("expression", condition.Expression is not null),
-            ("uiChanged", condition.UiChanged is not null),
-            ("gameMs", condition.GameMs is not null),
-            ("frames", condition.Frames is not null),
-        ];
-        string[] given = [.. kinds.Where(kind => kind.Given).Select(kind => kind.Kind)];
-        return given.Length == 1 ? given[0] : null;
+        string? refusal = condition switch
+        {
+            { Text: null, Under: not null } => "condition.under scopes a text condition; give text with it.",
+            { Text: { } text } when string.IsNullOrWhiteSpace(text) => "condition.text is blank; give the text a visible Control shows.",
+            { Under: { } under } when string.IsNullOrWhiteSpace(under) =>
+                "condition.under is blank; name the node to scope the text to, or leave under out.",
+            { Text: not null, Node: not null } => "a text condition takes no node; scope it with under.",
+            _ => null,
+        };
+        if (refusal is not null)
+        {
+            throw new McpException(refusal);
+        }
     }
 
-    private static bool HasCompanions(string kind, WaitCondition condition) =>
-        kind switch
-        {
-            "expression" => true,
-            "uiChanged" => IsUiChangedAlone(condition),
-            "gameMs" or "frames" => condition.Node is null,
-            "property" => !string.IsNullOrEmpty(condition.Node) && !string.IsNullOrEmpty(condition.Property) && HasEquals(condition),
-            _ => !string.IsNullOrEmpty(condition.Node),
-        };
+    // exists names the exists kind only without text, where it says whether the text is to show or to go.
+    private static bool IsExistsGiven(WaitCondition condition) => condition.Exists is not null && condition.Text is null;
+
+    private static bool IsPropertyGiven(WaitCondition condition) => condition.Property is not null || HasEquals(condition);
+
+    private static bool HasNode(WaitCondition condition) => !string.IsNullOrEmpty(condition.Node);
+
+    private static bool HasPropertyCompanions(WaitCondition condition) =>
+        HasNode(condition) && !string.IsNullOrEmpty(condition.Property) && HasEquals(condition);
 
     // Only true is a kind, and it takes no node: the other kinds' fields already make a second kind.
     private static bool IsUiChangedAlone(WaitCondition condition) => condition.UiChanged is true && condition.Node is null;
@@ -614,4 +634,10 @@ internal sealed partial class RuntimeTools
 
         return state;
     }
+
+    /// <summary>
+    /// A condition kind: its name, whether a condition gives the kind's own field, and whether it gives the fields that kind
+    /// needs with it and none it refuses.
+    /// </summary>
+    private sealed record ConditionKind(string Name, Func<WaitCondition, bool> Given, Func<WaitCondition, bool> HasCompanions);
 }

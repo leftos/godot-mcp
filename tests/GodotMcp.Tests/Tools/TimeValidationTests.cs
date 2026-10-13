@@ -13,7 +13,7 @@ public sealed class TimeValidationTests : IDisposable
 {
     private const string ConditionMessage =
         "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
-        + "{gameMs}, {frames}.";
+        + "{gameMs}, {frames}, {text}.";
     private const string ScaleMessage = "time_scale needs scale, greater than 0 and at most 100.";
 
     // The refusals of an options.call of neither form, both, or args of the other form's shape, after the option's path.
@@ -242,6 +242,84 @@ public sealed class TimeValidationTests : IDisposable
         );
 
         Assert.Equal(ConditionMessage, refused.Message);
+    }
+
+    [Fact]
+    public async Task ATextConditionWithANodeIsRefused()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(Node: "Main", Text: "Start"), 1000, null, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("a text condition takes no node; scope it with under.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("  \n")]
+    public void ABlankTextIsRefused(string text)
+    {
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildWaitParameters(new WaitCondition(Text: text), 1000));
+
+        Assert.Equal("condition.text is blank; give the text a visible Control shows.", refused.Message);
+    }
+
+    [Fact]
+    public void UnderWithoutTextIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildWaitParameters(new WaitCondition(Under: "Lobby"), 1000));
+
+        Assert.Equal("condition.under scopes a text condition; give text with it.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("  \n")]
+    public void ABlankUnderIsRefused(string under)
+    {
+        WaitCondition condition = new(Text: "Start", Under: under);
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildWaitParameters(condition, 1000));
+
+        Assert.Equal("condition.under is blank; name the node to scope the text to, or leave under out.", refused.Message);
+    }
+
+    [Fact]
+    public void ATextConditionIsOfTheTextKindAndCarriesItsText()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Text: "Start"), 1000);
+
+        Assert.Equal("text", parameters["kind"]!.GetValue<string>());
+        Assert.Equal("Start", parameters["text"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void ATextLeaveIsOfTheTextKindWithExistsFalse()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Exists: false, Text: "Start", Under: "Lobby"), 1000);
+
+        Assert.Equal("text", parameters["kind"]!.GetValue<string>());
+        Assert.False(parameters["exists"]!.GetValue<bool>());
+        Assert.Equal("Lobby", parameters["under"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void ACheckOnceTextWaitIsAccepted()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Text: "Start"), 0);
+
+        Assert.Equal(0, parameters["timeoutMs"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void AStepUntilTakesATextCondition()
+    {
+        StepOptions options = new(Until: new WaitCondition(Text: "Start"));
+
+        JsonObject parameters = RuntimeTools.BuildFrameParameters("step", null, null, options);
+
+        Assert.Equal("text", parameters["until"]!["kind"]!.GetValue<string>());
+        Assert.Equal("Start", parameters["until"]!["text"]!.GetValue<string>());
     }
 
     [Fact]
@@ -486,7 +564,7 @@ public sealed class TimeValidationTests : IDisposable
         );
 
         Assert.Equal(
-            $"options.call is taken only by a gameMs, frames, exists, property or expression wait; this condition is {kind}.",
+            $"options.call is taken only by a gameMs, frames, exists, property, expression or text wait; this condition is {kind}.",
             refused.Message
         );
     }
@@ -714,7 +792,16 @@ public sealed class TimeValidationTests : IDisposable
 
         McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildWaitParameters(condition, 1000, new WaitOptions(Edge: true)));
 
-        Assert.Equal($"options.edge applies to exists, property and expression waits; this condition is {kind}.", refused.Message);
+        Assert.Equal($"options.edge applies to exists, property, expression and text waits; this condition is {kind}.", refused.Message);
+    }
+
+    [Fact]
+    public void AnEdgeTextWaitIsAcceptedAndSent()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Text: "Start"), 1000, new WaitOptions(Edge: true));
+
+        Assert.Equal("text", parameters["kind"]!.GetValue<string>());
+        Assert.True(parameters["edge"]!.GetValue<bool>(), parameters.ToJsonString());
     }
 
     [Fact]

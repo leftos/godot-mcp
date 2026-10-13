@@ -1,7 +1,11 @@
+# gdlint: disable=max-public-methods
 extends "res://gd_test.gd"
 ## The conditions' pure logic (bridge/godot_mcp_conditions.gd): wait_for's condition kinds,
-## expression parsing and its count of failed checks. The node is never added to the tree;
-## only functions that do not need it are called.
+## expression parsing and its count of failed checks, and a text check's answer over entries
+## built by hand. The node is never added to the tree, and the tests run before the root enters it
+## (SceneTree::initialize calls _initialize first, scene/main/scene_tree.cpp L589-590 in 4.7.2),
+## so only functions that do not need it are called; a text check's walk of a live tree (hidden
+## Controls, ones being freed, under) is covered by TimeTests.
 
 ## The hint a refusal carries when the source reaches for GDScript syntax Expression has none of.
 # gdformat joins any split of this text back into one line past gdlint's 100 characters.
@@ -17,7 +21,19 @@ const FAILURE_PREFIX := "godot-mcp wait_for: the expression failed: "
 # gdlint: ignore=max-line-length
 const HOLDER_SOURCE := "extends Node\n\n\nfunc shout() -> bool:\n\tpush_error('holder shout')\n\treturn true\n"
 
+## The rect a text check's value carries for a Control _placing_targets places, as get_ui_elements
+## writes a rect.
+const SHOWN_RECT := {"x": 10.0, "y": 20.0, "width": 120.0, "height": 40.0}
+
+## The refusal _under_rig's resolver gives for an under several nodes have.
+const SHARED_UNDER := "'Lobby' names 2 nodes"
+
+## A target resolver placing every Control at 10,20,120,40, its rect_text the real one.
+# gdlint: ignore=max-line-length
+const PLACING_TARGETS_SOURCE := "extends Node\n\nvar bridge: Node\nvar resolver: GDScript\n\n\nfunc viewport_rect(_control: Control) -> Rect2:\n\treturn Rect2(10, 20, 120, 40)\n\n\nfunc rect_text(rect: Rect2) -> String:\n\treturn resolver.rect_text(rect)\n"
+
 var _conditions_script: GDScript = load_bridge_script("godot_mcp_conditions.gd")
+var _text_targets: GDScript = load_bridge_script("godot_mcp_text_targets.gd")
 
 
 func test_make_probe_builds_a_check_for_each_known_kind() -> void:
@@ -27,9 +43,11 @@ func test_make_probe_builds_a_check_for_each_known_kind() -> void:
 		"property", {"node": "Main", "property": "state", "equals": "done"}, {}
 	)
 	var expression: Variant = conditions.make_probe("expression", {"expression": "1 + 1 == 2"}, {})
+	var text: Variant = conditions.make_probe("text", {"text": "Start"}, {})
 	assert_true(exists is Callable, "exists")
 	assert_true(property is Callable, "property")
 	assert_true(expression is Callable, "expression")
+	assert_true(text is Callable, "text")
 	conditions.free()
 
 
@@ -314,6 +332,167 @@ func test_a_met_result_carries_its_failed_checks_and_a_clean_one_carries_none() 
 	conditions.add_failed_checks(clean, {})
 	assert_true(not clean["result"].has("failedChecks"), "a wait with no failed check carries none")
 	conditions.free()
+
+
+func test_a_text_appear_is_met_by_the_one_control_showing_it_with_its_value() -> void:
+	var targets: Node = _placing_targets()
+	var entries: Array[Dictionary] = [
+		_shown("/root/Menu/Go", "Start"), _shown("/root/Menu/X", "Quit")
+	]
+	var matches: Array[Dictionary] = _text_targets.matching(entries, "Start")
+	var none: Array[Dictionary] = []
+	assert_eq(
+		_conditions_script.text_answer("Start", matches, true, targets),
+		[true, {"path": "/root/Menu/Go", "shown": "Start", "rect": SHOWN_RECT}],
+		"met, with the Control's path, text and rect"
+	)
+	assert_eq(
+		_conditions_script.text_answer("Start", none, true, targets), [false, null], "none: not met"
+	)
+	_free_placing_targets(targets)
+
+
+func test_a_text_leave_holds_while_it_shows_and_is_met_once_none_does() -> void:
+	var targets: Node = _placing_targets()
+	var matches: Array[Dictionary] = [_shown("/root/Menu/Go", "Start")]
+	var none: Array[Dictionary] = []
+	assert_eq(
+		_conditions_script.text_answer("Start", matches, false, targets),
+		[false, {"path": "/root/Menu/Go", "shown": "Start", "rect": SHOWN_RECT}],
+		"held while it shows, the Control showing it as its value"
+	)
+	assert_eq(
+		_conditions_script.text_answer("Start", none, false, targets),
+		[true, null],
+		"met once none shows it"
+	)
+	_free_placing_targets(targets)
+
+
+func test_a_text_match_keeps_case_and_trims() -> void:
+	var targets: Node = _placing_targets()
+	var entries: Array[Dictionary] = [
+		_shown("/root/Menu/Lower", "start"), _shown("/root/Menu/Spaced", " Resume ")
+	]
+	var lower: Array[Dictionary] = _text_targets.matching(entries, "Start")
+	var spaced: Array[Dictionary] = _text_targets.matching(entries, "Resume")
+	assert_eq(
+		_conditions_script.text_answer("Start", lower, true, targets),
+		[false, null],
+		"start does not meet Start"
+	)
+	assert_eq(
+		_conditions_script.text_answer("Resume", spaced, true, targets),
+		[true, {"path": "/root/Menu/Spaced", "shown": " Resume ", "rect": SHOWN_RECT}],
+		"a padded text meets, its text as shown"
+	)
+	_free_placing_targets(targets)
+
+
+func test_two_controls_showing_a_text_fail_an_appear_and_hold_a_leave() -> void:
+	var targets: Node = _placing_targets()
+	var matches: Array[Dictionary] = [
+		_shown("/root/Menu/First", "Start"), _shown("/root/Menu/Second", "Start")
+	]
+	assert_eq(
+		_conditions_script.text_answer("Start", matches, true, targets),
+		[
+			false,
+			null,
+			(
+				"'Start' is shown by 2 Controls: /root/Menu/First at 10,20,120,40, "
+				+ "/root/Menu/Second at 10,20,120,40; narrow it with under."
+			)
+		],
+		"an appear fails with the ambiguity listing"
+	)
+	assert_eq(
+		_conditions_script.text_answer("Start", matches, false, targets),
+		[false, {"path": "/root/Menu/First", "shown": "Start", "rect": SHOWN_RECT}],
+		"a leave holds while both show, the first as its value"
+	)
+	assert_eq(
+		_conditions_script.text_answer("Start", matches.slice(1), false, targets),
+		[false, {"path": "/root/Menu/Second", "shown": "Start", "rect": SHOWN_RECT}],
+		"and while one still shows"
+	)
+	_free_placing_targets(targets)
+
+
+func test_a_missing_under_shows_nothing() -> void:
+	var rig: Dictionary = _under_rig(
+		"func _nodes_named(_node_name: String) -> Array[Node]:\n\treturn []\n"
+	)
+	var conditions: Node = rig["conditions"]
+	for under: String in ["TextRigLobby", "Menu/TextRigLobby"]:
+		var appear: Dictionary = {"text": "Start", "under": under}
+		var leave: Dictionary = {"text": "Start", "under": under, "exists": false}
+		var appeared: Array = conditions.make_probe("text", appear, {}).call()
+		var left: Array = conditions.make_probe("text", leave, {}).call()
+		assert_eq(appeared, [false, null], "%s missing: an appear is not met" % under)
+		assert_eq(left, [true, null], "%s missing: a leave is met" % under)
+	_free_under_rig(rig)
+
+
+func test_an_under_several_nodes_have_fails_the_check() -> void:
+	var rig: Dictionary = _under_rig(
+		(
+			"func _nodes_named(_node_name: String) -> Array[Node]:\n\treturn [self, self]\n\n\n"
+			+ "func _ambiguous(_node_name: String, _named: Array[Node]) -> String:\n"
+			+ '\treturn "%s"\n' % SHARED_UNDER
+		)
+	)
+	var conditions: Node = rig["conditions"]
+	var appear: Dictionary = {"text": "Start", "under": "Lobby"}
+	var leave: Dictionary = {"text": "Start", "under": "Lobby", "exists": false}
+	var appeared: Array = conditions.make_probe("text", appear, {}).call()
+	var left: Array = conditions.make_probe("text", leave, {}).call()
+	assert_eq(appeared, [false, null, SHARED_UNDER], "an appear fails with the resolver's refusal")
+	assert_eq(left, [false, null, SHARED_UNDER], "and so does a leave")
+	_free_under_rig(rig)
+
+
+## Conditions whose bridge is a stand-in finding no node, its input player's target resolver a
+## stand-in whose bare-name lookup is resolver_body.
+func _under_rig(resolver_body: String) -> Dictionary:
+	var bridge: Node = _compile(
+		(
+			"extends Node\n\nvar _gestures: Node\n\n\n"
+			+ "func _find_node(_element: String) -> Node:\n\treturn null\n"
+		)
+	)
+	var gestures: Node = _compile("extends Node\n\nvar _targets: Node\n")
+	gestures._targets = _compile("extends Node\n\n\n" + resolver_body)
+	bridge._gestures = gestures
+	var conditions: Node = _conditions_script.new()
+	conditions.bridge = bridge
+	return {"conditions": conditions, "bridge": bridge}
+
+
+func _free_under_rig(rig: Dictionary) -> void:
+	rig["conditions"].free()
+	rig["bridge"]._gestures._targets.free()
+	rig["bridge"]._gestures.free()
+	rig["bridge"].free()
+
+
+## A resolver stand-in (PLACING_TARGETS_SOURCE) whose bridge holds the JSON module.
+func _placing_targets() -> Node:
+	var targets: Node = _compile(PLACING_TARGETS_SOURCE)
+	targets.resolver = load_bridge_script("godot_mcp_targets.gd")
+	targets.bridge = _compile("extends Node\n\nvar _json: GDScript\n")
+	targets.bridge._json = load_bridge_script("godot_mcp_json.gd")
+	return targets
+
+
+func _free_placing_targets(targets: Node) -> void:
+	targets.bridge.free()
+	targets.free()
+
+
+## A text target entry at path showing shown, its Control left out: a resolver stand-in places it.
+static func _shown(path: String, shown: String) -> Dictionary:
+	return {"control": null, "path": path, "name": path.get_file(), "shown": shown}
 
 
 ## An exists probe on Main (edge unless edge is false) whose bridge is a stand-in finding Main

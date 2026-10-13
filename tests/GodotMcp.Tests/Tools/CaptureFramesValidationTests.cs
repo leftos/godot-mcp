@@ -378,6 +378,7 @@ public sealed class CaptureFramesValidationTests : IDisposable
     [InlineData("uiChanged")]
     [InlineData("gameMs")]
     [InlineData("frames")]
+    [InlineData("text")]
     public async Task AStartOfAnotherKindIsRefused(string kind)
     {
         CaptureStart start = kind switch
@@ -385,12 +386,27 @@ public sealed class CaptureFramesValidationTests : IDisposable
             "signal" => new(Node: "TimeProbe", Signal: "fired"),
             "uiChanged" => new(UiChanged: true),
             "gameMs" => new(GameMs: 500),
+            "text" => new(Text: "Start", Under: "Lobby"),
             _ => new(Frames: 30),
         };
 
         McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Start: start));
 
         Assert.Equal($"options.start takes an exists, property or expression condition; this condition is {kind}.", refused.Message);
+    }
+
+    // A text field makes the start a text condition, refused as one before a text condition's own refusals could send the
+    // agent to add text or drop node.
+    [Theory]
+    [InlineData("under")]
+    [InlineData("node")]
+    public async Task AStartWithATextFieldIsRefusedAsText(string companion)
+    {
+        CaptureStart start = companion == "under" ? new(Under: "Lobby") : new(Node: "Lobby", Text: "Start");
+
+        McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Start: start));
+
+        Assert.Equal("options.start takes an exists, property or expression condition; this condition is text.", refused.Message);
     }
 
     [Fact]

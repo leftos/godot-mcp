@@ -18,7 +18,11 @@ internal sealed record BatchStep(
             + "earlier tool step's fired list must carry the signal on, its absolute path or a path tail."
     )]
         string? Node = null,
-    [property: Description("wait: with node, the node present (true) or absent (false).")] bool? Exists = null,
+    [property: Description(
+        "wait: with node or text, the node present or a visible Control showing the text (true), or the node absent or none "
+            + "showing it (false), as wait_for's exists."
+    )]
+        bool? Exists = null,
     [property: Description("property, wait: the property to compare; a subproperty path such as position:x works too.")] string? Property = null,
     [property: JsonPropertyName("equals")]
     [property: Description(
@@ -49,5 +53,7 @@ internal sealed record BatchStep(
         int? Tolerance = null,
     [property: Description("screenshot: the largest share of changed pixels, 0 to 1, that still matches; 0 by default.")]
         double? MaxChangedRatio = null,
-    [property: Description("The session this step addresses; the batch's session when left out.")] string? Session = null
+    [property: Description("The session this step addresses; the batch's session when left out.")] string? Session = null,
+    [property: Description("wait: without node, the text exactly one visible Control must show, as wait_for's condition.text.")] string? Text = null,
+    [property: Description("wait: with text, the node whose visible Controls are scanned, as wait_for's condition.under.")] string? Under = null
 );

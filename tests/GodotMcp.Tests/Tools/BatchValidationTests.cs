@@ -193,7 +193,7 @@ public sealed class BatchValidationTests : IDisposable
     [InlineData(
         "wait",
         "step 0: condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
-            + "{gameMs}, {frames}."
+            + "{gameMs}, {frames}, {text}."
     )]
     public async Task AnAssertionMissingAFieldIsRefused(string assert, string message)
     {
@@ -222,6 +222,36 @@ public sealed class BatchValidationTests : IDisposable
         McpException refused = await RefusedAsync([new BatchStep(Assert: "wait", Node: "Main", UiChanged: true)]);
 
         Assert.StartsWith("step 0: condition needs exactly one of: ", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ATextWaitAssertionWithUnderIsAcceptedAndCarriesBoth()
+    {
+        BatchStep step = new(Assert: "wait", Exists: false, Text: "Start", Under: "Lobby");
+
+        RuntimeTools.CheckBatch([step]);
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(RuntimeTools.ConditionOf(step), 1000);
+
+        Assert.Equal("Start", parameters["text"]?.GetValue<string>());
+        Assert.Equal("Lobby", parameters["under"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task AWaitAssertionWithUnderAloneIsRefused()
+    {
+        McpException refused = await RefusedAsync([new BatchStep(Assert: "wait", Under: "Lobby")]);
+
+        Assert.Equal("step 0: condition.under scopes a text condition; give text with it.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AFiredAssertionWithTextIsRefused()
+    {
+        BatchStep fired = new(Assert: "fired", Node: "Ready", Signal: "pressed", Text: "Start", Under: "Lobby");
+
+        McpException refused = await RefusedAsync([new BatchStep(Tool: "click"), fired]);
+
+        Assert.Equal("step 1: the fired assertion takes node, signal and equals; got text, under.", refused.Message);
     }
 
     [Fact]

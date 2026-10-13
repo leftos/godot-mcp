@@ -28,23 +28,30 @@ const MAX_QUOTED := 60
 ## The entry of the one visible Control at or under under whose shown text, trimmed, is text
 ## trimmed, case kept; or a String saying why there is none. targets is the resolver: its bridge
 ## gathers the Controls get_ui_elements lists (the bridge's own and tooltips left out), and its
-## viewport_rect places each of several matches as the element refusals do.
+## viewport_rect places each of several matches as the element refusals do. wait_for's text
+## condition (godot_mcp_conditions.gd) matches through entries_under and matching as this does.
 static func find(targets: Node, under: Node, text: String) -> Variant:
 	var wanted: String = text.strip_edges()
-	var entries: Array[Dictionary] = _entries(targets.bridge, under)
+	var entries: Array[Dictionary] = entries_under(targets.bridge, under)
 	var matches: Array[Dictionary] = matching(entries, wanted)
 	if matches.is_empty():
 		return miss_refusal(wanted, entries)
 	if matches.size() == 1:
 		return matches[0]
+	return ambiguity_refusal(wanted, placed(targets, matches))
+
+
+## matches, the first MAX_LISTED_MATCHES each given the rect ambiguity_refusal lists it at: its
+## rect in the root's viewport coordinates as targets, the resolver, places and writes it.
+static func placed(targets: Node, matches: Array[Dictionary]) -> Array[Dictionary]:
 	for entry: Dictionary in matches.slice(0, MAX_LISTED_MATCHES):
 		entry["rect"] = targets.rect_text(targets.viewport_rect(entry["control"]))
-	return ambiguity_refusal(wanted, matches)
+	return matches
 
 
 ## An entry for each visible Control at or under under that shows a text, in tree order, leaving
 ## out every subtree pruned says so.
-static func _entries(bridge: Node, under: Node) -> Array[Dictionary]:
+static func entries_under(bridge: Node, under: Node) -> Array[Dictionary]:
 	var snapshot: GDScript = bridge._ui_snapshot
 	var skip := func(node: Node) -> bool: return pruned(node, bridge, snapshot)
 	var controls: Array[Control] = []

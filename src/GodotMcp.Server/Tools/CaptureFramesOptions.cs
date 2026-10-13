@@ -83,5 +83,7 @@ internal sealed record CaptureStart(
             + "from after the call, and a start met on the check right after it starts the clock in the call's frame. start adds "
             + "call: {value}, as options.call's. A refused or failing call fails the capture with no frames."
     )]
-        MethodCall? Call = null
+        MethodCall? Call = null,
+    [property: Description("Refused: options.start takes an exists, property or expression condition.")] string? Text = null,
+    [property: Description("Refused: options.start takes an exists, property or expression condition.")] string? Under = null
 );

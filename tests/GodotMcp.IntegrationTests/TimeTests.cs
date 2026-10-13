@@ -39,6 +39,12 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         + "func _process(_delta: float) -> void:\\n\\tif frames_left <= 0:\\n\\t\\treturn\\n\\tframes_left -= 1\\n\\t"
         + "if frames_left == 0:\\n\\t\\tvar kid := Node2D.new()\\n\\t\\tkid.name = 'Kid'\\n\\t\\t"
         + "kid.modulate = Color(2, 1, 1)\\n\\t\\tadd_child(kid)\\n";
+
+    // Once armed, shows its target three process frames later, noting that frame in its shown_frame meta.
+    private const string ShowerScript =
+        "extends Node\\n\\nvar frames_left := 0\\nvar target: CanvasItem\\n\\n\\nfunc arm() -> void:\\n\\tframes_left = 3\\n\\n\\n"
+        + "func _process(_delta: float) -> void:\\n\\tif frames_left <= 0:\\n\\t\\treturn\\n\\tframes_left -= 1\\n\\t"
+        + "if frames_left == 0:\\n\\t\\ttarget.show()\\n\\t\\tset_meta('shown_frame', Engine.get_process_frames())\\n";
     private static readonly WaitCondition UiChangedCondition = new(UiChanged: true);
     private static readonly InputTarget OpenButton = new("OpenButton");
     private readonly SharedProbeSession _shared = shared;
@@ -589,6 +595,111 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
 
         Assert.StartsWith("wait_for failed: ", refused.Message, StringComparison.Ordinal);
         Assert.Contains("the expression does not parse: ", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitForTextIsMetOnceACaptionAppears()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string path = await AddCaptionAsync("scene_tree.root", "Launch", (400, 250), hidden: true, cancellation);
+        JsonObject before = await WaitAsync(new WaitCondition(Text: "Launch"), 0);
+        await RunAsync($"scene_tree.create_timer(0.2).timeout.connect(scene_tree.root.get_node(\"{path}\").show)\n\treturn true");
+
+        JsonObject waited = await WaitAsync(new WaitCondition(Text: "Launch"));
+
+        Assert.False(before["met"]!.GetValue<bool>(), before.ToJsonString());
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Equal(path, waited["value"]!["path"]!.GetValue<string>());
+        Assert.Equal("Launch", waited["value"]!["shown"]!.GetValue<string>());
+        JsonNode rect = waited["value"]!["rect"]!;
+        Assert.Equal(400, rect["x"]!.GetValue<double>());
+        Assert.Equal(250, rect["y"]!.GetValue<double>());
+        Assert.Equal(120, rect["width"]!.GetValue<double>());
+        Assert.Equal(40, rect["height"]!.GetValue<double>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATextLeaveIsMetOnceTheControlShowingItIsHidden()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        WaitCondition leave = new(Exists: false, Text: "Abort Mission");
+        string path = await AddCaptionAsync("scene_tree.root", "Abort Mission", (400, 250), hidden: false, cancellation);
+        JsonObject before = await WaitAsync(leave, 0);
+        await RunAsync($"scene_tree.create_timer(0.2).timeout.connect(scene_tree.root.get_node(\"{path}\").hide)\n\treturn true");
+
+        JsonObject waited = await WaitAsync(leave);
+
+        Assert.False(before["met"]!.GetValue<bool>(), before.ToJsonString());
+        Assert.Equal(path, before["last"]!["path"]!.GetValue<string>());
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Null(waited["value"]);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task TwoControlsShowingATextEndTheWaitWithTheirList()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddBoxAsync("LeftBox", hidden: false, cancellation);
+        await AddBoxAsync("RightBox", hidden: false, cancellation);
+        string left = await AddCaptionAsync(BoxNode("LeftBox"), "Deal", (20, 300), hidden: false, cancellation);
+        string right = await AddCaptionAsync(BoxNode("RightBox"), "Deal", (500, 300), hidden: false, cancellation);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => WaitAsync(new WaitCondition(Text: "Deal")));
+
+        Assert.StartsWith("wait_for failed: ", refused.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            $"'Deal' is shown by 2 Controls: {left} at 20,300,120,40, {right} at 500,300,120,40; narrow it with under.",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task UnderKeepsATextWaitToItsSubtreeAndAHiddenOrMissingOneShowsNothing()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddBoxAsync("LeftBox", hidden: false, cancellation);
+        await AddBoxAsync("ShutBox", hidden: true, cancellation);
+        await AddCaptionAsync("scene_tree.root", "Deal", (500, 300), hidden: false, cancellation);
+        string inside = await AddCaptionAsync(BoxNode("LeftBox"), "Deal", (20, 300), hidden: false, cancellation);
+        await AddCaptionAsync(BoxNode("ShutBox"), "Fold", (20, 360), hidden: false, cancellation);
+        await AddCaptionAsync("scene_tree.root", "Fold", (500, 360), hidden: false, cancellation);
+
+        // Checked first: the visible Fold outside ShutBox would meet shut and hold shutLeave if under were ignored.
+        JsonObject shut = await WaitAsync(new WaitCondition(Text: "Fold", Under: "ShutBox"), 0);
+        JsonObject shutLeave = await WaitAsync(new WaitCondition(Exists: false, Text: "Fold", Under: "ShutBox"), 0);
+        Assert.False(shut["met"]!.GetValue<bool>(), shut.ToJsonString());
+        Assert.True(shutLeave["met"]!.GetValue<bool>(), shutLeave.ToJsonString());
+
+        JsonObject scoped = await WaitAsync(new WaitCondition(Text: "Deal", Under: "LeftBox"), 0);
+        JsonObject byPath = await WaitAsync(new WaitCondition(Text: "Deal", Under: "/root/LeftBox"), 0);
+        JsonObject missing = await WaitAsync(new WaitCondition(Text: "Deal", Under: "NoSuchBox"), 0);
+        JsonObject missingLeave = await WaitAsync(new WaitCondition(Exists: false, Text: "Deal", Under: "NoSuchBox"), 0);
+
+        Assert.True(scoped["met"]!.GetValue<bool>(), scoped.ToJsonString());
+        Assert.Equal(inside, scoped["value"]!["path"]!.GetValue<string>());
+        Assert.True(byPath["met"]!.GetValue<bool>(), byPath.ToJsonString());
+        Assert.Equal(inside, byPath["value"]!["path"]!.GetValue<string>());
+        Assert.False(missing["met"]!.GetValue<bool>(), missing.ToJsonString());
+        Assert.True(missingLeave["met"]!.GetValue<bool>(), missingLeave.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStepUntilATextStopsOnTheFrameItShows()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string path = await AddCaptionAsync("scene_tree.root", "Reveal Map", (400, 250), hidden: true, cancellation);
+        await FrameAsync("pause");
+        await AddShowerAsync(path, cancellation);
+
+        JsonObject stepped = await FrameAsync("step", options: new StepOptions(Until: new WaitCondition(Text: "Reveal Map")));
+        long shown = (await RunAsync("return scene_tree.root.get_node(\"TextShower\").get_meta(\"shown_frame\", -1)")).GetValue<long>();
+
+        Assert.True(stepped["met"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.Equal(path, stepped["value"]!["path"]!.GetValue<string>());
+        Assert.True(stepped["paused"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.True(shown > 0, $"shown at {shown}");
+        Assert.Equal(shown, stepped["frame"]!.GetValue<long>());
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -1691,6 +1802,50 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.DoesNotContain(messages, message => message.Contains(text, StringComparison.Ordinal));
     }
 
+    /// <summary>Adds a 120 x 40 Button reading <paramref name="text"/> at <paramref name="at"/>, named as the text without its
+    /// spaces, under the node the script expression <paramref name="parent"/> gives, hidden when <paramref name="hidden"/>;
+    /// returns its path.</summary>
+    private async Task<string> AddCaptionAsync(string parent, string text, (int X, int Y) at, bool hidden, CancellationToken cancellationToken) =>
+        (
+            await RunBodyAsync(
+                "var button := Button.new()\n\t"
+                    + $"button.name = \"{text.Replace(" ", "", StringComparison.Ordinal)}\"\n\t"
+                    + $"button.text = \"{text}\"\n\t"
+                    + $"button.position = Vector2({at.X}, {at.Y})\n\t"
+                    + "button.size = Vector2(120, 40)\n\t"
+                    + $"button.visible = {(hidden ? "false" : "true")}\n\t"
+                    + $"{parent}.add_child(button)\n\t"
+                    + "return str(button.get_path())",
+                cancellationToken
+            )
+        ).GetValue<string>();
+
+    /// <summary>Adds a mouse-ignoring Control named <paramref name="name"/> under the root, hidden when
+    /// <paramref name="hidden"/>.</summary>
+    private Task<JsonNode> AddBoxAsync(string name, bool hidden, CancellationToken cancellationToken) =>
+        RunBodyAsync(
+            "var box := Control.new()\n\t"
+                + $"box.name = \"{name}\"\n\t"
+                + "box.mouse_filter = Control.MOUSE_FILTER_IGNORE\n\t"
+                + $"box.visible = {(hidden ? "false" : "true")}\n\t"
+                + "scene_tree.root.add_child(box)\n\treturn true",
+            cancellationToken
+        );
+
+    /// <summary>The script expression for the node named <paramref name="name"/> under the root.</summary>
+    private static string BoxNode(string name) => $"scene_tree.root.get_node(\"{name}\")";
+
+    /// <summary>Adds TextShower under the root, with <see cref="ShowerScript"/>, its target the node at <paramref name="path"/>,
+    /// armed.</summary>
+    private Task<JsonNode> AddShowerAsync(string path, CancellationToken cancellationToken) =>
+        RunBodyAsync(
+            "var shower := Node.new()\n\tshower.name = \"TextShower\"\n\tvar script := GDScript.new()\n\t"
+                + $"script.source_code = \"{ShowerScript}\"\n\tscript.reload()\n\tshower.set_script(script)\n\t"
+                + $"shower.target = scene_tree.root.get_node(\"{path}\")\n\t"
+                + "scene_tree.root.add_child(shower)\n\tshower.arm()\n\treturn true",
+            cancellationToken
+        );
+
     private async Task<long> ReadIntAsync(string property) => (await RunAsync($"return {Probe}.{property}")).GetValue<long>();
 
     /// <summary>TimeProbe's property read through inspect_node, a read tool that runs no game code.</summary>
@@ -1724,10 +1879,12 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     private async Task<JsonObject> WaitAsync(WaitCondition condition, int timeoutMs = 10_000) =>
         JsonNode.Parse(Text(await _tools.WaitForAsync(condition, timeoutMs, cancellationToken: TestContext.Current.CancellationToken)))!.AsObject();
 
-    private async Task<JsonNode> RunAsync(string body)
+    private Task<JsonNode> RunAsync(string body) => RunBodyAsync(body, TestContext.Current.CancellationToken);
+
+    private async Task<JsonNode> RunBodyAsync(string body, CancellationToken cancellationToken)
     {
         string script = $"extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t{body}\n";
-        string json = await _tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: TestContext.Current.CancellationToken);
+        string json = await _tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: cancellationToken);
         return JsonNode.Parse(json)!["value"]!;
     }
 

@@ -14,6 +14,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `watch` takes `tracks.audio`: `players` reports each sound's start, pause, resume and end, and `buses` reports when each bus carried sound.
 - `batch_drive` takes a `fired` assertion, checking that the nearest earlier gesture step set off a node's signal, optionally with given arguments.
 - `run_csharp` snippets take `Log(value)`, returned as `log` with the result and inside a thrown exception's error, beside the game's errors.
+- `wait_for`, `frame_control` until and `batch_drive` waits take `{text, under?}`, met when exactly one visible Control shows that text, or none with `exists: false`.
 
 ### Changed
 
