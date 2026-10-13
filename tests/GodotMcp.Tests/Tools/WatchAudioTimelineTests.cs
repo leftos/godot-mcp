@@ -138,7 +138,94 @@ public sealed class WatchAudioTimelineTests
         Assert.False(shaped["tracks"]![0]!.AsObject().ContainsKey("cut"));
     }
 
+    [Fact]
+    public void FiftyHeardRangesPassThroughAndFiftyOneKeepTheFirst25AndTheLast25()
+    {
+        JsonObject fifty = Shape(Timeline(BusesAudio(Bus("Effects", ranges: 50))))["audio"]!["buses"]![0]!.AsObject();
+        Assert.Equal(Enumerable.Range(0, 50), StartsOf(fifty));
+        Assert.False(fifty.ContainsKey("heardCut"), fifty.ToJsonString());
+
+        JsonObject fiftyOne = Shape(Timeline(BusesAudio(Bus("Effects", ranges: 51))))["audio"]!["buses"]![0]!.AsObject();
+        Assert.Equal(Enumerable.Range(0, 25).Concat(Enumerable.Range(26, 25)), StartsOf(fiftyOne));
+        Assert.Equal(1, fiftyOne["heardCut"]!.GetValue<int>());
+        Assert.Equal(51, fiftyOne["heardFrames"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void EachBusIsCutOnItsOwnAndTheTimelineStaysUnderTheBudget()
+    {
+        JsonObject[] buses = [.. Enumerable.Range(0, 16).Select(bus => Bus($"Bus{bus}", ranges: bus == 0 ? 10 : 3600))];
+
+        JsonObject shaped = Shape(Timeline(BusesAudio(buses)));
+
+        Assert.True(shaped.ToJsonString().Length <= WatchTimeline.MaxResultLength, $"{shaped.ToJsonString().Length} characters");
+        JsonArray kept = shaped["audio"]!["buses"]!.AsArray();
+        Assert.Equal(10, kept[0]!["heard"]!.AsArray().Count);
+        Assert.False(kept[0]!.AsObject().ContainsKey("heardCut"));
+        Assert.All(kept.Skip(1), bus => Assert.Equal((50, 3550), (bus!["heard"]!.AsArray().Count, bus["heardCut"]!.GetValue<int>())));
+        Assert.Equal([.. Enumerable.Range(0, 25), .. Enumerable.Range(3575, 25)], StartsOf(kept[1]!.AsObject()));
+    }
+
+    [Fact]
+    public void HeardRangesAreCutFromTheMiddlePastTheResultBudgetAndCountedInHeardCut()
+    {
+        JsonObject reply = Timeline(BusesAudio(Bus("Effects", ranges: 50)));
+        int budget = reply.ToJsonString().Length - 100;
+
+        JsonObject bus = WatchTimeline.Shape(reply, budget)["audio"]!["buses"]![0]!.AsObject();
+
+        int[] starts = [.. StartsOf(bus)];
+        Assert.Equal(50 - starts.Length, bus["heardCut"]!.GetValue<int>());
+        Assert.True(starts.Length < 50, $"{starts.Length} ranges");
+        Assert.Equal((0, 49), (starts[0], starts[^1]));
+        Assert.Single(starts.Zip(starts.Skip(1)), pair => pair.Second - pair.First > 1);
+    }
+
+    [Fact]
+    public void TheFiftyRangeCutRunsBeforeTheBudgetCutWhichAddsToHeardCut()
+    {
+        int fullLength = Shape(Timeline(BusesAudio(Bus("Effects", ranges: 60)))).ToJsonString().Length;
+
+        JsonObject bus = WatchTimeline.Shape(Timeline(BusesAudio(Bus("Effects", ranges: 60))), fullLength - 60)["audio"]!["buses"]![0]!.AsObject();
+
+        int[] starts = [.. StartsOf(bus)];
+        Assert.InRange(starts.Length, 1, 49);
+        Assert.Equal(60 - starts.Length, bus["heardCut"]!.GetValue<int>());
+        Assert.All(starts, start => Assert.True(start is < 25 or >= 35, $"range {start} is one the 50-range cut drops"));
+        Assert.Equal((0, 59), (starts[0], starts[^1]));
+    }
+
     private static JsonObject Shape(JsonObject reply) => WatchTimeline.Shape(reply, WatchTimeline.MaxResultLength);
+
+    private static IEnumerable<int> StartsOf(JsonObject bus) => bus["heard"]!.AsArray().Select(range => range![0]!.GetValue<int>() / 2);
+
+    /// <summary>The bridge's audio object for a watch of buses only.</summary>
+    private static JsonObject BusesAudio(params JsonObject[] buses) => new() { ["buses"] = new JsonArray([.. buses]) };
+
+    /// <summary>A bus summary as the bridge sends it, with <paramref name="ranges"/> one-frame heard ranges on every second
+    /// frame.</summary>
+    private static JsonObject Bus(string name, int ranges) =>
+        new()
+        {
+            ["name"] = name,
+            ["peakMaxDb"] = -12.5,
+            ["peakMaxAt"] = 0,
+            ["heard"] = new JsonArray([.. Enumerable.Range(0, ranges).Select(range => new JsonArray(range * 2, range * 2))]),
+            ["heardFrames"] = ranges,
+            ["sampledFrames"] = ranges * 2,
+            ["volumeDb"] = new JsonObject
+            {
+                ["first"] = 0,
+                ["last"] = 0,
+                ["changes"] = 0,
+            },
+            ["mute"] = new JsonObject
+            {
+                ["first"] = false,
+                ["last"] = false,
+                ["changes"] = 0,
+            },
+        };
 
     private static string Player(JsonNode? item) => item![3]!.GetValue<string>();
 

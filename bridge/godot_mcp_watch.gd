@@ -25,6 +25,7 @@ const TIME_SCRIPT := "godot_mcp_time.gd"
 const CONDITIONS_SCRIPT := "godot_mcp_conditions.gd"
 const MONITORS_SCRIPT := "godot_mcp_watch_monitors.gd"
 const AUDIO_SCRIPT := "godot_mcp_watch_audio.gd"
+const BUSES_SCRIPT := "godot_mcp_watch_buses.gd"
 ## The change points a track keeps from its start, and from its end in a ring.
 const FIRST_POINTS := 200
 const LAST_POINTS := 50
@@ -98,6 +99,9 @@ var movie_path: Callable
 ## Whether a node is an audio player an audio track follows (the audio script's is_player; a test,
 ## whose stand-in players are of no player class, sets its own).
 var audio_player: Callable
+## A bus's peak in dB by its index, the largest over its channels (the bus script's peak; a test,
+## where nothing is mixed, sets its own).
+var bus_peak: Callable
 ## The clock's script, for its game clock and its JSON comparison.
 var _time_script: GDScript
 ## The conditions' script, for its expression inputs and its condition parse.
@@ -106,6 +110,8 @@ var _conditions_script: GDScript
 var _monitors_script: GDScript
 ## The audio script, which follows a watch's audio players and reads their voices.
 var _audio_script: GDScript
+## The bus levels' script, which the audio script reads a watch's buses through.
+var _buses_script: GDScript
 ## The watch running or held, or empty (see _new_watch for its fields).
 var _watch: Dictionary = {}
 ## Why no watch runs, while _watch is empty.
@@ -119,6 +125,8 @@ func _init() -> void:
 	_monitors_script = load(script_dir.path_join(MONITORS_SCRIPT)) as GDScript
 	_audio_script = load(script_dir.path_join(AUDIO_SCRIPT)) as GDScript
 	audio_player = func(node: Node) -> bool: return _audio_script.is_player(node)
+	_buses_script = load(script_dir.path_join(BUSES_SCRIPT)) as GDScript
+	bus_peak = func(index: int) -> float: return _buses_script.peak(index)
 	frame_counter = _engine_frames
 	group_members = _tree_group
 	usec_clock = Callable(Time, "get_ticks_usec")
@@ -209,7 +217,7 @@ func begin(params: Dictionary, source: Signal) -> String:
 		perf = _monitors_script.begin(params, movie_path)
 	if perf is String:
 		return perf
-	var audio: Variant = _audio_script.begin(params, bridge, audio_player)
+	var audio: Variant = _audio_script.begin(params, bridge, audio_player, _buses_script, bus_peak)
 	if audio is String:
 		return audio
 	_watch = _new_watch(params, tracks, source)
@@ -634,9 +642,9 @@ static func _past_deadline(watch: Dictionary, now_ms: int) -> bool:
 	return now_ms - int(watch["began_ms"]) > allowed
 
 
-## Samples every track still sampling at frame, stamped with the game time so far, and the audio
-## players' voices, then every monitor, which measures frame_ms to now_usec (the frame's stamp) and
-## the sampling's own time from began.
+## Samples every track still sampling at frame, stamped with the game time so far, the audio
+## players' voices and the buses' levels, then every monitor, which measures frame_ms to now_usec
+## (the frame's stamp) and the sampling's own time from began.
 func _sample(watch: Dictionary, frame: int, now_usec: int) -> void:
 	var began: int = usec_clock.call()
 	var game_ms: int = floori(float(watch["clock"]["seconds"]) * 1000.0)
@@ -644,6 +652,7 @@ func _sample(watch: Dictionary, frame: int, now_usec: int) -> void:
 		if not track["done"]:
 			_sample_track(track, frame, game_ms)
 	_audio_script.sample(watch["audio"], frame, game_ms)
+	_audio_script.sample_levels(watch["audio"], frame)
 	_monitors_script.sample(watch["perf"], frame, now_usec, began, usec_clock)
 
 
@@ -859,7 +868,7 @@ static func _add_events(result: Dictionary, watch: Dictionary) -> void:
 ## eventCounts, eventTracks, skipped, skippedTotal, monitors, warning, audio, paused, stopped,
 ## call]}; frames and gameMs count the unpaused frames sampled and their game time; the events keys
 ## only with signal tracks, monitors only with monitors, audio only with an audio track, warning
-## only when one applies.
+## only when one of the monitors' or the audio's applies.
 func _collect(watch: Dictionary) -> Dictionary:
 	var clock: Dictionary = watch["clock"]
 	var result: Dictionary = {

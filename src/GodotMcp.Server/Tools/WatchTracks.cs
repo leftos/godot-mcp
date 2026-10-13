@@ -4,7 +4,8 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// What a watch samples each frame and the signals it records: properties of nodes and Godot Expressions (at most 32 together),
-/// signals (at most 16 tracks), performance monitors (at most 16) and the voices of audio players.
+/// signals (at most 16 tracks), performance monitors (at most 16), the voices of audio players and the levels of audio buses
+/// (at most 16).
 /// </summary>
 internal sealed record WatchTracks(
     [property: Description(
@@ -34,15 +35,30 @@ internal sealed record WatchTracks(
     [property: Description(
         "Audio: {players: {under?}} follows the voices of every AudioStreamPlayer, AudioStreamPlayer2D and AudioStreamPlayer3D "
             + "at or under under (default the root), found at start or added during the window, at most 200 at a time; each "
-            + "voice's start, pause, resume and end is listed in audio.voices."
+            + "voice's start, pause, resume and end is listed in audio.voices. {buses: [\"Effects\"] | [\"*\"], thresholdDb?} reads "
+            + "each bus's peak, volume and mute once an unpaused sampled frame and summarises them in audio.buses. Players, "
+            + "buses or both."
     )]
         WatchAudioTrack? Audio = null
 );
 
-/// <summary>The audio a watch follows: the voices of the players at or under a node.</summary>
+/// <summary>The audio a watch follows: the voices of the players at or under a node, and the levels of buses by name.</summary>
 internal sealed record WatchAudioTrack(
     [property: Description("The players whose voices are listed: {} for every player under the root, {under} for those at or under a node.")]
-        WatchAudioPlayers? Players = null
+        WatchAudioPlayers? Players = null,
+    [property: Description(
+        "The buses whose levels are read each unpaused sampled frame, by name ([\"Effects\", \"Music\"], at most 16, each once), "
+            + "or [\"*\"] alone for every bus at start, Master included, the first 16 by index (the rest counted in busesSkipped; "
+            + "a bus added later is not followed). A name is resolved at every sample: a bus missing at start is listed {name, "
+            + "missing: true} in start's reply and read from any sampled frame it exists in, and one removed or renamed during "
+            + "the window is skipped while it is gone."
+    )]
+        string[]? Buses = null,
+    [property: Description(
+        "With buses: a bus counts as heard in a sampled frame whose peak is above this many dB, -100 to 0; left out, -60 "
+            + "(Godot's audio/buses/channel_disable_threshold_db default)."
+    )]
+        double? ThresholdDb = null
 );
 
 /// <summary>Which audio players a watch follows.</summary>

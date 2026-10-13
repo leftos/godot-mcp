@@ -10,7 +10,8 @@ extends RefCounted
 ## (scene/audio/audio_stream_player_internal.cpp L191-197 in 4.7.2); and ends only when the player
 ## holds no playback: finished when its finished signal fired since the last read, else freed when
 ## the player is gone, else stopped. Each player keeps its first VOICE_EVENTS voices and the watch
-## its first MAX_VOICES; the server shares them across players.
+## its first MAX_VOICES; the server shares them across players. A watch's buses are read through
+## the bus levels' script (godot_mcp_watch_buses.gd), in unpaused frames only.
 
 ## The most players a watch follows at a time; the rest are counted as skipped.
 const MAX_PLAYERS := 200
@@ -23,6 +24,11 @@ const MAX_VOICES := 1000
 ## id equals it, since the validator is never 0 (L2474-2477).
 const NO_VOICE := -9223372036854775807 - 1
 const NOT_FOUND_HINT := "get_scene_tree lists the nodes' paths"
+## Audio does not follow Engine.time_scale (AudioServer.playback_speed_scale sets its speed).
+const TIME_SCALE_WARNING := (
+	"Engine.time_scale was not 1 in a sampled frame; audio does not follow it, so a voice's length "
+	+ "in gameMs is its length in seconds times time_scale"
+)
 
 
 ## Whether node is one of the three audio player classes.
@@ -30,23 +36,54 @@ static func is_player(node: Node) -> bool:
 	return node is AudioStreamPlayer or node is AudioStreamPlayer2D or node is AudioStreamPlayer3D
 
 
-## A watch's audio state from params.audio, {} without one, or the refusal of an under node that
-## does not exist: the bridge, the under node (the root when none is named), which nodes are
-## players (is_player_check), the players followed by instance id (_new_entry), every player seen
+## A watch's audio state from params.audio, {} without players or buses, or the refusal of an under
+## node that does not exist: the bridge, the under node (the root when none is named, null without
+## a players track, which follows no player and connects nothing), which nodes are players
+## (is_player_check), the players followed by instance id (_new_entry), every player seen
 ## (followed or skipped), the counts of players followed after start and skipped, the voices kept
-## and per path, each path's starts and ends, every voice read, and the node_added connection.
-static func begin(params: Dictionary, bridge: Node, is_player_check: Callable) -> Variant:
+## and per path, each path's starts and ends, every voice read, the node_added connection, whether
+## a sampled frame ran at a time scale other than 1, and the bus levels' script and state
+## (buses_script's begin, reading peaks with bus_peak).
+static func begin(
+	params: Dictionary,
+	bridge: Node,
+	is_player_check: Callable,
+	buses_script: GDScript,
+	bus_peak: Callable
+) -> Variant:
 	var audio: Variant = params.get("audio")
-	if not audio is Dictionary or not (audio as Dictionary).get("players") is Dictionary:
+	if not audio is Dictionary:
 		return {}
-	var players: Dictionary = audio["players"]
-	var tree := Engine.get_main_loop() as SceneTree
-	var under: Node = tree.root
-	if players.get("under") is String:
-		under = bridge._find_node(players["under"])
-		if under == null:
-			return bridge._inspect.not_found(players["under"], NOT_FOUND_HINT)
-	var state: Dictionary = {
+	var players: Variant = (audio as Dictionary).get("players")
+	var levels: Dictionary = buses_script.begin(audio, bus_peak)
+	if not players is Dictionary and levels.is_empty():
+		return {}
+	var under: Variant = null
+	if players is Dictionary:
+		under = _resolve_under(players, bridge)
+		if under is String:
+			return under
+	var state: Dictionary = _new_state(bridge, under, is_player_check)
+	state["buses_script"] = buses_script
+	state["levels"] = levels
+	if under != null:
+		_follow_players(state)
+	return state
+
+
+## The node players.under names, the root when it names none, or the not-found refusal.
+static func _resolve_under(players: Dictionary, bridge: Node) -> Variant:
+	if not players.get("under") is String:
+		return (Engine.get_main_loop() as SceneTree).root
+	var under: Node = bridge._find_node(players["under"])
+	if under == null:
+		return bridge._inspect.not_found(players["under"], NOT_FOUND_HINT)
+	return under
+
+
+## A watch's audio state before any player is followed (see begin).
+static func _new_state(bridge: Node, under: Variant, is_player_check: Callable) -> Dictionary:
+	return {
 		"bridge": bridge,
 		"under": under,
 		"is_player": is_player_check,
@@ -58,15 +95,21 @@ static func begin(params: Dictionary, bridge: Node, is_player_check: Callable) -
 		"kept": {},
 		"counts": {},
 		"total": 0,
-		"node_added": tree.node_added,
+		"node_added": (Engine.get_main_loop() as SceneTree).node_added,
+		"scaled": false,
 	}
+
+
+## Follows the players at or under the under node now, the bridge's own left out, and connects
+## node_added to follow those that enter later.
+static func _follow_players(state: Dictionary) -> void:
+	var under: Node = state["under"]
 	for node: Node in [under] + under.find_children("*", "", true, false):
-		if is_player_check.call(node) and not _is_bridges(state, node):
+		if state["is_player"].call(node) and not _is_bridges(state, node):
 			_follow(state, node, true)
 	var on_added := func(node: Node) -> void: _on_node_added(state, node)
 	state["on_added"] = on_added
-	tree.node_added.connect(on_added)
-	return state
+	(state["node_added"] as Signal).connect(on_added)
 
 
 ## Follows a player that entered the tree at or under the under node, the bridge's own left out.
@@ -141,6 +184,16 @@ static func sample(state: Dictionary, frame: int, game_ms: int) -> void:
 			gone.append(id)
 	for id: int in gone:
 		players.erase(id)
+
+
+## Reads the bus levels at frame, an unpaused one (a paused frame reads voices only), and notes a
+## time scale other than 1.
+static func sample_levels(state: Dictionary, frame: int) -> void:
+	if state.is_empty():
+		return
+	if Engine.time_scale != 1.0:
+		state["scaled"] = true
+	state["buses_script"].sample(state["levels"], frame, bool(state["bridge"]._audio.muted))
 
 
 ## Reads one player, clearing its finished flag; returns false once the player is freed.
@@ -254,11 +307,24 @@ static func release(state: Dictionary) -> void:
 
 
 ## Adds start's audio to reply, when the watch has an audio track: {driver, mixRate, bridgeMuted,
-## players: {count, playing: [{path, stream?, bus, maxPolyphony?, position?}]}, playersSkipped?},
-## playing the followed players holding a playback now.
+## players?: {count, playing: [{path, stream?, bus, maxPolyphony?, position?}]}, playersSkipped?,
+## buses?, busesSkipped?}, playing the followed players holding a playback now, the players keys
+## only with a players track and the buses keys only with buses (the bus levels' describe).
 static func describe(reply: Dictionary, state: Dictionary) -> void:
 	if state.is_empty():
 		return
+	var audio: Dictionary = {
+		"driver": AudioServer.get_driver_name(),
+		"mixRate": int(AudioServer.get_mix_rate()),
+		"bridgeMuted": bool(state["bridge"]._audio.muted),
+	}
+	if state["under"] != null:
+		_describe_players(audio, state)
+	state["buses_script"].describe(audio, state["levels"])
+	reply["audio"] = audio
+
+
+static func _describe_players(audio: Dictionary, state: Dictionary) -> void:
 	var players: Dictionary = state["players"]
 	var playing: Array = []
 	for entry: Dictionary in players.values():
@@ -267,28 +333,39 @@ static func describe(reply: Dictionary, state: Dictionary) -> void:
 			var described: Dictionary = {"path": entry["path"]}
 			described.merge(_voice_info(state, player))
 			playing.append(described)
-	var audio: Dictionary = {
-		"driver": AudioServer.get_driver_name(),
-		"mixRate": int(AudioServer.get_mix_rate()),
-		"bridgeMuted": bool(state["bridge"]._audio.muted),
-		"players": {"count": players.size(), "playing": playing},
-	}
+	audio["players"] = {"count": players.size(), "playing": playing}
 	if int(state["skipped"]) > 0:
 		audio["playersSkipped"] = state["skipped"]
-	reply["audio"] = audio
 
 
 ## Adds the timeline's audio, when the watch has an audio track: {voices, voiceCounts, voiceTotal,
-## playersFollowed?, playersSkipped?}; voiceTotal counts every voice read, which the server drops
-## after sharing the voices.
+## playersFollowed?, playersSkipped?} with a players track, buses? and busesSkipped? with buses
+## (the bus levels' add_to); voiceTotal counts every voice read, which the server drops after
+## sharing the voices. Joins the audio warnings onto result's warning (the monitors' may be there
+## first) with "; ": Master read while the bridge muted it, and a time scale other than 1.
 static func add_to(result: Dictionary, state: Dictionary) -> void:
 	if state.is_empty():
 		return
-	var audio: Dictionary = {
-		"voices": state["voices"], "voiceCounts": state["counts"], "voiceTotal": state["total"]
-	}
+	var audio: Dictionary = {}
+	if state["under"] != null:
+		_add_voices(audio, state)
+	state["buses_script"].add_to(audio, state["levels"])
+	result["audio"] = audio
+	var warnings: PackedStringArray = state["buses_script"].warnings(state["levels"])
+	if state["scaled"]:
+		warnings.append(TIME_SCALE_WARNING)
+	if warnings.is_empty():
+		return
+	if result.has("warning"):
+		warnings.insert(0, result["warning"])
+	result["warning"] = "; ".join(warnings)
+
+
+static func _add_voices(audio: Dictionary, state: Dictionary) -> void:
+	audio["voices"] = state["voices"]
+	audio["voiceCounts"] = state["counts"]
+	audio["voiceTotal"] = state["total"]
 	if int(state["followed"]) > 0:
 		audio["playersFollowed"] = state["followed"]
 	if int(state["skipped"]) > 0:
 		audio["playersSkipped"] = state["skipped"]
-	result["audio"] = audio

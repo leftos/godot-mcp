@@ -25,6 +25,9 @@ internal static class WatchTimeline
     /// <summary>The most players' paths a timeline's voiceCounts keeps.</summary>
     internal const int MaxVoiceCountPaths = 100;
 
+    /// <summary>The most heard ranges a bus keeps: the first half and the last half.</summary>
+    internal const int MaxHeardRanges = 50;
+
     /// <summary>Where the bridge's event names the signal track it belongs to, after [frame, gameMs, node, signal, args].</summary>
     private const int EventTrackIndex = 5;
 
@@ -57,6 +60,7 @@ internal static class WatchTimeline
 
         ShareEvents(reply);
         ShareVoices(reply);
+        CutHeard(reply);
         CutLists(reply, maxLength);
         return reply;
     }
@@ -370,7 +374,7 @@ internal static class WatchTimeline
     }
 
     /// <summary>The lists a cut may shorten: each track's points, the events when the watch has signal tracks, and the
-    /// voices when it has an audio track.</summary>
+    /// voices and each bus's heard ranges when it has an audio track.</summary>
     private static List<CutList> ListsOf(JsonObject reply)
     {
         List<CutList> lists = [.. Tracks(reply).Select(track => new CutList(track, "points", "cut"))];
@@ -379,12 +383,51 @@ internal static class WatchTimeline
             lists.Add(new CutList(reply, "events", "eventsCut"));
         }
 
-        if (reply["audio"] is JsonObject audio && audio["voices"] is JsonArray)
+        if (reply["audio"] is JsonObject audio)
+        {
+            AddAudioLists(lists, audio);
+        }
+
+        return lists;
+    }
+
+    private static void AddAudioLists(List<CutList> lists, JsonObject audio)
+    {
+        if (audio["voices"] is JsonArray)
         {
             lists.Add(new CutList(audio, "voices", "voicesCut"));
         }
 
-        return lists;
+        lists.AddRange(Buses(audio).Select(bus => new CutList(bus, "heard", "heardCut")));
+    }
+
+    private static IEnumerable<JsonObject> Buses(JsonObject audio) => (audio["buses"] as JsonArray ?? []).OfType<JsonObject>();
+
+    /// <summary>Keeps each bus's first and last <see cref="MaxHeardRanges"/>/2 heard ranges and counts the ranges between them
+    /// in its heardCut.</summary>
+    private static void CutHeard(JsonObject reply)
+    {
+        if (reply["audio"] is not JsonObject audio)
+        {
+            return;
+        }
+
+        foreach (JsonObject bus in Buses(audio))
+        {
+            if (bus["heard"] is not JsonArray { Count: > MaxHeardRanges } heard)
+            {
+                continue;
+            }
+
+            int cut = heard.Count - MaxHeardRanges;
+            // From the last range cut to the first, so each removal moves only the last half.
+            for (int index = (MaxHeardRanges / 2) + cut - 1; index >= MaxHeardRanges / 2; index--)
+            {
+                heard.RemoveAt(index);
+            }
+
+            bus["heardCut"] = cut;
+        }
     }
 
     /// <summary>A list in the timeline (a track's points, or the events) and each item's length in JSON, cut from the middle

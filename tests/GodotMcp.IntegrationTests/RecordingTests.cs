@@ -11,7 +11,8 @@ namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// options.record against the InputProbe: Movie Maker writes an .avi from launch, record_mark notes movie frames, and the stop
-/// encodes one .mp4 clip per start-stop pair with ffmpeg. The files are read back with ffprobe, found beside ffmpeg.
+/// encodes one .mp4 clip per start-stop pair with ffmpeg. The files are read back with ffprobe, found beside ffmpeg. A watch's
+/// audio is read here too, since a recording mixes in step with its frames.
 /// </summary>
 public sealed class RecordingTests : IAsyncDisposable
 {
@@ -311,6 +312,52 @@ public sealed class RecordingTests : IAsyncDisposable
         // are the round trips between the reads and the wait (measured 4 at 240 fps, 8 at 20 fps).
         const int frames = 1000 * GodotCommandLine.MovieFramesPerSecond / 1000;
         Assert.InRange(after - before, frames, frames + 20);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ARecordedToneIsAStartAndAnEnd30FramesApartWithAHeardRangeOnItsBus()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await LaunchAsync(record: true);
+        string tone = JsonNode.Parse(
+            await _tools.RunScriptAsync(
+                "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t"
+                    + "var rig := Node.new()\n\trig.name = \"AudioRig\"\n\tscene_tree.root.add_child(rig)\n\t"
+                    + WatchAudioTests.PlayerLines("Tone", 500, 1, "rig", "AudioStreamPlayer")
+                    + "return str(tone.get_path())\n",
+                10_000,
+                cancellationToken: cancellation
+            )
+        )!["value"]!.GetValue<string>();
+        // The recording's quiet launch leaves the bridge's mute off, so Master carries the tone; a window of 7200 frames
+        // outlasts the round trips of a game that runs uncapped while it records.
+        WatchTracks tracks = new(Audio: new WatchAudioTrack(new WatchAudioPlayers(), ["Master"]));
+
+        JsonNode started = JsonNode.Parse(
+            await _tools.WatchAsync("start", tracks, new WatchWindow(Frames: 7200), null, cancellationToken: cancellation)
+        )!;
+        await _tools.RunScriptAsync(
+            "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t"
+                + $"scene_tree.root.get_node(\"{tone}\").play()\n\treturn true\n",
+            10_000,
+            cancellationToken: cancellation
+        );
+        await _tools.WaitForAsync(new WaitCondition(Node: tone, Expression: "not node.has_stream_playback()"), cancellationToken: cancellation);
+        await _tools.WaitForAsync(new WaitCondition(Frames: 3), cancellationToken: cancellation);
+        JsonNode audio = JsonNode.Parse(await _tools.WatchAsync("stop", cancellationToken: cancellation))!["audio"]!;
+
+        Assert.False(started["audio"]!["bridgeMuted"]!.GetValue<bool>(), started.ToJsonString());
+        JsonArray voices = audio["voices"]!.AsArray();
+        Assert.Equal(["start", "end"], voices.Select(voice => voice![2]!.GetValue<string>()));
+        Assert.Equal("finished", voices[1]![4]!["reason"]!.GetValue<string>());
+        // A recording mixes 1/60 s of audio a frame, so a 500 ms tone's voice lasts 30 frames, give or take the frame its
+        // last mix step lands in.
+        int start = (int)voices[0]![0]!.GetValue<double>();
+        int end = (int)voices[1]![0]!.GetValue<double>();
+        Assert.InRange(end - start, 29, 31);
+        JsonObject master = audio["buses"]!.AsArray().Single()!.AsObject();
+        JsonArray heard = master["heard"]!.AsArray();
+        Assert.Contains(heard, range => (int)range![0]!.GetValue<double>() <= end && (int)range[1]!.GetValue<double>() >= start);
     }
 
     /// <summary>

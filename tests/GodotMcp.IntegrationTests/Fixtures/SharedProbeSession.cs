@@ -15,7 +15,8 @@ public class SharedProbeSession : IAsyncLifetime
     private const int ScriptTimeoutMs = 10_000;
 
     // Frees every root child but the autoloads, loads the main scene again and waits for it, then undoes what a test may
-    // have set on the engine. Keys and actions are released here: the ones the bridge holds (its input player's held keys
+    // have set on the engine: the time scale, and on the audio the bridge's mute, the buses a test added and Master's
+    // volume, mute and solo. Keys and actions are released here: the ones the bridge holds (its input player's held keys
     // and its raw event player's held actions) through the bridge, so a step's held is empty after a reset, then any other
     // still pressed in Input. The mouse buttons and pad buttons and axes the bridge holds are returned, for ResetAsync to
     // release through simulate_input. The bridge's pointer goes back to the origin, since a raw mouse_motion with no
@@ -30,6 +31,7 @@ public class SharedProbeSession : IAsyncLifetime
         	RenderingServer.render_loop_enabled = true
         	Input.emulate_touch_from_mouse = {EMULATE_TOUCH}
         	var root: Window = scene_tree.root
+        	_reset_audio(root)
         	_release_keys_and_actions(root)
         	root.get_node("GodotMcpBridge").set("_pointer", Vector2.ZERO)
         	root.get_node("GodotMcpBridge/Gestures").set("_ui_baseline", {})
@@ -43,6 +45,16 @@ public class SharedProbeSession : IAsyncLifetime
         		if scene_tree.current_scene != null:
         			break
         	return {"reloaded": scene_tree.current_scene != null, "held": _held(root)}
+
+
+        # The probe has no bus layout of its own, so every bus past Master is a test's.
+        func _reset_audio(root: Window) -> void:
+        	root.get_node("GodotMcpBridge/Audio").set_muted(false)
+        	while AudioServer.get_bus_count() > 1:
+        		AudioServer.remove_bus(AudioServer.get_bus_count() - 1)
+        	AudioServer.set_bus_volume_db(0, 0.0)
+        	AudioServer.set_bus_mute(0, false)
+        	AudioServer.set_bus_solo(0, false)
 
 
         func _release_keys_and_actions(root: Window) -> void:

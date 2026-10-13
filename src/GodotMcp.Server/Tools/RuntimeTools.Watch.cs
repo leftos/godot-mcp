@@ -18,6 +18,10 @@ internal sealed partial class RuntimeTools
     internal const int MaxWatchTracks = 32;
     internal const int MaxWatchSignalTracks = 16;
     internal const int MaxWatchMonitors = 16;
+    internal const int MaxWatchBuses = 16;
+    internal const double MinWatchThresholdDb = -100;
+    internal const double MaxWatchThresholdDb = 0;
+    private const string EveryBus = "*";
     internal const double MaxWatchBudgetMs = 10_000;
     internal const int DefaultWatchFrames = 600;
     private const string WatchCommand = "watch";
@@ -65,17 +69,33 @@ internal sealed partial class RuntimeTools
             + "found at start or added during the window (at most 200 at a time, the rest counted in playersSkipped), and adds "
             + "audio: {voices: [[frame, gameMs, event, path, {stream?, bus?, maxPolyphony?, position?, reason?}]], voiceCounts: "
             + "{\"<path>\": {starts, ends}}, voiceCountsCut?, voicesDropped?, voicesCut?, playersFollowed?, playersSkipped?}; "
-            + "start's reply adds audio: {driver, mixRate, bridgeMuted, players: {count, playing: [{path, stream, bus, ...}]}, "
-            + "playersSkipped?}. event is start (a new playback: with unit process, a play() in frame N's processing reads at "
-            + "N+1, in a physics tick at N; it carries the stream, by its resource path (res://x.tscn::<id> for one embedded in a "
-            + "scene) or {class} when it has none, the bus, maxPolyphony above 1 and a 2D or 3D player's global position, not "
-            + "the playback position, null outside the tree), pause or resume (stream_paused flipped; it follows the player's "
+            + "start's reply adds audio: {driver, mixRate, bridgeMuted, players?: {count, playing: [{path, stream, bus, ...}]}, "
+            + "playersSkipped?}, the players keys with a players track. event is start (a new playback: with unit process, a "
+            + "play() in frame N's processing reads at N+1, in a physics tick at N; it carries the stream, by its resource path "
+            + "(res://x.tscn::<id> for one embedded in a scene) or {class} when it has none, the bus, maxPolyphony above 1 and "
+            + "a 2D or 3D player's global position, not the playback position, null outside the tree), pause or resume "
+            + "(stream_paused flipped; it follows the player's "
             + "oldest voice) or end (the player holds no playback; reason finished, freed or stopped; an end with no start is a "
             + "voice start's players.playing listed). Voices are read in paused frames too. At most 300 voices, shared fairly "
             + "across players (each keeps its earliest, the earliest players first), the rest counted in voicesDropped; "
             + "voiceCounts keeps the 100 paths with the most starts and ends and counts the rest in voiceCountsCut. A player "
             + "made, played and freed within one frame is never seen; a start says the game asked for the sound, not that it "
             + "was heard. "
+            + "tracks.audio.buses reads each named bus (or [\"*\"]: every bus at start, Master included, the first 16 by index, "
+            + "the rest counted in busesSkipped; a bus added later is not followed) once an unpaused sampled frame, resolved by "
+            + "name each time, and adds audio.buses: "
+            + "[{name, heard: [[fromFrame, toFrame]], heardFrames, sampledFrames, heardCut?, peakMaxDb?, peakMaxAt?, volumeDb?: "
+            + "{first, last, changes}, mute?: {first, last, changes}}]; start's reply adds audio.buses: [{name, index, volumeDb, "
+            + "mute, solo, send, effects: [class]}] ({name, missing: true} for a bus that does not exist at start, which is read "
+            + "from any sampled frame it exists in). "
+            + "The peak is the largest left or right peak over the bus's channels, after its volume, mute and solo, so a bus "
+            + "that is not soloed while another is reads -200; heard lists the runs of sampled frames whose peak was above "
+            + "thresholdDb (default -60), broken by a paused frame, at most 50 a bus (the first 25 and the last 25, the rest "
+            + "counted in heardCut). A bus removed or renamed during the window is skipped while it is gone, so sampledFrames "
+            + "counts the frames it was read. In a quiet or headless run audio is mixed in bursts of about 93 ms, so a sound "
+            + "shorter than about 81 ms may never reach a peak read: a voice's start, not heard, says whether a sound fired. "
+            + "warning? says when Master was read while the bridge muted it (the buses that send to it still read) and when "
+            + "a sampled frame ran at an Engine.time_scale other than 1, which audio does not follow. "
             + "Expressions, options.call and custom monitors run game code. A restart, a stop_project "
             + "or a lost connection drops the watch."
     )]
@@ -84,8 +104,9 @@ internal sealed partial class RuntimeTools
         [Description(
             "start and run: {properties: [{node, property, name?, minDelta?}], expressions: [{name, expression, node?, minDelta?}], "
                 + "signals: [{node | group, signal}], monitors: [\"frame_ms\" | a built-in monitor such as \"object/nodes\" | a custom "
-                + "monitor id], audio: {players: {under?}}}, at least one track; at most 32 property and expression tracks, each "
-                + "with a unique key (name, else node and property), at most 16 signal tracks and at most 16 monitors."
+                + "monitor id], audio: {players?: {under?}, buses?: [name] | [\"*\"], thresholdDb?}}, at least one track; at most 32 "
+                + "property and expression tracks, each with a unique key (name, else node and property), at most 16 signal "
+                + "tracks, at most 16 monitors and at most 16 buses; audio needs players or buses or both."
         )]
             WatchTracks? tracks = null,
         [Description(
@@ -119,7 +140,8 @@ internal sealed partial class RuntimeTools
     /// <see cref="MaxWatchMonitors"/> monitors, an empty node, property, name, expression, group, signal or monitor, a minDelta
     /// not above 0, two tracks with one key, a signal track with both or neither of node and group, two signal tracks on one
     /// emitter and signal, a monitor named twice, a once-a-second time/* monitor, frame_ms with unit physics, an audio track
-    /// without players, or an empty under; a window
+    /// with neither players nor buses, an empty under, an empty buses list, an empty bus name, a bus named twice, more than
+    /// <see cref="MaxWatchBuses"/> buses, "*" beside another name, a thresholdDb outside -100 to 0 or without buses; a window
     /// without exactly one of frames or gameMs, or out of range; run without a window; a unit other than process or physics;
     /// or a budgetMs out of range or without frame_ms.</exception>
     internal static JsonObject BuildWatchParameters(string action, WatchTracks? tracks, WatchWindow? window, WatchOptions? options)
@@ -210,7 +232,7 @@ internal sealed partial class RuntimeTools
         {
             throw new McpException(
                 "tracks needs at least one track: {properties: [{node, property}]}, {expressions: [{name, expression}]}, "
-                    + "{signals: [{node, signal}]}, {monitors: [\"frame_ms\"]} or {audio: {players: {}}}."
+                    + "{signals: [{node, signal}]}, {monitors: [\"frame_ms\"]}, {audio: {players: {}}} or {audio: {buses: [\"*\"]}}."
             );
         }
 
@@ -423,8 +445,8 @@ internal sealed partial class RuntimeTools
         }
     }
 
-    /// <summary>Adds the audio track, {players: {under?}}; the bridge resolves under and refuses a node that does not
-    /// exist.</summary>
+    /// <summary>Adds the audio track, {players?: {under?}, buses?, thresholdDb?}, with players or buses or both; the bridge
+    /// resolves under and refuses a node that does not exist, and resolves each bus by name.</summary>
     private static void AddWatchAudio(JsonObject parameters, WatchAudioTrack? audio)
     {
         if (audio is null)
@@ -432,12 +454,27 @@ internal sealed partial class RuntimeTools
             return;
         }
 
-        WatchAudioPlayers players =
-            audio.Players
-            ?? throw new McpException(
-                "tracks.audio needs players: {players: {}} follows every audio player under the root, {players: {under: \"<node>\"}} "
-                    + "those at or under a node."
+        if (audio.Players is null && audio.Buses is null)
+        {
+            throw new McpException(
+                "tracks.audio needs players or buses: {players: {}} follows every audio player under the root, {players: {under: "
+                    + "\"<node>\"}} those at or under a node, {buses: [\"Effects\"]} reads the named buses' levels and {buses: [\"*\"]} "
+                    + "every bus's."
             );
+        }
+
+        JsonObject spec = [];
+        if (audio.Players is { } players)
+        {
+            spec["players"] = PlayersParameters(players);
+        }
+
+        AddWatchBuses(spec, audio);
+        parameters["audio"] = spec;
+    }
+
+    private static JsonObject PlayersParameters(WatchAudioPlayers players)
+    {
         JsonObject spec = [];
         if (players.Under is { } under)
         {
@@ -448,7 +485,76 @@ internal sealed partial class RuntimeTools
             );
         }
 
-        parameters["audio"] = new JsonObject { ["players"] = spec };
+        return spec;
+    }
+
+    /// <summary>Adds the audio track's buses, each named once and at most <see cref="MaxWatchBuses"/>, or ["*"] alone, and
+    /// thresholdDb, which needs buses; a threshold left out is the bridge's default.</summary>
+    private static void AddWatchBuses(JsonObject spec, WatchAudioTrack audio)
+    {
+        if (audio.Buses is not { } buses)
+        {
+            if (audio.ThresholdDb is not null)
+            {
+                throw new McpException("tracks.audio.thresholdDb applies to buses; add tracks.audio.buses or drop thresholdDb.");
+            }
+
+            return;
+        }
+
+        spec["buses"] = new JsonArray([.. CheckBuses(buses).Select(bus => (JsonNode)bus)]);
+        if (audio.ThresholdDb is double threshold)
+        {
+            spec["thresholdDb"] = threshold is >= MinWatchThresholdDb and <= MaxWatchThresholdDb
+                ? threshold
+                : throw new McpException(
+                    $"tracks.audio.thresholdDb must be between {MinWatchThresholdDb.ToString(CultureInfo.InvariantCulture)} and "
+                        + $"{MaxWatchThresholdDb.ToString(CultureInfo.InvariantCulture)}; got {threshold.ToString(CultureInfo.InvariantCulture)}."
+                );
+        }
+    }
+
+    private static string[] CheckBuses(string[] buses)
+    {
+        if (buses.Length == 0)
+        {
+            throw new McpException("tracks.audio.buses is empty; name the buses to read, such as [\"Effects\"], or [\"*\"] for every bus.");
+        }
+
+        if (buses.Contains(EveryBus, StringComparer.Ordinal))
+        {
+            return buses.Length == 1
+                ? buses
+                : throw new McpException(
+                    $"tracks.audio.buses takes \"*\" alone: [\"*\"] reads every bus, Master included, up to {MaxWatchBuses}; or name the "
+                        + "buses without it."
+                );
+        }
+
+        if (buses.Length > MaxWatchBuses)
+        {
+            throw new McpException(
+                $"tracks.audio.buses names {buses.Length} buses; at most {MaxWatchBuses}, or [\"*\"] for every bus up to {MaxWatchBuses}."
+            );
+        }
+
+        HashSet<string> names = new(StringComparer.Ordinal);
+        foreach (string bus in buses)
+        {
+            if (string.IsNullOrWhiteSpace(bus))
+            {
+                throw new McpException(
+                    "tracks.audio.buses has an empty name; pass a bus's name as the Audio bus layout shows it, such as Master or Effects."
+                );
+            }
+
+            if (!names.Add(bus))
+            {
+                throw new McpException($"tracks.audio.buses names '{bus}' twice; each bus once.");
+            }
+        }
+
+        return buses;
     }
 
     private static void AddBudget(JsonObject parameters, double? budgetMs, bool frameMs)

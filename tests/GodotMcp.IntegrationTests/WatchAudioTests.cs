@@ -10,8 +10,10 @@ namespace GodotMcp.IntegrationTests;
 /// <summary>
 /// watch's audio players against the InputProbe: an AudioRig under the root holding pausable AudioStreamPlayers (2D and 3D
 /// ones for a start's position), each with a
-/// 440 Hz AudioStreamWAV tone run_script builds, played by a button's click or by run_script. One shared quiet run (the Dummy
-/// driver mixes it, so nothing is heard), reset before each test, after which a watch a failed test left behind is stopped.
+/// 440 Hz AudioStreamWAV tone run_script builds, played by a button's click or by run_script, on Master or on a bus a test
+/// adds; and watch's bus levels, asserted with inequalities only, since a quiet run mixes in bursts of about 93 ms. One
+/// shared quiet run (the Dummy driver mixes it, so nothing is heard), reset before each test (added buses removed, Master
+/// and the bridge's mute restored), after which a watch a failed test left behind is stopped.
 /// </summary>
 public sealed class WatchAudioTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
 {
@@ -205,6 +207,148 @@ public sealed class WatchAudioTests(SharedProbeSession shared) : IAsyncLifetime,
         Assert.Equal((1.0, 2.0, 4.0), (deepAt["x"]!.GetValue<double>(), deepAt["y"]!.GetValue<double>(), deepAt["z"]!.GetValue<double>()));
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AToneOnAnAddedBusIsHeardFromItsStartAndNotBefore()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string rig = await AddRigAsync(BusLines("Effects") + "tone.bus = &\"Effects\"\n\t", ("Tone", 500, 1));
+        string tone = $"{rig}/Tone";
+
+        await StartAsync(new WatchAudioTrack(new WatchAudioPlayers(rig), ["Effects"]), cancellation);
+        await WaitFramesAsync(3, cancellation);
+        await CallOnAsync(tone, "play");
+        await WaitUntilSilentAsync(tone, cancellation);
+        await WaitFramesAsync(3, cancellation);
+        JsonObject audio = await StopAsync(cancellation);
+
+        JsonObject effects = Bus(audio, "Effects");
+        JsonArray heard = effects["heard"]!.AsArray();
+        Assert.NotEmpty(heard);
+        Assert.InRange(Int(effects["heardFrames"]), 1, Int(effects["sampledFrames"]) - 1);
+        Assert.True(effects["peakMaxDb"]!.GetValue<double>() > -60, effects.ToJsonString());
+        Assert.Equal(0, Int(effects["volumeDb"]!["changes"]));
+        JsonArray voices = audio["voices"]!.AsArray();
+        Assert.Equal(["start", "end"], Events(voices));
+        Assert.InRange(Int(heard[0]![0]), Int(voices[0]![0]), Int(voices[1]![0]));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ABusAtMinus80AndAMutedBusAreNotHeardThoughTheirVoicesStart()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string rig = await AddRigAsync(
+            BusLines("Quiet")
+                + "AudioServer.set_bus_volume_db(AudioServer.get_bus_index(\"Quiet\"), -80.0)\n\t"
+                + BusLines("Muted")
+                + "AudioServer.set_bus_mute(AudioServer.get_bus_index(\"Muted\"), true)\n\t"
+                + "soft.bus = &\"Quiet\"\n\tsilent.bus = &\"Muted\"\n\t",
+            ("Soft", 500, 1),
+            ("Silent", 500, 1)
+        );
+
+        await StartAsync(new WatchAudioTrack(new WatchAudioPlayers(rig), ["Quiet", "Muted"]), cancellation);
+        await CallOnAsync($"{rig}/Soft", "play");
+        await CallOnAsync($"{rig}/Silent", "play");
+        await WaitUntilSilentAsync($"{rig}/Soft", cancellation);
+        await WaitUntilSilentAsync($"{rig}/Silent", cancellation);
+        await WaitFramesAsync(3, cancellation);
+        JsonObject audio = await StopAsync(cancellation);
+
+        Assert.Equal(2, Events(audio["voices"]!.AsArray()).Count(voiceEvent => voiceEvent == "start"));
+        JsonObject quiet = Bus(audio, "Quiet");
+        JsonObject muted = Bus(audio, "Muted");
+        Assert.All([quiet, muted], bus => Assert.Equal((0, 0), (bus["heard"]!.AsArray().Count, Int(bus["heardFrames"]))));
+        Assert.All([quiet, muted], bus => Assert.True(Int(bus["sampledFrames"]) > 0, bus.ToJsonString()));
+        Assert.Equal(-80.0, quiet["volumeDb"]!["first"]!.GetValue<double>());
+        Assert.True(muted["mute"]!["first"]!.GetValue<bool>() && muted["mute"]!["last"]!.GetValue<bool>(), muted.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task MasterUnderTheBridgeMuteWarnsWhileItsChildBusIsStillHeard()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string rig = await AddRigAsync(BusLines("Effects") + "tone.bus = &\"Effects\"\n\t", ("Tone", 500, 1));
+        string tone = $"{rig}/Tone";
+        await SetBridgeMutedAsync(true);
+        try
+        {
+            JsonObject started = await StartAsync(new WatchAudioTrack(new WatchAudioPlayers(rig), ["Master", "Effects"]), cancellation);
+            await CallOnAsync(tone, "play");
+            await WaitUntilSilentAsync(tone, cancellation);
+            await WaitFramesAsync(3, cancellation);
+            JsonObject timeline = await WatchAsync("stop", cancellation);
+
+            Assert.True(started["audio"]!["bridgeMuted"]!.GetValue<bool>(), started.ToJsonString());
+            Assert.Contains("Master read -200 dB while the bridge muted it", timeline["warning"]?.GetValue<string>() ?? "", StringComparison.Ordinal);
+            JsonObject audio = timeline["audio"]!.AsObject();
+            JsonObject master = Bus(audio, "Master");
+            Assert.Empty(master["heard"]!.AsArray());
+            Assert.True(master["peakMaxDb"]!.GetValue<double>() < -100, master.ToJsonString());
+            Assert.True(Int(Bus(audio, "Effects")["heardFrames"]) > 0, audio.ToJsonString());
+        }
+        finally
+        {
+            await SetBridgeMutedAsync(false);
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnUnknownBusIsListedMissingAndSkippedNotRefused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonObject started = await StartAsync(new WatchAudioTrack(Buses: ["Nowhere"]), cancellation);
+        await WaitFramesAsync(3, cancellation);
+        JsonObject audio = await StopAsync(cancellation);
+
+        JsonObject listed = started["audio"]!["buses"]!.AsArray().Single()!.AsObject();
+        Assert.Equal(("Nowhere", true, 2), (listed["name"]!.GetValue<string>(), listed["missing"]!.GetValue<bool>(), listed.Count));
+        JsonObject nowhere = Bus(audio, "Nowhere");
+        Assert.Equal((0, 0), (Int(nowhere["sampledFrames"]), nowhere["heard"]!.AsArray().Count));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ABusesOnlyWatchListsEveryBusAndNoVoices()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(BusLines("Effects") + "return true");
+
+        JsonObject started = await StartAsync(new WatchAudioTrack(Buses: ["*"]), cancellation);
+        await WaitFramesAsync(3, cancellation);
+        JsonObject audio = await StopAsync(cancellation);
+
+        JsonObject snapshot = started["audio"]!.AsObject();
+        Assert.False(snapshot.ContainsKey("players"), snapshot.ToJsonString());
+        JsonArray buses = snapshot["buses"]!.AsArray();
+        Assert.Equal(["Master", "Effects"], buses.Select(bus => bus!["name"]!.GetValue<string>()));
+        Assert.Equal((0, "Master"), (Int(buses[0]!["index"]), buses[1]!["send"]!.GetValue<string>()));
+        Assert.False(audio.ContainsKey("voices"), audio.ToJsonString());
+        Assert.True(Int(Bus(audio, "Master")["sampledFrames"]) >= 3, audio.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATimeScaleOtherThanOneAddsTheWarning()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync("Engine.time_scale = 2.0\n\treturn true");
+        try
+        {
+            await StartAsync(new WatchAudioTrack(Buses: ["Master"]), cancellation);
+            await WaitFramesAsync(3, cancellation);
+            JsonObject timeline = await WatchAsync("stop", cancellation);
+
+            Assert.Contains(
+                "Engine.time_scale was not 1 in a sampled frame",
+                timeline["warning"]?.GetValue<string>() ?? "",
+                StringComparison.Ordinal
+            );
+        }
+        finally
+        {
+            await RunAsync("Engine.time_scale = 1.0\n\treturn true");
+        }
+    }
+
     /// <summary>The {stream, bus, ...} of the player's first start in <paramref name="voices"/>.</summary>
     private static JsonNode StartOf(JsonArray voices, string player)
     {
@@ -214,7 +358,27 @@ public sealed class WatchAudioTests(SharedProbeSession shared) : IAsyncLifetime,
     }
 
     private async Task<JsonObject> StartAsync(string rig, CancellationToken cancellation) =>
-        await WatchAsync("start", cancellation, new WatchTracks(Audio: new WatchAudioTrack(new WatchAudioPlayers(rig))));
+        await StartAsync(new WatchAudioTrack(new WatchAudioPlayers(rig)), cancellation);
+
+    private async Task<JsonObject> StartAsync(WatchAudioTrack audio, CancellationToken cancellation) =>
+        await WatchAsync("start", cancellation, new WatchTracks(Audio: audio));
+
+    /// <summary>The bus named <paramref name="name"/> in the timeline's audio.buses.</summary>
+    private static JsonObject Bus(JsonObject audio, string name) =>
+        audio["buses"]!.AsArray().Single(bus => bus!["name"]!.GetValue<string>() == name)!.AsObject();
+
+    /// <summary>Waits until the player holds no playback: its tone has ended.</summary>
+    private async Task WaitUntilSilentAsync(string player, CancellationToken cancellation) =>
+        await _tools.WaitForAsync(new WaitCondition(Node: player, Expression: "not node.has_stream_playback()"), cancellationToken: cancellation);
+
+    /// <summary>Turns the bridge's Master mute (its Audio child, which the mute launch option sets) on or off.</summary>
+    private async Task SetBridgeMutedAsync(bool on) =>
+        await RunAsync($"scene_tree.root.get_node(\"GodotMcpBridge/Audio\").set_muted({(on ? "true" : "false")})\n\treturn true");
+
+    /// <summary>GDScript lines adding a bus named <paramref name="name"/> at the end of the layout, sending to Master.</summary>
+    private static string BusLines(string name) =>
+        $"AudioServer.add_bus()\n\tAudioServer.set_bus_name(AudioServer.get_bus_count() - 1, \"{name}\")\n\t"
+        + "AudioServer.set_bus_send(AudioServer.get_bus_count() - 1, \"Master\")\n\t";
 
     /// <summary>Stops the watch and returns its audio.</summary>
     private async Task<JsonObject> StopAsync(CancellationToken cancellation) => (await WatchAsync("stop", cancellation))["audio"]!.AsObject();
@@ -247,7 +411,7 @@ public sealed class WatchAudioTests(SharedProbeSession shared) : IAsyncLifetime,
     /// <summary>GDScript lines adding a pausable <paramref name="playerClass"/> named <paramref name="name"/> under the node in
     /// the variable <paramref name="parent"/>, held in a variable named as it in lower case, with a 440 Hz 16-bit tone of
     /// <paramref name="ms"/> milliseconds on the Master bus.</summary>
-    private static string PlayerLines(string name, int ms, int polyphony, string parent, string playerClass)
+    internal static string PlayerLines(string name, int ms, int polyphony, string parent, string playerClass)
     {
         string player = name.ToLowerInvariant();
         int samples = ToneMixRate * ms / 1000;
