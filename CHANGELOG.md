@@ -13,6 +13,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `run_scratches` takes `options.steps`, indices, names or ranges, and plays only those steps, reporting them as `selected`.
 - `watch` takes `tracks.audio.players`, following audio players and reporting each sound's start, pause, resume and end with its reason.
 - `batch_drive` takes a `fired` assertion, checking that the nearest earlier gesture step set off a node's signal, optionally with given arguments.
+- `run_csharp` snippets take `Log(value)`, returned as `log` with the result and inside a thrown exception's error, beside the game's errors.
 
 ### Changed
 

@@ -1,6 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
+using System.Text.Json.Nodes;
 using Godot;
 using GodotMcp.Dotnet.Core;
 
@@ -19,6 +21,16 @@ namespace GodotMcp.Dotnet;
 public abstract class SnippetGlobals
 {
     private const BindingFlags Everything = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+
+    /// <summary>How many lines one run's log keeps: the lines past it are counted and not kept.</summary>
+    private const int MaxLogLines = 200;
+
+    /// <summary>How many characters of one line the log keeps: the rest is counted in the line's own suffix.</summary>
+    private const int MaxLogLineLength = 1000;
+
+    private readonly List<string> _log = [];
+    private readonly object _logLock = new();
+    private int _logDropped;
 
     /// <summary>The game's main loop.</summary>
     protected SceneTree Tree => (SceneTree)Engine.GetMainLoop();
@@ -104,6 +116,58 @@ public abstract class SnippetGlobals
 
     /// <summary>Keeps <paramref name="value"/> in the handle table the C# tools share and answers its handle id.</summary>
     protected string Keep(object value) => Targets.Handles.Add(value);
+
+    /// <summary>
+    /// Adds one line to the run's log, which comes back with the result and, so that a snippet's work before a failure is
+    /// not lost, with a thrown exception too. Its value is written as it is (a null as "null"), and a line longer than
+    /// <see cref="MaxLogLineLength"/> characters is cut there, saying how many characters more it had. The log keeps
+    /// <see cref="MaxLogLines"/> lines; the lines past that are counted and not kept, and the count comes back beside it.
+    /// A line another thread logs lands in the same order as the ones on the snippet's own.
+    /// </summary>
+    protected void Log(object value)
+    {
+        string line = Cut(value?.ToString() ?? "null");
+        lock (_logLock)
+        {
+            if (_log.Count < MaxLogLines)
+            {
+                _log.Add(line);
+            }
+            else
+            {
+                _logDropped++;
+            }
+        }
+    }
+
+    /// <summary>Adds the run's log to <paramref name="owner"/> (the result or the failure), when the snippet wrote any.</summary>
+    internal void AddLogTo(JsonObject owner)
+    {
+        string[] lines;
+        int dropped;
+        lock (_logLock)
+        {
+            lines = [.. _log];
+            dropped = _logDropped;
+        }
+
+        if (lines.Length == 0)
+        {
+            return;
+        }
+
+        owner["log"] = new JsonArray([.. lines.Select(line => (JsonNode?)JsonValue.Create(line))]);
+        if (dropped > 0)
+        {
+            owner["logOmitted"] = dropped;
+        }
+    }
+
+    /// <summary>The line as the log keeps it: cut at <see cref="MaxLogLineLength"/> characters, with the count of the rest.</summary>
+    private static string Cut(string line) =>
+        line.Length <= MaxLogLineLength
+            ? line
+            : line[..MaxLogLineLength] + string.Create(CultureInfo.InvariantCulture, $"… ({line.Length - MaxLogLineLength} more characters)");
 
     private static object? Read(MemberRoot root, string path) => MemberPath.Read(root, MemberPath.Parse(path), Everything).Value;
 

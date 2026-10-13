@@ -58,11 +58,24 @@ public sealed class CSharpBridgeTests : IDisposable
     [Fact]
     public void AHelperErrorThrowsItsMessage()
     {
-        InvalidOperationException thrown = Assert.Throws<InvalidOperationException>(() =>
+        CSharpRefusedException thrown = Assert.Throws<CSharpRefusedException>(() =>
             CSharpBridge.ParseReply(BridgeResult("""{"ok":false,"error":"Unknown op 'nope'."}""", false))
         );
 
         Assert.Equal("The C# helper refused the request: Unknown op 'nope'.", thrown.Message);
+        Assert.True(thrown.Log.IsEmpty);
+    }
+
+    [Fact]
+    public void AHelperErrorCarriesTheLogTheSnippetWrote()
+    {
+        const string Reply = """{"ok":false,"error":"the snippet threw InvalidOperationException: boom","log":["a","b"],"logOmitted":7}""";
+
+        CSharpRefusedException thrown = Assert.Throws<CSharpRefusedException>(() => CSharpBridge.ParseReply(BridgeResult(Reply, false)));
+
+        Assert.Equal("The C# helper refused the request: the snippet threw InvalidOperationException: boom", thrown.Message);
+        Assert.Equal(["a", "b"], thrown.Log.Lines);
+        Assert.Equal(7, thrown.Log.Dropped);
     }
 
     [Fact]

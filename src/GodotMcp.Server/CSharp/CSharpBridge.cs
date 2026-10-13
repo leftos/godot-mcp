@@ -69,9 +69,12 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
     public static CSharpReply ParseReply(JsonNode bridgeResult)
     {
         JsonObject envelope = Parse(ReplyText(bridgeResult));
-        return Succeeded(envelope)
-            ? new CSharpReply(envelope["result"], LoadedNow(bridgeResult))
-            : throw new InvalidOperationException($"The C# helper refused the request: {ErrorMessage(envelope)}");
+        if (Succeeded(envelope))
+        {
+            return new CSharpReply(envelope["result"], LoadedNow(bridgeResult));
+        }
+
+        throw new CSharpRefusedException($"The C# helper refused the request: {ErrorMessage(envelope)}", SnippetLog.Read(envelope));
     }
 
     private static string ReplyText(JsonNode bridgeResult) =>

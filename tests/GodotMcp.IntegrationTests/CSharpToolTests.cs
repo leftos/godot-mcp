@@ -665,10 +665,10 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
 
-        InvalidOperationException poll = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        InvalidOperationException poll = await Assert.ThrowsAsync<CSharpRefusedException>(() =>
             PingAsync(_shared.Sessions, """{"op":"poll","id":"c999999"}""", cancellation)
         );
-        InvalidOperationException forget = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        InvalidOperationException forget = await Assert.ThrowsAsync<CSharpRefusedException>(() =>
             PingAsync(_shared.Sessions, """{"op":"forget","id":"c999999"}""", cancellation)
         );
 
@@ -787,6 +787,101 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
         Assert.StartsWith("run_csharp failed: ", lines[0], StringComparison.Ordinal);
         Assert.EndsWith("the snippet threw InvalidOperationException: boom", lines[0], StringComparison.Ordinal);
         Assert.Contains("in snippet:line 1", lines[1], StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpKeepsTheLogItsSnippetWroteBeforeItThrew()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            RunCSharpAsync("Log(\"a\"); Log(\"b\"); throw new InvalidOperationException(\"x\");", null, cancellation)
+        );
+
+        string[] lines = refused.Message.Split('\n');
+        Assert.EndsWith("the snippet threw InvalidOperationException: x", lines[0], StringComparison.Ordinal);
+        Assert.Contains("in snippet:line 1", lines[1], StringComparison.Ordinal);
+        int logged = Array.IndexOf(lines, "Log before the failure (2 lines):");
+        Assert.True(logged > 0, $"The failure names no log: {refused.Message}");
+        Assert.Equal(["  a", "  b"], lines[(logged + 1)..(logged + 3)]);
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpKeepsTheLogOfAnAwaitedSnippetThatThrew()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        const string code = "Log(\"before\"); await Task.Delay(50); Log(\"after\"); throw new InvalidOperationException(\"x\");";
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => RunCSharpAsync(code, null, cancellation));
+
+        Assert.Contains("Log before the failure (2 lines):\n  before\n  after", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpKeepsTheFirstTwoHundredLoggedLines()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonObject result = await RunCSharpAsync("for (int i = 0; i < 205; i++) Log(i); return 0;", null, cancellation);
+
+        JsonArray log = result["log"]!.AsArray();
+        Assert.Equal(200, log.Count);
+        Assert.Equal("0", log[0]!.GetValue<string>());
+        Assert.Equal("199", log[199]!.GetValue<string>());
+        Assert.Equal(5, result["logOmitted"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpLogsANullAsTheWordNull()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonObject result = await RunCSharpAsync("Log(null); return 1;", null, cancellation);
+
+        Assert.Equal("null", Assert.Single(result["log"]!.AsArray())!.GetValue<string>());
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpCutsALoggedLineAtAThousandCharacters()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            RunCSharpAsync("Log(new string('m', 1200)); throw new InvalidOperationException(\"x\");", null, cancellation)
+        );
+
+        Assert.Contains(
+            "Log before the failure (1 line):\n  " + new string('m', 1000) + "… (200 more characters)",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpReportsTheErrorsTheGameRaisedBeforeAThrow()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            RunCSharpAsync("GD.PushError(\"boom\"); throw new InvalidOperationException(\"x\");", null, cancellation)
+        );
+
+        Assert.Contains("\nGodot reported:\n", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("boom", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpReturnsTheLogOfASnippetThatSucceeded()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonObject result = await RunCSharpAsync("Log(\"a\"); Log(7); return 1 + 1;", null, cancellation);
+
+        JsonArray log = result["log"]!.AsArray();
+        Assert.Equal(2, result["value"]?.GetValue<int>());
+        Assert.Equal(2, log.Count);
+        Assert.Equal("a", log[0]!.GetValue<string>());
+        Assert.Equal("7", log[1]!.GetValue<string>());
     }
 
     [Fact(Timeout = CSharpTestTimeoutMs)]
@@ -935,12 +1030,15 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
             JsonObject read = await GetAsync(new CSharpTarget(Node: "%Solo"), "_last", null, cancellation);
             JsonObject ran = await RunCSharpAsync("return Node(\"%Solo\").GetPath().ToString();", null, cancellation);
             McpException got = await Assert.ThrowsAsync<McpException>(() => GetAsync(new CSharpTarget(Node: "%Shared"), "_last", null, cancellation));
-            McpException snippet = await Assert.ThrowsAsync<McpException>(() => RunCSharpAsync("Node(\"%Shared\")", null, cancellation));
+            McpException snippet = await Assert.ThrowsAsync<McpException>(() =>
+                RunCSharpAsync("Log(\"played\"); Node(\"%Shared\");", null, cancellation)
+            );
 
             Assert.Equal("start", read["value"]?["Label"]?.GetValue<string>());
             Assert.Equal("/root/UniqueA/Solo", ran["value"]?.GetValue<string>());
             Assert.Contains(AmbiguousShared, got.Message, StringComparison.Ordinal);
             Assert.Contains("the snippet threw InvalidOperationException: " + AmbiguousShared, snippet.Message, StringComparison.Ordinal);
+            Assert.Contains("Log before the failure (1 line):\n  played", snippet.Message, StringComparison.Ordinal);
         }
         finally
         {

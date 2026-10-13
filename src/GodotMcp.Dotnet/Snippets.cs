@@ -25,8 +25,9 @@ internal static class Snippets
 
     /// <summary>
     /// <c>{"op":"run","assembly":"&lt;base64&gt;","pdb"?:"&lt;base64&gt;","game":"Name","expect":{"Name":"&lt;mvid&gt;",..},
-    /// "maxDepth"?:int,"keep"?:bool}</c> → <c>{"value":..,"type":"..","handle"?:"h..","warning"?:".."}</c>, or the pending
-    /// reply. An <c>expect</c> entry whose assembly the game has loaded from another build is refused before anything loads.
+    /// "maxDepth"?:int,"keep"?:bool}</c> → <c>{"value":..,"type":"..","handle"?:"h..","warning"?:"..","log"?:[..],
+    /// "logOmitted"?:int}</c>, or the pending reply. An <c>expect</c> entry whose assembly the game has loaded from another
+    /// build is refused before anything loads. A snippet that threw answers its refusal with the same <c>log</c>.
     /// </summary>
     public static JsonObject Run(JsonObject request)
     {
@@ -102,15 +103,15 @@ internal static class Snippets
         catch (Exception e)
         {
             context.Unload();
-            return Threw(e);
+            return Threw(e, snippet);
         }
         if (!task.IsCompleted)
         {
-            return PendingTasks.Add(task, () => Settled(task, shape), context.Unload, cancellation);
+            return PendingTasks.Add(task, () => Settled(task, shape, snippet), context.Unload, cancellation);
         }
         try
         {
-            return Settled(task, shape);
+            return Settled(task, shape, snippet);
         }
         finally
         {
@@ -123,7 +124,7 @@ internal static class Snippets
         "CA1031:Do not catch general exception types",
         Justification = "The awaited snippet ran game code; whatever it threw is the failure to report."
     )]
-    private static JsonObject Settled(Task<object?> task, Shape shape)
+    private static JsonObject Settled(Task<object?> task, Shape shape, SnippetGlobals snippet)
     {
         object? value;
         try
@@ -132,7 +133,7 @@ internal static class Snippets
         }
         catch (Exception e)
         {
-            return Threw(e);
+            return Threw(e, snippet);
         }
         JsonObject result = new()
         {
@@ -143,13 +144,16 @@ internal static class Snippets
         {
             MemberAccess.Keep(value, result);
         }
+        snippet.AddLogTo(result);
         return new JsonObject { ["ok"] = true, ["result"] = result };
     }
 
-    private static JsonObject Threw(Exception e)
+    private static JsonObject Threw(Exception e, SnippetGlobals snippet)
     {
         Exception thrown = Thrown.Unwrap(e);
-        return Helper.Failure($"the snippet threw {Thrown.Describe(thrown)}{Thrown.Stack(thrown)}");
+        JsonObject failure = Helper.Failure($"the snippet threw {Thrown.Describe(thrown)}{Thrown.Stack(thrown)}");
+        snippet.AddLogTo(failure);
+        return failure;
     }
 
     /// <summary>What the reply needs besides the value: the writer's depth and whether to keep the value.</summary>

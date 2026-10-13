@@ -33,9 +33,10 @@ internal sealed partial class RuntimeTools
             + "{valuePreview, valueLength}. code is a method body: statements, or one expression whose value is returned; "
             + "await works, and a body that runs off its end returns null. In scope: Tree, Root, Node(path) and Node<T>(path), "
             + "Handle(id) and Handle<T>(id) for a kept object, Get/Set by member path and Call by method name on an object, "
-            + "private and internal members included (their Type forms reach statics), and Keep(value), which answers a "
-            + "handle usable as {handle} in a later C# call, and Cancellation, the token this call's timeout "
-            + "cancels. Node reads a path from /root, finds a bare name's first node under /root, or takes %Name for a node "
+            + "private and internal members included (their Type forms reach statics), Keep(value), which answers a "
+            + "handle usable as {handle} in a later C# call, and Cancellation, the token this call's timeout cancels. "
+            + "Log(value) adds one line to the run's log: the first 200 lines are kept, and the count of any past them comes "
+            + "back as logOmitted. Node reads a path from /root, finds a bare name's first node under /root, or takes %Name for a node "
             + "saved with a unique name (alone, looked up in every scene; or after its owner's path). The snippet names the "
             + "game's internal types and members directly, as code inside the game's "
             + "assemblies would; private ones only through Get, Set and Call. No type declarations; lambdas, local functions and anonymous "
@@ -43,9 +44,11 @@ internal sealed partial class RuntimeTools
             + "and the game's root namespace, plus options.usings. A compile error fails before the game is asked, with one "
             + "snippet(line,col): error line each. The snippet is awaited up to options.timeoutMs; past it the call fails and "
             + "Cancellation is cancelled, so a snippet that passes it on or checks it can stop; one that ignores it, or loops "
-            + "on the main thread without yielding, keeps running. options.keep also returns a handle to the value. Runs game code: a "
-            + "thrown exception fails with its type, message and a stack naming the snippet's lines. Refused when the game "
-            + "runs an older build of its assemblies than the one on disk; restart_project loads the new one."
+            + "on the main thread without yielding, keeps running. options.keep also returns a handle to the value. A run that "
+            + "logged comes back with the log beside its value. Runs game code: a thrown exception fails with its type, message and a "
+            + "stack naming the snippet's lines, then the lines the snippet logged and the errors Godot raised, so the work before the "
+            + "throw is not lost. Refused when the game runs an older build of its assemblies than the one on disk; restart_project "
+            + "loads the new one."
     )]
     public async Task<string> RunCSharpAsync(
         [Description("A C# method body: statements (return gives the value), or one expression whose value is returned.")] string code,
@@ -68,14 +71,50 @@ internal sealed partial class RuntimeTools
         JsonObject request = BuildRunRequest(game.ProjectDir, framework, code, usings);
         request["maxDepth"] = maxDepth;
         request["keep"] = options?.Keep ?? false;
-        (CSharpReply reply, IReadOnlyList<ErrorEntry> errors) = await SendCSharpAsync(
-            RunCSharpToolName,
-            request,
-            timeoutMs,
-            session,
-            cancellationToken
-        );
-        return ErrorReport.AddTo(GetResult(reply), errors).ToJsonString();
+        long mark = game.Errors.Mark();
+        try
+        {
+            (CSharpReply reply, IReadOnlyList<ErrorEntry> errors) = await SendCSharpAsync(
+                RunCSharpToolName,
+                request,
+                timeoutMs,
+                session,
+                cancellationToken
+            );
+            return SnippetLog.Read(reply.Result).AddTo(ErrorReport.AddTo(GetResult(reply), errors)).ToJsonString();
+        }
+        catch (McpException e) when (e.InnerException is CSharpRefusedException refused)
+        {
+            // Every refusal the helper words — a thrown snippet, a stale build, a bad maxDepth — loses its log and the
+            // game's errors here, so both are appended to the message it refused with.
+            throw new McpException(FailureMessage(e.Message, refused.Log, game.Errors.ErrorsSince(mark)), e);
+        }
+    }
+
+    /// <summary>
+    /// The message a snippet that threw fails the tool with: the helper's refusal, whose first line names the throw and
+    /// whose stack follows it, then one indent-led line per log entry the snippet wrote before it threw, so a newline a
+    /// logged value carries can never be read as a header of this message, then the errors the game raised meanwhile.
+    /// </summary>
+    internal static string FailureMessage(string refusal, SnippetLog log, IReadOnlyList<ErrorEntry> errors)
+    {
+        StringBuilder text = new(refusal);
+        if (!log.IsEmpty)
+        {
+            string count = log.Lines.Count == 1 ? "1 line" : string.Create(CultureInfo.InvariantCulture, $"{log.Lines.Count} lines");
+            text.Append(CultureInfo.InvariantCulture, $"\nLog before the failure ({count}):");
+            foreach (string line in log.Lines)
+            {
+                text.Append("\n  ").Append(line.Replace("\n", "\n  ", StringComparison.Ordinal));
+            }
+
+            if (log.Dropped > 0)
+            {
+                text.Append(CultureInfo.InvariantCulture, $"\n… {log.Dropped} more not kept");
+            }
+        }
+
+        return errors.Count == 0 ? text.ToString() : text.Append("\nGodot reported:\n").Append(ErrorReport.Summarise(errors)).ToString();
     }
 
     /// <summary>The namespaces options.usings adds, none when left out.</summary>
