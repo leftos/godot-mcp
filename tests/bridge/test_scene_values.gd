@@ -7,7 +7,10 @@ const SCENE_VALUES_SCRIPT := "../../headless/scene_values.gd"
 const NODE_INFO: Dictionary = {
 	"type": TYPE_OBJECT, "hint": PROPERTY_HINT_NODE_TYPE, "hint_string": "Node2D"
 }
-const REFUSED: Array = [false, null]
+const NOT_A_PATH := (
+	"a node-typed export takes a node path from the scene root, "
+	+ 'like "Card" or "Board/Card"; got '
+)
 
 var _values: GDScript = load(
 	ProjectSettings.globalize_path("res://").path_join(SCENE_VALUES_SCRIPT).simplify_path()
@@ -26,12 +29,30 @@ func test_node_export_reads_a_path_from_the_root() -> void:
 	root.free()
 
 
-func test_node_export_refuses_a_missing_or_mistyped_node() -> void:
+func test_node_export_refuses_a_missing_or_mistyped_node_saying_why() -> void:
 	var root: Node2D = _scene()
-	assert_eq(_values.from_json("Nope", NODE_INFO, root), REFUSED, "a missing node")
-	assert_eq(_values.from_json("Plain", NODE_INFO, root), REFUSED, "a node of another class")
-	assert_eq(_values.from_json("/root/Box", NODE_INFO, root), REFUSED, "an absolute path")
-	assert_eq(_values.from_json(3, NODE_INFO, root), REFUSED, "a value that is not a path")
+	var missing: Array = [false, null, 'no node at "Nope" from the scene root']
+	assert_eq(_values.from_json("Nope", NODE_INFO, root), missing, "a missing node")
+	var mistyped: Array = [false, null, '"Plain" is a Node; the export takes Node2D']
+	assert_eq(_values.from_json("Plain", NODE_INFO, root), mistyped, "a node of another class")
+	var absolute: Array = [false, null, NOT_A_PATH + '"/root/Box"']
+	assert_eq(_values.from_json("/root/Box", NODE_INFO, root), absolute, "an absolute path")
+	var number: Array = [false, null, NOT_A_PATH + "3"]
+	assert_eq(_values.from_json(3, NODE_INFO, root), number, "a value that is not a path")
+	root.free()
+
+
+func test_node_export_refusal_names_each_hinted_class_and_the_script_class() -> void:
+	var root: Node2D = _scene()
+	var listed: Dictionary = NODE_INFO.merged({"hint_string": "Node2D, Control"}, true)
+	var either: Array = [false, null, '"Plain" is a Node; the export takes Node2D or Control']
+	assert_eq(_values.from_json("Plain", listed, root), either, "a list of classes")
+	var plain: Node = root.get_node("Plain")
+	plain.set_script(_class_script("SceneValuesOtherView", "Node"))
+	var named: Array = [
+		false, null, '"Plain" is a SceneValuesOtherView (Node); the export takes Node2D'
+	]
+	assert_eq(_values.from_json("Plain", NODE_INFO, root), named, "a script with a class_name")
 	root.free()
 
 
@@ -54,6 +75,14 @@ func test_to_json_reads_nodes_from_the_root_and_resets_node_root() -> void:
 	assert_eq(_values.to_json(sprite.texture, root), null, "an empty object property")
 	sprite.free()
 	root.free()
+
+
+## A script made in memory whose class_name is title, extending the native class base.
+func _class_script(title: String, base: String) -> GDScript:
+	var script := GDScript.new()
+	script.source_code = "class_name %s\nextends %s\n" % [title, base]
+	script.reload()
+	return script
 
 
 ## A root Level with a Node2D Box and a plain Node Plain, in no tree.

@@ -604,7 +604,8 @@ On a GDScript-only project the headless Godot stays up between calls (a warm hos
 ### `set_node_properties`
 
 - **Does:** sets 1 to 100 `updates` `{nodePath, property, value}`, reads each back, and saves: `{results: [{nodePath, property, before, after}]}`.
-- **Use:** values as `set_property` takes them, typed arrays and dictionaries included; a resource as a `res://` or `uid://` path, `{resource: path}`, `{type, ...properties}` or null; a Node-typed export as a path from the scene's root.
+- **Use:** values as `set_property` takes them, typed arrays and dictionaries included; a resource as a `res://` or `uid://` path, `{resource: path}`, `{type, ...properties}` or null; a Node-typed export (GDScript or C#, a `[GlobalClass]` type included) as a path from the scene's root (`"Card"`, `"Board/Card"`, not the `../Card` the saved file holds).
+- **Refusals:** a Node-typed export given a non-string or absolute path, a path with no node, or a node of the wrong class is refused with the reason (`no node at "Card" from the scene root`, `"Card" is a Label; the export takes Button`; a node whose script has a class name is named by it, `"Card" is a CardView (Control); …`, and a hint listing several classes reads `takes Node2D or Control`).
 - **Edges:** a node from a base scene, or inside an editable instance, may be set (saved as an override); inside another instance it is refused. A non-zero `anchor_*` on a Control in Position layout (`layout_mode` 0) is refused unless the node already holds that value: set `layout_mode` 1 first (a full rect is `layout_mode` 1, `anchors_preset` 15, `grow_*` 2); the editor cannot make a Position node with anchors. Under a Container, `anchor_*`, `offset_*`, `grow_*` and `anchors_preset` are refused unless unchanged, since Godot saves none of them there: set `size_flags_*` instead. All or nothing.
 
 ### `get_node_properties`
@@ -622,7 +623,7 @@ On a GDScript-only project the headless Godot stays up between calls (a warm hos
 ### `connect_signal`
 
 - **Does:** saves a persistent connection from `signal` on `nodePath` to `target {nodePath, method, binds?}`: `{from, signal, target, method}`.
-- **Edges:** refused, saving nothing: a missing node, signal or method; an emitting node inside a non-editable instance; arguments plus binds that do not fit the method; a bind that does not convert (an array of Objects says why); a signal already connected to that method.
+- **Edges:** refused, saving nothing: a missing node, signal or method; an emitting node inside a non-editable instance; arguments plus binds that do not fit the method; a bind that does not convert (an array of Objects says why; a Node-typed parameter takes a path from the scene root and is refused for the same three reasons as `set_node_properties`); a signal already connected to that method.
 
 ### `disconnect_signal`
 
@@ -639,6 +640,7 @@ On a GDScript-only project the headless Godot stays up between calls (a warm hos
 
 - **Does:** runs 1 to 100 scene edits on one scene in a single headless Godot and saves once: `{passed, steps, failedAt?, uid?}`.
 - **Use:** any change of more than one edit: each step is `{tool, args}`, `tool` one of `delete_nodes`, `attach_script`, `duplicate_node`, `move_node`, `load_sprite`, `add_node`, `set_node_properties`, `connect_signal`, `disconnect_signal`, `export_mesh_library`, `args` that tool's own arguments without `projectPath` and `scenePath`. Later steps see earlier ones (add a node, then connect its signal).
+- **Shapes:** `args` by tool (`?` marks an optional key): `delete_nodes {nodePaths: [path]}`; `attach_script {nodePath, scriptPath}`; `duplicate_node {nodePath, newName?, options?: {parent?}}`; `move_node {nodePath, options: {parent?, position?: {index}|{before}|{after}, keepGlobalTransform?} (parent, position or both)}`; `load_sprite {nodePath, texturePath}`; `add_node {nodeType, nodeName, options?: {parent?, properties?: {name: value}, position?: {index}|{before}|{after}}}`; `set_node_properties {updates: [{nodePath, property, value}]}`; `connect_signal {nodePath, signal, target: {nodePath, method, binds?: [value]}}`; `disconnect_signal {nodePath, signal, target: {nodePath, method}}`; `export_mesh_library {outputPath, meshItemNames?: [name], options?: {overwrite?}}`. A step with an unknown or missing top-level argument is refused with the tool's shape appended (`set_node_properties has no argument 'nodePath'; it takes: updates. Its shape: {updates: [{nodePath, property, value}]}.`).
 - **Edges:** every step is checked before Godot starts. At the first failed step nothing is saved and no library written. One Godot start for the lot, so it is much faster than the tools one by one.
 
 ## Project profiles: `godot-mcp.json`

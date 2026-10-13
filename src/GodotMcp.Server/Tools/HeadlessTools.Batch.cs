@@ -22,7 +22,27 @@ internal sealed partial class HeadlessTools
         "delete_nodes, attach_script, duplicate_node, move_node, load_sprite, add_node, set_node_properties, connect_signal, "
         + "disconnect_signal, export_mesh_library";
 
+    /// <summary>
+    /// Each batchable tool and its args as a step gives them, "?" marking an optional one, "; " between tools. move_node's options
+    /// has no "?": its schema leaves it out, but <see cref="MoveNodeParameters"/> refuses a step without parent or position.
+    /// </summary>
+    private const string SceneStepShapeList =
+        "delete_nodes {nodePaths: [path]}; attach_script {nodePath, scriptPath}; duplicate_node {nodePath, newName?, options?: {parent?}}; "
+        + "move_node {nodePath, options: {parent?, position?: {index}|{before}|{after}, keepGlobalTransform?} (parent, position or both)}; "
+        + "load_sprite {nodePath, texturePath}; "
+        + "add_node {nodeType, nodeName, options?: {parent?, properties?: {name: value}, position?: {index}|{before}|{after}}}; "
+        + "set_node_properties {updates: [{nodePath, property, value}]}; "
+        + "connect_signal {nodePath, signal, target: {nodePath, method, binds?: [value]}}; "
+        + "disconnect_signal {nodePath, signal, target: {nodePath, method}}; "
+        + "export_mesh_library {outputPath, meshItemNames?: [name], options?: {overwrite?}}";
+
     private static readonly TimeSpan BatchCeiling = TimeSpan.FromSeconds(120);
+
+    /// <summary>Each batchable tool's args shape, from <see cref="SceneStepShapeList"/>, which the batch's description lists.</summary>
+    internal static readonly FrozenDictionary<string, string> SceneStepShapes = SceneStepShapeList
+        .Split("; ")
+        .Select(entry => entry.Split(' ', 2))
+        .ToFrozenDictionary(entry => entry[0], entry => entry[1], StringComparer.Ordinal);
 
     private static readonly Lazy<FrozenDictionary<string, JsonElement>> SceneStepSchemas = new(FindSceneStepSchemas);
 
@@ -54,9 +74,10 @@ internal sealed partial class HeadlessTools
     [McpServerTool(Name = "batch_scene_operations", ReadOnly = false, Destructive = true, OpenWorld = false)]
     [Description(
         "Runs several scene edits on one scene file in a single headless Godot and saves the scene once, without running the "
-            + "game. Each step is {tool, args}: tool is one of delete_nodes, attach_script, duplicate_node, move_node, load_sprite, "
-            + "add_node, set_node_properties, connect_signal, disconnect_signal or export_mesh_library, and args are that tool's own "
-            + "arguments without projectPath and scenePath. Every step is checked before Godot starts. The steps run in order on "
+            + "game. Each step is {\"tool\": name, \"args\": {...}} (the key is tool, not op), args being that tool's own arguments "
+            + "without projectPath and scenePath, by tool (? marks an optional key): "
+            + SceneStepShapeList
+            + ". Every step is checked before Godot starts. The steps run in order on "
             + "the open scene, each seeing the ones before it; at the first step that fails nothing is saved and no mesh library "
             + "is written. When all pass, the scene is saved once (unless every step was export_mesh_library), then each mesh "
             + "library is written. Returns {passed, steps: [{index, tool, ok, result | error}], failedAt?: {index, tool, error}, "
@@ -87,6 +108,9 @@ internal sealed partial class HeadlessTools
         });
         return ShapeSceneBatch(run);
     }
+
+    /// <summary>The tools a batch step can run.</summary>
+    internal static IEnumerable<string> SceneStepToolNames => SceneStepKinds.Keys;
 
     /// <summary>The JSON names of a batchable tool's args, in its parameters' order: its MCP schema's but projectPath and scenePath.</summary>
     internal static IReadOnlyList<string> SceneStepArgumentNames(string tool) => SceneStepKinds[tool].Names;
@@ -188,7 +212,10 @@ internal sealed partial class HeadlessTools
         }
     }
 
-    /// <exception cref="McpException">A key the tool does not take (projectPath and scenePath among them), or a required one missing.</exception>
+    /// <exception cref="McpException">
+    /// projectPath or scenePath given; or a key the tool does not take, or a required one missing, the refusal ending with the
+    /// tool's args shape.
+    /// </exception>
     private static void CheckSceneStepKeys(string tool, JsonElement schema, JsonObject given)
     {
         string[] keys = [.. given.Select(pair => pair.Key)];
@@ -201,7 +228,7 @@ internal sealed partial class HeadlessTools
         string? refusal = ArgumentErrors.UnknownArgument(tool, schema, keys) ?? ArgumentErrors.MissingArgument(tool, schema, keys);
         if (refusal is not null)
         {
-            throw new McpException(refusal);
+            throw new McpException($"{refusal} Its shape: {SceneStepShapes[tool]}.");
         }
     }
 

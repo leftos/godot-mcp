@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
@@ -98,8 +100,98 @@ public sealed class HeadlessBatchValidationTests : IDisposable
         McpException extra = await RefusedAsync([new SceneBatchStep("delete_nodes", unknown)]);
         McpException missing = await RefusedAsync([new SceneBatchStep("delete_nodes", [])]);
 
-        Assert.Equal("step 0 (delete_nodes): delete_nodes has no argument 'nodePath'; it takes: nodePaths.", extra.Message);
-        Assert.Equal("step 0 (delete_nodes): delete_nodes needs the argument 'nodePaths'.", missing.Message);
+        Assert.Equal(
+            "step 0 (delete_nodes): delete_nodes has no argument 'nodePath'; it takes: nodePaths. Its shape: {nodePaths: [path]}.",
+            extra.Message
+        );
+        Assert.Equal("step 0 (delete_nodes): delete_nodes needs the argument 'nodePaths'. Its shape: {nodePaths: [path]}.", missing.Message);
+    }
+
+    [Fact]
+    public async Task ASetNodePropertiesStepGivenOneNodesArgsIsRefusedWithTheUpdatesShape()
+    {
+        JsonObject args = new()
+        {
+            ["nodePath"] = "Box",
+            ["properties"] = new JsonObject { ["visible"] = false },
+        };
+
+        McpException refused = await RefusedAsync([new SceneBatchStep("set_node_properties", args)]);
+
+        Assert.Equal(
+            "step 0 (set_node_properties): set_node_properties has no argument 'nodePath'; it takes: updates. "
+                + "Its shape: {updates: [{nodePath, property, value}]}.",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public void AStepWithOpForToolIsRefusedNamingTool()
+    {
+        JsonObject step = new()
+        {
+            ["op"] = "set_node_properties",
+            ["args"] = new JsonObject { ["updates"] = new JsonArray() },
+        };
+        Dictionary<string, JsonElement> arguments = new()
+        {
+            ["projectPath"] = JsonSerializer.SerializeToElement(_project),
+            ["scenePath"] = JsonSerializer.SerializeToElement("level.tscn"),
+            ["steps"] = JsonSerializer.SerializeToElement(new JsonArray(step)),
+        };
+
+        // The server binds the steps with ToolJson.Options, which refuse a key no property takes, and names the key as the filter does.
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<SceneBatchStep>(step.ToJsonString(), ToolJson.Options));
+        string? message = ArgumentErrors.Describe(
+            "batch_scene_operations",
+            SchemaOf("batch_scene_operations"),
+            arguments,
+            new JsonException("bind failed")
+        );
+
+        Assert.Equal("steps[0] has no 'op'; it takes: tool, args.", message);
+    }
+
+    [Fact]
+    public void TheDescriptionGivesEachToolsArgumentShape()
+    {
+        string description = typeof(HeadlessTools)
+            .GetMethod(nameof(HeadlessTools.BatchSceneOperationsAsync))!
+            .GetCustomAttribute<DescriptionAttribute>()!
+            .Description;
+
+        Assert.Contains("Each step is {\"tool\": name, \"args\": {...}} (the key is tool, not op)", description, StringComparison.Ordinal);
+        Assert.Contains("by tool (? marks an optional key): ", description, StringComparison.Ordinal);
+        string[] kinds = [.. HeadlessTools.SceneStepToolNames.Order(StringComparer.Ordinal)];
+        Assert.Equal(Ten.Split(", ").Order(StringComparer.Ordinal), kinds);
+        Assert.Equal(kinds, HeadlessTools.SceneStepShapes.Keys.Order(StringComparer.Ordinal));
+        foreach (string tool in kinds)
+        {
+            Assert.Contains($"{tool} {HeadlessTools.SceneStepShapes[tool]}", description, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void EachShapeNamesTheToolsArgsMarkingTheOptionalOnes()
+    {
+        foreach (string tool in HeadlessTools.SceneStepToolNames)
+        {
+            string shape = HeadlessTools.SceneStepShapes[tool];
+            HashSet<string> required = [.. HeadlessTools.SceneStepRequiredArguments(tool)];
+            if (tool == "move_node")
+            {
+                // The schema leaves options out of required, but MoveNodeParameters refuses a step without parent or position.
+                required.Add("options");
+            }
+
+            (string Name, bool Optional)[] given = TopLevelArguments(shape);
+
+            Assert.Equal(
+                HeadlessTools.SceneStepArgumentNames(tool).Order(StringComparer.Ordinal),
+                given.Select(arg => arg.Name).Order(StringComparer.Ordinal)
+            );
+            Assert.All(given, arg => Assert.True(arg.Optional != required.Contains(arg.Name), $"{tool}: {arg.Name} in {shape}"));
+        }
     }
 
     [Fact]
@@ -186,13 +278,48 @@ public sealed class HeadlessBatchValidationTests : IDisposable
 
     private static bool IsStepArgument(string name) => name is not ("projectPath" or "scenePath");
 
+    /// <summary>
+    /// The names a shape gives inside its outer braces, each with whether "?" marks it optional; whatever sits in nested braces,
+    /// brackets or parentheses is left out.
+    /// </summary>
+    private static (string Name, bool Optional)[] TopLevelArguments(string shape)
+    {
+        StringBuilder top = new();
+        int depth = 0;
+        foreach (char character in shape)
+        {
+            if (character is '{' or '[' or '(')
+            {
+                depth++;
+            }
+            else if (character is '}' or ']' or ')')
+            {
+                depth--;
+            }
+            else if (depth == 1)
+            {
+                top.Append(character);
+            }
+        }
+
+        Assert.Equal(0, depth);
+        return
+        [
+            .. top.ToString()
+                .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Select(entry => entry.Split(':')[0].Trim())
+                .Select(name => (name.TrimEnd('?'), name.EndsWith('?'))),
+        ];
+    }
+
     /// <summary>The MCP input schema the SDK builds for the HeadlessTools method named tool.</summary>
     private static JsonElement SchemaOf(string tool)
     {
         MethodInfo method = typeof(HeadlessTools)
             .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
             .Single(candidate => candidate.GetCustomAttribute<McpServerToolAttribute>()?.Name == tool);
-        var created = McpServerTool.Create(method, _ => throw new InvalidOperationException("the schema needs no target"), null);
+        McpServerToolCreateOptions options = new() { SerializerOptions = ToolJson.Options };
+        var created = McpServerTool.Create(method, _ => throw new InvalidOperationException("the schema needs no target"), options);
         return created.ProtocolTool.InputSchema;
     }
 

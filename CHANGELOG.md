@@ -18,6 +18,8 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - `capture_frames` with `every` always takes a point at 0, which counts against the 1000-point cap.
 - `run_scratches` lists every step by its status line and keeps a failing step's detail short and folded unless `options.details` is set.
+- A refused node-typed export in `add_node` or `set_node_properties` now says why: not a path from the scene root, no such node, or the wrong class.
+- `batch_scene_operations` describes each step's argument shape, and an unknown step argument's refusal ends with that tool's shape.
 
 ### Fixed
 

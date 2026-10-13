@@ -107,8 +107,23 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         + "anchor_right = 1.0\nanchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n\n"
         + "[node name=\"Title\" type=\"Label\" parent=\".\"]\nsize_flags_vertical = 4\n";
 
+    // table.tscn: a Node2D root Table with a Card (a Control with CardView.cs) and a Plain Control.
+    private const string TableScene =
+        "[gd_scene format=3]\n\n[ext_resource type=\"Script\" path=\"res://CardView.cs\" id=\"1_view\"]\n\n"
+        + "[node name=\"Table\" type=\"Node2D\"]\n\n"
+        + "[node name=\"Card\" type=\"Control\" parent=\".\"]\nscript = ExtResource(\"1_view\")\n\n"
+        + "[node name=\"Plain\" type=\"Control\" parent=\".\"]\n";
+
     // ShadowTrail.cs: a Node2D script whose private field scale shadows Node2D.scale.
     private static readonly Dictionary<string, string> ShadowTrailSources = new() { ["ShadowTrail.cs"] = ShadowTrailSource };
+
+    // Two Node2D scripts whose exported card is Node-typed: NodeHolder's a Control, CardHolder's the [GlobalClass] CardView.
+    private static readonly Dictionary<string, string> NodeHolderSources = new()
+    {
+        ["NodeHolder.cs"] = NodeHolderSource("NodeHolder", "Control"),
+        ["ViewHolder.cs"] = NodeHolderSource("ViewHolder", "CardView"),
+        ["CardView.cs"] = "using Godot;\n\nnamespace CsProbe;\n\n[GlobalClass]\npublic partial class CardView : Control\n{\n}\n",
+    };
 
     private readonly SessionHarness _harness = new();
     private readonly HeadlessTools _tools;
@@ -1325,6 +1340,53 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
     }
 
     [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task AddNodeSetsACSharpNodeExportByItsPath()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(NodeHolderSources));
+        File.WriteAllText(Path.Combine(csProbe.Directory, "table.tscn"), TableScene);
+        AddNodeOptions options = new(Properties: new() { ["card"] = JsonSerializer.SerializeToElement("Card") });
+
+        await _tools.AddNodeAsync(csProbe.Directory, "table.tscn", "res://NodeHolder.cs", "Holder", options, cancellation);
+
+        AssertHolderCardSaved(csProbe.Directory);
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task BatchAddNodeSetsACSharpGlobalClassExportByItsPath()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(NodeHolderSources));
+        File.WriteAllText(Path.Combine(csProbe.Directory, "table.tscn"), TableScene);
+        SceneBatchStep add = new("add_node", HolderArgs("res://ViewHolder.cs", "Card"));
+
+        JsonObject batch = JsonNode.Parse(await _tools.BatchSceneOperationsAsync(csProbe.Directory, "table.tscn", [add], cancellation))!.AsObject();
+
+        Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        AssertHolderCardSaved(csProbe.Directory);
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task ABatchAddNodeRefusesACSharpNodeExportOfAnotherClassOrNoNode()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(NodeHolderSources));
+        File.WriteAllText(Path.Combine(csProbe.Directory, "table.tscn"), TableScene);
+        SceneBatchStep wrongClass = new("add_node", HolderArgs("res://ViewHolder.cs", "Plain"));
+        SceneBatchStep noNode = new("add_node", HolderArgs("res://NodeHolder.cs", "Nope"));
+
+        JsonNode plain = JsonNode.Parse(await _tools.BatchSceneOperationsAsync(csProbe.Directory, "table.tscn", [wrongClass], cancellation))!;
+        JsonNode nope = JsonNode.Parse(await _tools.BatchSceneOperationsAsync(csProbe.Directory, "table.tscn", [noNode], cancellation))!;
+
+        Assert.Equal(
+            "Property 'card' on 'Holder': \"Plain\" is a Control; the export takes CardView.",
+            plain["failedAt"]!["error"]!.GetValue<string>()
+        );
+        Assert.Equal("Property 'card' on 'Holder': no node at \"Nope\" from the scene root.", nope["failedAt"]!["error"]!.GetValue<string>());
+        Assert.Equal(TableScene, File.ReadAllText(Path.Combine(csProbe.Directory, "table.tscn")));
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
     public async Task AddNodeSavesTheNativeValueUnderAScriptFieldOfTheSameName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1845,6 +1907,32 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         "using Godot;\n\nnamespace CsProbe;\n\npublic partial class "
         + name
         + " : Node2D\n{\n    [Export]\n    private PackedScene card = null!;\n}\n";
+
+    /// <summary>A C# Node2D script named name whose exported property card holds a node of the class cardType.</summary>
+    private static string NodeHolderSource(string name, string cardType) =>
+        "using Godot;\n\nnamespace CsProbe;\n\npublic partial class "
+        + name
+        + " : Node2D\n{\n    [Export]\n    public "
+        + cardType
+        + " card { get; set; } = null!;\n}\n";
+
+    /// <summary>add_node's args for a Holder node with the script at nodeType, its card set to the path card from the root.</summary>
+    private static JsonObject HolderArgs(string nodeType, string card) =>
+        new()
+        {
+            ["nodeType"] = nodeType,
+            ["nodeName"] = "Holder",
+            ["options"] = new JsonObject { ["properties"] = new JsonObject { ["card"] = card } },
+        };
+
+    /// <summary>table.tscn's Holder stores card as the editor does: a path from Holder, named in its header's node_paths.</summary>
+    private static void AssertHolderCardSaved(string directory)
+    {
+        string[] lines = File.ReadAllLines(Path.Combine(directory, "table.tscn"));
+        string header = Assert.Single(lines, line => line.StartsWith("[node name=\"Holder\"", StringComparison.Ordinal));
+        Assert.Contains("node_paths=PackedStringArray(\"card\")", header, StringComparison.Ordinal);
+        Assert.Contains("card = NodePath(\"../Card\")", lines.SkipWhile(line => line != header).Skip(1).TakeWhile(line => line.Length > 0));
+    }
 
     /// <summary>Writes carded.tscn, whose root has the script at scriptPath and its card set to enemy.tscn.</summary>
     private static void WriteCardedScene(string directory, string scriptPath) =>
