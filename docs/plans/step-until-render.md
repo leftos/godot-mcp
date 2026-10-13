@@ -2,7 +2,7 @@
 
 Design draft for GMCP-20, "Design step-until-a-condition and render diagnosis (ideas 5 and 6)", from ideas 5 and 6 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L120-128). The two halves share no code: the first is three options on the existing `wait_for` and `frame_control` (no new tool), the second is documentation only ([DECISIONS.md](../DECISIONS.md) decision 31). Section 6 orders the steps so either half ships alone. Every question in section 7 is ruled.
 
-Status: step A1 shipped as `wait_for` `options.then` (ba6b522), which answered GMCP-7 (GitHub #62, "wait_for: no call in the frame an expression or property condition is met"). Steps A2, A3 and A4 (`until` and `input` on a step) shipped under GMCP-44 (Step-until: frame_control until and input). What remains is step A5 under GMCP-44, after the release that carries A1-A4, and the render docs, step R1 under GMCP-45 (Document render diagnosis).
+Status: step A1 shipped as `wait_for` `options.then` (ba6b522), which answered GMCP-7 (GitHub #62, "wait_for: no call in the frame an expression or property condition is met"). Steps A2, A3 and A4 (`until` and `input` on a step) landed under GMCP-44 (Step-until: frame_control until and input); A4 (ec90fe7) is in no release yet, since v0.16.0 carries only A2 and A3. What remains is step A5 under GMCP-44, after the release that carries A4, and the render docs, step R1 under GMCP-45 (Document render diagnosis).
 
 ## 1. Need
 

@@ -2,6 +2,8 @@
 
 Design for Linear GMCP-47, "Drives across several processes" (project "Ideas from the survey and the projects"). The issue cites delve-the-dungeon, whose drives start a .NET server and a second headless client in the background, and whose docs say "a tool call cannot stop a server while a script runs". The survey's nearest idea is 18, network conditions between instances ([survey](../research/2026-09-29-godot-mcp-survey.md) L184-187), which this design does not adopt (section 5). Section 7's questions are ruled; the step 1 spike's results are in section 2.
 
+Status: step 1 (the spike) is done; steps 2 to 10 are not built, and GMCP-47 is planned for the release after vNext.
+
 ## 1. Need
 
 ### What works today with several sessions
