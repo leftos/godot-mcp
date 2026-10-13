@@ -44,14 +44,14 @@ public sealed class OverrideFileTests : IDisposable
     }
 
     [Fact]
-    public void WriteCreatesTheWindowUnfocusedInPlaceWhenUnfocusedAndNotQuiet()
+    public void WriteCreatesTheWindowUnfocusedAndMinimizedInPlaceWhenUnfocusedAndNotQuiet()
     {
         OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), false, quiet: false, unfocused: true);
 
         string[] lines = File.ReadAllLines(OverrideFile.PathIn(_project.Path));
         int section = Array.IndexOf(lines, "[display]");
         Assert.True(section > 0, string.Join('\n', lines));
-        Assert.Equal(["", "window/size/no_focus=true"], lines[(section + 1)..]);
+        Assert.Equal(["", "window/size/no_focus=true", "window/size/mode=1"], lines[(section + 1)..]);
     }
 
     [Fact]

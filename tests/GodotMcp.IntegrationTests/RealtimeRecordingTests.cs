@@ -58,8 +58,14 @@ public sealed class RealtimeRecordingTests : IAsyncDisposable
         }
         finally
         {
-            await _harness.DisposeAsync();
-            _probe.Dispose();
+            try
+            {
+                await _harness.DisposeAsync();
+            }
+            finally
+            {
+                _probe.Dispose();
+            }
         }
     }
 
@@ -194,8 +200,24 @@ public sealed class RealtimeRecordingTests : IAsyncDisposable
         Assert.Equal("realtime", stopped["mode"]!.GetValue<string>());
     }
 
-    private Task<LaunchResult> LaunchAsync(bool quiet, CancellationToken cancellationToken) =>
-        _harness.Sessions.LaunchAsync(new LaunchRequest(_probe.Directory, null, [], [], quiet, false, Prepare: true), null, cancellationToken);
+    /// <summary>Launches the probe; a visible launch is handed over only once its window is restored behind the user's windows.</summary>
+    private async Task<LaunchResult> LaunchAsync(bool quiet, CancellationToken cancellationToken)
+    {
+        LaunchResult launched = await _harness.Sessions.LaunchAsync(
+            new LaunchRequest(_probe.Directory, null, [], [], quiet, false, Prepare: true),
+            null,
+            cancellationToken
+        );
+        if (!quiet)
+        {
+            GodotSession session = _harness.Sessions.Resolve(null);
+            int game = session.GameProcessId ?? throw new InvalidOperationException("the hello carried no game pid.");
+            long window = session.WindowHandle ?? throw new InvalidOperationException("the hello carried no window handle.");
+            await CaptureWindows.AssertRestoredAsync(_harness, game, (nint)window, cancellationToken);
+        }
+
+        return launched;
+    }
 
     /// <summary>
     /// Stops a recording a failed test left running, before the project copy goes, so its processes and files end with it; a

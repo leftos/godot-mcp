@@ -81,9 +81,11 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     internal ILogger Logger => logger;
 
     /// <summary>
-    /// Whether a session that is not quiet still has its window created unfocused, in place (<see cref="OverrideFile"/>'s
-    /// unfocused file), so it shows on the user's desktop without taking the foreground: off unless set, as the capture tests
-    /// set it, whose windows Windows.Graphics.Capture must see there.
+    /// Whether a session that is not quiet still has its window created unfocused and shown minimized, in place
+    /// (<see cref="OverrideFile"/>'s unfocused file), so it neither takes the foreground nor covers the user's windows: off
+    /// unless set, as the capture tests set it, whose windows Windows.Graphics.Capture must see on the user's desktop. The
+    /// window stays minimized until its caller restores it: the capture harness (SessionHarness) restores it without
+    /// activating it and then pushes it to the bottom of the z-order, behind the user's windows.
     /// </summary>
     internal bool LaunchesUnfocused { get; init; }
 

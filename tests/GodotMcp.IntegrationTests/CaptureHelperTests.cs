@@ -29,9 +29,15 @@ public sealed class CaptureHelperTests : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await _harness.DisposeAsync();
-        _probe.Dispose();
-        _temp.Dispose();
+        try
+        {
+            await _harness.DisposeAsync();
+        }
+        finally
+        {
+            _probe.Dispose();
+            _temp.Dispose();
+        }
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -85,6 +91,90 @@ public sealed class CaptureHelperTests : IAsyncDisposable
             (style & CaptureWindows.TopmostStyle) == 0,
             FormattableString.Invariant($"the game's main window {hwnd} is topmost (extended style 0x{style:X}): it sits above the user's windows")
         );
+    }
+
+    /// <summary>
+    /// A visible launch ends behind the window that had the foreground before it, the window the user works in: the
+    /// unfocused override shows the game's window minimized and the harness restores it at the bottom of the z-order. The
+    /// order is read through GetWindow, walking down from the window that was in front: the push is posted after the
+    /// restore and lands a few ms after it, so the wait is a hang guard that ends at once when the game exits or the
+    /// harness's restore loop fails. A topmost window in front, such as the taskbar, has every other window below it, so
+    /// the test cannot tell and fails saying so. A foreground that changes during the wait raises the window it activates,
+    /// so the test cannot tell the push from that activation either, and skips.
+    /// </summary>
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AVisibleLaunchEndsBehindTheWindowInFront()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        nint before = CaptureWindows.Foreground();
+        Assert.True(before != nint.Zero, "no window had the foreground before the launch, so there is no window to stay in front");
+        Assert.True(
+            (CaptureWindows.ExtendedStyle(before) & CaptureWindows.TopmostStyle) == 0,
+            FormattableString.Invariant($"window {before} (pid {CaptureWindows.OwnerOf(before)}), which has the foreground, is topmost, ")
+                + "so every other window is below it and the test cannot tell; give a window that is not topmost the foreground"
+        );
+        nint window = nint.Parse(await LaunchVisibleAsync(cancellation), CultureInfo.InvariantCulture);
+        using var game = Process.GetProcessById(
+            _harness.Sessions.Resolve(null).GameProcessId ?? throw new InvalidOperationException("the hello carried no game pid.")
+        );
+
+        bool behind = await Poll.UntilAsync(
+            () =>
+            {
+                CaptureWindows.ThrowIfEnded(_harness, game);
+                Assert.True(
+                    CaptureWindows.Exists(before),
+                    FormattableString.Invariant($"window {before}, which had the foreground before the launch, closed during the test")
+                );
+                // Read after the z-order, so an activation between the two reads is still seen.
+                bool above = CaptureWindows.IsAbove(before, window);
+                SkipIfTheForegroundMoved(before);
+                return above;
+            },
+            CaptureWindows.HangGuard,
+            cancellation
+        );
+
+        Assert.True(
+            behind,
+            FormattableString.Invariant($"the game's main window {window} is above window {before} (pid {CaptureWindows.OwnerOf(before)}), ")
+                + "which had the foreground before the launch"
+        );
+    }
+
+    /// <summary>
+    /// Skips the z-order test when another window has taken the foreground since the launch began: activating a window
+    /// raises it, so the z-order could come from that activation rather than the push, and the test can neither pass nor fail.
+    /// </summary>
+    private static void SkipIfTheForegroundMoved(nint before)
+    {
+        nint now = CaptureWindows.Foreground();
+        if (now != before)
+        {
+            Assert.Skip(
+                $"the foreground changed during the launch (from {Describe(before)} to {Describe(now)}), "
+                    + "so the z-order cannot be attributed to the push"
+            );
+        }
+    }
+
+    /// <summary>A window as its handle, its owner's pid and the owner's image name: <c>hwnd/pid (name)</c>.</summary>
+    private static string Describe(nint window)
+    {
+        int owner = CaptureWindows.OwnerOf(window);
+        string name;
+        try
+        {
+            using var process = Process.GetProcessById(owner);
+            name = process.ProcessName;
+        }
+        catch (ArgumentException)
+        {
+            // The owner exited since the window was read.
+            name = "exited";
+        }
+
+        return FormattableString.Invariant($"{window}/{owner} ({name})");
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -230,6 +320,7 @@ public sealed class CaptureHelperTests : IAsyncDisposable
             cancellationToken
         );
         Assert.True(found, $"the game (pid {game}) showed no main window in 10 s");
+        await CaptureWindows.AssertRestoredAsync(_harness, game, hwnd, cancellationToken);
         return ((long)hwnd).ToString(CultureInfo.InvariantCulture);
     }
 

@@ -13,9 +13,14 @@ namespace GodotMcp.Server.Session;
 /// <c>platform/windows/display_server_windows.cpp</c> L1970-1973), while <see cref="NoFocusSetting"/> becomes the
 /// NO_FOCUS flag at creation (<c>main.cpp</c> L2723-2724) and shows it without taking focus (L1964-1966), and an absolute
 /// initial position (<c>main.cpp</c> L2730-2735; <c>project_settings.cpp</c> L1725, Absolute is 0) places it. An unfocused
-/// session's file, one that is not quiet, has the <c>[display]</c> section with <see cref="NoFocusSetting"/> alone: its window
-/// shows where Godot places it without taking the foreground, as the capture tests need, whose windows
-/// Windows.Graphics.Capture must see on the user's desktop.
+/// session's file, one that is not quiet, has the <c>[display]</c> section with <see cref="NoFocusSetting"/> and
+/// <see cref="WindowModeSetting"/> minimized (<c>main.cpp</c> L2729), so its window is shown minimized and covers none of
+/// the user's windows, as a window shown normally does until Godot's first message pump. Godot's show_window takes its
+/// minimized branch, <c>ShowWindow(SW_SHOWMINIMIZED)</c> (<c>display_server_windows.cpp</c> L1962-1963), before its
+/// no_focus branch (L1964-1966), and Win32 documents SW_SHOWMINIMIZED as activating the window: what keeps the user's
+/// foreground is the WS_EX_NOACTIVATE that no_focus gives the window (L2627-2628) together with Windows' foreground lock.
+/// The capture tests, whose windows Windows.Graphics.Capture must see on the user's desktop, restore it behind the user's
+/// windows.
 /// The line after the marker lists the file's owners (<see cref="OwnersPrefix"/>): the server processes with live sessions
 /// using it, so a server releasing the folder deletes the file only when no other live server still uses it, and a file
 /// whose owners have all exited (or that lists none) is stale.
@@ -39,10 +44,16 @@ internal static class OverrideFile
     public const string InitialPositionTypeSetting = "window/size/initial_position_type";
     public const string InitialPositionSetting = "window/size/initial_position";
 
+    /// <summary>The project setting an unfocused session's file sets to <see cref="MinimizedWindowMode"/>.</summary>
+    public const string WindowModeSetting = "window/size/mode";
+
     /// <summary>Where a quiet session's window is created: far off every screen.</summary>
     public const string OffScreenPosition = "Vector2i(-9999, -9999)";
 
     private const int AbsolutePositionType = 0;
+
+    /// <summary>DisplayServer.WINDOW_MODE_MINIMIZED, which <see cref="WindowModeSetting"/> takes as an int.</summary>
+    private const int MinimizedWindowMode = 1;
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
     public static string PathIn(string projectDir) => Path.Combine(projectDir, FileName);
@@ -56,7 +67,7 @@ internal static class OverrideFile
     /// <param name="bridgeScriptPath">The bridge script the autoload names.</param>
     /// <param name="shutOutRealGamepads">Whether the bridge shuts the machine's real pads out; the setting is written to match.</param>
     /// <param name="quiet">Whether the window is created unfocused and off-screen.</param>
-    /// <param name="unfocused">Whether a window that is not quiet is still created unfocused, in place.</param>
+    /// <param name="unfocused">Whether a window that is not quiet is still created unfocused, in place, and shown minimized.</param>
     /// <exception cref="SessionException">
     /// The project has its own override.cfg, or another live server's marked file injects another bridge or holds other settings.
     /// </exception>
@@ -143,7 +154,7 @@ internal static class OverrideFile
         }
         else if (unfocused)
         {
-            body += $"\n[display]\n\n{NoFocusSetting}=true\n";
+            body += $"\n[display]\n\n{NoFocusSetting}=true\n{WindowModeSetting}={MinimizedWindowMode}\n";
         }
 
         return body;
