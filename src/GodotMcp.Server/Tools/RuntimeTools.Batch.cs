@@ -76,6 +76,7 @@ internal sealed partial class RuntimeTools
         ("maxChangedRatio", step => step.MaxChangedRatio is not null),
         ("text", step => step.Text is not null),
         ("under", step => step.Under is not null),
+        ("stable", step => step.Stable is not null),
     ];
 
     [McpServerTool(Name = BatchToolName, ReadOnly = false, Destructive = true, OpenWorld = false)]
@@ -85,7 +86,8 @@ internal sealed partial class RuntimeTools
             + "own (take_screenshot and compare_screenshot are forced to path_only; image blocks are dropped), or an assertion "
             + "{assert, ...}: property {node, property, equals, timeoutMs?}, expression {expression, timeoutMs?} (timeoutMs "
             + "defaults to 0: checked once, now, even while paused), wait {any wait_for condition, gameMs and frames included, "
-            + "timeoutMs?} (default 10000; gameMs + 10000 for gameMs, 10 s + 100 ms a frame for frames), no_errors {} (no "
+            + "timeoutMs?} (default 10000; gameMs + 10000 for gameMs, 10 s + 100 ms a frame for frames, 10 s + 100 ms for each "
+            + "of the stable + 1 frames a settled wait reads), no_errors {} (no "
             + "errors since the previous no_errors, or since the batch started), screenshot {name, "
             + "tolerance?, maxChangedRatio?} (compare_screenshot must match), fired {node, signal, equals?} (the nearest "
             + "earlier tool step's fired list has that node's signal, with those arguments when equals is given). Any step may "
@@ -303,7 +305,8 @@ internal sealed partial class RuntimeTools
                 step.GameMs,
                 step.Frames,
                 step.Text,
-                step.Under
+                step.Under,
+                step.Stable
             ),
         };
 

@@ -15,6 +15,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `batch_drive` takes a `fired` assertion, checking that the nearest earlier gesture step set off a node's signal, optionally with given arguments.
 - `run_csharp` snippets take `Log(value)`, returned as `log` with the result and inside a thrown exception's error, beside the game's errors.
 - `wait_for`, `frame_control` until and `batch_drive` waits take `{text, under?}`, met when exactly one visible Control shows that text, or none with `exists: false`.
+- `wait_for`, `frame_control` until and `batch_drive` waits take `{node, stable}`, met once the node's rect, transform or named property has held still that many frames.
 
 ### Changed
 
@@ -29,6 +30,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - An error raised in a world node's `input_event` handler now lands in the gesture's own reply, even when frames outrun physics ticks.
 - Engine errors from a `wait_for` or `frame_control` until expression's unguarded call stay out of `errors`, counted in `mutedErrors` instead.
+- A `wait_for` property condition whose path names a missing sub-property, such as `position:q`, now fails naming it instead of timing out.
 
 ## 0.16.0 - 2026-10-09
 

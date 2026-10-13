@@ -25,6 +25,11 @@ const HOLDER_SOURCE := "extends Node\n\n\nfunc shout() -> bool:\n\tpush_error('h
 ## writes a rect.
 const SHOWN_RECT := {"x": 10.0, "y": 20.0, "width": 120.0, "height": 40.0}
 
+## Why a settled check fails on Plain, a bare Node, named without a property.
+# gdformat joins any split of this text back into one line past gdlint's 100 characters.
+# gdlint: ignore=max-line-length
+const PLAIN_NO_PLACEMENT := "'Plain' is a Node, which has no rect or transform to watch; name a property with stable."
+
 ## The refusal _under_rig's resolver gives for an under several nodes have.
 const SHARED_UNDER := "'Lobby' names 2 nodes"
 
@@ -450,6 +455,116 @@ func test_an_under_several_nodes_have_fails_the_check() -> void:
 	assert_eq(appeared, [false, null, SHARED_UNDER], "an appear fails with the resolver's refusal")
 	assert_eq(left, [false, null, SHARED_UNDER], "and so does a leave")
 	_free_under_rig(rig)
+
+
+func test_a_still_value_is_settled_after_stable_counted_frames_and_not_before() -> void:
+	var state: Dictionary = _conditions_script.settled_state()
+	var rect: Dictionary = {"x": 10.0, "y": 20.0, "width": 120.0, "height": 40.0}
+	assert_eq(
+		_conditions_script.settled_answer(state, [true, rect], 50, 2),
+		[false, {"frames": 0, "value": rect}],
+		"the first reading counts no frame"
+	)
+	assert_eq(
+		_conditions_script.settled_answer(state, [true, rect.duplicate()], 51, 2),
+		[false, {"frames": 1, "value": rect}],
+		"one frame held of two is not settled"
+	)
+	assert_eq(
+		_conditions_script.settled_answer(state, [true, rect.duplicate()], 52, 2),
+		[true, {"frames": 2, "value": rect}],
+		"two frames held is settled"
+	)
+
+
+func test_a_changed_value_resets_the_settled_count() -> void:
+	var state: Dictionary = _conditions_script.settled_state()
+	_conditions_script.settled_answer(state, [true, 4.0], 50, 3)
+	_conditions_script.settled_answer(state, [true, 4.0], 51, 3)
+	assert_eq(
+		_conditions_script.settled_answer(state, [true, 9.0], 52, 3),
+		[false, {"frames": 0, "value": 9.0}],
+		"a new value starts the count again"
+	)
+	assert_eq(
+		_conditions_script.settled_answer(state, [true, 9.0 + 1e-9], 53, 3),
+		[false, {"frames": 1, "value": 9.0 + 1e-9}],
+		"a number within 1e-6 is the same value"
+	)
+
+
+func test_two_settled_checks_in_one_frame_count_it_once() -> void:
+	var state: Dictionary = _conditions_script.settled_state()
+	_conditions_script.settled_answer(state, [true, 4.0], 50, 2)
+	_conditions_script.settled_answer(state, [true, 4.0], 51, 2)
+	assert_eq(
+		_conditions_script.settled_answer(state, [true, 4.0], 51, 2),
+		[false, {"frames": 1, "value": 4.0}],
+		"a second check in frame 51 counts nothing"
+	)
+	assert_eq(
+		_conditions_script.settled_answer(state, [true, 4.0], 52, 2),
+		[true, {"frames": 2, "value": 4.0}],
+		"the next frame counts"
+	)
+
+
+func test_a_missing_reading_resets_the_settled_count_and_passes_through() -> void:
+	var state: Dictionary = _conditions_script.settled_state()
+	_conditions_script.settled_answer(state, [true, 4.0], 50, 2)
+	_conditions_script.settled_answer(state, [true, 4.0], 51, 2)
+	assert_eq(
+		_conditions_script.settled_answer(state, [false, null], 52, 2),
+		[false, null],
+		"a missing node is not met"
+	)
+	assert_eq(
+		_conditions_script.settled_answer(state, [false, null, "'%Box' names 2 nodes"], 53, 2),
+		[false, null, "'%Box' names 2 nodes"],
+		"a failed reading fails the check"
+	)
+	assert_eq(
+		_conditions_script.settled_answer(state, [true, 4.0], 54, 2),
+		[false, {"frames": 0, "value": 4.0}],
+		"the same value found again counts from its first reading"
+	)
+
+
+func test_a_property_path_names_the_first_sub_name_its_value_lacks() -> void:
+	var rect := Rect2(1, 2, 3, 4)
+	assert_eq(
+		_conditions_script.missing_subname(Vector2(3, 4), "position:q".split(":")),
+		"position:q",
+		"a Vector2 has no q"
+	)
+	assert_eq(
+		_conditions_script.missing_subname(Vector2(3, 4), "position:x".split(":")),
+		"",
+		"a Vector2 has x"
+	)
+	assert_eq(
+		_conditions_script.missing_subname(rect, "rect:size:q".split(":")),
+		"rect:size:q",
+		"the lacking part found deeper down"
+	)
+	assert_eq(
+		_conditions_script.missing_subname(rect, "rect:sise:x".split(":")),
+		"rect:sise",
+		"the path stops at the first part lacking"
+	)
+	assert_eq(_conditions_script.missing_subname(rect, "rect".split(":")), "", "a path of one part")
+
+
+func test_a_settled_reading_of_a_node_with_no_rect_or_transform_fails_naming_it() -> void:
+	var conditions: Node = _conditions_script.new()
+	var plain := Node.new()
+	assert_eq(
+		conditions._settled_reading(plain, "Plain", ""),
+		[false, null, PLAIN_NO_PLACEMENT],
+		"a plain Node without property fails the check"
+	)
+	plain.free()
+	conditions.free()
 
 
 ## Conditions whose bridge is a stand-in finding no node, its input player's target resolver a

@@ -156,7 +156,8 @@ internal sealed partial class RuntimeTools
             GameMs: start.GameMs,
             Frames: start.Frames,
             Text: start.Text,
-            Under: start.Under
+            Under: start.Under,
+            Stable: start.Stable
         );
         string kind = StartKindOf(condition);
         if (kind is not ("exists" or "property" or "expression"))
@@ -184,11 +185,13 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>
-    /// A start's kind as <see cref="CheckCondition"/> gives it, but text whenever text or under is given, so a start of the
-    /// text kind gets the start refusal rather than a text condition's own refusals.
+    /// A start's kind as <see cref="CheckCondition"/> gives it, but text whenever text or under is given and settled whenever
+    /// stable is, so a start of either kind gets the start refusal rather than that kind's own refusals.
     /// </summary>
     private static string StartKindOf(WaitCondition condition) =>
-        condition.Text is not null || condition.Under is not null ? "text" : CheckCondition(condition);
+        condition.Text is not null || condition.Under is not null ? "text"
+        : condition.Stable is not null ? "settled"
+        : CheckCondition(condition);
 
     /// <summary>
     /// How long capture_frames may run: the capture's own allowance (<see cref="CaptureOwnAllowance"/>), plus the start's

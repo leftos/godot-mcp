@@ -13,7 +13,7 @@ public sealed class TimeValidationTests : IDisposable
 {
     private const string ConditionMessage =
         "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
-        + "{gameMs}, {frames}, {text}.";
+        + "{gameMs}, {frames}, {text}, {node, stable}.";
     private const string ScaleMessage = "time_scale needs scale, greater than 0 and at most 100.";
 
     // The refusals of an options.call of neither form, both, or args of the other form's shape, after the option's path.
@@ -322,6 +322,99 @@ public sealed class TimeValidationTests : IDisposable
         Assert.Equal("Start", parameters["until"]!["text"]!.GetValue<string>());
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("position")]
+    public void ANodeWithStableIsOfTheSettledKindWithOrWithoutAProperty(string? property)
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Node: "Lobby", Property: property, Stable: 10), 1000);
+
+        Assert.Equal("settled", parameters["kind"]!.GetValue<string>());
+        Assert.Equal(10, parameters["stable"]!.GetValue<int>());
+        Assert.Equal(property, parameters["property"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public void StableWithoutANodeIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildWaitParameters(new WaitCondition(Stable: 10), 1000));
+
+        Assert.Equal(ConditionMessage, refused.Message);
+    }
+
+    [Fact]
+    public void ASettledConditionWithEqualsIsRefused()
+    {
+        WaitCondition condition = new(Node: "Lobby", Property: "position", EqualsValue: JsonSerializer.Deserialize<JsonElement>("3"), Stable: 10);
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildWaitParameters(condition, 1000));
+
+        Assert.Equal("a settled condition takes no equals; it waits for the value to hold, whatever it is.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(601)]
+    public void AStableOutsideItsRangeIsRefused(int stable)
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildWaitParameters(new WaitCondition(Node: "Lobby", Stable: stable), 1000)
+        );
+
+        Assert.Equal($"condition.stable must be 1 to 600 frames; got {stable}.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(600)]
+    public void AStableAtTheEdgeOfItsRangeIsAccepted(int stable)
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Node: "Lobby", Stable: stable), 1000);
+
+        Assert.Equal("settled", parameters["kind"]!.GetValue<string>());
+        Assert.Equal(stable, parameters["stable"]!.GetValue<int>());
+    }
+
+    [Theory]
+    [InlineData(1, 10_200)]
+    [InlineData(600, 70_100)]
+    public void ASettledWaitWithoutATimeoutGetsTheStepAllowanceOfItsReadings(int stable, int expected)
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Node: "Lobby", Stable: stable), null);
+
+        Assert.Equal(expected, parameters["timeoutMs"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void ACheckOnceSettledWaitIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildWaitParameters(new WaitCondition(Node: "Lobby", Stable: 10), 0));
+
+        Assert.Equal("timeoutMs 0 checks once, which a settled wait cannot meet; give it a timeout.", refused.Message);
+    }
+
+    [Fact]
+    public void ASettledWaitTakesACall()
+    {
+        WaitOptions options = new(Call: new MethodCall("Lobby", "arm"));
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Node: "Lobby", Stable: 10), 1000, options);
+
+        Assert.Equal("settled", parameters["kind"]!.GetValue<string>());
+        Assert.Equal("arm", parameters["call"]!["method"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void AStepUntilTakesASettledCondition()
+    {
+        StepOptions options = new(Until: new WaitCondition(Node: "Lobby", Stable: 10));
+
+        JsonObject parameters = RuntimeTools.BuildFrameParameters("step", null, null, options);
+
+        Assert.Equal("settled", parameters["until"]!["kind"]!.GetValue<string>());
+        Assert.Equal(10, parameters["until"]!["stable"]!.GetValue<int>());
+    }
+
     [Fact]
     public async Task WaitForRefusesAMissingCondition()
     {
@@ -564,7 +657,7 @@ public sealed class TimeValidationTests : IDisposable
         );
 
         Assert.Equal(
-            $"options.call is taken only by a gameMs, frames, exists, property, expression or text wait; this condition is {kind}.",
+            $"options.call is taken only by a gameMs, frames, exists, property, expression, text or settled wait; this condition is {kind}.",
             refused.Message
         );
     }
@@ -780,6 +873,7 @@ public sealed class TimeValidationTests : IDisposable
     [InlineData("uiChanged")]
     [InlineData("gameMs")]
     [InlineData("frames")]
+    [InlineData("settled")]
     public void AnEdgeWaitOnAnotherKindIsRefused(string kind)
     {
         WaitCondition condition = kind switch
@@ -787,6 +881,7 @@ public sealed class TimeValidationTests : IDisposable
             "signal" => new WaitCondition(Node: "Main", Signal: "fired"),
             "uiChanged" => new WaitCondition(UiChanged: true),
             "gameMs" => new WaitCondition(GameMs: 500),
+            "settled" => new WaitCondition(Node: "Lobby", Stable: 10),
             _ => new WaitCondition(Frames: 3),
         };
 

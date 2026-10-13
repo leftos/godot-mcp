@@ -6,7 +6,8 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// What wait_for waits for, exactly one kind: {node, exists}, {node, property, equals}, {node, signal}, {expression}
-/// (node optional), {uiChanged: true}, {gameMs}, {frames} or {text} (under and exists optional).
+/// (node optional), {uiChanged: true}, {gameMs}, {frames}, {text} (under and exists optional) or {node, stable} (property
+/// optional).
 /// </summary>
 internal sealed record WaitCondition(
     [property: Description(
@@ -20,7 +21,9 @@ internal sealed record WaitCondition(
             + "absent, or no visible Control shows the text (false); with text, true when left out."
     )]
         bool? Exists = null,
-    [property: Description("With node and equals: the property to read each frame; a subproperty path such as position:x works too.")]
+    [property: Description(
+        "With node and equals, or with node and stable: the property to read each frame; a subproperty path such as position:x works too."
+    )]
         string? Property = null,
     [property: JsonPropertyName("equals")]
     [property: Description(
@@ -62,5 +65,11 @@ internal sealed record WaitCondition(
         "With text: the node whose visible Controls are scanned, named as node is; the whole tree when left out. While it is "
             + "missing, hidden or being freed, no Control under it shows the text."
     )]
-        string? Under = null
+        string? Under = null,
+    [property: Description(
+        "With node: wait until the node's global rect (a Control), global_transform (a Node2D or Node3D) or property holds "
+            + "unchanged for this many process frames, 1 to 600, so a press can wait for a layout to settle. Met, value is "
+            + "{frames, value}; while it moves, last shows the value so far."
+    )]
+        int? Stable = null
 );

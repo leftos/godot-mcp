@@ -20,12 +20,13 @@ internal sealed partial class RuntimeTools
     internal const int MaxWaitMs = 120_000;
     internal const int MaxWaitGameMs = 120_000;
     internal const int MaxWaitFrames = 7200;
+    internal const int MaxStableFrames = 600;
     private const int DefaultWaitMs = 10_000;
     private const int MaxDerivedWaitMs = 600_000;
     private const int CapturePreviewMaxWidth = 480;
     private const string ConditionMessage =
         "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
-        + "{gameMs}, {frames}, {text}.";
+        + "{gameMs}, {frames}, {text}, {node, stable}.";
     private const string UntilFramesRefusal =
         "frame_control step's until takes any wait_for condition but frames: count is the most frames a step runs.";
     private const string EmptyThenRefusal = "options.then needs call, timeScale, pause or a mix.";
@@ -43,6 +44,7 @@ internal sealed partial class RuntimeTools
         new("gameMs", condition => condition.GameMs is not null, condition => condition.Node is null),
         new("frames", condition => condition.Frames is not null, condition => condition.Node is null),
         new("text", condition => condition.Text is not null, _ => true),
+        new("settled", condition => condition.Stable is not null, HasNode),
     ];
 
     // What a step's reply carries beyond its counts: the frame it stopped on, its until's answer as wait_for gives one, and
@@ -133,7 +135,10 @@ internal sealed partial class RuntimeTools
             + "equal to a value, a signal's next emission, a Godot Expression returning true, gameMs milliseconds of game time "
             + "(process delta over unpaused frames, so it follows Engine.time_scale), frames unpaused process frames, or a "
             + "visible Control showing a text, matched as a click's {text} target is, or none showing it (exists: false); a text "
-            + "shown by several Controls fails the wait with their list, so narrow it with under. Returns "
+            + "shown by several Controls fails the wait with their list, so narrow it with under. {node, stable: N} waits "
+            + "until the node's global rect (a Control), global_transform (a Node2D or Node3D) or the property named holds "
+            + "unchanged for N process frames, so a press can wait for a layout to settle; met, its value is {frames, value}. "
+            + "Returns "
             + "{met, elapsedMs, frames, value} (args instead of value for a signal; the game ms or frames reached for gameMs and "
             + "frames); on timeout {met: false, elapsedMs, frames, last}, the last "
             + "value seen (a signal wait's timeout has no last), which is not an error. elapsedMs is real time; in a recording "
@@ -169,15 +174,16 @@ internal sealed partial class RuntimeTools
     public async Task<IEnumerable<ContentBlock>> WaitForAsync(
         [Description(
             "Exactly one of {node, exists}, {node, property, equals}, {node, signal}, {expression} (with node optional), {uiChanged: true}, "
-                + "{gameMs}, {frames}, {text} (with under and exists optional)."
+                + "{gameMs}, {frames}, {text} (with under and exists optional), {node, stable} (with property optional)."
         )]
             WaitCondition condition,
         [Description(
             "How long to wait, in milliseconds, 0 to 120000, load-adjusted: under load it waits longer in wall time. Left out: "
-                + "10000, gameMs + 10000 for a gameMs wait, 10 s + 100 ms a frame for a frames wait. In a recording "
+                + "10000, gameMs + 10000 for a gameMs wait, 10 s + 100 ms a frame for a frames wait, and 10 s + 100 ms for each of "
+                + "the stable + 1 frames a settled wait reads, so it grows with stable. In a recording "
                 + "(run_project options.record) it counts clip time instead, 60 movie frames a second, however slowly the game runs, "
                 + "and the result adds clipMs. 0 checks the condition once, now (after options.call, in the next frame), and works "
-                + "while the game is paused; it is refused for a signal, gameMs or frames wait."
+                + "while the game is paused; it is refused for a signal, gameMs, frames or settled wait."
         )]
             int? timeoutMs = null,
         [Description("{screenshot, call, then, edge}: screenshot and edge false and no call or then when left out.")] WaitOptions? options = null,
@@ -231,7 +237,7 @@ internal sealed partial class RuntimeTools
     /// <summary>The bridge's wait parameters: the condition's fields as given, its kind, and the timeoutMs it runs under
     /// (<see cref="WaitTimeoutMs"/>).</summary>
     /// <exception cref="McpException">The condition is not exactly one kind, gameMs or frames is out of range, timeoutMs is
-    /// out of range, or 0 for a signal, gameMs or frames wait.</exception>
+    /// out of range, or 0 for a signal, gameMs, frames or settled wait.</exception>
     internal static JsonObject BuildWaitParameters(WaitCondition? condition, int? timeoutMs)
     {
         string kind = CheckCondition(condition);
@@ -244,6 +250,11 @@ internal sealed partial class RuntimeTools
         if (timeoutMs == 0 && kind is "signal" or "gameMs" or "frames")
         {
             throw new McpException($"timeoutMs 0 checks once, which a {kind} wait cannot do; give it a timeout.");
+        }
+
+        if (timeoutMs == 0 && kind == "settled")
+        {
+            throw new McpException("timeoutMs 0 checks once, which a settled wait cannot meet; give it a timeout.");
         }
 
         JsonObject parameters = ConditionParameters(condition!, kind);
@@ -316,7 +327,7 @@ internal sealed partial class RuntimeTools
         parameters["call"] = kind is not ("signal" or "uiChanged")
             ? CallOptionParameters(call, "options.call")
             : throw new McpException(
-                $"options.call is taken only by a gameMs, frames, exists, property, expression or text wait; this condition is {kind}."
+                $"options.call is taken only by a gameMs, frames, exists, property, expression, text or settled wait; this condition is {kind}."
             );
     }
 
@@ -396,7 +407,8 @@ internal sealed partial class RuntimeTools
 
     /// <summary>
     /// The timeout a wait runs under: <paramref name="timeoutMs"/> when given; else gameMs + 10 s for a gameMs wait, the step
-    /// allowance of its frames for a frames wait (either at most 600 s), and 10 s for any other.
+    /// allowance of its frames for a frames wait, the step allowance of its stable + 1 readings for a settled wait (each at
+    /// most 600 s), and 10 s for any other.
     /// </summary>
     internal static int WaitTimeoutMs(WaitCondition condition, int? timeoutMs) =>
         timeoutMs
@@ -404,6 +416,7 @@ internal sealed partial class RuntimeTools
         {
             { GameMs: int gameMs } => (int)Math.Min((long)gameMs + DefaultWaitMs, MaxDerivedWaitMs),
             { Frames: int frames } => (int)Math.Min(StepAllowance(frames).TotalMilliseconds, MaxDerivedWaitMs),
+            { Stable: int stable } => (int)Math.Min(StepAllowance(stable + 1).TotalMilliseconds, MaxDerivedWaitMs),
             _ => DefaultWaitMs,
         };
 
@@ -544,6 +557,7 @@ internal sealed partial class RuntimeTools
     private static string CheckCondition(WaitCondition? condition)
     {
         CheckTextFields(condition);
+        CheckSettledFields(condition);
         ConditionKind[] given = condition is null ? [] : [.. ConditionKinds.Where(kind => kind.Given(condition))];
         return given is [var kind] && kind.HasCompanions(condition!) ? kind.Name : throw new McpException(ConditionMessage);
     }
@@ -566,10 +580,27 @@ internal sealed partial class RuntimeTools
         }
     }
 
+    /// <exception cref="McpException">stable is outside 1 to <see cref="MaxStableFrames"/>, or comes with equals.</exception>
+    private static void CheckSettledFields(WaitCondition? condition)
+    {
+        string? refusal = condition switch
+        {
+            { Stable: < 1 or > MaxStableFrames } => $"condition.stable must be 1 to {MaxStableFrames} frames; got {condition.Stable}.",
+            { Stable: not null } when HasEquals(condition) => "a settled condition takes no equals; it waits for the value to hold, whatever it is.",
+            _ => null,
+        };
+        if (refusal is not null)
+        {
+            throw new McpException(refusal);
+        }
+    }
+
     // exists names the exists kind only without text, where it says whether the text is to show or to go.
     private static bool IsExistsGiven(WaitCondition condition) => condition.Exists is not null && condition.Text is null;
 
-    private static bool IsPropertyGiven(WaitCondition condition) => condition.Property is not null || HasEquals(condition);
+    // property names the property kind only without stable, where it names the value a settled wait watches.
+    private static bool IsPropertyGiven(WaitCondition condition) =>
+        (condition.Property is not null && condition.Stable is null) || HasEquals(condition);
 
     private static bool HasNode(WaitCondition condition) => !string.IsNullOrEmpty(condition.Node);
 

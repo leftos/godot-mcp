@@ -193,7 +193,7 @@ public sealed class BatchValidationTests : IDisposable
     [InlineData(
         "wait",
         "step 0: condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
-            + "{gameMs}, {frames}, {text}."
+            + "{gameMs}, {frames}, {text}, {node, stable}."
     )]
     public async Task AnAssertionMissingAFieldIsRefused(string assert, string message)
     {
@@ -252,6 +252,38 @@ public sealed class BatchValidationTests : IDisposable
         McpException refused = await RefusedAsync([new BatchStep(Tool: "click"), fired]);
 
         Assert.Equal("step 1: the fired assertion takes node, signal and equals; got text, under.", refused.Message);
+    }
+
+    [Fact]
+    public void ASettledWaitAssertionIsAcceptedAndCarriesStable()
+    {
+        BatchStep step = new(Assert: "wait", Node: "Lobby", Stable: 10);
+
+        RuntimeTools.CheckBatch([step]);
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(RuntimeTools.ConditionOf(step), 1000);
+
+        Assert.Equal("settled", parameters["kind"]?.GetValue<string>());
+        Assert.Equal(10, parameters["stable"]?.GetValue<int>());
+    }
+
+    [Fact]
+    public void ASettledWaitAssertionWithoutATimeoutGetsADefaultThatGrowsWithStable()
+    {
+        BatchStep step = new(Assert: "wait", Node: "Lobby", Stable: 600);
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(RuntimeTools.ConditionOf(step), step.TimeoutMs);
+
+        Assert.Equal(70_100, parameters["timeoutMs"]?.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task AFiredAssertionWithStableIsRefused()
+    {
+        BatchStep fired = new(Assert: "fired", Node: "Ready", Signal: "pressed", Stable: 10);
+
+        McpException refused = await RefusedAsync([new BatchStep(Tool: "click"), fired]);
+
+        Assert.Equal("step 1: the fired assertion takes node, signal and equals; got stable.", refused.Message);
     }
 
     [Fact]

@@ -1,12 +1,14 @@
 extends Node
 ## The godot-mcp bridge's conditions, a child of the bridge: parses a condition Expression and
 ## builds the checks wait_for polls each frame (a node existing, a property's value, an
-## expression, the UI changed since the last gesture, a Control showing a text).
+## expression, the UI changed since the last gesture, a Control showing a text, a node's rect,
+## transform or property holding still).
 ## The watch parses its expression tracks through parse_condition too.
 ##
 ## A check returns [met, value], or [false, null, error] when its condition cannot be met.
 
 const TextTargets := preload("godot_mcp_text_targets.gd")
+const Clock := preload("godot_mcp_time.gd")
 
 ## An expression's inputs besides node. Expression resolves only its inputs and its base
 ## instance's members, not singletons (core/math/expression.cpp L707-734 in 4.7.2).
@@ -19,6 +21,9 @@ const NO_UI_BASELINE := (
 	"uiChanged has no baseline: no input gesture has started since launch or since the last "
 	+ "uiChanged wait was met; send the input first"
 )
+# gdformat joins any split of this text back into one line past gdlint's 100 characters.
+# gdlint: ignore=max-line-length
+const NO_PLACEMENT := "'%s' is a %s, which has no rect or transform to watch; name a property with stable."
 
 ## The bridge these conditions belong to, for its node lookup, JSON conversion, input module and
 ## clock's JSON comparison.
@@ -64,6 +69,7 @@ func _kind_probe(kind: String, params: Dictionary, failures: Dictionary) -> Vari
 		"expression": _expression_probe,
 		"uiChanged": _ui_changed_probe,
 		"text": _text_probe,
+		"settled": _settled_probe,
 	}
 	if not builders.has(kind):
 		return "unknown condition kind '%s'" % kind
@@ -90,6 +96,70 @@ func _ui_changed_probe(_params: Dictionary, _failures: Dictionary) -> Variant:
 func _text_probe(params: Dictionary, _failures: Dictionary) -> Variant:
 	var text: String = _text(params, "text").strip_edges()
 	return _check_text.bind(text, _text(params, "under"), bool(params.get("exists", true)))
+
+
+func _settled_probe(params: Dictionary, _failures: Dictionary) -> Variant:
+	var node_name: String = _text(params, "node")
+	var needed: int = int(params.get("stable", 1))
+	var property: String = _text(params, "property")
+	return _check_settled.bind(node_name, property, needed, settled_state())
+
+
+## A settled check's count before its first reading: held -1 until a value has been read, then
+## the frames that kept last since it was first read, frame the process frame of the last check.
+static func settled_state() -> Dictionary:
+	return {"last": null, "frame": -1, "held": -1}
+
+
+## Reads the node's watched value (_settled_reading) and counts it into state (settled_answer) at
+## this process frame; while the node is missing, _missing's answer resets the count.
+func _check_settled(node_name: String, property: String, needed: int, state: Dictionary) -> Array:
+	var node: Node = bridge._find_node(node_name)
+	var reading: Array = _missing(node_name)
+	if node != null:
+		reading = _settled_reading(node, node_name, property)
+	return settled_answer(state, reading, Engine.get_process_frames(), needed)
+
+
+## A settled check's answer from reading, [true, value] for the watched value's JSON form, or the
+## probe answer that stood for it ([false, null] while the node is missing, or a failure), which
+## resets the count and is passed on as it is. A value equal to the last one (Clock.json_equal)
+## counts one frame when frame differs from the last check's, so two checks in one frame count it
+## once; a different one starts the count again from 0. Met once needed frames have held, its value
+## {frames, value}, frames the frames held so far.
+static func settled_answer(state: Dictionary, reading: Array, frame: int, needed: int) -> Array:
+	if not reading[0]:
+		state["last"] = null
+		state["held"] = -1
+		return reading
+	var value: Variant = reading[1]
+	if int(state["held"]) < 0 or not Clock.json_equal(value, state["last"]):
+		state["last"] = value
+		state["held"] = 0
+	elif frame != int(state["frame"]):
+		state["held"] = int(state["held"]) + 1
+	state["frame"] = frame
+	var held: int = state["held"]
+	return [held >= needed, {"frames": held, "value": value}]
+
+
+## The value a settled check watches on node, as [true, its JSON form]: property when given, read
+## as check_property reads it; else a Control's global rect or a Node2D's or Node3D's
+## global_transform. Any other node without property fails the check, which ends the wait with
+## {error} as a property the node lacks does.
+func _settled_reading(node: Node, node_name: String, property: String) -> Array:
+	if not property.is_empty():
+		return _read_property(node, property)
+	var placement: Variant = null
+	if node is Control:
+		placement = (node as Control).get_global_rect()
+	elif node is Node2D:
+		placement = (node as Node2D).global_transform
+	elif node is Node3D:
+		placement = (node as Node3D).global_transform
+	if placement == null:
+		return [false, null, NO_PLACEMENT % [node_name, node.get_class()]]
+	return [true, bridge._json.to_json(placement)]
 
 
 ## Whether text (trimmed) shows on the visible Controls at or under under, the root when empty,
@@ -182,11 +252,45 @@ func check_property(node_name: String, property: String, wanted: Variant) -> Arr
 	var node: Node = bridge._find_node(node_name)
 	if node == null:
 		return _missing(node_name)
-	var first: String = property.get_slice(":", 0)
-	if not bridge._json.has_property(node, first):
-		return [false, null, "'%s' has no property '%s'." % [node.get_path(), first]]
-	var value: Variant = bridge._json.to_json(node.get_indexed(NodePath(property)))
-	return [bridge._time.json_equal(value, wanted), value]
+	var read: Array = _read_property(node, property)
+	if read.size() > 2:
+		return read
+	return [bridge._time.json_equal(read[1], wanted), read[1]]
+
+
+## node's property (a path such as position:x) as run_script returns values: [true, value], or
+## [false, null, error] naming the path up to the first part node or its value lacks. get_indexed
+## reads a missing sub-name as null without an error (core/object/object.cpp L451-473 in 4.7.2),
+## so a null read is walked again by missing_subname.
+func _read_property(node: Node, property: String) -> Array:
+	var parts: PackedStringArray = property.split(":")
+	if not bridge._json.has_property(node, parts[0]):
+		return _no_property(node, parts[0])
+	var value: Variant = node.get_indexed(NodePath(property))
+	if typeof(value) == TYPE_NIL:
+		var lacking: String = missing_subname(node.get(parts[0]), parts)
+		if not lacking.is_empty():
+			return _no_property(node, lacking)
+	return [true, bridge._json.to_json(value)]
+
+
+static func _no_property(node: Node, path: String) -> Array:
+	return [false, null, "'%s' has no property '%s'." % [node.get_path(), path]]
+
+
+## The path through parts up to the first part after the first that its value lacks, value being
+## the first part's; empty when it has them all. Each part is read with Variant.get as
+## Expression's indexing reads it, which for a String index reads a named member, a Dictionary's
+## key or an Object's property as get_indexed does (core/variant/variant_setget.cpp L1235-1268).
+static func missing_subname(value: Variant, parts: PackedStringArray) -> String:
+	var member := Expression.new()
+	member.parse("base[key]", ["base", "key"])
+	var current: Variant = value
+	for index: int in range(1, parts.size()):
+		current = member.execute([current, parts[index]], null, false)
+		if member.has_execute_failed():
+			return ":".join(parts.slice(0, index + 1))
+	return ""
 
 
 ## Parses source once with its inputs (node too when node_name is set, also the base instance)

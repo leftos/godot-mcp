@@ -45,6 +45,18 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         "extends Node\\n\\nvar frames_left := 0\\nvar target: CanvasItem\\n\\n\\nfunc arm() -> void:\\n\\tframes_left = 3\\n\\n\\n"
         + "func _process(_delta: float) -> void:\\n\\tif frames_left <= 0:\\n\\t\\treturn\\n\\tframes_left -= 1\\n\\t"
         + "if frames_left == 0:\\n\\t\\ttarget.show()\\n\\t\\tset_meta('shown_frame', Engine.get_process_frames())\\n";
+
+    // Once armed with a count, moves its child Mover 8 px right in each of that many process frames, then holds it, noting
+    // the frame of the last move in moved_frame; note_press keeps Mover's global rect and the frame as they are when called.
+    private const string SettlerScript =
+        "extends Control\\n\\nvar frames_left := 0\\nvar pressed_rect := Rect2()\\nvar pressed_frame := -1\\nvar moved_frame := -1\\n\\n\\n"
+        + "func arm(frames: int) -> void:\\n\\tframes_left = frames\\n\\n\\n"
+        + "func note_press() -> void:\\n\\tpressed_rect = get_node('Mover').get_global_rect()\\n\\t"
+        + "pressed_frame = Engine.get_process_frames()\\n\\n\\n"
+        + "func _process(_delta: float) -> void:\\n\\tif frames_left <= 0:\\n\\t\\treturn\\n\\tframes_left -= 1\\n\\t"
+        + "var mover: Control = get_node('Mover')\\n\\tmover.position.x += 8\\n\\tmoved_frame = Engine.get_process_frames()\\n";
+    private const string Settler = "scene_tree.root.get_node(\"SettleBox\")";
+    private const string Mover = "SettleBox/Mover";
     private static readonly WaitCondition UiChangedCondition = new(UiChanged: true);
     private static readonly InputTarget OpenButton = new("OpenButton");
     private readonly SharedProbeSession _shared = shared;
@@ -700,6 +712,133 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.True(stepped["paused"]!.GetValue<bool>(), stepped.ToJsonString());
         Assert.True(shown > 0, $"shown at {shown}");
         Assert.Equal(shown, stepped["frame"]!.GetValue<long>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ASettledWaitIsMetOnceAMovingControlHoldsWithItsFinalRect()
+    {
+        await AddSettlerAsync(TestContext.Current.CancellationToken);
+        WaitOptions options = new(Call: new MethodCall("SettleBox", "arm", Json("[12]")));
+
+        JsonObject waited = await WaitAsync(new WaitCondition(Node: Mover, Stable: 5), options);
+        JsonNode final = await RunAsync($"return scene_tree.root.get_node(\"{Mover}\").get_global_rect()");
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.True(waited["value"]!["frames"]!.GetValue<int>() >= 5, waited.ToJsonString());
+        Assert.Equal(100 + (12 * 8), final["x"]!.GetValue<double>());
+        AssertSameRect(final, waited["value"]!["value"]!);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AThenCallOnASettledWaitPressesTheControlWhereItSettled()
+    {
+        await AddSettlerAsync(TestContext.Current.CancellationToken);
+        WaitOptions options = new(
+            Call: new MethodCall("SettleBox", "arm", Json("[12]")),
+            Then: new WaitThen(Call: new MethodCall("SettleBox", "note_press"))
+        );
+
+        JsonObject waited = await WaitAsync(new WaitCondition(Node: Mover, Stable: 5), options);
+        JsonNode pressed = await RunAsync($"return {Settler}.pressed_rect");
+        long pressedFrame = (await RunAsync($"return {Settler}.pressed_frame")).GetValue<long>();
+        long movedFrame = (await RunAsync($"return {Settler}.moved_frame")).GetValue<long>();
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        AssertSameRect(waited["value"]!["value"]!, pressed);
+        // The wait checks as process_frame is emitted, before that frame's _process (scene/main/scene_tree.cpp L713, L719 in
+        // 4.7.2), so the frame after the last move reads the final rect first and five frames later the wait is met: then.call
+        // ran in that frame, not later.
+        Assert.Equal(movedFrame + 1 + 5, pressedFrame);
+        Assert.Equal(pressedFrame, waited["then"]!["frame"]!.GetValue<long>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ASettledWaitOnAControlThatKeepsMovingTimesOutWithItsCountSoFar()
+    {
+        await AddSettlerAsync(TestContext.Current.CancellationToken);
+        await RunAsync("scene_tree.root.get_node(\"SettleBox\").arm(1000000)\n\treturn true");
+
+        JsonObject waited = await WaitAsync(new WaitCondition(Node: Mover, Stable: 5), 500);
+
+        Assert.False(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.True(waited["last"]!["frames"]!.GetValue<int>() < 5, waited.ToJsonString());
+        Assert.NotNull(waited["last"]!["value"]);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ASettledWaitOnAPropertyPathIsMetWithItsFinalValue()
+    {
+        await AddSettlerAsync(TestContext.Current.CancellationToken);
+        WaitOptions options = new(Call: new MethodCall("SettleBox", "arm", Json("[12]")));
+
+        JsonObject waited = await WaitAsync(new WaitCondition(Node: Mover, Property: "position:x", Stable: 3), options);
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.True(waited["value"]!["frames"]!.GetValue<int>() >= 3, waited.ToJsonString());
+        Assert.Equal(100 + (12 * 8), waited["value"]!["value"]!.GetValue<double>());
+    }
+
+    [Theory(Timeout = TestTimeoutMs)]
+    [InlineData("nope")]
+    [InlineData("position:q")]
+    public async Task ASettledWaitOnAPropertyTheNodeLacksFailsNamingIt(string property)
+    {
+        await AddSettlerAsync(TestContext.Current.CancellationToken);
+
+        McpException failed = await Assert.ThrowsAsync<McpException>(() => WaitAsync(new WaitCondition(Node: Mover, Property: property, Stable: 3)));
+
+        Assert.Contains($"'/root/{Mover}' has no property '{property}'.", failed.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ASettledWaitOnANodeWithNoRectOrTransformFailsNamingIt()
+    {
+        await AddPlacedNodesAsync(TestContext.Current.CancellationToken);
+
+        McpException failed = await Assert.ThrowsAsync<McpException>(() => WaitAsync(new WaitCondition(Node: "SettlePlain", Stable: 3)));
+
+        Assert.Contains(
+            "'SettlePlain' is a Node, which has no rect or transform to watch; name a property with stable.",
+            failed.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Theory(Timeout = TestTimeoutMs)]
+    [InlineData("SettleBase2D/Pad")]
+    [InlineData("SettleBase3D/Cube")]
+    public async Task ASettledWaitOnANode2DOrNode3DWatchesItsGlobalTransform(string node)
+    {
+        await AddPlacedNodesAsync(TestContext.Current.CancellationToken);
+
+        JsonObject waited = await WaitAsync(new WaitCondition(Node: node, Stable: 2));
+        string global = (await RunAsync($"return scene_tree.root.get_node(\"{node}\").global_transform")).GetValue<string>();
+        string local = (await RunAsync($"return scene_tree.root.get_node(\"{node}\").transform")).GetValue<string>();
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Equal(global, waited["value"]!["value"]!.GetValue<string>());
+        Assert.NotEqual(local, global);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task StepUntilASettledConditionStopsOnceTheControlHeldForTheSteppedFrames()
+    {
+        await AddSettlerAsync(TestContext.Current.CancellationToken);
+        await FrameAsync("pause");
+        await RunAsync($"{Settler}.arm(4)\n\treturn true");
+
+        JsonObject stepped = await FrameAsync("step", count: 100, options: new StepOptions(Until: new WaitCondition(Node: Mover, Stable: 3)));
+        JsonNode final = await RunAsync($"return scene_tree.root.get_node(\"{Mover}\").get_global_rect()");
+        long movedFrame = (await RunAsync($"return {Settler}.moved_frame")).GetValue<long>();
+
+        Assert.True(stepped["met"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.True(stepped["paused"]!.GetValue<bool>(), stepped.ToJsonString());
+        Assert.Equal(100 + (4 * 8), final["x"]!.GetValue<double>());
+        AssertSameRect(final, stepped["value"]!["value"]!);
+        Assert.Equal(3, stepped["value"]!["frames"]!.GetValue<int>());
+        // A step checks its until at each stepped frame's draw, after its _process: the last move's frame reads the final
+        // rect first, and each of the next three stepped frames counts once.
+        Assert.Equal(movedFrame + 3, stepped["frame"]!.GetValue<long>());
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -1832,6 +1971,41 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
             cancellationToken
         );
 
+    /// <summary>Adds SettleBox, a mouse-ignoring Control under the root with <see cref="SettlerScript"/>, and its child Mover, a
+    /// 120 x 40 Button at 100, 300, unarmed.</summary>
+    private Task<JsonNode> AddSettlerAsync(CancellationToken cancellationToken) =>
+        RunBodyAsync(
+            "var box := Control.new()\n\tbox.name = \"SettleBox\"\n\tbox.mouse_filter = Control.MOUSE_FILTER_IGNORE\n\t"
+                + $"var script := GDScript.new()\n\tscript.source_code = \"{SettlerScript}\"\n\tscript.reload()\n\tbox.set_script(script)\n\t"
+                + "var mover := Button.new()\n\tmover.name = \"Mover\"\n\tmover.text = \"Settle\"\n\t"
+                + "mover.position = Vector2(100, 300)\n\tmover.size = Vector2(120, 40)\n\tbox.add_child(mover)\n\t"
+                + "scene_tree.root.add_child(box)\n\treturn true",
+            cancellationToken
+        );
+
+    /// <summary>Adds under the root SettlePlain, a bare Node; SettleBase2D, a Node2D at 40, 50 with its child Pad, a Node2D at
+    /// 5, 6; and SettleBase3D, a Node3D at 1, 2, 3 with its child Cube, a Node3D at 4, 5, 6.</summary>
+    private Task<JsonNode> AddPlacedNodesAsync(CancellationToken cancellationToken) =>
+        RunBodyAsync(
+            "var plain := Node.new()\n\tplain.name = \"SettlePlain\"\n\tscene_tree.root.add_child(plain)\n\t"
+                + "var base_2d := Node2D.new()\n\tbase_2d.name = \"SettleBase2D\"\n\tbase_2d.position = Vector2(40, 50)\n\t"
+                + "var pad := Node2D.new()\n\tpad.name = \"Pad\"\n\tpad.position = Vector2(5, 6)\n\tbase_2d.add_child(pad)\n\t"
+                + "scene_tree.root.add_child(base_2d)\n\t"
+                + "var base_3d := Node3D.new()\n\tbase_3d.name = \"SettleBase3D\"\n\tbase_3d.position = Vector3(1, 2, 3)\n\t"
+                + "var cube := Node3D.new()\n\tcube.name = \"Cube\"\n\tcube.position = Vector3(4, 5, 6)\n\tbase_3d.add_child(cube)\n\t"
+                + "scene_tree.root.add_child(base_3d)\n\treturn true",
+            cancellationToken
+        );
+
+    /// <summary>Asserts two rects as the bridge writes them, {x, y, width, height}, are the same.</summary>
+    private static void AssertSameRect(JsonNode expected, JsonNode actual)
+    {
+        foreach (string field in new[] { "x", "y", "width", "height" })
+        {
+            Assert.Equal(expected[field]!.GetValue<double>(), actual[field]!.GetValue<double>());
+        }
+    }
+
     /// <summary>The script expression for the node named <paramref name="name"/> under the root.</summary>
     private static string BoxNode(string name) => $"scene_tree.root.get_node(\"{name}\")";
 
@@ -1878,6 +2052,11 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
 
     private async Task<JsonObject> WaitAsync(WaitCondition condition, int timeoutMs = 10_000) =>
         JsonNode.Parse(Text(await _tools.WaitForAsync(condition, timeoutMs, cancellationToken: TestContext.Current.CancellationToken)))!.AsObject();
+
+    private async Task<JsonObject> WaitAsync(WaitCondition condition, WaitOptions options) =>
+        JsonNode
+            .Parse(Text(await _tools.WaitForAsync(condition, 10_000, options, cancellationToken: TestContext.Current.CancellationToken)))!
+            .AsObject();
 
     private Task<JsonNode> RunAsync(string body) => RunBodyAsync(body, TestContext.Current.CancellationToken);
 
