@@ -33,7 +33,19 @@ internal sealed partial class RuntimeTools
 
     // What a step's reply carries beyond its counts: the frame it stopped on, its until's answer as wait_for gives one, and
     // what its riding input left: the events not sent, what is still held and the real-pad warning.
-    private static readonly string[] StepReportKeys = ["frame", "met", "value", "last", "args", "failedChecks", "inputNotSent", "held", "warning"];
+    private static readonly string[] StepReportKeys =
+    [
+        "frame",
+        "met",
+        "value",
+        "last",
+        "args",
+        "failedChecks",
+        "mutedErrors",
+        "inputNotSent",
+        "held",
+        "warning",
+    ];
     private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(10);
 
     // A generous allowance per stepped frame on top of FrameTimeout: a frame at 60 fps takes about 17 ms.
@@ -63,7 +75,8 @@ internal sealed partial class RuntimeTools
             + "Engine.time_scale, which scales process and physics delta. Returns {paused, timeScale, processFrames, "
             + "physicsFrames}, the frames and ticks the step ran (0 for other actions), plus a step's frame "
             + "(Engine.get_process_frames() where it stopped), screenshot when captured, and with until met plus value (args "
-            + "for a signal) or last as wait_for reports them: never met, it runs count frames and answers met: false."
+            + "for a signal) or last as wait_for reports them: never met, it runs count frames and answers met: false. Like "
+            + "wait_for's, an expression until adds failedChecks and mutedErrors when it has them."
     )]
     public async Task<IEnumerable<ContentBlock>> FrameControlAsync(
         [Description("pause, resume, step or time_scale.")] string action,
@@ -113,8 +126,11 @@ internal sealed partial class RuntimeTools
             + "count. A property the node does not have fails the call "
             + "once the node is found. An expression that does not parse fails the call; one that fails while it runs counts "
             + "as not met, and its error is in errors. failedChecks {count, error} counts the checks whose expression "
-            + "failed; with met: true they came before the met check. uiChanged compares the UI with the snapshot the bridge takes when the "
-            + "first input gesture since launch, or since the last met uiChanged wait, starts (later gestures keep it; a met "
+            + "failed; with met: true they came before the met check. An engine error a native method the expression calls "
+            + "raises on the main thread (get_child(0) on a node with no children: Expression evaluates both sides of and) "
+            + "is kept out of errors and counted in mutedErrors {count, error}, error the first one's text, met or not. "
+            + "uiChanged compares the UI with the snapshot the bridge takes when the first input gesture since launch, or "
+            + "since the last met uiChanged wait, starts (later gestures keep it; a met "
             + "wait uses it up, a timeout keeps it), and is refused when no gesture has taken one. options.screenshot: true "
             + "captures the frame the condition was met on as take_screenshot does, for a scene that changes faster than a "
             + "following take_screenshot can catch, adding screenshot to the result (a timed-out wait captures nothing, and a "
@@ -548,7 +564,7 @@ internal sealed partial class RuntimeTools
     private static bool HasEquals(WaitCondition condition) => condition.EqualsValue is { ValueKind: not JsonValueKind.Null };
 
     /// <summary>The frame reply as {paused, timeScale, processFrames, physicsFrames[, frame, met, value | args | last,
-    /// failedChecks, screenshot]}, and the preview image when captured.</summary>
+    /// failedChecks, mutedErrors, screenshot]}, and the preview image when captured.</summary>
     private static async Task<IEnumerable<ContentBlock>> ShapeFrameResultAsync(BridgeResult result, CancellationToken cancellationToken)
     {
         JsonObject reply =

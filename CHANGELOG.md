@@ -22,6 +22,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - An error raised in a world node's `input_event` handler now lands in the gesture's own reply, even when frames outrun physics ticks.
+- Engine errors from a `wait_for` or `frame_control` until expression's unguarded call stay out of `errors`, counted in `mutedErrors` instead.
 
 ## 0.16.0 - 2026-10-09
 

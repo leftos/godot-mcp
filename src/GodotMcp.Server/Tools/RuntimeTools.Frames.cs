@@ -53,8 +53,9 @@ internal sealed partial class RuntimeTools
             + "earlier tool call made may already have happened before the start's first check, so an edge start sent after the "
             + "call that starts a short effect can miss its rise. Its timeoutMs, real time, 10000 when left out, counted from "
             + "after start.call, is added to the capture's, at most 600000 in all. Met, the result adds start: {met: true, frame, "
-            + "then?, call?}, call: {value} as options.call's; a start that times out is still a success, with stopped: true, no "
-            + "frames and start: {met: false, last, call?}."
+            + "then?, call?, failedChecks?, mutedErrors?} (the last two as wait_for reports them), call: {value} as "
+            + "options.call's; a start that times out is still a success, with stopped: true, no frames and start: {met: false, "
+            + "last, call?, failedChecks?, mutedErrors?}."
     )]
     public async Task<string> CaptureFramesAsync(
         [Description(

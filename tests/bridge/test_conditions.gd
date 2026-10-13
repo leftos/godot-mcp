@@ -7,6 +7,15 @@ extends "res://gd_test.gd"
 # gdformat joins any split of this text back into one line past gdlint's 100 characters.
 # gdlint: ignore=max-line-length
 const NOT_GDSCRIPT_HINT := "Godot's Expression is not GDScript: it has no lambdas (func), no if/else, no is or as, no not in (write not (a in b)), and no statements; it has calls, indexing, literals and operators such as and, or, not, in, ==, !=, <, <=, >, >=, +, -, *, / and %."
+## A guard Expression does not short-circuit: and evaluates both sides, so get_child(0) runs on a
+## node with no children and raises the engine's index error.
+const GUARDED_EXPRESSION := "node.get_child_count() > 0 and node.get_child(0).modulate.r > 1.9"
+## How the bridge pushes an expression's failure to the error feed.
+const FAILURE_PREFIX := "godot-mcp wait_for: the expression failed: "
+## The game script on the expression rig's Holder: shout() raises a game error and answers true.
+# gdformat joins one string split over lines back into one line past gdlint's 100 characters.
+# gdlint: ignore=max-line-length
+const HOLDER_SOURCE := "extends Node\n\n\nfunc shout() -> bool:\n\tpush_error('holder shout')\n\treturn true\n"
 
 var _conditions_script: GDScript = load_bridge_script("godot_mcp_conditions.gd")
 
@@ -206,6 +215,93 @@ func test_note_failure_counts_each_check_and_keeps_each_text_once() -> void:
 	conditions.free()
 
 
+func test_note_muted_adds_each_checks_count_and_keeps_the_first_text() -> void:
+	var failures: Dictionary = {}
+	_conditions_script.note_muted(failures, {})
+	assert_true(not failures.has("muted"), "a check that muted nothing adds nothing")
+	_conditions_script.note_muted(failures, {"count": 2, "error": "first"})
+	_conditions_script.note_muted(failures, {})
+	_conditions_script.note_muted(failures, {"count": 1, "error": "second"})
+	assert_eq(
+		failures["muted"], {"count": 3, "error": "first"}, "both counted, the first text kept"
+	)
+
+
+func test_an_engine_error_a_called_method_raises_stays_out_of_the_feed() -> void:
+	var rig: Dictionary = _expression_rig()
+	var failures: Dictionary = {}
+	var probe: Callable = rig["conditions"].parse_expression(GUARDED_EXPRESSION, "Holder", failures)
+	var logger: Logger = rig["bridge"]._logger
+	OS.add_logger(logger)
+	var checks: Array = [probe.call(), probe.call(), probe.call()]
+	var kid := Node2D.new()
+	kid.modulate = Color(2.0, 1.0, 1.0)
+	rig["holder"].add_child(kid)
+	var met: Array = probe.call()
+	OS.remove_logger(logger)
+	# The runner fails a test on any engine error; get_child's, one a check, and the failure's
+	# push are expected, so they are taken here and checked.
+	var raised: PackedStringArray = Engine.get_main_loop().get("_recorder").take()
+	assert_eq(_containing(Array(raised), "out of bounds").size(), 3, "raised: %s" % [raised])
+	assert_eq(raised.size(), 4, "and the failure was pushed once: %s" % [raised])
+	var messages: Array = _messages(logger)
+	assert_eq(_containing(messages, "out of bounds"), [], "the bridge's logger kept none of them")
+	assert_eq(messages.size(), 1, "only the failure: %s" % [messages])
+	if messages.size() == 1:
+		assert_true(str(messages[0]).begins_with(FAILURE_PREFIX), messages[0])
+	assert_eq(checks, [[false, null], [false, null], [false, null]], "not met while childless")
+	assert_eq(failures["count"], 3, "each childless check failed")
+	assert_eq(met, [true, true], "met once the child is there")
+	var outcome: Dictionary = {"result": {"met": true, "value": true}}
+	rig["conditions"].add_failed_checks(outcome, failures)
+	var muted: Dictionary = outcome["result"].get("mutedErrors", {})
+	assert_eq(muted.get("count"), 3, "the result counts the errors kept out: %s" % [outcome])
+	assert_true(str(muted.get("error")).contains("out of bounds"), "the first's text: %s" % [muted])
+	_free_expression_rig(rig)
+
+
+func test_an_error_game_code_an_expression_calls_raises_still_reaches_the_feed() -> void:
+	var rig: Dictionary = _expression_rig()
+	var probe: Callable = rig["conditions"].parse_expression("node.shout()", "Holder", {})
+	var logger: Logger = rig["bridge"]._logger
+	OS.add_logger(logger)
+	var met: Array = probe.call()
+	OS.remove_logger(logger)
+	# The game's push reaches the runner, which would fail the test on it; it is expected.
+	var raised: PackedStringArray = Engine.get_main_loop().get("_recorder").take()
+	assert_eq(raised.size(), 1, "the game's error: %s" % [raised])
+	assert_eq(_messages(logger), ["holder shout"], "the game's error lands in the feed")
+	assert_eq(met, [true, true], "and the check reads the method's answer")
+	_free_expression_rig(rig)
+
+
+func test_an_expression_failure_still_reaches_the_feed_once() -> void:
+	var rig: Dictionary = _expression_rig()
+	var failures: Dictionary = {}
+	var source: String = "node.no_such_property > 0"
+	var probe: Callable = rig["conditions"].parse_expression(source, "Holder", failures)
+	var logger: Logger = rig["bridge"]._logger
+	OS.add_logger(logger)
+	var checks: Array = [probe.call(), probe.call()]
+	OS.remove_logger(logger)
+	# The failure's push reaches the runner, which would fail the test on it; it is expected.
+	var raised: PackedStringArray = Engine.get_main_loop().get("_recorder").take()
+	assert_eq(raised.size(), 1, "pushed once for two failed checks: %s" % [raised])
+	var messages: Array = _messages(logger)
+	assert_eq(messages.size(), 1, "the feed holds the failure once: %s" % [messages])
+	if messages.size() == 1:
+		var message: String = messages[0]
+		assert_true(message.begins_with(FAILURE_PREFIX), message)
+		assert_true(message.contains("no_such_property"), "naming the index: " + message)
+	assert_eq(checks, [[false, null], [false, null]], "neither check is met")
+	assert_eq(failures["count"], 2, "both checks failed")
+	var outcome: Dictionary = {"result": {"met": false, "last": null}}
+	rig["conditions"].add_failed_checks(outcome, failures)
+	assert_true(outcome["result"].has("failedChecks"), "the failed checks: %s" % [outcome])
+	assert_true(not outcome["result"].has("mutedErrors"), "and nothing muted: %s" % [outcome])
+	_free_expression_rig(rig)
+
+
 func test_a_met_result_carries_its_failed_checks_and_a_clean_one_carries_none() -> void:
 	var conditions: Node = _conditions_script.new()
 	var failed: Dictionary = {"count": 2, "error": "Invalid index of type int for base type Array"}
@@ -250,6 +346,54 @@ func _edge_rig(present: bool, edge: bool = true) -> Dictionary:
 func _free_edge_rig(rig: Dictionary) -> void:
 	rig["conditions"].free()
 	rig["bridge"].free()
+
+
+## Conditions whose bridge is a stand-in holding the JSON module and an unregistered logger, and
+## finding Holder, a node outside any tree with no children and HOLDER_SOURCE's script.
+func _expression_rig() -> Dictionary:
+	var bridge: Node = _compile(
+		(
+			"\n"
+			. join(
+				[
+					"extends Node",
+					"",
+					"var _json: GDScript",
+					"var _logger: Logger",
+					"var holder: Node",
+					"",
+					"",
+					"func _find_node(element: String) -> Node:",
+					"\treturn holder if element == str(holder.name) else null",
+				]
+			)
+		)
+	)
+	var holder: Node = _compile(HOLDER_SOURCE)
+	holder.name = "Holder"
+	bridge.holder = holder
+	bridge._json = load_bridge_script("godot_mcp_json.gd")
+	bridge._logger = load_bridge_script("godot_mcp_logger.gd").new()
+	var conditions: Node = _conditions_script.new()
+	conditions.bridge = bridge
+	return {"conditions": conditions, "bridge": bridge, "holder": holder}
+
+
+func _free_expression_rig(rig: Dictionary) -> void:
+	rig["conditions"].free()
+	rig["holder"].free()
+	rig["bridge"].free()
+
+
+## The messages of the entries logger holds, taking them.
+static func _messages(logger: Logger) -> Array:
+	var entries: Array = logger.take_pending()[0]
+	return entries.map(func(entry: Dictionary) -> String: return entry["message"])
+
+
+## The items of texts that contain text.
+static func _containing(texts: Array, text: String) -> Array:
+	return texts.filter(func(item: String) -> bool: return item.contains(text))
 
 
 ## An instance of a script compiled from source.

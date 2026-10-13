@@ -275,14 +275,15 @@ func _start_outcome(outcome: Dictionary, params: Dictionary) -> Dictionary:
 
 
 ## A capture's start from its poll's result: {met: true, frame} when met in frame, {met: false,
-## last} when it timed out, each with then when it ran and failedChecks when checks of it failed.
+## last} when it timed out, each with then when it ran, failedChecks when checks of it failed and
+## mutedErrors when its checks raised engine errors kept out of the error feed.
 static func start_report(result: Dictionary, frame: int) -> Dictionary:
 	var report: Dictionary = {"met": result["met"]}
 	if result["met"]:
 		report["frame"] = frame
 	else:
 		report["last"] = result.get("last", result.get("value"))
-	for key: String in ["then", "failedChecks"]:
+	for key: String in ["then", "failedChecks", "mutedErrors"]:
 		if result.has(key):
 			report[key] = result[key]
 	return report

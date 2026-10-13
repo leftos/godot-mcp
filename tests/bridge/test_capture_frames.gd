@@ -110,12 +110,14 @@ func test_a_start_that_timed_out_reports_its_last_value_and_no_frame() -> void:
 	assert_eq(report, {"met": false, "last": "idle"}, "not met, with the last value seen")
 
 
-func test_a_start_reports_its_failed_checks() -> void:
+func test_a_start_reports_its_failed_checks_and_muted_errors() -> void:
 	var failed: Dictionary = {"count": 3, "error": "Invalid named index 'nope'"}
+	var muted: Dictionary = {"count": 2, "error": 'Node not found: "Missing"'}
 	var report: Dictionary = _time_script.start_report(
-		{"met": false, "frames": 3, "last": null, "failedChecks": failed}, 9
+		{"met": false, "frames": 3, "last": null, "failedChecks": failed, "mutedErrors": muted}, 9
 	)
-	assert_eq(report["failedChecks"], failed, "the failed checks carried")
+	assert_eq(report.get("failedChecks"), failed, "the failed checks carried")
+	assert_eq(report.get("mutedErrors"), muted, "and the muted errors")
 
 
 func test_a_start_met_after_a_cancel_or_the_deadline_is_not_met_and_runs_no_then() -> void:

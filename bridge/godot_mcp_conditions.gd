@@ -159,9 +159,10 @@ static func _names_non_expression_syntax(source: String) -> bool:
 
 
 ## Met when the expression returns true; not run while its node is missing. A failed run counts as
-## not met in failures, its distinct texts going to the error feed once each (L1494-1508).
+## not met in failures, its distinct texts going to the error feed once each (L1494-1508), outside
+## the mute window _execute runs it in.
 func _run_expression(expression: Expression, node_name: String, failures: Dictionary) -> Array:
-	var tree: SceneTree = get_tree()
+	var tree := Engine.get_main_loop() as SceneTree
 	var inputs: Array = [tree.root, tree, Input, Engine]
 	var node: Node = null
 	if not node_name.is_empty():
@@ -169,13 +170,40 @@ func _run_expression(expression: Expression, node_name: String, failures: Dictio
 		if node == null:
 			return _missing(node_name)
 		inputs.append(node)
-	var value: Variant = expression.execute(inputs, node, false)
+	var value: Variant = _execute(expression, inputs, node, failures)
 	if expression.has_execute_failed():
 		var failure: String = expression.get_error_text()
 		if note_failure(failures, failure):
 			push_error("godot-mcp wait_for: the expression failed: %s" % failure)
 		return [false, null]
 	return [value is bool and value == true, bridge._json.to_json(value)]
+
+
+## Runs expression with a mute window for this script open on the bridge's logger, as the watch
+## runs its tracks: Expression evaluates both sides of and/or (core/math/expression.cpp L1261-1286
+## in 4.7.2), so a guard such as get_child_count() > 0 does not stop get_child(0) from raising the
+## engine's index error, which stays out of the error feed and is counted in failures instead
+## (note_muted). The logger is read here, since a dormant bridge has none until its first join. The
+## logger's windows are main-thread state, so off the main thread the expression runs unmuted.
+func _execute(expression: Expression, inputs: Array, node: Node, failures: Dictionary) -> Variant:
+	var logger: Logger = bridge._logger
+	if logger == null or OS.get_thread_caller_id() != OS.get_main_thread_id():
+		return expression.execute(inputs, node, false)
+	var own: String = (get_script() as Script).resource_path
+	logger.mute(true, own)
+	var value: Variant = expression.execute(inputs, node, false)
+	logger.mute(false, own)
+	note_muted(failures, logger.take_muted(own))
+	return value
+
+
+## Adds the engine errors a check's mute window dropped ({count, error}, or {} for none) to
+## failures' muted, which keeps the first one's text.
+static func note_muted(failures: Dictionary, muted: Dictionary) -> void:
+	if muted.is_empty():
+		return
+	var total: Dictionary = failures.get_or_add("muted", {"count": 0, "error": muted["error"]})
+	total["count"] += int(muted["count"])
 
 
 ## Counts a failed check in failures, naming its text; true the first time that text is seen.
@@ -189,11 +217,16 @@ static func note_failure(failures: Dictionary, failure: String) -> bool:
 
 
 ## Adds failedChecks {count, error} to an outcome's result when checks of it failed: how many failed
-## and the last failure's text (a screenshot wait may check twice in a frame, so it counts checks)
+## and the last failure's text (a screenshot wait may check twice in a frame, so it counts checks);
+## and mutedErrors {count, error} when its checks raised engine errors kept out of the error feed:
+## how many, and the first one's text.
 static func add_failed_checks(outcome: Dictionary, failures: Dictionary) -> void:
-	if int(failures.get("count", 0)) == 0 or not outcome.has("result"):
+	if not outcome.has("result"):
 		return
-	outcome["result"]["failedChecks"] = {"count": failures["count"], "error": failures["error"]}
+	if int(failures.get("count", 0)) > 0:
+		outcome["result"]["failedChecks"] = {"count": failures["count"], "error": failures["error"]}
+	if failures.has("muted"):
+		outcome["result"]["mutedErrors"] = (failures["muted"] as Dictionary).duplicate()
 
 
 ## params[key] when it is a String, else empty: the server leaves out fields it has no value for.

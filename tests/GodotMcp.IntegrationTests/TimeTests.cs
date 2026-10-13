@@ -28,6 +28,17 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         + "if window.visible and window.theme_type_variation == &\"TooltipPanel\":\n\t\t\t"
         + "return true\n\t"
         + "return false";
+
+    // A guard Expression does not short-circuit: and evaluates both sides, so get_child(0) runs on a node with no children
+    // and raises the engine's index error at each check until the child is there.
+    private const string GuardedExpression = "node.get_child_count() > 0 and node.get_child(0).modulate.r > 1.9";
+
+    // Once armed, adds a Node2D child named Kid, its modulate.r 2, three process frames later.
+    private const string GrowerScript =
+        "extends Node\\n\\nvar frames_left := 0\\n\\n\\nfunc arm() -> void:\\n\\tframes_left = 3\\n\\n\\n"
+        + "func _process(_delta: float) -> void:\\n\\tif frames_left <= 0:\\n\\t\\treturn\\n\\tframes_left -= 1\\n\\t"
+        + "if frames_left == 0:\\n\\t\\tvar kid := Node2D.new()\\n\\t\\tkid.name = 'Kid'\\n\\t\\t"
+        + "kid.modulate = Color(2, 1, 1)\\n\\t\\tadd_child(kid)\\n";
     private static readonly WaitCondition UiChangedCondition = new(UiChanged: true);
     private static readonly InputTarget OpenButton = new("OpenButton");
     private readonly SharedProbeSession _shared = shared;
@@ -519,6 +530,54 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
         Assert.True(waited["failedChecks"]?["count"]?.GetValue<int>() >= 1, waited.ToJsonString());
         Assert.Equal("Invalid index of type int for base type Array", waited["failedChecks"]?["error"]?.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnEngineErrorAWaitExpressionRaisesIsNotInTheCallsErrors()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string grower = await AddGrowerAsync(armed: false, cancellation);
+        WaitOptions options = new(Call: new MethodCall(grower, "arm"));
+
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(
+            new WaitCondition(Node: grower, Expression: GuardedExpression),
+            5000,
+            options,
+            cancellationToken: cancellation
+        );
+        JsonObject waited = JsonNode.Parse(Text(blocks))!.AsObject();
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        AssertCheckedChildlessWithoutEngineErrors(waited);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnEngineErrorAStepUntilExpressionRaisesIsNotInTheCallsErrors()
+    {
+        await FrameAsync("pause");
+        string grower = await AddGrowerAsync(armed: true, TestContext.Current.CancellationToken);
+
+        JsonObject stepped = await FrameAsync(
+            "step",
+            options: new StepOptions(Until: new WaitCondition(Node: grower, Expression: GuardedExpression))
+        );
+
+        Assert.True(stepped["met"]!.GetValue<bool>(), stepped.ToJsonString());
+        AssertCheckedChildlessWithoutEngineErrors(stepped);
+    }
+
+    // get_node on a missing child logs "Node not found" and returns null (scene/main/node.cpp L1973-1976 in 4.7.2), so the
+    // condition never holds and never fails: only mutedErrors tells the mistake apart from a slow game.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitTimedOutOnAMissingNodesGetNodeCountsItsMutedErrors()
+    {
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
+
+        JsonObject waited = await WaitAsync(new WaitCondition(Node: "TimeProbe", Expression: "node.get_node(\"Missing\") != null"), 300);
+
+        Assert.False(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.False(waited.ContainsKey("failedChecks"), waited.ToJsonString());
+        AssertMutedNotInErrors(waited, "Node not found: \"Missing\"");
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -1593,6 +1652,42 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         );
 
     private Task<JsonNode> ArmAsync(int ms) => RunAsync($"{Probe}.arm({ms})\n\treturn true");
+
+    /// <summary>Adds UntilGrower, with no children and <see cref="GrowerScript"/>, armed when <paramref name="armed"/>; returns its path.</summary>
+    private async Task<string> AddGrowerAsync(bool armed, CancellationToken cancellationToken)
+    {
+        string script =
+            "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t"
+            + "var grower := Node.new()\n\tgrower.name = \"UntilGrower\"\n\tvar script := GDScript.new()\n\t"
+            + $"script.source_code = \"{GrowerScript}\"\n\tscript.reload()\n\tgrower.set_script(script)\n\t"
+            + "scene_tree.root.add_child(grower)\n\t"
+            + (armed ? "grower.arm()\n\t" : "")
+            + "return str(grower.get_path())\n";
+        string json = await _tools.RunScriptAsync(script, ScriptTimeoutMs, cancellationToken: cancellationToken);
+        return JsonNode.Parse(json)!["value"]!.GetValue<string>();
+    }
+
+    /// <summary>
+    /// The call checked <see cref="GuardedExpression"/> while the grower had no child (each such check failed on the null
+    /// get_child(0) returned), and get_child's engine error is not in its errors.
+    /// </summary>
+    private static void AssertCheckedChildlessWithoutEngineErrors(JsonObject result)
+    {
+        Assert.True(result["failedChecks"]?["count"]?.GetValue<int>() >= 1, result.ToJsonString());
+        AssertMutedNotInErrors(result, "out of bounds");
+    }
+
+    /// <summary>
+    /// The engine errors raised by the condition's checks are counted in mutedErrors, the first with <paramref name="text"/> in
+    /// it, and none with that text is in errors.
+    /// </summary>
+    private static void AssertMutedNotInErrors(JsonObject result, string text)
+    {
+        Assert.True(result["mutedErrors"]?["count"]?.GetValue<int>() >= 1, result.ToJsonString());
+        Assert.Contains(text, result["mutedErrors"]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
+        IEnumerable<string> messages = result["errors"]?.AsArray().Select(error => error!["message"]!.GetValue<string>()) ?? [];
+        Assert.DoesNotContain(messages, message => message.Contains(text, StringComparison.Ordinal));
+    }
 
     private async Task<long> ReadIntAsync(string property) => (await RunAsync($"return {Probe}.{property}")).GetValue<long>();
 
