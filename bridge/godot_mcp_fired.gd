@@ -1,11 +1,12 @@
 extends Node
 ## The godot-mcp bridge's fired-signal listener, the input player's Fired child: lists the signals
-## a click or a mouse_button set off on its hit chain, and keeps the physics stamp every gesture's
-## settle wait reads. A begun gesture connects one variadic lambda per (node, kept signal) on each
-## chain listen is given, records [frame, node, signal, args, listeners] as they emit and lets go
-## of them all at finish. An emission calls its slots in connection order, synchronously, so the
-## list is in handler order: a signal a game handler emits comes before the one it answered
-## (core/object/object.cpp L1214-1218, L1288-1296 in 4.7.2).
+## a click, a drag, a mouse_button, a key or a type_text set off on its hit chain (a key's is the
+## focus chain), and keeps the physics stamp every gesture's settle wait reads. A begun gesture
+## connects one variadic lambda per (node, kept signal) on each chain listen is given, records
+## [frame, node, signal, args, listeners] as they emit and lets go of them all at finish. An
+## emission calls its slots in connection order, synchronously, so the list is in handler order:
+## a signal a game handler emits comes before the one it answered (core/object/object.cpp
+## L1214-1218, L1288-1296 in 4.7.2).
 
 ## Signals layout, drawing or the pointer's own motion emit on every gesture, never listened on.
 const NOISE := [
@@ -59,14 +60,18 @@ const PAUSED_WARNING := (
 var bridge: Node
 ## The physics ticks run so far: Engine.get_physics_frames, or a test's stand-in.
 var physics_frames: Callable = Callable(Engine, "get_physics_frames")
+## The Control that has key focus (null when none): window_focus_owner, or a test's stand-in.
+var focus_owner: Callable = window_focus_owner
 
 ## Whether the playing gesture lists what it set off (begin), so listen connects.
 var _begun: bool = false
 ## The physics tick of the gesture's last mouse button or wheel event; -1 before one.
 var _physics_stamp: int = -1
-## The process frame of the gesture's first mouse button or wheel event, which frame counts
+## The process frame of the gesture's first mouse button, wheel or key event, which frame counts
 ## from; -1 before one.
 var _first_event_frame: int = -1
+## Whether the gesture sent a key event, so a focus change listens on the new owner's chain.
+var _follows_focus: bool = false
 ## The raw entries, [frame, node, signal, args, listeners], in record order.
 var _entries: Array = []
 ## The emissions past CAP.
@@ -88,12 +93,13 @@ var _pressed: Variant = null
 
 
 ## Starts a gesture: lets go of anything still connected, forgets the last gesture's button
-## stamp and entries and, when lists (a click or a mouse_button), listens until finish.
+## stamp and entries and, when lists (a gesture that lists fired), listens until finish.
 func begin(lists: bool) -> void:
 	_disconnect_all()
 	_begun = lists
 	_physics_stamp = -1
 	_first_event_frame = -1
+	_follows_focus = false
 	_entries = []
 	_overflow = 0
 	_listened = {}
@@ -133,6 +139,60 @@ func after_button(hovered: Control, pressed: bool) -> void:
 		_pressed = hovered
 
 
+## Before a key event is sent: the gesture's first starts the frame count, a focus change from
+## now on brings the new owner's chain (a viewport's gui_focus_changed is emitted before the new
+## owner's focus_entered, scene/main/viewport.cpp L2734-2742 in 4.7.2, so a Tab lists both), and
+## the focus chain is listened on.
+func before_key() -> void:
+	if _first_event_frame < 0:
+		_first_event_frame = Engine.get_process_frames()
+	_follows_focus = true
+	listen_focus()
+
+
+## Listens, while a gesture is begun, on the focus chain: the focus owner (focus_owner) and its
+## ancestors. With none, the window that holds key focus is listened on instead (the root's
+## gui_focus_changed alone, an embedded window as a chain), since a first Tab or arrow grabs focus
+## for the window's first Control (scene/main/viewport.cpp L2323-2333, L2421-2422 in 4.7.2).
+func listen_focus() -> void:
+	if not _begun:
+		return
+	var focused: Variant = focus_owner.call()
+	if focused != null:
+		listen(focused)
+		return
+	var window: Window = key_window()
+	if window.get_parent() == null:
+		_listen_root(window)
+	else:
+		listen(window)
+
+
+## The window that holds key focus: an embedded window that has focus (a popup, a dialog), to
+## which the root forwards every key event (scene/main/viewport.cpp L3178-3205 in 4.7.2), else
+## the root. Read through the main loop, since a test's listener is in no tree.
+func key_window() -> Window:
+	var root: Window = (Engine.get_main_loop() as SceneTree).root
+	for window: Window in root.get_embedded_subwindows():
+		if window.has_focus():
+			return window
+	return root
+
+
+## The focus owner of the window that holds key focus (key_window): the one Control with focus
+## among the viewports whose base window it is, the window itself or a SubViewport in it, since a
+## grab releases the focus of every other viewport sharing that base window (the _viewports
+## group, scene/main/viewport.cpp L611, L2714-2717, L2734; Node.get_window, scene/main/node.cpp
+## L2125-2131); null when none has focus.
+func window_focus_owner() -> Control:
+	var window: Window = key_window()
+	for viewport: Viewport in get_tree().get_nodes_in_group("_viewports"):
+		var focused: Control = viewport.gui_get_focus_owner()
+		if focused != null and viewport.get_window() == window:
+			return focused
+	return null
+
+
 ## Listens on node's hit chain while a gesture is begun (chain_of): each kept signal and
 ## tree_exiting of every chain node not yet listened on, and the root's gui_focus_changed, which a
 ## press's focus grab emits (scene/main/viewport.cpp L1984, L2003 in 4.7.2); notes the chain's
@@ -145,7 +205,7 @@ func listen(node: Variant) -> void:
 		return
 	for link: Node in chain:
 		_listen_node(link)
-	_listen_root(chain[-1])
+	_listen_root(_root_of(chain[-1]))
 	var bottom: String = path_of(chain[0])
 	if not _listened_on.has(bottom):
 		_listened_on.append(bottom)
@@ -326,11 +386,10 @@ func _listen_group(button: BaseButton) -> void:
 			_listen_node(other)
 
 
-## Connects to the gui_focus_changed of the root above a chain's top alone, once per gesture.
-func _listen_root(top: Node) -> void:
-	var root: Node = top.get_parent()
-	while root.get_parent() != null:
-		root = root.get_parent()
+## Connects to the root's gui_focus_changed alone, once per gesture. Every other viewport a chain
+## is in (an embedded window, a SubViewport) is a chain node, whose gui_focus_changed
+## _listen_node connects, so a focus change in any of them is recorded and followed (_record).
+func _listen_root(root: Node) -> void:
 	var id: int = root.get_instance_id()
 	if _listened.has(id):
 		return
@@ -338,6 +397,14 @@ func _listen_root(top: Node) -> void:
 	var path: String = path_of(root)
 	var on_focus := func(...args: Array) -> void: _record(root, path, "gui_focus_changed", args)
 	_connect(root, "gui_focus_changed", on_focus)
+
+
+## The parentless top above node: /root in the game, a test run's root out of the tree.
+static func _root_of(node: Node) -> Node:
+	var root: Node = node
+	while root.get_parent() != null:
+		root = root.get_parent()
+	return root
 
 
 ## Connects callable to node's signal when node has it (a user signal another node of the class
@@ -350,10 +417,14 @@ func _connect(node: Node, signal_name: String, callable: Callable) -> void:
 
 ## Records an emission while the gesture is begun: [frame, node, signal, args, listeners], the
 ## arguments converted to JSON now, up to CAP entries, then only counted. An input_event of a
-## mouse motion is left out: the aim's own motion reaches a world node too.
+## mouse motion is left out: the aim's own motion reaches a world node too. After a key event, a
+## gui_focus_changed from any viewport brings its new focus owner's chain, before that owner's
+## focus_entered is emitted.
 func _record(node: Object, path: String, signal_name: String, args: Array) -> void:
 	if not _begun or (signal_name == "input_event" and _holds_motion(args)):
 		return
+	if _follows_focus and signal_name == "gui_focus_changed":
+		listen(args[0])
 	if _entries.size() >= CAP:
 		_overflow += 1
 		return
@@ -397,9 +468,10 @@ func _warning() -> String:
 
 
 ## The node the press landed on, a PopupMenu's internal Control answering as the menu itself, when
-## the gesture sent a button event and it is still in the tree; else null.
+## the gesture sent a mouse button or wheel event (a key gesture presses no node) and it is still
+## in the tree; else null.
 func _pressed_node() -> Node:
-	if _first_event_frame < 0 or not is_instance_valid(_pressed):
+	if _physics_stamp < 0 or not is_instance_valid(_pressed):
 		return null
 	var node: Node = _pressed
 	while _in_popup_menu(node):

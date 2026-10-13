@@ -23,7 +23,7 @@ const FIRED_SCRIPT := "godot_mcp_fired.gd"
 ## The gestures whose result says which Controls they hit, from _hits.
 const HIT_GESTURES := ["click", "drag", "mouse_button", "hover", "scroll"]
 ## The gestures whose result lists the signals they set off on their hit chains (fired).
-const FIRED_GESTURES := ["click", "mouse_button"]
+const FIRED_GESTURES := ["click", "mouse_button", "drag", "key", "type_text"]
 ## The recording's movie frame rate, which run_project sets beside --write-movie.
 const MOVIE_FPS_VARIABLE := "GODOT_MCP_MOVIE_FPS"
 const PAUSED_TOOLTIP_WARNING := (
@@ -183,7 +183,7 @@ func _create_targets() -> void:
 ## which follows physics_frame in the tick, scene/main/scene_tree.cpp L649-652 in 4.7.2) and
 ## their errors are flushed ahead of the reply. Every point arrives in viewport coordinates.
 ## Answers {result: {pointer, heldButtonMask}}, to which a click, drag, mouse_button, hover or
-## scroll adds the Controls it hit (a hover its tooltip too), a click or mouse_button what it set
+## scroll adds the Controls it hit (a hover its tooltip too), a FIRED_GESTURES one what it set
 ## off (the fired listener's report) and a pad gesture the gamepad's report (device, warning), or
 ## {error}. Takes the uiChanged baseline when none is pending.
 func play(params: Dictionary) -> Dictionary:
@@ -361,23 +361,32 @@ func click_at(window_point: Vector2, button: int, double_click: bool) -> void:
 
 
 ## Sends a button press or release and records the Control it landed on as pressedOn or
-## releasedOn. A release that drops a GUI drag reads the Control before it: the drop ends by
-## moving the hover to the real mouse (Window.update_mouse_cursor_state, 4.7.2 window.cpp
-## L935-949), and the pointer is already at the release point. The fired listener listens on the
-## last press's Control before a release, and on the Control under the point after either.
+## releasedOn; a release that drops a GUI drag goes through _send_drop. The fired listener listens
+## on the last press's Control before a release, and on the Control at the point after either.
 func _send_and_record(
 	window_point: Vector2, button: int, pressed: bool, double_click: bool
 ) -> void:
+	if not pressed and button == MOUSE_BUTTON_LEFT and get_tree().root.gui_is_dragging():
+		_send_drop(window_point, double_click)
+		return
 	var point: Vector2 = to_viewport(window_point)
-	var drops: bool = (
-		not pressed and button == MOUSE_BUTTON_LEFT and get_tree().root.gui_is_dragging()
-	)
-	var before_drop: Variant = _control_under(point) if drops else null
 	_fired.before_button(pressed)
 	send_button(window_point, button, pressed, double_click)
 	var hovered: Control = _hovered_control(point)
 	_fired.after_button(hovered, pressed)
-	_hits["pressedOn" if pressed else "releasedOn"] = (before_drop if drops else _describe(hovered))
+	_hits["pressedOn" if pressed else "releasedOn"] = _describe(hovered)
+
+
+## Sends a left release that drops a GUI drag, reading and describing the Control under the point
+## before it as releasedOn: the drop ends by moving the hover to the real mouse
+## (Window.update_mouse_cursor_state, 4.7.2 window.cpp L935-949), the pointer is already at the
+## release point, and the drop may free that Control, which the fired listener then skips.
+func _send_drop(window_point: Vector2, double_click: bool) -> void:
+	var before_drop: Control = _hovered_control(to_viewport(window_point))
+	_hits["releasedOn"] = _describe(before_drop)
+	_fired.before_button(false)
+	send_button(window_point, MOUSE_BUTTON_LEFT, false, double_click)
+	_fired.after_button(before_drop if is_instance_valid(before_drop) else null, false)
 
 
 ## Frees every tooltip the root shows before a press whose pressedOn is read, and waits a frame
@@ -457,10 +466,13 @@ func _play_drag(params: Dictionary) -> String:
 
 
 ## Replaces the start's aimedAt, which aim recorded, with {from, to} when either end is an
-## element; end is the resolved end.
+## element; end is the resolved end. The fired listener listens on an element end's own chain, as
+## aim does on the start's: a world node's release input_event is no hovered Control's.
 func _note_drag_aims(end: Variant) -> void:
 	var from_aim: Variant = _hits.get("aimedAt")
 	var to_aim: Variant = _targets.aimed_at(end) if end is Dictionary else null
+	if end is Dictionary:
+		_fired.listen((end as Dictionary).get("node"))
 	_hits.erase("aimedAt")
 	if from_aim != null or to_aim != null:
 		_hits["aimedAt"] = {"from": from_aim, "to": to_aim}
@@ -471,7 +483,8 @@ func _note_drag_aims(end: Variant) -> void:
 ## MIN_DRAG_STEPS frames), each carrying the held button in its button_mask and its step as
 ## relative: Godot's viewport starts a drag only from motions with LEFT in the mask whose
 ## relatives add up past gui/common/drag_threshold. Records whether the GUI was dragging after
-## any motion, and whether the release dropped it.
+## any motion, and whether the release dropped it. After each motion the fired listener listens
+## on the Control under the pointer, so the drop target joins before the release drops on it.
 func _drag(start: Vector2, end: Vector2, duration_ms: int, button: int) -> void:
 	var root: Window = get_tree().root
 	var gui_drag_started: bool = false
@@ -487,6 +500,7 @@ func _drag(start: Vector2, end: Vector2, duration_ms: int, button: int) -> void:
 		if step < MIN_DRAG_STEPS:
 			progress = minf(progress, float(step) / MIN_DRAG_STEPS)
 		_move_to(start.lerp(end, progress))
+		listen_at(to_viewport(bridge._pointer))
 		gui_drag_started = gui_drag_started or root.gui_is_dragging()
 	await get_tree().process_frame
 	_send_and_record(end, button, false, false)
@@ -523,8 +537,8 @@ func _type_character(code: int) -> void:
 		keycode = character.to_upper().unicode_at(0)
 		if character != character.to_lower():
 			modifiers.append("shift")
-	send_key(keycode, true, unicode, modifiers)
-	send_key(keycode, false, unicode, modifiers)
+	_send_gesture_key(keycode, true, unicode, modifiers)
+	_send_gesture_key(keycode, false, unicode, modifiers)
 
 
 func _play_key(params: Dictionary) -> String:
@@ -538,12 +552,22 @@ func _play_key(params: Dictionary) -> String:
 	var modifiers := PackedStringArray(params.get("modifiers", []))
 	var unicode: int = key_unicode(keycode, modifiers)
 	if action != "release":
-		send_key(keycode, true, unicode, modifiers)
+		_send_gesture_key(keycode, true, unicode, modifiers)
 	if action == "tap":
 		await get_tree().process_frame
 	if action != "press":
-		send_key(keycode, false, unicode, modifiers)
+		_send_gesture_key(keycode, false, unicode, modifiers)
 	return ""
+
+
+## A key or type_text gesture's key event (send_key); the fired listener listens on the focus
+## chain before and after it, since a Tab moves focus.
+func _send_gesture_key(
+	keycode: int, pressed: bool, unicode: int, modifiers: PackedStringArray
+) -> void:
+	_fired.before_key()
+	send_key(keycode, pressed, unicode, modifiers)
+	_fired.listen_focus()
 
 
 ## A press or a move is hit-tested; a release is not, since Godot sends it to the Control that

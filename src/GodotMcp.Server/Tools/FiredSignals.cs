@@ -3,12 +3,12 @@ using System.Text.Json.Nodes;
 namespace GodotMcp.Server.Tools;
 
 /// <summary>
-/// The fired list a click or a mouse_button answers: the bridge's raw entries <c>[frame, node, signal, args, listeners]</c>
-/// as <c>{node, signal, args?, frame, listeners, count?}</c>. A run of the same signal on the same node in a row folds into
-/// one entry with the run's first frame, its last args and its count; the first <see cref="MaxEntries"/> entries are kept,
-/// and firedDropped counts the rest with the bridge's own overflow (firedOverflow, removed) and any raw entry that is not
-/// an array; an argument over <see cref="MaxArgLength"/> characters of JSON becomes <c>{valuePreview, valueLength}</c>, as
-/// the watch cuts one.
+/// The fired list a click, a drag, a mouse_button, a key or a type_text answers: the bridge's raw entries
+/// <c>[frame, node, signal, args, listeners]</c> as <c>{node, signal, args?, frame, listeners, count?}</c>. A run of the
+/// same signal on the same node in a row folds into one entry with the run's first frame, its last args and its count;
+/// the first <see cref="MaxEntries"/> entries are kept, and firedDropped counts the rest with the bridge's own overflow
+/// (firedOverflow, removed) and any raw entry that is not an array; an argument over <see cref="MaxArgLength"/> characters
+/// of JSON becomes <c>{valuePreview, valueLength}</c>, as the watch cuts one.
 /// </summary>
 internal static class FiredSignals
 {
@@ -26,7 +26,7 @@ internal static class FiredSignals
 
     /// <summary>
     /// The result with its fired list shaped and firedDropped set when an entry was left out; a result without a fired
-    /// list (every gesture but click and mouse_button) comes back as it is. The other keys pass through.
+    /// list (hover, scroll and the gestures that list none) comes back as it is. The other keys pass through.
     /// </summary>
     internal static JsonObject Shape(JsonObject result)
     {

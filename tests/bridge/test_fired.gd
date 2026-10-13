@@ -276,6 +276,73 @@ func test_a_raw_entry_is_frame_node_signal_args_and_listeners() -> void:
 	_free(rig, [button])
 
 
+func test_the_focus_chain_is_the_owner_and_its_ancestors() -> void:
+	var rig: Dictionary = _rig()
+	var fired: Node = rig["fired"]
+	var form: Control = _add(Control.new(), _root(), "Form")
+	var edit: LineEdit = _add(LineEdit.new(), form, "Name")
+	fired.focus_owner = func() -> Control: return edit
+	fired.listen_focus()
+	assert_true(_connected(edit, "text_submitted", fired), "the focus owner")
+	assert_true(_connected(form, "visibility_changed", fired), "its ancestor")
+	assert_true(_connected(_root(), "gui_focus_changed", fired), "the root's gui_focus_changed")
+	assert_eq(fired.finish()["listenedOn"], ["/root/Form/Name"], "the owner is the chain's bottom")
+	_free(rig, [form])
+
+
+func test_a_key_with_nothing_focused_follows_the_focus_it_grabs() -> void:
+	var rig: Dictionary = _rig()
+	var fired: Node = rig["fired"]
+	var form: Control = _add(Control.new(), _root(), "Form")
+	var edit: LineEdit = _add(LineEdit.new(), form, "Name")
+	fired.focus_owner = func() -> Control: return null
+	fired.before_key()
+	assert_true(_connected(_root(), "gui_focus_changed", fired), "the key window's focus change")
+	assert_eq(fired._listened_on, [], "no chain while nothing has focus")
+	# A first Tab: the root grabs focus for its first Control and announces it.
+	_root().gui_focus_changed.emit(edit)
+	edit.focus_entered.emit()
+	var report: Dictionary = fired.finish()
+	assert_eq(report["listenedOn"], ["/root/Form/Name"], "the Control the key focused joins")
+	var emitted: Array = report["fired"].map(
+		func(entry: Array) -> String: return "%s %s" % [entry[1], entry[2]]
+	)
+	var expected: Array = ["/root gui_focus_changed", "/root/Form/Name focus_entered"]
+	assert_eq(emitted, expected, "the focus change and the new owner's focus_entered")
+	_free(rig, [form])
+
+
+func test_a_focus_refresh_adds_a_new_owner_without_listening_twice() -> void:
+	var rig: Dictionary = _rig()
+	var fired: Node = rig["fired"]
+	var form: Control = _add(Control.new(), _root(), "Form")
+	var first: LineEdit = _add(LineEdit.new(), form, "First")
+	var second: LineEdit = _add(LineEdit.new(), form, "Second")
+	var owners: Array = [first]
+	fired.focus_owner = func() -> Control: return owners[0]
+	fired.before_key()
+	# A Tab: the root announces the new owner before it emits focus_entered.
+	_root().gui_focus_changed.emit(second)
+	assert_true(_connected(second, "focus_entered", fired), "the new owner joins as focus moves")
+	owners[0] = second
+	fired.listen_focus()
+	fired.listen_focus()
+	second.focus_entered.emit()
+	form.visibility_changed.emit()
+	var report: Dictionary = fired.finish()
+	assert_eq(report["listenedOn"], ["/root/Form/First", "/root/Form/Second"], "each owner once")
+	var emitted: Array = report["fired"].map(
+		func(entry: Array) -> String: return "%s %s" % [entry[1], entry[2]]
+	)
+	var expected: Array = [
+		"/root gui_focus_changed",
+		"/root/Form/Second focus_entered",
+		"/root/Form visibility_changed",
+	]
+	assert_eq(emitted, expected, "one entry per emission: no node is listened on twice")
+	_free(rig, [form])
+
+
 ## A fake bridge under the root holding the JSON module, and a listener begun on a gesture that
 ## lists.
 func _rig() -> Dictionary:

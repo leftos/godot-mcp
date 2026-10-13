@@ -6,7 +6,7 @@ using GodotMcp.TestSupport;
 namespace GodotMcp.IntegrationTests;
 
 /// <summary>
-/// The fired list click and mouse_button answer, against the InputProbe running in the real Godot: one shared run, reset
+/// The fired list click, drag, mouse_button, key and type_text answer, against the InputProbe running in the real Godot: one shared run, reset
 /// before each test, the widgets built by run_script as children of the root, above Main.
 /// </summary>
 public sealed class FiredSignalsTests(SharedProbeSession shared) : IAsyncLifetime, IClassFixture<SharedProbeSession>
@@ -62,6 +62,71 @@ public sealed class FiredSignalsTests(SharedProbeSession shared) : IAsyncLifetim
         + "area.input_event.connect(func(_viewport: Node, _event: InputEvent, _shape: int) -> void:\n\t\t"
         + "area.set_meta(\"events\", int(area.get_meta(\"events\")) + 1))\n\t"
         + "world.add_child(area)\n\t";
+
+    // DragSource at (200, 250) and DropTarget at (400, 250), each 120 x 40 under the root: the source's drag data is
+    // "payload", and the target accepts any drop and emits its script signal dropped(data) with it.
+    private const string DragAndDropBlock = DragSourceBlock + DropTargetBlock;
+
+    // DragSource at (200, 250), 120 x 40 under the root, whose drag data is "payload".
+    private const string DragSourceBlock =
+        "var source_script := GDScript.new()\n\t"
+        + "source_script.source_code = \"extends Control\\n\\nfunc _get_drag_data(_at: Vector2) -> Variant:\\n\\treturn \\\"payload\\\"\\n\"\n\t"
+        + "source_script.reload()\n\t"
+        + "var source := Control.new()\n\t"
+        + "source.set_script(source_script)\n\t"
+        + "source.name = \"DragSource\"\n\t"
+        + "source.position = Vector2(200, 250)\n\t"
+        + "source.size = Vector2(120, 40)\n\t"
+        + "scene_tree.root.add_child(source)\n\t";
+
+    // Grid at (400, 250), 120 x 40 under the root, accepts any drop: its _drop_data emits dropped(data), then frees every
+    // child, as an inventory rebuilding its slots does. Slot fills it and passes the pointer on, so the drop lands on Grid.
+    private const string GridBlock =
+        "var grid_script := GDScript.new()\n\t"
+        + "grid_script.source_code = \"extends Control\\n\\nsignal dropped(data: Variant)\\n\\n"
+        + "func _can_drop_data(_at: Vector2, _data: Variant) -> bool:\\n\\treturn true\\n\\n"
+        + "func _drop_data(_at: Vector2, data: Variant) -> void:\\n\\tdropped.emit(data)\\n"
+        + "\\tfor child: Node in get_children():\\n\\t\\tchild.free()\\n\"\n\t"
+        + "grid_script.reload()\n\t"
+        + "var grid := Control.new()\n\t"
+        + "grid.set_script(grid_script)\n\t"
+        + "grid.name = \"Grid\"\n\t"
+        + "grid.position = Vector2(400, 250)\n\t"
+        + "grid.size = Vector2(120, 40)\n\t"
+        + "scene_tree.root.add_child(grid)\n\t"
+        + "var slot := Control.new()\n\t"
+        + "slot.name = \"Slot\"\n\t"
+        + "slot.size = Vector2(120, 40)\n\t"
+        + "slot.mouse_filter = Control.MOUSE_FILTER_PASS\n\t"
+        + "grid.add_child(slot)\n\t";
+
+    // Dialog, an embedded Window at (100, 80), 400 x 200, under the root, holding the LineEdits First and Second, a Tab
+    // from First going to Second.
+    private const string DialogBlock =
+        "var dialog := Window.new()\n\t"
+        + "dialog.name = \"Dialog\"\n\t"
+        + "dialog.position = Vector2i(100, 80)\n\t"
+        + "dialog.size = Vector2i(400, 200)\n\t"
+        + "scene_tree.root.add_child(dialog)\n\t"
+        + "var first := LineEdit.new()\n\tfirst.name = \"First\"\n\tfirst.position = Vector2(20, 20)\n\tfirst.size = Vector2(160, 30)\n\t"
+        + "dialog.add_child(first)\n\t"
+        + "var second := LineEdit.new()\n\tsecond.name = \"Second\"\n\tsecond.position = Vector2(200, 20)\n\tsecond.size = Vector2(160, 30)\n\t"
+        + "dialog.add_child(second)\n\t"
+        + "first.focus_next = first.get_path_to(second)\n\t";
+
+    // DropTarget at (400, 250), 120 x 40 under the root, accepts any drop and emits its script signal dropped(data) with it.
+    private const string DropTargetBlock =
+        "var target_script := GDScript.new()\n\t"
+        + "target_script.source_code = \"extends Control\\n\\nsignal dropped(data: Variant)\\n\\n"
+        + "func _can_drop_data(_at: Vector2, _data: Variant) -> bool:\\n\\treturn true\\n\\n"
+        + "func _drop_data(_at: Vector2, data: Variant) -> void:\\n\\tdropped.emit(data)\\n\"\n\t"
+        + "target_script.reload()\n\t"
+        + "var target := Control.new()\n\t"
+        + "target.set_script(target_script)\n\t"
+        + "target.name = \"DropTarget\"\n\t"
+        + "target.position = Vector2(400, 250)\n\t"
+        + "target.size = Vector2(120, 40)\n\t"
+        + "scene_tree.root.add_child(target)\n\t";
 
     private readonly SharedProbeSession _shared = shared;
     private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());
@@ -305,6 +370,185 @@ public sealed class FiredSignalsTests(SharedProbeSession shared) : IAsyncLifetim
         Assert.Equal(0, Find(clicked, "/root/Scroll/Inside", "button_down")["listeners"]!.GetValue<int>());
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ADragOntoADropTargetListsTheTargetsSignal()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(DragAndDropBlock + Drawn, cancellation);
+
+        JsonNode dragged = JsonNode.Parse(
+            await _tools.DragAsync(new InputTarget("/root/DragSource"), new InputTarget("/root/DropTarget"), cancellationToken: cancellation)
+        )!;
+
+        Assert.Equal("[\"payload\"]", Find(dragged, "/root/DropTarget", "dropped")["args"]!.ToJsonString());
+        Assert.Contains("/root/DropTarget", ListenedOn(dragged));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task EnterInALineEditListsTextSubmitted()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(LineEdit("edit", "Name", 400, 250) + "edit.text = \"Alex\"\n\tedit.grab_focus()\n\t" + Drawn, cancellation);
+
+        JsonNode keyed = await KeyAsync("Enter", cancellation);
+
+        Assert.Equal("[\"Alex\"]", Find(keyed, "/root/Name", "text_submitted")["args"]!.ToJsonString());
+        Assert.Contains("/root/Name", ListenedOn(keyed));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task TypeTextFoldsTextChangedIntoOneEntryWithACount()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(LineEdit("edit", "Name", 400, 250) + "edit.grab_focus()\n\t" + Drawn, cancellation);
+
+        JsonNode typed = JsonNode.Parse(await _tools.TypeTextAsync("abc", cancellationToken: cancellation))!;
+
+        JsonObject changed = Assert.Single(Entries(typed), entry => Is(entry, "/root/Name", "text_changed"));
+        Assert.Equal(3, changed["count"]!.GetValue<int>());
+        Assert.Equal("[\"abc\"]", changed["args"]!.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task TabMovesFocusAndTheNewOwnerJoinsTheChain()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            LineEdit("first", "First", 200, 250)
+                + LineEdit("second", "Second", 400, 250)
+                + "first.focus_next = first.get_path_to(second)\n\tfirst.grab_focus()\n\t"
+                + Drawn,
+            cancellation
+        );
+
+        JsonNode tabbed = await KeyAsync("Tab", cancellation);
+
+        AssertOrder(tabbed, ("/root/First", "focus_exited"), ("/root/Second", "focus_entered"));
+        string[] listenedOn = ListenedOn(tabbed);
+        Assert.Contains("/root/First", listenedOn);
+        Assert.Contains("/root/Second", listenedOn);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATabWithNothingFocusedListsTheFocusChangeItCauses()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            HideMain
+                + LineEdit("first", "First", 200, 250)
+                + LineEdit("second", "Second", 400, 250)
+                + "scene_tree.root.gui_release_focus()\n\t"
+                + Drawn,
+            cancellation
+        );
+
+        JsonNode tabbed = await KeyAsync("Tab", cancellation);
+
+        string owner = (await RunAsync("return str(scene_tree.root.gui_get_focus_owner().get_path())", cancellation)).GetValue<string>();
+        AssertOrder(tabbed, ("/root", "gui_focus_changed"), (owner, "focus_entered"));
+        Assert.Contains(owner, ListenedOn(tabbed));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task EnterInALineEditInsideAnEmbeddedWindowListsTextSubmitted()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(DialogBlock + "first.text = \"Alex\"\n\tfirst.grab_focus()\n\t" + Drawn, cancellation);
+
+        JsonNode keyed = await KeyAsync("Enter", cancellation);
+
+        Assert.Equal("[\"Alex\"]", Find(keyed, "/root/Dialog/First", "text_submitted")["args"]!.ToJsonString());
+        Assert.Contains("/root/Dialog/First", ListenedOn(keyed));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATabInsideAnEmbeddedWindowListsTheNewOwnersFocusEntered()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(DialogBlock + "first.grab_focus()\n\t" + Drawn, cancellation);
+
+        JsonNode tabbed = await KeyAsync("Tab", cancellation);
+
+        AssertOrder(tabbed, ("/root/Dialog/First", "focus_exited"), ("/root/Dialog", "gui_focus_changed"), ("/root/Dialog/Second", "focus_entered"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task TypeTextIntoALineEditInASubViewportListsTextChanged()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            "var box := SubViewportContainer.new()\n\tbox.name = \"Box\"\n\tbox.stretch = true\n\t"
+                + "box.position = Vector2(300, 200)\n\tbox.size = Vector2(300, 100)\n\tscene_tree.root.add_child(box)\n\t"
+                + "var sub := SubViewport.new()\n\tsub.name = \"Sub\"\n\tbox.add_child(sub)\n\t"
+                + LineEditUnder("sub", "edit", "Name", 20, 20)
+                + "edit.grab_focus()\n\t"
+                + Drawn,
+            cancellation
+        );
+
+        JsonNode typed = JsonNode.Parse(await _tools.TypeTextAsync("abc", cancellationToken: cancellation))!;
+
+        const string path = "/root/Box/Sub/Name";
+        Assert.Equal("[\"abc\"]", Find(typed, path, "text_changed")["args"]!.ToJsonString());
+        Assert.Contains(path, ListenedOn(typed));
+    }
+
+    // Grid accepts the drop and rebuilds its slots in _drop_data, freeing Slot, the Control under the pointer, after
+    // emitting dropped: the release's Control is freed inside the very send that drops on it.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ADropWhoseTargetFreesItselfAnswersWithoutAScriptError()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(DragSourceBlock + GridBlock + Drawn, cancellation);
+
+        JsonNode dragged = JsonNode.Parse(
+            await _tools.DragAsync(new InputTarget("/root/DragSource"), new InputTarget("/root/Grid/Slot"), cancellationToken: cancellation)
+        )!;
+
+        Assert.Null(dragged["errors"]);
+        Assert.Equal("/root/Grid/Slot", dragged["releasedOn"]?["path"]?.GetValue<string>());
+        Assert.Equal("[\"payload\"]", Find(dragged, "/root/Grid", "dropped")["args"]!.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ADragOntoAWorldAreaListsItsReleaseInputEvent()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(HideMain + World2DBlock + Area2DBlock + PhysicsTicks + "return true", cancellation);
+
+        JsonNode dragged = JsonNode.Parse(
+            await _tools.DragAsync(new InputTarget(X: 300, Y: 250), new InputTarget("Target2D"), cancellationToken: cancellation)
+        )!;
+
+        JsonObject released = Find(dragged, Area, "input_event");
+        Assert.Contains("InputEventMouseButton", released["args"]!.ToJsonString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("InputEventMouseMotion", dragged["fired"]!.ToJsonString(), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AKeyAfterADisabledButtonClickCarriesNoWarning()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(Button("button", "Ready", 400, 250) + "button.disabled = true\n\t" + Drawn, cancellation);
+        JsonNode clicked = await ClickAsync(new InputTarget("Ready"), cancellation);
+        Assert.Contains("is disabled", Warning(clicked), StringComparison.Ordinal);
+
+        JsonNode keyed = await KeyAsync("Enter", cancellation);
+
+        Assert.Null(keyed["warning"]);
+    }
+
+    // A LineEdit named name at (x, y), 160 x 30, held by the script variable variable, under the root.
+    private static string LineEdit(string variable, string name, int x, int y) => LineEditUnder("scene_tree.root", variable, name, x, y);
+
+    // A LineEdit named name at (x, y), 160 x 30, held by the script variable variable, under the node parent names.
+    private static string LineEditUnder(string parent, string variable, string name, int x, int y) =>
+        $"var {variable} := LineEdit.new()\n\t"
+        + $"{variable}.name = \"{name}\"\n\t"
+        + $"{variable}.position = Vector2({x}, {y})\n\t"
+        + $"{variable}.size = Vector2(160, 30)\n\t"
+        + $"{parent}.add_child({variable})\n\t";
+
     // A Button named name at (x, y), 120 x 40, reading its name, held by the script variable variable, under the root.
     private static string Button(string variable, string name, int x, int y) =>
         $"var {variable} := Button.new()\n\t"
@@ -352,6 +596,9 @@ public sealed class FiredSignalsTests(SharedProbeSession shared) : IAsyncLifetim
 
     private async Task<JsonNode> ClickAsync(InputTarget target, CancellationToken cancellation) =>
         JsonNode.Parse(await _tools.ClickAsync(target, "left", false, cancellationToken: cancellation))!;
+
+    private async Task<JsonNode> KeyAsync(string key, CancellationToken cancellation) =>
+        JsonNode.Parse(await _tools.KeyAsync(key, cancellationToken: cancellation))!;
 
     private async Task<JsonNode> RunAsync(string body, CancellationToken cancellation)
     {

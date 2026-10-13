@@ -30,13 +30,19 @@ internal sealed partial class RuntimeTools
         + "matched, item {index, text, path?, disabled?} the item an item target resolved to (its drawn text, a Tree's path, "
         + "disabled when it is), and the node's viewport when it is not the root.";
     private const string FiredNote =
-        " The result lists fired [{node, signal, args?, frame, listeners, count?}]: the signals the press set off on the "
-        + "pressed node's chain (with a ButtonGroup's other buttons and the root's gui_focus_changed) until the settle frames "
-        + "end, in handler order, frame (process frames since the press) grouping them, a run of one signal folded into "
-        + "count; firedDropped counts entries past the first 50, listenedOn names each chain listened on and leftTree the "
-        + "chain nodes that left the tree. listeners 0 on an engine signal means no Godot connection, not that nothing "
-        + "reacts (a game may poll); null is a C# [Signal]. An emission inside the very dispatch that changed the hover is "
-        + "missed for the newly hovered nodes; autoloads and nodes off the chain need a watch with signal tracks.";
+        " fired [{node, signal, args?, frame, listeners, count?}] lists what the gesture set off on its chain until the "
+        + "settle frames end, in handler order; frame counts process frames from its first button or key event, and a run of "
+        + "one signal on one node folds into count with its last args. firedDropped counts entries past 50, listenedOn names "
+        + "each chain's bottom, leftTree the chain nodes that left the tree. listeners 0 is no Godot connection (a game may "
+        + "poll), null a C# [Signal]. Autoloads and off-chain nodes need a watch with signal tracks.";
+    private const string PointerFiredChain =
+        " The chain: the pressed node's and its ancestors (a target node's too), a ButtonGroup's other buttons and the "
+        + "root's gui_focus_changed, refreshed from the hovered Control after each event, so a drop target joins. A warning "
+        + "names a disabled pressed button, or a Control a paused game cannot process.";
+    private const string KeyFiredChain =
+        " The chain: the focus owner's and its ancestors in the window holding key focus, a dialog's or SubViewport's too, "
+        + "refreshed after each key; when a key moves focus, even from none, the new owner's chain joins as focus changes, "
+        + "so its focus_entered is listed. No warning.";
     private const string DragTargetNote =
         ElementAim + "; an element or text target at either end adds aimedAt {from, to}, each as click's aimedAt, a point end null.";
     private const int MaxHoverTimeoutMs = 10_000;
@@ -71,6 +77,7 @@ internal sealed partial class RuntimeTools
             + "release, a popup's included, null over none; with doubleClick, the second click's."
             + TargetNote
             + FiredNote
+            + PointerFiredChain
             + ErrorNote
     )]
     public Task<string> ClickAsync(
@@ -101,6 +108,8 @@ internal sealed partial class RuntimeTools
             + "class}) under the press and under the release point, null over none; whether Godot's GUI started a drag; and "
             + "whether a Control accepted its drop."
             + DragTargetNote
+            + FiredNote
+            + PointerFiredChain
             + ErrorNote
     )]
     public Task<string> DragAsync(
@@ -136,6 +145,8 @@ internal sealed partial class RuntimeTools
     [Description(
         "Types text into the focused Control (click a LineEdit first): per character a key press and release with its "
             + "keycode on a US layout, its unicode, and shift where the character needs it, one frame apart. \\n is Enter, \\t Tab."
+            + FiredNote
+            + KeyFiredChain
             + ErrorNote
     )]
     public Task<string> TypeTextAsync(
@@ -157,6 +168,8 @@ internal sealed partial class RuntimeTools
     [Description(
         "Presses, releases or taps (press, a frame, release) one key in the running game. A printable key also carries "
             + "the character it types unless ctrl, alt or meta is held."
+            + FiredNote
+            + KeyFiredChain
             + ErrorNote
     )]
     public Task<string> KeyAsync(
@@ -193,6 +206,7 @@ internal sealed partial class RuntimeTools
             + "refused; a move is not."
             + TargetNote
             + FiredNote
+            + PointerFiredChain
             + ErrorNote
     )]
     public Task<string> MouseButtonAsync(
