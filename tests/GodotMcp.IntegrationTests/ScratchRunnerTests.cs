@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
@@ -401,6 +402,41 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal((0, 3), (scene["steps"]!["played"]!.GetValue<int>(), scene["steps"]!["total"]!.GetValue<int>()));
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task StepsPlaysOnlyTheSelectedStepsAndTheOthersNeverRun()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonObject last = Single(
+            await RunAsync(_probe.Directory, ["ScratchTwoRed"], new ScratchOptions(Steps: Tokens("""["last"]""")), cancellation)
+        );
+        JsonObject middle = Single(
+            await RunAsync(_probe.Directory, ["ScratchTwoRed"], new ScratchOptions(KeepGoing: true, Steps: Tokens("""["1-2"]""")), cancellation)
+        );
+        JsonObject unknown = Single(
+            await RunAsync(_probe.Directory, ["ScratchTwoRed"], new ScratchOptions(Steps: Tokens("""["nope"]""")), cancellation)
+        );
+
+        Assert.Equal("green", last["verdict"]!.GetValue<string>());
+        Assert.Equal((1, 4), (last["steps"]!["played"]!.GetValue<int>(), last["steps"]!["total"]!.GetValue<int>()));
+        Assert.Equal([3], Indices(last["selected"]!));
+
+        Assert.Equal("red", middle["verdict"]!.GetValue<string>());
+        Assert.Equal((2, 4), (middle["steps"]!["played"]!.GetValue<int>(), middle["steps"]!["total"]!.GetValue<int>()));
+        Assert.Equal([1, 2], Indices(middle["selected"]!));
+        Assert.Equal([1, 2], middle["failures"]!.AsArray().Select(failure => failure!["index"]!.GetValue<int>()));
+        Assert.Equal(["first", "second"], middle["details"]!.AsArray().Select(step => step!["name"]!.GetValue<string>()));
+
+        JsonNode failedAt = unknown["failedAt"]!;
+        Assert.Equal("red", unknown["verdict"]!.GetValue<string>());
+        Assert.Equal(-1, failedAt["index"]!.GetValue<int>());
+        Assert.Equal(
+            "options.steps token \"nope\" of ScratchTwoRed matches no step; its steps are 0: calm, 1: first, 2: second, 3: last",
+            failedAt["error"]!.GetValue<string>()
+        );
+        Assert.Equal((0, 4), (unknown["steps"]!["played"]!.GetValue<int>(), unknown["steps"]!["total"]!.GetValue<int>()));
+        Assert.Null(unknown["selected"]);
+    }
+
     [Fact(Timeout = CSharpTestTimeoutMs)]
     public async Task ACSharpStepThatThrowsIsRedWithItsExceptionAndAReadyThatThrowsIsRedAtTheBoot()
     {
@@ -458,6 +494,10 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
     private static JsonObject Single(JsonObject result) => Assert.Single(result["scenes"]!.AsArray())!.AsObject();
 
     private static string Status(JsonNode step) => step["status"]!.GetValue<string>();
+
+    private static JsonElement[] Tokens(string json) => JsonSerializer.Deserialize<JsonElement[]>(json)!;
+
+    private static IEnumerable<int> Indices(JsonNode indices) => indices.AsArray().Select(index => index!.GetValue<int>());
 
     private static (int Green, int Red, int Known, int NoSteps, int Killed) Counts(JsonObject result) =>
         (

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
@@ -8,6 +9,8 @@ namespace GodotMcp.Tests.Tools;
 /// <summary>run_scratches' argument checks, which refuse before anything launches, its plan, and its sessions' names; no Godot runs here.</summary>
 public sealed class ScratchValidationTests : IDisposable
 {
+    private const string NotAToken = "a token is a step index, a step's name, or a range such as \"2-5\".";
+
     private readonly TempDirectory _temp = new();
     private readonly string _project;
 
@@ -208,6 +211,46 @@ public sealed class ScratchValidationTests : IDisposable
     }
 
     [Fact]
+    public void ARangeOfNonAsciiDigitsIsANameTheScenesStepsDecide() =>
+        Assert.Equal(
+            [new ScratchStepToken("١-٢", IsNumber: false)],
+            Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens("[\"١-٢\"]"))).Steps
+        );
+
+    [Fact]
+    public void StepsAreNoneByDefaultAndRideOnThePlanAsTheCallWroteThem()
+    {
+        ScratchPlan none = Plan(["res://Other.tscn"]);
+        ScratchPlan given = Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens("""[3, "last", "1-2", "03", 2, 4.0, "2-2"]""")));
+
+        Assert.Null(none.Steps);
+        Assert.Equal(
+            [
+                new("3", IsNumber: true),
+                new("last", IsNumber: false),
+                new("1-2", IsNumber: false),
+                new("03", IsNumber: false),
+                new("2", IsNumber: true),
+                new("4", IsNumber: true),
+                new ScratchStepToken("2-2", IsNumber: false),
+            ],
+            given.Steps
+        );
+    }
+
+    [Theory]
+    [InlineData("[]", "options.steps is empty; list the steps to play by index, name or range (\"2-5\"), or leave it out to play every step.")]
+    [InlineData("[-1]", "options.steps token -1 is not a step index; a number names a step by its index, a whole number from 0 up.")]
+    [InlineData("[2.5]", "options.steps token 2.5 is not a step index; a number names a step by its index, a whole number from 0 up.")]
+    [InlineData("[\"5-2\"]", "options.steps token \"5-2\" is a range whose start is after its end; write it \"2-5\".")]
+    [InlineData("[3, \"3\"]", "options.steps tokens 3 and \"3\" are the same token; keep one.")]
+    [InlineData("[\"a\", \"a\"]", "options.steps tokens \"a\" and \"a\" are the same token; keep one.")]
+    [InlineData("[true]", "options.steps token true is neither a number nor a string; " + NotAToken)]
+    [InlineData("[{}]", "options.steps token {} is neither a number nor a string; " + NotAToken)]
+    public void ABadStepsListIsRefusedBeforeAnythingLaunches(string steps, string refusal) =>
+        Assert.Equal(refusal, Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens(steps)))));
+
+    [Fact]
     public void ABareNumberPaceCarriesNoReason()
     {
         WriteProfile("""{ "scratch": { "folder": "Scratch", "pace": { "Beta": 2 } } }""");
@@ -306,6 +349,8 @@ public sealed class ScratchValidationTests : IDisposable
         ScratchTools.Plan(_project, scenes, options ?? new ScratchOptions());
 
     private static string Refused(Func<object> action) => Assert.Throws<McpException>(action).Message;
+
+    private static JsonElement[] Tokens(string json) => JsonSerializer.Deserialize<JsonElement[]>(json)!;
 
     private void WriteProfile(string json) => File.WriteAllText(ProfilePath, json);
 

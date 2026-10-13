@@ -820,6 +820,147 @@ public sealed class ScratchVerdictTests
             ScratchRun.StepPaces(PacedScene(new() { ["0"] = new ScratchPace(1, null), ["open"] = new ScratchPace(2, null) }), ["open", "hit"]).Error
         );
 
+    [Theory]
+    [InlineData("[3]", new[] { 3 })]
+    [InlineData("[\"last\"]", new[] { 3 })]
+    [InlineData("[\"3\"]", new[] { 3 })]
+    [InlineData("[\"1-2\"]", new[] { 1, 2 })]
+    [InlineData("[3, \"calm\"]", new[] { 0, 3 })]
+    [InlineData("[\"0-1\", 1]", new[] { 0, 1 })]
+    [InlineData("[\"2-3\", \"0-2\"]", new[] { 0, 1, 2, 3 })]
+    public void StepsPlayTheUnionOfTheirTokensInAscendingOrderEachOnce(string steps, int[] played)
+    {
+        (int[] indices, string? error) = ScratchRun.ResolveSteps(Tokens(steps), "TwoRed", TwoRed);
+
+        Assert.Null(error);
+        Assert.Equal(played, indices);
+    }
+
+    [Theory]
+    [InlineData("[\"03\"]", "options.steps token \"03\" of TwoRed matches no step; " + TwoRedSteps)]
+    [InlineData("[\"+3\"]", "options.steps token \"+3\" of TwoRed matches no step; " + TwoRedSteps)]
+    [InlineData("[\"4\"]", "options.steps token \"4\" of TwoRed matches no step; " + TwoRedSteps)]
+    [InlineData("[4]", "options.steps token 4 of TwoRed matches no step; " + TwoRedSteps)]
+    [InlineData("[\"nope\"]", "options.steps token \"nope\" of TwoRed matches no step; " + TwoRedSteps)]
+    [InlineData("[\"2-4\"]", "options.steps token \"2-4\" of TwoRed reaches past its last step; " + TwoRedSteps)]
+    [InlineData("[\"0-99999999999\"]", "options.steps token \"0-99999999999\" of TwoRed reaches past its last step; " + TwoRedSteps)]
+    [InlineData("[0, \"nope\"]", "options.steps token \"nope\" of TwoRed matches no step; " + TwoRedSteps)]
+    [InlineData("[\"1-2\\n\"]", "options.steps token \"1-2\n\" of TwoRed matches no step; " + TwoRedSteps)]
+    [InlineData("[\"١-٢\"]", "options.steps token \"١-٢\" of TwoRed matches no step; " + TwoRedSteps)]
+    public void AStepsTokenThatNamesNoStepRefusesTheSceneListingItsSteps(string steps, string refusal)
+    {
+        (int[] indices, string? error) = ScratchRun.ResolveSteps(Tokens(steps), "TwoRed", TwoRed);
+
+        Assert.Equal(refusal, error);
+        Assert.Empty(indices);
+    }
+
+    [Theory]
+    [InlineData("hit")]
+    [InlineData("1-2")]
+    public void AStepsNameThatNamesTwoStepsIsRefusedEvenWhenItReadsAsARange(string name) =>
+        Assert.Equal(
+            $"options.steps token \"{name}\" of Paced names 2 steps (1, 2); key it by index",
+            ScratchRun.ResolveSteps(Tokens($"[\"{name}\"]"), "Paced", ["open", name, name]).Error
+        );
+
+    [Fact]
+    public void AStepsTokenOnASceneWithoutStepsIsRefused() =>
+        Assert.Equal("options.steps token 0 of Paced matches no step; it has no steps", ScratchRun.ResolveSteps(Tokens("[0]"), "Paced", []).Error);
+
+    [Fact]
+    public void AStepsStringIsAnIndexFirstThenANameThenARange()
+    {
+        IReadOnlyList<string> names = ["first", "0", "1-2", "7", "+3"];
+
+        Assert.Equal([0], ScratchRun.ResolveSteps(Tokens("""["0"]"""), "Odd", names).Indices);
+        Assert.Equal([3], ScratchRun.ResolveSteps(Tokens("""["7"]"""), "Odd", names).Indices);
+        Assert.Equal([2], ScratchRun.ResolveSteps(Tokens("""["1-2"]"""), "Odd", names).Indices);
+        Assert.Equal([4], ScratchRun.ResolveSteps(Tokens("""["+3"]"""), "Odd", names).Indices);
+        Assert.Equal([0, 1, 2, 3], ScratchRun.ResolveSteps(Tokens("""["0-3"]"""), "Odd", names).Indices);
+    }
+
+    [Fact]
+    public void ASelectionsCeilingPaceAfterAndKillReasonCountOnlyThePlayedSteps()
+    {
+        ScratchPace[] paces = [new(0.5, null), new(30, null), new(2, null), new(0.5, null)];
+
+        ScratchWalk walk = new(paces, [0, 2]);
+
+        Assert.Equal(TimeSpan.FromSeconds(10.5 + 12 + 2 + 10), walk.Ceiling);
+        Assert.Equal(2000, walk.AfterGameMs);
+        Assert.Equal(
+            "the scene passed its ceiling of 34.5 s of load-adjusted time (each of its 2 steps' pace + 10 s, the last step's pace once "
+                + "more, and 10 s for the markers), so its game was stopped",
+            walk.CeilingReason(string.Empty)
+        );
+    }
+
+    [Fact]
+    public void AOneStepWalksKillReasonNamesItsOneStep() =>
+        Assert.Equal(
+            "the scene passed its ceiling of 21 s of load-adjusted time (its 1 step's pace + 10 s, the last step's pace once more, and "
+                + "10 s for the markers), so its game was stopped",
+            new ScratchWalk([new(30, null), new(0.5, null)], [1]).CeilingReason(string.Empty)
+        );
+
+    [Fact]
+    public void AKnownScenePlayedInPartStaysKnownAndNeverKnownNowGreen()
+    {
+        ScratchObservation partial = new("Combat", "probe.scratch-Combat", 0.5, 6)
+        {
+            Steps = [Step(2)],
+            ExitCode = 0,
+            Selected = [2],
+        };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(partial, Plain with { Known = "step 5 crashes until the pool fix" });
+        ScratchRunResult run = ScratchVerdict.Summarise([result], PrepResult.Skipped);
+
+        Assert.Equal(ScratchVerdict.KnownRed, result.Verdict);
+        Assert.Equal("step 5 crashes until the pool fix", result.Known);
+        Assert.True(run.Passed);
+        Assert.Equal((0, 1), (run.Red, run.Known));
+    }
+
+    [Fact]
+    public void AKnownScenePlayedWhollyThroughASelectionIsKnownNowGreen()
+    {
+        ScratchObservation whole = new("Combat", "probe.scratch-Combat", 0.5, 2)
+        {
+            Steps = [Step(0), Step(1)],
+            ExitCode = 0,
+            Selected = [0, 1],
+        };
+
+        Assert.Equal(ScratchVerdict.KnownNowGreen, ScratchVerdict.Judge(whole, Plain with { Known = "flaky" }).Verdict);
+    }
+
+    [Fact]
+    public void ASelectionRidesOnTheSceneAsSelectedAndNoSelectionLeavesItOut()
+    {
+        ScratchObservation partial = new("Scene", "probe.scratch-Scene", 0.5, 4)
+        {
+            Steps = [Step(3)],
+            ExitCode = 0,
+            Selected = [3],
+        };
+
+        JsonObject selected = Json(ScratchVerdict.Judge(partial, Plain));
+        JsonObject whole = Json(ScratchVerdict.Judge(Seen(Step(0)), Plain));
+
+        Assert.Equal("green", selected["verdict"]!.GetValue<string>());
+        Assert.Equal((1, 4), (selected["steps"]!["played"]!.GetValue<int>(), selected["steps"]!["total"]!.GetValue<int>()));
+        Assert.Equal([3], selected["selected"]!.AsArray().Select(index => index!.GetValue<int>()));
+        Assert.False(whole.ContainsKey("selected"));
+    }
+
+    private const string TwoRedSteps = "its steps are 0: calm, 1: first, 2: second, 3: last";
+
+    private static readonly IReadOnlyList<string> TwoRed = ["calm", "first", "second", "last"];
+
+    private static IReadOnlyList<ScratchStepToken> Tokens(string json) => ScratchTools.StepTokens(JsonSerializer.Deserialize<JsonElement[]>(json))!;
+
     private static ScratchScenePlan PacedScene(Dictionary<string, ScratchPace> stepPaces) =>
         new("Paced", "res://scratch/Paced.tscn", 0.5, []) { PaceReason = "the scene settles", StepPaces = stepPaces };
 

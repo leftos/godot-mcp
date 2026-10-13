@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Globalization;
+using System.Numerics;
 using System.Text.Json;
 using GodotMcp.Server.Session;
 using ModelContextProtocol;
@@ -29,7 +31,9 @@ internal sealed class ScratchTools(SessionRegistry sessions)
             + "(<folder>.scratch-<scene>, or '<options.session>.scratch-<scene>'), its root is called through the scratch protocol "
             + "(GetStepCount, GetStepName(i), then per step "
             + "PlayStep(i), a wait of the pace in game time, GetStatus), and a scene stops at its first failed step unless "
-            + "options.keepGoing. A step fails "
+            + "options.keepGoing; options.steps [3, \"name\", \"2-5\"] plays only those steps, by index, name or inclusive range, in "
+            + "ascending order, and never runs the others, so a later step that depends on a skipped one is the caller's choice. "
+            + "A step fails "
             + "on an error the game logs (push_error, an engine error, a C# exception) or a stdout or stderr line matching the "
             + "profile's scratch.patterns; after the steps the game is stopped and a non-zero exit or an ObjectDB leak turns the "
             + "scene red. Settings live in godot-mcp.json's scratch section {folder, userArgs, pace, known, patterns, parallel}. Scenes "
@@ -38,9 +42,10 @@ internal sealed class ScratchTools(SessionRegistry sessions)
             + "step) is played once more alone after the others: green alone, its entry is the replay's with alone: true and counts "
             + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
             + "{passed, green, red, known, noSteps, killed, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, "
-            + "scenes: [{scene, verdict, steps: {played, total}, pace, paceReason?, seconds, session, "
+            + "scenes: [{scene, verdict, steps: {played, total}, selected?, pace, paceReason?, seconds, session, "
             + "failedAt?, failures?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?, alone?, "
-            + "aloneFailedAt?}]}, scenes in the order given; failedAt is the first failed step and failures [{index, name, error}] "
+            + "aloneFailedAt?}]}, scenes in the order given; selected lists the indices options.steps played from; "
+            + "failedAt is the first failed step and failures [{index, name, error}] "
             + "every one; failedAt.pattern {pattern, reason?} names the scratch.patterns entry a failing line matched; details "
             + "lists every played step of a red or killed scene, or of any scene with options.details, by its status line "
             + "{index, name, ok, gameMs, status}; without details, a failing step carries its error, its first 3 errors and 5 "
@@ -61,13 +66,15 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         )]
             string[]? scenes = null,
         [Description(
-            "{pace, userArgs, prepare, details, parallel, session, keepGoing}: pace in seconds for every step (else scratch.pace's "
+            "{pace, userArgs, prepare, details, parallel, session, keepGoing, steps}: pace in seconds for every step (else scratch.pace's "
                 + "for the step, else for the scene, else 0.5); userArgs appended after the profile's; prepare as run_project's; "
                 + "details true lists every scene's steps and gives every step its full detail; parallel the scenes at once, 1 to 4 "
                 + "(else scratch.parallel, else 1); "
                 + "session a prefix for the scenes' session names, in place of the project folder's; keepGoing true (default false) "
                 + "plays a scene's next step after one red on a pushed error or a matching line, but a step whose own call failed "
-                + "(the game gone or stuck) still stops the scene."
+                + "(the game gone or stuck) still stops the scene; steps [3, \"name\", \"2-5\"] plays only those steps, by index, name or "
+                + "inclusive range, in ascending order, and never runs the others, so a later step that depends on a skipped one is "
+                + "the caller's choice."
         )]
             ScratchOptions? options = null,
         CancellationToken cancellationToken = default
@@ -91,7 +98,7 @@ internal sealed class ScratchTools(SessionRegistry sessions)
 
     /// <summary>The checked call: the project, each scene with its pace and user arguments, and the profile's patterns.</summary>
     /// <exception cref="McpException">
-    /// The project, the profile, a scene, the pace, the user arguments or prepare is refused; nothing has launched.
+    /// The project, the profile, a scene, the pace, the user arguments, prepare or options.steps is refused; nothing has launched.
     /// </exception>
     internal static ScratchPlan Plan(string projectPath, IReadOnlyList<string>? scenes, ScratchOptions options)
     {
@@ -115,8 +122,72 @@ internal sealed class ScratchTools(SessionRegistry sessions)
             Listed = scenes is not null,
             SessionPrefix = prefix,
             KeepGoing = options.KeepGoing ?? false,
+            Steps = StepTokens(options.Steps),
         };
     }
+
+    /// <summary>options.steps as tokens, in the order given; null when left out.</summary>
+    /// <exception cref="McpException">
+    /// The list is empty, a token is neither a number nor a string, a number is not a whole number of 0 or more, a range runs
+    /// backwards, or two tokens are the same.
+    /// </exception>
+    internal static IReadOnlyList<ScratchStepToken>? StepTokens(JsonElement[]? steps)
+    {
+        if (steps is null)
+        {
+            return null;
+        }
+
+        if (steps.Length == 0)
+        {
+            throw new McpException(
+                "options.steps is empty; list the steps to play by index, name or range (\"2-5\"), or leave it out to play every step."
+            );
+        }
+
+        List<ScratchStepToken> tokens = [];
+        foreach (JsonElement element in steps)
+        {
+            ScratchStepToken token = StepToken(element);
+            int same = tokens.FindIndex(other => string.Equals(other.Text, token.Text, StringComparison.Ordinal));
+            if (same >= 0)
+            {
+                throw new McpException($"options.steps tokens {tokens[same]} and {token} are the same token; keep one.");
+            }
+
+            tokens.Add(token);
+        }
+
+        return tokens;
+    }
+
+    /// <exception cref="McpException">The token is neither a number nor a string, a bad index, or a backwards range.</exception>
+    private static ScratchStepToken StepToken(JsonElement element) =>
+        element.ValueKind switch
+        {
+            JsonValueKind.Number => new ScratchStepToken(StepIndex(element), IsNumber: true),
+            JsonValueKind.String => ForwardRange(new ScratchStepToken(element.GetString()!, IsNumber: false)),
+            _ => throw new McpException(
+                $"options.steps token {element.GetRawText()} is neither a number nor a string; a token is a step index, a step's name, "
+                    + "or a range such as \"2-5\"."
+            ),
+        };
+
+    /// <summary>A number token's index, written plainly.</summary>
+    /// <exception cref="McpException">The number is negative, not whole, or past the largest index.</exception>
+    private static string StepIndex(JsonElement element) =>
+        element.TryGetDouble(out double number) && number >= 0 && number <= int.MaxValue && number == Math.Floor(number)
+            ? ((int)number).ToString(CultureInfo.InvariantCulture)
+            : throw new McpException(
+                $"options.steps token {element.GetRawText()} is not a step index; a number names a step by its index, a whole number from 0 up."
+            );
+
+    /// <exception cref="McpException">The token is a range whose start is after its end.</exception>
+    private static ScratchStepToken ForwardRange(ScratchStepToken token) =>
+        token.IsRange(out string first, out string last)
+        && BigInteger.Parse(first, CultureInfo.InvariantCulture) > BigInteger.Parse(last, CultureInfo.InvariantCulture)
+            ? throw new McpException($"options.steps token {token} is a range whose start is after its end; write it \"{last}-{first}\".")
+            : token;
 
     /// <summary>The prefix the plan names its sessions with: options.session when given, else the project folder's name.</summary>
     /// <exception cref="McpException">The given name breaks the name rule.</exception>
@@ -334,5 +405,13 @@ internal sealed record ScratchOptions(
         "true plays a scene's next step after one that failed on a pushed error or a matching line, but a step whose own call "
             + "failed (the game gone or stuck) still stops the scene; default false, the scene stops at its first failed step."
     )]
-        bool? KeepGoing = null
+        bool? KeepGoing = null,
+    [property: Description(
+        "The steps to play, the others never run: an array of tokens, each a step index (3, or \"3\" spelled plainly), a step's "
+            + "exact name, or an inclusive range of indices (\"2-5\"); a string is read as an index first, then a name, then a range. "
+            + "The union plays in ascending order, each step once, and one list applies to every scene: a token naming no step of a "
+            + "scene turns that scene red before any step plays. A later step that depends on a skipped one is the caller's choice. "
+            + "The scene's result lists the played indices as selected."
+    )]
+        JsonElement[]? Steps = null
 );

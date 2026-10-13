@@ -10,6 +10,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `record_mark` records any windowed session not launched with `options.record` in real time, `start` to `stop`, into an MP4 clip.
 - `frame_control` step takes `options.input`, raw events sent inside chosen stepped frames, and reports what stays held and what went unsent.
 - `capture_frames` takes `options.start.call`, run after the start's first check, so an edge start sees the change its own call makes.
+- `run_scratches` takes `options.steps`, indices, names or ranges, and plays only those steps, reporting them as `selected`.
 
 ### Changed
 

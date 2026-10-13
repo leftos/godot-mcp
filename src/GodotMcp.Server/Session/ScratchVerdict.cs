@@ -28,7 +28,8 @@ internal sealed record ScratchStep(int Index, string Name, int GameMs)
 /// <summary>
 /// What the runner saw of one scene: the lines printed before the first step, never judged, and the error feed's entries from
 /// the launch to the first step, which are; the steps it played, and at most one of: a refusal before any step (the scene did
-/// not start, has no current scene, or its root lacks the scratch protocol), or the step in flight when it was killed (-1
+/// not start, has no current scene, its root lacks the scratch protocol, a pace.steps key names no single step, or an
+/// options.steps token names no step), or the step in flight when it was killed (-1
 /// outside a step) with the reason; then why the pace after the last step failed (an error in the feed, or a wait not met),
 /// the game's exit code, the stop's kill and warning, and the lines printed after the last step's window, the stop included.
 /// </summary>
@@ -46,6 +47,12 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
     /// the steps are named.
     /// </summary>
     public IReadOnlyList<string?> StepPaceReasons { get; init; } = [];
+
+    /// <summary>
+    /// The indices options.steps selected, ascending; null when the call gave no steps or the scene was refused before its steps
+    /// were resolved (a pace.steps key or an options.steps token naming no step included).
+    /// </summary>
+    public IReadOnlyList<int>? Selected { get; init; }
 
     public string? Refusal { get; init; }
 
@@ -161,6 +168,13 @@ internal sealed record ScratchExit(int? Code)
 /// <summary>One scene's verdict and what it rests on.</summary>
 internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchStepCount Steps, double Pace, double Seconds, string Session)
 {
+    /// <summary>
+    /// The indices options.steps selected and the scene played from, ascending; null when the call gave no steps or the scene
+    /// was refused before its steps were resolved (a pace.steps key or an options.steps token naming no step included).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<int>? Selected { get; init; }
+
     /// <summary>The profile's reason for the scene's pace, when the scene came out red or killed; null otherwise.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? PaceReason { get; init; }
@@ -288,7 +302,7 @@ internal static partial class ScratchVerdict
     public static ScratchSceneResult Judge(ScratchObservation seen, ScratchRules rules)
     {
         (string verdict, ScratchFailure? failedAt) = Underlying(seen, rules.Patterns);
-        string shown = Known(verdict, failedAt, rules.Known);
+        string shown = Known(verdict, failedAt, rules.Known, PlayedInPart(seen));
         return new ScratchSceneResult(
             seen.Scene,
             shown,
@@ -298,6 +312,7 @@ internal static partial class ScratchVerdict
             seen.Session
         )
         {
+            Selected = seen.Selected,
             PaceReason = shown is Red or Killed ? PaceReasonAt(seen, failedAt, rules.PaceReason) : null,
             FailedAt = failedAt,
             Failures = Failures(seen, rules.Patterns, rules.Details ? MaxCopyChars : MaxFailureIndexChars),
@@ -351,7 +366,8 @@ internal static partial class ScratchVerdict
     /// <summary>
     /// Whether a scene is played once more alone: it ran beside others (<paramref name="parallel"/> above 1) and came out red
     /// or killed, and it is not known. A red scene refused before any step (none played, failed at index -1: it did not start,
-    /// has no current scene, lacks the scratch protocol or logged an error at the boot) is not played again, since no game
+    /// has no current scene, lacks the scratch protocol, has a pace.steps key or an options.steps token naming no step, or
+    /// logged an error at the boot) is not played again, since no game
     /// beside it explains that; a killed one is, before its first step or in the pace after its last alike, since load can kill
     /// either.
     /// </summary>
@@ -456,12 +472,19 @@ internal static partial class ScratchVerdict
     private static bool ListsSteps(bool details, string verdict, ScratchFailure? failedAt) =>
         (details || verdict is Red or Killed) && !(verdict == Red && failedAt is { Index: -1 });
 
-    /// <summary>The verdict shown for a scene the profile knows to fail; one that failed before any step is red, never known.</summary>
-    private static string Known(string verdict, ScratchFailure? failedAt, string? known) =>
+    /// <summary>
+    /// The verdict shown for a scene the profile knows to fail; one that failed before any step is red, never known. A green one
+    /// is known-now-green only when it played every step: options.steps playing fewer says nothing of the known failure, so it
+    /// stays known.
+    /// </summary>
+    private static string Known(string verdict, ScratchFailure? failedAt, string? known, bool partial) =>
         known is null || failedAt is { Index: < 0 } ? verdict
         : verdict == Red ? KnownRed
-        : verdict == Green ? KnownNowGreen
+        : verdict == Green ? (partial ? KnownRed : KnownNowGreen)
         : verdict;
+
+    /// <summary>Whether options.steps selected fewer than all of the scene's steps.</summary>
+    private static bool PlayedInPart(ScratchObservation seen) => seen.Selected is { } selected && selected.Count < seen.Total;
 
     /// <summary>
     /// Whether the exit turns a scene with every step green red: an error in the pace after the last step, a kill by the stop, a
