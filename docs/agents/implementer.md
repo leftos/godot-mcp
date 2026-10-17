@@ -14,7 +14,7 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 
 ## Commands
 
-Every build and test runs through `run.ps1`, which runs it under `tools/gate.ps1` with a ceiling, writes `.tmp/<command>.log` and prints its tail:
+Every build and test runs through `run.ps1`, which runs it under `gate run` (the installed gate, on PATH) with a ceiling, writes `.tmp/<command>.log` and prints its tail:
 
 ```
 pwsh run.ps1 build                        # warnings are errors
@@ -27,7 +27,7 @@ pwsh run.ps1 drive -Calls <file.json>     # drive this tree's own server build a
 prek run --all-files                      # the lint hooks (CSharpier, line length, build, gdformat, gdlint, gdcomplexity, ruff); no test
 ```
 
-The gate's kill line (exit 124) says why: `STALLED` (no output and no CPU for 120 s) has hung, so read the log; `TIMED OUT` kept working past the load-adjusted ceiling, so read the log before touching the ceiling; `BACKSTOP` with a low "machine free" figure means the machine was busy, so re-run it once alone. Never re-run a command to read its output differently: read the log. `tools/gate.ps1` is a launcher synced from `~/.claude`; never edit it.
+The gate's kill line (exit 124) says why: `STALLED` (no output and no CPU for 120 s) has hung, so read the log; `TIMED OUT` kept working past the load-adjusted ceiling, so read the log before touching the ceiling; `BACKSTOP` with a low "machine free" figure means the machine was busy, so re-run it once alone. Never re-run a command to read its output differently: read the log. The gate is developed in its own repo (`X:\dev\gate`); a finding about it goes to the orchestrator.
 
 ## Non-negotiables
 

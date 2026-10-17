@@ -23,12 +23,12 @@ public sealed class PrepWrapperTests : IDisposable
     [Fact]
     public void TheWrapperRunsFirstWithBothTokensAndThenTheCommand()
     {
-        PrepWrapper wrapper = new(["pwsh", "-File", "tools/gate.ps1", "-Log", "{log}", "-TimeoutSeconds", "{ceiling}", "--"], _temp.Path);
+        PrepWrapper wrapper = new(["gate", "run", "--log", "{log}", "--timeout", "{ceiling}", "--"], _temp.Path);
 
         ToolProcessRequest wrapped = wrapper.Wrap(BuildRequest());
 
-        Assert.Equal("pwsh", wrapped.FileName);
-        Assert.Equal(["-File", "tools/gate.ps1", "-Log", StepLog, "-TimeoutSeconds", "300", "--", Dotnet, "build", "Game.csproj"], wrapped.Arguments);
+        Assert.Equal("gate", wrapped.FileName);
+        Assert.Equal(["run", "--log", StepLog, "--timeout", "300", "--", Dotnet, "build", "Game.csproj"], wrapped.Arguments);
         Assert.Equal(_temp.Path, wrapped.WorkingDirectory);
     }
 

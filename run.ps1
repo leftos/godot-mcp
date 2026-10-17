@@ -5,7 +5,7 @@
 Builds, tests, formats and publishes godot-mcp.
 
 .DESCRIPTION
-Every command but itest-groups, itest-csharp and itest-capture (which run inside their caller's gate) runs under tools/gate.ps1: its
+Every command but itest-groups, itest-csharp and itest-capture (which run inside their caller's gate) runs under gate run: its
 whole output goes to .tmp/<command>.log, the last lines are printed, and it exits with the command's own status, or 124 when the gate's watchdog killed it with every process it started. The
 watchdog kills a run for the first of three reasons, each named by a kill line in the log that this script prints with
 its reading: STALLED (no output and no CPU for 120 s: it hung), TIMED OUT (the ceiling ran out on a clock that runs
@@ -123,7 +123,7 @@ ceiling in plain wall time: the machine was busy, so run it once more alone). Th
            printed as [image <path>]. The server's own log (its stderr) goes to .tmp/drive-server.log. The first call
            that fails is printed and stops the run with status 1, and a failed call or a server that stops answering
            ends the output with "server log: <path>"; a malformed file stops it with status 2 before the server
-           starts, as does a missing -Calls. The gate runs with -NoMarkers: drive's exit status alone is the verdict,
+           starts, as does a missing -Calls. The gate runs with --no-markers: drive's exit status alone is the verdict,
            since a tool result can quote a game's error lines. The server is stopped at the end, killed if it has not exited 5 s
            after its input closed. It runs on the user's desktop, not the hidden one: a run is quiet unless a call asks
            for quiet: false, and then its window is meant to show.
@@ -234,7 +234,6 @@ $itestRules = @(
     @('bridge/godot_mcp_bridge.gd', $itestEveryGroup),
     @('bridge/**', 'all'),
     @('run.ps1', 'all'),
-    @('tools/gate.ps1', 'all'),
     @('tools/hidden-desktop.ps1', $itestEveryGroup),
     @('src/GodotMcp.Capture/**', @('capture')),
     @('src/GodotMcp.Server/Session/Realtime*.cs', @('capture')),
@@ -313,7 +312,6 @@ $itestRules = @(
     @('tools/release-check.ps1', 'none'),
     @('tools/agent-mail-guard.ps1', 'none'),
     @('tools/InstalledServers.psm1', 'none'),
-    @('tools/gate.selftest.ps1', 'none'),
     @('tools/gdcomplexity-baseline.txt', 'none')
 )
 $itestNamespace = 'GodotMcp.IntegrationTests'
@@ -333,7 +331,15 @@ $dotnetOut = Join-Path $root 'bin/dotnet'
 $dotnetStaging = Join-Path $logDir 'dotnet-publish'
 $captureOut = Join-Path $root 'bin/capture'
 
-$gate = Join-Path $root 'tools/gate.ps1'
+# The installed gate on PATH, resolved where a gated command runs so help and itest-groups work on a machine without it.
+function Get-GatePath {
+    $command = Get-Command gate -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $command) {
+        [Console]::Error.WriteLine('run.ps1: gate is not on PATH; install it from the gate repo (X:\dev\gate) with pwsh tools/install.ps1')
+        exit 2
+    }
+    return $command.Source
+}
 
 # The last kill line of the gate in a log (a match whose first group is STALLED, TIMED OUT or BACKSTOP), or $null.
 function Get-GateKillLine {
@@ -367,7 +373,7 @@ function Get-GateKill {
     return "$($line.Line) $reading"
 }
 
-# Runs a program under tools/gate.ps1: the whole output to .tmp/<Name>.log, the last 15 lines on the screen, and the
+# Runs a program under gate run: the whole output to .tmp/<Name>.log, the last 15 lines on the screen, and the
 # process tree killed with status 124 when the watchdog stops it (stalled, past its load-adjusted ceiling, or past five
 # times it in wall time), with the log's kill line and its reading printed.
 function Invoke-Gated {
@@ -381,9 +387,10 @@ function Invoke-Gated {
     )
     $log = Join-Path $logDir "$Name.log"
     Write-Host "$Program $($Arguments -join ' ')  (log: $log, ceiling: $TimeoutSeconds s, slot: $Slot)"
-    $gateOptions = @('-Log', $log, '-TimeoutSeconds', $TimeoutSeconds, '-Slot', $Slot, '-Tail', 15)
+    $gate = Get-GatePath
+    $gateOptions = @('run', '--log', $log, '--timeout', $TimeoutSeconds, '--slot', $Slot, '--tail', 15)
     if ($NoMarkers) {
-        $gateOptions += '-NoMarkers'
+        $gateOptions += '--no-markers'
     }
     & $gate @gateOptions -- $Program @Arguments | Out-Host
     $status = $LASTEXITCODE
@@ -393,7 +400,7 @@ function Invoke-Gated {
     return $status
 }
 
-# Runs dotnet under tools/gate.ps1, as Invoke-Gated does.
+# Runs dotnet under gate run, as Invoke-Gated does.
 function Invoke-Logged {
     param(
         [Parameter(Mandatory)] [string]$Name,
@@ -898,11 +905,11 @@ function Invoke-ItestGroupProcess {
     }
     $log = Join-Path $logDir "itest-$Group.log"
     $slot = Get-ItestGroupSlot -Group $Group
-    $gateOptions = @('-Log', $log, '-TimeoutSeconds', $ceiling, '-Slot', $slot, '-Tail', '15')
-    $words = @('-NoProfile', '-File', $gate) + $gateOptions + @('--', $command.Program) + $command.Arguments
+    $gate = Get-GatePath
+    $words = @('run', '--log', $log, '--timeout', $ceiling, '--slot', $slot, '--tail', '15', '--', $command.Program) + $command.Arguments
     Write-Host "itest ${Group}: started in lane $Lane (log: $log, ceiling: $ceiling s, slot: $slot)"
     $console = Join-Path $logDir "itest-$Group.console"
-    $process = Start-Process -FilePath 'pwsh' -ArgumentList @($words | ForEach-Object { ConvertTo-CommandLineWord -Word $_ }) `
+    $process = Start-Process -FilePath $gate -ArgumentList @($words | ForEach-Object { ConvertTo-CommandLineWord -Word $_ }) `
         -NoNewWindow -PassThru -RedirectStandardOutput $console -RedirectStandardError "$console.err"
     # Without a handle taken while it runs, the process object of Start-Process has no ExitCode once it has exited.
     $null = $process.Handle
@@ -945,9 +952,10 @@ function Invoke-ItestLaneNext {
 # Stops the gates of the groups still running (an interrupted run), each with its whole process tree.
 function Invoke-ItestStopTree {
     param([Parameter(Mandatory)] [hashtable]$Running)
+    $gate = Get-GatePath
     foreach ($entry in $Running.Values) {
         if (-not $entry.Process.HasExited) {
-            & $gate -StopTree $entry.Process.Id | Out-Host
+            & $gate stop-tree $entry.Process.Id | Out-Host
         }
     }
 }

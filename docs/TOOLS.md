@@ -1161,7 +1161,7 @@ A program with a folder in it is relative to the project folder, a bare name is 
 A wrapped process has no stall kill (a gate waiting for a slot is silent), the ceiling still holds, and a wrapper exit of 124 refuses the prep with `the prep wrapper stopped the build (exit 124); its log: …`. `prep.note` says `ran through prepWrapper (<program>)`. A malformed `godot-mcp.json` refuses any prep that runs a process.
 
 ```json
-{ "prepWrapper": ["pwsh", "tools/gate.ps1", "-Log", "{log}", "-TimeoutSeconds", "{ceiling}", "-Slot", "heavy", "--"] }
+{ "prepWrapper": ["gate", "run", "--log", "{log}", "--timeout", "{ceiling}", "--slot", "heavy", "--"] }
 ```
 
 ```jsonc

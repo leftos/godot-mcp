@@ -20,7 +20,7 @@ its code runs. `run.ps1 itest` runs its test gates through this script on Window
  - The desktop is named godot-mcp-itest-<this script's process id>, so two runs at once (two worktrees) never share
    one, and it is closed when the command ends.
  - The command inherits this script's standard input, output and error (STARTF_USESTDHANDLES with bInheritHandles),
-   so everything it prints lands where this script's output goes: tools/gate.ps1's log.
+   so everything it prints lands where this script's output goes: the gate's log.
  - It is started with CREATE_NO_WINDOW: CREATE_NEW_CONSOLE makes Windows Terminal open a visible window.
  - It runs in a job object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE held only by this script, so when the gate kills
    this script, the kernel closes the job and kills the command with every process it started. On a normal end
@@ -29,8 +29,8 @@ its code runs. `run.ps1 itest` runs its test gates through this script on Window
  - The command line is built with the Microsoft C runtime's quoting rules, since CreateProcessW takes one string, and
    is started as it arrived, never through a shell.
 
-The command is read by hand out of $args, as tools/gate.ps1 reads its own: a param block would send the words through
-PowerShell's parameter binder, which takes the bare -- and the command's own options for this script's. Everything
+The command is read by hand out of $args: a param block would send the words through PowerShell's parameter binder,
+which takes the bare -- and the command's own options for this script's. Everything
 past a leading -- is the command; a caller in a session of its own that had the -- eaten by the parser has every word
 taken as the command.
 

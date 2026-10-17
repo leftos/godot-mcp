@@ -320,7 +320,7 @@ internal sealed partial class ProjectProfile
 
         const string Shape =
             $"\"{PrepWrapperKey}\" must be a non-empty array of non-empty strings, the program and then its arguments, "
-            + "e.g. [\"pwsh\", \"tools/gate.ps1\", \"-Log\", \"{log}\", \"--\"]";
+            + "e.g. [\"gate\", \"run\", \"--log\", \"{log}\", \"--\"]";
         if (value.ValueKind != JsonValueKind.Array)
         {
             throw Refused(place, $"{Shape}; it is {Describe(value.ValueKind)}");

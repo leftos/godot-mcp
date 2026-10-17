@@ -18,7 +18,6 @@ import pytest
 
 TOOL_PATH = Path(__file__).resolve().parents[2] / "tools" / "drive.py"
 FAKE_SERVER = Path(__file__).resolve().with_name("fake_mcp_server.py")
-GATE_PATH = Path(__file__).resolve().parents[2] / "tools" / "gate.ps1"
 
 
 def _load_tool() -> ModuleType:
@@ -195,16 +194,17 @@ def test_a_server_that_dies_points_at_its_log(tmp_path: Path, capfd: pytest.Capt
     assert "dying before initialize" in (tmp_path / "server.log").read_text(encoding="utf-8")
 
 
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="tools/gate.ps1 needs PowerShell 7")
-@pytest.mark.parametrize(("gate_options", "expected_status"), [(["-NoMarkers"], 0), ([], 1)])
+@pytest.mark.skipif(shutil.which("gate") is None, reason="needs gate on PATH (install it from the gate repo)")
+@pytest.mark.parametrize(("gate_options", "expected_status"), [(["--no-markers", "--local"], 0), (["--local"], 1)])
 def test_the_gate_takes_a_drive_by_its_exit_status_alone(tmp_path: Path, gate_options: list[str], expected_status: int) -> None:
     quoted_failure = "E 0:00:01:250 main.gd:12 @ _ready(): error while loading\n  failed: 1"
     fake = _fake(tmp_path, [_text(quoted_failure)])
     command = [sys.executable, str(TOOL_PATH), *_drive_arguments(tmp_path, '[{"tool": "get_errors"}]', _fake_command(fake))]
     log = tmp_path / "drive.log"
-    gate = ["pwsh", "-NoProfile", "-File", str(GATE_PATH), *gate_options, "-Log", str(log), "-TimeoutSeconds", "60", "-Slot", "light", "--", *command]
+    gate = shutil.which("gate")
+    gate_command = [gate, "run", *gate_options, "--log", str(log), "--timeout", "60", "--slot", "light", "--", *command]
 
-    result = subprocess.run(gate, capture_output=True, text=True, timeout=90, check=False)
+    result = subprocess.run(gate_command, capture_output=True, text=True, timeout=90, check=False)
 
     assert result.returncode == expected_status, result.stdout + result.stderr
     assert "  failed: 1" in log.read_text(encoding="utf-8")

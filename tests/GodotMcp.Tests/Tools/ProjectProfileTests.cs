@@ -275,11 +275,11 @@ public sealed class ProjectProfileTests : IDisposable
     [Fact]
     public void APrepWrapperIsReadAsWritten()
     {
-        Write("""{ "prepWrapper": ["pwsh", "tools/gate.ps1", "-Log", "{log}", "-TimeoutSeconds", "{ceiling}", "--"] }""");
+        Write("""{ "prepWrapper": ["gate", "run", "--log", "{log}", "--timeout", "{ceiling}", "--"] }""");
 
         IReadOnlyList<string>? wrapper = ProjectProfile.Load(_temp.Path).PrepWrapper;
 
-        Assert.Equal(["pwsh", "tools/gate.ps1", "-Log", "{log}", "-TimeoutSeconds", "{ceiling}", "--"], wrapper);
+        Assert.Equal(["gate", "run", "--log", "{log}", "--timeout", "{ceiling}", "--"], wrapper);
     }
 
     [Fact]
