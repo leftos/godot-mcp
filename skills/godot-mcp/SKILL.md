@@ -5,9 +5,9 @@ description: Use when running, seeing, driving, inspecting or editing a Godot pr
 
 # Driving Godot through the godot MCP server
 
-The `godot` server (`mcp__godot__*`, source and full reference at `X:\dev\godot-mcp`, public at github.com/leftos/godot-mcp) runs a Godot 4.7 project with a bridge injected, so you can see it, drive it, inspect it and edit its scenes.
+The `godot` server (`mcp__godot__*`, source at github.com/leftos/godot-mcp) runs a Godot 4.7 project with a bridge injected, so you can see it, drive it, inspect it and edit its scenes.
 
-This is the walkthrough; every tool's full arguments, edges and result are in the reference, `X:\dev\godot-mcp\docs\TOOLS.md` (online: https://github.com/leftos/godot-mcp/blob/main/docs/TOOLS.md). Read a tool's section there before its first use in a session when its edges matter (input, time, headless edits).
+This is the walkthrough; every tool's full arguments, edges and result are in the reference, `TOOLS.md` beside this file, which ships with the installed server and matches its version (online, for the latest unreleased state: https://github.com/leftos/godot-mcp/blob/main/docs/TOOLS.md). Read a tool's section there before its first use in a session when its edges matter (input, time, headless edits).
 
 An agent whose godot tools are deferred (its `tools:` list holds `ToolSearch`) loads every tool a step needs in one call, `ToolSearch` with `select:mcp__godot__run_project,mcp__godot__get_ui_elements,mcp__godot__click,…`, rather than one search per tool.
 

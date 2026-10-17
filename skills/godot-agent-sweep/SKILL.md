@@ -31,7 +31,7 @@ The sweep then owns the agent's godot entries: it adds the tools of its classes,
 ```bash
 godot-mcp --sweep-agents --dry-run            # what would change, writing nothing
 godot-mcp --sweep-agents                      # apply
-godot-mcp --sweep-agents --root X:\dev        # also every X:\dev\<repo>\.claude\agents
+godot-mcp --sweep-agents --root <folder>      # also every <folder>\<repo>\.claude\agents
 ```
 
 `godot-mcp` is the installed `%LOCALAPPDATA%\godot-mcp\godot-mcp.exe`. The sweep always covers `~/.claude/agents`; each `--root` folder and each folder in `GODOT_MCP_SWEEP_ROOTS` (`;`-separated, set for the user) adds its child repositories' `.claude/agents`.

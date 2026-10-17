@@ -6,7 +6,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
-- The godot-mcp skill points at `X:\dev\godot-mcp` for the source and the tool reference, not the retired `D:` drive.
+- The installed godot-mcp skill carries its own `TOOLS.md`, matching the installed server, instead of pointing agents at a source checkout's path.
 
 ## 0.17.0 - 2026-10-13
 
