@@ -235,8 +235,20 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
 ## Footguns
 
-- **The recording and capture itest groups need an OpenGL window that shows its picture.** When the graphics driver drops a Compatibility-renderer (OpenGL) window's presents, every real-time clip is a flat grey window and `AFrameMatchesATakeScreenshotOfTheSameMoment` fails saying the frame is one flat colour. Check by running plain `Godot_console.exe --path <probe> --position 100,100` and looking at the window; a graphics-driver reset (Win+Ctrl+Shift+B) or a reboot is the usual cure.
-  A scratch project on Forward+ (the default renderer) still records its picture, so measure video timing with one.
+- **Every itest group but `scene` and `nodes` needs a Compatibility-renderer (OpenGL) window that draws.** InputProbe and CsProbe are `gl_compatibility` (`tests/fixtures/InputProbe/project.godot`, `tests/fixtures/CsProbe/project.godot`), and a quiet run on a hidden desktop still makes a real GL window, so `prep`, `csharp`, `headless` (whose `HeadlessTests` launch quiet games) and the rest fail without GL; they do not skip.
+
+  On a machine with no GPU, Godot falls back to ANGLE on Direct3D 11 WARP, which makes a window only in a logged-on console session: in an ssh session 0 it logs `Failed to create ANGLE OpenGL window.` and the bridge never connects.
+
+  `.gate/desktop.toml` declares the commands that need the build box's console desktop (`itest-csharp`, and the `tools/hidden-desktop.ps1` runs of `PrepTests` and `RestartTests`). The gate routes one there only while the PC's `%LOCALAPPDATA%\gate\remote.json` lists the pattern under both `repos` and `desktop`, else it runs on this machine.
+
+  A change to those commands' text updates the file, whose patterns must equal `remote.json`'s letter for letter; a file the gate cannot read keeps every routed godot-mcp command on this machine.
+
+  The recording and capture groups also need the window's picture to reach the screen. When the graphics driver drops a Compatibility-renderer window's presents, every real-time clip is a flat grey window and `AFrameMatchesATakeScreenshotOfTheSameMoment` fails saying the frame is one flat colour.
+
+  Check by running plain `Godot_console.exe --path <probe> --position 100,100` and looking at the window; a graphics-driver reset (Win+Ctrl+Shift+B) or a reboot is the usual cure. A scratch project on Forward+ (the default renderer) still records its picture, so measure video timing with one.
+- **"The bridge did not connect within 15 s" with only Godot's banner in the log means Godot was stopped before its scripts ran.** Usually by a modal alert that nobody on a hidden desktop or in session 0 can answer: ".NET assemblies not found" when Godot .NET cannot open `GodotSharp\Api\Debug` (a deny entry on the Godot folder that also denied SYNCHRONIZE, gate GATE-400), or the ANGLE failure above.
+
+  Look for the alert's window on that desktop, or in the build box's session, before suspecting the bridge.
 - **The drive gate runs the game, the helper and ffmpeg at BelowNormal priority.** On a busy machine they drop audio and video more than real use would, so a recording measured through the gate under load reads worse than a player's.
 - **`run.ps1 itest -Filter` takes a class name.** A full test name runs zero tests (exit 8).
 - **A fresh worktree may need a local `dotnet restore` of the itest project.** The build can run on the remote build box and leave no restore output on this machine. A worktree whose build went to the build box gets `bin/` back but not `obj/`, so `run.ps1 itest -Filter …` can fail with "No test projects were found" until that restore has run.
