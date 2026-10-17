@@ -26,7 +26,7 @@ The log, the ceiling, the slot kind and the command are all required: a missing 
 
 `--slot heavy` is for a command that keeps many threads busy (a build, `dotnet publish`, `dotnet format`, csharpier, an unfiltered unit run, an itest group that builds C#, one of `$itestHeavyGroups` (prep, headless, scene, nodes, csharp, scratch), and a filtered itest that selects a class of one); `--slot light` for one that keeps one or two busy (a filtered unit run, any other itest group and a filtered itest of their classes only, one headless Godot run, `drive`, `install`, `package`, `pytest`); `run.ps1` passes the kind for each command itself and prints it as `slot: <kind>` beside the log and ceiling.
 
-The gate is `gate` on PATH, developed and self-tested in its own repo, never here; a machine without it installs it from the gate repo (`X:\dev\gate`) with `pwsh tools/install.ps1`, and `run.ps1` refuses a gated command until it has.
+The gate is `gate` on PATH, developed and self-tested in its own repo, never here; a machine without it installs it from the gate repo (`X:\dev\gate`) with `pwsh tools/install.ps1`, and `run.ps1` refuses a gated command until it has. The one exception is GitHub Actions (`GITHUB_ACTIONS=true`), whose hosted runner has no gate: there a command runs ungated, its output still in `.tmp/<command>.log` with the tail printed, and the job's `timeout-minutes` bounds it.
 
 A gate writes `.tmp/<name>.log`, prints the tail and ends with `gate: passed in <w> s (load-adjusted <a> s, ceiling <n> s).` or `gate: FAILED (status n).`. The command runs in a Windows job object, so a kill takes every process it started, and the gate kills it for one of three reasons, each exit 124 with its own line in the log.
 

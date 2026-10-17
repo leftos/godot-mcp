@@ -11,6 +11,8 @@ watchdog kills a run for the first of three reasons, each named by a kill line i
 its reading: STALLED (no output and no CPU for 120 s: it hung), TIMED OUT (the ceiling ran out on a clock that runs
 slower while other work keeps the machine busy: a busy loop or a ceiling set too tight) or BACKSTOP (five times the
 ceiling in plain wall time: the machine was busy, so run it once more alone). The ceilings below are load-adjusted.
+On GitHub Actions only, where no gate is installed, a command runs ungated instead: its output still goes to the same
+log, and the job's timeout-minutes bounds it in place of the ceiling and watchdog.
 
   build    dotnet build GodotMcp.slnx in Release, warnings as errors; ceiling 300 s
   test     the unit tests (tests/GodotMcp.Tests): the project built in Release first (.tmp/test-build.log, ceiling 300 s),
@@ -334,14 +336,24 @@ $dotnetOut = Join-Path $root 'bin/dotnet'
 $dotnetStaging = Join-Path $logDir 'dotnet-publish'
 $captureOut = Join-Path $root 'bin/capture'
 
-# The installed gate on PATH, resolved where a gated command runs so help and itest-groups work on a machine without it.
-function Get-GatePath {
+# The installed gate on PATH, or $null when the machine has none.
+function Find-Gate {
     $command = Get-Command gate -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $command) {
+        return $null
+    }
+    return $command.Source
+}
+
+# The installed gate on PATH, for the itest lane runner and Invoke-ItestStopTree, which GitHub Actions never reaches:
+# exits 2 with the install hint when the machine has none.
+function Get-GatePath {
+    $gate = Find-Gate
+    if ($null -eq $gate) {
         [Console]::Error.WriteLine('run.ps1: gate is not on PATH; install it from the gate repo (X:\dev\gate) with pwsh tools/install.ps1')
         exit 2
     }
-    return $command.Source
+    return $gate
 }
 
 # The last kill line of the gate in a log (a match whose first group is STALLED, TIMED OUT or BACKSTOP), or $null.
@@ -376,9 +388,28 @@ function Get-GateKill {
     return "$($line.Line) $reading"
 }
 
+# Runs a program with no gate: its whole output goes to the log in UTF-8 and not to the screen, the last 15 lines are
+# printed, and its own exit status is returned. Only GitHub Actions reaches this, where the job's timeout-minutes bounds
+# a run in place of the gate's ceiling and watchdog.
+function Invoke-Ungated {
+    param(
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [string]$Program,
+        [Parameter(Mandatory)] [string[]]$Arguments,
+        [Parameter(Mandatory)] [string]$Log
+    )
+    Write-Host "run.ps1: gate is not on PATH; on GitHub Actions, running $Name ungated (no ceiling or watchdog; the job's timeout-minutes bounds it)"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Log) | Out-Null
+    & $Program @Arguments *>&1 | Out-File -LiteralPath $Log -Encoding utf8
+    $status = $LASTEXITCODE
+    Get-Content -LiteralPath $Log -Tail 15 | Out-Host
+    return $status
+}
+
 # Runs a program under gate run: the whole output to .tmp/<Name>.log, the last 15 lines on the screen, and the
 # process tree killed with status 124 when the watchdog stops it (stalled, past its load-adjusted ceiling, or past five
-# times it in wall time), with the log's kill line and its reading printed.
+# times it in wall time), with the log's kill line and its reading printed. On GitHub Actions only, with no gate on
+# PATH, it runs the program ungated instead.
 function Invoke-Gated {
     param(
         [Parameter(Mandatory)] [string]$Name,
@@ -390,7 +421,13 @@ function Invoke-Gated {
     )
     $log = Join-Path $logDir "$Name.log"
     Write-Host "$Program $($Arguments -join ' ')  (log: $log, ceiling: $TimeoutSeconds s, slot: $Slot)"
-    $gate = Get-GatePath
+    $gate = Find-Gate
+    if ($null -eq $gate) {
+        if ($env:GITHUB_ACTIONS -eq 'true') {
+            return Invoke-Ungated -Name $Name -Program $Program -Arguments $Arguments -Log $log
+        }
+        $gate = Get-GatePath
+    }
     $gateOptions = @('run', '--log', $log, '--timeout', $TimeoutSeconds, '--slot', $Slot, '--tail', 15)
     if ($NoMarkers) {
         $gateOptions += '--no-markers'
