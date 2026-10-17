@@ -51,7 +51,10 @@ STAGED_FILES = {
     "helper/GodotMcp.Dotnet.Core.dll": "helper/GodotMcp.Dotnet.Core.dll",
 }
 TEST_ASSEMBLY = "tests/GodotMcp.IntegrationTests/bin/Release/net10.0/GodotMcp.IntegrationTests.dll"
-GROUP_CLASSES = " ".join(f"GodotMcp.IntegrationTests.{name}" for name in ["CSharpToolTests", "GameToolTests", "CSharpStateTests", "CSharpWatchTests"])
+GROUP_CLASSES = " ".join(
+    f"GodotMcp.IntegrationTests.{name}"
+    for name in ["CSharpToolTests", "GameToolTests", "CSharpStateTests", "CSharpWatchTests", "CSharpFiredSignalsTests"]
+)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="the stand-in dotnet is a .cmd")
