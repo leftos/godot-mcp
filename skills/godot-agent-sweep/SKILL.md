@@ -31,14 +31,14 @@ The sweep then owns the agent's godot entries: it adds the tools of its classes,
 ```bash
 godot-mcp --sweep-agents --dry-run            # what would change, writing nothing
 godot-mcp --sweep-agents                      # apply
-godot-mcp --sweep-agents --root D:\           # also every D:\<repo>\.claude\agents
+godot-mcp --sweep-agents --root X:\dev        # also every X:\dev\<repo>\.claude\agents
 ```
 
 `godot-mcp` is the installed `%LOCALAPPDATA%\godot-mcp\godot-mcp.exe`. The sweep always covers `~/.claude/agents`; each `--root` folder and each folder in `GODOT_MCP_SWEEP_ROOTS` (`;`-separated, set for the user) adds its child repositories' `.claude/agents`.
 
 In a git repository it commits only the tracked agent files it changed, as `chore: sync godot-mcp tools` on the current branch, with hooks, and never pushes; the commit is never killed, however long its hooks run.
 
-A repository whose would-change agent files have uncommitted changes is left untouched and reported `repo has uncommitted agent files, skipped`: commit or discard them, then run the sweep again. Each repository is visited once and printed in git's own spelling of its folder, so a `subst` drive (`D:\` for `X:\dev`) prints as its target.
+A repository whose would-change agent files have uncommitted changes is left untouched and reported `repo has uncommitted agent files, skipped`: commit or discard them, then run the sweep again. Each repository is visited once and printed in git's own spelling of its folder, so a junction prints as its target.
 
 The marker is found anywhere in the body, a fenced code block included: an agent that documents the marker is marked by it.
 

@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- The godot-mcp skill points at `X:\dev\godot-mcp` for the source and the tool reference, not the retired `D:` drive.
+
 ## 0.17.0 - 2026-10-13
 
 ### Added

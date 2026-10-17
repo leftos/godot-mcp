@@ -17,7 +17,7 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
    - Verified 2026-09-25 on 4.7.2: an `override.cfg` autoload pointing outside the project loaded, and `project.godot` was untouched.
    - Godot's source: game runs read `override.cfg`; the editor, `--import` and `--export` never do (`main/main.cpp:2107`, `p_ignore_override`).
 3. **C# / .NET 10 server, GDScript bridge.**
-4. **Its own repo at `D:\godot-mcp`.**
+4. **Its own repo at `X:\dev\godot-mcp`.**
 5. **First-version must-have: faithful input**, offered as gestures plus raw events. Gamepad input is part of it: buttons, sticks and triggers per device (user, 2026-09-25).
 6. **The 16 headless scene and node tools are included.**
 7. **`run_project` takes pass-through arguments.**
