@@ -4,7 +4,7 @@ Design draft for GMCP-20, "Design step-until-a-condition and render diagnosis (i
 
 Status: step A1 shipped as `wait_for` `options.then` (ba6b522), which answered GMCP-7 (GitHub #62, "wait_for: no call in the frame an expression or property condition is met").
 
-Steps A2, A3 and A4 (`until` and `input` on a step) landed under GMCP-44 (Step-until: frame_control until and input); A4 (ec90fe7) is in no release yet, since v0.16.0 carries only A2 and A3. What remains is step A5 under GMCP-44, after the release that carries A4, and the render docs, step R1 under GMCP-45 (Document render diagnosis).
+Steps A2, A3 and A4 (`until` and `input` on a step) landed under GMCP-44 (Step-until: frame_control until and input); A4 (ec90fe7) shipped in v0.17.0 and v0.17.1. What remains is step A5 under GMCP-44, after the release that carries A4, and the render docs, step R1 under GMCP-45 (Document render diagnosis).
 
 ## 1. Need
 
@@ -64,7 +64,7 @@ Cited from the `4.7.2-stable` tag of `godotengine/godot` (fetched from `raw.gith
 | The hints at run time | `SceneTree.debug_collisions_hint`, `debug_navigation_hint` and `debug_paths_hint` are "not designed to be changed at run-time" | `SceneTree.xml` L266-276 |
 | `Viewport.debug_draw` | A property of every Viewport (the root Window included): unshaded, lighting, overdraw, wireframe, normal buffer. Lighting and overdraw replace every material, custom shaders included; wireframe under Compatibility needs `RenderingServer.set_debug_generate_wireframes(true)` before any mesh loads; normal buffer is Forward+ only | `Viewport.xml` L341-343, L650-676; `RenderingServer.xml` L3600-3605, L5525-5526 |
 | Renderers in use | The default rendering method is `forward_plus`; delve sets none (`rendering_device/driver.windows="d3d12"`, `project.godot` L170-172), so its 3D runs on Forward+; InputProbe uses `gl_compatibility` | `ProjectSettings.xml` L3279; `tests/fixtures/InputProbe/project.godot` L39-40 |
-| Module sizes | `godot_mcp_time.gd` is 857 lines of gdlint's 1000, `godot_mcp_bridge.gd` 942 and `godot_mcp_step.gd` 416 (`wc -l`) | `bridge/` |
+| Module sizes | `godot_mcp_time.gd` is 870 lines of gdlint's 1000, `godot_mcp_bridge.gd` 942 and `godot_mcp_step.gd` 416 (`wc -l`) | `bridge/` |
 
 The riding-input edges are run by step A4's itest, with the paused control case. Unverified until step R1's drive: whether `set_property` reaches the root Window's `debug_draw` through the bridge's node lookup, and whether a node added after start draws its collision shape under `--debug-collisions`.
 

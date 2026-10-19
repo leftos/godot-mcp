@@ -186,7 +186,7 @@ Source: docs/DECISIONS.md:38-39, docs/DEVELOPMENT.md:95, docs/ARCHITECTURE.md:72
 A quiet run sits on a hidden desktop that the user's mouse and keyboard never reach, so it needs no warning. A run on the user's own desktop does: a `quiet: false` run, or a game the user started and an agent joined.
 
 The bridge swallows real mouse input only while a gesture plays or an injected button is held, and never swallows real keys, so a key the user presses or a mouse they move between calls can break the drive. Before driving such a game, tell the user "hands off"; the skill does not say so yet, since it offers `quiet: false` only for watching or playing along.
-Source: ~/.claude/skills/godot-mcp/SKILL.md:51, ~/.claude/skills/godot-mcp/SKILL.md:64, docs/DEVELOPMENT.md:88-92. Seen: 0 here (seeded from towercab-3d).
+Source: ~/.claude/skills/godot-mcp/SKILL.md:51, ~/.claude/skills/godot-mcp/SKILL.md:64, docs/DEVELOPMENT.md:324-335. Seen: 0 here (seeded from towercab-3d).
 
 ### Mark injected pointer events and keep the pointer while a gesture plays
 <!-- rule: mark-injected-input -->
@@ -196,7 +196,7 @@ Injected mouse events carry a device mark (`0x6D6370`), and while a gesture play
 The app's own hover re-picks (a cursor-state update, a drop's end, a scene change) read the OS cursor, which is garbage on a hidden desktop, so while injected input owns the pointer the hook re-picks at the injected pointer every frame before draw, with a motion no app handler sees; a real motion hands the pointer back (a 0.14.0 fix: hovers used to drop to the hidden cursor).
 
 Every injected event is a new object followed by a flush, so the engine neither merges nor delays it, and every input call answers once its gesture has ended and two more frames have run.
-Source: docs/DEVELOPMENT.md:88-92, bridge/godot_mcp_bridge.gd:57, bridge/godot_mcp_input.gd:98, docs/ARCHITECTURE.md:162, docs/TOOLS.md:146, CHANGELOG.md:24. Seen: 0.14.0 hover fix.
+Source: docs/DEVELOPMENT.md:324-335, bridge/godot_mcp_bridge.gd:57, bridge/godot_mcp_input.gd:98, docs/ARCHITECTURE.md:162, docs/TOOLS.md:146, CHANGELOG.md:24. Seen: 0.14.0 hover fix.
 
 ### Expect real devices to reach even a quiet app, and inject on a device id no real one holds
 <!-- rule: real-devices-leak-in -->
@@ -224,7 +224,7 @@ An element target is checked before any event: a hidden node, one being freed, o
 A text target matches the exact shown text, trimmed and case-sensitive, with no substring fallback ("Play" would press "Play Again" on the wrong screen); several matches are refused with their rects rather than taking the first, since tree order is not screen order.
 
 Results say what was really hit (`pressedOn`, `releasedOn`, `guiDragStarted`, `dropAccepted`), the first thing to read when a click seems to do nothing. Never reach a tab, row or menu entry by setting its state and emitting its signal: that skips the input a player makes; even popup-menu items, which expose no rect, are found by real pointer motions. A showing tooltip is closed before a press, or the tooltip, removed a frame late, is what the press reports hitting.
-Source: docs/DECISIONS.md:83-87, docs/TOOLS.md:146, docs/TOOLS.md:152, docs/ARCHITECTURE.md:39, ~/.claude/skills/godot-mcp/SKILL.md:43, ~/.claude/skills/godot-mcp/SKILL.md:63, CHANGELOG.md:26-27, CHANGELOG.md:307. Seen: 0.1.2 (hidden or covered targets pressed silently) and 0.14.0 (off-screen read as covered) fixes.
+Source: docs/DECISIONS.md:83-87, docs/TOOLS.md:152, docs/ARCHITECTURE.md:39, ~/.claude/skills/godot-mcp/SKILL.md:43, ~/.claude/skills/godot-mcp/SKILL.md:63, CHANGELOG.md:26-27, CHANGELOG.md:307. Seen: 0.1.2 (hidden or covered targets pressed silently) and 0.14.0 (off-screen read as covered) fixes.
 
 ### Judge an action by its effect: read what was hit and read values back
 <!-- rule: check-action-effects -->
@@ -304,7 +304,7 @@ The bridge reaches only what the engine draws and routes input to. Name each sur
 Where the game can avoid opening a native surface while driven, it does, and a tool answers in its place: a native file dialog takes a path the agent queued instead of opening.
 
 Native file dialogs are not named yet, in the docs or in a refusal, and no queue answers them yet, so an agent can still burn turns trying to click one; name them, with the route around them (queue-file-answers), beside the native menus.
-Source: bridge/godot_mcp_popup_targets.gd:19-21, bridge/godot_mcp_popup_targets.gd:138, bridge/godot_mcp_targets.gd:55, docs/TOOLS.md:146. Seen: 0 here (seeded from towercab-3d).
+Source: bridge/godot_mcp_popup_targets.gd:19-21, bridge/godot_mcp_popup_targets.gd:138, bridge/godot_mcp_targets.gd:55, docs/TOOLS.md:362. Seen: 0 here (seeded from towercab-3d).
 
 ### Read the game's output by its tail, and log when the frame rate drops
 <!-- rule: unified-log-tail -->
@@ -398,7 +398,7 @@ Source: docs/DECISIONS.md:91-96, docs/DECISIONS.md:99-106, src/GodotMcp.Dotnet.C
 The bridge should turn every failure (a malformed frame, a missing id or command, an unknown command, a handler error) into a reply with a stable code, a message, a suggested fix and typed details, with an unknown command's hint listing the registered commands; codes may be added but never respelled.
 
 Half of this holds: a lost connection cancels every running request, and errors reply `{id, ok: false, error}`. The rest does not yet: a reply carries a message string and no code, a frame that is not a request or has no id is dropped with a warning instead of answered, and `unknown command '<name>'` lists nothing.
-Source: bridge/godot_mcp_bridge.gd:404-411, bridge/godot_mcp_bridge.gd:482-496, bridge/godot_mcp_bridge.gd:903-906, src/GodotMcp.Server/Wire/BridgeConnection.cs:391. Seen: 0 here (seeded from yaat).
+Source: bridge/godot_mcp_bridge.gd:404-411, bridge/godot_mcp_bridge.gd:496-515, bridge/godot_mcp_bridge.gd:931-934, src/GodotMcp.Server/Wire/BridgeConnection.cs:391. Seen: 0 here (seeded from yaat).
 
 ### Feed the app's errors into every tool result
 <!-- rule: error-feed-on-results -->

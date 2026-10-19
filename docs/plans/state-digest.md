@@ -153,7 +153,7 @@ Godot facts are cited from the `4.7.2-stable` tag of `godotengine/godot`, read t
 
 ## 5. Where the code goes and the tests
 
-- **Bridge**: a new module `bridge/godot_mcp_state.gd` (the `State` child), holding the group walk, the subtree filter, the depth-cut conversion, the per-node error entries and the inline helper call through the `Dotnet` child (`_dotnet`, which it reaches through `bridge`); `godot_mcp_bridge.gd` (845 lines of gdlint's 1000) gains the child's creation and the `state` entry in `_command_handlers`, a few lines.
+- **Bridge**: a new module `bridge/godot_mcp_state.gd` (the `State` child), holding the group walk, the subtree filter, the depth-cut conversion, the per-node error entries and the inline helper call through the `Dotnet` child (`_dotnet`, which it reaches through `bridge`); `godot_mcp_bridge.gd` (942 lines of gdlint's 1000) gains the child's creation and the `state` entry in `_command_handlers`, a few lines.
 
   `godot_mcp_dotnet.gd` gains a public synchronous `call_now(extension, request) -> Dictionary` (load once as `handle` does, then one `helper.call`, never polling), shared by `handle`, so the load and its remembered failure stay in one place.
 - **Core** (`src/GodotMcp.Dotnet.Core/`): `StateMethods.cs`, the rule that finds `_McpState` on a type (instance, parameterless, non-generic, any accessibility, declared up to the first GodotSharp type) and caches it per type; `StateKeys.cs`, the `keys` filter and the flattening to dotted leaf paths (Core, not the server, only if the helper needs it; otherwise the server).
