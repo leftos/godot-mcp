@@ -18,6 +18,8 @@
   - [ ] GMCP-74 Report frame-rate drops below a floor in the game's output
   - [ ] GMCP-75 Give bridge replies stable error codes and answer malformed frames
 - [ ] GMCP-115 fired: a point click over a SubViewport listens on the container, not the inner Control
+- [ ] GMCP-197 Let a wait place a record mark in the frame it is met
+- [ ] GMCP-198 Say how frame_control pause interacts with SceneTreeTimer, or add a hold that stops them
 
 ## Singles
 
