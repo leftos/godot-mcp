@@ -120,6 +120,8 @@ Refused: an attached session (`Session 'x' is attached: the server captures no o
 - An `after` from before a restart is honoured: the buffers carry their numbering over.
 - `value.at` arrives with the drive clock at step 8, not here.
 - The NetProbe `[net] joined` itest lives in `MultiSessionTests`, which owns NetProbe; `TimeTests` covers the InputProbe `run_script` lines.
+- Raw lines reach the wait through a new `GodotSession.GetRawOutput()`, since `GetDebugOutput` cuts them.
+- NetProbe's `_show()` prints `presses: <n>` beside setting Mirror, and the batch assertion scans with `after: 0`: the host's click is the step before the wait, so the line may already be held when the wait starts.
 
 ### D. Steps at once in a batch (questions 3, 4)
 
