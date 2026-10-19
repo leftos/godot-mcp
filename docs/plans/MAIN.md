@@ -89,6 +89,7 @@
 - [ ] GMCP-192 AccessKit: find and aim at a Control by its accessible name
 - [ ] GMCP-193 Capture an HDR 2D view, and resize an embedded game beside a CompositorEffect
 - [ ] GMCP-195 Record a cursor action log beside every clip
+- [ ] GMCP-199 run_scratches: a stale pace.steps key refuses the whole scene
 
 ## Docs
 
