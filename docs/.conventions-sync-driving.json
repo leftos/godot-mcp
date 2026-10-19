@@ -21,7 +21,7 @@
       "user": "8b932e230120198d"
     },
     "coded-errors-never-throw": {
-      "repo": "536e9a700409b07b",
+      "repo": "ead18d3f2d6b715d",
       "user": "4db7422a30f223f1"
     },
     "design-names-hook-surface": {
@@ -89,7 +89,7 @@
       "user": "45cd99cd2da27dd7"
     },
     "mark-injected-input": {
-      "repo": "7f5f22b3ce036f29",
+      "repo": "1971b8ed74d4fed2",
       "user": "b3f75d9310294ad1"
     },
     "merge-inherited-webview-args": {
@@ -97,7 +97,7 @@
       "user": "f5d059f2475ecb67"
     },
     "name-out-of-reach-ui": {
-      "repo": "9039b2dea088c503",
+      "repo": "27f3f0235a8c7a07",
       "user": "e01672b5229d4d44"
     },
     "never-block-main-thread": {
@@ -177,7 +177,7 @@
       "user": "c4299125d17cfe84"
     },
     "refuse-before-pressing": {
-      "repo": "ea9dee7bf653a909",
+      "repo": "856fccfbdb315ce0",
       "user": "31a82a3b4c886604"
     },
     "run-server-from-copy": {
@@ -185,7 +185,7 @@
       "user": "e1357ad6c047e437"
     },
     "say-hands-off-first": {
-      "repo": "bd2f2cfbeee09e82",
+      "repo": "e072f433addb36f7",
       "user": "3876083c457cc8f6"
     },
     "semantic-click-first": {
