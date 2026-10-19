@@ -21,7 +21,19 @@ public sealed class ProcessSessionTests : IAsyncDisposable
     private const string Profile = """
         {"processes": {
           "ticker": {"command": ["pwsh", "-NoProfile", "-File", "ticker.ps1"], "description": "a line a second"},
-          "once": {"command": ["pwsh", "-NoProfile", "-File", "ticker-once.ps1"], "description": "one line then exit"}
+          "once": {"command": ["pwsh", "-NoProfile", "-File", "ticker-once.ps1"], "description": "one line then exit"},
+          "failing": {"command": ["pwsh", "-NoProfile", "-File", "ticker-fails.ps1"], "description": "a stderr line then exit 1"},
+          "unready": {
+            "command": ["pwsh", "-NoProfile", "-File", "ticker.ps1"],
+            "ready": {"output": "Now listening on", "timeoutMs": 2000},
+            "description": "a line a second, never the ready line"
+          },
+          "ticker3": {
+            "command": ["pwsh", "-NoProfile", "-File", "ticker.ps1"],
+            "ready": {"output": "ticker 3", "timeoutMs": 10000},
+            "description": "a line a second, ready on its third"
+          },
+          "gone": {"command": ["./gone.exe", "/c", "exit", "0"], "description": "a program the start-failure test removes"}
         }}
         """;
 
@@ -138,6 +150,199 @@ public sealed class ProcessSessionTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AReadyLineIsWaitedForAtLaunch()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await WriteProfileAsync(cancellation);
+
+        JsonObject ready = JsonNode
+            .Parse(
+                await _process.RunProcessAsync(
+                    _probe.Directory,
+                    "ticker",
+                    options: new ProcessRunOptions(Ready: new ReadyOptions("ticker 1")),
+                    cancellationToken: cancellation
+                )
+            )!
+            .AsObject();
+        string session = ready["session"]!.GetValue<string>();
+        JsonObject met = ready["ready"]!.AsObject();
+
+        Assert.Equal("ticker 1", met["line"]!.GetValue<string>());
+        Assert.Equal("stdout", met["stream"]!.GetValue<string>());
+        Assert.True(met["ms"]!.GetValue<long>() >= 0);
+
+        JsonObject plain = JsonNode
+            .Parse(
+                await _process.RunProcessAsync(
+                    _probe.Directory,
+                    "ticker",
+                    options: new ProcessRunOptions(Session: "plain"),
+                    cancellationToken: cancellation
+                )
+            )!
+            .AsObject();
+
+        Assert.Null(plain["ready"]);
+
+        await _project.StopProjectAsync(session, cancellationToken: cancellation);
+        await _project.StopProjectAsync("plain", cancellationToken: cancellation);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AReadyTimeoutStopsTheProcessAndNamesThePatternAndTime()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await WriteProfileAsync(cancellation);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _process.RunProcessAsync(_probe.Directory, "unready", cancellationToken: cancellation)
+        );
+
+        Assert.StartsWith(
+            "The process 'unready' printed no line matching 'Now listening on' within 2 s of load-adjusted time, so it was stopped; "
+                + "its last output lines:\nstdout:\nticker ",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+        Assert.EndsWith("\nstderr:\n(none)", refused.Message, StringComparison.Ordinal);
+        Assert.Empty(JsonNode.Parse(_project.ListSessions(includeStopped: true))!["sessions"]!.AsArray());
+
+        int childPid = await WaitForChildPidAsync();
+        await WaitForGoneAsync(childPid);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AReadyWaitRefusesAProcessThatExitsFirst()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await WriteProfileAsync(cancellation);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _process.RunProcessAsync(
+                _probe.Directory,
+                "failing",
+                options: new ProcessRunOptions(Ready: new ReadyOptions("Now listening on")),
+                cancellationToken: cancellation
+            )
+        );
+
+        Assert.Equal(
+            "The process 'failing' exited (code 1) before a line matched 'Now listening on'; its last stderr lines:\n[ticker] failing",
+            refused.Message
+        );
+        Assert.Empty(JsonNode.Parse(_project.ListSessions(includeStopped: true))!["sessions"]!.AsArray());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ARestartStartsTheStoredCommandAgainAndKeepsTheBufferNumbering()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await WriteProfileAsync(cancellation);
+
+        JsonObject started = JsonNode.Parse(await _process.RunProcessAsync(_probe.Directory, "ticker", cancellationToken: cancellation))!.AsObject();
+        string session = started["session"]!.GetValue<string>();
+        int firstProcessId = started["processId"]!.GetValue<int>();
+        int firstChildPid = await WaitForChildPidAsync();
+        await WaitForTickerLineAsync(session);
+        long after = JsonNode.Parse(_project.GetDebugOutput(limit: 100, session: session))!["stdoutTotalLines"]!.GetValue<long>();
+
+        JsonObject restarted = JsonNode.Parse(await _project.RestartProjectAsync(session: session, cancellationToken: cancellation))!.AsObject();
+
+        Assert.NotEqual(firstProcessId, restarted["processId"]!.GetValue<int>());
+        Assert.Equal(firstProcessId, restarted["previousProcessId"]!.GetValue<int>());
+        Assert.Null(restarted["previousExitCode"]);
+        Assert.Null(restarted["ready"]);
+        Assert.Equal(
+            started["command"]!.AsArray().Select(node => node!.GetValue<string>()),
+            restarted["command"]!.AsArray().Select(node => node!.GetValue<string>())
+        );
+        Assert.Equal(started["log"]!.GetValue<string>(), restarted["log"]!.GetValue<string>());
+
+        int secondChildPid = await WaitForNewChildPidAsync(firstChildPid);
+        await WaitForGoneAsync(firstChildPid);
+        using (var secondChild = Process.GetProcessById(secondChildPid))
+        {
+            Assert.False(secondChild.HasExited);
+        }
+
+        string waited = await _runtime.WaitForAsync(new WaitCondition(Output: TickerLine, After: after), 10_000, session, cancellation);
+        Assert.True(JsonNode.Parse(waited)!["met"]!.GetValue<bool>());
+
+        JsonObject stopped = JsonNode.Parse(await _project.StopProjectAsync(session, cancellationToken: cancellation))!.AsObject();
+        Assert.Equal("process", stopped["kind"]!.GetValue<string>());
+        await WaitForGoneAsync(secondChildPid);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ARestartWaitsForTheNewProcessesReadyLine()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await WriteProfileAsync(cancellation);
+
+        JsonObject started = JsonNode.Parse(await _process.RunProcessAsync(_probe.Directory, "ticker3", cancellationToken: cancellation))!.AsObject();
+        string session = started["session"]!.GetValue<string>();
+        Assert.Equal("ticker 3", started["ready"]!["line"]!.GetValue<string>());
+
+        JsonObject restarted = JsonNode.Parse(await _project.RestartProjectAsync(session: session, cancellationToken: cancellation))!.AsObject();
+
+        Assert.Equal("ticker 3", restarted["ready"]!["line"]!.GetValue<string>());
+        Assert.True(restarted["ready"]!["ms"]!.GetValue<long>() >= 2000);
+
+        await _project.StopProjectAsync(session, cancellationToken: cancellation);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ARestartThatCannotStartLeavesTheSessionStoppable()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await WriteProfileAsync(cancellation);
+        string program = Path.Combine(_probe.Directory, "gone.exe");
+        File.Copy(Path.Combine(Environment.SystemDirectory, "cmd.exe"), program);
+
+        JsonObject started = JsonNode.Parse(await _process.RunProcessAsync(_probe.Directory, "gone", cancellationToken: cancellation))!.AsObject();
+        string session = started["session"]!.GetValue<string>();
+        string aside = program + ".away";
+        File.Move(program, aside);
+        try
+        {
+            McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+                _project.RestartProjectAsync(session: session, cancellationToken: cancellation)
+            );
+            Assert.StartsWith("Godot could not be started from ", refused.Message, StringComparison.Ordinal);
+
+            JsonObject stopped = JsonNode.Parse(await _project.StopProjectAsync(session, cancellationToken: cancellation))!.AsObject();
+            Assert.Equal("process", stopped["kind"]!.GetValue<string>());
+
+            McpException again = await Assert.ThrowsAsync<McpException>(() =>
+                _project.RestartProjectAsync(session: session, cancellationToken: cancellation)
+            );
+            Assert.StartsWith("Godot could not be started from ", again.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Move(aside, program);
+        }
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ARestartAfterShutdownIsRefused()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await WriteProfileAsync(cancellation);
+        JsonObject started = JsonNode.Parse(await _process.RunProcessAsync(_probe.Directory, "ticker", cancellationToken: cancellation))!.AsObject();
+        string session = started["session"]!.GetValue<string>();
+
+        _harness.Sessions.Shutdown();
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() =>
+            _harness.Sessions.RestartAsync(session, prepare: false, cancellation)
+        );
+
+        Assert.Equal(SessionRegistry.ShuttingDown, refused.Message);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ABatchRefusesAProcessToolStepBeforeAnyStepRuns()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -228,6 +433,21 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         while (true)
         {
             if (File.Exists(pidFile) && int.TryParse((await File.ReadAllTextAsync(pidFile, timeout.Token)).Trim(), out int pid))
+            {
+                return pid;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50), timeout.Token);
+        }
+    }
+
+    private async Task<int> WaitForNewChildPidAsync(int oldPid)
+    {
+        string pidFile = Path.Combine(_probe.Directory, "ticker-child.pid");
+        using CancellationTokenSource timeout = new(Wait);
+        while (true)
+        {
+            if (File.Exists(pidFile) && int.TryParse((await File.ReadAllTextAsync(pidFile, timeout.Token)).Trim(), out int pid) && pid != oldPid)
             {
                 return pid;
             }

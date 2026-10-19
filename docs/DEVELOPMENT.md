@@ -184,15 +184,20 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
   `TimeTests` covers a line a later script prints, a check-once wait from an `after` mark, and a timeout with both `last` streams; `MultiSessionTests` waits for the guest's `[net] joined` line and has a batch output assertion wait on the count it prints.
 
   `WaitOutputValidationTests` and `BatchValidationTests` (unit) cover the refusals (blank or invalid `output`, a bad `stream`, a negative `after`, check-once without `after`, `screenshot`, `then`, `call` and `edge`) and a `fired` assertion refusing `output`, `stream` and `after`.
-- **Process sessions** (`run_process`, and `stop_project` on one): unit `RunProcessValidationTests` (`tests/GodotMcp.Tests/Tools`) covers the refusals (no `godot-mcp.json`, an empty `projectPath`, an unknown name listing every declared process or `none`), the default session name fitted from the process's key, the call's `args` appended after the command, and a program with a folder in it resolved against the project folder while a bare one is left to `PATH`.
+- **Process sessions** (`run_process`, and `stop_project` and `restart_project` on one): unit `RunProcessValidationTests` (`tests/GodotMcp.Tests/Tools`) covers the refusals (no `godot-mcp.json`, an empty `projectPath`, an unknown name listing every declared process or `none`), the default session name fitted from the process's key, the call's `args` appended after the command, and a program with a folder in it resolved against the project folder while a bare one is left to `PATH`.
+
+  It covers the call's `ready` too: replacing the profile's whole, the profile's used when the call gives none, a missing or empty `output`, an invalid pattern, a timeout outside 1 to 600000, and the 60000 default.
 
   `ProjectProfileTests` covers the `processes` section: every field and the 60000 ms default, an unknown key, a wrong type, an empty `command`, a duplicate name, an absolute or escaping `cwd`, a bad `ready.output`, a `timeoutMs` outside 1 to 600000, and `IsInsideFolder`'s edges.
 
-  Itest `ProcessSessionTests` (the `sessions` group) runs on an InputProbe copy that takes the fixture's top-level `ticker.ps1`, which prints a line a second and starts `ticker-child.ps1`, and `ticker-once.ps1`, which prints one line and exits.
+  Itest `ProcessSessionTests` (the `sessions` group) runs on an InputProbe copy that takes the fixture's top-level `ticker.ps1`, which prints a line a second and starts `ticker-child.ps1`, `ticker-once.ps1`, which prints one line and exits, and `ticker-fails.ps1`, which prints a stderr line and exits 1.
 
-  It covers a start's `{session, processId, log, command}`, `list_sessions`' `kind: "process"` with a null `gameProcessId`, the ticker's line through `get_debug_output` and `wait_for {output}`, a runtime tool's refusal, and a passing `batch_drive` output assertion beside a tool step refused before any step runs.
+  It covers a start's `{session, processId, log, command}`, a `ready` line met at launch with its stream and milliseconds, a `ready` timeout quoting the pattern and load-adjusted seconds and stopping the tree, and a process that exits before its line quoting its last stderr lines.
+  It also covers `list_sessions`' `kind: "process"` with a null `gameProcessId`, the ticker's line through `get_debug_output` and `wait_for {output}`, a runtime tool's refusal, and a passing `batch_drive` output assertion beside a tool step refused before any step runs.
 
   `stop_project` returns `{kind: "process", killed: true, alreadyExited: false, exitCode: null}` and ends the child with the job, and a process that exits on its own stays listed as stopped while its child still ends.
+
+  `restart_project` starts the stored command and arguments again, keeps the output buffer numbering (an `after` mark reads the new process's line), leaves `previousExitCode` out when the job ended the old process, and waits on the new process's ready line; a start failure leaves the session stoppable, and one after the server's shutdown is refused.
 
   `SessionArmTests` pins that a live process session binds neither a folder's arm nor a preview's quiet and shut-out settings; `McpServerSmokeTests` and `ToolClassesTests` count the tool and its class.
 - **Watch audio tracks** (`tracks.audio.players`): `tests/bridge/test_watch_audio.gd` (gdtest, stub players only, since `run_tests.gd` runs inside `_initialize` before the root is in the tree and a real player cannot play).

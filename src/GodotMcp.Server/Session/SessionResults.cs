@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using GodotMcp.Server.Tools;
 
 namespace GodotMcp.Server.Session;
 
@@ -218,6 +219,23 @@ internal sealed record StopResult(string Session, string ProjectPath, int? ExitC
 /// exited. The kind is always "process".
 /// </summary>
 internal sealed record ProcessStopResult(string Session, string ProjectPath, string Kind, int? ExitCode, bool Killed, bool AlreadyExited);
+
+/// <summary>
+/// How restart_project restarted a process session: the new process, the one it replaced and that one's exit code (null when
+/// the kill-on-close job had to end it, since that code is not the process's own), the command started again, its log, and
+/// the ready line it met when it waits on one.
+/// </summary>
+internal sealed record ProcessRestartResult(
+    string Session,
+    string ProjectPath,
+    string Process,
+    int ProcessId,
+    int PreviousProcessId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PreviousExitCode,
+    IReadOnlyList<string> Command,
+    string Log,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ReadyResult? Ready = null
+);
 
 /// <summary>What stop_project returns when its projectPath had a warm headless host and no session running there.</summary>
 internal sealed record HostStopResult(string ProjectPath, bool HeadlessHostStopped);

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using GodotMcp.Server.Tools;
 
 namespace GodotMcp.Server.Session;
@@ -15,12 +16,19 @@ internal sealed partial class GodotSession
     private readonly OutputBuffer _processStdout = new(GodotRun.OutputCapacity);
     private readonly OutputBuffer _processStderr = new(GodotRun.OutputCapacity);
     private ToolProcess.Running? _process;
+    private ProcessLaunch? _launch;
+
+    /// <summary>The launch a process session keeps, so a restart starts the same command and waits on the same ready line.</summary>
+    private sealed record ProcessLaunch(string Key, ProcessProfile Profile, IReadOnlyList<string> Command, ReadyProfile? Ready);
 
     /// <summary>
     /// The program a process session runs, as the refusals name it: its file name without the extension, e.g. "dotnet"; null
     /// until the session starts.
     /// </summary>
     internal string? ProcessProgram { get; private set; }
+
+    /// <summary>Whether the session has started its process once, so its stored launch can be started again.</summary>
+    internal bool HasProcessLaunch => _launch is not null;
 
     /// <summary>Whether the process session's program is running; false for a session that has not started or has stopped.</summary>
     private bool ProcessRunning
@@ -38,48 +46,169 @@ internal sealed partial class GodotSession
         }
     }
 
-    /// <summary>What every runtime tool but the output wait says when it addresses a process session.</summary>
+    /// <summary>
+    /// What every runtime tool but the output wait, restart_project and the session tools says when it addresses a process
+    /// session.
+    /// </summary>
     internal static string ProcessRefusal(string session, string program) =>
         $"Session '{session}' is a process ({program}), not a Godot game: only wait_for with an output condition, "
-        + "get_debug_output, stop_project and list_sessions reach it.";
+        + "get_debug_output, restart_project, stop_project and list_sessions reach it.";
 
-    /// <summary>What restart_project says on a process session.</summary>
-    internal static string RestartRefusal(string session, string program) =>
-        $"Session '{session}' is a process ({program}): stop it with stop_project and start it again with run_process; "
-        + "restart_project restarts Godot runs.";
+    /// <summary>What restart_project says on a process session that never started.</summary>
+    internal const string NothingToRestart = "No process has been started in this session, so there is nothing to restart.";
 
     /// <summary>
     /// Starts the process a run_process call declares: <paramref name="command"/> from the project folder, in the profile's
     /// cwd with its environment, with no ceiling or stall kill, its output buffered and logged, and its tree in a job that
-    /// ends it when the job closes. A process that cannot join the job refuses the start.
+    /// ends it when the job closes. When the call declares a ready line, the start waits for it before returning; a process
+    /// that cannot join the job, exits first or misses the line refuses the start and is ended.
     /// </summary>
+    /// <param name="key">The process's name as the project's godot-mcp.json declares it.</param>
     /// <param name="profile">The process's declaration.</param>
     /// <param name="command">The program resolved and its arguments, as the process is started.</param>
+    /// <param name="ready">The line to wait for before returning; null for a start that returns at once.</param>
     /// <param name="cancellationToken">Refuses the start when the call was cancelled.</param>
-    /// <exception cref="SessionException">The session was already stopped.</exception>
-    /// <exception cref="System.ComponentModel.Win32Exception">The program could not be started, or the kill-on-close job made.</exception>
-    /// <exception cref="IOException">The log could not be opened.</exception>
-    internal (int ProcessId, string Log) StartProcess(ProcessProfile profile, IReadOnlyList<string> command, CancellationToken cancellationToken)
+    /// <exception cref="SessionException">
+    /// The program could not be started, the process exited before ready, or its ready timeout passed.
+    /// </exception>
+    internal async Task<(int ProcessId, string Log, ReadyResult? Ready)> StartProcess(
+        string key,
+        ProcessProfile profile,
+        IReadOnlyList<string> command,
+        ReadyProfile? ready,
+        CancellationToken cancellationToken
+    )
     {
         cancellationToken.ThrowIfCancellationRequested();
-        string log = Path.Combine(ProjectPrep.LogFolder(ProjectDir), $"process-{Name}.log");
-        ToolProcessRequest request = new(command[0], [.. command.Skip(1)], profile.Cwd ?? ProjectDir, log, Timeout.InfiniteTimeSpan)
+        // The ready wait may scan only what the new process prints; the buffers carry a restart's earlier lines and numbering.
+        long stdoutStart = _processStdout.TotalLines;
+        long stderrStart = _processStderr.TotalLines;
+        string log;
+        ToolProcess.Running process;
+        try
         {
-            SetVariables = profile.Env,
-            FlushEachLine = true,
-            StallLimit = TimeSpan.MaxValue,
-            KillOnClose = true,
-            StandardOutputLine = _processStdout.Add,
-            StandardErrorLine = _processStderr.Add,
-        };
-        ToolProcess.Running process = ToolProcess.Start(request, Logger);
+            log = Path.Combine(ProjectPrep.LogFolder(ProjectDir), $"process-{Name}.log");
+            ToolProcessRequest request = new(command[0], [.. command.Skip(1)], profile.Cwd ?? ProjectDir, log, Timeout.InfiniteTimeSpan)
+            {
+                SetVariables = profile.Env,
+                FlushEachLine = true,
+                StallLimit = TimeSpan.MaxValue,
+                KillOnClose = true,
+                StandardOutputLine = _processStdout.Add,
+                StandardErrorLine = _processStderr.Add,
+            };
+            process = ToolProcess.Start(request, Logger);
+        }
+        catch (Exception e) when (e is Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            throw new SessionException($"The process could not be started: {e.Message}", e);
+        }
+
         // The session owns the process before anything can watch it, so a failure from here leaves a session stop_project can end.
         _process = process;
+        ProcessLaunch launch = new(key, profile, [.. command], ready);
+        _launch = launch;
         ProcessId = process.Process.Id;
         ProcessProgram = ProgramName(command[0]);
-        _pending = false;
         _ = CloseJobWhenExitedAsync(process);
-        return (process.Process.Id, log);
+        ReadyResult? met = ready is null ? null : await WaitForReadyAsync(launch, stdoutStart, stderrStart, cancellationToken);
+        _pending = false;
+        return (process.Process.Id, log, met);
+    }
+
+    /// <summary>
+    /// Waits for the started process to print a line the launch's ready matches, scanning only the lines above the marks taken
+    /// before it started so a restart never matches the replaced process's line, stdout before stderr. A process that exits
+    /// first, a pattern that takes over a second to match and a timeout each end the process's tree and refuse the start.
+    /// </summary>
+    private async Task<ReadyResult> WaitForReadyAsync(ProcessLaunch launch, long stdoutStart, long stderrStart, CancellationToken cancellationToken)
+    {
+        ReadyProfile ready = launch.Ready!;
+        long started = Stopwatch.GetTimestamp();
+        using LoadDeadline deadline = LoadClock.Shared.Start(TimeSpan.FromMilliseconds(ready.TimeoutMs), cancellationToken);
+        while (true)
+        {
+            (OutputPage stdout, OutputPage stderr, _, _) = GetProcessRawOutput();
+            (OutputMatch? match, string? error) = OutputWait.Scan(stdout, stderr, "any", ready.Regex, stdoutStart, stderrStart);
+            if (error is not null)
+            {
+                throw await RefuseReadyAsync(() =>
+                    new SessionException($"The ready pattern '{ready.Output}' took over 1 s to match a line; simplify the pattern.")
+                );
+            }
+
+            if (match is { } found)
+            {
+                return new ReadyResult(
+                    OutputBuffer.Cut(found.Line, OutputBuffer.MaxLineLength),
+                    found.Stream,
+                    (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds
+                );
+            }
+
+            if (!ProcessRunning)
+            {
+                throw await RefuseReadyAsync(() => ExitedBeforeReady(launch));
+            }
+
+            if (deadline.Expired)
+            {
+                throw await RefuseReadyAsync(() => ReadyTimedOut(launch));
+            }
+
+            try
+            {
+                await Task.Delay(OutputWait.Poll, deadline.Token);
+            }
+            catch (OperationCanceledException) when (deadline.Expired)
+            {
+                throw await RefuseReadyAsync(() => ReadyTimedOut(launch));
+            }
+        }
+    }
+
+    /// <summary>Ends a process that failed its ready wait: closes its job, waits for it and finishes its output, then returns the refusal.</summary>
+    private async Task<SessionException> RefuseReadyAsync(Func<SessionException> refusal)
+    {
+        if (_process is { } process)
+        {
+            process.Tree.CloseJob();
+            await WaitGoneAsync(process.Process);
+            await process.FinishOutputAsync();
+        }
+
+        return refusal();
+    }
+
+    /// <summary>The refusal of a process that exited before its ready line: its own exit code and its last stderr lines.</summary>
+    private SessionException ExitedBeforeReady(ProcessLaunch launch)
+    {
+        int code = _process is { } process ? ExitCodeOf(process.Process) ?? 0 : 0;
+        string lines = Lines(_processStderr);
+        return new SessionException(
+            $"The process '{launch.Key}' exited (code {code}) before a line matched '{launch.Ready!.Output}'; " + $"its last stderr lines:\n{lines}"
+        );
+    }
+
+    /// <summary>
+    /// The refusal of a process that printed no ready line in time: the pattern, the load-adjusted seconds and both
+    /// streams' last lines.
+    /// </summary>
+    private SessionException ReadyTimedOut(ProcessLaunch launch)
+    {
+        ReadyProfile ready = launch.Ready!;
+        string seconds = TimeSpan.FromMilliseconds(ready.TimeoutMs).TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture);
+        return new SessionException(
+            $"The process '{launch.Key}' printed no line matching '{ready.Output}' within {seconds} s of load-adjusted time, so it was "
+                + $"stopped; its last output lines:\nstdout:\n{Lines(_processStdout)}\nstderr:\n{Lines(_processStderr)}"
+        );
+    }
+
+    /// <summary>A stream's last 20 held lines, or "(none)", as a ready refusal quotes them.</summary>
+    private static string Lines(OutputBuffer buffer)
+    {
+        List<string> lines = buffer.Tail(HangProbe.StderrLineCount);
+        return lines.Count == 0 ? "(none)" : string.Join('\n', lines);
     }
 
     /// <summary>
@@ -97,6 +226,65 @@ internal sealed partial class GodotSession
         await WaitGoneAsync(process.Process);
         await process.FinishOutputAsync();
         return new ProcessStopResult(Name, ProjectDir, "process", exitCode, Killed: !alreadyExited, AlreadyExited: alreadyExited);
+    }
+
+    /// <summary>
+    /// Under the session's gate: stops the process it runs (or the one that already ended), starts its stored launch again,
+    /// waiting on the same ready line, and lets go of the old handle once the new one is in place. A start that fails leaves
+    /// the old handle, so the session stays stoppable; a ready refusal leaves it listed as stopped with its output.
+    /// </summary>
+    /// <exception cref="SessionException">The session never started a process, or the new process failed its ready wait.</exception>
+    internal async Task<ProcessRestartResult> RestartProcessAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _gate.WaitAsync(cancellationToken);
+            try
+            {
+                ProcessLaunch launch = _launch ?? throw new SessionException(NothingToRestart);
+                int previousProcessId = ProcessId ?? throw new SessionException(NothingToRestart);
+                ToolProcess.Running previous = _process ?? throw new SessionException(NothingToRestart);
+                ProcessStopResult stopped = await StopProcessAsync();
+                previous.CloseLog();
+                try
+                {
+                    (int processId, string log, ReadyResult? ready) = await StartProcess(
+                        launch.Key,
+                        launch.Profile,
+                        launch.Command,
+                        launch.Ready,
+                        cancellationToken
+                    );
+                    return new ProcessRestartResult(
+                        Name,
+                        ProjectDir,
+                        launch.Key,
+                        processId,
+                        previousProcessId,
+                        stopped.ExitCode,
+                        launch.Command,
+                        log,
+                        ready
+                    );
+                }
+                finally
+                {
+                    // A start that failed before assigning leaves the old handle in place, so the session stays stoppable.
+                    if (!ReferenceEquals(_process, previous))
+                    {
+                        previous.Dispose();
+                    }
+                }
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+        finally
+        {
+            _pending = false;
+        }
     }
 
     /// <summary>Ends a process session at the server's exit: closes its job and waits for the process to go.</summary>

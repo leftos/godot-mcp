@@ -349,25 +349,33 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
-    /// Restarts the named or only run with the request it was launched with. The session is marked starting under the
-    /// registry's lock, so its name is never free during the restart, after the folder's live sessions are checked again:
-    /// one may have started on it with another setting since the session's game exited.
+    /// Restarts the named or only session with the request it was launched with: a run's last launch, or a process session's
+    /// stored process command. The session is marked starting under the registry's lock, so its name is never free during
+    /// the restart, after the folder's live sessions are checked again: one may have started on it with another setting since
+    /// the session's game exited.
     /// </summary>
+    /// <returns>A <see cref="RestartResult"/> for a run, a <see cref="ProcessRestartResult"/> for a process session.</returns>
     /// <exception cref="SessionException">
-    /// No session answers, the session is attached, still starting or never launched, the folder's live sessions rule it
-    /// out, the prep failed, or the new game did not start.
+    /// No session answers, the session is attached, still starting or never launched, a process session never started, the
+    /// folder's live sessions rule it out, the prep failed, or the new game did not start.
     /// </exception>
-    public Task<RestartResult> RestartAsync(string? session, bool prepare, CancellationToken cancellationToken)
+    public async Task<object> RestartAsync(string? session, bool prepare, CancellationToken cancellationToken)
     {
         GodotSession target;
         lock (_lock)
         {
             target = FindSession(session) ?? throw new SessionException(GodotSession.NoneRunning);
             CheckCanRestart(target);
+            RefuseStartAtShutdown();
             target.BeginRestart();
         }
 
-        return target.RestartAsync(prepare, cancellationToken);
+        if (target.Kind == SessionKind.Process)
+        {
+            return await target.RestartProcessAsync(cancellationToken);
+        }
+
+        return await target.RestartAsync(prepare, cancellationToken);
     }
 
     /// <exception cref="SessionException">No session answers to the name, or the session is not an attached one.</exception>
@@ -1118,12 +1126,25 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                 + "out first."
             : $"Another attach on {spec.ProjectDir} is still waiting for its game; wait for it or let it time out first.";
 
-    /// <summary>Refuses an attached session, one still starting or never launched, and one the folder's live sessions rule out.</summary>
+    /// <summary>
+    /// Refuses a session still starting, a process session that never started, an attached session, one that never launched,
+    /// and one the folder's live sessions rule out.
+    /// </summary>
     private void CheckCanRestart(GodotSession target)
     {
+        if (target.IsStarting)
+        {
+            throw new SessionException($"session '{target.Name}' is still starting or restarting; wait for its call to return, or stop_project it.");
+        }
+
         if (target.Kind == SessionKind.Process)
         {
-            throw new SessionException(GodotSession.RestartRefusal(target.Name, target.ProcessProgram ?? "a process"));
+            if (!target.HasProcessLaunch)
+            {
+                throw new SessionException(GodotSession.NothingToRestart);
+            }
+
+            return;
         }
 
         if (target.Kind == SessionKind.Attach)
@@ -1132,11 +1153,6 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                 $"session '{target.Name}' is attached, not started by run_project, so it cannot be restarted; detach_project, then start "
                     + "the game again yourself."
             );
-        }
-
-        if (target.IsStarting)
-        {
-            throw new SessionException($"session '{target.Name}' is still starting or restarting; wait for its call to return, or stop_project it.");
         }
 
         if (target.LastLaunch is null)

@@ -280,7 +280,9 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "records the new game to a new file (recording.path); the old game's recording is finished as stop_project "
             + "finishes it and returned as previousRecording. A real-time recording (record_mark) of the old game is ended "
             + "before it is stopped and its clip returned as previousRecording {mode: realtime, clips: [path], startedSeconds, "
-            + "warning?, error?}; the new game does not record until record_mark start. An attached session cannot be restarted."
+            + "warning?, error?}; the new game does not record until record_mark start. An attached session cannot be restarted. "
+            + "On a process session (run_process), it stops the program and starts its stored command and arguments again; "
+            + "options.prepare does not apply, and previousExitCode is left out when the kill-on-close job had to end the old process."
     )]
     public async Task<string> RestartProjectAsync(
         [Description(
@@ -293,7 +295,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     )
     {
         bool prepare = (options ?? new RestartOptions()).ShouldPrepare();
-        RestartResult result = await RunAsync(() => sessions.RestartAsync(session, prepare, cancellationToken));
+        object result = await RunAsync(() => sessions.RestartAsync(session, prepare, cancellationToken));
         return JsonSerializer.Serialize(result, Json);
     }
 

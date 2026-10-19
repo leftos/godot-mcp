@@ -59,7 +59,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   A new session is named after its project folder, fitted to the name rule (1 to 64 letters, digits, `.`, `_`, `-`; any other character becomes `_`, so `My Game` becomes `My_Game`). When a live session on another folder already holds that name (two worktrees of one repo), the new one takes `<name>-2`, `-3`, …, cut to fit 64 characters; read it from the result's `session`.
 
-  A process session (`run_process`) is a third kind beside a run and an attach: it has no bridge, joins no folder bookkeeping and writes no `override.cfg`, so the folder's quiet and shut-out rules do not bind it. Only `wait_for` with an output condition, `get_debug_output`, `stop_project` and `list_sessions` reach it; every other runtime tool and `restart_project` refuse it.
+  A process session (`run_process`) is a third kind beside a run and an attach: it has no bridge, joins no folder bookkeeping and writes no `override.cfg`, so the folder's quiet and shut-out rules do not bind it. Only `wait_for` with an output condition, `get_debug_output`, `restart_project`, `stop_project` and `list_sessions` reach it; every other runtime tool refuses it.
 
   Two sessions on one folder need distinct names: pass `options.session` to `run_project` or `attach_project`. The headless tools and `preview_scene` take `projectPath` instead and no session.
 - **Errors ride along.** A runtime tool's result carries `errors` (file, line, stack) for every error the game raised while the call ran, and the call still succeeds, except `run_script` and `call_method` as their sections say. The key is present only when the game raised an error during the call: its absence means none. Read `errors` in every result before the next step.
@@ -188,8 +188,12 @@ For an agent driving a Godot project through this server: which tool fits a job,
 ### `restart_project`
 
 - **Does:** relaunches a run session with the scene, arguments and options it was started with, keeping its name, its error `seq` and its debug output (a marker line separates the two games).
+
+  On a process session (`run_process`) it stops the program and starts its stored command and arguments again, waiting on the same ready line and keeping the session and its output buffers; `options.prepare` does not apply.
+  Its result is `{session, projectPath, process, processId, previousProcessId, previousExitCode?, command, log, ready?}`, `previousExitCode` left out when the kill-on-close job ended the old process and `ready` when the launch waited on none.
+  A session that never started is refused (`No process has been started in this session, so there is nothing to restart.`); a start that fails is refused as `run_process`'s is and leaves the session stoppable, and one after the server's shutdown has begun is refused as a run restart is.
 - **Use:** after editing code or scenes, to pick up the change without losing the session; `options {prepare}`.
-- **Edges:** the prep runs while the old game still runs, so a failed C# build is an error and leaves the old game running. To change the scene or arguments, `stop_project` then `run_project`. An attached session cannot be restarted, and a process session is refused (`Session '<name>' is a process (<program>): stop it with stop_project and start it again with run_process; restart_project restarts Godot runs.`).
+- **Edges:** the prep runs while the old game still runs, so a failed C# build is an error and leaves the old game running. To change the scene or arguments, `stop_project` then `run_project`. An attached session cannot be restarted.
   The old game is stopped as `stop_project` stops it, with its `warning` when a debugger was attached to it; `previousAlreadyExited` and `previousGameExitCode` (left out when unknown) say how it had ended, as `stop_project`'s `alreadyExited` and `gameExitCode` do, and `previousKillReason`, `previousLeftRunning` and `previousQuitMs` (each left out when empty) say how it was stopped, as its `killReason`, `leftRunning` and `quitMs` do.
   A recording run records the new game to a new file and returns the old one's outcome as `previousRecording`.
   A real-time recording of the old game is ended before it is stopped and its clip returned as `previousRecording` in `stop_project`'s real-time shape (a failed finish is its `error`, as there, and does not fail the restart); the new game does not record until `record_mark` `start`.
@@ -197,19 +201,29 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `run_process`
 
-- **Does:** starts a program the project's `godot-mcp.json` declares and returns at once, leaving it running: `{session, projectPath, process, processId, command, log}` (`process` its name in the file, `processId` the program's own pid, `command` the argv it started with, `log` the file its output is also written to).
+- **Does:** starts a program the project's `godot-mcp.json` declares, leaving it running: `{session, projectPath, process, processId, command, log, ready?}` (`process` its name in the file, `processId` the program's own pid, `command` the argv it started with, `log` the file its output is also written to, `ready` the line it waited on when the call or the profile declares one). It returns once the program starts, or once its ready line matches.
 - **Use:** a game server or a mock backend a drive needs beside its games. `projectPath` is the folder holding `project.godot`, `process` a name under the file's `processes` section, and `args` are appended to its `command`. Without `options.session` the session is the process's name fitted to the name rule, as a folder name is; a live session of that name on the same folder refuses the start as a run's does, and one on another folder takes `<name>-2`, `-3`, ….
+
+  `options {session, ready}`; `options.ready {output, timeoutMs}` gives the line to wait for, replacing the profile's `ready` whole.
 
   The folder must have a `godot-mcp.json` declaring the process: a missing file or an unknown name is refused, the latter listing every process it declares. No prep runs before the start (`dotnet run` builds itself).
 
-  `ready` is parsed and its pattern compiled, but `run_process` does not wait on it: the call returns as soon as the program starts. To wait for a line it prints, follow with `wait_for`'s `output` condition.
+  `ready` is a .NET regular expression a line is matched against before the call returns, stdout first and then stderr. `timeoutMs` is 1 to 600000 of load-adjusted time, 60000 when left out.
+
+  The wait scans only the lines the program prints after it starts, so a restart never matches the replaced process's line, and the result's `ready` is `{line, stream, ms}`: the matched line cut as `get_debug_output` cuts it, the stream it came from, and the real elapsed milliseconds.
+
+  The process is stopped and the start refused when it exits first (`The process '<name>' exited (code <n>) before a line matched '<pattern>'; its last stderr lines:` its last 20, or `(none)`), or when its timeout passes (`The process '<name>' printed no line matching '<pattern>' within <n> s of load-adjusted time, so it was stopped; its last output lines:` the last 20 of each stream).
+
+  A line the pattern takes over 1 s to match refuses it too: `The ready pattern '<pattern>' took over 1 s to match a line; simplify the pattern.` To wait for a later line, use `wait_for`'s `output` condition.
 - **A process session:** it has no bridge. `list_sessions` reports `kind: "process"`, its `processId` (the program itself) and a null `gameProcessId`, live while it runs and still listed as stopped after it ends.
 
   Its stdout and stderr fill the same last-500-lines buffers `get_debug_output` reads (lines cut at 1000 characters), its output is also written to `.godot/godot-mcp/process-<session>.log` (fresh on each start), and `wait_for` with an `output` condition, `after` included, reads those buffers.
 
-  Every other runtime tool and `restart_project` refuse it: `Session '<name>' is a process (<program>), not a Godot game: only wait_for with an output condition, get_debug_output, stop_project and list_sessions reach it.` `batch_drive` refuses a tool step on a process before any step of the batch runs (`{passed: false, steps: [], failedAt: {index, reason}}`), while a `wait` assertion with an `output` condition works.
+  Every other runtime tool refuses it: `Session '<name>' is a process (<program>), not a Godot game: only wait_for with an output condition, get_debug_output, restart_project, stop_project and list_sessions reach it.` `batch_drive` refuses a tool step on a process before any step of the batch runs (`{passed: false, steps: [], failedAt: {index, reason}}`), while a `wait` assertion with an `output` condition works.
 - **Stop:** `stop_project {session}` terminates the process and everything it started at once, and the server's exit ends process sessions with the runs. A process session is stopped by name only; `stop_project {projectPath}` never stops it.
 - **Edges:** parsing the section is strict: an unknown key, a wrong type, an empty `command`, a `ready.output` that is not a valid .NET regular expression, a duplicate name and a `cwd` that is absolute or leaves the project folder are each refused with the file's path and the fix. A process session needs Windows, since its process tree lives in a Windows job object; elsewhere the start is refused and nothing starts.
+
+  A call's `options.ready` with no `output`, an invalid pattern or a `timeoutMs` outside 1 to 600000 is refused before the start.
 
 ### `list_sessions`
 
@@ -1252,7 +1266,9 @@ A `processes` object declares the programs `run_process` starts, each keyed by t
 
 `cwd` is the folder the program runs in, relative to the project folder (an absolute path or one that leaves it is refused); left out, the project folder. `env` sets variables over the server's environment, with no way to remove one. `description` says what the process is, shown when a call names one the file does not declare.
 
-`ready {output, timeoutMs}` is accepted and its `output` must compile as a .NET regular expression, with `timeoutMs` 1 to 600000 (default 60000). `run_process` does not wait on `ready`: wait for the line with `wait_for`'s `output` condition.
+`ready {output, timeoutMs}` is the line `run_process` waits for before returning: `output` must compile as a .NET regular expression matched against stdout and then stderr, and `timeoutMs` is 1 to 600000 of load-adjusted time, 60000 when left out.
+
+A call's `options.ready` replaces the entry whole, and `restart_project` waits on it again; to wait for a later line, use `wait_for`'s `output` condition.
 
 The section is parsed strictly with the rest of the file: an unknown key, a wrong type, an empty `command`, a bad `ready.output`, a duplicate process name and a `cwd` that is absolute or leaves the project folder are each refused with the file's path and the fix. A process is not a preset and not a `run_project`: presets still launch Godot only.
 

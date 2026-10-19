@@ -269,7 +269,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         int firstGame = Assert.Single(_harness.Sessions.List(includeStopped: true)).GameProcessId!.Value;
         _harness.Sessions.IsDebuggerAttached = _ => true;
 
-        RestartResult restarted = await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
+        var restarted = (RestartResult)await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
         int secondGame = Assert.Single(_harness.Sessions.List(includeStopped: true)).GameProcessId!.Value;
         StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
 
@@ -435,7 +435,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         string started = await tools.RunScriptAsync(LingeringChildScript, 10_000, null, cancellation);
         int pingId = JsonNode.Parse(started)!["value"]!.GetValue<int>();
 
-        RestartResult restarted = await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
+        var restarted = (RestartResult)await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
         await _harness.Sessions.StopAsync(null, cancellation);
         bool pingGone = await ProcessGoneAsync(pingId);
 
@@ -454,7 +454,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
         await tools.RunScriptAsync(SlowToQuitScript, 10_000, null, cancellation);
 
-        RestartResult restarted = await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
+        var restarted = (RestartResult)await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
         await _harness.Sessions.StopAsync(null, cancellation);
 
         Assert.NotNull(restarted.PreviousKillReason);
@@ -471,7 +471,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
         await tools.RunScriptAsync(SlowButInTimeScript, 10_000, null, cancellation);
 
-        RestartResult restarted = await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
+        var restarted = (RestartResult)await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
         await _harness.Sessions.StopAsync(null, cancellation);
 
         Assert.Null(restarted.PreviousKillReason);
@@ -572,7 +572,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         await _harness.Sessions.LaunchAsync(Request(), "held", cancellation);
         // The old game never finishes quitting, so the restart stays in flight through its stop's grace, past both refusal checks.
         await tools.RunScriptAsync(IgnoresQuitScript, 10_000, "held", cancellation);
-        Task<RestartResult> restart = _harness.Sessions.RestartAsync("held", prepare: false, cancellation);
+        Task<object> restart = _harness.Sessions.RestartAsync("held", prepare: false, cancellation);
         await Task.Delay(RestartPastItsChecks, cancellation);
         try
         {
@@ -583,7 +583,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
             Assert.True(failed is null or SessionException, $"the restart failed with something other than a refused start: {failed}");
             if (failed is null)
             {
-                Assert.True(await ProcessGoneAsync((await restart).ProcessId), "the restarted game outlived the registry");
+                Assert.True(await ProcessGoneAsync(((RestartResult)await restart).ProcessId), "the restarted game outlived the registry");
             }
 
             Assert.False(File.Exists(_probe.OverrideFile));
@@ -592,7 +592,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         {
             if (restart.IsCompletedSuccessfully)
             {
-                EndIfRunning((await restart).ProcessId);
+                EndIfRunning(((RestartResult)await restart).ProcessId);
             }
         }
     }

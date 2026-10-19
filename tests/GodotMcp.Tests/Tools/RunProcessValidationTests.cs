@@ -30,6 +30,17 @@ public sealed class RunProcessValidationTests : IDisposable
         }
         """;
 
+    private const string ReadyDeclares = """
+        {
+          "processes": {
+            "server": {
+              "command": ["dotnet", "run"],
+              "ready": {"output": "Now listening on", "timeoutMs": 120000}
+            }
+          }
+        }
+        """;
+
     [Fact]
     public void AProjectWithNoProfileIsRefused()
     {
@@ -123,6 +134,93 @@ public sealed class RunProcessValidationTests : IDisposable
         string[] command = ProcessTools.CommandFor(server, _temp.Path, []);
 
         Assert.Equal("dotnet", command[0]);
+    }
+
+    [Fact]
+    public void ACallsReadyReplacesTheProfilesWhole()
+    {
+        Write(ReadyDeclares);
+        ProcessProfile server = ProcessTools.ProcessOf(ProcessTools.LoadProfile(_temp.Path), "server");
+
+        ReadyProfile? ready = ProcessTools.ReadyFor(server, new ReadyOptions("ticker \\d+", 1500));
+
+        Assert.NotNull(ready);
+        Assert.Equal("ticker \\d+", ready.Output);
+        Assert.Equal(1500, ready.TimeoutMs);
+        Assert.Matches(ready.Regex, "ticker 7");
+        Assert.DoesNotMatch(ready.Regex, "Now listening on");
+    }
+
+    [Fact]
+    public void NoReadyOptionsTakesTheProfiles()
+    {
+        Write(ReadyDeclares);
+        ProcessProfile server = ProcessTools.ProcessOf(ProcessTools.LoadProfile(_temp.Path), "server");
+
+        ReadyProfile? ready = ProcessTools.ReadyFor(server, null);
+
+        Assert.NotNull(ready);
+        Assert.Equal("Now listening on", ready.Output);
+        Assert.Equal(120000, ready.TimeoutMs);
+    }
+
+    [Fact]
+    public void AReadyWithoutAnOutputIsRefused()
+    {
+        Write(ReadyDeclares);
+        ProcessProfile server = ProcessTools.ProcessOf(ProcessTools.LoadProfile(_temp.Path), "server");
+
+        McpException refused = Assert.Throws<McpException>(() => ProcessTools.ReadyFor(server, new ReadyOptions()));
+
+        Assert.Equal("options.ready.output is missing: pass the regular expression a printed line is matched against.", refused.Message);
+    }
+
+    [Fact]
+    public void AnEmptyReadyOutputIsRefused()
+    {
+        Write(ReadyDeclares);
+        ProcessProfile server = ProcessTools.ProcessOf(ProcessTools.LoadProfile(_temp.Path), "server");
+
+        McpException refused = Assert.Throws<McpException>(() => ProcessTools.ReadyFor(server, new ReadyOptions("")));
+
+        Assert.Equal("options.ready.output is missing: pass the regular expression a printed line is matched against.", refused.Message);
+    }
+
+    [Fact]
+    public void AnInvalidReadyRegexIsRefused()
+    {
+        Write(ReadyDeclares);
+        ProcessProfile server = ProcessTools.ProcessOf(ProcessTools.LoadProfile(_temp.Path), "server");
+        Exception parse = Assert.IsAssignableFrom<ArgumentException>(Record.Exception(() => ScratchProfile.Compile("(")));
+
+        McpException refused = Assert.Throws<McpException>(() => ProcessTools.ReadyFor(server, new ReadyOptions("(")));
+
+        Assert.Equal($"options.ready.output is not a valid .NET regular expression: {parse.Message}. Fix or remove it.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(600001)]
+    public void AReadyTimeoutOutsideOneTo600000IsRefused(int timeoutMs)
+    {
+        Write(ReadyDeclares);
+        ProcessProfile server = ProcessTools.ProcessOf(ProcessTools.LoadProfile(_temp.Path), "server");
+
+        McpException refused = Assert.Throws<McpException>(() => ProcessTools.ReadyFor(server, new ReadyOptions("ticker", timeoutMs)));
+
+        Assert.Equal($"options.ready.timeoutMs must be a whole number from 1 to 600000; got {timeoutMs}.", refused.Message);
+    }
+
+    [Fact]
+    public void AReadyTimeoutLeftOutDefaultsTo60000()
+    {
+        Write(ReadyDeclares);
+        ProcessProfile server = ProcessTools.ProcessOf(ProcessTools.LoadProfile(_temp.Path), "server");
+
+        ReadyProfile? ready = ProcessTools.ReadyFor(server, new ReadyOptions("ticker"));
+
+        Assert.NotNull(ready);
+        Assert.Equal(60000, ready.TimeoutMs);
     }
 
     private void Write(string json) => File.WriteAllText(FilePath, json);

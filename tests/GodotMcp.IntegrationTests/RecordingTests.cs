@@ -158,7 +158,7 @@ public sealed class RecordingTests : IAsyncDisposable
         LaunchResult launched = await LaunchAsync(record: true);
         await MarkAsync("start");
 
-        RestartResult restarted = await _harness.Sessions.RestartAsync(null, prepare: true, cancellation);
+        var restarted = (RestartResult)await _harness.Sessions.RestartAsync(null, prepare: true, cancellation);
         StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
 
         RecordingResult previous = restarted.PreviousRecording ?? throw new InvalidOperationException("restart returned no previousRecording.");

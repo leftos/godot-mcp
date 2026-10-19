@@ -463,6 +463,12 @@ internal static class ToolProcess
         /// <summary>Waits for the output to end after the exit, at most <see cref="OutputDrainGrace"/>, saying in the log when it did not.</summary>
         public Task FinishOutputAsync() => FinishDrainAsync(started.Drain, started.Sink);
 
+        /// <summary>
+        /// Lets go of the log file while keeping the process and its job usable for a stop, so a restart can open the same path
+        /// again: call it once the output has finished draining, which drops any line that still arrives.
+        /// </summary>
+        public void CloseLog() => started.Sink.Dispose();
+
         /// <summary>Kills the whole process tree and waits until Windows lets go of the process, at most <see cref="KillWait"/>.</summary>
         public void Kill()
         {

@@ -278,7 +278,7 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
         await Task.Delay(500, Token);
 
         var sinceRestart = Stopwatch.StartNew();
-        RestartResult restarted = await _harness.Sessions.RestartAsync(Session, prepare: false, Token);
+        var restarted = (RestartResult)await _harness.Sessions.RestartAsync(Session, prepare: false, Token);
         _recording = false;
         RecordingResult? listedAfterRestart = ListedRecording();
         await AssertWindowRestoredAsync(Token);
