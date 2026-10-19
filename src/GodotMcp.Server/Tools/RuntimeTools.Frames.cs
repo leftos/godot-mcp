@@ -158,7 +158,10 @@ internal sealed partial class RuntimeTools
             Text: start.Text,
             Under: start.Under,
             Stable: start.Stable,
-            State: start.State
+            State: start.State,
+            Output: start.Output,
+            Stream: start.Stream,
+            After: start.After
         );
         string kind = StartKindOf(condition);
         if (kind is not ("exists" or "property" or "expression"))
@@ -194,6 +197,7 @@ internal sealed partial class RuntimeTools
         condition.Text is not null || condition.Under is not null ? "text"
         : condition.Stable is not null ? "settled"
         : condition.State is not null ? "state"
+        : condition.Output is not null ? "output"
         : CheckCondition(condition);
 
     /// <summary>

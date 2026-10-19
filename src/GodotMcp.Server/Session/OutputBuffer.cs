@@ -62,6 +62,15 @@ internal sealed class OutputBuffer(int capacity)
         }
     }
 
+    /// <summary>The held lines uncut, oldest first, with the number of the first (null when there are none).</summary>
+    public OutputPage Raw()
+    {
+        lock (_lock)
+        {
+            return new OutputPage(_lines.Count == 0 ? null : _totalLines - _lines.Count + 1, [.. _lines]);
+        }
+    }
+
     /// <summary>
     /// <paramref name="text"/> when it fits in <paramref name="max"/> characters, else its start and "… (+N chars)"; the cut
     /// never splits a surrogate pair, so it keeps one character fewer when the last one kept would be a pair's first half.

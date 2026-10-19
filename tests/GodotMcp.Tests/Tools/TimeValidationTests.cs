@@ -13,7 +13,7 @@ public sealed class TimeValidationTests : IDisposable
 {
     private const string ConditionMessage =
         "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
-        + "{gameMs}, {frames}, {text}, {node, stable}, {node, state, equals}.";
+        + "{gameMs}, {frames}, {text}, {node, stable}, {node, state, equals}, {output} (with stream and after optional).";
     private const string ScaleMessage = "time_scale needs scale, greater than 0 and at most 100.";
 
     // The refusals of an options.call of neither form, both, or args of the other form's shape, after the option's path.
@@ -98,6 +98,19 @@ public sealed class TimeValidationTests : IDisposable
         McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", 10, null, options));
 
         Assert.Equal("frame_control step's until takes any wait_for condition but frames: count is the most frames a step runs.", refused.Message);
+    }
+
+    [Fact]
+    public void UntilRefusesAnOutputCondition()
+    {
+        StepOptions options = new(Until: new WaitCondition(Output: "joined"));
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", null, null, options));
+
+        Assert.Equal(
+            "frame_control step's until takes any wait_for condition but output: a step waits on the game's frames, not its printed lines.",
+            refused.Message
+        );
     }
 
     [Fact]

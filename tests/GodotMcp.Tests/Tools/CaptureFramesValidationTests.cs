@@ -381,6 +381,7 @@ public sealed class CaptureFramesValidationTests : IDisposable
     [InlineData("text")]
     [InlineData("settled")]
     [InlineData("state")]
+    [InlineData("output")]
     public async Task AStartOfAnotherKindIsRefused(string kind)
     {
         CaptureStart start = kind switch
@@ -391,6 +392,7 @@ public sealed class CaptureFramesValidationTests : IDisposable
             "text" => new(Text: "Start", Under: "Lobby"),
             "settled" => new(Node: "Lobby", Stable: 10),
             "state" => new(Node: "Board", EqualsValue: Json("2"), State: "turn"),
+            "output" => new(Output: "joined"),
             _ => new(Frames: 30),
         };
 

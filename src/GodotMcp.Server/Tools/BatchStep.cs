@@ -63,5 +63,9 @@ internal sealed record BatchStep(
         "state, wait: with node and equals, the key path into the node's state to compare (seats[0].hp, or $ for the whole "
             + "state), as wait_for's condition.state."
     )]
-        string? State = null
+        string? State = null,
+    [property: Description("wait: a regular expression matched against a line the session printed, as wait_for's condition.output.")]
+        string? Output = null,
+    [property: Description("wait: stdout, stderr or any (the default) with output, as wait_for's condition.stream.")] string? Stream = null,
+    [property: Description("wait: scan only lines numbered after this one with output, 0 or more, as wait_for's condition.after.")] long? After = null
 );

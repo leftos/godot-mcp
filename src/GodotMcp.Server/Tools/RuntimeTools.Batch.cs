@@ -79,6 +79,9 @@ internal sealed partial class RuntimeTools
         ("under", step => step.Under is not null),
         ("stable", step => step.Stable is not null),
         ("state", step => step.State is not null),
+        ("output", step => step.Output is not null),
+        ("stream", step => step.Stream is not null),
+        ("after", step => step.After is not null),
     ];
 
     [McpServerTool(Name = BatchToolName, ReadOnly = false, Destructive = true, OpenWorld = false)]
@@ -315,7 +318,10 @@ internal sealed partial class RuntimeTools
                 step.Text,
                 step.Under,
                 step.Stable,
-                step.State
+                step.State,
+                step.Output,
+                step.Stream,
+                step.After
             ),
         };
 

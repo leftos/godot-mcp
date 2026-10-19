@@ -26,7 +26,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | Frames at set moments of an animation or a timed sequence | `capture_frames` | a `take_screenshot` per moment, whose timing drifts |
 | Press an InputMap action | `simulate_action` | `key` on a key bound to it |
 | Find the input a game cannot survive | `stress_input` | a hand-written loop of random `simulate_input` calls |
-| Wait for something to happen | `wait_for` | polling `inspect_node` or `run_script` |
+| Wait for something to happen | `wait_for` | polling `inspect_node`, `run_script` or `get_debug_output` |
 | Read or change a live node | `inspect_node`, `set_property`, `call_method` | `run_script`, which is for anything those three cannot say |
 | Read a game's own state (turn, hit points, the cell a player stands on) | `get_game_state`, when the game marks nodes | a screenshot, or a sampling `run_script` |
 | See everything an action changed in a subtree | `snapshot_subtree`, act, `diff_snapshots` | `inspect_node` on each node before and after |
@@ -515,7 +515,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 - **Does:** `action` `pause` or `resume` sets `SceneTree.paused`; `step` advances exactly `count` (1 to 1000, default 1) drawn frames, or physics ticks with `options.unit: "physics"`, and leaves the game paused; `time_scale` sets `Engine.time_scale` to `scale` (above 0, at most 100). Returns `{paused, timeScale, processFrames, physicsFrames}`, and a step adds `frame`, `Engine.get_process_frames()` where it stopped.
 - **Use:** freezing the game to inspect it; `step` with `options.screenshot: true` to capture the exact frame reached; `time_scale` to fast-forward a slow sequence.
 
-  `step` with `options.until`, any `wait_for` condition but `frames`, stops on the first stepped frame that meets it and stays paused there, so every read tool, a screenshot included, sees that frame. With `until`, `count` is the most frames the step runs, 1000 when left out (still 1 without `until`; 1 to 1000).
+  `step` with `options.until`, any `wait_for` condition but `frames` or `output`, stops on the first stepped frame that meets it and stays paused there, so every read tool, a screenshot included, sees that frame. With `until`, `count` is the most frames the step runs, 1000 when left out (still 1 without `until`; 1 to 1000).
 
   The condition is checked after each stepped frame, never before the first (so an `until: {node, stable: N}` counts stepped frames and needs a `count` above N), so a step runs at least one frame even when the condition already holds: at the frame's draw with the process unit, as the next physics tick starts with `options.unit: "physics"`.
 
@@ -526,7 +526,9 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   A step fails if the game pauses itself midway, unless its `until` is met on that frame or tick. While a step or a `capture_frames` runs, other steps, `pause` and `resume` are refused. On a headless game a step with `options.screenshot` fails with `take_screenshot`'s headless refusal, in place of the no-draw refusal a step without a screenshot still gets.
 
-  `until` is refused on `pause`, `resume` and `time_scale` (`options.until applies to step only.`; `options.input` likewise, `options.input applies to step only.`), and with a `frames` condition (`frame_control step's until takes any wait_for condition but frames: count is the most frames a step runs.`); its other conditions are refused as `wait_for` refuses them, `uiChanged` with no pending baseline included, before any frame runs.
+  `until` is refused on `pause`, `resume` and `time_scale` (`options.until applies to step only.`; `options.input` likewise, `options.input applies to step only.`), and with a `frames` condition (`frame_control step's until takes any wait_for condition but frames: count is the most frames a step runs.`) or an output one.
+
+  The output refusal reads `frame_control step's until takes any wait_for condition but output: a step waits on the game's frames, not its printed lines.` Its other conditions are refused as `wait_for` refuses them, `uiChanged` with no pending baseline included, before any frame runs.
 
   A condition that cannot be met (an ambiguous unique name) fails the step with `wait_for`'s text, the game left paused at that frame. A `state` until (`until: {node, state, equals}`) reads the node's state after each stepped frame as `wait_for` does, a C# node's through the C# helper, so it stops on the frame a game's own key reaches a value. A signal `until` is connected when the request arrives, so a signal emitted before the first stepped frame is met at that first frame.
 
@@ -575,7 +577,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   A `start.call` the bridge refuses, or that fails, fails the capture with its error and takes no frames.
 
-  Another kind is refused: `options.start takes an exists, property or expression condition; this condition is {kind}.` (a start given `text` or `under` is of kind `text`, one given `stable` of kind `settled`, and one given `state` of kind `state`, whatever else it carries) A bad `start.timeoutMs` or `start.then` is refused with `wait_for`'s texts (`timeoutMs must be between 0 and 120000.`, `options.then needs call, timeScale or both.`).
+  Another kind is refused: `options.start takes an exists, property or expression condition; this condition is {kind}.` (a start given `text` or `under` is of kind `text`, one given `stable` of kind `settled`, one given `state` of kind `state`, and one given `output` of kind `output`, whatever else it carries) A bad `start.timeoutMs` or `start.then` is refused with `wait_for`'s texts (`timeoutMs must be between 0 and 120000.`, `options.then needs call, timeScale or both.`).
 
   The result adds `start: {met: true, frame, call?, then?, failedChecks?, mutedErrors?}`, `call` being `{value}`, the start call's return value, reported when the start is met and when it times out; `frame` being `Engine.get_process_frames()` where the start was met.
 
@@ -689,7 +691,9 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
 ### `wait_for`
 
-- **Does:** waits until `condition` holds, checked each frame, exactly one of `{node, exists}`, `{node, property, equals}`, `{node, signal}`, `{expression}`, `{uiChanged: true}`, `{gameMs}`, `{frames}`, `{text, under?, exists?}`, `{node, stable: N, property?}` or `{node, state, equals}`: `{met, elapsedMs, frames, value}` (`args` for a signal), or on timeout `{met: false, ..., last}`.
+- **Does:** waits until `condition` holds, checked each frame (the server polls an output wait), exactly one of `{node, exists}`, `{node, property, equals}`, `{node, signal}`, `{expression}`, `{uiChanged: true}`, `{gameMs}`, `{frames}`, `{text, under?, exists?}`, `{node, stable: N, property?}`, `{node, state, equals}` or `{output, stream?, after?}`: `{met, elapsedMs, frames, value}` (`args` for a signal), or on timeout `{met: false, ..., last}`.
+
+  An output wait has no `frames`: its `value` is `{line, stream, lineNumber, groups}`, and its timeout `last` is `{stdout, stderr}`.
 - **Use:** after an input, to wait for its effect instead of sleeping; `timeoutMs` 0 to 120000, default 10000, load-adjusted: under load it waits longer in wall time.
 
   So a `timeoutMs` is never a pause: to hold for a span of the game's own time (a shot 0.5 s into an effect), wait `{gameMs: N}` (1 to 120000 ms of process delta over unpaused frames, so it follows `time_scale` and load does not stretch it) or `{frames: N}` (1 to 7200 unpaused process frames), each alone, counted from the first frame after the request; `value` is the game ms (whole) or frames reached, up to one frame past N. Left out, their `timeoutMs` is N + 10000 for `gameMs` and 10 s + 100 ms a frame for `frames`, and a settled wait's is 10 s + 100 ms for each of the `stable` + 1 frames it reads, so it grows with `stable` (10200 for 1, 70100 for 600); each is at most 600000.
@@ -698,9 +702,9 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   The result adds `call` as `capture_frames`' does; a refused or erroring call fails the wait. A check-once wait (`timeoutMs: 0`) with a call waits for the next frame, calls, then checks once.
 
-  A `signal` or `uiChanged` wait refuses `options.call` (`options.call is taken only by a gameMs, frames, exists, property, expression, text, settled or state wait; this condition is {kind}.`), and `batch_drive`'s wait assertion has none: put a `call_method` step before it.
+  A `signal`, `uiChanged` or `output` wait refuses `options.call` (`options.call is taken only by a gameMs, frames, exists, property, expression, text, settled or state wait; this condition is {kind}.`), and `batch_drive`'s wait assertion has none: put a `call_method` step before it.
 
-  In a recording (`run_project` `options.record`) it counts clip time instead, 60 movie frames a second, however slowly the game runs, so a timed-out `expression: "false"` wait holds a still of exactly that length in the clip, and the result adds `clipMs`, the clip time waited (`elapsedMs` stays real time).
+  In a recording (`run_project` `options.record`) a bridge wait counts clip time instead, 60 movie frames a second, however slowly the game runs, so a timed-out `expression: "false"` wait holds a still of exactly that length in the clip, and the result adds `clipMs`, the clip time waited (`elapsedMs` stays real time).
 
   `{uiChanged: true}` waits for a UI change nobody can name in advance: it compares the visible Controls (as `get_ui_elements` lists them), the focus owner and the top popup with the baseline the bridge snapshots when the first input gesture since launch, or since the last met `uiChanged` wait, starts.
 
@@ -708,7 +712,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   `property` takes subproperty paths (`position:x`); `equals` compares as `run_script` returns values, numbers within 1e-6. An `expression` sees `node`, `root`, `tree`, `Input` and `Engine`. `options.screenshot: true` captures the frame the condition was met on, as `take_screenshot` does, adding `screenshot {path, width, height, previewPath, previewWidth, previewHeight}` and a preview image at most 480 px wide: for a scene that changes faster than a following `take_screenshot` can catch.
 - **A headless game:** `options.screenshot` on a headless game still returns the wait's result, with `warning` "a headless game draws no frames, so no screenshot was taken; read state with get_game_state, get_ui_elements or run_script, or run the scene windowed." and no engine error.
-- **Act in the met frame:** `options.then {call?: {node, method, args?} | {tool, args?}, timeScale?, pause?}`, taken by every condition and by a check-once wait, runs once in the frame the condition is first found true (the met frame): `call` first, then `timeScale` (above 0, at most 100), which scales the next frame on, then `pause: true`, which pauses the game there as `frame_control pause` does and adds `paused: true` to the result's `then`; `frame_control resume` undoes it, and a `timeScale` set beside it applies on resume.
+- **Act in the met frame:** `options.then {call?: {node, method, args?} | {tool, args?}, timeScale?, pause?}`, taken by every condition but `output` and by a check-once wait, runs once in the frame the condition is first found true (the met frame): `call` first, then `timeScale` (above 0, at most 100), which scales the next frame on, then `pause: true`, which pauses the game there as `frame_control pause` does and adds `paused: true` to the result's `then`; `frame_control resume` undoes it, and a `timeScale` set beside it applies on resume.
 
   A `then` needs at least one of the three (`options.then needs call, timeScale, pause or a mix.`).
 
@@ -758,7 +762,26 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
   `options.edge`, `options.call`, `then`, `screenshot`, `timeoutMs: 0` (checked once, even while paused) and a `frame_control` `until` all compose with it. A C# node's state is read through the C# helper in the same frame, which the first check loads, and the default timeout covers.
 
   Refused: a blank `state` (`condition.state is blank; give a key path into the node's state, such as seats[0].hp, or $ for the whole state.`), `property` or `stable` with it (`a state condition takes no property or stable; state names the key path to read.`) and `state` without `equals` (`a state condition needs equals, the JSON value the key must equal; null is not supported.`).
-- **Edges:** a timeout is a result (`met: false`), not an error. While the game is paused only a signal wait or a check-once wait (`timeoutMs: 0`) is accepted; a check-once wait is refused for a signal, `gameMs`, `frames` or settled wait, and a pause during a `gameMs` or `frames` wait stops its count, so it runs to its timeout with `last` the progress. `equals: null` is not supported: use an expression (`node.target == null`).
+- **Wait for a printed line:** `{output: "<regular expression>"}` waits until a line the run printed matches a .NET regular expression, against the captured stdout and/or stderr (`stream`: `stdout`, `stderr` or `any`, the default, which scans stdout first).
+
+  It sends nothing to the bridge, so it works while the game is paused, and an attached session, which captures no output, is refused (`Session '<name>' is attached: the server captures no output from a game it did not start; wait on a node, a property or an expression instead.`).
+
+  Met, `value` is `{line, stream, lineNumber, groups}`: the line as printed, cut at 1000 characters in the answer but matched whole; the stream it came from; its number in that stream, as `get_debug_output`'s totals number it; and the pattern's capture groups (the whole match excluded, null for a group that did not match).
+
+  A timeout's `last` is `{stdout, stderr}`, each stream's newest line or null, both keys always present; `elapsedMs` is real time and the result has no `frames`.
+
+  `after` starts the scan after that line number on both streams: `after: 0` scans every line still held (the last 500 of each stream), and left out, only lines printed after the call are read. Line numbers carry over a restart, as `get_debug_output`'s do, so a mark taken before one still finds the lines printed since. In a Movie Maker recording `timeoutMs` still counts load-adjusted time: no clip time is involved in a check the server makes.
+
+  It takes no `options.call`, `options.edge`, `then` or `screenshot`: `options.call is taken only by a gameMs, frames, exists, property, expression, text, settled or state wait; this condition is output.`
+
+  An `edge` refusal reads `options.edge applies to exists, property, expression, text and state waits; this condition is output.`; `then` and `screenshot` are refused as `options.then needs a wait that meets on a game frame; an output wait meets on a printed line.` and `options.screenshot needs a wait that meets on a game frame; an output wait meets on a printed line.`
+
+  `timeoutMs` defaults to 10000 and is load-adjusted; `timeoutMs: 0` checks once, and needs `after` (`timeoutMs 0 checks once, which an output wait needs after for: without it there is nothing new to check.`). A pattern that takes over its one-second match timeout ends the wait with `condition.output took over 1 s to match a line; simplify the pattern.`
+
+  Refused: a blank `output` (`condition.output is blank; give a regular expression to match a printed line.`), one that does not compile (`condition.output is not a valid regular expression: <reason>.`), a `stream` other than the three (`condition.stream must be stdout, stderr or any; got <value>.`), a negative `after` (`condition.after must be 0 or more; got <value>.`) and another kind's field beside `output`.
+- **Edges:** a timeout is a result (`met: false`), not an error.
+
+  While the game is paused only a signal wait, an output wait or a check-once wait (`timeoutMs: 0`) is accepted; a check-once wait is refused for a signal, `gameMs`, `frames` or settled wait; an output one needs `after` for it; and a pause during a `gameMs` or `frames` wait stops its count, so it runs to its timeout with `last` the progress. `equals: null` is not supported: use an expression (`node.target == null`).
 
   With `options.screenshot`, the condition is checked inside each frame's draw, so the image shows the state the check saw; a timed-out wait captures nothing, a check-once or signal wait captures the draw of the frame running when it is met, which in a running game can already show nodes that processed after the check (pause first for an exact image), and a frame not drawn (a minimized window, low-processor mode) answers a `warning` and no image.
 
@@ -945,10 +968,14 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 - **Does:** plays 1 to 100 `steps` against a running game in one call and stops at the first failure: `{passed, steps: [{index, tool | assert, ok, result | error}], failedAt?}`.
 - **Use:** a regression check or a long repeatable sequence.
 
-  A step is `{tool, args}` (any runtime tool of this server but `batch_drive` and `save_screenshot`, with its own arguments) or an assertion `{assert, ...}`: `property {node, property, equals, timeoutMs?}`, `expression {expression, timeoutMs?}`, `state {node, state, equals, timeoutMs?}` (the value at a key path of the node's state, as `wait_for`'s state condition reads it), `wait {any wait_for condition, gameMs, frames, text (with under, exists), stable (with property) and state included, timeoutMs?}` (wait_for's own default timeout, `stable` growing it as it does there), `no_errors {}`, `screenshot {name, tolerance?, maxChangedRatio?}`, `fired {node, signal, equals?}`.
+  A step is `{tool, args}` (any runtime tool of this server but `batch_drive` and `save_screenshot`, with its own arguments) or an assertion `{assert, ...}`: `property {node, property, equals, timeoutMs?}`, `expression {expression, timeoutMs?}`, `state {node, state, equals, timeoutMs?}` (the value at a key path of the node's state, as `wait_for`'s state condition reads it).
+
+  A `wait` takes any `wait_for` condition, `gameMs`, `frames`, `text` (with `under`, `exists`), `stable` (with `property`), `state` and `output` (with `stream`, `after`) included, and `wait_for`'s own default timeout, `stable` growing it as it does there; the other assertions are `no_errors {}`, `screenshot {name, tolerance?, maxChangedRatio?}` and `fired {node, signal, equals?}`.
 
   Any step may carry `session`; the batch's `session` is the default.
-- **Edges:** `property`, `expression` and `state` default to `timeoutMs: 0` (checked once, now); `wait` defaults to 10000. A `state` assertion missing `node`, `state` or `equals` is refused at validation (`step {index}: the state assertion needs node, state and equals.`), and a failed one reads `the state assertion {...} was not met when checked; wait_for returned {...}`, `last` the value at the key.
+- **Edges:** `property`, `expression` and `state` default to `timeoutMs: 0` (checked once, now); `wait` defaults to 10000. A `wait` with `output` is answered by the server from the session's captured run output, so it works while paused and refuses an attached session; `timeoutMs: 0` on it needs `after`, as `wait_for` does.
+
+  A `state` assertion missing `node`, `state` or `equals` is refused at validation (`step {index}: the state assertion needs node, state and equals.`), and a failed one reads `the state assertion {...} was not met when checked; wait_for returned {...}`, `last` the value at the key.
 
   `no_errors` covers errors since the batch started or the previous `no_errors`. `take_screenshot` and `compare_screenshot` steps are forced to `path_only` and images dropped. Not batchable: the lifecycle tools, `preview_scene`, `save_screenshot` (it writes a project file, which `batch_drive`'s class does not grant) and the headless tools. The whole batch stops after 300 s of load-adjusted time.
   A `fired` assertion checks the `fired` list of the nearest earlier tool step (assertion steps between are skipped), so it follows a `click`, `mouse_button`, `drag`, `key` or `type_text`; with no tool step before it the batch is refused at validation (`step {index}: assert 'fired' needs a tool step before it, whose fired list it checks.`).
@@ -956,7 +983,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
   `equals` is a JSON array compared as JSON with the entry's whole `args` (an entry with no `args` reads as `[]`); absent or null, any args match. A non-array `equals` is refused (`equals must be an array of the emission's arguments; got {json}.`). A folded entry with `count` matches like any other, its args being the run's last.
   A pass answers `{"fired": {node, signal, args?, frame, listeners, count?}}`, the matching entry. A failure reads `the fired assertion wanted {node}.{signal}[ with args {json}] but step {k} fired: ` then up to 10 `node.signal` entries and `, … (N more)`; an entry whose node and signal match but whose args did not shows as `{node}.{signal} with args {json}`; with none it says `nothing fired on {listenedOn}` or `nothing fired and nothing was listened on`; a checked result with `firedDropped` appends `; {firedDropped} more were dropped from the fired list`.
   When the checked step's result has no fired list the assertion fails: `step {i}: the fired assertion checks step {k} ({tool}), whose result has no fired list, so there is nothing to check.`
-  Fields other than `assert`, `node`, `signal`, `equals` and `session` are refused (`step {i}: the fired assertion takes node, signal and equals; got {fields}.`). `session` is accepted and ignored: the assertion reads the earlier step's result.
+  Fields other than `assert`, `node`, `signal`, `equals` and `session` are refused (`step {i}: the fired assertion takes node, signal and equals; got {fields}.`), `output`, `stream` and `after` included. `session` is accepted and ignored: the assertion reads the earlier step's result.
 
 ## Screenshot baselines
 
@@ -1242,7 +1269,7 @@ A wrapped process has no stall kill (a gate waiting for a slot is silent), the c
 1. Pick a loopback port both runs take, and give the game an argument that names it.
 2. `run_project {projectPath, scene: "res://Lobby.tscn", userArgs: ["--host=<port>"], options: {session: "host"}}`: the host is a windowed game, so it can be screenshotted.
 3. `run_project {projectPath, scene: "res://Lobby.tscn", engineArgs: ["--headless", "--resolution", "<the project's viewport size>"], userArgs: ["--join=<port>"], options: {session: "guest"}}`: the guest is a run like any other, driven and read by every runtime tool. `--resolution` is the project's viewport size because a headless root window is 64x64; without it the guest lays its Controls out for a 64x64 screen. Both sessions on the folder must take the same `quiet` and `shutOutRealGamepads`.
-4. Wait for the join before driving: `get_debug_output {session: "guest"}` until the game's own line saying it joined is in its stdout, then `wait_for {condition: {node: "<the host's node>", property: "<its connected flag>", equals: true}, session: "host"}` for the host's side.
+4. Wait for the join before driving: `wait_for {condition: {output: "<the line the guest prints when it joins>", stream: "stdout"}, session: "guest"}` answers once the guest prints that line, from the run's captured output; an attached session has none and is refused. Then `wait_for {condition: {node: "<the host's node>", property: "<its connected flag>", equals: true}, session: "host"}` for the host's side.
 5. One `batch_drive` acts in one and checks the other: `batch_drive {steps: [{tool: "click", args: {target: {element: "Main/Lobby/Start"}}, session: "host"}, {assert: "wait", node: "Main/Hud/Status", property: "text", equals: "started", session: "guest"}]}`. `passed: true` means the host's click reached the guest's label.
 6. `list_sessions` lists both names, and `stop_project {session: …}` stops each; the folder's `override.cfg` goes with the last one.
 

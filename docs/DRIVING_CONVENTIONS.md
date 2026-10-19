@@ -67,7 +67,7 @@ Source: docs/DECISIONS.md:11, docs/DECISIONS.md:44, docs/DECISIONS.md:58, docs/D
 
 `wait_for` takes a `timeoutMs` of 0 to 120000 (`gameMs` and `frames` are bounded too), and the server waits for the bridge's answer for the wait's release plus 5 s, never a shorter request timeout, so the transport never cuts a full-length wait short; the bridge's own `backstopMs` ends the wait should the cancel be lost.
 
-A wait that times out is a result, not an error: `{met: false, elapsedMs, frames, last}`, carrying the condition's last value. `batch_drive` returns `{passed, steps, failedAt?}` rather than an MCP error, so the agent reads `passed`. Where a timeout must be an error, it carries the last observation, so an agent can tell "never matched" from "matched the wrong value".
+A wait that times out is a result, not an error: `{met: false, elapsedMs, frames, last}`, or without `frames` for an output wait, carrying the condition's last value. `batch_drive` returns `{passed, steps, failedAt?}` rather than an MCP error, so the agent reads `passed`. Where a timeout must be an error, it carries the last observation, so an agent can tell "never matched" from "matched the wrong value".
 Source: src/GodotMcp.Server/Tools/RuntimeTools.Time.cs:20-25, src/GodotMcp.Server/Tools/RuntimeTools.Time.cs:36-40, src/GodotMcp.Server/Tools/RuntimeTools.Time.cs:77, bridge/godot_mcp_time.gd:663, src/GodotMcp.Server/Tools/RuntimeTools.Batch.cs:84. Seen: 0 here (seeded from yaat).
 
 ### Own the app's real process, not the launcher you started
@@ -131,7 +131,7 @@ Source: docs/DEVELOPMENT.md:26, docs/DEVELOPMENT.md:48, docs/DEVELOPMENT.md:71-7
 
 A survey of desktop-automation MCP servers (in another project) found none that drives an app from outside its process and fully avoids stealing focus; the ones that never do run a hook inside the app.
 
-Here every runtime call goes through the bridge inside the game: the server listens on loopback and the bridge dials in with the session's token, and input, reads and writes all run in the game's own process. A game started without the bridge is joined by arming its folder first (arm-before-start), never by driving its window from outside.
+Here every runtime call but an output wait goes through the bridge inside the game: the server listens on loopback and the bridge dials in with the session's token, and input, reads and writes all run in the game's own process. An output wait reads the output the server already captured, where the bridge is unreachable, so it also works while the game is paused. A game started without the bridge is joined by arming its folder first (arm-before-start), never by driving its window from outside.
 Source: src/GodotMcp.Server/Wire/BridgeListener.cs:22, src/GodotMcp.Server/Session/GodotCommandLine.cs:316-317, docs/TOOLS.md:81-85. Seen: 0 here (seeded from yaat).
 
 ### Drive the real game, and write down what each lesser route cannot see
@@ -237,7 +237,7 @@ Source: bridge/godot_mcp_input.gd:80, bridge/godot_mcp_input.gd:349, bridge/godo
 ### Wait on a condition after every action, and treat a timeout as a result
 <!-- rule: wait-for-conditions -->
 
-A drive is start, look, act, wait, check, then stop. After each act, `wait_for` one condition (a node exists, a property equals, a signal fires, an expression holds), checked every frame, default 10 s, at most 120 s; a timeout is `met: false` with the last value, not an error.
+A drive is start, look, act, wait, check, then stop. After each act, `wait_for` one condition (a node exists, a property equals, a signal fires, an expression holds), checked every frame, default 10 s, at most 120 s; a timeout is `met: false` with the last value, not an error. An output wait (`{output}`) is checked by the server from the game's captured stdout and stderr instead, so it works while paused, and `after` reaches a line printed before the call.
 
 When the effect cannot be named in advance (a dialog, a menu), `uiChanged` diffs the visible controls, the focus owner and the top popup against a baseline the first gesture takes. Because timeouts stretch under load, a timeout is never a pause: hold for app time with `gameMs` or `frames`, which count the app's own scaled delta.
 

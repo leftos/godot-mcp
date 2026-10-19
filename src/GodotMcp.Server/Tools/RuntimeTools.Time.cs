@@ -1,7 +1,9 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
@@ -26,9 +28,11 @@ internal sealed partial class RuntimeTools
     private const int CapturePreviewMaxWidth = 480;
     private const string ConditionMessage =
         "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
-        + "{gameMs}, {frames}, {text}, {node, stable}, {node, state, equals}.";
+        + "{gameMs}, {frames}, {text}, {node, stable}, {node, state, equals}, {output} (with stream and after optional).";
     private const string UntilFramesRefusal =
         "frame_control step's until takes any wait_for condition but frames: count is the most frames a step runs.";
+    private const string UntilOutputRefusal =
+        "frame_control step's until takes any wait_for condition but output: a step waits on the game's frames, not its printed lines.";
     private const string EmptyThenRefusal = "options.then needs call, timeScale, pause or a mix.";
     private static readonly string[] FrameActions = ["pause", "resume", "step", "time_scale"];
 
@@ -46,6 +50,7 @@ internal sealed partial class RuntimeTools
         new("text", condition => condition.Text is not null, _ => true),
         new("settled", condition => condition.Stable is not null, HasNode),
         new("state", condition => condition.State is not null, HasStateCompanions),
+        new("output", condition => condition.Output is not null, HasOutputCompanions),
     ];
 
     // What a step's reply carries beyond its counts: the frame it stopped on, its until's answer as wait_for gives one, and
@@ -144,12 +149,17 @@ internal sealed partial class RuntimeTools
             + "group; its state method runs at every check) and waits until the value at the key path state (seats[0].hp, or $ for "
             + "the whole state) equals equals, compared as a property is; a path the state lacks is not met, and a node with no "
             + "state to read fails the call. "
+            + "An output condition waits for a line the run prints: {output} is a regular expression matched against stdout and/or "
+            + "stderr, with stream (stdout, stderr, or any by default) and after (a line number to scan after). The server answers "
+            + "it from the captured output, so it works while the game is paused; met, its value is {line, stream, lineNumber, "
+            + "groups}. "
             + "Returns "
-            + "{met, elapsedMs, frames, value} (args instead of value for a signal; the game ms or frames reached for gameMs and "
-            + "frames); on timeout {met: false, elapsedMs, frames, last}, the last "
-            + "value seen (a signal wait's timeout has no last), which is not an error. elapsedMs is real time; in a recording "
+            + "{met, elapsedMs, value}, with frames as well except for an output wait (args instead of value for a signal; the "
+            + "game ms or frames reached for gameMs and frames); on timeout {met: false, elapsedMs, last}, with frames as well "
+            + "except for an output wait, the last value seen (a signal wait's timeout has no last), which is not an error. "
+            + "elapsedMs is real time; in a recording "
             + "the result adds clipMs, the clip time waited (frames x 1000 / 60). While the game is paused only a "
-            + "signal wait or a check-once wait (timeoutMs 0) is accepted; a pause during a gameMs or frames wait stops its "
+            + "signal wait, an output wait or a check-once wait (timeoutMs 0) is accepted; a pause during a gameMs or frames wait stops its "
             + "count. A property the node does not have fails the call "
             + "once the node is found. An expression that does not parse fails the call; one that fails while it runs counts "
             + "as not met, and its error is in errors. failedChecks {count, error} counts the checks whose expression "
@@ -181,7 +191,7 @@ internal sealed partial class RuntimeTools
         [Description(
             "Exactly one of {node, exists}, {node, property, equals}, {node, signal}, {expression} (with node optional), {uiChanged: true}, "
                 + "{gameMs}, {frames}, {text} (with under and exists optional), {node, stable} (with property optional), "
-                + "{node, state, equals}."
+                + "{node, state, equals}, {output} (with stream and after optional)."
         )]
             WaitCondition condition,
         [Description(
@@ -190,7 +200,8 @@ internal sealed partial class RuntimeTools
                 + "the stable + 1 frames a settled wait reads, so it grows with stable. In a recording "
                 + "(run_project options.record) it counts clip time instead, 60 movie frames a second, however slowly the game runs, "
                 + "and the result adds clipMs. 0 checks the condition once, now (after options.call, in the next frame), and works "
-                + "while the game is paused; it is refused for a signal, gameMs, frames or settled wait."
+                + "while the game is paused; it is refused for a signal, gameMs, frames or settled wait, and for an output wait "
+                + "without after."
         )]
             int? timeoutMs = null,
         [Description("{screenshot, call, then, edge}: screenshot and edge false and no call or then when left out.")] WaitOptions? options = null,
@@ -244,7 +255,7 @@ internal sealed partial class RuntimeTools
     /// <summary>The bridge's wait parameters: the condition's fields as given, its kind, and the timeoutMs it runs under
     /// (<see cref="WaitTimeoutMs"/>).</summary>
     /// <exception cref="McpException">The condition is not exactly one kind, gameMs or frames is out of range, timeoutMs is
-    /// out of range, or 0 for a signal, gameMs, frames or settled wait.</exception>
+    /// out of range, or 0 for a signal, gameMs, frames or settled wait, or for an output wait without after.</exception>
     internal static JsonObject BuildWaitParameters(WaitCondition? condition, int? timeoutMs)
     {
         string kind = CheckCondition(condition);
@@ -254,19 +265,29 @@ internal sealed partial class RuntimeTools
             throw new McpException($"timeoutMs must be between 0 and {MaxWaitMs}.");
         }
 
-        if (timeoutMs == 0 && kind is "signal" or "gameMs" or "frames")
+        if (timeoutMs == 0)
         {
-            throw new McpException($"timeoutMs 0 checks once, which a {kind} wait cannot do; give it a timeout.");
-        }
-
-        if (timeoutMs == 0 && kind == "settled")
-        {
-            throw new McpException("timeoutMs 0 checks once, which a settled wait cannot meet; give it a timeout.");
+            RefuseCheckOnce(kind, condition!);
         }
 
         JsonObject parameters = ConditionParameters(condition!, kind);
         parameters["timeoutMs"] = WaitTimeoutMs(condition!, timeoutMs);
         return parameters;
+    }
+
+    /// <summary>Refuses timeoutMs 0 for a wait that cannot answer on one check.</summary>
+    /// <exception cref="McpException">The kind cannot meet on one check, or an output wait gave no after.</exception>
+    private static void RefuseCheckOnce(string kind, WaitCondition condition)
+    {
+        switch (kind)
+        {
+            case "signal" or "gameMs" or "frames":
+                throw new McpException($"timeoutMs 0 checks once, which a {kind} wait cannot do; give it a timeout.");
+            case "settled":
+                throw new McpException("timeoutMs 0 checks once, which a settled wait cannot meet; give it a timeout.");
+            case "output" when condition.After is null:
+                throw new McpException("timeoutMs 0 checks once, which an output wait needs after for: without it there is nothing new to check.");
+        }
     }
 
     /// <summary>A condition as the bridge reads it: its fields as given, and its kind.</summary>
@@ -282,6 +303,11 @@ internal sealed partial class RuntimeTools
     /// range.</exception>
     private static JsonObject UntilParameters(WaitCondition until)
     {
+        if (until.Output is not null || until.Stream is not null || until.After is not null)
+        {
+            throw new McpException(UntilOutputRefusal);
+        }
+
         if (until.Frames is not null)
         {
             throw new McpException(UntilFramesRefusal);
@@ -311,6 +337,11 @@ internal sealed partial class RuntimeTools
 
     private static void AddWaitOptions(JsonObject parameters, WaitOptions options)
     {
+        if (parameters["kind"]!.GetValue<string>() == "output")
+        {
+            RefuseOutputOptions(options);
+        }
+
         AddScreenshot(parameters, options.Screenshot);
         if (options.Call is { } call)
         {
@@ -328,10 +359,25 @@ internal sealed partial class RuntimeTools
         }
     }
 
+    /// <summary>Refuses the options an output wait cannot honour: both need a met game frame.</summary>
+    /// <exception cref="McpException">screenshot or then is given.</exception>
+    private static void RefuseOutputOptions(WaitOptions options)
+    {
+        if (options.Screenshot is true)
+        {
+            throw new McpException("options.screenshot needs a wait that meets on a game frame; an output wait meets on a printed line.");
+        }
+
+        if (options.Then is not null)
+        {
+            throw new McpException("options.then needs a wait that meets on a game frame; an output wait meets on a printed line.");
+        }
+    }
+
     private static void AddWaitCall(JsonObject parameters, MethodCall call)
     {
         string kind = parameters["kind"]!.GetValue<string>();
-        parameters["call"] = kind is not ("signal" or "uiChanged")
+        parameters["call"] = kind is not ("signal" or "uiChanged" or "output")
             ? CallOptionParameters(call, "options.call")
             : throw new McpException(
                 "options.call is taken only by a gameMs, frames, exists, property, expression, text, settled or state wait; "
@@ -443,6 +489,11 @@ internal sealed partial class RuntimeTools
 
     private async Task<BridgeResult> CallWaitAsync(JsonObject parameters, string? session, CancellationToken cancellationToken)
     {
+        if (parameters["kind"]!.GetValue<string>() == "output")
+        {
+            return await WaitForOutputAsync(Find(session), parameters, parameters["timeoutMs"]!.GetValue<int>(), cancellationToken);
+        }
+
         await PrepareGameToolCallsAsync("wait_for", parameters, session, cancellationToken);
         GodotSession target = Find(session);
         AddConditionStateHelper(parameters, target);
@@ -451,6 +502,129 @@ internal sealed partial class RuntimeTools
         BridgeCall call = new("wait_for", "wait_for", parameters, release + WaitReplyAllowance, timeoutMs > 0 ? release : null);
         return await CallWithErrorsAsync(target, call, cancellationToken);
     }
+
+    /// <summary>
+    /// An output wait: the attached refusal, the line marks, and the poll of the session's captured output until a line
+    /// matches or <paramref name="timeoutMs"/> passes in load-adjusted time. It sends nothing to the bridge, so it works
+    /// while the game is paused.
+    /// </summary>
+    /// <exception cref="McpException">The session is attached, or the pattern took over its match timeout.</exception>
+    private static async Task<BridgeResult> WaitForOutputAsync(
+        GodotSession target,
+        JsonObject parameters,
+        int timeoutMs,
+        CancellationToken cancellationToken
+    )
+    {
+        RefuseAttachedOutput(target);
+
+        string stream = OutputStream(parameters);
+        Regex regex = ScratchProfile.Compile(parameters["output"]!.GetValue<string>());
+        long? after = parameters["after"]?.GetValue<long>();
+        long started = Stopwatch.GetTimestamp();
+        using LoadDeadline deadline = LoadClock.Shared.Start(TimeSpan.FromMilliseconds(timeoutMs), cancellationToken);
+        (OutputPage stdout, OutputPage stderr, long stdoutAfter, long stderrAfter) = OutputStart(target, after);
+        while (true)
+        {
+            (OutputMatch? match, string? error) = OutputWait.Scan(stdout, stderr, stream, regex, stdoutAfter, stderrAfter);
+            if (error is not null)
+            {
+                throw new McpException(error);
+            }
+
+            if (match is { } found)
+            {
+                return new BridgeResult(OutputMet(found, ElapsedMs(started)), []);
+            }
+
+            if (OutputExpired(timeoutMs, deadline) || !await PollOutputAsync(deadline, cancellationToken))
+            {
+                return new BridgeResult(OutputTimeout(stdout, stderr, ElapsedMs(started)), []);
+            }
+
+            (stdout, stderr) = OutputPages(target);
+        }
+    }
+
+    /// <exception cref="McpException">The session is attached, which captures no output.</exception>
+    private static void RefuseAttachedOutput(GodotSession target)
+    {
+        if (target.Kind == SessionKind.Attach)
+        {
+            throw new McpException(
+                $"Session '{target.Name}' is attached: the server captures no output from a game it did not start; "
+                    + "wait on a node, a property or an expression instead."
+            );
+        }
+    }
+
+    private static string OutputStream(JsonObject parameters) => parameters["stream"]?.GetValue<string>() ?? "any";
+
+    // Line numbers carry over a restart (GodotRun.Stdout and Stderr continue their buffers), so an after from before a
+    // restart still scans the lines printed since it.
+    private static (OutputPage Stdout, OutputPage Stderr, long StdoutAfter, long StderrAfter) OutputStart(GodotSession target, long? after)
+    {
+        (OutputPage stdout, OutputPage stderr, long stdoutTotal, long stderrTotal) = target.GetRawOutput();
+        return (stdout, stderr, after ?? stdoutTotal, after ?? stderrTotal);
+    }
+
+    private static (OutputPage Stdout, OutputPage Stderr) OutputPages(GodotSession target)
+    {
+        (OutputPage stdout, OutputPage stderr, _, _) = target.GetRawOutput();
+        return (stdout, stderr);
+    }
+
+    private static bool OutputExpired(int timeoutMs, LoadDeadline deadline) => timeoutMs == 0 || deadline.Expired;
+
+    private static async Task<bool> PollOutputAsync(LoadDeadline deadline, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(OutputWait.Poll, deadline.Token);
+            return true;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>The met answer: {met, elapsedMs, value: {line, stream, lineNumber, groups}}.</summary>
+    private static JsonObject OutputMet(OutputMatch match, int elapsedMs)
+    {
+        JsonArray groups = [];
+        foreach (string? group in match.Groups)
+        {
+            groups.Add((JsonNode?)group);
+        }
+
+        return new JsonObject
+        {
+            ["met"] = true,
+            ["elapsedMs"] = elapsedMs,
+            ["value"] = new JsonObject
+            {
+                ["line"] = OutputBuffer.Cut(match.Line, OutputBuffer.MaxLineLength),
+                ["stream"] = match.Stream,
+                ["lineNumber"] = match.LineNumber,
+                ["groups"] = groups,
+            },
+        };
+    }
+
+    /// <summary>The timeout answer: {met: false, elapsedMs, last: {stdout, stderr}}, each stream's newest line or null.</summary>
+    private static JsonObject OutputTimeout(OutputPage stdout, OutputPage stderr, int elapsedMs) =>
+        new()
+        {
+            ["met"] = false,
+            ["elapsedMs"] = elapsedMs,
+            ["last"] = new JsonObject { ["stdout"] = LastOutputLine(stdout), ["stderr"] = LastOutputLine(stderr) },
+        };
+
+    private static string? LastOutputLine(OutputPage page) =>
+        page.Lines.Count == 0 ? null : OutputBuffer.Cut(page.Lines[^1], OutputBuffer.MaxLineLength);
+
+    private static int ElapsedMs(long started) => (int)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
 
     /// <summary>
     /// Adds to a state condition's parameters the C# helper's extension, or csharpError, why it cannot run, as a state read
@@ -581,6 +755,7 @@ internal sealed partial class RuntimeTools
         CheckTextFields(condition);
         CheckStateFields(condition);
         CheckSettledFields(condition);
+        CheckOutputFields(condition);
         ConditionKind[] given = condition is null ? [] : [.. ConditionKinds.Where(kind => kind.Given(condition))];
         return given is [var kind] && kind.HasCompanions(condition!) ? kind.Name : throw new McpException(ConditionMessage);
     }
@@ -637,6 +812,51 @@ internal sealed partial class RuntimeTools
         }
     }
 
+    /// <exception cref="McpException">output is blank or not a valid regular expression, stream is not stdout, stderr or any,
+    /// or after is negative.</exception>
+    private static void CheckOutputFields(WaitCondition? condition)
+    {
+        if (condition?.Output is not { } output)
+        {
+            string? companion = condition switch
+            {
+                { Stream: not null } => "condition.stream scopes an output condition; give output with it.",
+                { After: not null } => "condition.after scopes an output condition; give output with it.",
+                _ => null,
+            };
+            if (companion is not null)
+            {
+                throw new McpException(companion);
+            }
+
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            throw new McpException("condition.output is blank; give a regular expression to match a printed line.");
+        }
+
+        try
+        {
+            _ = ScratchProfile.Compile(output);
+        }
+        catch (ArgumentException e)
+        {
+            throw new McpException($"condition.output is not a valid regular expression: {e.Message.TrimEnd('.')}.");
+        }
+
+        if (condition.Stream is { } stream && stream is not ("stdout" or "stderr" or "any"))
+        {
+            throw new McpException($"condition.stream must be stdout, stderr or any; got {stream}.");
+        }
+
+        if (condition.After is < 0)
+        {
+            throw new McpException($"condition.after must be 0 or more; got {condition.After}.");
+        }
+    }
+
     // exists names the exists kind only without text, where it says whether the text is to show or to go.
     private static bool IsExistsGiven(WaitCondition condition) => condition.Exists is not null && condition.Text is null;
 
@@ -652,6 +872,25 @@ internal sealed partial class RuntimeTools
 
     // CheckStateFields has already refused a state with property or stable, or without equals.
     private static bool HasStateCompanions(WaitCondition condition) => HasNode(condition) && HasEquals(condition);
+
+    // CheckOutputFields has already refused a blank or invalid output, a bad stream and a negative after.
+    private static bool HasOutputCompanions(WaitCondition condition) =>
+        condition
+            is {
+                Node: null,
+                Exists: null,
+                Property: null,
+                EqualsValue: null,
+                Signal: null,
+                Expression: null,
+                UiChanged: null,
+                GameMs: null,
+                Frames: null,
+                Text: null,
+                Under: null,
+                Stable: null,
+                State: null,
+            };
 
     // Only true is a kind, and it takes no node: the other kinds' fields already make a second kind.
     private static bool IsUiChangedAlone(WaitCondition condition) => condition.UiChanged is true && condition.Node is null;

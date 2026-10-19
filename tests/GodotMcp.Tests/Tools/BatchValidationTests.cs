@@ -193,7 +193,7 @@ public sealed class BatchValidationTests : IDisposable
     [InlineData(
         "wait",
         "step 0: condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
-            + "{gameMs}, {frames}, {text}, {node, stable}, {node, state, equals}."
+            + "{gameMs}, {frames}, {text}, {node, stable}, {node, state, equals}, {output} (with stream and after optional)."
     )]
     public async Task AnAssertionMissingAFieldIsRefused(string assert, string message)
     {
@@ -408,6 +408,50 @@ public sealed class BatchValidationTests : IDisposable
         Assert.Equal("path_only", compare["options"].GetProperty("responseMode").GetString());
         Assert.False(compare.ContainsKey("session"));
         Assert.Equal("other", own["session"].GetString());
+    }
+
+    [Fact]
+    public void AWaitAssertionWithOutputIsAccepted()
+    {
+        BatchStep step = new(Assert: "wait", Output: "joined", Stream: "stdout", After: 2);
+
+        RuntimeTools.CheckBatch([step]);
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(RuntimeTools.ConditionOf(step), RuntimeTools.TimeoutOf(step));
+
+        Assert.Equal("output", parameters["kind"]?.GetValue<string>());
+        Assert.Equal("joined", parameters["output"]?.GetValue<string>());
+        Assert.Equal("stdout", parameters["stream"]?.GetValue<string>());
+        Assert.Equal(2L, parameters["after"]?.GetValue<long>());
+    }
+
+    [Fact]
+    public async Task AWaitAssertionWithOutputAndNodeIsRefused()
+    {
+        McpException refused = await RefusedAsync([new BatchStep(Assert: "wait", Node: "Main", Output: "joined")]);
+
+        Assert.Equal(
+            "step 0: condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
+                + "{gameMs}, {frames}, {text}, {node, stable}, {node, state, equals}, {output} (with stream and after optional).",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public async Task AWaitAssertionWithAnUnknownStreamIsRefused()
+    {
+        McpException refused = await RefusedAsync([new BatchStep(Assert: "wait", Output: "joined", Stream: "log")]);
+
+        Assert.Equal("step 0: condition.stream must be stdout, stderr or any; got log.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AFiredAssertionNamingOutputIsRefused()
+    {
+        BatchStep fired = new(Assert: "fired", Node: "Ready", Signal: "pressed", Output: "joined");
+
+        McpException refused = await RefusedAsync([new BatchStep(Tool: "click"), fired]);
+
+        Assert.Equal("step 1: the fired assertion takes node, signal and equals; got output.", refused.Message);
     }
 
     private Task<McpException> RefusedAsync(BatchStep[] steps) =>

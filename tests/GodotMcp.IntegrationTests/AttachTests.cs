@@ -59,6 +59,10 @@ public sealed class AttachTests : IAsyncDisposable
         _games.Add(Process.GetProcessById(gameProcessId));
         int? listedGameProcessId = Assert.Single(_harness.Sessions.List(includeStopped: true)).GameProcessId;
         McpException output = Assert.Throws<McpException>(() => _project.GetDebugOutput(10));
+        string attachedName = _harness.Sessions.Resolve(null).Name;
+        McpException outputWait = await Assert.ThrowsAsync<McpException>(() =>
+            _runtime.WaitForAsync(new WaitCondition(Output: "joined"), 1000, cancellationToken: cancellation)
+        );
         JsonNode detached = JsonNode.Parse(await _project.DetachProjectAsync(cancellationToken: cancellation))!;
         await Task.Delay(TimeSpan.FromSeconds(1), cancellation);
 
@@ -70,6 +74,11 @@ public sealed class AttachTests : IAsyncDisposable
         Assert.True(pong?["pong"]?.GetValue<bool>());
         Assert.Equal(gameProcessId, listedGameProcessId);
         Assert.Contains("attached sessions have no captured output", output.Message, StringComparison.Ordinal);
+        Assert.Equal(
+            $"Session '{attachedName}' is attached: the server captures no output from a game it did not start; "
+                + "wait on a node, a property or an expression instead.",
+            outputWait.Message
+        );
         Assert.True(detached["overrideRemoved"]!.GetValue<bool>());
         Assert.Empty(_harness.Sessions.List(includeStopped: true));
         Assert.False(_games[^1].HasExited);

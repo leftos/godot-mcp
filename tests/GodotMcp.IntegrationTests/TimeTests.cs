@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
+using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
@@ -2133,6 +2134,96 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
                 + "scene_tree.root.add_child(shower)\n\tshower.arm()\n\treturn true",
             cancellationToken
         );
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnOutputWaitCatchesALineALaterScriptPrints()
+    {
+        string marker = $"wait-output-{Guid.NewGuid():N}";
+        Task<JsonObject> waiting = WaitAsync(new WaitCondition(Output: marker, Stream: "stdout"), 15_000);
+
+        await RunBodyAsync($"print(\"{marker}\")\n\treturn true", TestContext.Current.CancellationToken);
+
+        JsonObject met = await waiting;
+        Assert.True(met["met"]!.GetValue<bool>(), met.ToJsonString());
+        JsonObject value = met["value"]!.AsObject();
+        Assert.Equal("stdout", value["stream"]!.GetValue<string>());
+        Assert.Equal(marker, value["line"]!.GetValue<string>());
+        Assert.Empty(value["groups"]!.AsArray());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnOutputWaitMatchesPastTheCutLengthAndCutsTheReportedLine()
+    {
+        string marker = $"beyond-cut-{Guid.NewGuid():N}";
+        string line = new string('x', 1100) + marker;
+        Task<JsonObject> waiting = WaitAsync(new WaitCondition(Output: marker, Stream: "stdout"), 15_000);
+
+        await RunBodyAsync($"print(\"{line}\")\n\treturn true", TestContext.Current.CancellationToken);
+
+        JsonObject met = await waiting;
+        Assert.True(met["met"]!.GetValue<bool>(), met.ToJsonString());
+        Assert.EndsWith(
+            $"… (+{line.Length - OutputBuffer.MaxLineLength} chars)",
+            met["value"]!["line"]!.GetValue<string>(),
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnOutputWaitReadsStderr()
+    {
+        string marker = $"stderr-{Guid.NewGuid():N}";
+        Task<JsonObject> waiting = WaitAsync(new WaitCondition(Output: marker, Stream: "stderr"), 15_000);
+
+        await RunBodyAsync($"printerr(\"{marker}\")\n\treturn true", TestContext.Current.CancellationToken);
+
+        JsonObject met = await waiting;
+        Assert.True(met["met"]!.GetValue<bool>(), met.ToJsonString());
+        Assert.Equal("stderr", met["value"]!["stream"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACheckOnceOutputWaitSeesALineAboveTheGivenMark()
+    {
+        long mark = _shared.Sessions.GetDebugOutput(null, GodotRun.OutputCapacity, null).StdoutTotalLines;
+        string marker = $"check-once-{Guid.NewGuid():N}";
+
+        await RunAsync($"print(\"{marker}\")\n\treturn true");
+        await Poll.UntilAsync(
+            () => _shared.Sessions.GetDebugOutput(null, GodotRun.OutputCapacity, null).Stdout.Contains(marker),
+            TimeSpan.FromSeconds(10),
+            TestContext.Current.CancellationToken
+        );
+
+        JsonObject met = await WaitAsync(new WaitCondition(Output: marker, Stream: "stdout", After: mark), 0);
+
+        Assert.True(met["met"]!.GetValue<bool>(), met.ToJsonString());
+        Assert.True(met["value"]!["lineNumber"]!.GetValue<long>() > mark, met.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnOutputWaitTimesOutWithBothLastStreams()
+    {
+        string marker = $"never-{Guid.NewGuid():N}";
+
+        JsonObject timedOut = JsonNode
+            .Parse(
+                Text(
+                    await _tools.WaitForAsync(
+                        new WaitCondition(Output: marker, Stream: "any"),
+                        200,
+                        cancellationToken: TestContext.Current.CancellationToken
+                    )
+                )
+            )!
+            .AsObject();
+
+        Assert.False(timedOut["met"]!.GetValue<bool>(), timedOut.ToJsonString());
+        Assert.True(timedOut["elapsedMs"]!.GetValue<int>() >= 0, timedOut.ToJsonString());
+        JsonObject last = timedOut["last"]!.AsObject();
+        Assert.False(string.IsNullOrEmpty(last["stdout"]?.GetValue<string>()), timedOut.ToJsonString());
+        Assert.True(last.ContainsKey("stderr"), timedOut.ToJsonString());
+    }
 
     private async Task<long> ReadIntAsync(string property) => (await RunAsync($"return {Probe}.{property}")).GetValue<long>();
 

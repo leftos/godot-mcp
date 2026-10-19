@@ -87,5 +87,8 @@ internal sealed record CaptureStart(
     [property: Description("Refused: options.start takes an exists, property or expression condition.")] string? Text = null,
     [property: Description("Refused: options.start takes an exists, property or expression condition.")] string? Under = null,
     [property: Description("Refused: options.start takes an exists, property or expression condition.")] int? Stable = null,
-    [property: Description("Refused: options.start takes an exists, property or expression condition.")] string? State = null
+    [property: Description("Refused: options.start takes an exists, property or expression condition.")] string? State = null,
+    [property: Description("Refused: options.start takes an exists, property or expression condition.")] string? Output = null,
+    [property: Description("Refused: options.start takes an exists, property or expression condition.")] string? Stream = null,
+    [property: Description("Refused: options.start takes an exists, property or expression condition.")] long? After = null
 );

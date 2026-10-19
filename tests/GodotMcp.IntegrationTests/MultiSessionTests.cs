@@ -57,14 +57,16 @@ public sealed class MultiSessionTests : IAsyncDisposable
 
         await _harness.Sessions.LaunchAsync(HostRequest(port), "host", cancellation);
         LaunchResult guest = await _harness.Sessions.LaunchAsync(GuestRequest(port), "guest", cancellation);
-        bool joined = await JoinedAsync(cancellation);
+        JsonObject joined = await JoinedAsync(cancellation);
         JsonObject connected = await HostConnectedAsync(cancellation);
         JsonObject batch = await BatchAsync(cancellation);
         JsonArray listed = SessionsListed();
         StopResult hostStopped = await _harness.Sessions.StopAsync("host", cancellation);
         StopResult guestStopped = await _harness.Sessions.StopAsync("guest", cancellation);
 
-        Assert.True(joined, "the guest printed no [net] joined line");
+        Assert.True(joined["met"]!.GetValue<bool>(), joined.ToJsonString());
+        Assert.Equal("stdout", joined["value"]!["stream"]!.GetValue<string>());
+        Assert.True(joined["value"]!["lineNumber"]!.GetValue<long>() > 0, joined.ToJsonString());
         Assert.True(connected["met"]!.GetValue<bool>(), connected.ToJsonString());
         Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
         Assert.False(batch.ContainsKey("failedAt"), batch.ToJsonString());
@@ -101,12 +103,17 @@ public sealed class MultiSessionTests : IAsyncDisposable
             Prepare: true
         );
 
-    private Task<bool> JoinedAsync(CancellationToken cancellation) =>
-        Poll.UntilAsync(
-            () => _harness.Sessions.GetDebugOutput("guest", GodotRun.OutputCapacity, null).Stdout.Contains("[net] joined"),
-            TimeSpan.FromMilliseconds(JoinedWaitMs),
-            cancellation
-        );
+    private async Task<JsonObject> JoinedAsync(CancellationToken cancellation) =>
+        JsonNode
+            .Parse(
+                await _tools.WaitForAsync(
+                    new WaitCondition(Output: "\\[net\\] joined", Stream: "stdout", After: 0),
+                    JoinedWaitMs,
+                    "guest",
+                    cancellation
+                )
+            )!
+            .AsObject();
 
     private async Task<JsonObject> HostConnectedAsync(CancellationToken cancellation)
     {
@@ -124,7 +131,8 @@ public sealed class MultiSessionTests : IAsyncDisposable
             EqualsValue: JsonSerializer.SerializeToElement("presses: 1"),
             Session: "guest"
         );
-        return JsonNode.Parse(await _tools.BatchDriveAsync([click, wait], _server, cancellationToken: cancellation))!.AsObject();
+        BatchStep printed = new(Assert: "wait", Output: "presses: 1", Stream: "stdout", After: 0, Session: "guest");
+        return JsonNode.Parse(await _tools.BatchDriveAsync([click, wait, printed], _server, cancellationToken: cancellation))!.AsObject();
     }
 
     /// <summary>The sessions <c>list_sessions</c> reports, live ones only.</summary>

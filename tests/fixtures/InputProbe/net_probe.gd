@@ -1,8 +1,8 @@
 extends Control
 ## The InputProbe's networked probe: two games on one folder, one listening and one joining over loopback.
 ## With --net-host=<port> it listens on 127.0.0.1 and sends "press:<n>" to its peer each time Send is
-## pressed; with --net-join=<port> it dials until connected, prints "[net] joined", and shows every
-## count it receives in Mirror.
+## pressed; with --net-join=<port> it dials until connected, prints "[net] joined", and prints and
+## shows every count it receives.
 
 ## Whether this game listens for the other, set by --net-host=<port>.
 var is_host: bool = false
@@ -91,6 +91,7 @@ func _guest_poll() -> void:
 func _show(n: int) -> void:
 	shown_count = n
 	_mirror.text = "presses: %d" % n
+	print("presses: %d" % n)
 
 
 func _read_lines() -> PackedStringArray:

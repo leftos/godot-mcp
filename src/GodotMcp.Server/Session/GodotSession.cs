@@ -279,6 +279,31 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         };
     }
 
+    /// <summary>The held lines of each stream uncut, with each stream's line count: what an output wait reads, so a line
+    /// longer than <see cref="OutputBuffer.MaxLineLength"/> is still matched whole. An attached session has no captured output.</summary>
+    /// <exception cref="SessionException">The session is attached.</exception>
+    public (OutputPage Stdout, OutputPage Stderr, long StdoutTotalLines, long StderrTotalLines) GetRawOutput()
+    {
+        if (Kind == SessionKind.Attach)
+        {
+            throw new SessionException(
+                $"The session for {ProjectDir} is attached: attached sessions have no captured output; the game's own console or log has it."
+            );
+        }
+
+        GodotRun? run = _run;
+        if (run is null)
+        {
+            return (new OutputPage(null, []), new OutputPage(null, []), 0L, 0L);
+        }
+
+        // Read the totals before the snapshots: a line arriving between them would otherwise be in neither page nor above
+        // a mark read later, and a wait without after would miss it.
+        long stdoutTotal = run.Stdout.TotalLines;
+        long stderrTotal = run.Stderr.TotalLines;
+        return (run.Stdout.Raw(), run.Stderr.Raw(), stdoutTotal, stderrTotal);
+    }
+
     /// <summary>
     /// The server's own exit: a live game it launched is stopped as stop_project stops it (a ping, the shutdown command, then
     /// the grace, and a kill for a game silent or still running after it), without waiting on the gate. An attached game is

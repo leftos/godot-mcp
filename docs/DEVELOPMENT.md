@@ -90,7 +90,9 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   `SessionLifecycleTests` covers launch, arguments, stop, a refused `override.cfg`, a quiet run's handshake, and several sessions: two on one project running together (the override survives the first stop and goes with the last), a game that quits on its own leaving the override for the other session, a name reused after its session stops, a live name refused, a different gamepad shut-out on the same project refused, and a runtime tool without a name refused while several are live.
 
-  `MultiSessionTests` networks two runs over loopback and drives them in one call: a quiet windowed host and a headless guest launched with `--resolution`, whose `NetProbe` fixture (in InputProbe) prints `[net] joined` and mirrors the host's press count into a label. One `batch_drive` clicks in the host and waits in the guest on that label, then both are listed and stopped one at a time.
+  `MultiSessionTests` networks two runs over loopback and drives them in one call: a quiet windowed host and a headless guest launched with `--resolution`, whose `NetProbe` fixture (in InputProbe) prints `[net] joined` and both prints and mirrors the host's press count.
+
+  The guest's join line is waited on with `wait_for {output}`, and one `batch_drive` clicks in the host, waits in the guest on the mirrored label, then waits on the printed count with an output assertion; both are listed and stopped one at a time.
 
   `ProfileTests` launches with a `godot-mcp.json` preset and checks the session takes the preset's name and the window its `resolution`.
 
@@ -177,6 +179,11 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   Itest `TimeTests` covers the live wait on a GDScript node (met when the key changes, a missing key timing out with `last` null, a node outside the group, edge, check-once while paused, a step `until`), `StateTests` the `batch_drive` assertion's pass and failure text, and `CSharpStateTests` a wait and a step `until` on a C# node through the helper.
   The CsProbe fixture's `Counter` node (`CounterState`, an anonymous-type `_McpState` of `Turn` and `Seats[{Name, Hp}]`) changes only when the test calls its `Arm()`, which raises the turn three process frames later, so a wait has a change to meet and nothing else moves it.
+- **Output wait** (`wait_for {output}`, a `batch_drive` `wait` assertion): `OutputWait.Scan` (unit `WaitOutputValidationTests`) matches a held line above its stream's mark, uncut, and reports its stream, number and capture groups (null for one that did not match), scanning stdout first for `any`, with a pattern over its one-second match timeout failing the wait.
+
+  `TimeTests` covers a line a later script prints, a check-once wait from an `after` mark, and a timeout with both `last` streams; `MultiSessionTests` waits for the guest's `[net] joined` line and has a batch output assertion wait on the count it prints.
+
+  `WaitOutputValidationTests` and `BatchValidationTests` (unit) cover the refusals (blank or invalid `output`, a bad `stream`, a negative `after`, check-once without `after`, `screenshot`, `then`, `call` and `edge`) and a `fired` assertion refusing `output`, `stream` and `after`.
 - **Watch audio tracks** (`tracks.audio.players`): `tests/bridge/test_watch_audio.gd` (gdtest, stub players only, since `run_tests.gd` runs inside `_initialize` before the root is in the tree and a real player cannot play).
 
   The gdtest covers a start per greater playback id, a revert to an older voice reading none, the end reasons in their order, `stream_paused` as pause and resume, no event and no error for an idle player, paused-frame reads, a player followed once however often it enters, the 200-player and 1000-voice caps, a freed player making room, a 3D player outside the tree, the start reply, the disconnects at finish and drop, an `under` that does not exist).

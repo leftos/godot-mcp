@@ -7,7 +7,7 @@ namespace GodotMcp.Server.Tools;
 /// <summary>
 /// What wait_for waits for, exactly one kind: {node, exists}, {node, property, equals}, {node, signal}, {expression}
 /// (node optional), {uiChanged: true}, {gameMs}, {frames}, {text} (under and exists optional), {node, stable} (property
-/// optional) or {node, state, equals}.
+/// optional), {node, state, equals} or {output} (stream and after optional).
 /// </summary>
 internal sealed record WaitCondition(
     [property: Description(
@@ -79,5 +79,17 @@ internal sealed record WaitCondition(
             + "it; $ is the whole state. A path the state lacks is not met, its last null; a node outside the group, or one "
             + "whose state cannot be read, fails the wait."
     )]
-        string? State = null
+        string? State = null,
+    [property: Description(
+        "An output wait: a .NET regular expression matched against a line the session's game printed. Met, value is {line, "
+            + "stream, lineNumber, groups}, groups its capture groups (the whole match excluded), null for a group that did not "
+            + "match. The server answers it from the captured output, so it works while the game is paused."
+    )]
+        string? Output = null,
+    [property: Description("With output: match stdout, stderr or any (the default); any scans stdout first.")] string? Stream = null,
+    [property: Description(
+        "With output: scan only lines numbered after this one, 0 or more, on both streams; 0 scans every held line, and one from "
+            + "before a restart still counts."
+    )]
+        long? After = null
 );
