@@ -1168,9 +1168,9 @@ A wrapped process has no stall kill (a gate waiting for a slot is silent), the c
 {
   "resolution": "1280x720",
   "presets": {
-    // Start the server first: the client connects at launch.
-    "server": { "userArgs": ["--server"], "session": "server", "description": "the listen server, headless-safe" },
-    "client": { "userArgs": ["--connect", "127.0.0.1"], "session": "client-1" },
+    // Two Godot runs of the same game on one folder, each a session of its own.
+    "host": { "userArgs": ["--host"], "session": "host", "quiet": false },
+    "guest": { "userArgs": ["--join=127.0.0.1"], "session": "guest" },
   }
 }
 ```
@@ -1235,3 +1235,14 @@ A wrapped process has no stall kill (a gate waiting for a slot is silent), the c
    `batch_drive {steps: [{tool: "click", args: {target: {element: "Main/Menu/Play"}}}, {assert: "wait", node: "Hud", exists: true}, {tool: "frame_control", args: {action: "pause"}}, {assert: "property", node: "Hud/Score", property: "text", equals: "0"}, {assert: "screenshot", name: "hud-idle", maxChangedRatio: 0.001}, {assert: "no_errors"}]}`
 
 3. Read `passed`. On failure `failedAt {index, reason}` names the step; for a screenshot failure the step's error carries the comparison, and `compare_screenshot {name: "hud-idle"}` outside the batch returns the diff image to look at.
+
+### Drive a host and a headless client
+
+1. Pick a loopback port both runs take, and give the game an argument that names it.
+2. `run_project {projectPath, scene: "res://Lobby.tscn", userArgs: ["--host=<port>"], options: {session: "host"}}`: the host is a windowed game, so it can be screenshotted.
+3. `run_project {projectPath, scene: "res://Lobby.tscn", engineArgs: ["--headless", "--resolution", "<the project's viewport size>"], userArgs: ["--join=<port>"], options: {session: "guest"}}`: the guest is a run like any other, driven and read by every runtime tool. `--resolution` is the project's viewport size because a headless root window is 64x64; without it the guest lays its Controls out for a 64x64 screen. Both sessions on the folder must take the same `quiet` and `shutOutRealGamepads`.
+4. Wait for the join before driving: `get_debug_output {session: "guest"}` until the game's own line saying it joined is in its stdout, then `wait_for {condition: {node: "<the host's node>", property: "<its connected flag>", equals: true}, session: "host"}` for the host's side.
+5. One `batch_drive` acts in one and checks the other: `batch_drive {steps: [{tool: "click", args: {target: {element: "Main/Lobby/Start"}}, session: "host"}, {assert: "wait", node: "Main/Hud/Status", property: "text", equals: "started", session: "guest"}]}`. `passed: true` means the host's click reached the guest's label.
+6. `list_sessions` lists both names, and `stop_project {session: …}` stops each; the folder's `override.cfg` goes with the last one.
+
+Wait on state that persists: a step after the other session's input misses a one-frame effect (measured 30 of 30 in the spike). A guest that must be screenshotted is a quiet windowed run instead, since a headless one has no picture and no `window` in its result.

@@ -90,6 +90,8 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   `SessionLifecycleTests` covers launch, arguments, stop, a refused `override.cfg`, a quiet run's handshake, and several sessions: two on one project running together (the override survives the first stop and goes with the last), a game that quits on its own leaving the override for the other session, a name reused after its session stops, a live name refused, a different gamepad shut-out on the same project refused, and a runtime tool without a name refused while several are live.
 
+  `MultiSessionTests` networks two runs over loopback and drives them in one call: a quiet windowed host and a headless guest launched with `--resolution`, whose `NetProbe` fixture (in InputProbe) prints `[net] joined` and mirrors the host's press count into a label. One `batch_drive` clicks in the host and waits in the guest on that label, then both are listed and stopped one at a time.
+
   `ProfileTests` launches with a `godot-mcp.json` preset and checks the session takes the preset's name and the window its `resolution`.
 
   `PreviewTests` covers `preview_scene`: a 2D scene's pixels at its swatch, a 3D scene without a camera getting one that shows its box (a large-range `OmniLight3D` beside it not widening the framing), a scene's own camera kept, a preview beside a live not-quiet run leaving it running, nothing left behind and a headless tool running right after, and a `.gd` refused before launch; `PreviewValidationTests` (unit) its scene, resolution, mode and width refusals and the preview session's name.
