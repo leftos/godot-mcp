@@ -79,6 +79,53 @@ public sealed class MultiSessionTests : IAsyncDisposable
         Assert.All(listed, session => Assert.True(session!["live"]!.GetValue<bool>(), session.ToJsonString()));
     }
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AParallelGroupCancelsTheGuestsWaitWhenTheHostsClickFailsAndPassesWhenItLands()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        int port = FreePort();
+        await _harness.Sessions.LaunchAsync(HostRequest(port), "host", cancellation);
+        await _harness.Sessions.LaunchAsync(GuestRequest(port), "guest", cancellation);
+        JsonObject joined = await JoinedAsync(cancellation);
+        JsonObject connected = await HostConnectedAsync(cancellation);
+        BatchStep never = new(Assert: "wait", Expression: "false", TimeoutMs: 10_000, Session: "guest");
+        BatchStep missing = HostClick("NoSuchElement");
+        BatchStep mirrored = new(
+            Assert: "wait",
+            Node: "Mirror",
+            Property: "text",
+            EqualsValue: JsonSerializer.SerializeToElement("presses: 1"),
+            Session: "guest"
+        );
+
+        JsonObject failed = await GroupAsync(never, missing, cancellation);
+        JsonObject passed = await GroupAsync(mirrored, HostClick("Send"), cancellation);
+        await _harness.Sessions.StopAsync("host", cancellation);
+        await _harness.Sessions.StopAsync("guest", cancellation);
+
+        Assert.True(joined["met"]!.GetValue<bool>(), joined.ToJsonString());
+        Assert.True(connected["met"]!.GetValue<bool>(), connected.ToJsonString());
+        Assert.False(failed["passed"]!.GetValue<bool>(), failed.ToJsonString());
+        Assert.Equal(0, failed["failedAt"]!["index"]!.GetValue<int>());
+        Assert.Equal(1, failed["failedAt"]!["member"]!.GetValue<int>());
+        JsonObject wait = failed["steps"]![0]!["members"]![0]!.AsObject();
+        Assert.True(wait["cancelled"]!.GetValue<bool>(), failed.ToJsonString());
+        Assert.True(wait["sent"]!.GetValue<bool>(), failed.ToJsonString());
+        // A 10 s load-adjusted wait cannot time out in under 10 s of wall time, so a shorter span means the cancel ended it.
+        double waitedMs = wait["endMs"]!.GetValue<double>() - wait["startMs"]!.GetValue<double>();
+        Assert.True(waitedMs < 10_000, $"the wait member ran {waitedMs} ms: {failed.ToJsonString()}");
+        Assert.True(passed["passed"]!.GetValue<bool>(), passed.ToJsonString());
+        Assert.All(passed["steps"]![0]!["members"]!.AsArray(), member => Assert.True(member!["ok"]!.GetValue<bool>(), passed.ToJsonString()));
+    }
+
+    private static BatchStep HostClick(string element) =>
+        new(Tool: "click", Args: new JsonObject { ["target"] = new JsonObject { ["element"] = element } }, Session: "host");
+
+    private async Task<JsonObject> GroupAsync(BatchStep first, BatchStep second, CancellationToken cancellation) =>
+        JsonNode
+            .Parse(await _tools.BatchDriveAsync([new BatchStep(Parallel: [first, second])], _server, cancellationToken: cancellation))!
+            .AsObject();
+
     /// <summary>A port of the loopback interface no process holds, closed before the host binds it.</summary>
     private static int FreePort()
     {

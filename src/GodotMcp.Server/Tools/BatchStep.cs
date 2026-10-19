@@ -6,7 +6,8 @@ using System.Text.Json.Serialization;
 namespace GodotMcp.Server.Tools;
 
 /// <summary>
-/// One step of batch_drive: a runtime tool {tool, args} or an assertion {assert, …}, either with an optional session.
+/// One step of batch_drive: a runtime tool {tool, args} or an assertion {assert, …}, either with an optional session, or a
+/// parallel group {parallel: [steps]} of such steps.
 /// </summary>
 internal sealed record BatchStep(
     [property: Description("A runtime tool's name, e.g. click or take_screenshot; leave out for an assertion.")] string? Tool = null,
@@ -67,5 +68,13 @@ internal sealed record BatchStep(
     [property: Description("wait: a regular expression matched against a line the session printed, as wait_for's condition.output.")]
         string? Output = null,
     [property: Description("wait: stdout, stderr or any (the default) with output, as wait_for's condition.stream.")] string? Stream = null,
-    [property: Description("wait: scan only lines numbered after this one with output, 0 or more, as wait_for's condition.after.")] long? After = null
+    [property: Description("wait: scan only lines numbered after this one with output, 0 or more, as wait_for's condition.after.")]
+        long? After = null,
+    [property: Description(
+        "A parallel group in place of tool or assert: 2 to 8 tool or assertion steps (not fired or no_errors, not another group), "
+            + "each on its own session, started in listed order, each once the one before has sent its request; the group ends when "
+            + "all have answered, and a failed member cancels the others still running, whose entries say cancelled: true, with sent "
+            + "telling whether the request had reached the game (an input gesture once sent plays to its end)."
+    )]
+        IReadOnlyList<BatchStep>? Parallel = null
 );

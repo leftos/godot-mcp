@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using System.Xml;
 using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
+using GodotMcp.Server.Wire;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
@@ -146,6 +147,8 @@ internal sealed partial class RuntimeTools
             return known.Directory;
         }
 
+        // The ping is setup: a parallel group's next member waits for the request this ping comes before.
+        WriteWatch.Unwatch();
         JsonObject ping = new() { ["op"] = "ping" };
         (CSharpReply reply, _) = await SendCSharpAsync(tool, ping, null, session, cancellationToken);
         string directory =

@@ -10,6 +10,8 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `run_process` starts a process a project's profile declares, a game server or mock backend, and `stop_project` ends it and everything it started.
 - `run_process` takes `options.ready`: it returns once the process prints a matching line, and refuses a start whose process exits first or misses its timeout.
 - `restart_project` restarts a process session, stopping the program and starting its stored command again, waiting on its ready line.
+- `batch_drive` takes parallel groups: up to 8 steps on different sessions at once, each sent before the next starts, a failure cancelling the rest.
+- `batch_drive` results carry `startedAt`, and every step's `startMs` and `endMs`, on one clock across sessions.
 
 ## 0.17.1 - 2026-10-17
 

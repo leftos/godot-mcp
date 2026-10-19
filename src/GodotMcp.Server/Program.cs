@@ -20,6 +20,7 @@ if (ServerCommands.Run(args, Console.Out, Console.Error, commandEnvironment) is 
     return;
 }
 
+DriveClock.Start();
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
 // stdout is the MCP protocol: every log line goes to stderr.

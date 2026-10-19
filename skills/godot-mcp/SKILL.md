@@ -84,7 +84,7 @@ While paused, `wait_for` accepts a signal wait, an output wait or a check-once w
 
 `get_errors` lists logged errors and warnings since a `seq` (`since` = the last call's `next`).
 
-**Regression checks.** `batch_drive` replays up to 100 tool steps and assertions (`property`, `expression`, `wait`, `no_errors`, `screenshot`, `fired`) in one call and stops at the first failure. A `fired {node, signal, equals?}` assertion checks the `fired` list of the nearest earlier click, key, drag, mouse_button or type_text step, matching `node` by its trailing path segments and `equals` against the emission's whole argument array.
+**Regression checks.** `batch_drive` replays up to 100 tool steps and assertions (`property`, `expression`, `wait`, `no_errors`, `screenshot`, `fired`) in one call and stops at the first failure. A step `{parallel: [steps]}` runs 2 to 8 tool or assertion steps at once, each on its own `session`, started in listed order and ended together: put a `wait` before the click that should satisfy it so the wait is armed first, and a failed member cancels the rest (an input already sent plays to its end). Every entry reports `startMs` and `endMs`. A `fired {node, signal, equals?}` assertion checks the `fired` list of the nearest earlier click, key, drag, mouse_button or type_text step, matching `node` by its trailing path segments and `equals` against the emission's whole argument array.
 
 A `wait` assertion takes any `wait_for` condition, `{output}` included: the server answers it from the run's captured output, so it works while paused and refuses an attached session.
 

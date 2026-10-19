@@ -77,8 +77,161 @@ public sealed class BatchValidationTests : IDisposable
     {
         McpException refused = await RefusedAsync([new BatchStep(Assert: "no_errors"), new BatchStep(Tool: tool, Assert: assert)]);
 
-        Assert.Equal("step 1: give exactly one of tool and assert.", refused.Message);
+        Assert.Equal("step 1: give exactly one of tool, assert and parallel.", refused.Message);
     }
+
+    [Theory]
+    [InlineData("click", null)]
+    [InlineData(null, "no_errors")]
+    public async Task AGroupWithToolOrAssertBesideParallelIsRefused(string? tool, string? assert)
+    {
+        McpException refused = await RefusedAsync([new BatchStep(Tool: tool, Assert: assert, Parallel: Members(2))]);
+
+        Assert.Equal("step 0: give exactly one of tool, assert and parallel.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AGroupWithOtherFieldsBesideParallelIsRefused()
+    {
+        McpException refused = await RefusedAsync([new BatchStep(TimeoutMs: 5, Session: "host", Parallel: Members(2))]);
+
+        Assert.Equal("step 0: a parallel group takes parallel alone; got timeoutMs, session.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(9)]
+    public async Task AGroupOfFewerThanTwoOrMoreThanEightStepsIsRefused(int count)
+    {
+        McpException refused = await RefusedAsync([new BatchStep(Assert: "no_errors"), new BatchStep(Parallel: Members(count))]);
+
+        Assert.Equal($"step 1: a parallel group takes 2 to 8 steps; got {count}.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(8)]
+    public void AGroupOfTwoToEightStepsIsAccepted(int count)
+    {
+        BatchStep[] steps = [new BatchStep(Parallel: Members(count))];
+
+        RuntimeTools.CheckBatch(steps);
+        RuntimeTools.CheckGroupSessions(steps, null);
+    }
+
+    [Fact]
+    public async Task AGroupNamingOneSessionTwiceIsRefused()
+    {
+        BatchStep wait = new(Assert: "wait", GameMs: 500, Session: "guest");
+
+        McpException refused = await RefusedAsync([new BatchStep(Parallel: [Click("host"), wait, Click("host")])]);
+
+        Assert.Equal("step 0: parallel steps 0 and 2 both address session 'host'; each step of a group addresses its own session.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AGroupMemberWithoutASessionAddressesTheBatchsDefault()
+    {
+        BatchStep wait = new(Assert: "wait", GameMs: 500, Session: "host");
+
+        McpException refused = await RefusedAsync([new BatchStep(Parallel: [Click(null), wait])], "host");
+
+        Assert.Equal("step 0: parallel steps 0 and 1 both address session 'host'; each step of a group addresses its own session.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AGroupInsideAGroupIsRefused()
+    {
+        McpException refused = await RefusedAsync([new BatchStep(Parallel: [Click("a"), new BatchStep(Parallel: [Click("b"), Click("c")])])]);
+
+        Assert.Equal("step 0: parallel steps cannot be nested; a group holds tool and assertion steps only.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("fired")]
+    [InlineData("no_errors")]
+    public async Task AFiredOrNoErrorsAssertionIsRefusedInAGroup(string assert)
+    {
+        BatchStep member = new(Assert: assert, Node: "Ready", Signal: "pressed", Session: "b");
+
+        McpException refused = await RefusedAsync([Click("a"), new BatchStep(Parallel: [Click("a"), member])]);
+
+        Assert.Equal($"step 1: parallel step 1: {assert} cannot run in a parallel group; put it after the group.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AMembersOwnRefusalNamesItsPlaceInTheGroup()
+    {
+        BatchStep member = new(Assert: "wait", GameMs: 0, Session: "b");
+
+        McpException refused = await RefusedAsync([new BatchStep(Assert: "no_errors"), new BatchStep(Parallel: [Click("a"), member])]);
+
+        Assert.Equal("step 1: parallel step 1: gameMs must be between 1 and 120000; got 0.", refused.Message);
+    }
+
+    [Fact]
+    public async Task TheStepLimitCountsAGroupsMembers()
+    {
+        BatchStep[] full = [.. Enumerable.Repeat(new BatchStep(Assert: "no_errors"), 92), new BatchStep(Parallel: Members(8))];
+        BatchStep[] over = [new BatchStep(Assert: "no_errors"), .. full];
+
+        RuntimeTools.CheckBatch(full);
+        McpException refused = await RefusedAsync(over);
+
+        Assert.Equal("a batch takes at most 100 steps; split it.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AToolMemberOnAProcessSessionIsRefusedBeforeAnyStepRuns()
+    {
+        await _sessions.ReserveProcessAsync("server", AppContext.BaseDirectory, defaultName: false);
+
+        JsonObject refused = JsonNode
+            .Parse(
+                await _tools.BatchDriveAsync(
+                    [Click("game"), new BatchStep(Parallel: [Click("game"), Click("server")])],
+                    null!,
+                    null,
+                    TestContext.Current.CancellationToken
+                )
+            )!
+            .AsObject();
+
+        Assert.False(refused["passed"]!.GetValue<bool>());
+        Assert.True(refused.ContainsKey("startedAt"), refused.ToJsonString());
+        Assert.Empty(refused["steps"]!.AsArray());
+        Assert.Equal(1, refused["failedAt"]!["index"]!.GetValue<int>());
+        Assert.Equal(1, refused["failedAt"]!["member"]!.GetValue<int>());
+        Assert.Equal(GodotSession.ProcessRefusal("server", "a process"), refused["failedAt"]!["reason"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task AGroupWhoseMembersResolveToOneSessionIsRefusedAsTheBatchStarts()
+    {
+        await _sessions.ReserveProcessAsync("server", AppContext.BaseDirectory, defaultName: false);
+        BatchStep unnamed = new(Assert: "wait", Output: "ready");
+        BatchStep named = unnamed with { Session = "server" };
+
+        JsonObject refused = JsonNode
+            .Parse(await _tools.BatchDriveAsync([new BatchStep(Parallel: [unnamed, named])], null!, null, TestContext.Current.CancellationToken))!
+            .AsObject();
+
+        Assert.False(refused["passed"]!.GetValue<bool>());
+        Assert.True(refused.ContainsKey("startedAt"), refused.ToJsonString());
+        Assert.Empty(refused["steps"]!.AsArray());
+        JsonObject failedAt = refused["failedAt"]!.AsObject();
+        Assert.Equal(["index", "reason"], failedAt.Select(field => field.Key));
+        Assert.Equal(0, failedAt["index"]!.GetValue<int>());
+        Assert.Equal(
+            "step 0: parallel steps 0 and 1 both address session 'server'; each step of a group addresses its own session.",
+            failedAt["reason"]!.GetValue<string>()
+        );
+    }
+
+    private static BatchStep Click(string? session) => new(Tool: "click", Session: session);
+
+    /// <summary>A group's worth of click steps, each on its own session.</summary>
+    private static BatchStep[] Members(int count) => [.. Enumerable.Range(0, count).Select(member => Click($"s{member}"))];
 
     [Theory]
     [InlineData("run_project")]
@@ -454,6 +607,6 @@ public sealed class BatchValidationTests : IDisposable
         Assert.Equal("step 1: the fired assertion takes node, signal and equals; got output.", refused.Message);
     }
 
-    private Task<McpException> RefusedAsync(BatchStep[] steps) =>
-        Assert.ThrowsAsync<McpException>(() => _tools.BatchDriveAsync(steps, null!, null, TestContext.Current.CancellationToken));
+    private Task<McpException> RefusedAsync(BatchStep[] steps, string? session = null) =>
+        Assert.ThrowsAsync<McpException>(() => _tools.BatchDriveAsync(steps, null!, session, TestContext.Current.CancellationToken));
 }

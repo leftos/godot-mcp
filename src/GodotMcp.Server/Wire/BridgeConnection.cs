@@ -101,6 +101,7 @@ internal sealed class BridgeConnection : IAsyncDisposable
         {
             await WriteAsync(Request(id, command, sent), cancellationToken);
             pending.MarkWritten();
+            WriteWatch.Written();
             if (released is { Token.IsCancellationRequested: true })
             {
                 // The release passed while the write was still going out, when there was nothing yet to cancel.

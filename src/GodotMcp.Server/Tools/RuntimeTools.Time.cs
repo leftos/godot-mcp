@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
+using GodotMcp.Server.Wire;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -529,6 +530,7 @@ internal sealed partial class RuntimeTools
         long started = Stopwatch.GetTimestamp();
         using LoadDeadline deadline = LoadClock.Shared.Start(TimeSpan.FromMilliseconds(timeoutMs), cancellationToken);
         (OutputPage stdout, OutputPage stderr, long stdoutAfter, long stderrAfter) = OutputStart(target, after);
+        WriteWatch.Ready();
         while (true)
         {
             (OutputMatch? match, string? error) = OutputWait.Scan(stdout, stderr, stream, regex, stdoutAfter, stderrAfter);

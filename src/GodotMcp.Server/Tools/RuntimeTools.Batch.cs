@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
+using GodotMcp.Server.Wire;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -17,7 +18,8 @@ namespace GodotMcp.Server.Tools;
 /// <summary>
 /// batch_drive: a list of runtime tool calls and assertions played against a running game in one call. Tool steps run
 /// through the server's own tool collection, so each takes its real arguments; assertions run wait_for, the session's
-/// error feed or compare_screenshot. The batch stops at the first step that fails.
+/// error feed or compare_screenshot; a parallel group runs several such steps on their own sessions at once. The batch stops
+/// at the first step that fails.
 /// </summary>
 internal sealed partial class RuntimeTools
 {
@@ -61,12 +63,20 @@ internal sealed partial class RuntimeTools
         ),
     }.ToFrozenDictionary();
 
-    /// <summary>How a step shows that each field a fired assertion does not take was given.</summary>
-    private static readonly (string Name, Func<BatchStep, bool> Given)[] FiredForeignStepFields =
+    private const int MinGroupSteps = 2;
+    private const int MaxGroupSteps = 8;
+
+    /// <summary>How a step shows that each of its fields but parallel was given, named as in the JSON, in the record's order.</summary>
+    private static readonly (string Name, Func<BatchStep, bool> Given)[] StepFields =
     [
+        ("tool", step => step.Tool is not null),
         ("args", step => step.Args is not null),
+        ("assert", step => step.Assert is not null),
+        ("node", step => step.Node is not null),
         ("exists", step => step.Exists is not null),
         ("property", step => !string.IsNullOrEmpty(step.Property)),
+        ("equals", step => step.EqualsValue is not null),
+        ("signal", step => step.Signal is not null),
         ("expression", step => !string.IsNullOrEmpty(step.Expression)),
         ("uiChanged", step => step.UiChanged is not null),
         ("gameMs", step => step.GameMs is not null),
@@ -75,6 +85,7 @@ internal sealed partial class RuntimeTools
         ("name", step => !string.IsNullOrEmpty(step.Name)),
         ("tolerance", step => step.Tolerance is not null),
         ("maxChangedRatio", step => step.MaxChangedRatio is not null),
+        ("session", step => step.Session is not null),
         ("text", step => step.Text is not null),
         ("under", step => step.Under is not null),
         ("stable", step => step.Stable is not null),
@@ -82,6 +93,15 @@ internal sealed partial class RuntimeTools
         ("output", step => step.Output is not null),
         ("stream", step => step.Stream is not null),
         ("after", step => step.After is not null),
+    ];
+
+    /// <summary>The fields a fired assertion takes, or that a step of any kind may carry.</summary>
+    private static readonly string[] FiredStepFields = ["tool", "assert", "node", "equals", "signal", "session"];
+
+    /// <summary>How a step shows that each field a fired assertion does not take was given.</summary>
+    private static readonly (string Name, Func<BatchStep, bool> Given)[] FiredForeignStepFields =
+    [
+        .. StepFields.Where(field => !FiredStepFields.Contains(field.Name)),
     ];
 
     [McpServerTool(Name = BatchToolName, ReadOnly = false, Destructive = true, OpenWorld = false)]
@@ -97,27 +117,33 @@ internal sealed partial class RuntimeTools
             + "of the stable + 1 frames a settled wait reads), no_errors {} (no "
             + "errors since the previous no_errors, or since the batch started), screenshot {name, "
             + "tolerance?, maxChangedRatio?} (compare_screenshot must match), fired {node, signal, equals?} (the nearest "
-            + "earlier tool step's fired list has that node's signal, with those arguments when equals is given). Any step may "
-            + "carry session. At most 100 steps; "
+            + "earlier tool step's fired list has that node's signal, with those arguments when equals is given). Any tool or "
+            + "assertion step may carry session. At most 100 steps; "
             + "the whole batch stops after 300 s of load-adjusted time. Returns {passed, steps: [{index, tool or assert, ok, result or error}], "
-            + "failedAt?: {index, reason}}."
+            + "failedAt?: {index, reason}}. A step may be {parallel: [steps]} (see the step's parallel field); a group's entry is "
+            + "{index, parallel: true, ok, startMs, endMs, members: [entries]} and failedAt.member names the member that failed. The "
+            + "result's startedAt and every entry's startMs and endMs are drive-clock milliseconds since the server started."
     )]
     public async Task<string> BatchDriveAsync(
-        [Description("The steps, in order: {tool, args, session?} or {assert, …, session?}; 1 to 100 of them.")] IReadOnlyList<BatchStep> steps,
+        [Description("The steps, in order: {tool, args, session?} or {assert, …, session?} or {parallel: [steps]}; 1 to 100 of them.")]
+            IReadOnlyList<BatchStep> steps,
         McpServer server,
         [Description(ProjectTools.SessionDescription + " Every step addresses it unless the step names its own.")] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
         CheckBatch(steps);
-        if (FindProcessToolStep(steps, session) is { } processStep)
+        CheckGroupSessions(steps, session);
+        double startedAt = DriveClock.NowMs;
+        if ((FindProcessToolStep(steps, session) ?? FindSharedSession(steps, session)) is { } refused)
         {
             // Refused before any step runs, so a game step ahead of it in the batch never acts.
             return new JsonObject
             {
                 ["passed"] = false,
+                ["startedAt"] = startedAt,
                 ["steps"] = new JsonArray(),
-                ["failedAt"] = new JsonObject { ["index"] = processStep.Index, ["reason"] = processStep.Refusal },
+                ["failedAt"] = refused.ToFailedAt(),
             }.ToJsonString();
         }
 
@@ -127,13 +153,18 @@ internal sealed partial class RuntimeTools
         JsonObject? failedAt = null;
         for (int index = 0; index < steps.Count && failedAt is null; index++)
         {
-            StepOutcome outcome = await RunStepOrDeadlineAsync(run, index, steps[index], cancellationToken);
-            RecordToolStep(run, index, steps[index], outcome);
-            entries.Add(outcome.ToEntry(index, steps[index]));
-            failedAt = outcome.Ok ? null : new JsonObject { ["index"] = index, ["reason"] = outcome.Error };
+            (JsonObject entry, failedAt) = steps[index].Parallel is { } members
+                ? await RunGroupAsync(run, index, members, cancellationToken)
+                : await RunTimedStepAsync(run, index, steps[index], cancellationToken);
+            entries.Add(entry);
         }
 
-        JsonObject result = new() { ["passed"] = failedAt is null, ["steps"] = entries };
+        JsonObject result = new()
+        {
+            ["passed"] = failedAt is null,
+            ["startedAt"] = startedAt,
+            ["steps"] = entries,
+        };
         if (failedAt is not null)
         {
             result["failedAt"] = failedAt;
@@ -141,6 +172,124 @@ internal sealed partial class RuntimeTools
 
         return result.ToJsonString();
     }
+
+    /// <summary>Runs one step that is not a group, and gives its entry, stamped on the drive clock, and its failedAt when it failed.</summary>
+    private async Task<(JsonObject Entry, JsonObject? FailedAt)> RunTimedStepAsync(
+        BatchRun run,
+        int index,
+        BatchStep step,
+        CancellationToken clientCancellation
+    )
+    {
+        double startMs = DriveClock.NowMs;
+        StepOutcome outcome = await RunStepOrDeadlineAsync(run, index, step, clientCancellation);
+        double endMs = DriveClock.NowMs;
+        RecordToolStep(run, index, step, outcome);
+        JsonObject? failedAt = outcome.Ok ? null : new JsonObject { ["index"] = index, ["reason"] = outcome.Error };
+        return (outcome.ToEntry(index, step, startMs, endMs), failedAt);
+    }
+
+    /// <summary>
+    /// Runs a parallel group: each member starts once the one before has sent its request, has read its output baseline or
+    /// has ended, and the group ends when every member has. The first member to fail cancels the others still running.
+    /// </summary>
+    private async Task<(JsonObject Entry, JsonObject? FailedAt)> RunGroupAsync(
+        BatchRun run,
+        int index,
+        IReadOnlyList<BatchStep> members,
+        CancellationToken clientCancellation
+    )
+    {
+        double startMs = DriveClock.NowMs;
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(run.Cancellation);
+        GroupRun group = new(run with { Cancellation = cancel.Token }, index, cancel, clientCancellation);
+        var running = new Task<JsonObject>[members.Count];
+        for (int member = 0; member < members.Count; member++)
+        {
+            WriteWatch watch = new();
+            running[member] = RunMemberAsync(group, member, members[member], watch);
+            await watch.Released;
+        }
+
+        JsonObject[] entries = await Task.WhenAll(running);
+        JsonObject entry = new()
+        {
+            ["index"] = index,
+            ["parallel"] = true,
+            ["ok"] = group.Failure is null,
+            ["startMs"] = startMs,
+            ["endMs"] = DriveClock.NowMs,
+            ["members"] = new JsonArray(entries),
+        };
+        JsonObject? failedAt = group.Failure is { } failure
+            ? new JsonObject
+            {
+                ["index"] = index,
+                ["member"] = failure.Member,
+                ["reason"] = failure.Reason,
+            }
+            : null;
+        return (entry, failedAt);
+    }
+
+    /// <summary>
+    /// Runs one member of a group under <paramref name="watch"/>, which it releases when it ends at the latest, and gives its
+    /// entry: its own outcome, or the cancelled entry when the group was cancelled before it finished.
+    /// </summary>
+    private async Task<JsonObject> RunMemberAsync(GroupRun group, int member, BatchStep step, WriteWatch watch)
+    {
+        watch.Watch();
+        double startMs = DriveClock.NowMs;
+        try
+        {
+            StepOutcome? outcome = await RunMemberStepAsync(group, step);
+            bool cancelled = group.Judge(member, outcome, group.Cancel.IsCancellationRequested);
+            double endMs = DriveClock.NowMs;
+            return cancelled || outcome is null
+                ? CancelledEntry(member, step, MemberSession(step, group.Run.Session), watch.Sent, startMs, endMs)
+                : outcome.ToEntry(member, step, startMs, endMs);
+        }
+        catch (Exception)
+        {
+            // An exception no outcome caught (the client's cancel, or one of no token's) ends the group now, not at its slowest member.
+            await group.Cancel.CancelAsync();
+            throw;
+        }
+        finally
+        {
+            watch.Release();
+        }
+    }
+
+    /// <summary>A member's outcome; null when the group's cancel, not the client or the deadline, ended it with an exception.</summary>
+    private async Task<StepOutcome?> RunMemberStepAsync(GroupRun group, BatchStep step)
+    {
+        try
+        {
+            return await RunStepOrDeadlineAsync(group.Run, group.Index, step, group.ClientCancellation);
+        }
+        catch (OperationCanceledException) when (group.Cancel.IsCancellationRequested && !group.ClientCancellation.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The entry of a member the group cancelled: whether its request had reached the game, and no result or error.</summary>
+    private static JsonObject CancelledEntry(int member, BatchStep step, string? session, bool sent, double startMs, double endMs)
+    {
+        JsonObject entry = new() { ["index"] = member };
+        entry[EntryKind(step)] = step.Tool ?? step.Assert;
+        entry["session"] = session;
+        entry["ok"] = false;
+        entry["cancelled"] = true;
+        entry["sent"] = sent;
+        entry["startMs"] = startMs;
+        entry["endMs"] = endMs;
+        return entry;
+    }
+
+    /// <summary>The key a step's entry names it under: tool for a tool step, assert for an assertion.</summary>
+    private static string EntryKind(BatchStep step) => step.Tool is not null ? "tool" : "assert";
 
     /// <summary>Keeps the step's result for a later fired assertion to check it, when the step runs a tool.</summary>
     private static void RecordToolStep(BatchRun run, int index, BatchStep step, StepOutcome outcome)
@@ -166,7 +315,7 @@ internal sealed partial class RuntimeTools
             throw new McpException("steps is empty; a batch needs at least one step.");
         }
 
-        if (steps.Count > MaxBatchSteps)
+        if (StepCount(steps) > MaxBatchSteps)
         {
             throw new McpException($"a batch takes at most {MaxBatchSteps} steps; split it.");
         }
@@ -174,10 +323,87 @@ internal sealed partial class RuntimeTools
         bool toolStepBefore = false;
         for (int index = 0; index < steps.Count; index++)
         {
-            CheckStep(index, steps[index], toolStepBefore);
+            CheckStep($"step {index}", steps[index], toolStepBefore);
             toolStepBefore |= steps[index]?.Tool is not null;
         }
     }
+
+    /// <summary>The steps a batch counts toward its limit: a group counts as its members.</summary>
+    private static int StepCount(IReadOnlyList<BatchStep> steps) => steps.Sum(step => step?.Parallel?.Count ?? 1);
+
+    /// <summary>
+    /// Refuses a group two of whose members address one session by the names given: a tool member's args.session, else its
+    /// step's session, else the batch's, as <see cref="MemberSession"/> reads them. A member that names none while the batch
+    /// names none is left to the check on the resolved sessions as the batch starts.
+    /// </summary>
+    /// <exception cref="McpException">A group's members address one session twice.</exception>
+    internal static void CheckGroupSessions(IReadOnlyList<BatchStep> steps, string? session)
+    {
+        for (int index = 0; index < steps.Count; index++)
+        {
+            if (steps[index].Parallel is { } members && SharedName(members, member => MemberSession(member, session)) is { } shared)
+            {
+                throw new McpException(SharedSessionRefusal(index, shared));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The first group two of whose members resolve to one live session, with the refusal; null when none does. A name that
+    /// resolves to no session is passed over here: the member's own call refuses it as it runs.
+    /// </summary>
+    private StepRefusal? FindSharedSession(IReadOnlyList<BatchStep> steps, string? session)
+    {
+        for (int index = 0; index < steps.Count; index++)
+        {
+            if (steps[index].Parallel is { } members && SharedName(members, member => ResolvedName(MemberSession(member, session))) is { } shared)
+            {
+                return new StepRefusal(index, null, SharedSessionRefusal(index, shared));
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The name of the session <paramref name="session"/> resolves to; null when it resolves to none.</summary>
+    private string? ResolvedName(string? session)
+    {
+        try
+        {
+            return sessions.Resolve(session, allowProcess: true).Name;
+        }
+        catch (SessionException)
+        {
+            // The member's own call raises the same refusal when it runs, and its entry carries it.
+            return null;
+        }
+    }
+
+    /// <summary>The first two members, in listed order, whose names are one, with the name; null when every name differs or is null.</summary>
+    private static (int First, int Second, string Name)? SharedName(IReadOnlyList<BatchStep> members, Func<BatchStep, string?> nameOf)
+    {
+        string?[] names = [.. members.Select(nameOf)];
+        for (int second = 1; second < names.Length; second++)
+        {
+            for (int first = 0; first < second; first++)
+            {
+                if (names[first] is { } name && string.Equals(name, names[second], StringComparison.Ordinal))
+                {
+                    return (first, second, name);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static string SharedSessionRefusal(int index, (int First, int Second, string Name) shared) =>
+        $"step {index}: parallel steps {shared.First} and {shared.Second} both address session '{shared.Name}'; "
+        + "each step of a group addresses its own session.";
+
+    /// <summary>The session a step addresses: a tool step's <see cref="EffectiveSession"/>, an assertion's own, else the batch's.</summary>
+    private static string? MemberSession(BatchStep step, string? session) =>
+        step.Tool is not null ? EffectiveSession(step, session) : step.Session ?? session;
 
     /// <summary>
     /// A tool step's arguments as the tool receives them: its args, the session when they name none, and path_only forced
@@ -220,44 +446,92 @@ internal sealed partial class RuntimeTools
             .Where(name => name is not (BatchToolName or SaveScreenshotToolName))
             .ToFrozenSet();
 
-    private static void CheckStep(int index, BatchStep? step, bool toolStepBefore)
+    /// <summary>Checks one step; <paramref name="at"/> is how its refusals name it, "step 3" or "step 3: parallel step 1".</summary>
+    private static void CheckStep(string at, BatchStep? step, bool toolStepBefore)
     {
-        if (step is null || (step.Tool is null) == (step.Assert is null))
+        if (step is null || KindsGiven(step) != 1)
         {
-            throw new McpException($"step {index}: give exactly one of tool and assert.");
+            throw new McpException($"{at}: give exactly one of tool, assert and parallel.");
         }
 
-        if (step.Tool is not null)
+        if (step.Parallel is { } members)
         {
-            if (!BatchableTools.Contains(step.Tool))
-            {
-                throw new McpException(
-                    $"step {index}: '{step.Tool}' cannot run in a batch; a tool step names a runtime tool, one of: "
-                        + $"{string.Join(", ", BatchableTools.Order(StringComparer.Ordinal))}."
-                );
-            }
-
-            return;
+            CheckGroup(at, step, members);
         }
-
-        CheckAssertion(index, step, toolStepBefore);
+        else if (step.Tool is not null)
+        {
+            CheckToolStep(at, step.Tool);
+        }
+        else
+        {
+            CheckAssertion(at, step, toolStepBefore);
+        }
     }
 
-    private static void CheckAssertion(int index, BatchStep step, bool toolStepBefore)
+    private static int KindsGiven(BatchStep step) =>
+        (step.Tool is not null ? 1 : 0) + (step.Assert is not null ? 1 : 0) + (step.Parallel is not null ? 1 : 0);
+
+    private static void CheckToolStep(string at, string tool)
+    {
+        if (!BatchableTools.Contains(tool))
+        {
+            throw new McpException(
+                $"{at}: '{tool}' cannot run in a batch; a tool step names a runtime tool, one of: "
+                    + $"{string.Join(", ", BatchableTools.Order(StringComparer.Ordinal))}."
+            );
+        }
+    }
+
+    /// <summary>Checks a group: parallel alone, 2 to 8 members, and each a tool step or an assertion a group may hold.</summary>
+    private static void CheckGroup(string at, BatchStep step, IReadOnlyList<BatchStep> members)
+    {
+        string[] beside = [.. StepFields.Where(field => field.Given(step)).Select(field => field.Name)];
+        if (beside.Length > 0)
+        {
+            throw new McpException($"{at}: a parallel group takes parallel alone; got {string.Join(", ", beside)}.");
+        }
+
+        if (members.Count is < MinGroupSteps or > MaxGroupSteps)
+        {
+            throw new McpException($"{at}: a parallel group takes {MinGroupSteps} to {MaxGroupSteps} steps; got {members.Count}.");
+        }
+
+        for (int member = 0; member < members.Count; member++)
+        {
+            CheckMember(at, member, members[member]);
+        }
+    }
+
+    private static void CheckMember(string at, int member, BatchStep? step)
+    {
+        if (step?.Parallel is not null)
+        {
+            throw new McpException($"{at}: parallel steps cannot be nested; a group holds tool and assertion steps only.");
+        }
+
+        if (step is { Tool: null, Assert: "fired" or "no_errors" })
+        {
+            throw new McpException($"{at}: parallel step {member}: {step.Assert} cannot run in a parallel group; put it after the group.");
+        }
+
+        CheckStep($"{at}: parallel step {member}", step, toolStepBefore: false);
+    }
+
+    private static void CheckAssertion(string at, BatchStep step, bool toolStepBefore)
     {
         if (!AssertionKinds.TryGetValue(step.Assert!, out AssertionKind? kind))
         {
-            throw new McpException($"step {index}: assert '{step.Assert}' is not one of {AssertionKindList}.");
+            throw new McpException($"{at}: assert '{step.Assert}' is not one of {AssertionKindList}.");
         }
 
         if (kind.NeedsToolBefore && !toolStepBefore)
         {
-            throw new McpException(NeedsToolStepRefusal(index, step.Assert!));
+            throw new McpException(NeedsToolStepRefusal(at, step.Assert!));
         }
 
         if (!kind.IsComplete(step))
         {
-            throw new McpException($"step {index}: the {step.Assert} assertion needs {kind.Needs}.");
+            throw new McpException($"{at}: the {step.Assert} assertion needs {kind.Needs}.");
         }
 
         try
@@ -266,7 +540,7 @@ internal sealed partial class RuntimeTools
         }
         catch (McpException e)
         {
-            throw new McpException($"step {index}: {e.Message}", e);
+            throw new McpException($"{at}: {e.Message}", e);
         }
     }
 
@@ -298,8 +572,8 @@ internal sealed partial class RuntimeTools
         [.. FiredForeignStepFields.Where(field => field.Given(step)).Select(field => field.Name)];
 
     /// <summary>The refusal of a fired assertion no tool step comes before; validation raises it before the batch runs.</summary>
-    private static string NeedsToolStepRefusal(int index, string assert) =>
-        $"step {index}: assert '{assert}' needs a tool step before it, whose fired list it checks.";
+    private static string NeedsToolStepRefusal(string at, string assert) =>
+        $"{at}: assert '{assert}' needs a tool step before it, whose fired list it checks.";
 
     private static void CheckWaitAssertion(BatchStep step) => _ = BuildWaitParameters(ConditionOf(step), TimeoutOf(step));
 
@@ -342,27 +616,32 @@ internal sealed partial class RuntimeTools
     private static CompareOptions CompareOptionsOf(BatchStep step) => new(step.MaxChangedRatio ?? 0, "path_only");
 
     /// <summary>
-    /// The first tool step whose effective session is a process, with its index and the refusal; null when every tool step
-    /// addresses another kind, an unknown name or none. It runs before the first step, so no step of the batch acts first.
+    /// The first tool step, or tool member of a group, whose effective session is a process, with its place and the refusal;
+    /// null when every tool step addresses another kind, an unknown name or none. It runs before the first step, so no step
+    /// of the batch acts first.
     /// </summary>
-    private (int Index, string Refusal)? FindProcessToolStep(IReadOnlyList<BatchStep> steps, string? session)
+    private StepRefusal? FindProcessToolStep(IReadOnlyList<BatchStep> steps, string? session)
     {
         for (int index = 0; index < steps.Count; index++)
         {
-            BatchStep step = steps[index];
-            if (step.Tool is null)
+            IReadOnlyList<BatchStep> members = steps[index].Parallel ?? [steps[index]];
+            for (int member = 0; member < members.Count; member++)
             {
-                continue;
-            }
-
-            if (sessions.ProcessSession(EffectiveSession(step, session)) is { } process)
-            {
-                return (index, GodotSession.ProcessRefusal(process.Name, process.ProcessProgram ?? "a process"));
+                if (ProcessRefusalOf(members[member], session) is { } refusal)
+                {
+                    return new StepRefusal(index, steps[index].Parallel is null ? null : member, refusal);
+                }
             }
         }
 
         return null;
     }
+
+    /// <summary>The refusal of a tool step whose effective session is a process; null for any other step.</summary>
+    private string? ProcessRefusalOf(BatchStep step, string? session) =>
+        step.Tool is not null && sessions.ProcessSession(EffectiveSession(step, session)) is { } process
+            ? GodotSession.ProcessRefusal(process.Name, process.ProcessProgram ?? "a process")
+            : null;
 
     /// <summary>
     /// The session a tool step's own arguments name: args.session when it carries one, else the step's, else the batch's,
@@ -423,7 +702,7 @@ internal sealed partial class RuntimeTools
 
     /// <summary>Whether the batch's own deadline, not the client, cancelled it.</summary>
     private static bool DeadlinePassed(BatchRun run, CancellationToken clientCancellation) =>
-        run.Cancellation.IsCancellationRequested && !clientCancellation.IsCancellationRequested;
+        run.Deadline.Token.IsCancellationRequested && !clientCancellation.IsCancellationRequested;
 
     /// <summary><see cref="DeadlineReason"/>, with the backstop clause when the batch's backstop, not its ceiling, ended it.</summary>
     private string DeadlineFailure(BatchRun run) =>
@@ -557,7 +836,7 @@ internal sealed partial class RuntimeTools
     private static StepOutcome AssertFired(AssertionCall call)
     {
         (int Index, string Tool, JsonObject? Result) toolStep =
-            call.Run.LastTool ?? throw new McpException(NeedsToolStepRefusal(call.Index, call.Step.Assert!));
+            call.Run.LastTool ?? throw new McpException(NeedsToolStepRefusal($"step {call.Index}", call.Step.Assert!));
         FiredCheck check = CheckFired(call.Step, call.Index, toolStep.Index, toolStep.Tool, toolStep.Result);
         return check.Reason is { } reason ? StepOutcome.Failed(reason) : StepOutcome.Passed(check.Result);
     }
@@ -691,8 +970,11 @@ internal sealed partial class RuntimeTools
     /// <summary>What a batch run carries from step to step: the server, the default session, the error marks and the deadline.</summary>
     private sealed record BatchRun(McpServer Server, string? Session, Dictionary<GodotSession, long> Marks, LoadDeadline Deadline)
     {
-        /// <summary>Cancelled when the batch's deadline passes or the client cancels the call.</summary>
-        public CancellationToken Cancellation => Deadline.Token;
+        /// <summary>
+        /// Cancelled when the batch's deadline passes or the client cancels the call; in a group's members, also when the
+        /// group's first member fails.
+        /// </summary>
+        public CancellationToken Cancellation { get; init; } = Deadline.Token;
 
         /// <summary>The nearest earlier tool step's index, tool and result, whose fired list a fired assertion checks.</summary>
         public (int Index, string Tool, JsonObject? Result)? LastTool { get; set; }
@@ -728,10 +1010,10 @@ internal sealed partial class RuntimeTools
 
         public static StepOutcome Failed(string reason) => new(false, null, reason);
 
-        public JsonObject ToEntry(int index, BatchStep step)
+        public JsonObject ToEntry(int index, BatchStep step, double startMs, double endMs)
         {
             JsonObject entry = new() { ["index"] = index };
-            entry[step.Tool is not null ? "tool" : "assert"] = step.Tool ?? step.Assert;
+            entry[EntryKind(step)] = step.Tool ?? step.Assert;
             entry["ok"] = Ok;
             if (Ok)
             {
@@ -742,7 +1024,79 @@ internal sealed partial class RuntimeTools
                 entry["error"] = Error;
             }
 
+            entry["startMs"] = startMs;
+            entry["endMs"] = endMs;
             return entry;
+        }
+    }
+
+    /// <summary>A step refused as the batch starts, before any step runs: its place, its member's in a group, and why.</summary>
+    private sealed record StepRefusal(int Index, int? Member, string Reason)
+    {
+        public JsonObject ToFailedAt()
+        {
+            JsonObject failedAt = new() { ["index"] = Index };
+            if (Member is { } member)
+            {
+                failedAt["member"] = member;
+            }
+
+            failedAt["reason"] = Reason;
+            return failedAt;
+        }
+    }
+
+    /// <summary>
+    /// One parallel group as it runs: the batch run its members share, whose cancellation is the group's; the group's
+    /// place; its cancel; the client's cancellation; and the first member to fail, by completion order.
+    /// </summary>
+    private sealed class GroupRun(BatchRun run, int index, CancellationTokenSource cancel, CancellationToken clientCancellation)
+    {
+        private readonly Lock _lock = new();
+
+        public BatchRun Run => run;
+
+        public int Index => index;
+
+        public CancellationTokenSource Cancel => cancel;
+
+        public CancellationToken ClientCancellation => clientCancellation;
+
+        /// <summary>The first member to fail and its reason; null while none has.</summary>
+        public (int Member, string Reason)? Failure { get; private set; }
+
+        /// <summary>
+        /// Takes a member's outcome as it ends: the first failure becomes the group's and cancels the members still running.
+        /// </summary>
+        /// <param name="member">The member's place in the group.</param>
+        /// <param name="outcome">Its outcome; null when the group's cancel ended it.</param>
+        /// <param name="cancelledBefore">Whether the group's token had fired when the outcome came in.</param>
+        /// <returns>Whether the member counts as cancelled: a later failure, or none, after the group's token fired.</returns>
+        public bool Judge(int member, StepOutcome? outcome, bool cancelledBefore)
+        {
+            if (outcome is { Ok: true })
+            {
+                return false;
+            }
+
+            bool first = false;
+            lock (_lock)
+            {
+                if (Failure is null && outcome is not null)
+                {
+                    Failure = (member, outcome.Error ?? "");
+                    first = true;
+                }
+            }
+
+            if (first)
+            {
+                // Outside the lock: the cancel runs the members' callbacks and continuations inline.
+                cancel.Cancel();
+                return false;
+            }
+
+            return cancelledBefore || outcome is null;
         }
     }
 }
