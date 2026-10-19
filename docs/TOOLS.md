@@ -1168,9 +1168,10 @@ A wrapped process has no stall kill (a gate waiting for a slot is silent), the c
 {
   "resolution": "1280x720",
   "presets": {
-    // Two Godot runs of the same game on one folder, each a session of its own.
+    // Two Godot runs of the same game on one folder, each a session of its own;
+    // both must take the same quiet and shutOutRealGamepads.
     "host": { "userArgs": ["--host"], "session": "host", "quiet": false },
-    "guest": { "userArgs": ["--join=127.0.0.1"], "session": "guest" },
+    "guest": { "userArgs": ["--join=127.0.0.1"], "session": "guest", "quiet": false },
   }
 }
 ```
