@@ -71,7 +71,7 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
         ];
         return request with
         {
-            FileName = ResolveProgram(command[0]),
+            FileName = ResolveProgram(command[0], ProjectDir),
             Arguments = [.. command.Skip(1), Path.GetFullPath(request.FileName), .. request.Arguments],
             WorkingDirectory = ProjectDir,
             LogPath = CaptureLog(request.LogPath),
@@ -90,6 +90,6 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
     }
 
     /// <summary>A program with a folder in it is relative to the project folder; a bare name is looked up on PATH.</summary>
-    private string ResolveProgram(string program) =>
-        program.IndexOfAny(['/', '\\']) < 0 ? program : Path.GetFullPath(Path.Combine(ProjectDir, program));
+    internal static string ResolveProgram(string program, string projectDir) =>
+        program.IndexOfAny(['/', '\\']) < 0 ? program : Path.GetFullPath(Path.Combine(projectDir, program));
 }

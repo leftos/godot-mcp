@@ -491,7 +491,12 @@ internal sealed partial class RuntimeTools
     {
         if (parameters["kind"]!.GetValue<string>() == "output")
         {
-            return await WaitForOutputAsync(Find(session), parameters, parameters["timeoutMs"]!.GetValue<int>(), cancellationToken);
+            return await WaitForOutputAsync(
+                Find(session, allowProcess: true),
+                parameters,
+                parameters["timeoutMs"]!.GetValue<int>(),
+                cancellationToken
+            );
         }
 
         await PrepareGameToolCallsAsync("wait_for", parameters, session, cancellationToken);

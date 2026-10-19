@@ -18,6 +18,8 @@ A drive is always the same five moves: **start → look → act → wait → che
 1. **Start.** `run_project {projectPath}` (the folder holding `project.godot`) returns once the bridge is connected; note the `session` and pass it to every later call, and, in a C# project, the `prep` (a stale assembly was built, imports were run). It starts **quiet**: off-screen, unfocused, silent, real input shut out.
 
    `scene` picks another scene; `userArgs` go after `--` (the game reads them with `OS.get_cmdline_user_args()`), `engineArgs` before it (`["--resolution", "1280x720"]`). A `godot-mcp.json` beside `project.godot` holds per-project defaults and named `presets` (`options.preset`), and `prepWrapper`, the project's gate the prep builds and imports through; `prep.buildLog` / `importLog` name the logs.
+
+   A server or backend the game needs beside it starts with `run_process {projectPath, process}` when the file's `processes` section declares it; note that session too, and wait for its first line with `wait_for {output}` (its `ready` entry is not waited on).
 2. **Look.** `get_ui_elements` lists Controls with their rects in viewport coordinates; `get_scene_tree` lists every live node; `take_screenshot` returns an image (a 480 px preview by default; `responseMode: "path_only"` when only the file matters).
 3. **Act.** Aim at a Control by path: `click {target: {element: "Main/Menu/Play"}}`. Use `{x, y}` only where no Control exists, and then in **viewport** coordinates, never pixels read off a screenshot (a stretched or letterboxed window's screenshot is not the viewport).
 4. **Wait.**
@@ -32,6 +34,8 @@ A drive is always the same five moves: **start → look → act → wait → che
 5. **Check.** Every runtime result carries `errors` the game raised during the call, with file and line. The key is absent when there were none. Read them before the next step: a handler that threw still "succeeds".
 6. **Stop.** `stop_project` at the end of every `run_project` session. For a game joined with `attach_project`, `detach_project` leaves it running and `stop_project` quits it. A game `run_project` started also quits by itself when its server exits or is stopped (an install, a crash), running its exit work; an attached game keeps running.
 
+   A process session is stopped by name, never with `projectPath`: `stop_project {session}` ends the program and everything it started at once, while `stop_project {projectPath}` never stops one.
+
 ## Every tool, by job
 
 **Sessions.**
@@ -39,6 +43,10 @@ A drive is always the same five moves: **start → look → act → wait → che
 `run_project` starts a game; `attach_project` joins one started some other way (a second client, a `--server` run, the editor's Play button: start it within `waitSeconds` after the call, never before; `options.quiet: true` for one a debugger launches, which also mutes it; `options.mute: true` silences a watched game); to join a game that is already running (a launcher script, a windowed smoke, a state a player reached), `arm_project` the folder first: every game with a window started on it from then on waits dormant (a `--headless` one is left alone), `attach_project` joins it (`options.pid` when several wait; `list_sessions`' `armed` lists them), `detach_project` returns it to waiting, and `disarm_project` ends that.
 
 A game started before the arm has no bridge and cannot be joined; `restart_project` relaunches a run session with the same scene and arguments after you change code, keeping its name and output; `stop_project` and `detach_project` end them; `list_sessions` names the live ones (`includeStopped: true` adds runs that ended, still reachable by name); `get_debug_output` reads a run's stdout and stderr when it crashed or quit.
+
+`run_process` starts a companion a project declares in `godot-mcp.json`'s `processes` section (a game server, a mock backend) as a process session: it has no bridge, `list_sessions` lists it with `kind: "process"` and a null `gameProcessId`, `get_debug_output` and `wait_for {output}` read what it prints (also written to `.godot/godot-mcp/process-<session>.log`), and `stop_project {session}` ends it and everything it started at once.
+
+Every other runtime tool refuses it; `batch_drive` runs a `wait` with `output` on it and refuses a tool step. Stop it by name, never with `projectPath`.
 
 `stop_project`'s `alreadyExited` says the game had ended before the stop, and `gameExitCode` is the game's own code (`exitCode` is the console wrapper's). Several sessions can run at once, on one folder or several (a host and a headless guest of one project): name them with `options.session`, and launch a headless client with `engineArgs: ["--headless", "--resolution", "<the project's viewport size>"]`, since a headless root window is 64x64. Pass the `session` `run_project` returned to every call from the first one: another agent's game can start on the same server at any time, and a call without a name is then refused.
 

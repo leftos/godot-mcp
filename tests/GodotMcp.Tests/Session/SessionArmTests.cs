@@ -51,6 +51,24 @@ public sealed class SessionArmTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task ALiveProcessSessionDoesNotBindTheArmOrAPreviewsSettings()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string alpha = _harness.Project("alpha");
+        GodotSession process = await _harness.Sessions.ReserveProcessAsync("server", alpha, defaultName: true);
+
+        GodotSession preview = _harness.Sessions.ReservePreview(alpha);
+        ArmState armed = await _harness.Sessions.ArmAsync(alpha, Quiet, cancellation);
+
+        Assert.True(process.IsLive);
+        Assert.False(process.Quiet);
+        Assert.True(preview.Quiet);
+        Assert.False(preview.ShutOutRealGamepads);
+        Assert.True(armed.Quiet);
+        Assert.False(armed.ShutOutRealGamepads);
+    }
+
+    [Fact]
     public async Task ArmWritesTheOverrideAndTheArmFileAndListsTheDormantGames()
     {
         string alpha = _harness.Project("alpha");

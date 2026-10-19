@@ -488,7 +488,7 @@ internal sealed class ScratchRun
         }
 
         ScratchObservation seen = await WalkAsync(session, cancellationToken);
-        StopResult stopped = await session.StopAsync(CancellationToken.None);
+        var stopped = (StopResult)await session.StopAsync(CancellationToken.None);
         (OutputPage stdout, OutputPage stderr, _) = Output(session);
         return seen with
         {

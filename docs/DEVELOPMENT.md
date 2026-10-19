@@ -184,6 +184,17 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
   `TimeTests` covers a line a later script prints, a check-once wait from an `after` mark, and a timeout with both `last` streams; `MultiSessionTests` waits for the guest's `[net] joined` line and has a batch output assertion wait on the count it prints.
 
   `WaitOutputValidationTests` and `BatchValidationTests` (unit) cover the refusals (blank or invalid `output`, a bad `stream`, a negative `after`, check-once without `after`, `screenshot`, `then`, `call` and `edge`) and a `fired` assertion refusing `output`, `stream` and `after`.
+- **Process sessions** (`run_process`, and `stop_project` on one): unit `RunProcessValidationTests` (`tests/GodotMcp.Tests/Tools`) covers the refusals (no `godot-mcp.json`, an empty `projectPath`, an unknown name listing every declared process or `none`), the default session name fitted from the process's key, the call's `args` appended after the command, and a program with a folder in it resolved against the project folder while a bare one is left to `PATH`.
+
+  `ProjectProfileTests` covers the `processes` section: every field and the 60000 ms default, an unknown key, a wrong type, an empty `command`, a duplicate name, an absolute or escaping `cwd`, a bad `ready.output`, a `timeoutMs` outside 1 to 600000, and `IsInsideFolder`'s edges.
+
+  Itest `ProcessSessionTests` (the `sessions` group) runs on an InputProbe copy that takes the fixture's top-level `ticker.ps1`, which prints a line a second and starts `ticker-child.ps1`, and `ticker-once.ps1`, which prints one line and exits.
+
+  It covers a start's `{session, processId, log, command}`, `list_sessions`' `kind: "process"` with a null `gameProcessId`, the ticker's line through `get_debug_output` and `wait_for {output}`, a runtime tool's refusal, and a passing `batch_drive` output assertion beside a tool step refused before any step runs.
+
+  `stop_project` returns `{kind: "process", killed: true, alreadyExited: false, exitCode: null}` and ends the child with the job, and a process that exits on its own stays listed as stopped while its child still ends.
+
+  `SessionArmTests` pins that a live process session binds neither a folder's arm nor a preview's quiet and shut-out settings; `McpServerSmokeTests` and `ToolClassesTests` count the tool and its class.
 - **Watch audio tracks** (`tracks.audio.players`): `tests/bridge/test_watch_audio.gd` (gdtest, stub players only, since `run_tests.gd` runs inside `_initialize` before the root is in the tree and a real player cannot play).
 
   The gdtest covers a start per greater playback id, a revert to an older voice reading none, the end reasons in their order, `stream_paused` as pause and resume, no event and no error for an idle player, paused-frame reads, a player followed once however often it enters, the 200-player and 1000-voice caps, a freed player making room, a 3D player outside the tree, the start reply, the disconnects at finish and drop, an `under` that does not exist).
@@ -310,6 +321,9 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
   A quiet run on Windows inherits exactly its three pipe handles (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`), made inheritable only around its `CreateProcessW`; every other child start in the server goes through `ChildProcesses.Start`, under the same `StartLock`, because a child started meanwhile would inherit the game's pipe ends and hold its output open.
 
   `ToolProcess` keeps a child's stdin open only when its request says so (`KeepStandardInput`, for ffmpeg's frames), never the server's own, and hands a child's stdout to the caller only for `PipeStandardOutput` (the capture helper's frames), logging stderr alone then.
+- **A process session's tree is in a kill-on-close job, so the program is joined before it runs.** `ToolProcess` gives the job `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (`OwnWork.TreeCpu`), starts the program through `DesktopProcess.StartSuspended` (`CreateProcessW` with `CREATE_SUSPENDED`), joins it to the job while it is suspended, and only then resumes its main thread.
+
+  A child it spawns joins the job by default, so even one started on the program's first line ends with it: `stop_project` and the server's exit close the job and end the whole tree. A job that cannot be made or joined refuses the start instead of falling back to a tree kill, since nothing would then end the descendants. `run_process` is refused on non-Windows before the log is opened or anything starts.
 - **Only an `McpException`'s message reaches the client.** Any other exception becomes "An error occurred invoking '<tool>'.", so tools rethrow session errors as `McpException`. That wrapping is the server pipeline's: `McpServerTool.InvokeAsync`, which `batch_drive` calls, rethrows the tool's exception as it is, an argument of the wrong type as a raw `JsonException`.
 
   Argument binding happens before a tool's body runs, so the server's call-tool filter (`ArgumentErrors.Filter`) names a binding failure against the tool's input schema, and `batch_drive` and `batch_scene_operations` call the same helper for their steps; every tool binds with `ToolJson.Options`, which refuses an unmapped key, so a binding test builds the tool collection with those options too.

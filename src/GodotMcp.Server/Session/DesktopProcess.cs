@@ -80,7 +80,7 @@ internal sealed partial class DesktopProcess : IRunProcess
         ProcessInformation native;
         lock (ChildProcesses.StartLock)
         {
-            (stdout, stderr, native) = CreateWithPipes(application, startInfo, desktopPath);
+            (stdout, stderr, native) = CreateWithPipes(application, fullPath: true, startInfo, desktopPath);
         }
 
         try
@@ -98,14 +98,91 @@ internal sealed partial class DesktopProcess : IRunProcess
         }
     }
 
+    /// <summary>A process started suspended and resumed, with its three standard streams on pipes: what a tool process reads.</summary>
+    /// <param name="Process">The running process, opened through <see cref="System.Diagnostics.Process.GetProcessById(int)"/>.</param>
+    /// <param name="Stdout">Its stdout, from its first line.</param>
+    /// <param name="Stderr">Its stderr, from its first line.</param>
+    internal sealed record SuspendedProcess(Process Process, StreamReader Stdout, StreamReader Stderr);
+
+    /// <summary>
+    /// Starts a process suspended and joins it through <paramref name="join"/> before it may run, so every process it starts
+    /// joins the job too: the caller's kill-on-close job then ends the whole tree. The process starts on the current desktop,
+    /// with <paramref name="startInfo"/>'s command, arguments, folder and environment.
+    /// </summary>
+    /// <param name="startInfo">What to run; its program may be a bare name found on PATH.</param>
+    /// <param name="join">Called while the process is suspended; a throw ends it.</param>
+    /// <exception cref="Win32Exception">The process could not be created or resumed; nothing is left running.</exception>
+    [SupportedOSPlatform("windows")]
+    internal static SuspendedProcess StartSuspended(ProcessStartInfo startInfo, Action<Process> join)
+    {
+        string application = startInfo.FileName;
+        bool fullPath = Path.IsPathRooted(application);
+        AnonymousPipeServerStream stdout;
+        AnonymousPipeServerStream stderr;
+        ProcessInformation native;
+        lock (ChildProcesses.StartLock)
+        {
+            (stdout, stderr, native) = CreateWithPipes(application, fullPath, startInfo, desktopPath: null);
+        }
+
+        Process process;
+        try
+        {
+            process = Watch(native);
+        }
+        catch
+        {
+            stdout.Dispose();
+            stderr.Dispose();
+            throw;
+        }
+
+        try
+        {
+            join(process);
+            Resume(native, application);
+        }
+        catch
+        {
+            Abandon(native);
+            stdout.Dispose();
+            stderr.Dispose();
+            process.Dispose();
+            throw;
+        }
+
+        return new SuspendedProcess(
+            process,
+            new StreamReader(stdout, Encoding.UTF8, detectEncodingFromByteOrderMarks: true),
+            new StreamReader(stderr, Encoding.UTF8, detectEncodingFromByteOrderMarks: true)
+        );
+    }
+
+    /// <summary>Lets a suspended process run and lets go of the native handles; a failure leaves them to the caller's abandon.</summary>
+    private static void Resume(ProcessInformation native, string application)
+    {
+        if (ResumeThread(native.Thread) == uint.MaxValue)
+        {
+            int error = Marshal.GetLastPInvokeError();
+            throw new Win32Exception(
+                error,
+                $"{application} could not be resumed after it joined its job (ResumeThread failed with Win32 error {error}: "
+                    + $"{Marshal.GetPInvokeErrorMessage(error)}), so it was ended."
+            );
+        }
+
+        CloseHandles(native);
+    }
+
     /// <summary>
     /// Creates the process with its stdin closed at once and its stdout and stderr on pipes whose ends it alone holds. The
     /// caller holds <see cref="ChildProcesses.StartLock"/>.
     /// </summary>
     private static (AnonymousPipeServerStream Stdout, AnonymousPipeServerStream Stderr, ProcessInformation Native) CreateWithPipes(
         string application,
+        bool fullPath,
         ProcessStartInfo startInfo,
-        string desktopPath
+        string? desktopPath
     )
     {
         using AnonymousPipeServerStream stdin = new(PipeDirection.Out, HandleInheritability.None);
@@ -114,7 +191,7 @@ internal sealed partial class DesktopProcess : IRunProcess
         try
         {
             nint[] inherited = [ClientHandle(stdin), ClientHandle(stdout), ClientHandle(stderr)];
-            ProcessInformation native = CreateInheriting(application, startInfo, desktopPath, inherited);
+            ProcessInformation native = CreateInheriting(application, fullPath, startInfo, desktopPath, inherited);
             stdout.DisposeLocalCopyOfClientHandle();
             stderr.DisposeLocalCopyOfClientHandle();
             return (stdout, stderr, native);
@@ -131,7 +208,13 @@ internal sealed partial class DesktopProcess : IRunProcess
     /// Creates the process with <paramref name="inherited"/> inheritable only for the <c>CreateProcessW</c> call, as the
     /// handle list requires.
     /// </summary>
-    private static ProcessInformation CreateInheriting(string application, ProcessStartInfo startInfo, string desktopPath, nint[] inherited)
+    private static ProcessInformation CreateInheriting(
+        string application,
+        bool fullPath,
+        ProcessStartInfo startInfo,
+        string? desktopPath,
+        nint[] inherited
+    )
     {
         foreach (nint handle in inherited)
         {
@@ -143,7 +226,7 @@ internal sealed partial class DesktopProcess : IRunProcess
 
         try
         {
-            return CreateProcess(application, startInfo, desktopPath, inherited);
+            return CreateProcess(application, fullPath, startInfo, desktopPath, inherited);
         }
         finally
         {
@@ -244,7 +327,13 @@ internal sealed partial class DesktopProcess : IRunProcess
 
     private static nint ClientHandle(AnonymousPipeServerStream pipe) => pipe.ClientSafePipeHandle.DangerousGetHandle();
 
-    private static ProcessInformation CreateProcess(string application, ProcessStartInfo startInfo, string desktopPath, nint[] inherited)
+    private static ProcessInformation CreateProcess(
+        string application,
+        bool fullPath,
+        ProcessStartInfo startInfo,
+        string? desktopPath,
+        nint[] inherited
+    )
     {
         nint desktopName = Marshal.StringToHGlobalUni(desktopPath);
         nint commandLine = Marshal.StringToHGlobalUni(BuildCommandLine(application, startInfo.ArgumentList));
@@ -266,8 +355,9 @@ internal sealed partial class DesktopProcess : IRunProcess
                 AttributeList = attributes,
             };
             const uint flags = CreateNoWindow | CreateSuspendedFlag | CreateUnicodeEnvironment | ExtendedStartupInfoPresent;
+            // A bare program name is left out of lpApplicationName, so CreateProcessW finds it on PATH through the command line.
             return CreateProcessW(
-                application,
+                fullPath ? application : null,
                 commandLine,
                 0,
                 0,
@@ -404,7 +494,7 @@ internal sealed partial class DesktopProcess : IRunProcess
     [LibraryImport("kernel32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool CreateProcessW(
-        string application,
+        string? application,
         nint commandLine,
         nint processAttributes,
         nint threadAttributes,

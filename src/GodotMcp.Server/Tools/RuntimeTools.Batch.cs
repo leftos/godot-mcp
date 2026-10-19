@@ -110,6 +110,17 @@ internal sealed partial class RuntimeTools
     )
     {
         CheckBatch(steps);
+        if (FindProcessToolStep(steps, session) is { } processStep)
+        {
+            // Refused before any step runs, so a game step ahead of it in the batch never acts.
+            return new JsonObject
+            {
+                ["passed"] = false,
+                ["steps"] = new JsonArray(),
+                ["failedAt"] = new JsonObject { ["index"] = processStep.Index, ["reason"] = processStep.Refusal },
+            }.ToJsonString();
+        }
+
         using LoadDeadline deadline = sessions.Clock.Start(BatchDeadline, cancellationToken);
         BatchRun run = new(server, session, MarkErrorFeeds(steps, session), deadline);
         JsonArray entries = [];
@@ -329,6 +340,36 @@ internal sealed partial class RuntimeTools
     internal static int? TimeoutOf(BatchStep step) => step.Assert == "wait" ? step.TimeoutMs : step.TimeoutMs ?? 0;
 
     private static CompareOptions CompareOptionsOf(BatchStep step) => new(step.MaxChangedRatio ?? 0, "path_only");
+
+    /// <summary>
+    /// The first tool step whose effective session is a process, with its index and the refusal; null when every tool step
+    /// addresses another kind, an unknown name or none. It runs before the first step, so no step of the batch acts first.
+    /// </summary>
+    private (int Index, string Refusal)? FindProcessToolStep(IReadOnlyList<BatchStep> steps, string? session)
+    {
+        for (int index = 0; index < steps.Count; index++)
+        {
+            BatchStep step = steps[index];
+            if (step.Tool is null)
+            {
+                continue;
+            }
+
+            if (sessions.ProcessSession(EffectiveSession(step, session)) is { } process)
+            {
+                return (index, GodotSession.ProcessRefusal(process.Name, process.ProcessProgram ?? "a process"));
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The session a tool step's own arguments name: args.session when it carries one, else the step's, else the batch's,
+    /// which is what <see cref="ToolArguments"/> hands the tool.
+    /// </summary>
+    internal static string? EffectiveSession(BatchStep step, string? session) =>
+        step.Args?["session"] is { } named && named.GetValueKind() == JsonValueKind.String ? named.GetValue<string>() : step.Session ?? session;
 
     /// <summary>Marks the error feed of every session a no_errors step addresses, so its first check counts from here.</summary>
     private Dictionary<GodotSession, long> MarkErrorFeeds(IReadOnlyList<BatchStep> steps, string? session)

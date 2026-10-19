@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - `wait_for` and `batch_drive` waits take `output`: a regex matched against a run's printed lines, with `stream` and `after`, working while paused.
+- `run_process` starts a process a project's profile declares, a game server or mock backend, and `stop_project` ends it and everything it started.
 
 ## 0.17.1 - 2026-10-17
 

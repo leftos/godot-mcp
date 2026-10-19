@@ -45,6 +45,18 @@ internal sealed record ToolProcessRequest(string FileName, IReadOnlyList<string>
     /// only stderr is logged then.
     /// </summary>
     public bool PipeStandardOutput { get; init; }
+
+    /// <summary>Gets each stdout line as the log writes it; null when only the log takes it.</summary>
+    public Action<string>? StandardOutputLine { get; init; }
+
+    /// <summary>Gets each stderr line as the log writes it; null when only the log takes it.</summary>
+    public Action<string>? StandardErrorLine { get; init; }
+
+    /// <summary>
+    /// Gives the process tree's job the kill-on-close limit, so closing the job ends the process and everything it started; a
+    /// job that cannot be made or joined then refuses the start rather than leaving the tree unreachable.
+    /// </summary>
+    public bool KillOnClose { get; init; }
 }
 
 /// <summary>What killed a tool process and its tree, if anything did.</summary>
@@ -136,6 +148,11 @@ internal static class ToolProcess
     /// <exception cref="IOException">The log could not be opened, as when another running process writes it.</exception>
     public static Running Start(ToolProcessRequest request, ILogger logger)
     {
+        if (request.KillOnClose && !OperatingSystem.IsWindows())
+        {
+            throw new SessionException(ProcessSessionsNeedWindows);
+        }
+
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(request.LogPath))!);
         FileStreamOptions logOptions = new()
         {
@@ -145,32 +162,114 @@ internal static class ToolProcess
             Share = FileShare.Read,
         };
         LogSink sink = new(new StreamWriter(request.LogPath, Utf8NoBom, logOptions) { AutoFlush = request.FlushEachLine });
-        Process process = new() { StartInfo = CreateStartInfo(request) };
+        Process? process = null;
+        StreamReader? stdout = null;
+        StreamReader? stderr = null;
         OwnWork.TreeCpu? tree = null;
+        bool started = false;
         try
         {
             var stopwatch = Stopwatch.StartNew();
-            ChildProcesses.Start(process);
-            tree = OwnWork.TreeCpu.Adopt(process, logger, request.MeasureTree);
-            // Never inherit the server's stdin, the MCP pipe (see GodotCommandLine.CreateStartInfo): it is redirected, and
-            // closed here unless the caller writes it.
-            if (!request.KeepStandardInput)
-            {
-                process.StandardInput.Close();
-            }
-
+            (process, stdout, stderr, tree) = StartProcess(request, logger);
+            started = true;
             Task drain = request.PipeStandardOutput
-                ? sink.CopyAsync(process.StandardError)
-                : Task.WhenAll(sink.CopyAsync(process.StandardOutput), sink.CopyAsync(process.StandardError));
-            return new Running(new Started(process, sink, tree, stopwatch, drain), request, logger);
+                ? sink.CopyAsync(stderr, request.StandardErrorLine)
+                : Task.WhenAll(sink.CopyAsync(stdout, request.StandardOutputLine), sink.CopyAsync(stderr, request.StandardErrorLine));
+            return new Running(new Started(process, sink, tree, stopwatch, drain, stdout, stderr), request, logger);
         }
         catch
         {
-            tree?.Dispose();
-            process.Dispose();
-            sink.Dispose();
+            AbandonStart(request, logger, sink, started, (process, stdout, stderr, tree));
             throw;
         }
+    }
+
+    /// <summary>Starts a process: in a kill-on-close job when the request asks for one, else as a watched tool process.</summary>
+    private static (Process Process, StreamReader Stdout, StreamReader Stderr, OwnWork.TreeCpu Tree) StartProcess(
+        ToolProcessRequest request,
+        ILogger logger
+    ) => request.KillOnClose ? StartInKillJob(request, logger) : StartNormally(request, logger);
+
+    /// <summary>
+    /// Ends a start that failed: a process started without a kill-on-close job is killed, then the job, the readers, the
+    /// process and the log are let go.
+    /// </summary>
+    private static void AbandonStart(
+        ToolProcessRequest request,
+        ILogger logger,
+        LogSink sink,
+        bool started,
+        (Process? Process, StreamReader? Stdout, StreamReader? Stderr, OwnWork.TreeCpu? Tree) state
+    )
+    {
+        KillUnprotected(request, logger, started, state);
+        state.Tree?.Dispose();
+        state.Stdout?.Dispose();
+        state.Stderr?.Dispose();
+        state.Process?.Dispose();
+        sink.Dispose();
+    }
+
+    /// <summary>Kills a process that started in a kill-on-close job that was never made, since no handle could end its tree.</summary>
+    private static void KillUnprotected(
+        ToolProcessRequest request,
+        ILogger logger,
+        bool started,
+        (Process? Process, StreamReader? Stdout, StreamReader? Stderr, OwnWork.TreeCpu? Tree) state
+    )
+    {
+        if (started && state.Tree is null && request.KillOnClose && state.Process is not null)
+        {
+            KillTree(state.Process, request.FileName, logger);
+        }
+    }
+
+    /// <summary>What a start on a machine without Windows job objects says: nothing was started.</summary>
+    internal const string ProcessSessionsNeedWindows =
+        "A process session needs Windows job objects, so stop_project can end it and everything it starts; this server supports "
+        + "process sessions on Windows only, and nothing was started.";
+
+    /// <summary>
+    /// Starts a kill-on-close process suspended, joins it to its job, and only then lets it run, so a process it starts on its
+    /// first line is in the job too. The job is made before the process is resumed; a failure ends the suspended process.
+    /// </summary>
+    private static (Process Process, StreamReader Stdout, StreamReader Stderr, OwnWork.TreeCpu Tree) StartInKillJob(
+        ToolProcessRequest request,
+        ILogger logger
+    )
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new SessionException(ProcessSessionsNeedWindows);
+        }
+
+        OwnWork.TreeCpu? tree = null;
+        DesktopProcess.SuspendedProcess suspended = DesktopProcess.StartSuspended(
+            CreateStartInfo(request),
+            started => tree = OwnWork.TreeCpu.Adopt(started, logger, request.MeasureTree, killOnClose: true)
+        );
+        return tree is null
+            ? throw new InvalidOperationException("the kill-on-close job was not made")
+            : (suspended.Process, suspended.Stdout, suspended.Stderr, tree);
+    }
+
+    /// <summary>Starts a process as the ceiling-watched tool processes are, with its tree measured and its stdin closed.</summary>
+    private static (Process Process, StreamReader Stdout, StreamReader Stderr, OwnWork.TreeCpu Tree) StartNormally(
+        ToolProcessRequest request,
+        ILogger logger
+    )
+    {
+        var process = new Process { StartInfo = CreateStartInfo(request) };
+        ChildProcesses.Start(process);
+        var tree = OwnWork.TreeCpu.Adopt(process, logger, request.MeasureTree, killOnClose: false);
+        // Never inherit the server's stdin, the MCP pipe (see GodotCommandLine.CreateStartInfo): it is redirected, and
+        // closed here unless the caller writes it.
+        if (!request.KeepStandardInput)
+        {
+            process.StandardInput.Close();
+        }
+
+        return (process, process.StandardOutput, process.StandardError, tree);
     }
 
     /// <summary>
@@ -313,8 +412,19 @@ internal static class ToolProcess
         }
     }
 
-    /// <summary>What <see cref="Start"/> set going: the process, its log, its tree's CPU, its clock and the reading of its output.</summary>
-    internal sealed record Started(Process Process, LogSink Sink, OwnWork.TreeCpu Tree, Stopwatch Stopwatch, Task Drain);
+    /// <summary>
+    /// What <see cref="Start"/> set going: the process, its log, its tree's CPU, its clock, the reading of its output, and the
+    /// readers when the start made its own pipes (a kill-on-close start does).
+    /// </summary>
+    internal sealed record Started(
+        Process Process,
+        LogSink Sink,
+        OwnWork.TreeCpu Tree,
+        Stopwatch Stopwatch,
+        Task Drain,
+        StreamReader? Stdout = null,
+        StreamReader? Stderr = null
+    );
 
     /// <summary>
     /// A started tool process, the log its output goes to and its tree's CPU, with what it was asked to run. Disposing it
@@ -373,6 +483,8 @@ internal static class ToolProcess
         public void Dispose()
         {
             started.Tree.Dispose();
+            started.Stdout?.Dispose();
+            started.Stderr?.Dispose();
             started.Process.Dispose();
             started.Sink.Dispose();
         }
@@ -391,13 +503,16 @@ internal static class ToolProcess
         /// <summary>The lines written so far.</summary>
         public long Lines => Interlocked.Read(ref _lines);
 
-        public async Task CopyAsync(StreamReader reader)
+        /// <param name="reader">The stream to read.</param>
+        /// <param name="onLine">Gets each line as it is written; null when only the log takes it.</param>
+        public async Task CopyAsync(StreamReader reader, Action<string>? onLine = null)
         {
             try
             {
                 while (await reader.ReadLineAsync() is { } line)
                 {
                     Write(line);
+                    onLine?.Invoke(line);
                 }
             }
             catch (Exception e) when (e is ObjectDisposedException or IOException)

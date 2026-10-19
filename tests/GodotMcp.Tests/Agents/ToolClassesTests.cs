@@ -22,6 +22,7 @@ public sealed class ToolClassesTests
     [InlineData("scroll", ToolClasses.Drive)]
     [InlineData("click", ToolClasses.Drive)]
     [InlineData("run_project", ToolClasses.Drive)]
+    [InlineData("run_process", ToolClasses.Drive)]
     [InlineData("run_scratches", ToolClasses.Drive)]
     [InlineData("get_scene_tree", ToolClasses.Read)]
     [InlineData("take_screenshot", ToolClasses.Read)]

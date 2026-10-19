@@ -285,18 +285,43 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
     /// <summary>
     /// Stops the named or only session, then the warm headless host on its folder if it is idle; a host running a request is
-    /// left running, without waiting for it.
+    /// left running, without waiting for it. A process session is stopped as stop_project reports it, and holds no folder
+    /// bookkeeping, so no host is stopped for it.
     /// </summary>
+    /// <returns>The session's <see cref="StopResult"/>; a process session's <see cref="ProcessStopResult"/>.</returns>
     /// <exception cref="SessionException">No session answers to the name, or it never reached a game.</exception>
-    public async Task<StopResult> StopAsync(string? session, CancellationToken cancellationToken)
+    public async Task<object> StopAnyAsync(string? session, CancellationToken cancellationToken)
     {
         GodotSession target =
             TryResolve(session)
             ?? throw new SessionException("No Godot session has been started, so there is nothing to stop. Start one with run_project.");
-        StopResult stopped = await target.StopAsync(cancellationToken);
+        if (target.Kind == SessionKind.Process)
+        {
+            return await target.StopAsync(cancellationToken);
+        }
+
+        var stopped = (StopResult)await target.StopAsync(cancellationToken);
         bool hostStopped = Volatile.Read(ref _headlessHosts) is { } hosts && await hosts.StopIfIdleAsync(target.ProjectDir, "stop_project");
         return stopped with { HeadlessHostStopped = hostStopped };
     }
+
+    /// <summary>
+    /// <see cref="StopAnyAsync"/> as the run-shaped stop internal callers (the harness, a scratch run) take it: a process
+    /// session's stop is reported in a <see cref="StopResult"/>, with no override to remove and no game exit code.
+    /// </summary>
+    /// <exception cref="SessionException">No session answers to the name, or it never reached a game.</exception>
+    public async Task<StopResult> StopAsync(string? session, CancellationToken cancellationToken)
+    {
+        object stopped = await StopAnyAsync(session, cancellationToken);
+        return stopped as StopResult ?? ProcessAsStop((ProcessStopResult)stopped);
+    }
+
+    private static StopResult ProcessAsStop(ProcessStopResult stopped) =>
+        new(stopped.Session, stopped.ProjectPath, stopped.ExitCode, stopped.Killed, OverrideRemoved: false)
+        {
+            AlreadyExited = stopped.AlreadyExited,
+            GameExitCode = null,
+        };
 
     /// <summary>
     /// stop_project on a folder: stops the session running there (the one <paramref name="session"/> names, else the only
@@ -314,7 +339,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         GodotSession? target = FindSessionIn(projectDir, session);
         if (target is not null)
         {
-            StopResult stopped = await target.StopAsync(cancellationToken);
+            var stopped = (StopResult)await target.StopAsync(cancellationToken);
             return stopped with { HeadlessHostStopped = await StopHeadlessHostAsync(projectDir, cancellationToken) };
         }
 
@@ -359,8 +384,25 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         TryResolve(session)?.GetDebugOutput(limit, before) ?? new DebugOutput();
 
     /// <summary>The session a tool addresses: the named one, else the only live one, else the only one there is.</summary>
-    /// <exception cref="SessionException">No session answers to the name, there is none at all, or several could be meant.</exception>
-    public GodotSession Resolve(string? session) => TryResolve(session) ?? throw new SessionException(GodotSession.NoneRunning);
+    /// <param name="session">The session's name; null for the only live one.</param>
+    /// <param name="allowProcess">
+    /// Whether a process session may answer. A runtime tool does not: only the output wait reads one, and it admits it through
+    /// this parameter; every other caller keeps the refusal.
+    /// </param>
+    /// <exception cref="SessionException">
+    /// No session answers to the name, there is none at all, several could be meant, or a process session answered to a caller
+    /// that does not admit one.
+    /// </exception>
+    public GodotSession Resolve(string? session, bool allowProcess = false)
+    {
+        GodotSession target = TryResolve(session) ?? throw new SessionException(GodotSession.NoneRunning);
+        if (!allowProcess && target.Kind == SessionKind.Process)
+        {
+            throw new SessionException(GodotSession.ProcessRefusal(target.Name, target.ProcessProgram ?? "a process"));
+        }
+
+        return target;
+    }
 
     /// <summary>The live sessions, ordered by name; with <paramref name="includeStopped"/>, the stopped ones too.</summary>
     public IReadOnlyList<SessionInfo> List(bool includeStopped)
@@ -715,6 +757,9 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         return folderName.Length > keep ? folderName[..keep] + suffix : folderName + suffix;
     }
 
+    /// <summary>A process's key fitted to <see cref="NameRule"/> as a folder name is: excluded characters become '_', cut to 64.</summary>
+    internal static string FitName(string name) => SanitiseFolderName(name);
+
     /// <summary>
     /// Makes a folder-derived name fit <see cref="NameRule"/>: every character it excludes becomes '_', and the first 64
     /// characters are kept.
@@ -816,7 +861,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             return
             [
                 .. Ordered()
-                    .Where(other => !ReferenceEquals(other, except) && other.HasGame && ProjectPaths.AreSame(other.ProjectDir, projectDir))
+                    .Where(other =>
+                        !ReferenceEquals(other, except)
+                        && other.Kind != SessionKind.Process
+                        && other.HasGame
+                        && ProjectPaths.AreSame(other.ProjectDir, projectDir)
+                    )
                     .Select(other => other.Name),
             ];
         }
@@ -830,7 +880,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     {
         lock (_lock)
         {
-            return [.. Ordered().Where(other => other.IsLive && ProjectPaths.AreSame(other.ProjectDir, projectDir)).Select(other => other.Name)];
+            return
+            [
+                .. Ordered()
+                    .Where(other => other.IsLive && other.Kind != SessionKind.Process && ProjectPaths.AreSame(other.ProjectDir, projectDir))
+                    .Select(other => other.Name),
+            ];
         }
     }
 
@@ -866,12 +921,20 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             if (session is not null)
             {
                 GodotSession named = FindSession(session)!;
+                if (named.Kind == SessionKind.Process)
+                {
+                    throw new SessionException($"session '{named.Name}' is a process; stop it by name with stop_project, without projectPath.");
+                }
+
                 return ProjectPaths.AreSame(named.ProjectDir, projectDir)
                     ? named
                     : throw new SessionException($"session '{named.Name}' runs {named.ProjectDir}, not projectPath {projectDir}; pass one of them.");
             }
 
-            GodotSession[] live = [.. Ordered().Where(other => other.IsLive && ProjectPaths.AreSame(other.ProjectDir, projectDir))];
+            GodotSession[] live =
+            [
+                .. Ordered().Where(other => other.IsLive && other.Kind != SessionKind.Process && ProjectPaths.AreSame(other.ProjectDir, projectDir)),
+            ];
             return live.Length <= 1
                 ? live.FirstOrDefault()
                 : throw new SessionException(
@@ -925,6 +988,21 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                     + "Pass the session run_project or attach_project returned on every call: "
                     + $"another agent's game can start at any time.{DescribeStopped()}"
             );
+    }
+
+    /// <summary>
+    /// Reserves a process session: <paramref name="name"/> as given, or, with <paramref name="defaultName"/>, fitted to the
+    /// name rule as a folder name is and numbered when a live session on another folder holds it. A live session of that name
+    /// on the same folder refuses the start as run_project's does.
+    /// </summary>
+    /// <exception cref="SessionException">The name is invalid, a live session holds it, or the server is shutting down.</exception>
+    internal async Task<GodotSession> ReserveProcessAsync(string name, string projectDir, bool defaultName)
+    {
+        string chosen = defaultName ? FitName(name) : name;
+        CheckName(chosen);
+        RefuseStartAtShutdown();
+        SessionSpec spec = new(chosen, projectDir, SessionKind.Process, ShutOutRealGamepads: false, Quiet: false);
+        return await ReserveAsync(spec, defaultName, completeUnderLock: chosen => chosen);
     }
 
     /// <summary>
@@ -1017,6 +1095,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             );
         }
 
+        if (spec.Kind == SessionKind.Process)
+        {
+            // A process session shares no override.cfg with the folder's games, so their settings do not bind it.
+            return;
+        }
+
         GodotSession[] onFolder = CheckFolder(spec, except: null);
         if (spec.Kind == SessionKind.Attach && onFolder.FirstOrDefault(other => other.IsWaitingForGame && other.JoinPid == spec.JoinPid) is { } rival)
         {
@@ -1037,6 +1121,11 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// <summary>Refuses an attached session, one still starting or never launched, and one the folder's live sessions rule out.</summary>
     private void CheckCanRestart(GodotSession target)
     {
+        if (target.Kind == SessionKind.Process)
+        {
+            throw new SessionException(GodotSession.RestartRefusal(target.Name, target.ProcessProgram ?? "a process"));
+        }
+
         if (target.Kind == SessionKind.Attach)
         {
             throw new SessionException(
@@ -1064,7 +1153,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         GodotSession[] onFolder =
         [
             .. _sessions.Values.Where(other =>
-                !ReferenceEquals(other, except) && other.IsLive && ProjectPaths.AreSame(other.ProjectDir, spec.ProjectDir)
+                !ReferenceEquals(other, except)
+                && other.Kind != SessionKind.Process
+                && other.IsLive
+                && ProjectPaths.AreSame(other.ProjectDir, spec.ProjectDir)
             ),
         ];
         CheckSameSetting(spec, onFolder, "shutOutRealGamepads", session => session.ShutOutRealGamepads, spec.ShutOutRealGamepads);
@@ -1109,7 +1201,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                     );
             }
 
-            GodotSession[] onFolder = [.. _sessions.Values.Where(other => other.IsLive && ProjectPaths.AreSame(other.ProjectDir, projectDir))];
+            GodotSession[] onFolder =
+            [
+                .. _sessions.Values.Where(other =>
+                    other.IsLive && other.Kind != SessionKind.Process && ProjectPaths.AreSame(other.ProjectDir, projectDir)
+                ),
+            ];
             CheckSessionsForArm(projectDir, onFolder, "shutOutRealGamepads", session => session.ShutOutRealGamepads, wanted.ShutOutRealGamepads);
             CheckSessionsForArm(projectDir, onFolder, "quiet", session => session.Quiet, wanted.Quiet);
 
@@ -1249,7 +1346,9 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// </summary>
     private ArmSettings FolderSettingsForPreview(string projectDir)
     {
-        GodotSession? onFolder = _sessions.Values.FirstOrDefault(other => other.IsLive && ProjectPaths.AreSame(other.ProjectDir, projectDir));
+        GodotSession? onFolder = _sessions.Values.FirstOrDefault(other =>
+            other.IsLive && other.Kind != SessionKind.Process && ProjectPaths.AreSame(other.ProjectDir, projectDir)
+        );
         if (onFolder is not null)
         {
             return new ArmSettings(onFolder.Quiet, onFolder.ShutOutRealGamepads, onFolder.Mute);
@@ -1368,7 +1467,30 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
     /// <summary>Whether a live session but <paramref name="except"/> uses the folder. The caller holds the lock.</summary>
     private bool HasLiveSessionOn(string projectDir, GodotSession? except) =>
-        _sessions.Values.Any(other => !ReferenceEquals(other, except) && other.IsLive && ProjectPaths.AreSame(other.ProjectDir, projectDir));
+        _sessions.Values.Any(session =>
+            !ReferenceEquals(session, except)
+            && session.Kind != SessionKind.Process
+            && session.IsLive
+            && ProjectPaths.AreSame(session.ProjectDir, projectDir)
+        );
+
+    /// <summary>
+    /// The process session <paramref name="session"/> names, else the only live one; null for any other session, an unknown
+    /// name or several live ones. batch_drive uses it to refuse a tool step on a process before the tool runs.
+    /// </summary>
+    internal GodotSession? ProcessSession(string? session)
+    {
+        lock (_lock)
+        {
+            if (session is not null)
+            {
+                return _sessions.GetValueOrDefault(session) is { Kind: SessionKind.Process } named ? named : null;
+            }
+
+            GodotSession[] live = [.. _sessions.Values.Where(candidate => candidate.IsLive)];
+            return live is [{ Kind: SessionKind.Process } only] ? only : null;
+        }
+    }
 
     private IEnumerable<GodotSession> Ordered() => _sessions.Values.OrderBy(session => session.Name, StringComparer.OrdinalIgnoreCase);
 
@@ -1387,16 +1509,17 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     private static SessionInfo Describe(GodotSession session) =>
-        new(
-            session.Name,
-            session.ProjectDir,
-            session.Kind == SessionKind.Run ? "run" : "attach",
-            session.IsLive,
-            session.ProcessId,
-            session.GameProcessId
-        )
+        new(session.Name, session.ProjectDir, KindName(session.Kind), session.IsLive, session.ProcessId, session.GameProcessId)
         {
             Recording = session.RecordingState,
+        };
+
+    private static string KindName(SessionKind kind) =>
+        kind switch
+        {
+            SessionKind.Run => "run",
+            SessionKind.Attach => "attach",
+            _ => "process",
         };
 
     private static void CheckName(string? session)

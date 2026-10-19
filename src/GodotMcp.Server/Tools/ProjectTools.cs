@@ -234,7 +234,9 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "stopped all the same, and "
             + "the result's warning says its debug session ended with it. An attached session's game is asked to quit and killed "
             + "after 3 s in the same way; its exitCode is null, gameExitCode is the game's own, and the session is gone afterwards. "
-            + "detach_project leaves an attached game running instead. Stopping a session also stops the warm headless host "
+            + "detach_project leaves an attached game running instead. A process session (run_process) is terminated at once with "
+            + "everything it started: its result is {session, projectPath, kind: \"process\", exitCode (null when it had to be "
+            + "killed), killed, alreadyExited}, and it stays listed as stopped. Stopping a session also stops the warm headless host "
             + "on its folder (the Godot the headless tools keep running on a GDScript project) if it is idle, and "
             + "headlessHostStopped says whether one was stopped; a warm host busy with a headless call is left running. With "
             + "projectPath it stops that folder's warm headless host, waiting for a headless call running on it, and the session "
@@ -253,7 +255,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     )
     {
         object result = projectPath is null
-            ? await RunAsync(() => sessions.StopAsync(session, cancellationToken))
+            ? await RunAsync(() => sessions.StopAnyAsync(session, cancellationToken))
             : await RunAsync(() => sessions.StopFolderAsync(projectPath, session, cancellationToken));
         return JsonSerializer.Serialize(result, Json);
     }
@@ -327,10 +329,11 @@ internal sealed class ProjectTools(SessionRegistry sessions)
 
     [McpServerTool(Name = "list_sessions", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
-        "Lists the server's live sessions, ordered by name: each one's name, project folder, kind (run or attach), whether it "
-            + "is live, its processId (the process run_project started, on Windows the Godot_console wrapper that stop_project "
-            + "ends; null for an attached game) and its gameProcessId (the game's own process, the one a debugger attaches to; "
-            + "null until the game's bridge has connected), plus for a recording run its recording: {mode: movie, path} while it "
+        "Lists the server's live sessions, ordered by name: each one's name, project folder, kind (run, attach or process), "
+            + "whether it is live, its processId (the process run_project started, on Windows the Godot_console wrapper that "
+            + "stop_project ends; for a process session the program run_process started; null for an attached game) and its "
+            + "gameProcessId (the game's own process, the one a debugger attaches to; null until the game's bridge has connected, "
+            + "and always null for a process), plus for a recording run its recording: {mode: movie, path} while it "
             + "runs, and once it has ended, stopped or quit, what stop_project returns for it. A real-time recording (record_mark) "
             + "shows as {mode: realtime, path, startedSeconds} while it runs (none while its start is still in flight), and "
             + "once it has ended on its own as what stop_project will return for it, until a stop returns it. A session whose run has ended is kept, "

@@ -7,11 +7,12 @@ using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Session;
 
-/// <summary>Whether a session is a Godot run the server launched or a game attach_project reached.</summary>
+/// <summary>Whether a session is a Godot run the server launched, a game attach_project reached, or a program run_process started.</summary>
 internal enum SessionKind
 {
     Run,
     Attach,
+    Process,
 }
 
 /// <summary>
@@ -28,9 +29,11 @@ internal sealed record SessionSpec(string Name, string ProjectDir, SessionKind K
 }
 
 /// <summary>
-/// One named session in the <see cref="SessionRegistry"/>: a Godot run launched with the bridge injected, or a game
-/// attach_project reached. It talks to its bridge, stops its run, and releases the injected override.cfg to the registry
-/// on every way out (stop, a failed launch, the game exiting), which removes it once no other live session uses the folder.
+/// One named session in the <see cref="SessionRegistry"/>: a Godot run launched with the bridge injected, a game
+/// attach_project reached, or a program run_process started beside the game. It talks to its bridge, stops its run, and
+/// releases the injected override.cfg to the registry on every way out (stop, a failed launch, the game exiting), which
+/// removes it once no other live session uses the folder. A process session has no bridge: its output fills two ring
+/// buffers and its tree lives in a kill-on-close job (see ProcessSession.cs).
 /// </summary>
 internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry registry) : IDisposable
 {
@@ -71,7 +74,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>
     /// The process the server started, once it has; null for an attached game. On Windows that is the Godot_console.exe
-    /// wrapper, not the game: <see cref="GameProcessId"/> is the game's.
+    /// wrapper, not the game: <see cref="GameProcessId"/> is the game's. For a process session it is the program itself.
     /// </summary>
     public int? ProcessId { get; private set; }
 
@@ -105,8 +108,17 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <summary>Whether the session is starting, its run is running, or its attached game is still connected.</summary>
     public bool IsLive => _pending || HasGame;
 
-    /// <summary>Whether the session's game is running: its run has started and not exited, or its attached game is still connected.</summary>
-    public bool HasGame => Kind == SessionKind.Run ? _run is { IsRunning: true } : _attached is { IsOpen: true };
+    /// <summary>
+    /// Whether the session's process is running: its run has started and not exited, its attached game is still connected, or
+    /// its process session's program is still running.
+    /// </summary>
+    public bool HasGame =>
+        Kind switch
+        {
+            SessionKind.Process => ProcessRunning,
+            SessionKind.Run => _run is { IsRunning: true },
+            _ => _attached is { IsOpen: true },
+        };
 
     /// <summary>Whether this is an attach still waiting for its game to dial in.</summary>
     public bool IsWaitingForGame => _pending && Kind == SessionKind.Attach;
@@ -150,11 +162,16 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// and its session is dropped.
     /// </summary>
     /// <exception cref="SessionException">No run was ever launched, or the attached session has no game.</exception>
-    public async Task<StopResult> StopAsync(CancellationToken cancellationToken)
+    public async Task<object> StopAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            if (Kind == SessionKind.Process)
+            {
+                return await StopProcessAsync();
+            }
+
             if (Kind == SessionKind.Attach)
             {
                 return await StopAttachedAsync();
@@ -238,6 +255,11 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <summary>The run's newest stderr lines, oldest first; null for an attached game, which has no captured output.</summary>
     public IReadOnlyList<string>? LastStderrLines(int count)
     {
+        if (Kind == SessionKind.Process)
+        {
+            return _processStderr.Tail(count);
+        }
+
         if (Kind == SessionKind.Attach)
         {
             return null;
@@ -249,6 +271,11 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <exception cref="SessionException">The session is attached, so there is no captured output.</exception>
     public DebugOutput GetDebugOutput(int limit, long? before)
     {
+        if (Kind == SessionKind.Process)
+        {
+            return GetProcessDebugOutput(limit, before);
+        }
+
         if (Kind == SessionKind.Attach)
         {
             throw new SessionException(
@@ -284,6 +311,11 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <exception cref="SessionException">The session is attached.</exception>
     public (OutputPage Stdout, OutputPage Stderr, long StdoutTotalLines, long StderrTotalLines) GetRawOutput()
     {
+        if (Kind == SessionKind.Process)
+        {
+            return GetProcessRawOutput();
+        }
+
         if (Kind == SessionKind.Attach)
         {
             throw new SessionException(
@@ -316,6 +348,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// </returns>
     public async Task<bool> ShutdownAsync()
     {
+        if (Kind == SessionKind.Process)
+        {
+            await ShutdownProcessAsync();
+            return true;
+        }
+
         if (Kind == SessionKind.Attach)
         {
             AtShutdown(RemoveHandoffFile);
@@ -419,6 +457,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 _attached = null;
             }
 
+            DisposeProcess();
             DisposeAttachedGame();
             if (_run is not null)
             {
@@ -433,6 +472,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     public void Dispose()
     {
+        DisposeProcess();
         _gate.Dispose();
         InputGate.Dispose();
     }

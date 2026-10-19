@@ -212,6 +212,13 @@ internal sealed record StopResult(string Session, string ProjectPath, int? ExitC
     public bool HeadlessHostStopped { get; init; }
 }
 
+/// <summary>
+/// How stop_project ended a process session: its exit code when it had already exited (null when the kill-on-close job had
+/// to end it, since that code is not the process's own), whether it was running and so killed, and whether it had already
+/// exited. The kind is always "process".
+/// </summary>
+internal sealed record ProcessStopResult(string Session, string ProjectPath, string Kind, int? ExitCode, bool Killed, bool AlreadyExited);
+
 /// <summary>What stop_project returns when its projectPath had a warm headless host and no session running there.</summary>
 internal sealed record HostStopResult(string ProjectPath, bool HeadlessHostStopped);
 

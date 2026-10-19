@@ -30,13 +30,13 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
 
    This reversed decision 5's "several sessions" and "in-engine recording" as later work.
 10. **Sessions, the error feed, screenshots and quiet runs** (user, 2026-09-25, each the recommended option of a ranked choice):
-    - **Session names.** `run_project` and `attach_project` take an optional `session`; without one, the session is named after the project folder. A second session under a live name is refused and asked for a name; a name whose run has exited is replaced. Runs and attaches share one name space.
+    - **Session names.** `run_project` and `attach_project` take an optional `session`; without one, the session is named after the project folder. A second session under a live name is refused and asked for a name; a name whose run has exited is replaced. Runs, attaches and process sessions share one name space.
 
       A stopped run is kept until then, for its crash output, a restart by name and a recording's outcome, but `list_sessions` and the session errors show only the live ones, with a count of the stopped (user, 2026-09-27, #11). `stop_project` says a run had ended before it (`alreadyExited`) and gives the game's own exit code beside the wrapper's (user, 2026-09-27, #12).
 
       A runtime tool without a name uses the only session, and with several it refuses, listing the names. The refusal and every `session` description tell the agent to pass the session `run_project` or `attach_project` returned on every call from the start, since another agent's game can start at any time; no default session is kept (user, 2026-09-28, #35).
 
-      One server process serves one client, so the agents in it cannot be told apart, and a default one agent set would send another agent's calls, `stop_project` included, to its game. `list_sessions` (read-only) returns each session's name, project, kind (run or attach), liveness and process id.
+      One server process serves one client, so the agents in it cannot be told apart, and a default one agent set would send another agent's calls, `stop_project` included, to its game. `list_sessions` (read-only) returns each session's name, project, kind (run, attached or process), liveness and process id.
     - **Several sessions on one project folder** (delve's server and two clients). The marked `override.cfg` is reference-counted and removed when the last session on that folder ends.
 
       Across servers too: its second line lists the server processes (pid and start time) with live sessions on it, a release takes one off and deletes the file only when none is left, and a file whose owners have all exited is stale, removed by a headless run on the folder and by every server's startup sweep of the folders it has written to (the user chose this over leaving the leftover for the bridge to make harmless).

@@ -8,7 +8,7 @@ namespace GodotMcp.Tests.Tools;
 
 public sealed class ProjectProfileTests : IDisposable
 {
-    private const string TopLevelKeys = "scene, userArgs, engineArgs, resolution, quiet, presets, prepWrapper, scratch";
+    private const string TopLevelKeys = "scene, userArgs, engineArgs, resolution, quiet, presets, prepWrapper, scratch, processes";
     private const string PrepWrapperShape =
         "(top level): \"prepWrapper\" must be a non-empty array of non-empty strings, the program and then its arguments";
     private const string PresetKeys = "scene, userArgs, engineArgs, resolution, quiet, session";
@@ -721,6 +721,143 @@ public sealed class ProjectProfileTests : IDisposable
         string message = Refused(() => ProjectProfile.Load(_temp.Path));
 
         Assert.StartsWith($"{FilePath} (scratch): the pattern \"(unclosed\" in \"patterns\" is not a valid .NET regular expression: ", message);
+        Assert.EndsWith(" Fix or remove it.", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ProcessesParseEveryFieldAndTheTimeoutDefault()
+    {
+        Write(
+            """
+            {
+              "processes": {
+                "server": {
+                  "command": ["dotnet", "run", "--project", "../Delve.Server", "--", "--dev-cheats"],
+                  "cwd": ".",
+                  "env": {"Delve__DataDir": "../../.tmp/drive-runs"},
+                  "ready": {"output": "Now listening on", "timeoutMs": 120000},
+                  "description": "the game server; pass --port <n> as args"
+                },
+                "ticker": {
+                  "command": ["pwsh", "-NoProfile", "-File", "ticker.ps1"],
+                  "ready": {"output": "ticker \\d+"}
+                }
+              }
+            }
+            """
+        );
+
+        IReadOnlyDictionary<string, ProcessProfile> processes = ProjectProfile.Load(_temp.Path).Processes;
+
+        Assert.Equal(["server", "ticker"], processes.Keys);
+        ProcessProfile server = processes["server"];
+        Assert.Equal(["dotnet", "run", "--project", "../Delve.Server", "--", "--dev-cheats"], server.Command);
+        Assert.Equal(Path.GetFullPath(Path.Combine(_temp.Path, ".")), server.Cwd);
+        Assert.Equal("../../.tmp/drive-runs", server.Env["Delve__DataDir"]);
+        Assert.Equal("Now listening on", server.Ready!.Output);
+        Assert.Equal(120000, server.Ready.TimeoutMs);
+        Assert.Matches(server.Ready.Regex, "Now listening on http://localhost:5000");
+        Assert.Equal("the game server; pass --port <n> as args", server.Description);
+
+        ProcessProfile ticker = processes["ticker"];
+        Assert.Null(ticker.Cwd);
+        Assert.Empty(ticker.Env);
+        Assert.Equal(60000, ticker.Ready!.TimeoutMs);
+        Assert.Null(ticker.Description);
+    }
+
+    [Theory]
+    [InlineData("""{ "processes": [] }""", "(top level): \"processes\" must be an object, not an array.")]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"], "redo": 1 } } }""",
+        "(processes.server): unknown key \"redo\"; the allowed keys are command, cwd, env, ready, description. Remove or rename it."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"] }, "server": { "command": ["b"] } } }""",
+        "(top level): the process \"server\" appears twice in \"processes\"; keep one."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": [] } } }""",
+        "(processes.server): \"command\" must be a non-empty array of non-empty strings, the program and then its arguments; it is empty."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": "dotnet" } } }""",
+        "(processes.server): \"command\" must be a non-empty array of non-empty strings, the program and then its arguments; it is a string."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["dotnet", 1] } } }""",
+        "(processes.server): \"command\" must be a non-empty array of non-empty strings, the program and then its arguments; it holds a number."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"], "ready": {"output": "x", "why": 1} } } }""",
+        "(processes.server.ready): unknown key \"why\"; the allowed keys are output, timeoutMs. Remove or rename it."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"], "ready": {"timeoutMs": 1000} } } }""",
+        "(processes.server.ready): \"output\" is missing; \"ready\" needs the regular expression a printed line is matched against."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"], "ready": {"output": "x", "timeoutMs": 0} } } }""",
+        "(processes.server.ready): \"timeoutMs\" must be a whole number from 1 to 600000; got 0."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"], "ready": {"output": "x", "timeoutMs": 600001} } } }""",
+        "(processes.server.ready): \"timeoutMs\" must be a whole number from 1 to 600000; got 600001."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"], "ready": {"output": "x", "timeoutMs": 1.5} } } }""",
+        "(processes.server.ready): \"timeoutMs\" must be a whole number from 1 to 600000; got 1.5."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"], "env": {"Delve__DataDir": 1} } } }""",
+        "(processes.server): \"env\" of \"server\" must hold strings; \"Delve__DataDir\" is a number."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"], "cwd": "" } } }""",
+        "(processes.server): \"cwd\" must be a non-empty string, the folder the process runs in, relative to the project folder."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"], "cwd": "C:\\work" } } }""",
+        "(processes.server): cwd \"C:\\work\" leaves the project folder; it must be the folder or a folder inside it."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"], "cwd": "..\\..\\x" } } }""",
+        "(processes.server): cwd \"..\\..\\x\" leaves the project folder; it must be the folder or a folder inside it."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"], "description": "" } } }""",
+        "(processes.server): \"description\" must be a non-empty string, what the process is."
+    )]
+    public void AMalformedProcessesSectionIsRefusedNamingTheFile(string json, string problem)
+    {
+        Write(json);
+
+        string message = Refused(() => ProjectProfile.Load(_temp.Path));
+
+        Assert.Equal($"{FilePath} {problem}", message);
+    }
+
+    [Theory]
+    [InlineData(@"C:\", @"C:\sub", true)]
+    [InlineData(@"C:\", @"C:\x", true)]
+    [InlineData(@"C:\", @"C:\other\..\..\x", true)]
+    [InlineData(@"C:\folder", @"C:\folder\sub", true)]
+    [InlineData(@"C:\folder", @"C:\folder\..\x", false)]
+    [InlineData(@"C:\folder", @"D:\folder\sub", false)]
+    public void AFolderIsInsideWhenItIsTheFolderOrBelowIt(string folder, string path, bool inside) =>
+        Assert.Equal(inside, ProjectProfile.IsInsideFolder(folder, path));
+
+    [Fact]
+    public void AnInvalidReadyPatternIsRefusedAtLoadNamingIt()
+    {
+        Write("""{ "processes": { "server": { "command": ["a"], "ready": {"output": "("} } } }""");
+
+        string message = Refused(() => ProjectProfile.Load(_temp.Path));
+
+        Assert.StartsWith(
+            $"{FilePath} (processes.server.ready.output): the pattern \"(\" in \"ready.output\" is not a valid .NET regular expression: ",
+            message
+        );
         Assert.EndsWith(" Fix or remove it.", message, StringComparison.Ordinal);
     }
 

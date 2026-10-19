@@ -363,11 +363,13 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     }
 
     /// <summary>The session a tool addresses, resolved once its own arguments have been checked.</summary>
-    private GodotSession Find(string? session)
+    /// <param name="session">The session's name; null for the only live one.</param>
+    /// <param name="allowProcess">Whether a process session may answer; only the output wait admits one.</param>
+    private GodotSession Find(string? session, bool allowProcess = false)
     {
         try
         {
-            return sessions.Resolve(session);
+            return sessions.Resolve(session, allowProcess);
         }
         catch (SessionException e)
         {

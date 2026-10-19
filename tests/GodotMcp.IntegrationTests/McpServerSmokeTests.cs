@@ -101,6 +101,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "record_mark",
                 "restart_project",
                 "run_csharp",
+                "run_process",
                 "run_project",
                 "run_scratches",
                 "run_script",
@@ -211,6 +212,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["record_mark"] = changesTheGame,
             ["restart_project"] = destructive,
             ["run_csharp"] = destructive,
+            ["run_process"] = changesTheGame,
             ["run_project"] = changesTheGame,
             ["run_scratches"] = changesTheGame,
             ["run_script"] = destructive,
@@ -241,7 +243,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(70, actual.Count);
+        Assert.Equal(71, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

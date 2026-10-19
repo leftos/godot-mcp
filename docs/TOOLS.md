@@ -7,6 +7,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | Job | Reach for | Instead of |
 |---|---|---|
 | Start the game and drive it | `run_project`, then the runtime tools | `attach_project`, which is for a game started some other way |
+| Start a server or backend the game needs beside it | `run_process`, for a process the project declares in `godot-mcp.json` | a background shell job, or launching it by hand |
 | Drive a game you (or the editor) started | `attach_project` | `run_project` |
 | Look at a game a launcher or a player already has running | `arm_project` before it starts, then `attach_project` at any time | a delayed launcher timed against `attach_project` |
 | See one scene without playing | `preview_scene` | `run_project` with `scene` plus `take_screenshot` plus `stop_project` |
@@ -52,11 +53,13 @@ For an agent driving a Godot project through this server: which tool fits a job,
 - **Arguments are checked by name.** An argument or options key a tool does not take is refused (`run_project has no argument 'optoins'; it takes: …`, `options has no 'prepar'; it takes: …`), as is a value of the wrong kind (`options.prepare takes a string, not true.`, followed by that option's description) and a missing required one (`run_project needs the argument 'projectPath'.`).
 
   Free-form values (`add_node`'s `options.properties`, `set_node_properties`' `value`) take any keys. `batch_drive` and `batch_scene_operations` steps are checked the same way, behind their step prefix.
-- **Session.** Every runtime tool, and `restart_project`, `stop_project`, `detach_project` and `get_debug_output`, takes a last `session` argument. Pass the session `run_project` or `attach_project` returned on every call from the start: another agent's game can start on the same server at any time, and there is no default session.
+- **Session.** Every runtime tool, and `restart_project`, `stop_project`, `detach_project` and `get_debug_output`, takes a last `session` argument; `run_process` takes it as `options.session`. Pass the session `run_project`, `attach_project` or `run_process` returned on every call from the start: another agent's game can start on the same server at any time, and there is no default session.
 
   It may be left out while only one session exists; with several live ones and no name the call is refused and lists the live ones, with a count of the stopped. A name no session has is refused the same way.
 
   A new session is named after its project folder, fitted to the name rule (1 to 64 letters, digits, `.`, `_`, `-`; any other character becomes `_`, so `My Game` becomes `My_Game`). When a live session on another folder already holds that name (two worktrees of one repo), the new one takes `<name>-2`, `-3`, …, cut to fit 64 characters; read it from the result's `session`.
+
+  A process session (`run_process`) is a third kind beside a run and an attach: it has no bridge, joins no folder bookkeeping and writes no `override.cfg`, so the folder's quiet and shut-out rules do not bind it. Only `wait_for` with an output condition, `get_debug_output`, `stop_project` and `list_sessions` reach it; every other runtime tool and `restart_project` refuse it.
 
   Two sessions on one folder need distinct names: pass `options.session` to `run_project` or `attach_project`. The headless tools and `preview_scene` take `projectPath` instead and no session.
 - **Errors ride along.** A runtime tool's result carries `errors` (file, line, stack) for every error the game raised while the call ran, and the call still succeeds, except `run_script` and `call_method` as their sections say. The key is present only when the game raised an error during the call: its absence means none. Read `errors` in every result before the next step.
@@ -163,6 +166,10 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   When only a host ran there the result is `{projectPath, headlessHostStopped: true}`; neither is refused. Stopping a session also stops its folder's warm host when that host is idle, and `headlessHostStopped` says whether one was stopped.
 
+  A process session (`run_process`) is stopped by name only: `stop_project {session}` closes its job and ends the program and everything it started at once, returning `{session, projectPath, kind: "process", exitCode, killed, alreadyExited}` (`exitCode` the program's only when it had already exited, null when the stop had to end it; `killed` true only then), and the session stays listed as stopped.
+
+  `stop_project {projectPath}` never stops a process session, and naming one beside `projectPath` is refused (`session '<name>' is a process; stop it by name with stop_project, without projectPath.`).
+
   `exitCode` is the process the server started (on Windows the `Godot_console` wrapper); `gameExitCode` is the game's own, null when it could not be read and whenever the game was killed (the code read after a kill is not the game's).
 
   The grace watches the game itself: a game that quits in time is not killed even when it left processes running, which `leftRunning` lists (`["PING.EXE (pid 1234)"]`) and which end with the wrapper, so `exitCode` is then -1. A kill says why in `killReason`: no answer to a ping, no answer to the quit request, still shutting down after the grace, or no bridge connection to ask.
@@ -182,15 +189,35 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 - **Does:** relaunches a run session with the scene, arguments and options it was started with, keeping its name, its error `seq` and its debug output (a marker line separates the two games).
 - **Use:** after editing code or scenes, to pick up the change without losing the session; `options {prepare}`.
-- **Edges:** the prep runs while the old game still runs, so a failed C# build is an error and leaves the old game running. To change the scene or arguments, `stop_project` then `run_project`. An attached session cannot be restarted.
+- **Edges:** the prep runs while the old game still runs, so a failed C# build is an error and leaves the old game running. To change the scene or arguments, `stop_project` then `run_project`. An attached session cannot be restarted, and a process session is refused (`Session '<name>' is a process (<program>): stop it with stop_project and start it again with run_process; restart_project restarts Godot runs.`).
   The old game is stopped as `stop_project` stops it, with its `warning` when a debugger was attached to it; `previousAlreadyExited` and `previousGameExitCode` (left out when unknown) say how it had ended, as `stop_project`'s `alreadyExited` and `gameExitCode` do, and `previousKillReason`, `previousLeftRunning` and `previousQuitMs` (each left out when empty) say how it was stopped, as its `killReason`, `leftRunning` and `quitMs` do.
   A recording run records the new game to a new file and returns the old one's outcome as `previousRecording`.
   A real-time recording of the old game is ended before it is stopped and its clip returned as `previousRecording` in `stop_project`'s real-time shape (a failed finish is its `error`, as there, and does not fail the restart); the new game does not record until `record_mark` `start`.
   `window {width, height}` is the relaunched game's window, as `run_project` reports it, and a window that differs from `--resolution` adds `run_project`'s size text to `warning`, after the debugger's.
 
+### `run_process`
+
+- **Does:** starts a program the project's `godot-mcp.json` declares and returns at once, leaving it running: `{session, projectPath, process, processId, command, log}` (`process` its name in the file, `processId` the program's own pid, `command` the argv it started with, `log` the file its output is also written to).
+- **Use:** a game server or a mock backend a drive needs beside its games. `projectPath` is the folder holding `project.godot`, `process` a name under the file's `processes` section, and `args` are appended to its `command`. Without `options.session` the session is the process's name fitted to the name rule, as a folder name is; a live session of that name on the same folder refuses the start as a run's does, and one on another folder takes `<name>-2`, `-3`, ….
+
+  The folder must have a `godot-mcp.json` declaring the process: a missing file or an unknown name is refused, the latter listing every process it declares. No prep runs before the start (`dotnet run` builds itself).
+
+  `ready` is parsed and its pattern compiled, but `run_process` does not wait on it: the call returns as soon as the program starts. To wait for a line it prints, follow with `wait_for`'s `output` condition.
+- **A process session:** it has no bridge. `list_sessions` reports `kind: "process"`, its `processId` (the program itself) and a null `gameProcessId`, live while it runs and still listed as stopped after it ends.
+
+  Its stdout and stderr fill the same last-500-lines buffers `get_debug_output` reads (lines cut at 1000 characters), its output is also written to `.godot/godot-mcp/process-<session>.log` (fresh on each start), and `wait_for` with an `output` condition, `after` included, reads those buffers.
+
+  Every other runtime tool and `restart_project` refuse it: `Session '<name>' is a process (<program>), not a Godot game: only wait_for with an output condition, get_debug_output, stop_project and list_sessions reach it.` `batch_drive` refuses a tool step on a process before any step of the batch runs (`{passed: false, steps: [], failedAt: {index, reason}}`), while a `wait` assertion with an `output` condition works.
+- **Stop:** `stop_project {session}` terminates the process and everything it started at once, and the server's exit ends process sessions with the runs. A process session is stopped by name only; `stop_project {projectPath}` never stops it.
+- **Edges:** parsing the section is strict: an unknown key, a wrong type, an empty `command`, a `ready.output` that is not a valid .NET regular expression, a duplicate name and a `cwd` that is absolute or leaves the project folder are each refused with the file's path and the fix. A process session needs Windows, since its process tree lives in a Windows job object; elsewhere the start is refused and nothing starts.
+
 ### `list_sessions`
 
-- **Does:** lists the live sessions by name (`includeStopped: true` adds the stopped ones): project folder, kind (`run` or `attach`), whether it is live, `processId` (the process `run_project` started, the `Godot_console` wrapper on Windows that `stop_project` ends; null for an attach), `gameProcessId` (the game's own process, the one a debugger attaches to; null until the bridge has connected), and a recording's state.
+- **Does:** lists the live sessions by name (`includeStopped: true` adds the stopped ones): project folder, kind (`run`, `attach` or `process`), whether it is live, and a recording's state.
+
+  `processId` is the process `run_project` started, the `Godot_console` wrapper on Windows that `stop_project` ends; for a process session the program `run_process` started; null for an attach. `gameProcessId` is the game's own process, the one a debugger attaches to; null until the bridge has connected, and always null for a process.
+
+  A process session is live while its program runs and is still listed as stopped once it ends, so `get_debug_output` still reads it.
   `recording` is `{mode: "movie", path}` for a movie run while it runs, `{mode: "realtime", path, startedSeconds}` for a real-time recording, nothing while its `start` is in flight, and once a recording has ended on its own (the game quit) what `stop_project` will return for it, until `stop_project`, `restart_project`, `detach_project` or `record_mark` `stop` takes it.
   `armed` lists the folders `arm_project` armed, each with its `quiet`, `shutOutRealGamepads` and `dormant` games (`{pid, startedAt}`) that `attach_project` can join; `headlessHosts` lists the warm headless hosts by folder, `{projectPath, pid, startedAt, requests, idleSeconds}` (`idleSeconds` 0 while one serves a call).
 - **Use:** when a call is refused for want of a session name, or to find a session a previous turn started; `gameProcessId` for a debugger's attach. A stopped run is kept until its name is reused, with its last pids and output (`get_debug_output` and `restart_project` still reach it by name), and listed only with `includeStopped: true`.
@@ -198,9 +225,9 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `get_debug_output`
 
-- **Does:** the newest stdout and stderr lines of a session's run (the current or last one under its name), whether it still runs, and its exit code.
+- **Does:** the newest stdout and stderr lines of a session's run (the current or last one under its name), whether it still runs, and its exit code. A process session's program answers too, from the output `run_process` captured.
 - **Use:** when the game crashed or quit, or a tool reports the connection ended. `limit` (1 to 500, default 100); `before` (a line number) pages back, starting from the returned `stdoutFirstLine` or `stderrFirstLine`.
-- **Edges:** the server keeps the last 500 lines of each stream; lines over 1000 characters are cut. Structured errors are better read from `get_errors`.
+- **Edges:** the server keeps the last 500 lines of each stream; lines over 1000 characters are cut. Structured errors are better read from `get_errors`. A process session's output is also in `.godot/godot-mcp/process-<session>.log`.
 
 ## See the game
 
@@ -762,9 +789,9 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
   `options.edge`, `options.call`, `then`, `screenshot`, `timeoutMs: 0` (checked once, even while paused) and a `frame_control` `until` all compose with it. A C# node's state is read through the C# helper in the same frame, which the first check loads, and the default timeout covers.
 
   Refused: a blank `state` (`condition.state is blank; give a key path into the node's state, such as seats[0].hp, or $ for the whole state.`), `property` or `stable` with it (`a state condition takes no property or stable; state names the key path to read.`) and `state` without `equals` (`a state condition needs equals, the JSON value the key must equal; null is not supported.`).
-- **Wait for a printed line:** `{output: "<regular expression>"}` waits until a line the run printed matches a .NET regular expression, against the captured stdout and/or stderr (`stream`: `stdout`, `stderr` or `any`, the default, which scans stdout first).
+- **Wait for a printed line:** `{output: "<regular expression>"}` waits until a line the run, or a process session's program, printed matches a .NET regular expression, against the captured stdout and/or stderr (`stream`: `stdout`, `stderr` or `any`, the default, which scans stdout first).
 
-  It sends nothing to the bridge, so it works while the game is paused, and an attached session, which captures no output, is refused (`Session '<name>' is attached: the server captures no output from a game it did not start; wait on a node, a property or an expression instead.`).
+  It sends nothing to the bridge, so it works while the game is paused, and an attached session, which captures no output, is refused (`Session '<name>' is attached: the server captures no output from a game it did not start; wait on a node, a property or an expression instead.`). It is the only wait a process session accepts.
 
   Met, `value` is `{line, stream, lineNumber, groups}`: the line as printed, cut at 1000 characters in the answer but matched whole; the stream it came from; its number in that stream, as `get_debug_output`'s totals number it; and the pattern's capture groups (the whole match excluded, null for a group that did not match).
 
@@ -975,6 +1002,8 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
   Any step may carry `session`; the batch's `session` is the default.
 - **Edges:** `property`, `expression` and `state` default to `timeoutMs: 0` (checked once, now); `wait` defaults to 10000. A `wait` with `output` is answered by the server from the session's captured run output, so it works while paused and refuses an attached session; `timeoutMs: 0` on it needs `after`, as `wait_for` does.
 
+  On a process session a `wait` with `output` works, and a tool step is refused before any step runs: `{passed: false, steps: [], failedAt: {index, reason}}` with the process refusal as `reason`.
+
   A `state` assertion missing `node`, `state` or `equals` is refused at validation (`step {index}: the state assertion needs node, state and equals.`), and a failed one reads `the state assertion {...} was not met when checked; wait_for returned {...}`, `last` the value at the key.
 
   `no_errors` covers errors since the batch started or the previous `no_errors`. `take_screenshot` and `compare_screenshot` steps are forced to `path_only` and images dropped. Not batchable: the lifecycle tools, `preview_scene`, `save_screenshot` (it writes a project file, which `batch_drive`'s class does not grant) and the headless tools. The whole batch stops after 300 s of load-adjusted time.
@@ -1171,7 +1200,7 @@ A host stops by itself after 5 minutes (wall time) with no call; at most 4 run p
 
 ## Project profiles: `godot-mcp.json`
 
-A `godot-mcp.json` beside `project.godot` sets launch defaults for every `run_project` on the folder. Top-level keys: `scene`, `userArgs`, `engineArgs`, `resolution` (`WIDTHxHEIGHT`, lowercase `x`), `quiet`, `presets`, `prepWrapper`.
+A `godot-mcp.json` beside `project.godot` sets launch defaults for every `run_project` on the folder. Top-level keys: `scene`, `userArgs`, `engineArgs`, `resolution` (`WIDTHxHEIGHT`, lowercase `x`), `quiet`, `presets`, `prepWrapper`, `processes`.
 
 Each preset under `presets` takes the same keys but `presets`, plus `session` and `description` (what the preset is for; an unknown `options.preset` is refused listing each preset as `name (description)`). The file may carry `//` and `/* */` comments and trailing commas, so a value can sit beside a note on why it is set.
 
@@ -1202,6 +1231,30 @@ A wrapped process has no stall kill (a gate waiting for a slot is silent), the c
   }
 }
 ```
+
+### `processes`
+
+A `processes` object declares the programs `run_process` starts, each keyed by the name a call passes as `process`:
+
+```jsonc
+"processes": {
+  "server": {
+    "command": ["dotnet", "run", "--project", "../Delve.Server", "--", "--dev-cheats"],
+    "cwd": ".",
+    "env": {"Delve__DataDir": "../../.tmp/drive-runs"},
+    "ready": {"output": "Now listening on", "timeoutMs": 120000},
+    "description": "the game server; pass --port <n> as args"
+  }
+}
+```
+
+`command` (required) is a non-empty array of non-empty strings, the program and then its arguments: a program with a folder in it is relative to the project folder, a bare name is found on `PATH`, and `run_process`'s `args` append after them.
+
+`cwd` is the folder the program runs in, relative to the project folder (an absolute path or one that leaves it is refused); left out, the project folder. `env` sets variables over the server's environment, with no way to remove one. `description` says what the process is, shown when a call names one the file does not declare.
+
+`ready {output, timeoutMs}` is accepted and its `output` must compile as a .NET regular expression, with `timeoutMs` 1 to 600000 (default 60000). `run_process` does not wait on `ready`: wait for the line with `wait_for`'s `output` condition.
+
+The section is parsed strictly with the rest of the file: an unknown key, a wrong type, an empty `command`, a bad `ready.output`, a duplicate process name and a `cwd` that is absolute or leaves the project folder are each refused with the file's path and the fix. A process is not a preset and not a `run_project`: presets still launch Godot only.
 
 ## Worked drives
 

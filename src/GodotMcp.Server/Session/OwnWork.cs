@@ -14,6 +14,8 @@ namespace GodotMcp.Server.Session;
 internal static partial class OwnWork
 {
     private const int BasicAccountingInformation = 1;
+    private const int ExtendedLimitInformationClass = 9;
+    private const uint JobObjectLimitKillOnJobClose = 0x2000;
 
     private static readonly nint Job = OperatingSystem.IsWindows() ? CreateJobObjectW(0, null) : 0;
     private static int _adoptFailureLogged;
@@ -71,6 +73,49 @@ internal static partial class OwnWork
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool CloseHandle(nint handle);
 
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool SetInformationJobObject(nint job, int informationClass, ref ExtendedLimitInformation information, int length);
+
+    /// <summary><c>JOBOBJECT_BASIC_LIMIT_INFORMATION</c>.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BasicLimitInformation
+    {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public nuint MinimumWorkingSetSize;
+        public nuint MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public nuint Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+
+    /// <summary><c>IO_COUNTERS</c>.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoCounters
+    {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+
+    /// <summary><c>JOBOBJECT_EXTENDED_LIMIT_INFORMATION</c>.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ExtendedLimitInformation
+    {
+        public BasicLimitInformation BasicLimitInformation;
+        public IoCounters IoInfo;
+        public nuint ProcessMemoryLimit;
+        public nuint JobMemoryLimit;
+        public nuint PeakProcessMemoryUsed;
+        public nuint PeakJobMemoryUsed;
+    }
+
     /// <summary><c>JOBOBJECT_BASIC_ACCOUNTING_INFORMATION</c>.</summary>
     [StructLayout(LayoutKind.Sequential)]
     private struct BasicAccounting
@@ -87,12 +132,13 @@ internal static partial class OwnWork
 
     /// <summary>
     /// The CPU one tool process and its descendants have used: a job of its own, nested in the server's. When the process
-    /// cannot join one, it falls back to the process's own CPU, logged once.
+    /// cannot join one, it falls back to the process's own CPU, logged once; a job made to kill on close refuses the start
+    /// instead, since nothing else would end the tree.
     /// </summary>
     internal sealed class TreeCpu : IDisposable
     {
         private static int _fallbackLogged;
-        private readonly nint _job;
+        private nint _job;
         private readonly Process _process;
         private long _last;
 
@@ -120,30 +166,91 @@ internal static partial class OwnWork
         /// <param name="process">The started process.</param>
         /// <param name="logger">Where a failed join is reported, once.</param>
         /// <param name="join">False skips the job, as a failed join does: the seam tests use for an unmeasurable tree.</param>
-        public static TreeCpu Adopt(Process process, ILogger logger, bool join)
+        /// <param name="killOnClose">
+        /// True gives the job <c>JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE</c>, so closing it ends every process in it; a job that
+        /// cannot be made or joined is then a failure, not a fallback, since nothing else would end the tree.
+        /// </param>
+        /// <exception cref="Win32Exception">The kill-on-close job could not be made or joined.</exception>
+        public static TreeCpu Adopt(Process process, ILogger logger, bool join, bool killOnClose = false)
         {
-            nint job = join && OperatingSystem.IsWindows() ? CreateJobObjectW(0, null) : 0;
+            nint job = CreateJob(join, killOnClose);
             if (job != 0 && !AssignProcessToJobObject(job, process.Handle))
             {
-                int error = Marshal.GetLastPInvokeError();
-                _ = CloseHandle(job);
-                job = 0;
-                if (Interlocked.Exchange(ref _fallbackLogged, 1) == 0)
-                {
-                    Log.OwnWorkAdoptFailed(logger, "a tool process's job", error, "its stall guard is off; its ceiling and backstop still apply");
-                }
+                job = JoinFailed(job, logger, killOnClose);
             }
 
             return new TreeCpu(job, process);
         }
 
-        public void Dispose()
+        /// <summary>The job a start joins: none when <paramref name="join"/> is false, made to kill on close when asked.</summary>
+        private static nint CreateJob(bool join, bool killOnClose)
         {
-            if (_job != 0)
+            if (!join || !OperatingSystem.IsWindows())
             {
-                _ = CloseHandle(_job);
+                return killOnClose ? throw JobFailure(0) : 0;
+            }
+
+            nint job = CreateJobObjectW(0, null);
+            if (job == 0)
+            {
+                return killOnClose ? throw JobFailure(Marshal.GetLastPInvokeError()) : 0;
+            }
+
+            if (killOnClose && !SetKillOnClose(job))
+            {
+                int error = Marshal.GetLastPInvokeError();
+                _ = CloseHandle(job);
+                throw JobFailure(error);
+            }
+
+            return job;
+        }
+
+        /// <summary>Closes the job a process could not join: a failure when it must kill on close, else the logged CPU fallback.</summary>
+        private static nint JoinFailed(nint job, ILogger logger, bool killOnClose)
+        {
+            int error = Marshal.GetLastPInvokeError();
+            _ = CloseHandle(job);
+            if (killOnClose)
+            {
+                throw JobFailure(error);
+            }
+
+            if (Interlocked.Exchange(ref _fallbackLogged, 1) == 0)
+            {
+                Log.OwnWorkAdoptFailed(logger, "a tool process's job", error, "its stall guard is off; its ceiling and backstop still apply");
+            }
+
+            return 0;
+        }
+
+        /// <summary>Gives the job the kill-on-close limit; false, with the Windows error set, when it cannot.</summary>
+        private static bool SetKillOnClose(nint job)
+        {
+            ExtendedLimitInformation information = new();
+            information.BasicLimitInformation.LimitFlags = JobObjectLimitKillOnJobClose;
+            return SetInformationJobObject(job, ExtendedLimitInformationClass, ref information, Marshal.SizeOf<ExtendedLimitInformation>());
+        }
+
+        /// <summary>The refusal of a start whose kill-on-close job could not be made or joined.</summary>
+        private static Win32Exception JobFailure(int error) =>
+            new(
+                error,
+                "The process could not be put in a job that ends it and everything it starts when the job closes "
+                    + $"(Windows error {error}), so it was not started."
+            );
+
+        /// <summary>Closes the job, ending every process in it when it was made to kill on close; later calls do nothing.</summary>
+        public void CloseJob()
+        {
+            nint job = Interlocked.Exchange(ref _job, 0);
+            if (job != 0)
+            {
+                _ = CloseHandle(job);
             }
         }
+
+        public void Dispose() => CloseJob();
 
         private long ProcessTicks()
         {

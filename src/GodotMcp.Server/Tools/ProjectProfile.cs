@@ -41,9 +41,23 @@ internal sealed partial class ProjectProfile
     private const string TopLevel = "top level";
     private const string PrepWrapperKey = "prepWrapper";
     private const string ScratchKey = "scratch";
-    private static readonly string[] TopLevelKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "presets", PrepWrapperKey, ScratchKey];
+    private const string ProcessesKey = "processes";
+    private static readonly string[] TopLevelKeys =
+    [
+        "scene",
+        "userArgs",
+        "engineArgs",
+        "resolution",
+        "quiet",
+        "presets",
+        PrepWrapperKey,
+        ScratchKey,
+        ProcessesKey,
+    ];
     private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "session", "description"];
     private static readonly string[] ScratchKeys = ["folder", "userArgs", "pace", "known", "patterns", "parallel"];
+    private static readonly string[] ProcessKeys = ["command", "cwd", "env", "ready", "description"];
+    private static readonly string[] ReadyKeys = ["output", "timeoutMs"];
     private const string StepsKey = "steps";
     private static readonly string[] StepPaceKeys = ["seconds", "reason"];
     private static readonly string[] PaceKeys = [.. StepPaceKeys, StepsKey];
@@ -89,6 +103,12 @@ internal sealed partial class ProjectProfile
     /// <summary>The <c>scratch</c> section, how run_scratches finds and judges the project's scratch scenes; null when the file has none.</summary>
     public ScratchProfile? Scratch { get; private init; }
 
+    /// <summary>
+    /// The <c>processes</c> section, the programs beside the game that run_process starts by name, keyed by their name in
+    /// file order; empty when the file has none.
+    /// </summary>
+    public IReadOnlyDictionary<string, ProcessProfile> Processes { get; private init; } = new Dictionary<string, ProcessProfile>();
+
     /// <summary>The profile of a folder with no godot-mcp.json: it sets nothing and has no presets.</summary>
     public static ProjectProfile Empty(string projectDir) =>
         new(projectDir, false, ProfileValues.None, new Dictionary<string, ProfileValues>(), prepWrapper: null);
@@ -112,6 +132,7 @@ internal sealed partial class ProjectProfile
         return new ProjectProfile(projectDir, true, defaults, ReadPresets(keys, top), ReadPrepWrapper(keys, top))
         {
             Scratch = ReadScratch(keys, top),
+            Processes = ReadProcesses(keys, top, projectDir),
         };
     }
 
@@ -374,6 +395,181 @@ internal sealed partial class ProjectProfile
                 $"\"parallel\" must be a whole number from 1 to {ScratchProfile.MaxParallel}, not "
                     + (value.ValueKind == JsonValueKind.Number ? value.GetRawText() : Describe(value.ValueKind))
             );
+    }
+
+    /// <summary>
+    /// The <c>processes</c> section: each process's command, folder, environment, ready line and description, keyed by its name
+    /// in file order; empty when the key is absent.
+    /// </summary>
+    private static Dictionary<string, ProcessProfile> ReadProcesses(Dictionary<string, JsonElement> keys, Place top, string projectDir)
+    {
+        Dictionary<string, ProcessProfile> processes = new(StringComparer.Ordinal);
+        if (!keys.TryGetValue(ProcessesKey, out JsonElement value))
+        {
+            return processes;
+        }
+
+        foreach (JsonProperty entry in Expect(value, JsonValueKind.Object, ProcessesKey, top).EnumerateObject())
+        {
+            Place place = new(top.Path, $"{ProcessesKey}.{entry.Name}");
+            Dictionary<string, JsonElement> process = Keys(entry.Value, ProcessKeys, place);
+            ProcessProfile read = new(
+                ReadCommand(process, place),
+                ReadCwd(process, place, projectDir),
+                ReadEnvironment(process, place, entry.Name),
+                ReadReady(process, place),
+                ReadProcessDescription(process, place)
+            );
+            if (!processes.TryAdd(entry.Name, read))
+            {
+                throw Refused(top, $"the process \"{entry.Name}\" appears twice in \"{ProcessesKey}\"; keep one");
+            }
+        }
+
+        return processes;
+    }
+
+    /// <summary>A process's <c>command</c>: a non-empty array of non-empty strings, the program and then its arguments.</summary>
+    private static string[] ReadCommand(Dictionary<string, JsonElement> keys, Place place)
+    {
+        if (!keys.TryGetValue("command", out JsonElement value))
+        {
+            throw Refused(place, "\"command\" is missing; a process needs the program and then its arguments. Add it");
+        }
+
+        const string Shape = "\"command\" must be a non-empty array of non-empty strings, the program and then its arguments";
+        if (value.ValueKind != JsonValueKind.Array)
+        {
+            throw Refused(place, $"{Shape}; it is {Describe(value.ValueKind)}");
+        }
+
+        List<string> command = [];
+        foreach (JsonElement item in value.EnumerateArray())
+        {
+            string element =
+                item.ValueKind == JsonValueKind.String ? item.GetString()! : throw Refused(place, $"{Shape}; it holds {Describe(item.ValueKind)}");
+            command.Add(element.Length > 0 ? element : throw Refused(place, $"{Shape}; its item {command.Count + 1} is an empty string"));
+        }
+
+        return command.Count > 0 ? [.. command] : throw Refused(place, $"{Shape}; it is empty");
+    }
+
+    /// <summary>
+    /// A process's <c>cwd</c>: the folder it runs in, resolved against the project folder; null when the key is absent, which
+    /// runs it in the project folder.
+    /// </summary>
+    private static string? ReadCwd(Dictionary<string, JsonElement> keys, Place place, string projectDir)
+    {
+        if (!keys.TryGetValue("cwd", out JsonElement value))
+        {
+            return null;
+        }
+
+        string text =
+            value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } given
+                ? given
+                : throw Refused(place, "\"cwd\" must be a non-empty string, the folder the process runs in, relative to the project folder");
+        string resolved = Path.GetFullPath(Path.Combine(projectDir, text));
+        string folder = ProjectPaths.Normalise(projectDir);
+        return Path.IsPathRooted(text) || !IsInsideFolder(folder, resolved)
+            ? throw Refused(place, $"cwd \"{text}\" leaves the project folder; it must be the folder or a folder inside it")
+            : resolved;
+    }
+
+    /// <summary>Whether <paramref name="path"/> is <paramref name="folder"/> or a folder inside it.</summary>
+    internal static bool IsInsideFolder(string folder, string path)
+    {
+        string relative = Path.GetRelativePath(folder, path);
+        return !Path.IsPathRooted(relative)
+            && relative != ".."
+            && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            && !relative.StartsWith("../", StringComparison.Ordinal);
+    }
+
+    /// <summary>A process's <c>env</c>: the variables set for it over the server's own environment; empty when absent.</summary>
+    private static Dictionary<string, string> ReadEnvironment(Dictionary<string, JsonElement> keys, Place place, string process)
+    {
+        Dictionary<string, string> environment = new(StringComparer.Ordinal);
+        if (!keys.TryGetValue("env", out JsonElement value))
+        {
+            return environment;
+        }
+
+        foreach (JsonProperty entry in Expect(value, JsonValueKind.Object, "env", place).EnumerateObject())
+        {
+            string read =
+                entry.Value.ValueKind == JsonValueKind.String
+                    ? entry.Value.GetString()!
+                    : throw Refused(place, $"\"env\" of \"{process}\" must hold strings; \"{entry.Name}\" is {Describe(entry.Value.ValueKind)}");
+            if (!environment.TryAdd(entry.Name, read))
+            {
+                throw Refused(place, $"the variable \"{entry.Name}\" appears twice in \"env\"; keep one");
+            }
+        }
+
+        return environment;
+    }
+
+    /// <summary>
+    /// A process's <c>ready</c>: the line it must print before run_process returns, as a compiled pattern, and the timeout it
+    /// has, 1 to 600000 ms, 60000 when the key sets none; null when the key is absent.
+    /// </summary>
+    private static ReadyProfile? ReadReady(Dictionary<string, JsonElement> keys, Place place)
+    {
+        if (!keys.TryGetValue("ready", out JsonElement value))
+        {
+            return null;
+        }
+
+        Place ready = new(place.Path, $"{place.Where}.ready");
+        Dictionary<string, JsonElement> readyKeys = Keys(value, ReadyKeys, ready);
+        if (!readyKeys.TryGetValue("output", out JsonElement output))
+        {
+            throw Refused(ready, "\"output\" is missing; \"ready\" needs the regular expression a printed line is matched against");
+        }
+
+        string text =
+            output.ValueKind == JsonValueKind.String && output.GetString() is { Length: > 0 } pattern
+                ? pattern
+                : throw Refused(ready, "\"output\" must be a non-empty string, the regular expression a printed line is matched against");
+        return new ReadyProfile(text, ReadyTimeout(readyKeys, ready)) { Regex = CompileReady(place, text) };
+    }
+
+    /// <summary>A ready pattern compiled as written, with <see cref="ScratchProfile.Compile"/>'s options and timeout.</summary>
+    private static Regex CompileReady(Place place, string text)
+    {
+        try
+        {
+            return ScratchProfile.Compile(text);
+        }
+        catch (ArgumentException e)
+        {
+            Place output = new(place.Path, $"{place.Where}.ready.output");
+            string message = $"the pattern \"{text}\" in \"ready.output\" is not a valid .NET regular expression: {e.Message} Fix or remove it";
+            throw Refused(output, message);
+        }
+    }
+
+    /// <summary>A ready timeout: a whole number of milliseconds from 1 to 600000; 60000 when the key is absent.</summary>
+    private static int ReadyTimeout(Dictionary<string, JsonElement> keys, Place place)
+    {
+        if (!keys.TryGetValue("timeoutMs", out JsonElement value))
+        {
+            return ReadyProfile.DefaultTimeoutMs;
+        }
+
+        return value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int timeoutMs) && ReadyProfile.IsTimeout(timeoutMs)
+            ? timeoutMs
+            : throw Refused(place, $"\"timeoutMs\" must be a whole number from 1 to {ReadyProfile.MaxTimeoutMs}; got {Shown(value)}");
+    }
+
+    /// <summary>A process's description, a non-empty string saying what it is; null when the key is absent.</summary>
+    private static string? ReadProcessDescription(Dictionary<string, JsonElement> keys, Place place)
+    {
+        string? description = ReadString(keys, "description", place);
+        return description is null or { Length: > 0 }
+            ? description
+            : throw Refused(place, "\"description\" must be a non-empty string, what the process is");
     }
 
     /// <summary>An object of scene names to values, each read by <paramref name="read"/>; empty when the key is absent.</summary>
@@ -690,3 +886,32 @@ internal sealed record ScratchPace(double Seconds, string? Reason)
 
 /// <summary>A pattern a step's output line fails it by, and why; the reason is null for a bare string.</summary>
 internal sealed record ScratchPattern(Regex Regex, string? Reason);
+
+/// <summary>
+/// A program the project's <c>processes</c> section declares: the command and its arguments, the folder it runs in (null for
+/// the project folder), the variables set over the server's environment, the line it may print before run_process returns
+/// (null when it declares none), and what it is.
+/// </summary>
+internal sealed record ProcessProfile(
+    string[] Command,
+    string? Cwd,
+    IReadOnlyDictionary<string, string> Env,
+    ReadyProfile? Ready,
+    string? Description
+);
+
+/// <summary>What a process declares it prints before run_process returns: the pattern's text, its compiled form and its timeout.</summary>
+internal sealed record ReadyProfile(string Output, int TimeoutMs)
+{
+    /// <summary>The timeout a ready sets none for: 60000 ms.</summary>
+    public const int DefaultTimeoutMs = 60000;
+
+    /// <summary>The longest ready timeout: 600000 ms.</summary>
+    public const int MaxTimeoutMs = 600000;
+
+    /// <summary>Whether <paramref name="milliseconds"/> is a ready timeout: from 1 to <see cref="MaxTimeoutMs"/>.</summary>
+    public static bool IsTimeout(int milliseconds) => milliseconds is >= 1 and <= MaxTimeoutMs;
+
+    /// <summary>The pattern compiled as the section takes patterns: case-sensitive, culture-invariant, one-second match timeout.</summary>
+    public required Regex Regex { get; init; }
+}
