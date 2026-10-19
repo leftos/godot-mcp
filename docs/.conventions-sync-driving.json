@@ -10,7 +10,7 @@
     },
     "build-before-launch": {
       "repo": "3c4fb49efa876644",
-      "user": "70a4e55758c28ceb"
+      "user": "b379c34bac572167"
     },
     "cancel-timed-out-requests": {
       "repo": "d136e241d12296fa",
@@ -98,7 +98,7 @@
     },
     "name-out-of-reach-ui": {
       "repo": "9039b2dea088c503",
-      "user": "76eac69226b9a50c"
+      "user": "e01672b5229d4d44"
     },
     "never-block-main-thread": {
       "repo": "45f340eefb9ad593",
@@ -190,7 +190,7 @@
     },
     "semantic-click-first": {
       "declined": "presses through injected pointer input as a player would; never invokes a control's action",
-      "user": "07c6ef3828d1467b"
+      "user": "08c21b44dbbdf1ea"
     },
     "shared-wire-types": {
       "declined": "the hook is injected from the server's own install, so the two cannot skew (draft installed-versioned-copy)",
@@ -237,5 +237,5 @@
       "user": "81e92891fb8fe24c"
     }
   },
-  "user_revision": 5
+  "user_revision": 7
 }
