@@ -124,9 +124,9 @@ A process a project needs beside its games (a .NET server, a mock backend) is de
 - A ready refusal during a restart leaves the session listed as stopped with its output, as a failed run restart keeps the session, and the refusal is thrown.
 - `restart_project` accepts a process session that has stopped and starts its stored launch again; only a process session that never started is refused, with `No process has been started in this session, so there is nothing to restart.`
 - `options.ready` replaces the profile's `ready` whole, not field by field, so a call's own pattern is never paired with the profile's timeout; `timeoutMs` defaults to 60000 when the call omits it.
-- `ready.ms` is real elapsed time, as `wait_for`'s `elapsedMs` is; the timeout counts load-adjusted time, as every wait's does.
+- `ready.ms` is real elapsed time, as `wait_for`'s `elapsedMs` is; the timeout counts load-adjusted time, as every wait's does. `ready.line` is the matched line cut to `OutputBuffer.MaxLineLength`, as `wait_for`'s `value.line` is.
 - `restart_project`'s `prepare` means nothing for a process (no prep runs before a process start) and is ignored there; the tool's description says so.
-- The two refusals are the design's sentences verbatim, their last lines joined with a newline and `(none)` when a stream has none, as `HangProbe` renders them: up to 20 stderr lines for an exit before ready, and the last lines of both streams for a timeout.
+- The two refusals are the design's sentences verbatim, their last lines joined with a newline and `(none)` when a stream has none, as `HangProbe` renders them: up to 20 stderr lines for an exit before ready, and for a timeout up to 20 lines of each stream under a `stdout:` and a `stderr:` line.
 - `options.ready`'s validation mirrors the profile's `ready` wording with an `options.ready.` prefix: a missing or empty `output`, an invalid regex, a `timeoutMs` outside 1 to 600000, and a non-integer are refused by name.
 - The process refusal sentence gains `restart_project` in its list of what reaches a process session, and `RestartRefusal` is deleted with its only use.
 
