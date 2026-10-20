@@ -1,8 +1,8 @@
 # State digest: a game's own compact state in place of a screenshot
 
-Design draft for the plan item "State digest: game nodes opt in for a compact state read in place of a screenshot" from idea 4 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L115-118). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../DECISIONS.md) decision 27, which wins where this file differs.
+Design draft for the plan item "State digest: game nodes opt in for a compact state read in place of a screenshot" from idea 4 of the [survey](../../research/2026-09-29-godot-mcp-survey.md) (L115-118). Section 6's questions are ruled, and the rulings are [DECISIONS.md](../../DECISIONS.md) decision 27, which wins where this file differs.
 
-Status: steps 1 to 5 of section 7 have landed (the GDScript read 5fcd5a0, the C# read 71b6c5e, kept reads and diffs 1134e20, the `state` condition in `wait_for` and its `batch_drive` assertion under GMCP-143). Next is step 6, telling the game repos after the release that carries them, under GMCP-17 (State digest: tell the game repos).
+Status: steps 1 to 6 of section 7 are done; the rulings are in [DECISIONS.md](../../DECISIONS.md) decision 27.
 
 ## 1. Problem
 
@@ -105,7 +105,7 @@ The state methods are game code, so `get_game_state` declares `Destructive = tru
 
 ### Relation to project tools
 
-[project-tools.md](./archive/project-tools.md) marks methods an agent calls, with an attribute the game declares and the helper matches by name through `CustomAttributeData`. A digest is a different contract (one read, many nodes, keyed by node path, one frame, diffable), so it keeps its own convention.
+[project-tools.md](./project-tools.md) marks methods an agent calls, with an attribute the game declares and the helper matches by name through `CustomAttributeData`. A digest is a different contract (one read, many nodes, keyed by node path, one frame, diffable), so it keeps its own convention.
 
 Question 1 (b) is the attribute form, which would share project-tools' name matching and the game's attribute file; a read-only game tool (`[GodotMcpTool(…, ReadOnly = true)]` returning a status) stays the way to expose a single computed answer that belongs to no node, such as opening-hand's `GetStatus`.
 
@@ -218,7 +218,7 @@ Each step lands on its own with its tests, docs and changelog bullet, and passes
 3. **Landed: C# read** (every marked C# node goes to the helper, a `missing` answer falls back to Godot's `_mcp_state` in the same frame, a 5000-value budget per node, `csharpError` when the project has C# the helper cannot serve, the helper copy cached per build): `StateMethods`, the helper's `state` op, `call_now` on the `Dotnet` child, the inline call and the merge (question 7); the CsProbe fixture's `CsState.cs`, `StateMethodsTests`, `CSharpStateTests`; docs for the C# convention.
 4. **Landed: kept reads and diffs** (the flattener is the server's `StateFlatten.cs`, no Core file, since the helper never needs it; `$` keys a whole state that is not a non-empty Dictionary or Array; an errored node is the one leaf `error`; the mixed-kind refusal is `CheckSameKind`, unit-tested in `SnapshotDiffTests`; `diff_snapshots` became destructive with a `read` override, user 2026-09-30, since its live re-read runs state methods): `options.keep`, the flattening, `Snapshot`'s kind and the live re-read in `diff_snapshots`, the mixed-kind refusal; `StateFlattenTests`, `SnapshotDiffTests`, `StateTests` and `CSharpStateTests` additions.
 5. **Done: waiting on a state key** (question 8): the `wait_for` state condition and its `batch_drive` assertion.
-6. **After the release that carries them**: delve and opening-hand opt in through their own plans, and their DEVELOPMENT.md sampling-script and `snapshot_subtree` prose (delve L73, opening-hand L61) is rewritten through `godot-mcp-docs-sync`.
+6. **Done: the game repos told**: delve opts in (`Combat`, `Lobby`, `Rewards`, `ZoneMap`, `McpState.cs`); opening-hand's opt-in (`ScratchScene` and `OverworldScratch`) went to opening-hand by inbox request. The rulings are in DECISIONS.md decision 27 and this file moved to the archive.
 
 ## 8. Spike results (step 1, 2026-09-30)
 

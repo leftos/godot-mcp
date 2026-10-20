@@ -1,8 +1,8 @@
 # Audio observation: which players play, bus levels
 
-Design draft for Linear GMCP-21, "Design audio observation: which players play, bus levels (idea 9)", from idea 9 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L140-143), paired with the closed GitHub #50 (the `mute` option). It builds on the timeline watch of [timeline-watch.md](./archive/timeline-watch.md) ([DECISIONS.md](../DECISIONS.md) decision 29, GMCP-19). Every question in section 7 is ruled.
+Design draft for Linear GMCP-21, "Design audio observation: which players play, bus levels (idea 9)", from idea 9 of the [survey](../../research/2026-09-29-godot-mcp-survey.md) (L140-143), paired with the closed GitHub #50 (the `mute` option). It builds on the timeline watch of [timeline-watch.md](./timeline-watch.md) ([DECISIONS.md](../../DECISIONS.md) decision 29, GMCP-19). Every question in section 7 is ruled.
 
-Status: the blocker is cleared, since the watch's steps 2 to 4 have landed (property and expression tracks d638a9f, signal tracks 4d9d406, monitor tracks 42f1184). Steps 1 (the spike), 2 (voice tracks) and 3 (bus tracks) have landed; next is section 6's step 4.
+Status: steps 1 to 4 are done; the rulings are in [DECISIONS.md](../../DECISIONS.md) decision 29.
 
 **The answer in one line**: audio observation is two new track kinds of the `watch` tool, voices and buses, not a tool of its own: the question an agent asks ("did the hit sound fire when I clicked") is an event in a window, which a read between calls misses for any sound shorter than the gap between them, and a watch already runs beside every input, wait and `frame_control` call and stamps everything on one frame clock.
 
@@ -172,7 +172,7 @@ Each step lands with its tests, docs and changelog bullet, and passes the build,
 3. **Bus tracks** (**Done**): `buses`, `thresholdDb`, the peak summary and `heard` ranges, `volumeDb` and `mute` as `{first, last, changes}`, the Master-under-mute warning (`bridgeMuted`, `driver` and `mixRate` shipped with step 2, so this is the Master warning only), the `time_scale` warning.
 
    Tests: gdtest `tests/bridge/test_watch_buses.gd` for the bus module (peaks fed through the `bus_peak` seam, since gdtest mixes nothing; the `heard` ranges are built in the bridge, so they are proven here), `WatchAudioValidationTests` (the bus checks), `WatchAudioTimelineTests` (only the server's `heard` cut), `WatchAudioTests` (an added bus heard while a tone plays, unheard at -80 dB and when muted, Master under `mute`), and a recording case in `RecordingTests` (the `recording` group: a 500 ms tone's `start` and `end` 30 frames apart, give or take one, and its `heard` range).
-4. **After the release that carries them**: delve's `docs/DEVELOPMENT.md` L88 (a quiet run is not deaf to a watch) and the scriptable halves of `docs/manual-tests.md` L47, L51 and L52 rewritten through `godot-mcp-docs-sync`; replacing `FightSoundsScratch`'s and `MusicScratch`'s samplers with a watch is the game's choice, filed as a suggestion in its plan. Then the rulings move into `docs/DECISIONS.md` and this file is archived.
+4. **Done: the rulings archived**: the rulings moved into DECISIONS.md decision 29 and this file moved to the archive. delve already reads sound through the watch (`docs/development/scratch-scenes.md` L11); the muted-Master note and the suggestion to replace `FightSoundsScratch`'s and `MusicScratch`'s samplers went to delve-the-dungeon by inbox request.
 
 ## 7. Open questions
 

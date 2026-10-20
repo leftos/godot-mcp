@@ -139,7 +139,7 @@ Godot facts are cited from the `4.7.2-stable` tag of `godotengine/godot`, read t
 | C# fields | Godot's `get` reads every C# field it can marshal, exported or not; a record, a `List<T>` or a plain class reads null | Confirmed (decision 21) | DECISIONS.md L69; TOOLS.md L29 |
 | C# events | A plain C# `event` is not a Godot signal; only `[Signal]` delegates are | Confirmed: a plain `event` reads `has_signal` false in the spike | `Godot.SourceGenerators/ScriptSignalsGenerator.cs` L117-122 |
 | Module size | `godot_mcp_time.gd` is 940 lines and `godot_mcp_bridge.gd` 870 of gdlint's 1000 (`wc -l`), so the watch is a new module | Measured | `bridge/` |
-| Cost per C# read | The helper reads a C# member in about 49-78 µs warm, 2 s cold (the state-digest spike) | Measured for a watch (section 8): 32 C# property tracks cost 146 µs a frame at p50, about 4.6 µs a read, through Godot's `get` with no helper | [state-digest.md](../state-digest.md) section 8 |
+| Cost per C# read | The helper reads a C# member in about 49-78 µs warm, 2 s cold (the state-digest spike) | Measured for a watch (section 8): 32 C# property tracks cost 146 µs a frame at p50, about 4.6 µs a read, through Godot's `get` with no helper | [state-digest.md](./state-digest.md) section 8 |
 | Agent files | A marked agent file's `mcp__godot__` entries are exactly its classes' tools, so a removed tool leaves them at the next install; an unmarked file keeps a dead name | Confirmed | `src/GodotMcp.Server/Agents/AgentFile.cs` L28-35 |
 
 ## 4. Edges

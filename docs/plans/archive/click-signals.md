@@ -1,10 +1,10 @@
 # Fired signals: a click that reports what it set off
 
-Status: steps 1 to 5 have landed; step 6 follows the release that carries them.
+Status: steps 1 to 6 are done; the rulings are in [DECISIONS.md](../../DECISIONS.md) decision 37.
 
-Design draft for Linear GMCP-22, "Design a click that reports the signals it fired" (project "Ideas from the survey and the projects"), from the survey's list of what godot-mcp-runtime had that this server lacks ([survey](../research/2026-09-29-godot-mcp-survey.md) L206), not one of its numbered ideas.
+Design draft for Linear GMCP-22, "Design a click that reports the signals it fired" (project "Ideas from the survey and the projects"), from the survey's list of what godot-mcp-runtime had that this server lacks ([survey](../../research/2026-09-29-godot-mcp-survey.md) L206), not one of its numbered ideas.
 
-It builds on the input targets as decision 25 and [input-targets.md](./archive/input-targets.md) design them, the popup items of that design's step 5 included, not on the code in flight. Every question in section 7 is ruled; the build is GMCP-43 (Report the signals a gesture fired), section 6's steps 1 to 6.
+It builds on the input targets as decision 25 and [input-targets.md](./input-targets.md) design them, the popup items of that design's step 5 included, not on the code in flight. Every question in section 7 is ruled; the build is GMCP-43 (Report the signals a gesture fired), section 6's steps 1 to 6.
 
 ## 1. Need
 
@@ -45,7 +45,7 @@ Cited from the `4.7.2-stable` tag (files fetched from `raw.githubusercontent.com
 | Nested emissions | A slot is called synchronously (L1291-1295), so a signal a game handler emits is delivered, to the bridge too, before the bridge's own slot for the outer signal runs | `object.cpp` L1288-1296 |
 | Deferred slots | A `CONNECT_DEFERRED` slot is pushed to the `MessageQueue` (L1288-1289), which `SceneTree::process` flushes after `process_frame` and after `_process` (`scene/main/scene_tree.cpp` L713-722) and `physics_process` after its nodes (L658) | as cited |
 | Freed emitters | An object's destructor drops every slot of its signals, so a freed emitter needs no disconnect; a disconnect at the end checks `is_instance_valid` first | `object.cpp` L2321-2350 |
-| Any argument count | A variadic GDScript lambda (`func(...args: Array)`) connected to a signal receives every argument; the bridge's `wait_for {signal}` does it, and the watch spike received C# `[Signal]`s of 0, 3 and 6 arguments | `bridge/godot_mcp_time.gd` L880; [timeline-watch.md](./archive/timeline-watch.md) section 8 |
+| Any argument count | A variadic GDScript lambda (`func(...args: Array)`) connected to a signal receives every argument; the bridge's `wait_for {signal}` does it, and the watch spike received C# `[Signal]`s of 0, 3 and 6 arguments | `bridge/godot_mcp_time.gd` L880; [timeline-watch.md](./timeline-watch.md) section 8 |
 | Listener counts | `get_signal_connection_list(signal)` returns each connection with its callable | `object.cpp` L1396-1409; `Object.xml` L698-707 |
 | C# `[Signal]` listeners | A C# script signal keeps its `+=` handlers on a generated backing delegate (`add => backing_X += value`), invisible to Godot, and the script instance connects one `EventSignalCallable` per signal to itself to raise them; so Godot always counts one connection and never the C# subscribers. A C# `+=` on an engine signal (`Button.Pressed`) is a real Godot connection (`add => Connect(SignalName.X, …)`); two identical `+=` delegates collapse to one connection, so a distinct lambda counts as a second; proven end to end by `CSharpFiredSignalsTests` | `modules/mono/editor/Godot.NET.Sdk/Godot.SourceGenerators/ScriptSignalsGenerator.cs` L255-283; `modules/mono/csharp_script.cpp` L1821-1836; `modules/mono/editor/bindings_generator.cpp` L3326-3342; `core/object/object.cpp` L1562 |
 | The bridge's dispatch | Every injected event goes through `Input.parse_input_event` then `Input.flush_buffered_events`, so it is handled before the call returns; a gesture then waits one `physics_frame` when it sent a mouse button or wheel event and no tick has run since, then two process frames (`SETTLE_FRAMES`) before it answers | `bridge/godot_mcp_input.gd` (`SETTLE_FRAMES`, `play`, `_send_and_record`); `Input.xml` L50-54 |
@@ -149,7 +149,7 @@ The spike found that tick can fall after two process frames, so `play` awaits on
 
 - **Per gesture, not per frame.** Nothing runs between gestures. A gesture connects and disconnects a lambda per kept signal on each chain node: a delve card's chain is about 15-20 nodes deep (unmeasured), times the signals each keeps after the noise list (unmeasured; a Button keeps about eight engine ones plus its script's).
 
-  Connect and disconnect costs are unmeasured; the spike measures them. Each emission then costs one variadic call, about 1.1-1.5 µs (the watch spike, [timeline-watch.md](./archive/timeline-watch.md) section 8), plus its arguments' `to_json`.
+  Connect and disconnect costs are unmeasured; the spike measures them. Each emission then costs one variadic call, about 1.1-1.5 µs (the watch spike, [timeline-watch.md](./timeline-watch.md) section 8), plus its arguments' `to_json`.
 - **Wire size.** A plain click lists about six entries, under 1 KB (unmeasured); the cap is 50 entries with arguments cut at 200 characters, about 15 KB at worst.
 - **A handler that emits in a loop** (a list rebuilt row by row, each row a script signal on a chain node): the bridge stops recording at 200 raw entries and counts the rest, and the server folds and caps. The fastest way to fill the cap is `type_text` of a long string into a LineEdit with a script `text_changed` relay, which folding turns into one entry per alternating signal.
 - **A huge argument** (an Array of thousands of entries on a game signal) is converted on the main thread inside the emission; the JSON module's depth limit bounds nesting, not length (unmeasured). The bridge converts no argument once 200 entries are recorded.
@@ -185,7 +185,7 @@ Each step lands on its own with its tests, docs (TOOLS.md, SKILL.md, ARCHITECTUR
 
    `CSharpFiredSignalsTests` also proves that two identical `+=` delegates on an engine signal collapse to one Godot connection (`core/object/object.cpp` L1562), so a distinct lambda counts as a second.
 5. **The `fired` assertion** (landed; question 8 (a)): the `fired` assertion in `batch_drive` (`RuntimeTools.Batch.cs`), its validation in `BatchValidationTests`, a step in `BatchTests` (the `time` group).
-6. **After the release that carries them**: delve's L67, L72 and L77 hand emissions rewritten through `godot-mcp-docs-sync` (a click on `Ready`, `PcName` then `type_text` with `\n`, the card by its title, the `Assign` item), and opening-hand's conventions rule L336-340 offered a line on reading `fired`; then the rulings move into `docs/DECISIONS.md` and this file into `docs/plans/archive/`.
+6. **Done: the rulings archived**: the rulings moved into DECISIONS.md decision 37 and this file moved to the archive; delve's remaining hand emissions (`docs/development/driving-the-client.md`'s `PcName`, dev console and pressing-rule lines) went to delve-the-dungeon by inbox request for its godot-mcp-docs-sync audit, its `Ready` and `Assign` lines already reading as clicks. opening-hand's DEVELOPMENT.md already reads `fired` (L80).
 
 ## 7. Open questions
 
