@@ -199,6 +199,8 @@ Injected mouse events carry a device mark (`0x6D6370`), and while a gesture play
 
 The app's own hover re-picks (a cursor-state update, a drop's end, a scene change) read the OS cursor, which is garbage on a hidden desktop, so while injected input owns the pointer the hook re-picks at the injected pointer every frame before draw, with a motion no app handler sees; a real motion hands the pointer back (a 0.14.0 fix: hovers used to drop to the hidden cursor).
 
+`run_project`'s `options.repickHover: false` turns the every-frame re-pick off for a drive that needs the app's own re-picks to decide the hover; the hook then re-picks only once after a scene change and once at the end of a GUI drag (a drop or a cancel).
+
 Every injected event is a new object followed by a flush, so the engine neither merges nor delays it, and every input call answers once its gesture has ended and two more frames have run.
 Source: docs/DEVELOPMENT.md:324-335, bridge/godot_mcp_bridge.gd:57, bridge/godot_mcp_input.gd:98, docs/ARCHITECTURE.md:162, docs/TOOLS.md:146, CHANGELOG.md:24. Seen: 0.14.0 hover fix.
 

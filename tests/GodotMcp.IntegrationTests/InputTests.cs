@@ -186,6 +186,21 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         + "var entered: int = scene_tree.root.get_node(\"Main/SmallButton\").get_meta(\"entered\", -1)\n\t"
         + "return [\"\" if hovered == null else str(hovered.name), entered]";
 
+    // A full-screen Control Cover that stops the mouse, added under the root without asking for a re-pick, then the hovered
+    // Control's name five frames later, "" over none.
+    private const string CoverThenReadHovered =
+        "var cover := Control.new()\n\t"
+        + "cover.name = \"Cover\"\n\t"
+        + "cover.mouse_filter = Control.MOUSE_FILTER_STOP\n\t"
+        + "scene_tree.root.add_child(cover)\n\t"
+        + "cover.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)\n\t"
+        + "for _frame in 5:\n\t\t"
+        + "await scene_tree.process_frame\n\t"
+        + "var hovered: Control = scene_tree.root.gui_get_hovered_control()\n\t"
+        + "return \"\" if hovered == null else str(hovered.name)";
+
+    private const string RemoveCover = "scene_tree.root.get_node(\"Cover\").free()\n\treturn true";
+
     private const string ReadSmallButtonPresses = "return scene_tree.root.get_node(\"Main/SmallButton\").press_count";
 
     // Two scene-like owners under the root, UniqueA and UniqueB, each holding a Label Shared saved with a unique name; UniqueA
@@ -451,6 +466,62 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         // the game's _process (4.7.2 viewport.cpp L3521-3524, _drop_mouse_over L3446-3481), before the bridge's re-pick
         // enters it again at frame_pre_draw, so a game that re-picks every frame costs one exit and one enter per frame.
         Assert.True(after[1]!.GetValue<int>() >= 1, after.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task TheEveryFrameRepickMovesTheHoverOntoACoverNobodyRepickedFor()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await _tools.MouseButtonAsync(new InputTarget("SmallButton"), "left", "move", cancellationToken: cancellation);
+
+        string hovered;
+        try
+        {
+            hovered = (await RunAsync(CoverThenReadHovered)).GetValue<string>();
+        }
+        finally
+        {
+            await RunAsync(RemoveCover);
+        }
+
+        Assert.Equal("Cover", hovered);
+    }
+
+    // With repickHover false only a re-pick moves the hover: a cover added without one leaves it on SmallButton, and the
+    // game's own re-pick, at the OS cursor (host-dependent on the hidden desktop), takes it off.
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task WithoutTheEveryFrameRepickOnlyTheGamesRepickMovesTheHover()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using ProbeProject probe = new();
+        await using SessionHarness harness = new();
+        RuntimeTools tools = await LaunchWithoutRepickAsync(probe, harness);
+        await tools.MouseButtonAsync(new InputTarget("SmallButton"), "left", "move", cancellationToken: cancellation);
+
+        string covered = (await RunAsync(tools, CoverThenReadHovered)).GetValue<string>();
+        string repicked = (await RunAsync(tools, RepickThenReadHovered)).GetValue<string>();
+
+        Assert.Equal("SmallButton", covered);
+        Assert.NotEqual("SmallButton", repicked);
+        await StopAndCheckCleanAsync(harness, probe);
+    }
+
+    // The engine's re-pick at the end of a drop picks at the OS cursor (4.7.2 viewport.cpp L2459); with repickHover false
+    // the bridge still re-picks once at the injected pointer after it, as on the default run.
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task WithoutTheEveryFrameRepickADropLeavesTheHoverOnTheDropTarget()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using ProbeProject probe = new();
+        await using SessionHarness harness = new();
+        RuntimeTools tools = await LaunchWithoutRepickAsync(probe, harness);
+
+        JsonNode dragged = JsonNode.Parse(await tools.DragAsync(DragSource, DropTarget, 300, "left", cancellationToken: cancellation))!;
+        Assert.True(dragged["dropAccepted"]!.GetValue<bool>(), dragged.ToJsonString());
+        string hovered = (await RunAsync(tools, ReadHoveredInTwoFrames)).GetValue<string>();
+
+        Assert.Equal("DropTarget", hovered);
+        await StopAndCheckCleanAsync(harness, probe);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -1077,6 +1148,17 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
     {
         await harness.Sessions.StopAsync(null, TestContext.Current.CancellationToken);
         Assert.Equal(string.Empty, Git.Status(probe.Directory));
+    }
+
+    // A run of its own with repickHover false: the bridge does not re-pick the hover every frame.
+    private static async Task<RuntimeTools> LaunchWithoutRepickAsync(ProbeProject probe, SessionHarness harness)
+    {
+        await harness.Sessions.LaunchAsync(
+            new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true) { RepickHover = false },
+            null,
+            TestContext.Current.CancellationToken
+        );
+        return new RuntimeTools(harness.Sessions, TestCSharp.Unused());
     }
 
     // A run of its own in a 1000 x 900 window, checked letterboxed: without the bars the letterboxed tests would prove

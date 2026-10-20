@@ -539,6 +539,13 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
       An early `until` leaves later events unsent: the result adds `inputNotSent` (a press and release counting two) and `held {keys, mouseButtons, padButtons, actions}`, and a failed step that leaves something held ends its error with `; held: <JSON>`. A wait entry and a `click_element` are refused, as is the physics unit.
     - **No report on the met frame**: the game left paused serves every read tool, `then.call` returns what a game method gives, and a watch around the step records the stepped frames up to the met one. Ruled out: a `report` list of expressions (a second list beside the watch's tracks, with its own budget and errors) and `report: "state"` (every C# game pays the helper's load on the first report).
     - **Annotations unchanged**: `frame_control` and `wait_for` already run game code through expressions and `options.call`, so `until` and riding input need no agent sweep.
+39. **A drive turns the per-frame hover re-pick off; the bridge does not re-pick only when the game asks** (GMCP-65; an orchestrator decision, not an owner ruling). `run_project` takes `options.repickHover` (default true); false stops the bridge re-picking the hover at the injected pointer each frame.
+
+    Why: 4.7.2 gives a script no hook for the game's own re-pick. `Window::update_mouse_cursor_state` (`scene/main/window.cpp` L935-950) emits no signal and calls no script virtual, `Viewport::update_mouse_cursor_state` is bound as a plain method (`viewport.cpp` L5223), and `window_input` filters internal events (`window.cpp` L2019-2026), so the bridge cannot tell when to re-pick. The agent who needs the game's own re-picks to decide the hover says so with `repickHover: false`.
+
+    With it false the bridge still re-picks once at the injected pointer after a scene change (`SceneTree.scene_changed`, emitted after the engine's own re-pick, `scene_tree.cpp` L1691-1695) and once at the end of a GUI drag (`NOTIFICATION_DRAG_END`, which `Viewport::gui_perform_drop_at` sends to every node before its re-pick, `viewport.cpp` L2457-2459), while it owns the pointer: those engine re-picks also read the OS cursor, and no game call decides them.
+
+    Ruled out: a `warp_mouse` route, whose effect on a quiet run's hidden desktop is unmeasured.
 
 ## Wire
 

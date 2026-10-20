@@ -5,7 +5,8 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// How run_project sets up the game's window and pads, the session's name, whether the project is prepared first, and which
-/// preset of the project's godot-mcp.json it launches, whether it is recorded and whether its clips drop idle frames.
+/// preset of the project's godot-mcp.json it launches, whether it is recorded, whether its clips drop idle frames and whether
+/// the bridge re-picks the hover every frame.
 /// <see cref="Quiet"/> and <see cref="Mute"/> are null when not given.
 /// </summary>
 internal sealed record RunOptions(
@@ -40,7 +41,12 @@ internal sealed record RunOptions(
             + "disappears and the clip plays the action at real speed. Such clips have no audio, and a deliberate still "
             + "collapses too. Refused without record."
     )]
-        bool? DropIdle = null
+        bool? DropIdle = null,
+    [property: Description(
+        "Default true; false stops the bridge re-picking the hover at the injected pointer every frame, so only the game's own "
+            + "re-picks (which pick at the OS cursor), a scene change and the end of a GUI drag (a drop or a cancel) move the hover."
+    )]
+        bool? RepickHover = null
 )
 {
     /// <summary>The prepare option, for run_project's options and restart_project's.</summary>

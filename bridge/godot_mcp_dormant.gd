@@ -34,6 +34,8 @@ const SOURCE_JOIN := "join"
 const QUIET_VARIABLE := "GODOT_MCP_QUIET"
 ## Set to "1" by the server for a run that is muted and not quiet: the bridge mutes its Master bus.
 const MUTE_VARIABLE := "GODOT_MCP_MUTE"
+## Set to "1" by the server for a run with repickHover false: the hover is not re-picked each frame.
+const NO_REPICK_HOVER_VARIABLE := "GODOT_MCP_NO_REPICK_HOVER"
 const ATTACH_FILE := "attach.json"
 ## Set to "1" by the server for its headless runs, which load a live session's override.cfg: the
 ## bridge then stays off without looking for a server, and frees itself without a warning.
@@ -97,8 +99,9 @@ static func find_endpoint(dir: String) -> Dictionary:
 	return found if not found.is_empty() else attach_endpoint(dir)
 
 
-## GODOT_MCP_PORT, GODOT_MCP_TOKEN, GODOT_MCP_SHUT_OUT_REAL_GAMEPADS, GODOT_MCP_QUIET and
-## GODOT_MCP_MUTE from run_project, as an endpoint; empty without a port and a token.
+## GODOT_MCP_PORT, GODOT_MCP_TOKEN, GODOT_MCP_SHUT_OUT_REAL_GAMEPADS, GODOT_MCP_QUIET,
+## GODOT_MCP_MUTE and GODOT_MCP_NO_REPICK_HOVER from run_project, as an endpoint; empty without a
+## port and a token.
 ## override.cfg's joypad and window settings are written to match, but the bridge reads only these.
 static func env_endpoint() -> Dictionary:
 	var port_text: String = OS.get_environment("GODOT_MCP_PORT")
@@ -111,6 +114,7 @@ static func env_endpoint() -> Dictionary:
 		"shutOutRealGamepads": OS.get_environment("GODOT_MCP_SHUT_OUT_REAL_GAMEPADS") == "1",
 		"quiet": OS.get_environment(QUIET_VARIABLE) == "1",
 		"mute": OS.get_environment(MUTE_VARIABLE) == "1",
+		"repickHover": OS.get_environment(NO_REPICK_HOVER_VARIABLE) != "1",
 	}
 
 
@@ -146,8 +150,9 @@ static func decide_mode(
 
 
 ## The endpoint an attach or join file's text holds, {port, token, shutOutRealGamepads, quiet,
-## mute}, quiet also when quiet_variable (GODOT_MCP_QUIET=1) is, and a missing flag false; empty
-## when the text is not a JSON object with a port and a token.
+## mute, repickHover}, quiet also when quiet_variable (GODOT_MCP_QUIET=1) is, a missing
+## repickHover true and any other missing flag false; empty when the text is not a JSON object
+## with a port and a token.
 static func parse_endpoint(text: String, quiet_variable: bool) -> Dictionary:
 	var json := JSON.new()
 	if json.parse(text) != OK or not json.data is Dictionary:
@@ -161,6 +166,7 @@ static func parse_endpoint(text: String, quiet_variable: bool) -> Dictionary:
 		"shutOutRealGamepads": bool(found.get("shutOutRealGamepads", false)),
 		"quiet": quiet_variable or bool(found.get("quiet", false)),
 		"mute": bool(found.get("mute", false)),
+		"repickHover": bool(found.get("repickHover", true)),
 	}
 
 

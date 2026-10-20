@@ -66,6 +66,22 @@ func test_parse_endpoint_defaults_the_flags_and_lets_the_quiet_variable_force_qu
 	assert_eq(forced.get("quiet"), true, "GODOT_MCP_QUIET=1 makes it quiet")
 
 
+func test_parse_endpoint_re_picks_the_hover_without_the_key() -> void:
+	var text: String = '{"port": 1, "token": "t"}'
+	assert_eq(_dormant_script.parse_endpoint(text, false).get("repickHover"), true, "on by default")
+
+
+func test_env_endpoint_stops_the_hover_re_pick_only_with_its_variable() -> void:
+	OS.set_environment("GODOT_MCP_PORT", "5")
+	OS.set_environment("GODOT_MCP_TOKEN", "env")
+	assert_eq(_dormant_script.env_endpoint().get("repickHover"), true, "on without the variable")
+	OS.set_environment("GODOT_MCP_NO_REPICK_HOVER", "1")
+	assert_eq(_dormant_script.env_endpoint().get("repickHover"), false, "off with it set to 1")
+	OS.unset_environment("GODOT_MCP_NO_REPICK_HOVER")
+	OS.unset_environment("GODOT_MCP_PORT")
+	OS.unset_environment("GODOT_MCP_TOKEN")
+
+
 func test_parse_endpoint_refuses_malformed_text_and_missing_keys() -> void:
 	var parse: Callable = _dormant_script.parse_endpoint
 	assert_eq(parse.call("{not json", false), {}, "text that is not JSON")

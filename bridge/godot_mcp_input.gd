@@ -6,9 +6,8 @@ extends Node
 ## The godot-mcp bridge's input player, a child of the bridge: plays the input tools' gestures
 ## (click, drag, type_text, key, mouse_button, hover, scroll, the gamepad gestures) and, through
 ## the raw event player (godot_mcp_raw_events.gd), simulate_input's raw events over frames, with
-## new event objects sent through Input. The
-## injected pointer and the held buttons live on the bridge, whose _input keeps the real mouse out
-## while they are in play.
+## new event objects sent through Input. The injected pointer and the held buttons live on the
+## bridge, whose _input keeps the real mouse out while they are in play.
 
 const MIN_DRAG_STEPS := 3
 const SETTLE_FRAMES := 2
@@ -71,25 +70,24 @@ const UNKNOWN_KEY_HINT := (
 
 ## The bridge (godot_mcp_bridge.gd), set by it before this node enters the tree.
 var bridge: Node
-## The target resolver (godot_mcp_targets.gd), created by _ready as this node's child.
+## Whether the injected pointer re-picks the hover every frame (run_project's repickHover); off, it
+## re-picks once after a scene change or a GUI drag's end, as _repick_once arms.
+var repick_hover: bool = true
+var _repick_once: bool = false
+## The children _create_targets makes: the target resolver, the popup item player, the tooltip
+## reader and the fired-signal listener.
 var _targets: Node
-## The popup item player (godot_mcp_popup_targets.gd), created by _ready as this node's child.
 var _popups: Node
-## The tooltip reader (godot_mcp_hover.gd), created by _ready as this node's child.
 var _hover: Node
-## The fired-signal listener (godot_mcp_fired.gd), created by _ready as this node's child.
 var _fired: Node
-## What the playing gesture hit: pressedOn, releasedOn, guiDragStarted, dropAccepted,
-## scrolledOn.
+## What the playing gesture hit: pressedOn, releasedOn, guiDragStarted, dropAccepted, scrolledOn.
 var _hits: Dictionary = {}
-## The UI snapshot (godot_mcp_ui_snapshot.gd) taken as the first gesture since launch, or since
-## the last uiChanged wait was met, started: the baseline wait_for {uiChanged} compares with.
-## Empty while none is pending.
+## The UI snapshot (godot_mcp_ui_snapshot.gd) wait_for {uiChanged} compares with, taken as the
+## first gesture since launch or since the last uiChanged wait was met started; empty if none.
 var _ui_baseline: Dictionary = {}
 ## The instance ids of the drag previews seen entering the tree, which the snapshot leaves out.
 var _drag_previews: Dictionary = {}
-## The keycodes a drive pressed and has not released; never a scan of Input, which a person's
-## held key would answer too.
+## The keycodes a drive pressed and has not released (not Input's, which a person's keys feed).
 var _held_keys: Dictionary = {}
 
 
@@ -102,11 +100,13 @@ func _ready() -> void:
 func _enter_tree() -> void:
 	get_tree().root.window_input.connect(_on_window_input)
 	RenderingServer.frame_pre_draw.connect(_repick)
+	get_tree().scene_changed.connect(_arm_repick)
 
 
 func _exit_tree() -> void:
 	get_tree().root.window_input.disconnect(_on_window_input)
 	RenderingServer.frame_pre_draw.disconnect(_repick)
+	get_tree().scene_changed.disconnect(_arm_repick)
 
 
 ## Hands the hover back to the real cursor on a real mouse motion while no injected input is in
@@ -118,9 +118,10 @@ func _on_window_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseMotion and event.device != bridge.INJECTED_DEVICE:
 		bridge._owns_pointer = false
+		_repick_once = false
 
 
-## Puts the hover back on the injected pointer each frame the drive owns it. Godot's re-picks
+## Puts the hover back on the injected pointer while the drive owns it. Godot's re-picks
 ## (update_mouse_cursor_state, which games call, a drop's end, a scene change) pick at the OS
 ## cursor, unreadable on a quiet run's hidden desktop (window.cpp L935-950, viewport.cpp
 ## L1483-1500, L2459, scene_tree.cpp L1692 in 4.7.2). frame_pre_draw follows the whole SceneTree
@@ -130,7 +131,7 @@ func _on_window_input(event: InputEvent) -> void:
 ## sees the engine's own passive hover pick. It skips Input and a capture, and a re-pick on the
 ## hovered Control restarts no tooltip timer (viewport.cpp L2138).
 func _repick() -> void:
-	if not _repick_due():
+	if not _take_repick():
 		return
 	var point: Vector2 = to_viewport(bridge._pointer)
 	var motion := InputEventMouseMotion.new()
@@ -140,15 +141,30 @@ func _repick() -> void:
 	get_viewport().push_input(motion, true)
 
 
-## Whether the injected pointer owns the hover with no gesture playing, no button held and the
-## mouse not captured.
-func _repick_due() -> bool:
-	return (
-		bridge._owns_pointer
+## A GUI drop or cancel notifies every node under the root, then re-picks at the OS cursor
+## (viewport.cpp L2437-2459 in 4.7.2): the injected pointer re-picks once after it.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_DRAG_END:
+		_arm_repick()
+
+
+## Arms one re-pick at the injected pointer, which repick_hover off still makes, while it owns it.
+func _arm_repick() -> void:
+	_repick_once = bridge._owns_pointer
+
+
+## Whether a re-pick is due (every frame, or once as armed) while the pointer is owned, no gesture
+## plays, no button is held and the mouse is not captured; a due one uses up the armed one.
+func _take_repick() -> bool:
+	var due: bool = (
+		(repick_hover or _repick_once)
+		and bridge._owns_pointer
 		and not bridge._gesture_playing
 		and bridge._held_mask == 0
 		and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED
 	)
+	_repick_once = _repick_once and not due
+	return due
 
 
 ## Creates the target resolver (godot_mcp_targets.gd), the popup item player

@@ -163,6 +163,7 @@ internal sealed partial class ProjectProfile
             Record = options.Record ?? false,
             DropIdle = options.DropIdle ?? false,
             Mute = options.MuteFor(quiet),
+            RepickHover = options.RepickHover ?? true,
         };
         return new ProfileLaunch(request, options.Session ?? preset.Session);
     }

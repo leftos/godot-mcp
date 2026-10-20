@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `run_project` takes `options.repickHover: false` to stop re-picking the hover every frame, so a drive sees whether the game's own re-pick moves it.
+
 ### Fixed
 
 - A scene edit whose splice would give two nodes one `unique_id` now falls back to the full save with a warning.

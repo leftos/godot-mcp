@@ -36,6 +36,12 @@ internal sealed record LaunchRequest(
     public bool Mute { get; init; }
 
     /// <summary>
+    /// Whether the bridge re-picks the hover at the injected pointer every frame; false reaches the bridge as
+    /// <see cref="GodotCommandLine.NoRepickHoverVariable"/>.
+    /// </summary>
+    public bool RepickHover { get; init; } = true;
+
+    /// <summary>
     /// Whether the run is preview_scene's: the bridge pauses the game before its scene's first frame and frames a 3D scene
     /// that has no current camera.
     /// </summary>
@@ -55,6 +61,9 @@ internal static partial class GodotCommandLine
     /// <summary>Set to "1" for a run that is muted and not quiet: the bridge mutes the game's Master bus.</summary>
     public const string MuteVariable = "GODOT_MCP_MUTE";
     public const string ShutOutRealGamepadsVariable = "GODOT_MCP_SHUT_OUT_REAL_GAMEPADS";
+
+    /// <summary>Set to "1" for a run with repickHover false: the bridge stops re-picking the hover every frame.</summary>
+    public const string NoRepickHoverVariable = "GODOT_MCP_NO_REPICK_HOVER";
     public const string PreviewVariable = "GODOT_MCP_PREVIEW";
 
     /// <summary>
@@ -319,6 +328,7 @@ internal static partial class GodotCommandLine
         SetFlag(startInfo, MuteVariable, request.Mute && !request.Quiet);
         SetFlag(startInfo, ShutOutRealGamepadsVariable, request.ShutOutRealGamepads);
         SetFlag(startInfo, PreviewVariable, request.Preview);
+        SetFlag(startInfo, NoRepickHoverVariable, !request.RepickHover);
         SetFlag(startInfo, HiddenDesktopVariable, UsesHiddenDesktop(request.Quiet));
         if (request.Record)
         {

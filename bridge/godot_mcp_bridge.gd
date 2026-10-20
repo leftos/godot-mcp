@@ -286,7 +286,8 @@ func _build_once() -> void:
 
 ## Serves endpoint, from source (a SOURCE_*; a join drops the errors logged before it): builds the
 ## children once, sizes the window, parks it and caps the frame rate when quiet, mutes as asked,
-## shuts the real pads out if asked, and dials; a dial refused at once when armed waits dormant.
+## sets the hover re-pick, shuts the real pads out if asked, and dials; a dial refused at once
+## when armed waits dormant.
 func _join(endpoint: Dictionary, source: String) -> void:
 	_build_once()
 	_endpoint = endpoint
@@ -301,6 +302,7 @@ func _join(endpoint: Dictionary, source: String) -> void:
 		if Engine.max_fps == 0:
 			Engine.max_fps = _window.QUIET_MAX_FPS
 	_audio.set_muted(endpoint["mute"])
+	_gestures.repick_hover = endpoint.get("repickHover", true)
 	if endpoint["shutOutRealGamepads"]:
 		_pads.shut_out_real_pads()
 	var port: int = endpoint["port"]

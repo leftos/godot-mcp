@@ -220,6 +220,27 @@ public sealed class GodotCommandLineTests
     }
 
     [Fact]
+    public void AsksTheBridgeToStopTheHoverRepickOnlyWhenRepickHoverIsFalse()
+    {
+        BridgeEndpoint bridge = new(4321, "t0k3n");
+        var profile = ProjectProfile.Empty(Project);
+        LaunchRequest off = profile.Merge(null, [], [], new RunOptions(RepickHover: false)).Request;
+        LaunchRequest on = profile.Merge(null, [], [], new RunOptions(RepickHover: true)).Request;
+        LaunchRequest byDefault = profile.Merge(null, [], [], new RunOptions()).Request;
+
+        ProcessStartInfo stopped = GodotCommandLine.CreateStartInfo("godot.exe", off, bridge, moviePath: null);
+        // A restart relaunches the session's last request with only its prepare replaced.
+        ProcessStartInfo restarted = GodotCommandLine.CreateStartInfo("godot.exe", off with { Prepare = false }, bridge, moviePath: null);
+        ProcessStartInfo kept = GodotCommandLine.CreateStartInfo("godot.exe", on, bridge, moviePath: null);
+        ProcessStartInfo defaulted = GodotCommandLine.CreateStartInfo("godot.exe", byDefault, bridge, moviePath: null);
+
+        Assert.Equal("1", stopped.Environment[GodotCommandLine.NoRepickHoverVariable]);
+        Assert.Equal("1", restarted.Environment[GodotCommandLine.NoRepickHoverVariable]);
+        Assert.False(kept.Environment.ContainsKey(GodotCommandLine.NoRepickHoverVariable));
+        Assert.False(defaulted.Environment.ContainsKey(GodotCommandLine.NoRepickHoverVariable));
+    }
+
+    [Fact]
     public void TellsTheBridgeItIsOnTheHiddenDesktopOnlyForAQuietWindowsRun()
     {
         BridgeEndpoint bridge = new(4321, "t0k3n");

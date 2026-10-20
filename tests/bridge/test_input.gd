@@ -92,6 +92,87 @@ func test_a_motion_that_moves_nowhere_carries_no_velocity() -> void:
 	bridge.free()
 
 
+func test_with_repick_hover_on_the_owned_pointer_re_picks_every_frame() -> void:
+	var rig: Array = _repick_rig(true)
+	var gestures: Node = rig[0]
+	assert_eq(gestures._take_repick(), true, "a re-pick is due while the pointer is owned")
+	assert_eq(gestures._take_repick(), true, "and is due again the next frame")
+	_free_rig(rig)
+
+
+## The scene_changed handler arms the one re-pick; the test runner runs outside the tree, so it
+## calls the handler itself.
+func test_with_repick_hover_off_a_scene_change_arms_one_re_pick() -> void:
+	var rig: Array = _repick_rig(false)
+	var gestures: Node = rig[0]
+	assert_eq(gestures._take_repick(), false, "no re-pick each frame with repickHover off")
+	gestures._arm_repick()
+	assert_eq(gestures._take_repick(), true, "an armed re-pick is due")
+	assert_eq(gestures._take_repick(), false, "the re-pick used it up")
+	_free_rig(rig)
+
+
+func test_an_armed_re_pick_waits_for_the_gesture_and_the_held_buttons() -> void:
+	var rig: Array = _repick_rig(false)
+	var gestures: Node = rig[0]
+	var bridge: Node = rig[1]
+	gestures._arm_repick()
+	bridge._gesture_playing = true
+	assert_eq(gestures._take_repick(), false, "not while a gesture plays")
+	bridge._gesture_playing = false
+	bridge._held_mask = MOUSE_BUTTON_MASK_LEFT
+	assert_eq(gestures._take_repick(), false, "not while a button is held")
+	bridge._held_mask = 0
+	bridge._owns_pointer = false
+	assert_eq(gestures._take_repick(), false, "not when the real mouse owns the pointer")
+	bridge._owns_pointer = true
+	assert_eq(gestures._take_repick(), true, "due once nothing holds it back")
+	_free_rig(rig)
+
+
+## Viewport.gui_perform_drop_at sends NOTIFICATION_DRAG_END to every node under the root at a GUI
+## drop or cancel, then re-picks at the OS cursor (viewport.cpp L2457-2459 in 4.7.2).
+func test_with_repick_hover_off_a_gui_drag_end_arms_one_re_pick_only_on_an_owned_pointer() -> void:
+	var rig: Array = _repick_rig(false)
+	var gestures: Node = rig[0]
+	var bridge: Node = rig[1]
+	gestures.notification(Node.NOTIFICATION_DRAG_END)
+	assert_eq(gestures._take_repick(), true, "a drag's end arms one re-pick")
+	assert_eq(gestures._take_repick(), false, "the re-pick used it up")
+	bridge._owns_pointer = false
+	gestures.notification(Node.NOTIFICATION_DRAG_END)
+	bridge._owns_pointer = true
+	assert_eq(gestures._take_repick(), false, "a drag's end arms none while the mouse owns it")
+	_free_rig(rig)
+
+
+func test_handing_the_pointer_back_drops_an_armed_re_pick() -> void:
+	var rig: Array = _repick_rig(false)
+	var gestures: Node = rig[0]
+	var bridge: Node = rig[1]
+	gestures._arm_repick()
+	gestures._on_window_input(_real_motion())
+	bridge._owns_pointer = true
+	assert_eq(gestures._take_repick(), false, "the hand-back dropped the armed re-pick")
+	_free_rig(rig)
+
+
+## An input player re-picking every frame as repick_hover says, with a bridge that owns the
+## pointer: [gestures, bridge].
+func _repick_rig(repick_hover: bool) -> Array:
+	var bridge: Node = _bridge_script.new()
+	var gestures: Node = _input_script.new()
+	gestures.bridge = bridge
+	gestures.repick_hover = repick_hover
+	bridge._owns_pointer = true
+	return [gestures, bridge]
+
+
+func _free_rig(rig: Array) -> void:
+	for node: Node in rig:
+		node.free()
+
+
 ## A mouse motion without the injected mark, as the real mouse sends one.
 func _real_motion() -> InputEventMouseMotion:
 	var motion := InputEventMouseMotion.new()

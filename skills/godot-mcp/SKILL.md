@@ -143,6 +143,7 @@ Prefer it for any change of more than one edit, then `validate`, then `preview_s
 - **Quiet by default** (off-screen, silent, capped at 60 fps): pass `options.quiet: false` only when the user wants to watch or play along, and `options.mute: true` beside it to watch without sound.
 - **A `--headless` game draws no frames**: `take_screenshot`, `save_screenshot`, the baseline tools, `capture_frames` and a stepped screenshot refuse it ("a headless game draws no frames…"), and a `wait_for` screenshot comes back as a `warning`. Read state with `get_game_state`, `get_ui_elements` or `run_script`, or run the scene windowed. This holds for a `run_scratches` session and a headless game you attached.
 - **Real gamepads reach even a quiet game.** A connected pad's drifting stick can move GUI focus, and a focus move between a click's press and release drops the click. When clicks seem to vanish now and then, or a drive counts presses, launch with `options.shutOutRealGamepads: true`.
+- **The bridge keeps the hover on the injected pointer every frame.** A game's own re-pick reads the OS cursor, which is garbage on a quiet run's hidden desktop. When a drive needs the game's own hover handling to decide what is hovered, launch with `options.repickHover: false`: the bridge then re-picks only after a scene change and at the end of a GUI drag (a drop or a cancel).
 
 ## When something goes wrong
 

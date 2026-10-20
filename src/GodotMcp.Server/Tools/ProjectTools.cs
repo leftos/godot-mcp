@@ -84,11 +84,12 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         )]
             string[]? engineArgs = null,
         [Description(
-            "{quiet, mute, shutOutRealGamepads, session, prepare, preset, record, dropIdle}; when left out, quiet is true unless "
+            "{quiet, mute, shutOutRealGamepads, session, prepare, preset, record, dropIdle, repickHover}; when left out, quiet is "
+                + "true unless "
                 + "godot-mcp.json sets it, mute and shutOutRealGamepads are false, prepare is auto (a stale C# assembly is built and "
                 + "missing or outdated imports are run first; the result's prep says what was done), no preset is used, the session is named by "
                 + "the preset's session, else after the project folder, record is false (with record, the result's recording.path "
-                + "is the movie), and dropIdle is false."
+                + "is the movie), dropIdle is false, and repickHover is true."
         )]
             RunOptions? options = null,
         CancellationToken cancellationToken = default
