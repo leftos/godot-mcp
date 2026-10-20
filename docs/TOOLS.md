@@ -618,7 +618,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   A `start.call` the bridge refuses, or that fails, fails the capture with its error and takes no frames.
 
-  Another kind is refused: `options.start takes an exists, property or expression condition; this condition is {kind}.` (a start given `text` or `under` is of kind `text`, one given `stable` of kind `settled`, one given `state` of kind `state`, and one given `output` of kind `output`, whatever else it carries) A bad `start.timeoutMs` or `start.then` is refused with `wait_for`'s texts (`timeoutMs must be between 0 and 120000.`, `options.then needs call, timeScale or both.`).
+  Another kind is refused: `options.start takes an exists, property or expression condition; this condition is {kind}.` (a start given `uiChanged`, `true` or `"now"`, is of kind `uiChanged`, one given `text` or `under` of kind `text`, one given `stable` of kind `settled`, one given `state` of kind `state`, and one given `output` of kind `output`, whatever else it carries) A bad `start.timeoutMs` or `start.then` is refused with `wait_for`'s texts (`timeoutMs must be between 0 and 120000.`, `options.then needs call, timeScale or both.`).
 
   The result adds `start: {met: true, frame, call?, then?, failedChecks?, mutedErrors?}`, `call` being `{value}`, the start call's return value, reported when the start is met and when it times out; `frame` being `Engine.get_process_frames()` where the start was met.
 
@@ -732,7 +732,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
 ### `wait_for`
 
-- **Does:** waits until `condition` holds, checked each frame (the server polls an output wait), exactly one of `{node, exists}`, `{node, property, equals}`, `{node, signal}`, `{expression}`, `{uiChanged: true}`, `{gameMs}`, `{frames}`, `{text, under?, exists?}`, `{node, stable: N, property?}`, `{node, state, equals}` or `{output, stream?, after?}`: `{met, elapsedMs, frames, value}` (`args` for a signal), or on timeout `{met: false, ..., last}`.
+- **Does:** waits until `condition` holds, checked each frame (the server polls an output wait), exactly one of `{node, exists}`, `{node, property, equals}`, `{node, signal}`, `{expression}`, `{uiChanged: true | "now"}`, `{gameMs}`, `{frames}`, `{text, under?, exists?}`, `{node, stable: N, property?}`, `{node, state, equals}` or `{output, stream?, after?}`: `{met, elapsedMs, frames, value}` (`args` for a signal), or on timeout `{met: false, ..., last}`.
 
   An output wait has no `frames`: its `value` is `{line, stream, lineNumber, groups}`, and its timeout `last` is `{stdout, stderr}`.
 - **Use:** after an input, to wait for its effect instead of sleeping; `timeoutMs` 0 to 120000, default 10000, load-adjusted: under load it waits longer in wall time.
@@ -747,9 +747,11 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   In a recording (`run_project` `options.record`) a bridge wait counts clip time instead, 60 movie frames a second, however slowly the game runs, so a timed-out `expression: "false"` wait holds a still of exactly that length in the clip, and the result adds `clipMs`, the clip time waited (`elapsedMs` stays real time).
 
-  `{uiChanged: true}` waits for a UI change nobody can name in advance: it compares the visible Controls (as `get_ui_elements` lists them), the focus owner and the top popup with the baseline the bridge snapshots when the first input gesture since launch, or since the last met `uiChanged` wait, starts.
+  `{uiChanged: true}` waits for a UI change nobody can name in advance: it compares the visible Controls (as `get_ui_elements` lists them), the focus owner and the top popup with the baseline the bridge snapshots when the first input gesture since launch, or since the last met `uiChanged` wait, starts. `{uiChanged: "now"}` takes its snapshot when the wait starts instead (as its probe is built, before the first check, a check-once wait included), replacing one a gesture left pending: for a wait in a parallel group beside an input in another session, where no gesture on this session takes a baseline.
 
-  Later gestures keep that baseline, so a press and a separate release, or a batch's several inputs, all count; a met wait uses it up and a timeout keeps it. Its `value` is `{appeared, disappeared, appearedCount, disappearedCount}` (node paths, at most 20 in each list, the counts full), plus `focus` and `popup` `{before, after}` when those changed; on a timeout `last` is null.
+  Any other value is refused `uiChanged takes true or "now"; got <value>.` (`got false.`, `got "later".`, `got 3.`; in a batch prefixed `step N: `), and `"now"` with a `node` is refused as `true` is. A check-once `"now"` (`timeoutMs` 0) is refused, `timeoutMs 0 checks once, which a {uiChanged: "now"} wait cannot meet; give it a timeout.`, since its fresh snapshot is checked in the same instant. The snapshot holds the visible Controls' paths, the focus owner and the top popup, not label text, so a text change alone does not meet either form.
+
+  Later gestures keep that baseline, so a press and a separate release, or a batch's several inputs, all count; a met wait uses it up (a `"now"` one too) and a timeout keeps it. Its `value` is `{appeared, disappeared, appearedCount, disappearedCount}` (node paths, at most 20 in each list, the counts full), plus `focus` and `popup` `{before, after}` when those changed; on a timeout `last` is null.
 
   `property` takes subproperty paths (`position:x`); `equals` compares as `run_script` returns values, numbers within 1e-6. An `expression` sees `node`, `root`, `tree`, `Input` and `Engine`. `options.screenshot: true` captures the frame the condition was met on, as `take_screenshot` does, adding `screenshot {path, width, height, previewPath, previewWidth, previewHeight}` and a preview image at most 480 px wide: for a scene that changes faster than a following `take_screenshot` can catch.
 - **A headless game:** `options.screenshot` on a headless game still returns the wait's result, with `warning` "a headless game draws no frames, so no screenshot was taken; read state with get_game_state, get_ui_elements or run_script, or run the scene windowed." and no engine error.
@@ -836,7 +838,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   The game's own errors (a `push_error` in a game method the expression calls) and other threads' errors still land in `errors`, as does the once-per-text `godot-mcp wait_for: the expression failed: …` report.
 
-  `uiChanged` takes no `node` and is refused when no gesture has taken a baseline since launch or since the last met `uiChanged` wait; a gesture the bridge refuses (an unknown element or key) still takes one. Tooltips, drag previews and the bridge's own nodes never count as a change; the change may already have landed during the gesture's settle frames, so the wait can be met at frame 0.
+  `uiChanged` takes no `node`, and `true` is refused when no gesture has taken a baseline since launch or since the last met `uiChanged` wait (`uiChanged has no baseline: …; send the input first, or wait for {uiChanged: "now"} in a parallel group beside an input in another session`; the paused refusal applies to both forms); a gesture the bridge refuses (an unknown element or key) still takes one. Tooltips, drag previews and the bridge's own nodes never count as a change; the change may already have landed during the gesture's settle frames, so the wait can be met at frame 0.
 
 ## Inspect and change the running game
 
@@ -1011,7 +1013,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   A step is `{tool, args}` (any runtime tool of this server but `batch_drive` and `save_screenshot`, with its own arguments) or an assertion `{assert, ...}`: `property {node, property, equals, timeoutMs?}`, `expression {expression, timeoutMs?}`, `state {node, state, equals, timeoutMs?}` (the value at a key path of the node's state, as `wait_for`'s state condition reads it).
 
-  A `wait` takes any `wait_for` condition, `gameMs`, `frames`, `text` (with `under`, `exists`), `stable` (with `property`), `state` and `output` (with `stream`, `after`) included, and `wait_for`'s own default timeout, `stable` growing it as it does there; the other assertions are `no_errors {}`, `screenshot {name, tolerance?, maxChangedRatio?}` and `fired {node, signal, equals?}`.
+  A `wait` takes any `wait_for` condition, `uiChanged` (`true` or `"now"`), `gameMs`, `frames`, `text` (with `under`, `exists`), `stable` (with `property`), `state` and `output` (with `stream`, `after`) included, and `wait_for`'s own default timeout, `stable` growing it as it does there; the other assertions are `no_errors {}`, `screenshot {name, tolerance?, maxChangedRatio?}` and `fired {node, signal, equals?}`.
 
   Any tool or assertion step may carry `session`; the batch's `session` is the default.
 
@@ -1347,6 +1349,8 @@ The section is parsed strictly with the rest of the file: an unknown key, a wron
 5. One `batch_drive` acts in one and checks the other: `batch_drive {steps: [{tool: "click", args: {target: {element: "Main/Lobby/Start"}}, session: "host"}, {assert: "wait", node: "Main/Hud/Status", property: "text", equals: "started", session: "guest"}]}`. `passed: true` means the host's click reached the guest's label.
 
    For an effect that lasts one frame, arm the wait first in a parallel group: `batch_drive {steps: [{parallel: [{assert: "wait", node: "Main/Hud/Status", property: "text", equals: "started", session: "guest"}, {tool: "click", args: {target: {element: "Main/Lobby/Start"}}, session: "host"}]}]}`. The wait has written its request before the click starts, and the group ends when both have answered; the entries' `startMs` and `endMs` show the order.
+
+   A wait for any UI change takes the same place: `{assert: "wait", uiChanged: "now", session: "guest"}` in the group snapshots the guest's UI as it starts, which no gesture in that session would, and is met when the host's click changes it; a plain `uiChanged: true` there is refused with no baseline.
 6. `list_sessions` lists both names, and `stop_project {session: …}` stops each; the folder's `override.cfg` goes with the last one.
 
 Wait on state that persists: a step after the other session's input misses a one-frame effect (measured 30 of 30 in the spike). A guest that must be screenshotted is a quiet windowed run instead, since a headless one has no picture and no `window` in its result.

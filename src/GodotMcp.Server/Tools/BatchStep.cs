@@ -40,9 +40,9 @@ internal sealed record BatchStep(
     [property: Description("expression, wait: a Godot Expression that must return true, as wait_for evaluates it.")] string? Expression = null,
     [property: Description(
         "wait: true, alone, to wait for the UI to change from the snapshot taken when the first input gesture since launch, or "
-            + "since the last met uiChanged wait, started, as wait_for's uiChanged."
+            + "since the last met uiChanged wait, started, as wait_for's uiChanged. \"now\" takes the snapshot when the wait starts instead."
     )]
-        bool? UiChanged = null,
+        JsonElement? UiChanged = null,
     [property: Description("wait: alone, the milliseconds of game time to wait for, 1 to 120000, as wait_for's gameMs.")] int? GameMs = null,
     [property: Description("wait: alone, the unpaused process frames to wait for, 1 to 7200, as wait_for's frames.")] int? Frames = null,
     [property: Description(

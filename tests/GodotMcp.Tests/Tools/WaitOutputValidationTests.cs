@@ -10,7 +10,7 @@ namespace GodotMcp.Tests.Tools;
 public sealed class WaitOutputValidationTests
 {
     private const string ConditionMessage =
-        "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
+        "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true | \"now\"}, "
         + "{gameMs}, {frames}, {text}, {node, stable}, {node, state, equals}, {output} (with stream and after optional).";
 
     [Theory]

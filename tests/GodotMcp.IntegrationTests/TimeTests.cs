@@ -23,7 +23,8 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         "The game is paused, so only a signal wait or a check-once wait (timeoutMs 0) can be met; resume or step it first.";
     private const string SteppingRefusal = "A step is still running on this game; wait for its reply before pause, resume or another step.";
     private const string NoUiBaseline =
-        "uiChanged has no baseline: no input gesture has started since launch or since the last uiChanged wait was met; " + "send the input first";
+        "uiChanged has no baseline: no input gesture has started since launch or since the last uiChanged wait was met; "
+        + "send the input first, or wait for {uiChanged: \"now\"} in a parallel group beside an input in another session";
     private const string TooltipShown =
         "for window in scene_tree.root.get_embedded_subwindows():\n\t\t"
         + "if window.visible and window.theme_type_variation == &\"TooltipPanel\":\n\t\t\t"
@@ -66,7 +67,7 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         + "if frames_left == 0:\\n\\t\\tturn += 1\\n\\t\\thp -= 1\\n\\n\\n"
         + "func _mcp_state() -> Dictionary:\\n\\treturn {'turn': turn, 'seats': [{'name': 'alex', 'hp': hp}]}\\n";
     private const string Keeper = "scene_tree.root.get_node(\"Keeper\")";
-    private static readonly WaitCondition UiChangedCondition = new(UiChanged: true);
+    private static readonly WaitCondition UiChangedCondition = new(UiChanged: JsonSerializer.SerializeToElement(true));
     private static readonly InputTarget OpenButton = new("OpenButton");
     private readonly SharedProbeSession _shared = shared;
     private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());

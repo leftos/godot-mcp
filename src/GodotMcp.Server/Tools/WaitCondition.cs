@@ -6,7 +6,7 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// What wait_for waits for, exactly one kind: {node, exists}, {node, property, equals}, {node, signal}, {expression}
-/// (node optional), {uiChanged: true}, {gameMs}, {frames}, {text} (under and exists optional), {node, stable} (property
+/// (node optional), {uiChanged: true | "now"}, {gameMs}, {frames}, {text} (under and exists optional), {node, stable} (property
 /// optional), {node, state, equals} or {output} (stream and after optional).
 /// </summary>
 internal sealed record WaitCondition(
@@ -42,9 +42,10 @@ internal sealed record WaitCondition(
     [property: Description(
         "true, alone: wait until the UI (the visible Controls, the focus owner, the top popup) differs from the snapshot taken "
             + "when the first input gesture since launch, or since the last met uiChanged wait, started. Met, it carries "
-            + "{appeared, disappeared, appearedCount, disappearedCount}, plus focus and popup {before, after} when they changed."
+            + "{appeared, disappeared, appearedCount, disappearedCount}, plus focus and popup {before, after} when they changed. "
+            + "\"now\" takes the snapshot when the wait starts instead."
     )]
-        bool? UiChanged = null,
+        JsonElement? UiChanged = null,
     [property: Description(
         "Alone: wait until this many milliseconds of game time, 1 to 120000, have passed since the wait started: process delta "
             + "summed over unpaused frames, so it follows Engine.time_scale and stops while the game is paused. Met, value is the "

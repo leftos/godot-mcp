@@ -2,7 +2,8 @@ extends Control
 ## The InputProbe's networked probe: two games on one folder, one listening and one joining over loopback.
 ## With --net-host=<port> it listens on 127.0.0.1 and sends "press:<n>" to its peer each time Send is
 ## pressed; with --net-join=<port> it dials until connected, prints "[net] joined", and prints and
-## shows every count it receives.
+## shows every count it receives. On the guest, Flash shows "press <n>" for one frame as each count
+## arrives: shown in the frame the count is read, hidden and cleared in the next frame's _process.
 
 ## Whether this game listens for the other, set by --net-host=<port>.
 var is_host: bool = false
@@ -21,9 +22,11 @@ var _peer: StreamPeerTCP
 var _join_port: int = 0
 var _buffer: String = ""
 var _redial_frame: int = 0
+var _flash_frame: int = 0
 
 @onready var _send: Button = $Send
 @onready var _mirror: Label = $Mirror
+@onready var _flash: Label = $Flash
 
 
 func _ready() -> void:
@@ -53,6 +56,9 @@ func _on_send() -> void:
 
 
 func _process(_delta: float) -> void:
+	if _flash.visible and Engine.get_process_frames() > _flash_frame:
+		_flash.visible = false
+		_flash.text = ""
 	if is_host:
 		_host_poll()
 	elif _peer != null:
@@ -91,6 +97,9 @@ func _guest_poll() -> void:
 func _show(n: int) -> void:
 	shown_count = n
 	_mirror.text = "presses: %d" % n
+	_flash.text = "press %d" % n
+	_flash.visible = true
+	_flash_frame = Engine.get_process_frames()
 	print("presses: %d" % n)
 
 

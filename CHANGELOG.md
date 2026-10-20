@@ -12,6 +12,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `restart_project` restarts a process session, stopping the program and starting its stored command again, waiting on its ready line.
 - `batch_drive` takes parallel groups: up to 8 steps on different sessions at once, each sent before the next starts, a failure cancelling the rest.
 - `batch_drive` results carry `startedAt`, and every step's `startMs` and `endMs`, on one clock across sessions.
+- `wait_for {uiChanged: "now"}` takes its UI snapshot when the wait starts, so a parallel group's wait sees another session's input change it.
 
 ## 0.17.1 - 2026-10-17
 

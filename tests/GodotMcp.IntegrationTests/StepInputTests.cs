@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Tools;
@@ -113,7 +114,10 @@ public sealed class StepInputTests(SharedProbeSession shared) : IAsyncLifetime, 
         await FrameAsync("pause");
         try
         {
-            StepOptions options = new(Until: new WaitCondition(UiChanged: true), Input: [Key("P", 2, pressed: true)]);
+            StepOptions options = new(
+                Until: new WaitCondition(UiChanged: JsonSerializer.SerializeToElement(true)),
+                Input: [Key("P", 2, pressed: true)]
+            );
             JsonObject stepped = await FrameAsync("step", 10, options);
             long shown = await ReadIntAsync("shown_frame");
             bool visible = (await RunAsync("return scene_tree.root.get_node(\"RidingPanel\").visible")).GetValue<bool>();

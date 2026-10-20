@@ -20,7 +20,8 @@ const EXPRESSION_INPUTS: PackedStringArray = ["root", "tree", "Input", "Engine"]
 const NOT_GDSCRIPT_HINT := "Godot's Expression is not GDScript: it has no lambdas (func), no if/else, no is or as, no not in (write not (a in b)), and no statements; it has calls, indexing, literals and operators such as and, or, not, in, ==, !=, <, <=, >, >=, +, -, *, / and %."
 const NO_UI_BASELINE := (
 	"uiChanged has no baseline: no input gesture has started since launch or since the last "
-	+ "uiChanged wait was met; send the input first"
+	+ 'uiChanged wait was met; send the input first, or wait for {uiChanged: "now"} '
+	+ "in a parallel group beside an input in another session"
 )
 # gdformat joins any split of this text back into one line past gdlint's 100 characters.
 # gdlint: ignore=max-line-length
@@ -99,7 +100,14 @@ func _expression_probe(params: Dictionary, failures: Dictionary) -> Variant:
 	return parse_expression(_text(params, "expression"), _text(params, "node"), failures)
 
 
-func _ui_changed_probe(_params: Dictionary, _failures: Dictionary) -> Variant:
+## With params.uiChanged "now", takes a fresh baseline as the wait starts (make_probe runs once
+## per wait, before its first check), replacing one a gesture left pending; with true, compares
+## with the baseline a gesture took, and refuses (NO_UI_BASELINE) when none is pending.
+func _ui_changed_probe(params: Dictionary, _failures: Dictionary) -> Variant:
+	if str(params.get("uiChanged")) == "now":
+		bridge._gestures.use_up_ui_baseline()
+		bridge._gestures.take_ui_baseline()
+		return _check_ui_changed
 	return _check_ui_changed if bridge._gestures.has_ui_baseline() else NO_UI_BASELINE
 
 

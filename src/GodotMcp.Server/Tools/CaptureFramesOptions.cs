@@ -58,7 +58,7 @@ internal sealed record CaptureStart(
     [property: Description("Refused: options.start takes an exists, property or expression condition.")] string? Signal = null,
     [property: Description("A Godot Expression evaluated each frame, as wait_for's condition.expression; met when it returns true.")]
         string? Expression = null,
-    [property: Description("Refused: options.start takes an exists, property or expression condition.")] bool? UiChanged = null,
+    [property: Description("Refused: options.start takes an exists, property or expression condition.")] JsonElement? UiChanged = null,
     [property: Description("Refused: options.start takes an exists, property or expression condition.")] int? GameMs = null,
     [property: Description("Refused: options.start takes an exists, property or expression condition.")] int? Frames = null,
     [property: Description(

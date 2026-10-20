@@ -49,6 +49,22 @@ const STATE_BRIDGE_SOURCE := (
 	+ "var _state: Node\nvar top: Node\n\n\nfunc _find_node(element: String) -> Node:\n"
 	+ "\treturn top.find_child(element, true, false)\n"
 )
+## wait_for's refusal of a uiChanged: true condition no gesture has taken a baseline for.
+const NO_UI_BASELINE := (
+	"uiChanged has no baseline: no input gesture has started since launch or since the last "
+	+ 'uiChanged wait was met; send the input first, or wait for {uiChanged: "now"} '
+	+ "in a parallel group beside an input in another session"
+)
+## The uiChanged rig's stand-in input module: its UI is the number ui, its baseline the ui it saw.
+const UI_GESTURES_SOURCE := (
+	"extends Node\n\nvar ui: int = 0\nvar _ui_baseline: Dictionary = {}\n\n\n"
+	+ "func has_ui_baseline() -> bool:\n\treturn not _ui_baseline.is_empty()\n\n\n"
+	+ "func take_ui_baseline() -> void:\n\tif _ui_baseline.is_empty():\n"
+	+ "\t\t_ui_baseline = {'ui': ui}\n\n\n"
+	+ "func ui_change() -> Dictionary:\n\tif _ui_baseline.is_empty() or _ui_baseline['ui'] == ui:\n"
+	+ "\t\treturn {}\n\treturn {'before': _ui_baseline['ui'], 'after': ui}\n\n\n"
+	+ "func use_up_ui_baseline() -> void:\n\t_ui_baseline = {}\n"
+)
 ## A state the key path tests read.
 const SEATED := {
 	"turn": 2,
@@ -709,6 +725,62 @@ func test_a_state_wait_on_a_node_with_no_state_fails_with_the_reads_error() -> v
 		"a marked node without _mcp_state fails the check"
 	)
 	_free_state_rig(rig)
+
+
+func test_a_now_ui_wait_with_no_baseline_takes_one_and_is_met_by_a_later_change() -> void:
+	var rig: Dictionary = _ui_rig()
+	var gestures: Node = rig["bridge"]._gestures
+	var probe: Variant = rig["conditions"].make_probe("uiChanged", {"uiChanged": "now"}, {})
+	assert_true(probe is Callable, "a probe, not a refusal: %s" % [probe])
+	assert_true(gestures.has_ui_baseline(), "the probe took a baseline")
+	if probe is Callable:
+		assert_eq(probe.call(), [false, null], "nothing changed yet")
+		gestures.ui = 1
+		assert_eq(probe.call(), [true, {"before": 0, "after": 1}], "the later change meets it")
+	assert_true(not gestures.has_ui_baseline(), "the met wait used its baseline up")
+	_free_ui_rig(rig)
+
+
+func test_a_now_ui_wait_replaces_a_baseline_a_gesture_left() -> void:
+	var rig: Dictionary = _ui_rig()
+	var gestures: Node = rig["bridge"]._gestures
+	gestures.take_ui_baseline()
+	gestures.ui = 1
+	var probe: Variant = rig["conditions"].make_probe("uiChanged", {"uiChanged": "now"}, {})
+	assert_true(probe is Callable, "a probe, not a refusal: %s" % [probe])
+	if probe is Callable:
+		assert_eq(
+			probe.call(), [false, null], "a change from before the wait started meets nothing"
+		)
+		gestures.ui = 2
+		assert_eq(probe.call(), [true, {"before": 1, "after": 2}], "a change after it does")
+	_free_ui_rig(rig)
+
+
+func test_a_true_ui_wait_with_no_baseline_is_refused() -> void:
+	var rig: Dictionary = _ui_rig()
+	assert_eq(
+		rig["conditions"].make_probe("uiChanged", {"uiChanged": true}, {}),
+		NO_UI_BASELINE,
+		"no gesture took a baseline"
+	)
+	assert_true(not rig["bridge"]._gestures.has_ui_baseline(), "and the refusal took none")
+	_free_ui_rig(rig)
+
+
+## Conditions whose bridge is a stand-in holding UI_GESTURES_SOURCE's input module.
+func _ui_rig() -> Dictionary:
+	var bridge: Node = _compile("extends Node\n\nvar _gestures: Node\n")
+	bridge._gestures = _compile(UI_GESTURES_SOURCE)
+	var conditions: Node = _conditions_script.new()
+	conditions.bridge = bridge
+	return {"conditions": conditions, "bridge": bridge}
+
+
+func _free_ui_rig(rig: Dictionary) -> void:
+	rig["conditions"].free()
+	rig["bridge"]._gestures.free()
+	rig["bridge"].free()
 
 
 ## Conditions whose bridge is a stand-in finding no node, its input player's target resolver a

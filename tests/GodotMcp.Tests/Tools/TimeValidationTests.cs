@@ -12,7 +12,7 @@ namespace GodotMcp.Tests.Tools;
 public sealed class TimeValidationTests : IDisposable
 {
     private const string ConditionMessage =
-        "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
+        "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true | \"now\"}, "
         + "{gameMs}, {frames}, {text}, {node, stable}, {node, state, equals}, {output} (with stream and after optional).";
     private const string ScaleMessage = "time_scale needs scale, greater than 0 and at most 100.";
 
@@ -172,7 +172,7 @@ public sealed class TimeValidationTests : IDisposable
     [InlineData(1001)]
     public void AStepUntilsCountStaysWithinOneToAThousand(int count)
     {
-        StepOptions options = new(Until: new WaitCondition(UiChanged: true));
+        StepOptions options = new(Until: new WaitCondition(UiChanged: Json("true")));
 
         McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildFrameParameters("step", count, null, options));
 
@@ -231,12 +231,13 @@ public sealed class TimeValidationTests : IDisposable
     [InlineData(null, null, null, null, "fired", "true", null)]
     [InlineData("", true, null, null, null, null, null)]
     [InlineData("Main", null, "state", "null", null, null, null)]
-    [InlineData(null, null, null, null, null, null, false)]
-    [InlineData("Main", null, null, null, null, null, true)]
-    [InlineData("", null, null, null, null, null, true)]
-    [InlineData(null, true, null, null, null, null, true)]
-    [InlineData(null, null, null, null, null, "true", true)]
-    [InlineData("Main", null, null, null, "fired", null, true)]
+    [InlineData("Main", null, null, null, null, null, "true")]
+    [InlineData("Main", null, null, null, null, null, "\"now\"")]
+    [InlineData("", null, null, null, null, null, "true")]
+    [InlineData(null, true, null, null, null, null, "true")]
+    [InlineData(null, true, null, null, null, null, "\"now\"")]
+    [InlineData(null, null, null, null, null, "true", "true")]
+    [InlineData("Main", null, null, null, "fired", null, "true")]
     public async Task WaitForRefusesAConditionThatIsNotExactlyOneKind(
         string? node,
         bool? exists,
@@ -244,10 +245,11 @@ public sealed class TimeValidationTests : IDisposable
         string? equalsJson,
         string? signal,
         string? expression,
-        bool? uiChanged
+        string? uiChangedJson
     )
     {
         JsonElement? equals = equalsJson is null ? null : JsonSerializer.Deserialize<JsonElement>(equalsJson);
+        JsonElement? uiChanged = uiChangedJson is null ? null : Json(uiChangedJson);
         WaitCondition condition = new(node, exists, property, equals, signal, expression, uiChanged);
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
@@ -582,15 +584,50 @@ public sealed class TimeValidationTests : IDisposable
     }
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(1000)]
-    public async Task AUiChangedWaitIsAccepted(int timeoutMs)
+    [InlineData(0, "true")]
+    [InlineData(1000, "true")]
+    [InlineData(1000, "\"now\"")]
+    public async Task AUiChangedWaitIsAccepted(int timeoutMs, string uiChangedJson)
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
-            _tools.WaitForAsync(new WaitCondition(UiChanged: true), timeoutMs, null, TestContext.Current.CancellationToken)
+            _tools.WaitForAsync(new WaitCondition(UiChanged: Json(uiChangedJson)), timeoutMs, null, TestContext.Current.CancellationToken)
         );
 
         Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACheckOnceUiChangedNowWaitIsRefused()
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(UiChanged: Json("\"now\"")), 0, null, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("timeoutMs 0 checks once, which a {uiChanged: \"now\"} wait cannot meet; give it a timeout.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("false")]
+    [InlineData("\"later\"")]
+    [InlineData("3")]
+    public async Task AUiChangedOfAnotherValueIsRefused(string uiChangedJson)
+    {
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(UiChanged: Json(uiChangedJson)), 1000, null, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal($"uiChanged takes true or \"now\"; got {uiChangedJson}.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("true")]
+    [InlineData("\"now\"")]
+    public void AUiChangedValueTravelsToTheBridgeAsGiven(string uiChangedJson)
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(UiChanged: Json(uiChangedJson)), 1000);
+
+        Assert.Equal("uiChanged", parameters["kind"]!.GetValue<string>());
+        Assert.Equal(uiChangedJson, parameters["uiChanged"]!.ToJsonString());
     }
 
     [Fact]
@@ -782,7 +819,7 @@ public sealed class TimeValidationTests : IDisposable
     [InlineData("uiChanged")]
     public async Task ACallOnASignalOrUiChangedWaitIsRefused(string kind)
     {
-        WaitCondition condition = kind == "signal" ? new(Node: "Main", Signal: "fired") : new(UiChanged: true);
+        WaitCondition condition = kind == "signal" ? new(Node: "Main", Signal: "fired") : new(UiChanged: Json("true"));
         WaitOptions options = new(Call: new MethodCall("TimeProbe", "start_clock"));
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
@@ -962,7 +999,7 @@ public sealed class TimeValidationTests : IDisposable
             new WaitCondition(Node: "Main", Signal: "fired"),
             new WaitCondition(GameMs: 500),
             new WaitCondition(Frames: 3),
-            new WaitCondition(UiChanged: true),
+            new WaitCondition(UiChanged: Json("true")),
         ];
 
         foreach (WaitCondition condition in conditions)
@@ -1012,7 +1049,7 @@ public sealed class TimeValidationTests : IDisposable
         WaitCondition condition = kind switch
         {
             "signal" => new WaitCondition(Node: "Main", Signal: "fired"),
-            "uiChanged" => new WaitCondition(UiChanged: true),
+            "uiChanged" => new WaitCondition(UiChanged: Json("true")),
             "gameMs" => new WaitCondition(GameMs: 500),
             "settled" => new WaitCondition(Node: "Lobby", Stable: 10),
             _ => new WaitCondition(Frames: 3),

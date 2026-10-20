@@ -345,7 +345,8 @@ public sealed class BatchValidationTests : IDisposable
     [InlineData("screenshot", "step 0: the screenshot assertion needs name.")]
     [InlineData(
         "wait",
-        "step 0: condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
+        "step 0: condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, "
+            + "{uiChanged: true | \"now\"}, "
             + "{gameMs}, {frames}, {text}, {node, stable}, {node, state, equals}, {output} (with stream and after optional)."
     )]
     public async Task AnAssertionMissingAFieldIsRefused(string assert, string message)
@@ -366,15 +367,41 @@ public sealed class BatchValidationTests : IDisposable
         Assert.Equal("step 1: timeoutMs must be between 0 and 120000.", refused.Message);
     }
 
-    [Fact]
-    public void AUiChangedWaitAssertionIsAccepted() => RuntimeTools.CheckBatch([new BatchStep(Assert: "wait", UiChanged: true)]);
+    [Theory]
+    [InlineData("true")]
+    [InlineData("\"now\"")]
+    public void AUiChangedWaitAssertionIsAccepted(string uiChangedJson) =>
+        RuntimeTools.CheckBatch([new BatchStep(Assert: "wait", UiChanged: JsonSerializer.Deserialize<JsonElement>(uiChangedJson))]);
 
-    [Fact]
-    public async Task AUiChangedWaitAssertionWithANodeIsRefused()
+    [Theory]
+    [InlineData("true")]
+    [InlineData("\"now\"")]
+    public async Task AUiChangedWaitAssertionWithANodeIsRefused(string uiChangedJson)
     {
-        McpException refused = await RefusedAsync([new BatchStep(Assert: "wait", Node: "Main", UiChanged: true)]);
+        McpException refused = await RefusedAsync([
+            new BatchStep(Assert: "wait", Node: "Main", UiChanged: JsonSerializer.Deserialize<JsonElement>(uiChangedJson)),
+        ]);
 
         Assert.StartsWith("step 0: condition needs exactly one of: ", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ACheckOnceUiChangedNowWaitAssertionIsRefused()
+    {
+        McpException refused = await RefusedAsync([new BatchStep(Assert: "wait", UiChanged: JsonSerializer.SerializeToElement("now"), TimeoutMs: 0)]);
+
+        Assert.Equal("step 0: timeoutMs 0 checks once, which a {uiChanged: \"now\"} wait cannot meet; give it a timeout.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("false")]
+    [InlineData("\"later\"")]
+    [InlineData("3")]
+    public async Task AUiChangedWaitAssertionOfAnotherValueIsRefused(string uiChangedJson)
+    {
+        McpException refused = await RefusedAsync([new BatchStep(Assert: "wait", UiChanged: JsonSerializer.Deserialize<JsonElement>(uiChangedJson))]);
+
+        Assert.Equal($"step 0: uiChanged takes true or \"now\"; got {uiChangedJson}.", refused.Message);
     }
 
     [Fact]
@@ -583,7 +610,8 @@ public sealed class BatchValidationTests : IDisposable
         McpException refused = await RefusedAsync([new BatchStep(Assert: "wait", Node: "Main", Output: "joined")]);
 
         Assert.Equal(
-            "step 0: condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
+            "step 0: condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, "
+                + "{uiChanged: true | \"now\"}, "
                 + "{gameMs}, {frames}, {text}, {node, stable}, {node, state, equals}, {output} (with stream and after optional).",
             refused.Message
         );

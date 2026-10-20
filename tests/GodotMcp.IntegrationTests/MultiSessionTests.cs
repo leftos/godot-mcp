@@ -21,6 +21,9 @@ public sealed class MultiSessionTests : IAsyncDisposable
 {
     private const string NetProbe = "res://NetProbe.tscn";
     private const int JoinedWaitMs = 20_000;
+    private const string NoUiBaseline =
+        "uiChanged has no baseline: no input gesture has started since launch or since the last uiChanged wait was met; "
+        + "send the input first, or wait for {uiChanged: \"now\"} in a parallel group beside an input in another session";
 
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
@@ -116,6 +119,58 @@ public sealed class MultiSessionTests : IAsyncDisposable
         Assert.True(waitedMs < 10_000, $"the wait member ran {waitedMs} ms: {failed.ToJsonString()}");
         Assert.True(passed["passed"]!.GetValue<bool>(), passed.ToJsonString());
         Assert.All(passed["steps"]![0]!["members"]!.AsArray(), member => Assert.True(member!["ok"]!.GetValue<bool>(), passed.ToJsonString()));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AGuestsWaitArmedBeforeTheHostsClickCatchesALabelShownForOneFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        (JsonObject joined, JsonObject connected) = await LaunchPairAsync(cancellation);
+        BatchStep flashed = new(
+            Assert: "wait",
+            Node: "Flash",
+            Property: "text",
+            EqualsValue: JsonSerializer.SerializeToElement("press 1"),
+            Session: "guest"
+        );
+
+        JsonObject passed = await GroupAsync(flashed, HostClick("Send"), cancellation);
+        await _harness.Sessions.StopAsync("host", cancellation);
+        await _harness.Sessions.StopAsync("guest", cancellation);
+
+        Assert.True(joined["met"]!.GetValue<bool>(), joined.ToJsonString());
+        Assert.True(connected["met"]!.GetValue<bool>(), connected.ToJsonString());
+        Assert.True(passed["passed"]!.GetValue<bool>(), passed.ToJsonString());
+        Assert.All(passed["steps"]![0]!["members"]!.AsArray(), member => Assert.True(member!["ok"]!.GetValue<bool>(), passed.ToJsonString()));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AGuestsUiChangedNowWaitSeesTheHostsClickAndAPlainOneHasNoBaseline()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        (JsonObject joined, JsonObject connected) = await LaunchPairAsync(cancellation);
+        BatchStep changed = new(Assert: "wait", UiChanged: JsonSerializer.SerializeToElement("now"), Session: "guest");
+        BatchStep plain = new(Assert: "wait", UiChanged: JsonSerializer.SerializeToElement(true), Session: "guest");
+
+        JsonObject passed = await GroupAsync(changed, HostClick("Send"), cancellation);
+        JsonObject refused = JsonNode.Parse(await _tools.BatchDriveAsync([plain], _server, cancellationToken: cancellation))!.AsObject();
+        await _harness.Sessions.StopAsync("host", cancellation);
+        await _harness.Sessions.StopAsync("guest", cancellation);
+
+        Assert.True(joined["met"]!.GetValue<bool>(), joined.ToJsonString());
+        Assert.True(connected["met"]!.GetValue<bool>(), connected.ToJsonString());
+        Assert.True(passed["passed"]!.GetValue<bool>(), passed.ToJsonString());
+        Assert.All(passed["steps"]![0]!["members"]!.AsArray(), member => Assert.True(member!["ok"]!.GetValue<bool>(), passed.ToJsonString()));
+        Assert.False(refused["passed"]!.GetValue<bool>(), refused.ToJsonString());
+        Assert.Contains(NoUiBaseline, refused["steps"]![0]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
+    }
+
+    private async Task<(JsonObject Joined, JsonObject Connected)> LaunchPairAsync(CancellationToken cancellation)
+    {
+        int port = FreePort();
+        await _harness.Sessions.LaunchAsync(HostRequest(port), "host", cancellation);
+        await _harness.Sessions.LaunchAsync(GuestRequest(port), "guest", cancellation);
+        return (await JoinedAsync(cancellation), await HostConnectedAsync(cancellation));
     }
 
     private static BatchStep HostClick(string element) =>

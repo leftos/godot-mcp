@@ -11,7 +11,8 @@ signal test_draw
 ## wait_for's refusal of a uiChanged condition no gesture has taken a baseline for.
 const NO_UI_BASELINE := (
 	"uiChanged has no baseline: no input gesture has started since launch or since the last "
-	+ "uiChanged wait was met; send the input first"
+	+ 'uiChanged wait was met; send the input first, or wait for {uiChanged: "now"} '
+	+ "in a parallel group beside an input in another session"
 )
 ## wait_for's refusal of a signal condition on a node a bare name does not find.
 const MISSING_NODE := (
@@ -325,6 +326,31 @@ func test_a_ui_changed_until_with_riding_input_takes_the_baseline_first() -> voi
 	_free_step_rig(rig)
 
 
+func test_a_now_ui_changed_until_takes_its_baseline_at_the_step_start() -> void:
+	var rig: Dictionary = _step_rig()
+	var gestures: Node = rig["bridge"]._gestures
+	var sent: Array = rig["bridge"]._capture.sent_events
+	gestures.ui_source = func() -> Dictionary:
+		var controls: Dictionary = {"/root/Shown": true} if not sent.is_empty() else {}
+		return {"controls": controls, "focus": null, "popup": null}
+	gestures._ui_baseline = {"controls": {"/root/Old": true}, "focus": null, "popup": null}
+	var params: Dictionary = {
+		"count": 3, "input": [_key(0, "A", 0)], "until": {"kind": "uiChanged", "uiChanged": "now"}
+	}
+	var until: Variant = rig["time"]._stepper._until_with_baseline(params)
+	assert_true(until is Dictionary, "no refusal: %s" % [until])
+	if until is Dictionary:
+		var run: Dictionary = _start(rig, params, until)
+		_frame(rig)
+		assert_eq(run["ended"], {"error": ""}, "met on the frame the riding key was sent")
+		assert_eq(run["result"]["processFrames"], 1, "after one frame")
+		var change: Dictionary = run["result"].get("value", {})
+		assert_eq(change.get("appeared"), ["/root/Shown"], "what the key showed: %s" % [change])
+		assert_eq(change.get("disappeared"), [], "the gesture's old baseline was replaced")
+	assert_true(not gestures.has_ui_baseline(), "the met until used its baseline up")
+	_free_step_rig(rig)
+
+
 func test_an_event_the_bridge_cannot_play_fails_the_step_at_its_frame() -> void:
 	var rig: Dictionary = _step_rig()
 	var input: Array = [
@@ -437,7 +463,7 @@ func test_a_refused_until_with_riding_input_leaves_no_ui_baseline_behind() -> vo
 ## JSON, raw event and gamepad modules and a stand-in capture listing what is sent, and a stand-in
 ## Target node outside any tree whose signal a signal until takes. The input player is a subclass
 ## whose window points are viewport points and whose UI snapshot is a constant, since it is in no
-## tree.
+## tree, unless a test gives it a ui_source.
 func _step_rig() -> Dictionary:
 	var tree: RefCounted = _compile(
 		"extends RefCounted\n\nsignal process_frame\nsignal physics_frame\n\nvar paused: bool = true\n"
@@ -446,7 +472,8 @@ func _step_rig() -> Dictionary:
 		(
 			"extends Node\n\nconst INJECTED_DEVICE := 0x6D6370\n\nvar _conditions: Node\n"
 			+ "var _gestures: Node\nvar _inspect: Node\nvar _json: GDScript\nvar _raw_events: Node\n"
-			+ "var _pads: Node\nvar _capture: Node\nvar _gesture_playing: bool = false\n"
+			+ "var _pads: Node\nvar _capture: Node\nvar _ui_snapshot: GDScript\n"
+			+ "var _gesture_playing: bool = false\n"
 			+ "var _dispatching: bool = false\nvar _held_mask: int = 0\n"
 			+ "var _pointer: Vector2 = Vector2.ZERO\nvar _owns_pointer: bool = false\n"
 			+ "var target: Node\n\n\nfunc _find_node(element: String) -> Node:\n"
@@ -462,6 +489,7 @@ func _step_rig() -> Dictionary:
 	bridge._inspect = load_bridge_script("godot_mcp_inspect.gd").new()
 	bridge._inspect._bridge = bridge
 	bridge._json = load_bridge_script("godot_mcp_json.gd")
+	bridge._ui_snapshot = load_bridge_script("godot_mcp_ui_snapshot.gd")
 	var time: Node = _time_script.new()
 	time.bridge = bridge
 	time._stepper.frames_tree = tree
@@ -479,7 +507,9 @@ func _add_input_modules(bridge: Node) -> void:
 				'extends "%s"\n\n\nfunc to_window(point: Vector2) -> Vector2:\n\treturn point\n\n\n'
 				% input_script.resource_path
 			)
-			+ 'func _snapshot_ui() -> Dictionary:\n\treturn {"stand-in": true}\n'
+			+ "var ui_source: Callable\n\n\n"
+			+ "func _snapshot_ui() -> Dictionary:\n"
+			+ '\treturn ui_source.call() if ui_source.is_valid() else {"stand-in": true}\n'
 		)
 	)
 	bridge._gestures.bridge = bridge

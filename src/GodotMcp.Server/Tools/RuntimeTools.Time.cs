@@ -28,7 +28,7 @@ internal sealed partial class RuntimeTools
     private const int MaxDerivedWaitMs = 600_000;
     private const int CapturePreviewMaxWidth = 480;
     private const string ConditionMessage =
-        "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true}, "
+        "condition needs exactly one of: {node, exists}, {node, property, equals}, {node, signal}, {expression}, {uiChanged: true | \"now\"}, "
         + "{gameMs}, {frames}, {text}, {node, stable}, {node, state, equals}, {output} (with stream and after optional).";
     private const string UntilFramesRefusal =
         "frame_control step's until takes any wait_for condition but frames: count is the most frames a step runs.";
@@ -169,7 +169,9 @@ internal sealed partial class RuntimeTools
             + "is kept out of errors and counted in mutedErrors {count, error}, error the first one's text, met or not. "
             + "uiChanged compares the UI with the snapshot the bridge takes when the first input gesture since launch, or "
             + "since the last met uiChanged wait, starts (later gestures keep it; a met "
-            + "wait uses it up, a timeout keeps it), and is refused when no gesture has taken one. options.screenshot: true "
+            + "wait uses it up, a timeout keeps it), and is refused when no gesture has taken one. {uiChanged: \"now\"} takes its "
+            + "snapshot when the wait starts instead, replacing one a gesture left, for a wait in a parallel group beside an input "
+            + "in another session. options.screenshot: true "
             + "captures the frame the condition was met on as take_screenshot does, for a scene that changes faster than a "
             + "following take_screenshot can catch, adding screenshot to the result (a timed-out wait captures nothing, and a "
             + "frame that was not drawn gives a warning instead). options.call {node, method, args}, or {tool, args} for a game "
@@ -190,7 +192,8 @@ internal sealed partial class RuntimeTools
     )]
     public async Task<IEnumerable<ContentBlock>> WaitForAsync(
         [Description(
-            "Exactly one of {node, exists}, {node, property, equals}, {node, signal}, {expression} (with node optional), {uiChanged: true}, "
+            "Exactly one of {node, exists}, {node, property, equals}, {node, signal}, {expression} (with node optional), "
+                + "{uiChanged: true | \"now\"}, "
                 + "{gameMs}, {frames}, {text} (with under and exists optional), {node, stable} (with property optional), "
                 + "{node, state, equals}, {output} (with stream and after optional)."
         )]
@@ -286,6 +289,8 @@ internal sealed partial class RuntimeTools
                 throw new McpException($"timeoutMs 0 checks once, which a {kind} wait cannot do; give it a timeout.");
             case "settled":
                 throw new McpException("timeoutMs 0 checks once, which a settled wait cannot meet; give it a timeout.");
+            case "uiChanged" when condition.UiChanged is { ValueKind: JsonValueKind.String }:
+                throw new McpException("timeoutMs 0 checks once, which a {uiChanged: \"now\"} wait cannot meet; give it a timeout.");
             case "output" when condition.After is null:
                 throw new McpException("timeoutMs 0 checks once, which an output wait needs after for: without it there is nothing new to check.");
         }
@@ -759,6 +764,7 @@ internal sealed partial class RuntimeTools
     /// companions are given too.</summary>
     private static string CheckCondition(WaitCondition? condition)
     {
+        CheckUiChangedValue(condition);
         CheckTextFields(condition);
         CheckStateFields(condition);
         CheckSettledFields(condition);
@@ -766,6 +772,18 @@ internal sealed partial class RuntimeTools
         ConditionKind[] given = condition is null ? [] : [.. ConditionKinds.Where(kind => kind.Given(condition))];
         return given is [var kind] && kind.HasCompanions(condition!) ? kind.Name : throw new McpException(ConditionMessage);
     }
+
+    /// <exception cref="McpException">uiChanged is given as anything but true or "now", the JSON it got quoted.</exception>
+    private static void CheckUiChangedValue(WaitCondition? condition)
+    {
+        if (condition?.UiChanged is { ValueKind: not JsonValueKind.Undefined } value && !IsUiChangedValue(value))
+        {
+            throw new McpException($"uiChanged takes true or \"now\"; got {value.GetRawText()}.");
+        }
+    }
+
+    private static bool IsUiChangedValue(JsonElement value) =>
+        value.ValueKind == JsonValueKind.True || (value.ValueKind == JsonValueKind.String && value.GetString() == "now");
 
     /// <exception cref="McpException">under is given without text, text or under is blank, or text comes with a node.</exception>
     private static void CheckTextFields(WaitCondition? condition)
@@ -899,8 +917,9 @@ internal sealed partial class RuntimeTools
                 State: null,
             };
 
-    // Only true is a kind, and it takes no node: the other kinds' fields already make a second kind.
-    private static bool IsUiChangedAlone(WaitCondition condition) => condition.UiChanged is true && condition.Node is null;
+    // CheckUiChangedValue has already refused a value but true or "now"; neither takes a node, and the other kinds' fields
+    // already make a second kind.
+    private static bool IsUiChangedAlone(WaitCondition condition) => condition.UiChanged is not null && condition.Node is null;
 
     // A JSON null arrives as a null JsonElement?, the same as a missing equals, so a null to compare with is not supported
     // either way; an explicit Null element is treated alike.

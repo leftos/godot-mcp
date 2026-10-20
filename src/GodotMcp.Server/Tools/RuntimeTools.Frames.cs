@@ -198,6 +198,7 @@ internal sealed partial class RuntimeTools
         : condition.Stable is not null ? "settled"
         : condition.State is not null ? "state"
         : condition.Output is not null ? "output"
+        : condition.UiChanged is not null ? "uiChanged"
         : CheckCondition(condition);
 
     /// <summary>

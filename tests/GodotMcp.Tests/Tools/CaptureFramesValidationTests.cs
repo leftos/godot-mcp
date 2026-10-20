@@ -387,7 +387,7 @@ public sealed class CaptureFramesValidationTests : IDisposable
         CaptureStart start = kind switch
         {
             "signal" => new(Node: "TimeProbe", Signal: "fired"),
-            "uiChanged" => new(UiChanged: true),
+            "uiChanged" => new(UiChanged: Json("true")),
             "gameMs" => new(GameMs: 500),
             "text" => new(Text: "Start", Under: "Lobby"),
             "settled" => new(Node: "Lobby", Stable: 10),
@@ -399,6 +399,17 @@ public sealed class CaptureFramesValidationTests : IDisposable
         McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Start: start));
 
         Assert.Equal($"options.start takes an exists, property or expression condition; this condition is {kind}.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("\"now\"")]
+    [InlineData("false")]
+    [InlineData("\"later\"")]
+    public async Task AStartWithUiChangedIsRefusedWhateverItsValue(string uiChangedJson)
+    {
+        McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Start: new CaptureStart(UiChanged: Json(uiChangedJson))));
+
+        Assert.Equal("options.start takes an exists, property or expression condition; this condition is uiChanged.", refused.Message);
     }
 
     // A text field makes the start a text condition, refused as one before a text condition's own refusals could send the
