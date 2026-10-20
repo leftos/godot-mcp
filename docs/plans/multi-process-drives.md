@@ -238,8 +238,10 @@ So "the guest showed the host's lock-in 46 ms after the host's click step began"
 - **A tick that cannot be converted** (no bounds, or a bridge too old to send one): `at` is `null`, so every item keeps its length and a client can index it blindly. The result then has no `clockErrorMs`. The raw tick never reaches the client.
 - **`clockErrorMs`**: once, at the top level of the timeline beside `gameMs` and `wallMs`. It is read from one set of bounds before the walk, so every item shares it, and it is left out when nothing was converted.
 - **Rounding and order**: `at` is rounded to 0.1 ms, as `metAt` is. Times are converted before `WatchTimeline.Shape`, so the 40000-character budget (unchanged) counts the real length.
-- **The extra ping**: before converting a watch result or a met wait, a session whose bounds are wider than 2 ms (or missing) sends one more clock ping. It goes on the raw path, is awaited, and a timeout or a closed connection leaves the bounds as they are. A late ping is valid for earlier stamps because the offset is constant (section 2).
-- **The random-gap pings** are not in this step. The extra ping already restores precision before every conversion. The random-gap pings would tighten 1.4-1.9 ms to 0.2-0.3 ms but need a loop with a lifetime of its own, so they are booked as their own item.
+- **The extra ping**: before converting a watch result or a met wait, a session whose bounds are wider than 2 ms (or missing) sends one more clock ping. It goes on the raw path and is awaited. A timeout, a closed connection or a cancellation leaves the bounds as they are, and the stamp converts on the clock the ping fed. A cancellation during the ping never turns a met wait into a cancelled one. A late ping is valid for earlier stamps because the offset is constant (section 2).
+
+  The ping adds one sample and no promise of a width. A single ping can lock to the bridge's frame (section 2), so it narrows the bounds only when its round trip lands early in a frame. Its cost is about one frame, paid only on wide bounds.
+- **The random-gap pings** are not in this step. They would tighten 1.4-1.9 ms to 0.2-0.3 ms but need a loop with a lifetime of its own, so they are booked as their own item (GMCP-213).
 - **Recording and pause**: the watch has no clip time, so a recorded session's `at` is drive time with nothing to keep apart. A watch samples only unpaused frames, so a gap in `at` includes paused wall time that `gameMs` does not.
 
 ### Interactions
