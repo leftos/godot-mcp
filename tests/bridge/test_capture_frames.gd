@@ -1,14 +1,101 @@
+# gdlint: disable=max-public-methods, private-method-call
 extends "res://gd_test.gd"
 ## capture_frames' pure logic on the clock (bridge/godot_mcp_time.gd): which points a frame's game
 ## time makes due, the entries a grab gives them, the result a stopped capture answers, its
 ## refusals, and the method call a capture or a game-time wait makes as its clock starts
-## (_call_once), against a stand-in bridge. The clock node is never added to the tree; only
-## functions that do not need it are called.
-# gdlint: disable=private-method-call
+## (_call_once), against a stand-in bridge, and the frame module's saves off the main thread
+## (bridge/godot_mcp_frame.gd save_screenshot_off_thread). The nodes are never added to the tree;
+## only functions that do not need it are called.
 
 const SAVED := {"path": "C:/shots/a.png", "width": 64, "height": 32}
 
 var _time_script: GDScript = load_bridge_script("godot_mcp_time.gd")
+var _frame_script: GDScript = load_bridge_script("godot_mcp_frame.gd")
+
+
+func test_a_frame_saved_off_the_main_thread_is_written_once_its_saves_are_finished() -> void:
+	var frame: Node = _frame_script.new()
+	var saved: Dictionary = frame.save_screenshot_off_thread(_small_image(), {})
+	assert_eq([saved["width"], saved["height"]], [4, 2], "the size saved")
+	assert_eq(frame._saves.size(), 1, "its encode went to a task")
+	var finished: Variant = frame.call("finish_saves")
+	assert_eq(finished, "", "no save failed, answered without a frame outside the tree")
+	assert_eq(frame._saves.size(), 0, "every task collected")
+	var written: Image = Image.load_from_file(saved["path"])
+	assert_true(written != null and written.get_size() == Vector2i(4, 2), "a whole PNG")
+	DirAccess.remove_absolute(saved["path"])
+	frame.free()
+
+
+func test_a_captured_frames_file_is_named_for_its_process_frame_too() -> void:
+	var frame: Node = _frame_script.new()
+	var saved: Dictionary = frame.save_screenshot_off_thread(_small_image(), {})
+	var wanted: String = "-%d-%d.png" % [OS.get_process_id(), Engine.get_process_frames()]
+	assert_true(str(saved["path"]).ends_with(wanted), "%s ends with %s" % [saved["path"], wanted])
+	frame.wait_saves()
+	var shot: Dictionary = frame.save_screenshot(_small_image(), {})
+	var plain: String = "-%d.png" % OS.get_process_id()
+	assert_true(
+		str(shot["path"]).ends_with(plain), "a screenshot keeps its name: %s" % shot["path"]
+	)
+	DirAccess.remove_absolute(saved["path"])
+	DirAccess.remove_absolute(shot["path"])
+	frame.free()
+
+
+func test_a_frame_due_at_the_cap_of_saves_in_flight_is_saved_on_the_main_thread() -> void:
+	var frame: Node = _frame_script.new()
+	var cap: int = frame.MAX_SAVES_IN_FLIGHT
+	var release := Semaphore.new()
+	for _held in cap:
+		var task: int = WorkerThreadPool.add_task(release.wait)
+		frame._saves.append({"task": task, "path": "held", "outcome": [OK]})
+	assert_eq(frame.saves_in_flight(), cap, "the cap is reached")
+	var saved: Dictionary = frame.save_screenshot_off_thread(_small_image(), {})
+	assert_true(FileAccess.file_exists(saved["path"]), "written before it returned")
+	assert_eq(frame._saves.size(), cap, "no task started for it")
+	for _held in cap:
+		release.post()
+	frame.wait_saves()
+	assert_eq(frame.saves_in_flight(), 0, "the held saves ended")
+	DirAccess.remove_absolute(saved["path"])
+	frame.free()
+
+
+func test_a_finished_save_is_waited_and_dropped_at_the_next_in_flight_check() -> void:
+	var frame: Node = _frame_script.new()
+	var release := Semaphore.new()
+	var held: int = WorkerThreadPool.add_task(release.wait)
+	var done: int = WorkerThreadPool.add_task(func() -> void: pass)
+	frame._saves.append({"task": held, "path": "held", "outcome": [OK]})
+	frame._saves.append({"task": done, "path": "done", "outcome": [ERR_FILE_CANT_WRITE]})
+	# A hang guard only: the empty task ends at once unless the pool is starved.
+	var guard: int = Time.get_ticks_msec() + 60000
+	while not WorkerThreadPool.is_task_completed(done) and Time.get_ticks_msec() < guard:
+		OS.delay_msec(1)
+	assert_eq(frame.saves_in_flight(), 1, "only the held save is in flight")
+	assert_eq(frame._saves.map(func(save: Dictionary) -> int: return save["task"]), [held], "kept")
+	release.post()
+	assert_eq(
+		frame.call("finish_saves"),
+		frame.save_failure("done", ERR_FILE_CANT_WRITE),
+		"the dropped save's failure is still answered"
+	)
+	frame.free()
+
+
+func test_finishing_the_saves_answers_the_first_that_failed() -> void:
+	var frame: Node = _frame_script.new()
+	for failure: Array in [["C:/shots/a.png", ERR_FILE_CANT_WRITE], ["C:/shots/b.png", FAILED]]:
+		var task: int = WorkerThreadPool.add_task(func() -> void: pass)
+		frame._saves.append({"task": task, "path": failure[0], "outcome": [failure[1]]})
+	assert_eq(
+		frame.call("finish_saves"),
+		frame.save_failure("C:/shots/a.png", ERR_FILE_CANT_WRITE),
+		"the first failure, as a synchronous save words it"
+	)
+	assert_eq(frame._saves.size(), 0, "every task collected")
+	frame.free()
 
 
 func test_nothing_is_due_before_the_first_point() -> void:
@@ -275,6 +362,11 @@ func _free_call_rig(rig: Dictionary) -> void:
 	rig["bridge"]._inspect.free()
 	rig["bridge"].free()
 	rig["target"].free()
+
+
+## A 4 x 2 image to save.
+func _small_image() -> Image:
+	return Image.create_empty(4, 2, false, Image.FORMAT_RGB8)
 
 
 ## An instance of a script compiled from source.

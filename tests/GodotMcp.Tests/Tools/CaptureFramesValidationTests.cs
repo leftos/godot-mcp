@@ -269,6 +269,16 @@ public sealed class CaptureFramesValidationTests : IDisposable
     }
 
     [Fact]
+    public void TheReplyMayComeTwentyOneSecondsAfterTheRelease()
+    {
+        // 5 s for the answer to the cancel, and 2 s for each of the 8 frames the bridge may still be encoding then.
+        RuntimeTools.BridgeCall call = RuntimeTools.CaptureCall([], TimeSpan.FromSeconds(10));
+
+        Assert.Equal(TimeSpan.FromSeconds(10), call.Release);
+        Assert.Equal(TimeSpan.FromSeconds(31), call.Timeout);
+    }
+
+    [Fact]
     public void TimeoutMsReplacesTheDefaultAllowance() =>
         Assert.Equal(TimeSpan.FromMilliseconds(1500), RuntimeTools.CaptureAllowance([0.05, 5.0], 1500, null));
 

@@ -1,8 +1,11 @@
+using System.Diagnostics;
+using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
+using GodotMcp.TestSupport;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 
@@ -67,6 +70,18 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         + "if frames_left == 0:\\n\\t\\tturn += 1\\n\\t\\thp -= 1\\n\\n\\n"
         + "func _mcp_state() -> Dictionary:\\n\\treturn {'turn': turn, 'seats': [{'name': 'alex', 'hp': hp}]}\\n";
     private const string Keeper = "scene_tree.root.get_node(\"Keeper\")";
+
+    // Covers the 1920 x 1080 frame with random noise on a top layer, so a PNG of it cannot compress and its encode is the
+    // slowest a frame can cost; returns the window size.
+    private const string NoiseCoverScript =
+        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t"
+        + "var bytes: PackedByteArray = Crypto.new().generate_random_bytes(1920 * 1080 * 3)\n\t"
+        + "var image := Image.create_from_data(1920, 1080, false, Image.FORMAT_RGB8, bytes)\n\t"
+        + "var layer := CanvasLayer.new()\n\tlayer.layer = 100\n\tscene_tree.root.add_child(layer)\n\t"
+        + "var cover := TextureRect.new()\n\tcover.texture = ImageTexture.create_from_image(image)\n\t"
+        + "cover.expand_mode = TextureRect.EXPAND_IGNORE_SIZE\n\tcover.stretch_mode = TextureRect.STRETCH_SCALE\n\t"
+        + "cover.set_anchors_preset(Control.PRESET_FULL_RECT)\n\tlayer.add_child(cover)\n\t"
+        + "return DisplayServer.window_get_size()\n";
     private static readonly WaitCondition UiChangedCondition = new(UiChanged: JsonSerializer.SerializeToElement(true));
     private static readonly InputTarget OpenButton = new("OpenButton");
     private readonly SharedProbeSession _shared = shared;
@@ -1357,7 +1372,7 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         await FrameAsync("time_scale", scale: 8);
         try
         {
-            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var watch = Stopwatch.StartNew();
             JsonObject captured = await CaptureFramesAsync([8.0], null, TestContext.Current.CancellationToken);
             watch.Stop();
 
@@ -1380,7 +1395,7 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         await FrameAsync("time_scale", scale: 4);
         try
         {
-            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var watch = Stopwatch.StartNew();
             JsonObject waited = await WaitAsync(new WaitCondition(GameMs: 4000), TestContext.Current.CancellationToken);
             watch.Stop();
 
@@ -1471,6 +1486,87 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         {
             await FrameAsync("time_scale", scale: 1);
         }
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ACapturedFrameCostsTheGamesMainThreadLittleMoreThanAnOrdinaryFrame()
+    {
+        // capture_frames grabs each due frame at frame_post_draw on the game's main thread. Whatever else it does there (the
+        // PNG encode of the whole frame) lengthens that frame, and Godot then clamps the next delta to 8 physics steps
+        // (main/main.cpp L4955-4959 in 4.7.2), so the game's clock and its own per-frame sampling run slow while a capture
+        // runs. The budget is main-thread CPU time, which a loaded machine does not inflate; wall time would. The capture
+        // takes 8 points (every 0.15 for 1.05), no more than the bridge's cap of 8 frames encoding off the main thread, so
+        // slow workers can never push a frame past the cap and onto the main thread.
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Skip("The game's main thread is found by its start time, which .NET reads on Windows and Linux; measured on Windows.");
+            return;
+        }
+
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using ProbeProject probe = new();
+        await using SessionHarness harness = new();
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
+        await LaunchUnderNoiseAsync(harness, tools, probe, cancellation);
+        int pid = harness.Sessions.Resolve(null).GameProcessId ?? throw new InvalidOperationException("the hello carried no game pid.");
+        using var game = Process.GetProcessById(pid);
+        int mainThread = MainThreadId(game);
+
+        (double idleMs, long idleFrames) = await MainThreadCostAsync(
+            tools,
+            game,
+            mainThread,
+            () => tools.WaitForAsync(new WaitCondition(GameMs: 1000), 30_000, cancellationToken: cancellation),
+            cancellation
+        );
+        JsonObject? captured = null;
+        (double captureMs, long captureFrames) = await MainThreadCostAsync(
+            tools,
+            game,
+            mainThread,
+            async () =>
+                captured = JsonNode
+                    .Parse(await tools.CaptureFramesAsync(null, new CaptureFramesOptions(0.15, 1.05), cancellationToken: cancellation))!
+                    .AsObject(),
+            cancellation
+        );
+
+        int files = captured!["files"]!.AsArray().Count;
+        double ordinaryMs = idleMs / idleFrames;
+        double extraPerFileMs = (captureMs - (ordinaryMs * captureFrames)) / files;
+        Assert.True(
+            extraPerFileMs < 50,
+            $"each captured frame cost the game's main thread {extraPerFileMs:F0} ms of CPU beyond an ordinary frame's {ordinaryMs:F1} ms "
+                + $"({captureMs:F0} ms over {captureFrames} frames for {files} files); the encode and write belong off the main thread. "
+                + captured.ToJsonString()
+        );
+        await harness.Sessions.StopAsync(null, cancellation);
+        Assert.Equal(string.Empty, Git.Status(probe.Directory));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ACaptureStoppedWhileFramesEncodeSavesEachFileWholeAndTheGameQuitsCleanly()
+    {
+        // Under noise at 1920 x 1080 a frame's PNG takes about half a second to encode, so frames due every 0.05 s are still
+        // encoding when the 1.5 s timeout stops the capture: the reply waits for each of them, and the game then quits by
+        // itself with exit code 0, no encode left running into its exit.
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using ProbeProject probe = new();
+        await using SessionHarness harness = new();
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
+        await LaunchUnderNoiseAsync(harness, tools, probe, cancellation);
+
+        JsonObject captured = JsonNode
+            .Parse(await tools.CaptureFramesAsync(null, new CaptureFramesOptions(0.05, 5.0, TimeoutMs: 1500), cancellationToken: cancellation))!
+            .AsObject();
+        StopResult stopped = await harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.True(captured["stopped"]!.GetValue<bool>(), captured.ToJsonString());
+        Assert.NotEmpty(FramePaths(captured));
+        Assert.All(FramePaths(captured), path => AssertWholePng(path, captured.ToJsonString()));
+        Assert.False(stopped.Killed, $"the game had to be killed: {stopped.KillReason}");
+        Assert.Equal(0, stopped.GameExitCode);
+        Assert.Equal(string.Empty, Git.Status(probe.Directory));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -1603,7 +1699,7 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         CaptureStart start = new(Node: "TimeProbe", Property: "state", EqualsValue: Json("\"done\""), Then: new WaitThen(TimeScale: 8));
         try
         {
-            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var watch = Stopwatch.StartNew();
             JsonObject captured = await CaptureFramesAsync([4.0], new CaptureFramesOptions(Start: start), cancellation);
             watch.Stop();
 
@@ -2016,6 +2112,88 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     /// <summary>The files a capture took: its folder joined with each distinct name, as the compact result names them.</summary>
     private static IEnumerable<string> FramePaths(JsonObject captured) =>
         captured["files"]!.AsArray().Select(name => Path.Combine(captured["folder"]!.GetValue<string>(), name!.GetValue<string>()));
+
+    /// <summary>A run of its own of <paramref name="probe"/> at 1920 x 1080, its frame covered by <see cref="NoiseCoverScript"/>.</summary>
+    private static async Task LaunchUnderNoiseAsync(SessionHarness harness, RuntimeTools tools, ProbeProject probe, CancellationToken cancellation)
+    {
+        await harness.Sessions.LaunchAsync(
+            new LaunchRequest(probe.Directory, null, ["--resolution", "1920x1080"], [], true, false, Prepare: true),
+            null,
+            cancellation
+        );
+        await tools.RunScriptAsync(NoiseCoverScript, ScriptTimeoutMs, cancellationToken: cancellation);
+    }
+
+    /// <summary>The game's main-thread CPU time across <paramref name="action"/>, in ms, and the process frames it spanned.</summary>
+    private static async Task<(double CpuMs, long Frames)> MainThreadCostAsync(
+        RuntimeTools tools,
+        Process game,
+        int mainThread,
+        Func<Task> action,
+        CancellationToken cancellation
+    )
+    {
+        long before = await ProcessFramesAsync(tools, cancellation);
+        TimeSpan cpuBefore = MainThreadCpu(game, mainThread);
+        await action();
+        TimeSpan cpuAfter = MainThreadCpu(game, mainThread);
+        long after = await ProcessFramesAsync(tools, cancellation);
+        return ((cpuAfter - cpuBefore).TotalMilliseconds, after - before);
+    }
+
+    /// <summary>The id of <paramref name="game"/>'s main thread: the earliest started, as the hang watchdog finds it.</summary>
+    [SupportedOSPlatform("windows")]
+    private static int MainThreadId(Process game)
+    {
+        (int Id, DateTime Started)? earliest = null;
+        foreach (ProcessThread thread in game.Threads)
+        {
+            DateTime started;
+            try
+            {
+                started = thread.StartTime;
+            }
+            catch (InvalidOperationException)
+            {
+                // The thread exited after the list was read, so it is not the main thread.
+                continue;
+            }
+
+            if (earliest is null || started < earliest.Value.Started)
+            {
+                earliest = (thread.Id, started);
+            }
+        }
+
+        return earliest?.Id ?? throw new InvalidOperationException($"no thread of the game (pid {game.Id}) could be read.");
+    }
+
+    private static TimeSpan MainThreadCpu(Process game, int mainThread)
+    {
+        game.Refresh();
+        return game.Threads.Cast<ProcessThread>().Single(thread => thread.Id == mainThread).TotalProcessorTime;
+    }
+
+    private static async Task<long> ProcessFramesAsync(RuntimeTools tools, CancellationToken cancellation)
+    {
+        string json = await tools.RunScriptAsync(
+            "extends RefCounted\n\n\nfunc execute(_scene_tree: SceneTree) -> Variant:\n\treturn Engine.get_process_frames()\n",
+            ScriptTimeoutMs,
+            cancellationToken: cancellation
+        );
+        return JsonNode.Parse(json)!["value"]!.GetValue<long>();
+    }
+
+    /// <summary>Asserts the file at <paramref name="path"/> is a whole PNG: the PNG signature first and the IEND chunk last.</summary>
+    private static void AssertWholePng(string path, string context)
+    {
+        byte[] signature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        byte[] iend = [0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82];
+        byte[] bytes = File.ReadAllBytes(path);
+        Assert.True(bytes.Length > signature.Length + iend.Length, $"{path} holds {bytes.Length} bytes: {context}");
+        Assert.True(bytes.AsSpan(0, signature.Length).SequenceEqual(signature), $"{path} does not start as a PNG: {context}");
+        Assert.True(bytes.AsSpan(bytes.Length - iend.Length).SequenceEqual(iend), $"{path} does not end with IEND: {context}");
+    }
 
     /// <summary>Adds time_probe.tscn under the shared run's root as TimeProbe; InitializeAsync has already reset the run.</summary>
     private Task<string> AddTimeProbeAsync(CancellationToken cancellationToken) =>

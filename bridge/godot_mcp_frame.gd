@@ -21,6 +21,19 @@ const HEADLESS_WARNING := (
 	"a headless game draws no frames, so no screenshot was taken; read state with "
 	+ "get_game_state, get_ui_elements or run_script, or run the scene windowed."
 )
+## The most frame saves encoding off the main thread at once (save_screenshot_off_thread): an
+## image of a 1920 x 1080 frame holds 8 MB, so past this a due frame is saved on the main thread.
+## The server's MaxCaptureSavesInFlight (RuntimeTools.Frames.cs) holds the same value and sizes
+## the reply's allowance by it.
+const MAX_SAVES_IN_FLIGHT := 8
+
+## The saves handed to the WorkerThreadPool and not yet waited, in the order they started, each
+## {task, path, outcome: [Error]}. A finished task keeps its Callable, and so its image, until it
+## is waited, so each is waited as soon as it is seen finished (saves_in_flight).
+var _saves: Array[Dictionary] = []
+## The message of the first save a waited task reports failed since finish_saves last answered,
+## or "".
+var _save_failure: String = ""
 
 
 ## Whether the game runs on the headless display server, which draws no frames: it reports that
@@ -123,6 +136,91 @@ static func _rect_through(transform: Transform2D, rect: Rect2) -> Rect2i:
 ## previewHeight]}, or a String saying why it could not: on a headless game, with no image,
 ## HEADLESS_REFUSAL.
 func save_screenshot(image: Image, params: Dictionary) -> Variant:
+	var prepared: Variant = _prepare_screenshot(image, params, "")
+	if prepared is String:
+		return prepared
+	return _write_screenshot(prepared, params)
+
+
+## Saves image, the frame of this process frame, as save_screenshot does with no preview, its file
+## named for the frame too (<stamp>-<pid>-<frame>.png), so two frames saved in one millisecond
+## never share a path. While fewer than MAX_SAVES_IN_FLIGHT saves run, it only crops and names the
+## file here and hands the PNG's encode and write to a WorkerThreadPool task, which finish_saves
+## collects; at the cap it saves here. Returns {path, width, height}, the file still being written
+## when a task has it, or a String as save_screenshot.
+func save_screenshot_off_thread(image: Image, params: Dictionary) -> Variant:
+	var tag: String = "-%d" % Engine.get_process_frames()
+	var prepared: Variant = _prepare_screenshot(image, params, tag)
+	if prepared is String:
+		return prepared
+	if saves_in_flight() >= MAX_SAVES_IN_FLIGHT:
+		return _write_screenshot(prepared, params)
+	var outcome: Array[Error] = [OK]
+	var encode: Callable = _encode.bind(prepared["image"], prepared["path"], outcome)
+	var task: int = WorkerThreadPool.add_task(encode, false, "godot-mcp frame save")
+	_saves.append({"task": task, "path": prepared["path"], "outcome": outcome})
+	return _saved(prepared)
+
+
+## How many saves save_screenshot_off_thread started are still encoding or writing. Each one
+## found finished is waited here and dropped, freeing its image, its failure kept for
+## finish_saves.
+func saves_in_flight() -> int:
+	var running: Array[Dictionary] = []
+	for save: Dictionary in _saves:
+		if WorkerThreadPool.is_task_completed(save["task"]):
+			_collect(save)
+		else:
+			running.append(save)
+	_saves = running
+	return _saves.size()
+
+
+## Waits for every save save_screenshot_off_thread started, the main thread running a frame
+## between checks while this node is in the tree (blocking outside it), and collects each task.
+## Returns the message of the first save that failed, in the order they started, or "".
+func finish_saves() -> String:
+	while is_inside_tree() and saves_in_flight() > 0:
+		await get_tree().process_frame
+	wait_saves()
+	var failed: String = _save_failure
+	_save_failure = ""
+	return failed
+
+
+## Blocks until every save task still running has ended and collects each, keeping the first
+## failure for finish_saves: every task must be waited (doc/classes/WorkerThreadPool.xml L72 in
+## 4.7.2), and one still running when the game quits can crash its exit.
+func wait_saves() -> void:
+	for save: Dictionary in _saves:
+		_collect(save)
+	_saves.clear()
+
+
+## What a failed save of path answers.
+static func save_failure(path: String, error: Error) -> String:
+	return "saving %s failed: %s" % [path, error_string(error)]
+
+
+## No save task outlives this node: leaving the tree, as the game's quit makes it, or being freed
+## waits for each.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_EXIT_TREE or what == NOTIFICATION_PREDELETE:
+		wait_saves()
+
+
+## Waits a save's task, which frees it and its image, and keeps its failure when it is the first.
+func _collect(save: Dictionary) -> void:
+	WorkerThreadPool.wait_for_task_completion(save["task"])
+	var error: Error = save["outcome"][0]
+	if error != OK and _save_failure.is_empty():
+		_save_failure = save_failure(save["path"], error)
+
+
+## image cropped as params.crop asks and the path its PNG goes to, its folder made, the file
+## named <stamp>-<pid><tag>.png: {image, path}, or a String saying why not, as save_screenshot
+## answers it.
+func _prepare_screenshot(image: Image, params: Dictionary, tag: String) -> Variant:
 	if image == null:
 		return HEADLESS_REFUSAL if is_headless() else NO_IMAGE
 	if params.get("crop") is Dictionary:
@@ -133,19 +231,36 @@ func save_screenshot(image: Image, params: Dictionary) -> Variant:
 	var directory: String = ProjectSettings.globalize_path(SCREENSHOT_DIR)
 	DirAccess.make_dir_recursive_absolute(directory)
 	# The process id keeps two games on one project from writing one file in the same millisecond.
-	var file_name: String = "%s-%d.png" % [_utc_stamp(), OS.get_process_id()]
-	var path: String = directory.path_join(file_name)
+	var file_name: String = "%s-%d%s.png" % [_utc_stamp(), OS.get_process_id(), tag]
+	return {"image": image, "path": directory.path_join(file_name)}
+
+
+## Encodes and writes prepared's image as a PNG at its path, and its preview when params asks one,
+## as save_screenshot does.
+func _write_screenshot(prepared: Dictionary, params: Dictionary) -> Variant:
+	var image: Image = prepared["image"]
+	var path: String = prepared["path"]
 	var error: Error = image.save_png(path)
 	if error != OK:
-		return "saving %s failed: %s" % [path, error_string(error)]
-	var result: Dictionary = {
-		"path": path, "width": image.get_width(), "height": image.get_height()
-	}
+		return save_failure(path, error)
+	var result: Dictionary = _saved(prepared)
 	var preview_max_width: int = int(params.get("previewMaxWidth", 0))
 	error = save_preview(image, path.get_basename() + "_preview.png", preview_max_width, result)
 	if error != OK:
 		return "saving the preview of %s failed: %s" % [path, error_string(error)]
 	return result
+
+
+## A save's {path, width, height} from _prepare_screenshot's result.
+static func _saved(prepared: Dictionary) -> Dictionary:
+	var image: Image = prepared["image"]
+	return {"path": prepared["path"], "width": image.get_width(), "height": image.get_height()}
+
+
+## A save task's work, on a worker thread: image encoded and written as a PNG at path, its Error
+## put in outcome[0], which the main thread reads only once the task is waited.
+static func _encode(image: Image, path: String, outcome: Array[Error]) -> void:
+	outcome[0] = image.save_png(path)
 
 
 ## The part of image, a frame of the root viewport, inside the crop {x, y, width, height}, or a

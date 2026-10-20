@@ -426,8 +426,10 @@ func _end_connection() -> void:
 		_quit(tree)
 
 
-## Ends the game as its own quit does, running its exit work; the unit tests replace it.
+## Ends the game as its own quit does, running its exit work, once every frame save still
+## encoding on a worker has ended; the unit tests replace it.
 func _quit(tree: SceneTree) -> void:
+	_frame.wait_saves()
 	tree.quit()
 
 
@@ -747,7 +749,7 @@ func _handle_shutdown(id: int, _params: Dictionary) -> void:
 	_capture.flush()
 	_reply_ok(id, {})
 	await get_tree().process_frame
-	get_tree().quit()
+	_quit(get_tree())
 
 
 ## Saves the next drawn frame of the root viewport as the frame module's save_screenshot does;

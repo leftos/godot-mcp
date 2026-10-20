@@ -180,14 +180,16 @@ func _next(source: Signal) -> bool:
 ## the sum of each process frame's delta, which Engine.time_scale already scales, so the points
 ## follow the game's timers; a frame that finds the tree paused adds nothing, as it stops them.
 ## A point is due in the first frame whose sum reaches it; that frame is grabbed once at its
-## frame_post_draw and saved as take_screenshot saves it (params.crop, no preview), and every point
-## due in it shares the file. With params.call {node, method, args}, the method is called in the
-## clock's first frame (_call_once), so the points count from its entry. With params.start, a
-## wait condition, the clock starts in the frame it is met instead (_capture_from_start). Returns
-## {result: frames_result}, with call: {value} when the method was called and start when given,
-## stopped with the points missed when the deadline (params.deadlineMs, or params.backstopMs), a
-## cancel or the start's timeout ends it first, or {error} when it cannot start, the start's
-## condition or then fails, the call fails or a frame cannot be saved, or on a headless game.
+## frame_post_draw and saved as take_screenshot saves it (params.crop, no preview), its PNG encoded
+## off the main thread (save_screenshot_off_thread) and written before the reply however the
+## capture ends, and every point due in it shares the file. With params.call {node, method,
+## args}, the method is called in the clock's first frame (_call_once), so the points count from
+## its entry. With params.start, a wait condition, the clock starts in the frame it is met instead
+## (_capture_from_start). Returns {result: frames_result}, with call: {value} when the method was
+## called and start when given, stopped with the points missed when the deadline
+## (params.deadlineMs, or params.backstopMs), a cancel or the start's timeout ends it first, or
+## {error} when it cannot start, the start's condition or then fails, the call fails or a frame
+## cannot be saved, or on a headless game.
 func capture_frames(params: Dictionary) -> Dictionary:
 	var refusal: String = bridge._frame.headless_refusal()
 	if refusal.is_empty():
@@ -201,9 +203,13 @@ func capture_frames(params: Dictionary) -> Dictionary:
 	var called: Dictionary = {}
 	var start: Dictionary = {}
 	var taken: Variant = await _capture_from_start(points, params, called, start)
+	# However the capture ended, every frame a worker encodes is written before the reply.
+	var unsaved: String = await bridge._frame.finish_saves()
 	_end(deadline)
 	if taken is String:
 		return {"error": taken}
+	if not unsaved.is_empty():
+		return {"error": unsaved}
 	var result: Dictionary = frames_result(points, taken)
 	if not called.is_empty():
 		result["call"] = called
@@ -334,7 +340,8 @@ func _take_due(points: Array, params: Dictionary, clock: Dictionary, entries: Ar
 		return true
 	if not await _next(RenderingServer.frame_post_draw):
 		return false
-	var saved: Variant = bridge._frame.save_screenshot(bridge._frame.grab_frame(), params)
+	var frame: Image = bridge._frame.grab_frame()
+	var saved: Variant = bridge._frame.save_screenshot_off_thread(frame, params)
 	if saved is String:
 		return saved
 	entries.append_array(frame_entries(due, saved, Engine.get_process_frames(), elapsed))

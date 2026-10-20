@@ -23,8 +23,17 @@ internal sealed partial class RuntimeTools
     // A point k x every counts as within for when it passes it by no more than this, so every 0.1 for 0.3 takes 0.3 as a point.
     private const double CapturePointTolerance = 1e-9;
 
+    // The most captured frames the bridge encodes off its main thread at once: MAX_SAVES_IN_FLIGHT in bridge/godot_mcp_frame.gd,
+    // which must hold the same value.
+    internal const int MaxCaptureSavesInFlight = 8;
+
     // The default allowance on top of the last point's game time: the time to reach the first frame and save the files.
     private static readonly TimeSpan CaptureBaseAllowance = TimeSpan.FromSeconds(10);
+
+    // How long the reply may take after the release: a wait's reply allowance, plus 2 s for each frame the bridge may still be
+    // encoding then (MaxCaptureSavesInFlight), since it writes every one before it answers. A property, since the order of static
+    // initializers across a partial class's files is undefined.
+    internal static TimeSpan CaptureReplyAllowance => WaitReplyAllowance + (TimeSpan.FromSeconds(2) * MaxCaptureSavesInFlight);
 
     [McpServerTool(Name = "capture_frames", ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
@@ -76,10 +85,16 @@ internal sealed partial class RuntimeTools
         TimeSpan allowance = CaptureAllowance(points, options?.TimeoutMs, options?.Start);
         JsonObject parameters = BuildCaptureParameters(points, allowance, options);
         await PrepareGameToolCallsAsync("capture_frames", parameters, session, cancellationToken);
-        BridgeCall call = new("capture_frames", "frames", parameters, allowance + WaitReplyAllowance, allowance);
-        BridgeResult result = await CallWithErrorsAsync(Find(session), call, cancellationToken);
+        BridgeResult result = await CallWithErrorsAsync(Find(session), CaptureCall(parameters, allowance), cancellationToken);
         return ErrorReport.AddTo(CompactFrames(CaptureReply(result)), result.Errors).ToJsonString();
     }
+
+    /// <summary>
+    /// The bridge call of a capture that may run for <paramref name="allowance"/>: released (cancelled) then, and answered within
+    /// <see cref="CaptureReplyAllowance"/> after, the frames still encoding included.
+    /// </summary>
+    internal static BridgeCall CaptureCall(JsonObject parameters, TimeSpan allowance) =>
+        new("capture_frames", "frames", parameters, allowance + CaptureReplyAllowance, allowance);
 
     /// <summary>A copy of the bridge's capture_frames reply, with the values of its call, its start's call and its start's then.call cut.</summary>
     /// <exception cref="McpException">The reply is not an object.</exception>
