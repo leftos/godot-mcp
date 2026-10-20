@@ -43,6 +43,24 @@ public sealed class ErrorReportTests
     }
 
     [Fact]
+    public void AddToWritesTheShapedErrorsAndTheOmittedCount()
+    {
+        ErrorEntry[] errors =
+        [
+            Entry(1, "boom", 5),
+            .. Enumerable.Range(2, 22).Select(index => Entry(index, $"error {index}", index)),
+            Entry(24, "boom", 5),
+        ];
+
+        (JsonArray shown, int omitted) = ErrorReport.Shape(errors);
+        JsonObject added = ErrorReport.AddTo([], errors);
+
+        Assert.Equal(3, omitted);
+        Assert.Equal(2, shown[0]!["count"]!.GetValue<int>());
+        Assert.Equal(new JsonObject { ["errors"] = shown, ["errorsOmitted"] = omitted }.ToJsonString(), added.ToJsonString());
+    }
+
+    [Fact]
     public void LongMessagesAreCutAndEmptyFieldsLeftOut()
     {
         ErrorEntry error = new(9, ErrorFeed.ErrorType, new string('m', 2500), string.Empty, 0, string.Empty, [], string.Empty);

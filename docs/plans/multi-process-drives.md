@@ -4,7 +4,7 @@ Design for Linear GMCP-47, "Drives across several processes" (project "Ideas fro
 
 The survey's nearest idea is 18, network conditions between instances ([survey](../research/2026-09-29-godot-mcp-survey.md) L184-187), which this design does not adopt (section 5). Section 7's questions are ruled; the step 1 spike's results are in section 2.
 
-Status: steps 1 to 6 are done; steps 7 to 10 are not built, and GMCP-47 is in the vNext release.
+Status: steps 1 to 7 are done; steps 8 to 10 are not built, and GMCP-47 is in the vNext release.
 
 ## 1. Need
 
@@ -192,6 +192,18 @@ The feeds of every session a batch names are marked at its start (`MarkErrorFeed
 
 `no_errors` takes `sessions: "all"` (every session the batch names) or a list, beside today's default of its own session. A tool called outside a batch is unchanged: the batch is what says which sessions belong together.
 
+**Step 7's rulings** (from its map, `.tmp/map-gmcp47-step7.md` at the time):
+
+- **"While that step ran"** is a contiguous cursor per session, kept apart from the `no_errors` marks. Each error shows on at most one entry: the first step to end after it arrived. One gap remains: an error in the next step's own session that lands between this step's cursor read and the next step's call mark is consumed and shown nowhere (a short window; closing it means giving the tool the batch's mark, GMCP-211). An error that lands after the last step is caught only by a final `no_errors {sessions: "all"}`.
+- **Parallel groups**: the group entry carries `errorsElsewhere` for the batch's sessions that no member addresses, and for each member's session the errors outside that member's own call (each member's feed range is taken around its call). A cancelled member's session counts as not addressed. Members carry none, because their own results hold their call's `errors`.
+- **Marks stay one per session.** `no_errors {sessions}` replaces the step's own session. `"all"` means every session another step of the batch addresses, except process sessions; a pass with `sessions` lists the names it checked (`{errors: 0, sessions: [...]}`), in name order. `session` and `sessions` together are refused. The single-session failure text is unchanged.
+- **Process sessions** have no error feed. They never appear in `errorsElsewhere`, `"all"` skips them, and naming one in `sessions` is refused.
+- **The `sessions` shape** is `"all"` or a non-empty list of distinct session names. It is refused on any step but `no_errors`, tool steps included. An unknown name fails at batch start, as `no_errors`'s own session does today.
+- **Size**: there is no new budget. Each session is shaped by `ErrorReport`'s collapse and 20-cap, and the omitted count goes in a sibling `errorsElsewhereOmitted: {"<session>": n}`.
+- **A session restarted mid-batch** keeps its feed and its numbering (`restart_project` restarts the same session), so its cursor carries on. A session relaunched under the same name is a new session the batch does not follow.
+- **Failed steps** carry `errorsElsewhere`. Cancelled group members do not.
+- **Marking**: only the sessions the batch names are marked. A one-session batch never has an `errorsElsewhere`. Marking resolves sessions with process sessions allowed and never throws for a step whose session is absent: that step still fails as a step.
+
 ### F. One clock for every process (question 8)
 
 The **drive clock** is the server's `Stopwatch`, in milliseconds since the server started, to 0.1 ms. Each game session keeps a **clock offset**: the bridge's hello and every `pong` add `ticksUsec` (`Time.get_ticks_usec()` when the bridge handled it); for each ping the server knows its send time `S` and receipt time `R`, so the offset lies in `[S - t, R - t]`, and the session keeps the tightest bounds seen (the largest lower, the smallest upper).
@@ -246,7 +258,7 @@ Each step lands with its tests, docs (TOOLS.md, SKILL.md, ARCHITECTURE.md, READM
 4. **Done: process sessions** (part B, start and stop): `ProjectProfile` `processes` (strict parse; `ProjectProfileTests`), `RuntimeTools`-free `ProcessTools.cs` (`run_process`), `Session/ProcessSession.cs` (a `GodotSession` kind with no bridge, or a sibling the registry lists), the kill-on-close job, `list_sessions` kind, `stop_project`, `get_debug_output`, the runtime-tool refusal; unit `RunProcessValidationTests`; itest `ProcessSessionTests` (a new class in the `sessions` group) with a `pwsh -NoProfile -File ticker.ps1` fixture process under InputProbe printing a line a second and starting a child; `McpServerSmokeTests` and `ToolClassesTests` counts.
 5. **Done: process sessions** (ready and restart): `ready` at launch and from the call, the exit-before-ready and timeout refusals, `restart_project` on a process session; tests in `ProcessSessionTests` (a ticker that never prints the line, one that exits 1).
 6. **Done: parallel groups** (part D; 6a, the groups; 6b, `{uiChanged: "now"}`, whose UI change in the itest is the NetProbe guest's hidden `Flash` label appearing for one frame, since the UI snapshot compares visible Controls, not label text): `BatchStep.Parallel`, the checks (`BatchValidationTests`: sizes, one session twice, nesting), the run (members started in order, the cancel on a failure), entries and `failedAt.member`, `startMs`/`endMs` and `startedAt` from the drive clock; `{uiChanged: "now"}` in `godot_mcp_conditions.gd` with a gdtest in `tests/bridge/`; the run in `BatchDispatchTests`, and itest in `MultiSessionTests` (a failing member cancelling a 10 s wait; the NetProbe guest's one-frame label armed before the host's click). Two commits, 6a and 6b (part D's rulings).
-7. **Errors elsewhere** (part E): `MarkErrorFeeds` over every named session, `errorsElsewhere` on entries, `no_errors {sessions}`; unit tests on the shaping; itest in `MultiSessionTests` (a host click whose message makes the guest `push_error`).
+7. **Done: errors elsewhere** (part E): `MarkErrorFeeds` over every named session, `errorsElsewhere` on entries, `no_errors {sessions}`; unit tests on the shaping; itest in `MultiSessionTests` (a host click whose message makes the guest `push_error`).
 8. **The drive clock** (part F, without the watch): `ticksUsec` on the hello and `pong`, `SessionClock` (bounds, the five pings, `clockErrorMs`), `metAt` on `wait_for`, `at` on output waits; unit `SessionClockTests` (bounds from fake send and receive times); gdtest for the pong; itest in `MultiSessionTests` (a host click's `startMs` before the guest's `metAt`, the gap under 500 ms).
 9. **The watch on the drive clock**, once GMCP-19's step 2 has landed and question 8 is ruled: the fourth point element and `clockErrorMs` in the `Watch` module and `WatchTimeline.cs`; tests in `WatchTimelineTests` and `WatchTests`.
 10. **After the release that carries them**: delve's DEVELOPMENT.md L65 (server start and stop), L67 (the second player), L71 (the swap to `Connecting`) and L107 (a second client as a session) rewritten through `godot-mcp-docs-sync`, and a `processes` entry for its server suggested to its plan; the rulings move into DECISIONS.md (amending decision 11, and decision 29 if question 8 is (a)) and this file is archived.

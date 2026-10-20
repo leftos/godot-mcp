@@ -26,6 +26,22 @@ internal static class ErrorReport
             return result;
         }
 
+        (JsonArray shown, int omitted) = Shape(errors);
+        result["errors"] = shown;
+        if (omitted > 0)
+        {
+            result["errorsOmitted"] = omitted;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// The errors as a result's <c>errors</c> array shows them, identical ones collapsed with a count, at most
+    /// <see cref="MaxPerResult"/>, and how many collapsed errors did not fit.
+    /// </summary>
+    public static (JsonArray Errors, int Omitted) Shape(IReadOnlyList<ErrorEntry> errors)
+    {
         List<Collapsed> collapsed = Collapse(errors);
         JsonArray shown = [];
         foreach (Collapsed error in collapsed.Take(MaxPerResult))
@@ -39,13 +55,7 @@ internal static class ErrorReport
             shown.Add(item);
         }
 
-        result["errors"] = shown;
-        if (collapsed.Count > MaxPerResult)
-        {
-            result["errorsOmitted"] = collapsed.Count - MaxPerResult;
-        }
-
-        return result;
+        return (shown, Math.Max(0, collapsed.Count - MaxPerResult));
     }
 
     /// <summary>One entry as a result shows it, {seq, type?, message, file, line, function, engine, stack}, leaving out empty fields.</summary>

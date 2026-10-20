@@ -58,7 +58,7 @@ public sealed class MultiSessionTests : IAsyncDisposable
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         int port = FreePort();
 
-        await _harness.Sessions.LaunchAsync(HostRequest(port), "host", cancellation);
+        await _harness.Sessions.LaunchAsync(HostRequest(port, faults: false), "host", cancellation);
         LaunchResult guest = await _harness.Sessions.LaunchAsync(GuestRequest(port), "guest", cancellation);
         JsonObject joined = await JoinedAsync(cancellation);
         JsonObject connected = await HostConnectedAsync(cancellation);
@@ -87,7 +87,7 @@ public sealed class MultiSessionTests : IAsyncDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         int port = FreePort();
-        await _harness.Sessions.LaunchAsync(HostRequest(port), "host", cancellation);
+        await _harness.Sessions.LaunchAsync(HostRequest(port, faults: false), "host", cancellation);
         await _harness.Sessions.LaunchAsync(GuestRequest(port), "guest", cancellation);
         JsonObject joined = await JoinedAsync(cancellation);
         JsonObject connected = await HostConnectedAsync(cancellation);
@@ -165,10 +165,68 @@ public sealed class MultiSessionTests : IAsyncDisposable
         Assert.Contains(NoUiBaseline, refused["steps"]![0]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
     }
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AGuestsErrorShowsElsewhereOnAHostStepAndFailsNoErrorsOverAllSessions()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        int port = FreePort();
+        await _harness.Sessions.LaunchAsync(HostRequest(port, faults: true), "host", cancellation);
+        await _harness.Sessions.LaunchAsync(GuestRequest(port), "guest", cancellation);
+        JsonObject joined = await JoinedAsync(cancellation);
+        JsonObject connected = await HostConnectedAsync(cancellation);
+        BatchStep acked = new(
+            Assert: "wait",
+            Node: "NetProbe",
+            Property: "acked_count",
+            EqualsValue: JsonSerializer.SerializeToElement(1),
+            Session: "host"
+        );
+        // The guest's check, before the click, names the guest in the batch, so its feed is marked and "all" covers it, while
+        // every step from the click to the final check is a host step.
+        BatchStep guestJoined = new(
+            Assert: "property",
+            Node: "NetProbe",
+            Property: "connected",
+            EqualsValue: JsonSerializer.SerializeToElement(true),
+            Session: "guest"
+        );
+        BatchStep settled = new(Assert: "wait", Frames: 2, Session: "host");
+        BatchStep all = new(Assert: "no_errors", Sessions: JsonSerializer.SerializeToElement("all"));
+
+        JsonObject batch = JsonNode
+            .Parse(await _tools.BatchDriveAsync([guestJoined, HostClick("Send"), acked, settled, all], _server, cancellationToken: cancellation))!
+            .AsObject();
+        await _harness.Sessions.StopAsync("host", cancellation);
+        await _harness.Sessions.StopAsync("guest", cancellation);
+
+        Assert.True(joined["met"]!.GetValue<bool>(), joined.ToJsonString());
+        Assert.True(connected["met"]!.GetValue<bool>(), connected.ToJsonString());
+        JsonArray steps = batch["steps"]!.AsArray();
+        // The guest writes the error to its socket before the ack to the host's, but the server reads each socket on its own
+        // loop, so on a busy machine the error can reach it after the last host step: it then shows on no host entry, and the
+        // final no_errors, which reads the marks rather than the cursors, is the one place left that must name it.
+        JsonObject[] carrying =
+        [
+            .. steps.Skip(1).Take(3).Select(entry => entry!.AsObject()).Where(entry => entry["errorsElsewhere"]?["guest"] is not null),
+        ];
+        Assert.True(carrying.Length <= 1, batch.ToJsonString());
+        foreach (JsonObject shown in carrying)
+        {
+            Assert.Contains("net_probe: fault 1", shown["errorsElsewhere"]!["guest"]!.ToJsonString(), StringComparison.Ordinal);
+        }
+
+        Assert.True(steps[2]!["ok"]!.GetValue<bool>(), batch.ToJsonString());
+        Assert.False(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        Assert.Equal(4, batch["failedAt"]!["index"]!.GetValue<int>());
+        string reason = batch["failedAt"]!["reason"]!.GetValue<string>();
+        Assert.StartsWith("session 'guest' raised ", reason, StringComparison.Ordinal);
+        Assert.Contains("net_probe: fault 1 at ", reason, StringComparison.Ordinal);
+    }
+
     private async Task<(JsonObject Joined, JsonObject Connected)> LaunchPairAsync(CancellationToken cancellation)
     {
         int port = FreePort();
-        await _harness.Sessions.LaunchAsync(HostRequest(port), "host", cancellation);
+        await _harness.Sessions.LaunchAsync(HostRequest(port, faults: false), "host", cancellation);
         await _harness.Sessions.LaunchAsync(GuestRequest(port), "guest", cancellation);
         return (await JoinedAsync(cancellation), await HostConnectedAsync(cancellation));
     }
@@ -191,8 +249,17 @@ public sealed class MultiSessionTests : IAsyncDisposable
         return port;
     }
 
-    private LaunchRequest HostRequest(int port) =>
-        new(_probe.Directory, NetProbe, [], [$"--net-host={port}"], Quiet: true, ShutOutRealGamepads: false, Prepare: true);
+    /// <summary>The host's launch; with <paramref name="faults"/>, each Send makes the guest raise an error and acknowledge it.</summary>
+    private LaunchRequest HostRequest(int port, bool faults) =>
+        new(
+            _probe.Directory,
+            NetProbe,
+            [],
+            faults ? [$"--net-host={port}", "--net-fault"] : [$"--net-host={port}"],
+            Quiet: true,
+            ShutOutRealGamepads: false,
+            Prepare: true
+        );
 
     private LaunchRequest GuestRequest(int port) =>
         new(

@@ -635,6 +635,87 @@ public sealed class BatchValidationTests : IDisposable
         Assert.Equal("step 1: the fired assertion takes node, signal and equals; got output.", refused.Message);
     }
 
+    [Theory]
+    [InlineData("\"some\"")]
+    [InlineData("[1]")]
+    [InlineData("[\"\"]")]
+    [InlineData("5")]
+    public async Task ANoErrorsSessionsThatIsNotAllOrAListOfNamesIsRefused(string sessionsJson)
+    {
+        McpException refused = await RefusedAsync([NoErrors(sessionsJson)]);
+
+        Assert.Equal($"step 0: sessions takes \"all\" or a list of session names; got {sessionsJson}.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AnEmptyNoErrorsSessionsIsRefused()
+    {
+        McpException refused = await RefusedAsync([NoErrors("[]")]);
+
+        Assert.Equal("step 0: sessions is empty; name at least one session, or give \"all\".", refused.Message);
+    }
+
+    [Fact]
+    public async Task ANoErrorsSessionsNamingASessionTwiceIsRefused()
+    {
+        McpException refused = await RefusedAsync([NoErrors("[\"host\", \"guest\", \"host\"]")]);
+
+        Assert.Equal("step 0: sessions names 'host' twice.", refused.Message);
+    }
+
+    [Fact]
+    public async Task SessionsOnAnotherAssertionIsRefused()
+    {
+        BatchStep wait = new(Assert: "wait", GameMs: 500, Sessions: JsonSerializer.SerializeToElement("all"));
+
+        McpException refused = await RefusedAsync([wait]);
+
+        Assert.Equal("step 0: the wait assertion does not take sessions; only no_errors does.", refused.Message);
+    }
+
+    [Fact]
+    public async Task ANoErrorsSessionsNamingAProcessSessionIsRefusedAsTheBatchStarts()
+    {
+        await _sessions.ReserveProcessAsync("server", AppContext.BaseDirectory, defaultName: false);
+
+        McpException refused = await RefusedAsync([NoErrors("[\"server\"]")]);
+
+        Assert.Equal("step 0: " + GodotSession.ProcessRefusal("server", "a process"), refused.Message);
+    }
+
+    [Fact]
+    public async Task ANoErrorsWithBothSessionAndSessionsIsRefused()
+    {
+        BatchStep both = NoErrors("[\"guest\"]") with { Session = "host" };
+
+        McpException refused = await RefusedAsync([both]);
+
+        Assert.Equal("step 0: no_errors takes session or sessions, not both; sessions replaces its own session.", refused.Message);
+    }
+
+    [Fact]
+    public async Task SessionsOnAToolStepIsRefused()
+    {
+        BatchStep click = new(Tool: "click", Sessions: JsonSerializer.SerializeToElement(5));
+
+        McpException refused = await RefusedAsync([new BatchStep(Assert: "no_errors"), click]);
+
+        Assert.Equal("step 1: a tool step does not take sessions; only no_errors does.", refused.Message);
+    }
+
+    [Fact]
+    public async Task SessionsOnAToolMemberIsRefused()
+    {
+        BatchStep click = new(Tool: "click", Session: "b", Sessions: JsonSerializer.SerializeToElement("all"));
+
+        McpException refused = await RefusedAsync([new BatchStep(Parallel: [Click("a"), click])]);
+
+        Assert.Equal("step 0: parallel step 1: a tool step does not take sessions; only no_errors does.", refused.Message);
+    }
+
+    private static BatchStep NoErrors(string sessionsJson) =>
+        new(Assert: "no_errors", Sessions: JsonSerializer.Deserialize<JsonElement>(sessionsJson));
+
     private Task<McpException> RefusedAsync(BatchStep[] steps, string? session = null) =>
         Assert.ThrowsAsync<McpException>(() => _tools.BatchDriveAsync(steps, null!, session, TestContext.Current.CancellationToken));
 }

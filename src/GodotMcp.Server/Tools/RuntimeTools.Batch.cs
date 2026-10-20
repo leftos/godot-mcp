@@ -47,7 +47,7 @@ internal sealed partial class RuntimeTools
         ),
         ["state"] = new("node, state and equals", HasStateFields, CheckWaitAssertion, (tools, call) => tools.AssertWaitAsync(call)),
         ["wait"] = new("a wait_for condition", _ => true, CheckWaitAssertion, (tools, call) => tools.AssertWaitAsync(call)),
-        ["no_errors"] = new("nothing", _ => true, _ => { }, (tools, call) => Task.FromResult(tools.AssertNoErrors(call))),
+        ["no_errors"] = new("nothing", _ => true, CheckNoErrorsSessions, (tools, call) => Task.FromResult(tools.AssertNoErrors(call))),
         ["screenshot"] = new(
             "name",
             step => !string.IsNullOrEmpty(step.Name),
@@ -93,6 +93,7 @@ internal sealed partial class RuntimeTools
         ("output", step => step.Output is not null),
         ("stream", step => step.Stream is not null),
         ("after", step => step.After is not null),
+        ("sessions", step => step.Sessions is not null),
     ];
 
     /// <summary>The fields a fired assertion takes, or that a step of any kind may carry.</summary>
@@ -114,15 +115,21 @@ internal sealed partial class RuntimeTools
             + "all three, timeoutMs defaults to 0: checked once, now, even while paused), wait {any wait_for condition, gameMs "
             + "and frames included, "
             + "timeoutMs?} (default 10000; gameMs + 10000 for gameMs, 10 s + 100 ms a frame for frames, 10 s + 100 ms for each "
-            + "of the stable + 1 frames a settled wait reads), no_errors {} (no "
-            + "errors since the previous no_errors, or since the batch started), screenshot {name, "
+            + "of the stable + 1 frames a settled wait reads), no_errors {sessions?} (no "
+            + "errors since the previous no_errors, or since the batch started, in its session, or in each of sessions: \"all\" "
+            + "for every session another step of the batch addresses, except process sessions, or a list of names, in place of "
+            + "session; with sessions, a pass is {errors: 0, sessions: [names checked]}), screenshot {name, "
             + "tolerance?, maxChangedRatio?} (compare_screenshot must match), fired {node, signal, equals?} (the nearest "
             + "earlier tool step's fired list has that node's signal, with those arguments when equals is given). Any tool or "
             + "assertion step may carry session. At most 100 steps; "
             + "the whole batch stops after 300 s of load-adjusted time. Returns {passed, steps: [{index, tool or assert, ok, result or error}], "
             + "failedAt?: {index, reason}}. A step may be {parallel: [steps]} (see the step's parallel field); a group's entry is "
             + "{index, parallel: true, ok, startMs, endMs, members: [entries]} and failedAt.member names the member that failed. The "
-            + "result's startedAt and every entry's startMs and endMs are drive-clock milliseconds since the server started."
+            + "result's startedAt and every entry's startMs and endMs are drive-clock milliseconds since the server started. A "
+            + "top-level entry also carries errorsElsewhere: {session: [errors]}, the errors the batch's other sessions raised "
+            + "since the entry before it ended (for a group, every session's but those raised during the call of the member that "
+            + "addresses it, a cancelled member's session counting as not addressed; members carry none), at most 20 "
+            + "a session, then errorsElsewhereOmitted: {session: n}; both are left out when there are none."
     )]
     public async Task<string> BatchDriveAsync(
         [Description("The steps, in order: {tool, args, session?} or {assert, …, session?} or {parallel: [steps]}; 1 to 100 of them.")]
@@ -148,7 +155,9 @@ internal sealed partial class RuntimeTools
         }
 
         using LoadDeadline deadline = sessions.Clock.Start(BatchDeadline, cancellationToken);
-        BatchRun run = new(server, session, MarkErrorFeeds(steps, session), deadline);
+        Dictionary<GodotSession, long> marks = MarkErrorFeeds(steps, session);
+        ErrorCursors elsewhere = new([.. marks.Select(mark => (mark.Key.Name, Feed: mark.Key.Errors, Mark: mark.Value))]);
+        BatchRun run = new(server, session, marks, elsewhere, deadline);
         JsonArray entries = [];
         JsonObject? failedAt = null;
         for (int index = 0; index < steps.Count && failedAt is null; index++)
@@ -186,7 +195,9 @@ internal sealed partial class RuntimeTools
         double endMs = DriveClock.NowMs;
         RecordToolStep(run, index, step, outcome);
         JsonObject? failedAt = outcome.Ok ? null : new JsonObject { ["index"] = index, ["reason"] = outcome.Error };
-        return (outcome.ToEntry(index, step, startMs, endMs), failedAt);
+        JsonObject entry = outcome.ToEntry(index, step, startMs, endMs);
+        run.Elsewhere.AddTo(entry, AddressedSessions(step, run));
+        return (entry, failedAt);
     }
 
     /// <summary>
@@ -221,6 +232,7 @@ internal sealed partial class RuntimeTools
             ["endMs"] = DriveClock.NowMs,
             ["members"] = new JsonArray(entries),
         };
+        run.Elsewhere.AddTo(entry, group.Calls());
         JsonObject? failedAt = group.Failure is { } failure
             ? new JsonObject
             {
@@ -242,12 +254,18 @@ internal sealed partial class RuntimeTools
         double startMs = DriveClock.NowMs;
         try
         {
+            MemberCall call = new(ResolvedSession(MemberSession(step, group.Run.Session)));
             StepOutcome? outcome = await RunMemberStepAsync(group, step);
+            call.End();
             bool cancelled = group.Judge(member, outcome, group.Cancel.IsCancellationRequested);
             double endMs = DriveClock.NowMs;
-            return cancelled || outcome is null
-                ? CancelledEntry(member, step, MemberSession(step, group.Run.Session), watch.Sent, startMs, endMs)
-                : outcome.ToEntry(member, step, startMs, endMs);
+            if (cancelled || outcome is null)
+            {
+                return CancelledEntry(member, step, MemberSession(step, group.Run.Session), watch.Sent, startMs, endMs);
+            }
+
+            group.Called(call);
+            return outcome.ToEntry(member, step, startMs, endMs);
         }
         catch (Exception)
         {
@@ -366,11 +384,14 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>The name of the session <paramref name="session"/> resolves to; null when it resolves to none.</summary>
-    private string? ResolvedName(string? session)
+    private string? ResolvedName(string? session) => ResolvedSession(session)?.Name;
+
+    /// <summary>The session <paramref name="session"/> resolves to, a process session included; null when it resolves to none.</summary>
+    private GodotSession? ResolvedSession(string? session)
     {
         try
         {
-            return sessions.Resolve(session, allowProcess: true).Name;
+            return sessions.Resolve(session, allowProcess: true);
         }
         catch (SessionException)
         {
@@ -460,7 +481,7 @@ internal sealed partial class RuntimeTools
         }
         else if (step.Tool is not null)
         {
-            CheckToolStep(at, step.Tool);
+            CheckToolStep(at, step);
         }
         else
         {
@@ -471,14 +492,19 @@ internal sealed partial class RuntimeTools
     private static int KindsGiven(BatchStep step) =>
         (step.Tool is not null ? 1 : 0) + (step.Assert is not null ? 1 : 0) + (step.Parallel is not null ? 1 : 0);
 
-    private static void CheckToolStep(string at, string tool)
+    private static void CheckToolStep(string at, BatchStep step)
     {
-        if (!BatchableTools.Contains(tool))
+        if (!BatchableTools.Contains(step.Tool!))
         {
             throw new McpException(
-                $"{at}: '{tool}' cannot run in a batch; a tool step names a runtime tool, one of: "
+                $"{at}: '{step.Tool}' cannot run in a batch; a tool step names a runtime tool, one of: "
                     + $"{string.Join(", ", BatchableTools.Order(StringComparer.Ordinal))}."
             );
+        }
+
+        if (step.Sessions is not null)
+        {
+            throw new McpException($"{at}: a tool step does not take sessions; only no_errors does.");
         }
     }
 
@@ -534,6 +560,7 @@ internal sealed partial class RuntimeTools
             throw new McpException($"{at}: the {step.Assert} assertion needs {kind.Needs}.");
         }
 
+        CheckSessionsField(at, step);
         try
         {
             kind.Check(step);
@@ -543,6 +570,63 @@ internal sealed partial class RuntimeTools
             throw new McpException($"{at}: {e.Message}", e);
         }
     }
+
+    /// <summary>Refuses sessions on any assertion but no_errors, the one kind that checks several sessions.</summary>
+    private static void CheckSessionsField(string at, BatchStep step)
+    {
+        if (step.Sessions is not null && step.Assert != "no_errors")
+        {
+            throw new McpException($"{at}: the {step.Assert} assertion does not take sessions; only no_errors does.");
+        }
+    }
+
+    /// <summary>Refuses a no_errors assertion's sessions that is neither "all" nor a non-empty list of distinct session names.</summary>
+    private static void CheckNoErrorsSessions(BatchStep step)
+    {
+        if (step.Sessions is not { } given)
+        {
+            return;
+        }
+
+        if (step.Session is not null)
+        {
+            throw new McpException("no_errors takes session or sessions, not both; sessions replaces its own session.");
+        }
+
+        if (!IsAllSessions(step))
+        {
+            CheckSessionList(step, given);
+        }
+    }
+
+    /// <summary>Refuses a sessions list that is not a non-empty list of distinct session names.</summary>
+    private static void CheckSessionList(BatchStep step, JsonElement given)
+    {
+        if (given.ValueKind != JsonValueKind.Array || !given.EnumerateArray().All(IsSessionName))
+        {
+            throw new McpException($"sessions takes \"all\" or a list of session names; got {given.GetRawText()}.");
+        }
+
+        if (given.GetArrayLength() == 0)
+        {
+            throw new McpException("sessions is empty; name at least one session, or give \"all\".");
+        }
+
+        string? twice = ListedSessions(step)!.GroupBy(name => name, StringComparer.Ordinal).FirstOrDefault(names => names.Count() > 1)?.Key;
+        if (twice is not null)
+        {
+            throw new McpException($"sessions names '{twice}' twice.");
+        }
+    }
+
+    private static bool IsSessionName(JsonElement element) => element.ValueKind == JsonValueKind.String && element.GetString() is { Length: > 0 };
+
+    /// <summary>Whether the step's sessions is "all".</summary>
+    private static bool IsAllSessions(BatchStep step) => step.Sessions is { ValueKind: JsonValueKind.String } given && given.GetString() == "all";
+
+    /// <summary>The session names the step's sessions lists; null when it gives none or "all".</summary>
+    private static string?[]? ListedSessions(BatchStep step) =>
+        step.Sessions is { ValueKind: JsonValueKind.Array } given ? [.. given.EnumerateArray().Select(name => name.GetString()!)] : null;
 
     private static bool HasPropertyFields(BatchStep step) =>
         !string.IsNullOrEmpty(step.Node) && !string.IsNullOrEmpty(step.Property) && step.EqualsValue is { ValueKind: not JsonValueKind.Null };
@@ -650,29 +734,70 @@ internal sealed partial class RuntimeTools
     internal static string? EffectiveSession(BatchStep step, string? session) =>
         step.Args?["session"] is { } named && named.GetValueKind() == JsonValueKind.String ? named.GetValue<string>() : step.Session ?? session;
 
-    /// <summary>Marks the error feed of every session a no_errors step addresses, so its first check counts from here.</summary>
+    /// <summary>
+    /// Marks the error feed of every session the batch names but process sessions, which have none: each step's and each group
+    /// member's, as <see cref="MemberSession"/> reads it, and each a no_errors step checks, so the first check and the first
+    /// entry count from here. A no_errors step's sessions must resolve; any other step's that resolves to none is passed over,
+    /// as its own call refuses it when it runs.
+    /// </summary>
+    /// <exception cref="McpException">A session a no_errors step checks resolves to none, or to a process; the refusal names the step.</exception>
     private Dictionary<GodotSession, long> MarkErrorFeeds(IReadOnlyList<BatchStep> steps, string? session)
     {
         Dictionary<GodotSession, long> marks = [];
         for (int index = 0; index < steps.Count; index++)
         {
-            if (steps[index].Assert != "no_errors")
+            GodotSession[] named =
+                steps[index].Assert == "no_errors"
+                    ? NoErrorsSessionsAtStart(steps[index], index, session)
+                    :
+                    [
+                        .. (steps[index].Parallel ?? [steps[index]])
+                            .Select(member => ResolvedSession(MemberSession(member, session)))
+                            .OfType<GodotSession>(),
+                    ];
+            foreach (GodotSession target in named.Where(target => target.Kind != SessionKind.Process))
             {
-                continue;
-            }
-
-            try
-            {
-                GodotSession target = Find(steps[index].Session ?? session);
                 marks.TryAdd(target, target.Errors.Mark());
-            }
-            catch (McpException e)
-            {
-                throw new McpException($"step {index}: {e.Message}", e);
             }
         }
 
         return marks;
+    }
+
+    /// <summary>The sessions a no_errors step lists, else its own; none for "all", which reads the sessions the other steps name.</summary>
+    /// <exception cref="McpException">One resolves to none, or to a process; the refusal names the step.</exception>
+    private GodotSession[] NoErrorsSessionsAtStart(BatchStep step, int index, string? session)
+    {
+        if (IsAllSessions(step))
+        {
+            return [];
+        }
+
+        try
+        {
+            return [.. (ListedSessions(step) ?? [step.Session ?? session]).Select(name => Find(name))];
+        }
+        catch (McpException e)
+        {
+            throw new McpException($"step {index}: {e.Message}", e);
+        }
+    }
+
+    /// <summary>
+    /// The sessions a step that is not a group addresses, whose errors its entry's errorsElsewhere leaves out whole: a
+    /// no_errors step's sessions, else the step's own; those that resolve to none are left out.
+    /// </summary>
+    private Dictionary<string, SeqRange> AddressedSessions(BatchStep step, BatchRun run)
+    {
+        IEnumerable<string?> named =
+            step.Assert != "no_errors" ? [MemberSession(step, run.Session)]
+            : IsAllSessions(step) ? run.Elsewhere.Names
+            : ListedSessions(step) ?? [MemberSession(step, run.Session)];
+        return named
+            .Select(ResolvedName)
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToDictionary(name => name, _ => SeqRange.All, StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -796,18 +921,56 @@ internal sealed partial class RuntimeTools
         return $"within {timeoutMs} ms (load-adjusted; {wall} s of wall time)";
     }
 
+    /// <summary>
+    /// The no_errors assertion: no errors in each session it checks since that session's mark, the batch's start or the
+    /// previous no_errors that checked it; each mark checked moves to now.
+    /// </summary>
     private StepOutcome AssertNoErrors(AssertionCall call)
     {
-        GodotSession target = Find(call.Session);
-        long mark = call.Run.Marks[target];
-        long now = target.Errors.Mark();
-        ErrorEntry[] errors = [.. target.Errors.ErrorsSince(mark).Where(entry => entry.Seq <= now)];
-        call.Run.Marks[target] = now;
-        return errors.Length == 0
-            ? StepOutcome.Passed(new JsonObject { ["errors"] = 0 })
-            : StepOutcome.Failed(
-                $"the game raised {errors.Length} error(s) since the batch started or its previous no_errors:\n{ErrorReport.Summarise(errors)}"
-            );
+        GodotSession[] targets = NoErrorsTargets(call);
+        List<(string Session, ErrorEntry[] Errors)> raised = [];
+        foreach (GodotSession target in targets)
+        {
+            long mark = call.Run.Marks[target];
+            long now = target.Errors.Mark();
+            ErrorEntry[] errors = [.. target.Errors.ErrorsSince(mark).Where(entry => entry.Seq <= now)];
+            call.Run.Marks[target] = now;
+            if (errors.Length > 0)
+            {
+                raised.Add((target.Name, errors));
+            }
+        }
+
+        if (raised.Count == 0)
+        {
+            JsonObject passed = new() { ["errors"] = 0 };
+            if (call.Step.Sessions is not null)
+            {
+                passed["sessions"] = new JsonArray([.. targets.Select(target => JsonValue.Create(target.Name))]);
+            }
+
+            return StepOutcome.Passed(passed);
+        }
+
+        return StepOutcome.Failed(
+            targets.Length == 1
+                ? $"the game raised {raised[0].Errors.Length} error(s) since the batch started or its previous no_errors:\n"
+                    + ErrorReport.Summarise(raised[0].Errors)
+                : string.Join('\n', raised.Select(session => SessionErrorsText(session.Session, session.Errors)))
+        );
+    }
+
+    /// <summary>One session's part of a failed no_errors that checks several.</summary>
+    private static string SessionErrorsText(string session, ErrorEntry[] errors) =>
+        $"session '{session}' raised {errors.Length} error(s) since the batch started or its previous no_errors:\n{ErrorReport.Summarise(errors)}";
+
+    /// <summary>The sessions a no_errors step checks, by name: every one the batch marked for "all", else those it lists, else its own.</summary>
+    private GodotSession[] NoErrorsTargets(AssertionCall call)
+    {
+        IEnumerable<GodotSession> targets = IsAllSessions(call.Step)
+            ? call.Run.Marks.Keys
+            : (ListedSessions(call.Step) ?? [call.Session]).Select(name => Find(name));
+        return [.. targets.OrderBy(target => target.Name, StringComparer.Ordinal)];
     }
 
     private async Task<StepOutcome> AssertScreenshotAsync(AssertionCall call)
@@ -967,8 +1130,17 @@ internal sealed partial class RuntimeTools
         }
     }
 
-    /// <summary>What a batch run carries from step to step: the server, the default session, the error marks and the deadline.</summary>
-    private sealed record BatchRun(McpServer Server, string? Session, Dictionary<GodotSession, long> Marks, LoadDeadline Deadline)
+    /// <summary>
+    /// What a batch run carries from step to step: the server, the default session, the no_errors marks, the errorsElsewhere
+    /// cursors and the deadline.
+    /// </summary>
+    private sealed record BatchRun(
+        McpServer Server,
+        string? Session,
+        Dictionary<GodotSession, long> Marks,
+        ErrorCursors Elsewhere,
+        LoadDeadline Deadline
+    )
     {
         /// <summary>
         /// Cancelled when the batch's deadline passes or the client cancels the call; in a group's members, also when the
@@ -978,6 +1150,108 @@ internal sealed partial class RuntimeTools
 
         /// <summary>The nearest earlier tool step's index, tool and result, whose fired list a fired assertion checks.</summary>
         public (int Index, string Tool, JsonObject? Result)? LastTool { get; set; }
+    }
+
+    /// <summary>
+    /// A batch's errorsElsewhere cursors: per session, by name, the last error sequence number an entry has read, kept apart
+    /// from the no_errors marks so that neither takes errors from the other. Each error shows on one entry at most, the first
+    /// to end after the server received it, unless that entry's step addressed its session when it was raised.
+    /// </summary>
+    private sealed class ErrorCursors
+    {
+        private readonly Cursor[] _cursors;
+
+        /// <param name="marks">Each session's name, error feed and the mark its cursor starts from.</param>
+        public ErrorCursors(IReadOnlyList<(string Name, ErrorFeed Feed, long Mark)> marks)
+        {
+            _cursors = [.. marks.OrderBy(mark => mark.Name, StringComparer.Ordinal).Select(mark => new Cursor(mark.Name, mark.Feed, mark.Mark))];
+            Names = _cursors.Select(cursor => cursor.Name).ToFrozenSet(StringComparer.Ordinal);
+        }
+
+        /// <summary>The sessions' names.</summary>
+        public IReadOnlySet<string> Names { get; }
+
+        /// <summary>
+        /// Adds errorsElsewhere, and errorsElsewhereOmitted when a session's errors did not all fit, to <paramref name="entry"/>
+        /// for the errors each session raised since its cursor but those in its range in <paramref name="addressed"/>, and moves
+        /// every cursor to its feed's current mark. With none, the entry is left as it is.
+        /// </summary>
+        public void AddTo(JsonObject entry, IReadOnlyDictionary<string, SeqRange> addressed)
+        {
+            JsonObject errors = [];
+            JsonObject omitted = [];
+            foreach (Cursor cursor in _cursors)
+            {
+                SeqRange skipped = addressed.GetValueOrDefault(cursor.Name, SeqRange.None);
+                ErrorEntry[] raised = [.. cursor.Advance().Where(error => !skipped.Holds(error.Seq))];
+                if (raised.Length == 0)
+                {
+                    continue;
+                }
+
+                (JsonArray shown, int left) = ErrorReport.Shape(raised);
+                errors[cursor.Name] = shown;
+                if (left > 0)
+                {
+                    omitted[cursor.Name] = left;
+                }
+            }
+
+            if (errors.Count > 0)
+            {
+                entry["errorsElsewhere"] = errors;
+            }
+
+            if (omitted.Count > 0)
+            {
+                entry["errorsElsewhereOmitted"] = omitted;
+            }
+        }
+
+        /// <summary>One session's cursor over its error feed.</summary>
+        private sealed class Cursor(string name, ErrorFeed feed, long seq)
+        {
+            public string Name => name;
+
+            /// <summary>The errors raised after the cursor, up to the feed's current mark, to which the cursor then moves.</summary>
+            public ErrorEntry[] Advance()
+            {
+                long now = feed.Mark();
+                long from = seq;
+                seq = now;
+                return [.. feed.ErrorsSince(from).Where(entry => entry.Seq <= now)];
+            }
+        }
+    }
+
+    /// <summary>The error sequence numbers after <paramref name="After"/> up to <paramref name="Upto"/>.</summary>
+    private readonly record struct SeqRange(long After, long Upto)
+    {
+        /// <summary>Every sequence number: a session a step addressed throughout.</summary>
+        public static SeqRange All => new(long.MinValue, long.MaxValue);
+
+        /// <summary>No sequence number: a session no step addressed.</summary>
+        public static SeqRange None => new(0, 0);
+
+        public bool Holds(long seq) => seq > After && seq <= Upto;
+    }
+
+    /// <summary>
+    /// A group member's call on its session's error feed: the marks just before and just after it, so the group's entry leaves
+    /// out only the errors the member's own result covers.
+    /// </summary>
+    private sealed class MemberCall(GodotSession? session)
+    {
+        private readonly long _before = session?.Errors.Mark() ?? 0;
+        private long _after;
+
+        /// <summary>The session's name; null when the member's session resolved to none.</summary>
+        public string? Session => session?.Name;
+
+        public SeqRange Range => new(_before, _after);
+
+        /// <summary>Takes the mark just after the call.</summary>
+        public void End() => _after = session?.Errors.Mark() ?? 0;
     }
 
     /// <summary>One assertion step as it runs: the step, its index, the session it addresses, and its batch.</summary>
@@ -1062,8 +1336,33 @@ internal sealed partial class RuntimeTools
 
         public CancellationToken ClientCancellation => clientCancellation;
 
+        private readonly Dictionary<string, SeqRange> _calls = new(StringComparer.Ordinal);
+
         /// <summary>The first member to fail and its reason; null while none has.</summary>
         public (int Member, string Reason)? Failure { get; private set; }
+
+        /// <summary>Keeps the call of a member that ended with its own outcome; a cancelled member's session counts as unaddressed.</summary>
+        public void Called(MemberCall call)
+        {
+            if (call.Session is not { } name)
+            {
+                return;
+            }
+
+            lock (_lock)
+            {
+                _calls[name] = call.Range;
+            }
+        }
+
+        /// <summary>Each member session's call range, by session name, for the members that ended with their own outcome.</summary>
+        public Dictionary<string, SeqRange> Calls()
+        {
+            lock (_lock)
+            {
+                return new Dictionary<string, SeqRange>(_calls, StringComparer.Ordinal);
+            }
+        }
 
         /// <summary>
         /// Takes a member's outcome as it ends: the first failure becomes the group's and cancels the members still running.

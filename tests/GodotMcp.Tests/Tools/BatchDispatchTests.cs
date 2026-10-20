@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Server.Wire;
+using GodotMcp.TestSupport;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -22,6 +23,7 @@ public sealed class BatchDispatchTests : IAsyncDisposable
     private readonly SessionRegistry _sessions;
     private readonly RuntimeTools _tools;
     private readonly ServiceProvider _services;
+    private readonly TempDirectory _temp = new();
 
     public BatchDispatchTests()
     {
@@ -40,6 +42,7 @@ public sealed class BatchDispatchTests : IAsyncDisposable
         await _services.DisposeAsync();
         _sessions.Dispose();
         _listener.Dispose();
+        _temp.Dispose();
     }
 
     [Fact]
@@ -398,6 +401,281 @@ public sealed class BatchDispatchTests : IAsyncDisposable
             }
         );
     }
+
+    [Fact(Timeout = HangGuardMs)]
+    public async Task EachErrorElsewhereShowsOnExactlyOneEntry()
+    {
+        GodotSession a = Session();
+        GodotSession b = Session();
+        Raise(b, "before the batch");
+        int clicks = 0;
+        await using McpServer server = FakeServer(
+            Fake(
+                "click",
+                _ =>
+                {
+                    clicks++;
+                    Raise(a, $"own {clicks}");
+                    Raise(b, $"raised by click {clicks}");
+                    return Task.FromResult("{}");
+                }
+            ),
+            Fake("hover", _ => Task.FromResult("{}"))
+        );
+
+        JsonObject batch = await BatchAsync(
+            server,
+            TestContext.Current.CancellationToken,
+            Step("click", a.Name),
+            Step("click", a.Name),
+            Step("hover", b.Name)
+        );
+
+        JsonArray steps = batch["steps"]!.AsArray();
+        Assert.Equal(["raised by click 1"], Messages(steps[0], b.Name));
+        Assert.Equal(["raised by click 2"], Messages(steps[1], b.Name));
+        Assert.Single(steps[0]!["errorsElsewhere"]!.AsObject());
+        Assert.Single(steps[1]!["errorsElsewhere"]!.AsObject());
+        Assert.False(steps[2]!.AsObject().ContainsKey("errorsElsewhere"), batch.ToJsonString());
+    }
+
+    [Fact(Timeout = HangGuardMs)]
+    public async Task AGroupEntryCarriesEveryErrorOutsideTheCallOfTheMemberAddressingItsSessionAndItsMembersNone()
+    {
+        GodotSession a = Session();
+        GodotSession b = Session();
+        GodotSession c = Session();
+        await using McpServer server = FakeServer(
+            // hover writes no request, so click starts only once hover's member has ended and its call's end is marked.
+            Fake(
+                "hover",
+                _ =>
+                {
+                    Raise(b, "inside its member's call");
+                    return Task.FromResult("{}");
+                }
+            ),
+            Fake(
+                "click",
+                _ =>
+                {
+                    Raise(b, "after its member ended");
+                    Raise(c, "in no member's session");
+                    return Task.FromResult("{}");
+                }
+            ),
+            Fake("scroll", _ => Task.FromResult("{}"))
+        );
+
+        JsonObject batch = await BatchAsync(
+            server,
+            TestContext.Current.CancellationToken,
+            new BatchStep(Parallel: [Step("hover", b.Name), Step("click", a.Name)]),
+            Step("scroll", c.Name)
+        );
+
+        JsonObject group = batch["steps"]![0]!.AsObject();
+        Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        Assert.Equal(["after its member ended"], Messages(group, b.Name));
+        Assert.Equal(["in no member's session"], Messages(group, c.Name));
+        Assert.Equal([b.Name, c.Name], group["errorsElsewhere"]!.AsObject().Select(session => session.Key));
+        Assert.All(group["members"]!.AsArray(), member => Assert.False(member!.AsObject().ContainsKey("errorsElsewhere"), batch.ToJsonString()));
+        Assert.False(batch["steps"]![1]!.AsObject().ContainsKey("errorsElsewhere"), batch.ToJsonString());
+    }
+
+    [Fact(Timeout = HangGuardMs)]
+    public async Task ACancelledMembersSessionCountsAsNotAddressed()
+    {
+        GodotSession a = Session();
+        GodotSession b = Session();
+        await using McpServer server = FakeServer(
+            Fake(
+                "click",
+                async cancellationToken =>
+                {
+                    Raise(a, "raised in the cancelled member's call");
+                    WriteWatch.Written();
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                    return "{}";
+                }
+            ),
+            Fake("hover", _ => throw new McpException("the fake hover failed"))
+        );
+
+        JsonObject batch = await BatchAsync(
+            server,
+            TestContext.Current.CancellationToken,
+            new BatchStep(Parallel: [Step("click", a.Name), Step("hover", b.Name)])
+        );
+
+        JsonObject group = batch["steps"]![0]!.AsObject();
+        Assert.True(group["members"]![0]!["cancelled"]!.GetValue<bool>(), batch.ToJsonString());
+        Assert.Equal(["raised in the cancelled member's call"], Messages(group, a.Name));
+    }
+
+    [Fact(Timeout = HangGuardMs)]
+    public async Task ACancelledMemberCarriesNoErrorsElsewhere()
+    {
+        GodotSession a = Session();
+        GodotSession b = Session();
+        GodotSession c = Session();
+        await using McpServer server = FakeServer(
+            Fake(
+                "click",
+                async cancellationToken =>
+                {
+                    WriteWatch.Written();
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                    return "{}";
+                }
+            ),
+            Fake(
+                "hover",
+                _ =>
+                {
+                    Raise(c, "raised as the group failed");
+                    throw new McpException("the fake hover failed");
+                }
+            )
+        );
+
+        JsonObject batch = await BatchAsync(
+            server,
+            TestContext.Current.CancellationToken,
+            new BatchStep(Parallel: [Step("click", a.Name), Step("hover", b.Name)]),
+            Step("hover", c.Name)
+        );
+
+        JsonObject group = batch["steps"]![0]!.AsObject();
+        JsonObject cancelled = group["members"]![0]!.AsObject();
+        Assert.True(cancelled["cancelled"]!.GetValue<bool>(), batch.ToJsonString());
+        Assert.False(cancelled.ContainsKey("errorsElsewhere"), batch.ToJsonString());
+        Assert.Equal(["raised as the group failed"], Messages(group, c.Name));
+    }
+
+    [Fact(Timeout = HangGuardMs)]
+    public async Task AOneSessionBatchNeverCarriesErrorsElsewhere()
+    {
+        GodotSession a = Session();
+        GodotSession unnamed = Session();
+        await using McpServer server = FakeServer(
+            Fake(
+                "click",
+                _ =>
+                {
+                    Raise(a, "in the batch's session");
+                    Raise(unnamed, "in a session the batch does not name");
+                    return Task.FromResult("{}");
+                }
+            ),
+            Fake("hover", _ => Task.FromResult("{}"))
+        );
+
+        JsonObject batch = await BatchAsync(server, TestContext.Current.CancellationToken, Step("click", a.Name), Step("hover", a.Name));
+
+        Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        Assert.All(batch["steps"]!.AsArray(), entry => Assert.False(entry!.AsObject().ContainsKey("errorsElsewhere"), batch.ToJsonString()));
+    }
+
+    [Fact(Timeout = HangGuardMs)]
+    public async Task ErrorsElsewherePastTwentyASessionAreCountedAsOmitted()
+    {
+        GodotSession a = Session();
+        GodotSession b = Session();
+        await using McpServer server = FakeServer(
+            Fake(
+                "click",
+                _ =>
+                {
+                    for (int error = 1; error <= 23; error++)
+                    {
+                        Raise(b, $"error {error}");
+                    }
+
+                    return Task.FromResult("{}");
+                }
+            ),
+            Fake("hover", _ => Task.FromResult("{}"))
+        );
+
+        JsonObject batch = await BatchAsync(server, TestContext.Current.CancellationToken, Step("click", a.Name), Step("hover", b.Name));
+
+        JsonObject entry = batch["steps"]![0]!.AsObject();
+        Assert.Equal(ErrorReport.MaxPerResult, entry["errorsElsewhere"]![b.Name]!.AsArray().Count);
+        Assert.Equal(3, entry["errorsElsewhereOmitted"]![b.Name]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = HangGuardMs)]
+    public async Task APassingNoErrorsOverAllSessionsListsTheSessionsItChecked()
+    {
+        GodotSession a = Session();
+        GodotSession b = Session();
+        await using McpServer server = FakeServer(Fake("click", _ => Task.FromResult("{}")), Fake("hover", _ => Task.FromResult("{}")));
+        BatchStep all = new(Assert: "no_errors", Sessions: JsonSerializer.SerializeToElement("all"));
+
+        JsonObject batch = await BatchAsync(server, TestContext.Current.CancellationToken, Step("hover", b.Name), Step("click", a.Name), all);
+
+        Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        Assert.Equal(
+            new JsonObject { ["errors"] = 0, ["sessions"] = new JsonArray(a.Name, b.Name) }.ToJsonString(),
+            batch["steps"]![2]!["result"]!.ToJsonString()
+        );
+    }
+
+    [Fact(Timeout = HangGuardMs)]
+    public async Task NoErrorsOverAllSessionsChecksEverySessionTheBatchNames()
+    {
+        GodotSession a = Session();
+        GodotSession b = Session();
+        GodotSession unnamed = Session();
+        await using McpServer server = FakeServer(
+            Fake(
+                "click",
+                _ =>
+                {
+                    Raise(a, "boom in a");
+                    Raise(b, "boom in b");
+                    Raise(unnamed, "boom in a session the batch does not name");
+                    return Task.FromResult("{}");
+                }
+            ),
+            Fake("hover", _ => Task.FromResult("{}"))
+        );
+        BatchStep all = new(Assert: "no_errors", Sessions: JsonSerializer.SerializeToElement("all"));
+
+        JsonObject batch = await BatchAsync(server, TestContext.Current.CancellationToken, Step("click", a.Name), Step("hover", b.Name), all);
+
+        string reason = batch["failedAt"]!["reason"]!.GetValue<string>();
+        Assert.Equal(2, batch["failedAt"]!["index"]!.GetValue<int>());
+        Assert.Contains(
+            $"session '{a.Name}' raised 1 error(s) since the batch started or its previous no_errors:\nboom in a at ",
+            reason,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            $"session '{b.Name}' raised 1 error(s) since the batch started or its previous no_errors:\nboom in b at ",
+            reason,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(unnamed.Name, reason, StringComparison.Ordinal);
+        Assert.False(batch["steps"]![2]!.AsObject().ContainsKey("errorsElsewhere"), batch.ToJsonString());
+    }
+
+    /// <summary>A pending session on the test's folder, whose error feed a test fills as a game would.</summary>
+    private GodotSession Session()
+    {
+        string project = _temp.Combine("game");
+        Directory.CreateDirectory(project);
+        return _sessions.ReservePreview(project);
+    }
+
+    private static void Raise(GodotSession session, string message) => session.Errors.Add([Error(message)], 0);
+
+    private static ErrorEntry Error(string message) => new(0, ErrorFeed.ErrorType, message, "res://x.gd", 1, "f", [], string.Empty);
+
+    /// <summary>The messages an entry's errorsElsewhere lists for a session.</summary>
+    private static string[] Messages(JsonNode? entry, string session) =>
+        [.. entry!["errorsElsewhere"]![session]!.AsArray().Select(error => error!["message"]!.GetValue<string>())];
 
     /// <summary>A guard against a group that never ends; a passing run never comes near it.</summary>
     private const int HangGuardMs = 120_000;

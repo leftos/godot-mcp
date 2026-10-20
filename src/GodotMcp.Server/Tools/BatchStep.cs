@@ -71,6 +71,11 @@ internal sealed record BatchStep(
     [property: Description("wait: scan only lines numbered after this one with output, 0 or more, as wait_for's condition.after.")]
         long? After = null,
     [property: Description(
+        "no_errors: the sessions it checks in place of its own: \"all\" for every session another step of the batch addresses, "
+            + "except process sessions, or a list of session names; not with session."
+    )]
+        JsonElement? Sessions = null,
+    [property: Description(
         "A parallel group in place of tool or assert: 2 to 8 tool or assertion steps (not fired or no_errors, not another group), "
             + "each on its own session, started in listed order, each once the one before has sent its request; the group ends when "
             + "all have answered, and a failed member cancels the others still running, whose entries say cancelled: true, with sent "
