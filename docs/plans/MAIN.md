@@ -20,6 +20,9 @@
 - [ ] GMCP-115 fired: a point click over a SubViewport listens on the container, not the inner Control
 - [ ] GMCP-197 Let a wait place a record mark in the frame it is met
 - [ ] GMCP-198 Say how frame_control pause interacts with SceneTreeTimer, or add a hold that stops them
+- [ ] GMCP-202 Prove WriteWatch.Unwatch: a unit test, the real run_csharp path, a scoped suspend
+- [ ] GMCP-207 Test a failing GetStepUntil call and rule a step that pauses the tree
+- [ ] GMCP-211 batch_drive: show errors raised between a step's cursor read and the next step's call
 
 ## Singles
 
@@ -84,12 +87,19 @@
 - [ ] GMCP-176 capture_frames: an edge start with a call is met in the call's own frame
 - [ ] GMCP-177 run_script: take a script path as well as inline source
 - [ ] GMCP-180 run_scratches: a per-scene steps map, and hidden steps marked in the step list
-- [ ] GMCP-181 run_scratches: wait for an awaited step to end instead of a fixed pace
 - [ ] GMCP-191 run_project: import an asset that has no .import file
 - [ ] GMCP-192 AccessKit: find and aim at a Control by its accessible name
 - [ ] GMCP-193 Capture an HDR 2D view, and resize an embedded game beside a CompositorEffect
 - [ ] GMCP-195 Record a cursor action log beside every clip
 - [ ] GMCP-199 run_scratches: a stale pace.steps key refuses the whole scene
+- [ ] GMCP-201 RealtimeRecordingTests: the deadline file write is denied under the routed full suite
+- [ ] GMCP-203 Load-proof ProcessSessionTests' restart test: its pid-file wait times out on a busy machine
+- [ ] GMCP-204 run_scratches until: clearer refusals for raw JSON errors, output/uiChanged kinds, and a paused tree
+- [ ] GMCP-205 Load-proof RealtimeSessionEndTests' helper-kill timing on the builder
+- [ ] GMCP-206 Bring the scratch itest group back under its 300 s ceiling
+- [ ] GMCP-208 Let the install stop running servers gracefully so background scratch runs end interrupted
+- [ ] GMCP-209 run_scratches details: a compact per-step form and a capped result
+- [ ] GMCP-210 Drop the itest build's --local once GATE-557 lands
 
 ## Docs
 
