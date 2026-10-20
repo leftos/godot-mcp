@@ -1,5 +1,5 @@
 $child = Join-Path $PSScriptRoot 'ticker-child.ps1'
-Start-Process pwsh -ArgumentList '-NoProfile', '-File', $child
+Start-Process pwsh -NoNewWindow -ArgumentList '-NoProfile', '-File', $child
 $line = 0
 while ($true) {
     $line++
