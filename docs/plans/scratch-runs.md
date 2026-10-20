@@ -33,7 +33,7 @@ From the map of `src/GodotMcp.Server/Session/ScratchRun.cs` and `Tools/ScratchTo
 - **A refused `until`** (a node or signal that does not exist, a malformed condition) turns the step red the same way, with `wait_for`'s own error: `step <i> '<name>': its until was refused: <wait_for's error>`.
 - **An answer that is neither a dictionary nor null** turns the step red the same way: `GetStepUntil(<i>) returned <value>, not a wait_for condition`.
 - **The pace after the last step is unchanged** (the full last pace, for late errors), and so is the scene's ceiling (a step's wait never passes its pace).
-- **The pace's clock**: for a step with an `until`, the pace is the wait's `timeoutMs`, counted as `wait_for` counts it; a paced step still waits its pace in game time.
+- **The pace's clock is game time for every step.** A step with an `until` ends when its condition holds or when the game time since `PlayStep` reaches the pace, whichever comes first: the runner passes the bridge an internal game-time limit beside the condition, and the bridge adds up frame deltas as a `gameMs` wait does. The wait's `timeoutMs` is the pace plus 10 s, as a paced step's wait has, a backstop only for a game whose clock stands still, answered with the paced wait's "clock stood still" error. A busy machine slows the game's clock with the step, so a step that fits its pace in game time stays green under load. The limit is not a public `wait_for` option.
 - **Result**: a step with an `until` carries `until: {met, elapsedMs, frames}` in `details` (the wait's own figures); its `gameMs` is left out. A paced step's entry is unchanged.
 
 ### B. Background runs (GMCP-200)
