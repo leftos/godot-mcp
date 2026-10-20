@@ -4,10 +4,6 @@
 
 ## Ideas from the survey and the projects
 
-- [ ] GMCP-43 Report the signals a gesture fired
-- [ ] GMCP-44 Step-until: frame_control until and input
-- [ ] GMCP-46 Audio tracks in the watch: voices and buses
-- [ ] GMCP-17 State digest: wait_for on a state key, then tell the game repos
 - [ ] GMCP-68 Adopt driving lessons from the sibling projects
   - [ ] GMCP-69 Probe h264_nvenc with a real 256x256 encode before cutting clips
   - [ ] GMCP-70 Give each launch a scratch user:// folder so drives never touch real saves
@@ -24,18 +20,15 @@
 - [ ] GMCP-211 batch_drive: show errors raised between a step's cursor read and the next step's call
 - [ ] GMCP-212 batch_drive's schema text promises metAt and clockErrorMs on every met wait
 - [ ] GMCP-213 Random-gap clock pings to tighten the drive clock over a long watch
+- [ ] GMCP-224 Watch a dialogue runner's autoload signals without naming each one
+- [ ] GMCP-225 Watch an interactive music stream's current clip, and per-channel bus peaks
 
 ## Singles
 
-- [ ] GMCP-92 capture_frames on a windowed run stretches each captured frame to ~140 ms
-- [ ] GMCP-65 hover: the per-frame re-pick hides whether the game re-picked the hover
-- [ ] GMCP-24 Fall back to a full save when a splice leaves two nodes one unique_id
-- [ ] GMCP-26 Give the bridge's mouse motions a velocity
+- [ ] GMCP-65 hover: the per-frame re-pick hides whether the game re-picked the hover · release vNext
 - [ ] GMCP-27 Find why CSharpStateTests' first get_game_state timed out cold
 - [ ] GMCP-32 Find which tests leak fixture folders in %TEMP%\godot-mcp-tests
-- [ ] GMCP-33 Make run.ps1 format exit 0 after a passing format
 - [ ] GMCP-34 Serve the cs_* tools and run_csharp from the cached helper copy
-- [ ] GMCP-35 Stop the state reads' walk once the value budget is spent
 - [ ] GMCP-36 Test wait_for on an ambiguous %Name and cut its per-frame tree walk
 - [ ] GMCP-37 Add Integration Footguns, Test locations and Deep docs to ARCHITECTURE.md
 - [ ] GMCP-38 Carry get_ui_elements rects out of SubViewports
@@ -47,7 +40,7 @@
 - [ ] GMCP-147 Load-proof the capture group's helper-exit and drag-clip itests
 - [ ] GMCP-174 move_node re-bases relative NodePaths and rewrites an untouched node's anchors
 - [ ] GMCP-175 cs_set refuses an enum by name: the value arrives JSON-quoted twice
-- [ ] GMCP-221 run_scratches keepGoing: starts the next step while an awaited step runs, and reports a thrown awaited step ok
+- [ ] GMCP-221 run_scratches keepGoing: starts the next step while an awaited step runs, and reports a thrown awaited step ok · release vNext
 - [ ] GMCP-218 run_scratches: let the caller set a per-scene ceiling
 - [ ] GMCP-220 get_debug_output: a run session keeps 500 lines and writes no full log
 - [ ] GMCP-219 run_process: a process's build runs outside the project's prepWrapper gate
@@ -107,6 +100,7 @@
 - [ ] GMCP-215 frame_control reads its saved image on a cancelled token, losing a step that ran
 - [ ] GMCP-216 A cancel mid-write may leave a partial frame on the bridge connection
 - [ ] GMCP-217 run.ps1: spell gated test commands so they route to the builder from a worktree
+- [ ] GMCP-226 Load-proof three tests that failed once under three test lanes
 
 ## Docs
 
