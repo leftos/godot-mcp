@@ -24,6 +24,7 @@
 - [ ] GMCP-207 Test a failing GetStepUntil call and rule a step that pauses the tree
 - [ ] GMCP-211 batch_drive: show errors raised between a step's cursor read and the next step's call
 - [ ] GMCP-212 batch_drive's schema text promises metAt and clockErrorMs on every met wait
+- [ ] GMCP-213 Random-gap clock pings to tighten the drive clock over a long watch
 
 ## Singles
 
@@ -101,6 +102,10 @@
 - [ ] GMCP-208 Let the install stop running servers gracefully so background scratch runs end interrupted
 - [ ] GMCP-209 run_scratches details: a compact per-step form and a capped result
 - [ ] GMCP-210 Drop the itest build's --local once GATE-557 lands
+- [ ] GMCP-214 run_scratches: a timeScale option that launches with --time-scale and scales pace and kill bounds
+- [ ] GMCP-215 frame_control reads its saved image on a cancelled token, losing a step that ran
+- [ ] GMCP-216 A cancel mid-write may leave a partial frame on the bridge connection
+- [ ] GMCP-217 run.ps1: spell gated test commands so they route to the builder from a worktree
 
 ## Docs
 
