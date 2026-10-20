@@ -4,7 +4,6 @@
 
 ## Ideas from the survey and the projects
 
-- [ ] GMCP-47 Drives across several processes · release vNext
 - [ ] GMCP-43 Report the signals a gesture fired
 - [ ] GMCP-44 Step-until: frame_control until and input
 - [ ] GMCP-46 Audio tracks in the watch: voices and buses
