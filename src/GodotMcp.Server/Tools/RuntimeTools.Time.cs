@@ -223,7 +223,9 @@ internal sealed partial class RuntimeTools
         JsonObject reply = WaitReply(result);
         CutMethodValue(reply["call"] as JsonObject);
         CutMethodValue((reply["then"] as JsonObject)?["call"] as JsonObject);
-        return await WithCaptureAsync(reply, reply, result.Errors, cancellationToken);
+        // The bridge already saved the screenshot, so its read is local and short: a cancel that landed during the extra clock
+        // ping must not lose a wait that met.
+        return await WithCaptureAsync(reply, reply, result.Errors, CancellationToken.None);
     }
 
     /// <summary>wait_for without a capture, answered as its JSON text: the form a batch step runs.</summary>
@@ -517,32 +519,40 @@ internal sealed partial class RuntimeTools
         TimeSpan release = WaitRelease(parameters, timeoutMs, target.ActiveRecording is not null);
         BridgeCall call = new("wait_for", "wait_for", parameters, release + WaitReplyAllowance, timeoutMs > 0 ? release : null);
         BridgeResult result = await CallWithErrorsAsync(target, call, cancellationToken);
-        StampMet(result.Reply as JsonObject, target.Clock);
+        if (result.Reply is JsonObject reply && TakeMetTick(reply) is { } ticksUsec)
+        {
+            SessionClock clock = await target.RefreshClockAsync(cancellationToken);
+            StampMet(reply, ticksUsec, clock);
+        }
+
         return result;
     }
 
     /// <summary>
-    /// A met wait's stamp: converts the bridge's <c>ticksUsec</c> through the session's clock into <c>metAt</c> (drive-clock
-    /// ms, 0.1 ms) and <c>clockErrorMs</c>, and drops the raw tick so it never reaches the client. A reply without a tick, a
-    /// wait that did not meet, and a session whose clock has no bounds yet each get no stamp; the tick is dropped either way.
+    /// Drops the bridge's <c>ticksUsec</c> from <paramref name="reply"/>, so a raw tick never reaches the client, and returns it
+    /// when the wait met and the tick parses; null for a wait that did not meet, a reply without a tick, and an unreadable one.
     /// </summary>
-    private static void StampMet(JsonObject? reply, SessionClock clock)
+    private static long? TakeMetTick(JsonObject reply)
     {
-        if (reply is null || !reply.Remove("ticksUsec", out JsonNode? tick))
+        if (!reply.Remove("ticksUsec", out JsonNode? tick))
         {
-            return;
+            return null;
         }
 
         if (reply["met"] is not JsonValue met || !met.TryGetValue(out bool isMet) || !isMet)
         {
-            return;
+            return null;
         }
 
-        if (HandshakeExpectation.ReadTicksUsec(tick) is not { } ticksUsec)
-        {
-            return;
-        }
+        return HandshakeExpectation.ReadTicksUsec(tick);
+    }
 
+    /// <summary>
+    /// A met wait's stamp: converts the bridge's tick through <paramref name="clock"/> into <c>metAt</c> (drive-clock ms,
+    /// 0.1 ms) and <c>clockErrorMs</c>; a clock with no bounds yet adds no stamp.
+    /// </summary>
+    private static void StampMet(JsonObject reply, long ticksUsec, SessionClock clock)
+    {
         if (!clock.TryToDriveMs(ticksUsec, out double driveMs, out double errorMs))
         {
             return;

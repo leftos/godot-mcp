@@ -57,7 +57,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     // answered or abandoned within ClockPingTimeout of wall time; the design's ~40 ms for all five.
     private static readonly TimeSpan ClockPingGap = TimeSpan.FromMilliseconds(7);
     private static readonly TimeSpan ClockPingTimeout = TimeSpan.FromMilliseconds(500);
-    private const int ClockPingCount = 5;
+    internal const int ClockPingCount = 5;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ILogger _logger = registry.Logger;
@@ -791,26 +791,73 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         await Task.WhenAll(pings);
     }
 
+    /// <summary>
+    /// Sends one more clock ping when the session's bounds are wider than 2 ms or missing, so a stamp converted next is as
+    /// precise as a pong can make it; returns at once while they are tight. A ping that times out or fails, one that
+    /// <paramref name="cancellationToken"/> cancels, and a session with no live connection, leave the bounds as they are, so
+    /// a result already in hand is never lost to the ping. Returns the clock it read on entry and fed, the one to convert on.
+    /// </summary>
+    internal async Task<SessionClock> RefreshClockAsync(CancellationToken cancellationToken)
+    {
+        SessionClock clock = _clock;
+        if (!clock.IsWide)
+        {
+            return clock;
+        }
+
+        BridgeConnection connection;
+        try
+        {
+            connection = FindLiveConnection();
+        }
+        catch (SessionException)
+        {
+            // No live connection, so nothing to ping: the stamp converts on the bounds the clock already has.
+            return clock;
+        }
+
+        try
+        {
+            await AddClockPingAsync(connection, clock, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The caller gave up during the ping, after its result arrived: the stamp converts on the bounds already held, and
+            // the caller's own cancellation handling decides what becomes of the result.
+        }
+
+        return clock;
+    }
+
     /// <summary>One handshake ping, sent once its gap from the handshake's start has passed, feeding the clock its pong.</summary>
     private static async Task PingClockAsync(BridgeConnection connection, SessionClock clock, long started, int index)
     {
+        TimeSpan due = ClockPingGap * index;
+        TimeSpan spent = Stopwatch.GetElapsedTime(started);
+        if (due > spent)
+        {
+            await Task.Delay(due - spent);
+        }
+
+        await AddClockPingAsync(connection, clock, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Sends one clock ping on the connection's raw path and adds its pong's bounds to <paramref name="clock"/>; a ping that
+    /// times out or fails leaves the bounds as they are.
+    /// </summary>
+    private static async Task AddClockPingAsync(BridgeConnection connection, SessionClock clock, CancellationToken cancellationToken)
+    {
         try
         {
-            TimeSpan due = ClockPingGap * index;
-            TimeSpan spent = Stopwatch.GetElapsedTime(started);
-            if (due > spent)
-            {
-                await Task.Delay(due - spent);
-            }
-
-            if (await connection.ClockPingAsync(ClockPingTimeout, CancellationToken.None) is { } sample)
+            if (await connection.ClockPingAsync(ClockPingTimeout, cancellationToken) is { } sample)
             {
                 clock.Add(sample.TicksUsec, sample.SentMs, sample.ReceivedMs);
             }
         }
         catch (TimeoutException)
         {
-            // A ping the game does not answer leaves the bounds to the pongs that do; the handshake is not failed for it.
+            // A ping the game does not answer leaves the bounds to the pongs that do; neither the handshake nor a stamp fails for it.
         }
         catch (Exception e) when (e is IOException or InvalidOperationException)
         {

@@ -14,31 +14,45 @@ namespace GodotMcp.Tests.Wire;
 internal sealed class FakeBridge : IDisposable
 {
     // The handshake's five clock pings, 7 ms apart from one start (design part F); the pump answers them without a test's
-    // help, and a later ping, a debugger's or a stop's, goes to the test as any other request does.
-    private const int HandshakePingCount = 5;
+    // help, and a later ping, a debugger's, a stop's or a stamp's extra one, goes to the test as any other request does.
+    // It is the server's own count of the same pings, so the two cannot drift apart.
+    private const int HandshakePingCount = GodotSession.ClockPingCount;
     private const int GracefulStopMs = 5_000;
     private readonly TcpClient _client;
     private readonly bool _answerPings;
+    private readonly TimeSpan _handshakePongDelay;
     private readonly FrameDecoder _frames = new();
     private readonly Channel<JsonObject> _requests = Channel.CreateUnbounded<JsonObject>();
     private readonly CancellationTokenSource _stopping = new();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
-    private Task _pump;
+    private readonly Task _pump;
     private int _disposed;
     private int _pingsAnswered;
+    private int _pingsSeen;
     private volatile bool _answerAllPings;
-    private volatile bool _sawNonPing;
+    private volatile bool _queuedAny;
 
     /// <summary>
     /// Stands in for a game's bridge on <paramref name="client"/>, already connected and, unless <paramref name="answerPings"/>
-    /// is false, answering the handshake's clock pings; the pump reads the server's requests from the moment it is made.
+    /// is false, answering the handshake's clock pings at once; the pump reads the server's requests from the moment it is made.
     /// </summary>
     public FakeBridge(TcpClient client, bool answerPings = true)
+        : this(client, answerPings, TimeSpan.Zero) { }
+
+    /// <summary>
+    /// Stands in for a game's bridge on <paramref name="client"/>, as the public constructor does, with each handshake pong held
+    /// back by <paramref name="handshakePongDelay"/>.
+    /// </summary>
+    private FakeBridge(TcpClient client, bool answerPings, TimeSpan handshakePongDelay)
     {
         _client = client;
         _answerPings = answerPings;
+        _handshakePongDelay = handshakePongDelay;
         _pump = Task.Run(PumpAsync);
     }
+
+    /// <summary>How many clock pings the server has sent: those the pump answered and those it queued for the test.</summary>
+    public int PingsSeen => Volatile.Read(ref _pingsSeen);
 
     /// <summary>
     /// Dials with a hello that carries no pid, no window handle and no ticks, as a bridge older than the fields does.
@@ -83,7 +97,7 @@ internal sealed class FakeBridge : IDisposable
         }
 
         await client.GetStream().WriteAsync(FrameCodec.EncodeJson(frame), cancellationToken);
-        return new FakeBridge(client, answerPings);
+        return new FakeBridge(client, answerPings, hello.HandshakePongDelay);
     }
 
     /// <summary>
@@ -96,7 +110,8 @@ internal sealed class FakeBridge : IDisposable
         _answerAllPings = true;
         try
         {
-            await Task.Delay(Timeout.InfiniteTimeSpan, stop.Token);
+            // The pump ends when the server closes the connection; the token ends the wait before that.
+            await _pump.WaitAsync(stop.Token);
         }
         catch (OperationCanceledException)
         {
@@ -219,11 +234,23 @@ internal sealed class FakeBridge : IDisposable
 
     private async Task HandleAsync(JsonObject frame)
     {
-        if (!IsPing(frame) || !IsHandshakePing())
+        bool isPing = IsPing(frame);
+        if (isPing)
         {
-            _sawNonPing = true;
+            Interlocked.Increment(ref _pingsSeen);
+        }
+
+        if (!isPing || !IsHandshakePing())
+        {
+            _queuedAny = true;
             _requests.Writer.TryWrite(frame);
             return;
+        }
+
+        if (_pingsAnswered < HandshakePingCount)
+        {
+            // Holding a handshake pong back widens the bounds it gives, as a game slow to answer does; later pongs are prompt.
+            await Task.Delay(_handshakePongDelay, _stopping.Token);
         }
 
         _pingsAnswered++;
@@ -231,14 +258,18 @@ internal sealed class FakeBridge : IDisposable
     }
 
     /// <summary>
-    /// Whether <paramref name="frame"/>'s ping is one of the handshake's: a test that asks for pongs answers later pings itself,
-    /// and a fake with <c>answerPings</c> false, one the server never handshakes, leaves every ping to its test.
+    /// Whether the fake answers a ping it reads now: every ping while <see cref="AnswerPingsOnlyAsync"/> runs, and otherwise
+    /// only the handshake's: the first <see cref="HandshakePingCount"/>, while the pump has queued no frame for the test (a
+    /// queued ping counts as such a frame). The rule rests on <c>StartClockAsync</c> being awaited inside the launch or attach
+    /// gate, so no other request reaches the fake before the handshake's pings do. A later ping, such as the extra one before
+    /// a stamp is converted, goes to the test unless it runs <see cref="AnswerPingsOnlyAsync"/>; a fake with
+    /// <c>answerPings</c> false, one the server never handshakes, leaves every ping to its test.
     /// </summary>
-    private bool IsHandshakePing() => _answerAllPings || (_answerPings && !_sawNonPing && _pingsAnswered < HandshakePingCount);
+    private bool IsHandshakePing() => _answerAllPings || (_answerPings && !_queuedAny && _pingsAnswered < HandshakePingCount);
 
     /// <summary>
-    /// The next request that is not one the pump answered, taking each frame the pump queued in order; a ping the pump left
-    /// behind before its handshake was done is answered here as a fallback.
+    /// The next request that is not one the pump answered, taking each frame the pump queued in order; a ping the pump queued
+    /// before the test started <see cref="AnswerPingsOnlyAsync"/> is answered here, without ticks, once it does.
     /// </summary>
     private async Task<JsonObject> ReadNextAsync(CancellationToken cancellationToken)
     {
@@ -282,10 +313,16 @@ internal sealed class FakeBridge : IDisposable
     private static bool IsPing(JsonObject request) => HandshakeExpectation.ReadString(request, "command") == "ping";
 }
 
-/// <summary>The pid and window handle a fake game's hello carries, each when it is not null.</summary>
+/// <summary>
+/// The pid and window handle a fake game's hello carries, each when it is not null, and how long the fake holds back each of
+/// its handshake pongs.
+/// </summary>
 internal sealed record FakeHello
 {
     public int? ProcessId { get; init; }
 
     public long? WindowHandle { get; init; }
+
+    /// <summary>How long each of the handshake's five pongs is held back; zero answers them at once.</summary>
+    public TimeSpan HandshakePongDelay { get; init; }
 }
