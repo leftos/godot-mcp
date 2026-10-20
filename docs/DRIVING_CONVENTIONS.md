@@ -173,12 +173,16 @@ Each part is set at launch, because later is too late: the engine creates its ma
 
 Windows clamps an off-screen initial position onto the primary screen and the window shows about 0.9 s after start, before any app code, and the console wrapper drops `STARTUPINFO`'s `SW_HIDE`.
 
-So on Windows a quiet run is started on a hidden desktop (`<station>\godot-mcp-<server pid>` in the server's own window station, `CreateProcessW` with `lpDesktop` naming that station: a child named on `WinSta0` from an ssh session or a service cannot start), where screenshots, input and recording all work (parking it off-screen from app code had left it visible about 300 ms at (0,0)).
+So on Windows a quiet run is started on a hidden desktop (`<station>\godot-mcp-<server pid>` in the server's own window station, `CreateProcessW` with `lpDesktop` naming that station: a child named on `WinSta0` from an ssh session or a service cannot start), where screenshots, input and recording all work (parking it off-screen from app code had left it visible about 300 ms at (0,0)). Another project hides its window with DWM cloaking set before the first show instead, exiting if the cloak fails so no uncloaked window reaches the desktop.
+
+On a shared desktop, "not activated" needs the window style: showing a window without activating it (`SW_SHOWNOACTIVATE`) leaves it activatable, so when the window in front of it is minimised Windows hands the foreground to the next top-level window in Z order, which can be the game; only `WS_EX_NOACTIVATE` stops that, and Godot's no-focus flag sets it.
+
+A window launched from a process that holds the foreground right (an agent's shell under the user's focused app) is created above every window and paints over the user's app while focus stays put, so a visible launch that must stay out of the way is moved to the bottom of the Z order: the integration harness restores the window with `SW_SHOWNOACTIVATE` and only then pushes it to `HWND_BOTTOM`, since pushing first left it on top in 1 run of 3.
 
 Audio is off through the dummy audio driver, never by muting the app's buses, so the app's own mute stays testable and nothing leaks into its saved settings. A hidden window kept VSync and drew at the monitor's 239 Hz, so a quiet run caps at 60 fps unless the project sets its own cap.
 
 Real input is kept out by the window never receiving it, not by swallowing it: an always-on swallow missed handlers that run before it and input polling, and killed input the app synthesises itself (on-screen keyboards, virtual cursors).
-Source: docs/DECISIONS.md:38-39, docs/DEVELOPMENT.md:95, docs/ARCHITECTURE.md:72, docs/TOOLS.md:53, ~/.claude/skills/godot-mcp/SKILL.md:51. Seen: issue #6 (239 Hz); window timings measured with a 5 ms window poller.
+Source: docs/DECISIONS.md:38-39, docs/DEVELOPMENT.md:95, docs/DEVELOPMENT.md:232, src/GodotMcp.Server/Session/OverrideFile.cs:21, docs/ARCHITECTURE.md:72, docs/TOOLS.md:53, ~/.claude/skills/godot-mcp/SKILL.md:51. Seen: issue #6 (239 Hz); window timings measured with a 5 ms window poller.
 
 ### Say "hands off" before driving a game on the user's desktop
 <!-- rule: say-hands-off-first -->

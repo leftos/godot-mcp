@@ -37,8 +37,8 @@
       "user": "5703da5682eac4dc"
     },
     "drive-owned-app-in-process": {
-      "repo": "bd87ad578751ff90",
-      "user": "db0a27091136c67f"
+      "repo": "97aa5515bb72f637",
+      "user": "be66d24a8139e90d"
     },
     "emulation-per-call": {
       "declined": "no CDP or webview",
@@ -145,8 +145,8 @@
       "user": "ebfaa4da3ea3e159"
     },
     "quiet-by-default": {
-      "repo": "a57948c7aff284c3",
-      "user": "6bab3db9ab0a37c1"
+      "repo": "38b3704fdbb92c35",
+      "user": "6f85f9f72b58cf63"
     },
     "real-app-over-frontend-only": {
       "repo": "271d0467f0483c69",
@@ -225,17 +225,17 @@
       "user": "f211fee3057bfaec"
     },
     "wait-for-conditions": {
-      "repo": "2a38ca35c490d3c4",
-      "user": "9bb1d20171a07155"
+      "repo": "ba4b930fb79d3924",
+      "user": "5ba0317410bb3123"
     },
     "waits-bounded-outcome-as-data": {
-      "repo": "18ddc3e4bbac320d",
-      "user": "1e1fedbd7932f9f8"
+      "repo": "02061f016ad80e6b",
+      "user": "c375cca2a2c76a41"
     },
     "what-capture-misses": {
       "repo": "a16c83f20d16dc1a",
       "user": "81e92891fb8fe24c"
     }
   },
-  "user_revision": 7
+  "user_revision": 9
 }
