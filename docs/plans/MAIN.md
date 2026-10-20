@@ -23,6 +23,7 @@
 - [ ] GMCP-202 Prove WriteWatch.Unwatch: a unit test, the real run_csharp path, a scoped suspend
 - [ ] GMCP-207 Test a failing GetStepUntil call and rule a step that pauses the tree
 - [ ] GMCP-211 batch_drive: show errors raised between a step's cursor read and the next step's call
+- [ ] GMCP-212 batch_drive's schema text promises metAt and clockErrorMs on every met wait
 
 ## Singles
 
