@@ -100,6 +100,7 @@
 - [ ] GMCP-217 run.ps1: spell gated test commands so they route to the builder from a worktree
 - [ ] GMCP-226 Load-proof three tests that failed once under three test lanes
 - [ ] GMCP-227 Split bridge/godot_mcp_input.gd below gdlint's 1000-line limit
+- [ ] GMCP-229 Measure whether capture_frames falls back to main-thread saves on a 4-core pool
 
 ## Docs
 
