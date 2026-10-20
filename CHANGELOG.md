@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- A scene edit whose splice would give two nodes one `unique_id` now falls back to the full save with a warning.
+
 ## 0.19.0 - 2026-10-20
 
 ### Added

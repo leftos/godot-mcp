@@ -429,6 +429,58 @@ func test_self_check_falls_back_on_a_lost_order() -> void:
 	assert_eq(kept, "", "the same order passes")
 
 
+func test_self_check_falls_back_when_two_nodes_share_a_unique_id() -> void:
+	var box: String = '[node name="Box" type="Node2D" parent="." unique_id=33]'
+	var holder: String = '[node name="Holder" type="Node2D" parent="." unique_id=33]'
+	var spliced: String = _text(["[gd_scene format=3]", "", box, "", holder])
+	var saved: String = _text(
+		[
+			"[gd_scene format=3]",
+			"",
+			box,
+			"",
+			'[node name="Holder" type="Node2D" parent="." unique_id=44]',
+		]
+	)
+
+	var failure: String = _splice.self_check(spliced, saved)
+
+	assert_eq(
+		failure,
+		"the spliced text gave two nodes the unique_id 33",
+		"a text that gives two nodes one unique_id fails the check",
+	)
+
+
+func test_self_check_passes_distinct_and_absent_unique_ids() -> void:
+	var spliced: String = _text(
+		[
+			"[gd_scene format=3]",
+			"",
+			'[node name="Box" type="Node2D" parent="." unique_id=33]',
+			"",
+			'[node name="Holder" type="Node2D" parent="."]',
+			"",
+			'[node name="Marker" type="Sprite2D" parent="Box" unique_id=44]',
+		]
+	)
+	var saved: String = _text(
+		[
+			"[gd_scene format=3]",
+			"",
+			'[node name="Box" type="Node2D" parent="." unique_id=33]',
+			"",
+			'[node name="Holder" type="Node2D" parent="." unique_id=55]',
+			"",
+			'[node name="Marker" type="Sprite2D" parent="Box" unique_id=44]',
+		]
+	)
+
+	var failure: String = _splice.self_check(spliced, saved)
+
+	assert_eq(failure, "", "distinct ids and a node without one pass")
+
+
 ## head's lines, then each node's lines, a blank line before each.
 func _nodes_text(head: Array, nodes: Array) -> String:
 	var lines: Array = head.duplicate()

@@ -61,7 +61,8 @@ static func splice(original: String, saved: String) -> Dictionary:
 
 
 ## "" when spliced and saved hold the same sections, each by its key with an equal canonical form
-## (the gd_scene header left out), and their node sections in the same order; else what differs.
+## (the gd_scene header left out), their node sections in the same order, and no two nodes of
+## spliced sharing a unique_id; else what differs.
 static func self_check(spliced: String, saved: String) -> String:
 	var mine: Dictionary = _parse(spliced)
 	var theirs: Dictionary = _parse(saved)
@@ -71,6 +72,8 @@ static func self_check(spliced: String, saved: String) -> String:
 	var failure: String = _form_difference(_forms(mine), _forms(theirs))
 	if failure.is_empty() and _node_keys(mine) != _node_keys(theirs):
 		failure = "the spliced text put the nodes in another order than the save"
+	if failure.is_empty():
+		failure = _shared_unique_id(mine)
 	return failure
 
 
@@ -457,6 +460,22 @@ static func _node_keys(doc: Dictionary) -> PackedStringArray:
 		if section["kind"] == "node":
 			keys.append(section["key"])
 	return keys
+
+
+## Why two of doc's node sections carry one unique_id, or "": a node without one is never counted.
+static func _shared_unique_id(doc: Dictionary) -> String:
+	var seen: Dictionary = {}
+	for section: Dictionary in doc["sections"]:
+		if section["kind"] != "node":
+			continue
+		var found: RegExMatch = _unique_id.search(section["head"])
+		if found == null:
+			continue
+		var value: int = int(found.get_string().trim_prefix(" unique_id="))
+		if seen.has(value):
+			return "the spliced text gave two nodes the unique_id %d" % value
+		seen[value] = true
+	return ""
 
 
 ## original's header line with load_steps=<resources + 1> where it had load_steps, and saved's uid
