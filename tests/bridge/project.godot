@@ -7,3 +7,8 @@ config_version=5
 
 config/name="godot-mcp bridge tests"
 config/features=PackedStringArray("4.7")
+
+[threading]
+
+; Matches CI's 4-core runner, so a test that depends on the pool's size fails here too.
+worker_pool/max_threads=4

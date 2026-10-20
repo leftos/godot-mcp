@@ -48,7 +48,7 @@ func test_a_frame_due_at_the_cap_of_saves_in_flight_is_saved_on_the_main_thread(
 	var cap: int = frame.MAX_SAVES_IN_FLIGHT
 	var release := Semaphore.new()
 	for _held in cap:
-		var task: int = WorkerThreadPool.add_task(release.wait)
+		var task: int = WorkerThreadPool.add_task(release.wait, true)
 		frame._saves.append({"task": task, "path": "held", "outcome": [OK]})
 	assert_eq(frame.saves_in_flight(), cap, "the cap is reached")
 	var saved: Dictionary = frame.save_screenshot_off_thread(_small_image(), {})
@@ -65,8 +65,8 @@ func test_a_frame_due_at_the_cap_of_saves_in_flight_is_saved_on_the_main_thread(
 func test_a_finished_save_is_waited_and_dropped_at_the_next_in_flight_check() -> void:
 	var frame: Node = _frame_script.new()
 	var release := Semaphore.new()
-	var held: int = WorkerThreadPool.add_task(release.wait)
-	var done: int = WorkerThreadPool.add_task(func() -> void: pass)
+	var held: int = WorkerThreadPool.add_task(release.wait, true)
+	var done: int = WorkerThreadPool.add_task(func() -> void: pass, true)
 	frame._saves.append({"task": held, "path": "held", "outcome": [OK]})
 	frame._saves.append({"task": done, "path": "done", "outcome": [ERR_FILE_CANT_WRITE]})
 	# A hang guard only: the empty task ends at once unless the pool is starved.
@@ -87,7 +87,7 @@ func test_a_finished_save_is_waited_and_dropped_at_the_next_in_flight_check() ->
 func test_finishing_the_saves_answers_the_first_that_failed() -> void:
 	var frame: Node = _frame_script.new()
 	for failure: Array in [["C:/shots/a.png", ERR_FILE_CANT_WRITE], ["C:/shots/b.png", FAILED]]:
-		var task: int = WorkerThreadPool.add_task(func() -> void: pass)
+		var task: int = WorkerThreadPool.add_task(func() -> void: pass, true)
 		frame._saves.append({"task": task, "path": failure[0], "outcome": [failure[1]]})
 	assert_eq(
 		frame.call("finish_saves"),
