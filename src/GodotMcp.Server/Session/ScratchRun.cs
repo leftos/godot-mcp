@@ -93,6 +93,13 @@ internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyLi
     /// <summary>The game milliseconds waited after the last step played: that step's own pace.</summary>
     public int AfterGameMs => ScratchRun.GameMs(Paces[Played[^1]].Seconds);
 
+    /// <summary>
+    /// The most seconds the scene's steps can still take once <paramref name="step"/> starts: the pace of each played step not
+    /// yet started, the step's own, and the pace after the last step played; the launch and the prep are left out.
+    /// </summary>
+    public double RemainingSecondsAtMost(int step) =>
+        Played.Where(played => played >= step).Sum(played => Paces[played].Seconds) + Paces[Played[^1]].Seconds;
+
     /// <summary>Why a scene was killed at its ceiling, with <paramref name="backstop"/> appended to the budget's terms.</summary>
     public string CeilingReason(string backstop)
     {
@@ -157,6 +164,8 @@ internal sealed class ScratchRun
     private readonly CSharpBridge _csharp;
     private readonly ScratchPlan _plan;
     private readonly ScratchScenePlan _scene;
+    private readonly IScratchRunObserver? _observer;
+    private readonly int _index;
     private readonly string _nonce = Guid.NewGuid().ToString("N")[..12];
     private readonly List<string> _names = [];
     private readonly List<ScratchStep> _steps = [];
@@ -173,36 +182,47 @@ internal sealed class ScratchRun
     private long _feedMark;
     private bool _hasUntil;
 
-    private ScratchRun(SessionRegistry registry, CSharpBridge csharp, ScratchPlan plan, ScratchScenePlan scene)
+    private ScratchRun(RunContext context, int index)
     {
-        _registry = registry;
-        _csharp = csharp;
-        _plan = plan;
-        _scene = scene;
+        _registry = context.Registry;
+        _csharp = context.CSharp;
+        _plan = context.Plan;
+        _scene = context.Plan.Scenes[index];
+        _observer = context.Observer;
+        _index = index;
     }
+
+    /// <summary>What every scene of one run shares: the registry, the C# bridge, the plan, and who is told as the run plays.</summary>
+    private sealed record RunContext(SessionRegistry Registry, CSharpBridge CSharp, ScratchPlan Plan, IScratchRunObserver? Observer);
 
     /// <summary>
     /// Prepares the project once when the plan says so, then plays the scenes, starting them in <see cref="StartOrder"/> at most
     /// the plan's parallel at once, and judges each; a scene red or killed beside others is then played once more alone, one at a time in
     /// order. The result lists the scenes in the plan's order, whatever finished first, with what the prep did.
-    /// <paramref name="csharp"/> readies the C# helper a state until reads a C# node's state with.
+    /// <paramref name="csharp"/> readies the C# helper a state until reads a C# node's state with. <paramref name="observer"/>,
+    /// a background run's, is told each scene's start, session, steps and verdict, and each replay's start; a synchronous run
+    /// passes null.
     /// </summary>
     /// <exception cref="SessionException">The prep failed.</exception>
     public static async Task<ScratchRunResult> RunAsync(
         SessionRegistry registry,
         CSharpBridge csharp,
         ScratchPlan plan,
+        IScratchRunObserver? observer,
         CancellationToken cancellationToken
     )
     {
+        RunContext context = new(registry, csharp, plan, observer);
         PrepResult prep = plan.Prepare ? await registry.PrepareFolderAsync(plan.ProjectDir, cancellationToken) : PrepResult.Skipped;
-        ScratchSceneResult[] scenes = await PlayBesideAsync(registry, csharp, plan, cancellationToken);
+        ScratchSceneResult[] scenes = await PlayBesideAsync(context, cancellationToken);
         for (int index = 0; index < scenes.Length; index++)
         {
             if (ScratchVerdict.PlaysAgainAlone(scenes[index], plan.Parallel))
             {
-                ScratchSceneResult replay = await PlayOneAsync(registry, csharp, plan, plan.Scenes[index], cancellationToken);
+                observer?.ReplayStarted(index);
+                ScratchSceneResult replay = await PlayOneAsync(context, index, cancellationToken);
                 scenes[index] = ScratchVerdict.Alone(scenes[index], replay);
+                observer?.SceneEnded(index, scenes[index], playsAgain: false);
             }
         }
 
@@ -213,13 +233,9 @@ internal sealed class ScratchRun
     /// Plays every scene, each started once a slot is free, in <see cref="StartOrder"/>, its result kept at its place in the
     /// plan; waits for every scene started, even when a scene throws or the call is cancelled, so no game outlives the call.
     /// </summary>
-    private static async Task<ScratchSceneResult[]> PlayBesideAsync(
-        SessionRegistry registry,
-        CSharpBridge csharp,
-        ScratchPlan plan,
-        CancellationToken cancellationToken
-    )
+    private static async Task<ScratchSceneResult[]> PlayBesideAsync(RunContext context, CancellationToken cancellationToken)
     {
+        ScratchPlan plan = context.Plan;
         var results = new ScratchSceneResult[plan.Scenes.Count];
         using SemaphoreSlim slots = new(plan.Parallel, plan.Parallel);
         List<Task> playing = [];
@@ -243,7 +259,9 @@ internal sealed class ScratchRun
         {
             try
             {
-                results[index] = await PlayOneAsync(registry, csharp, plan, plan.Scenes[index], cancellationToken);
+                context.Observer?.SceneStarted(index);
+                results[index] = await PlayOneAsync(context, index, cancellationToken);
+                context.Observer?.SceneEnded(index, results[index], ScratchVerdict.PlaysAgainAlone(results[index], plan.Parallel));
             }
             finally
             {
@@ -263,15 +281,11 @@ internal sealed class ScratchRun
         return listed ? [.. places] : [.. places.OrderByDescending(place => scenes[place].LargestPace)];
     }
 
-    private static async Task<ScratchSceneResult> PlayOneAsync(
-        SessionRegistry registry,
-        CSharpBridge csharp,
-        ScratchPlan plan,
-        ScratchScenePlan scene,
-        CancellationToken cancellationToken
-    )
+    private static async Task<ScratchSceneResult> PlayOneAsync(RunContext context, int index, CancellationToken cancellationToken)
     {
-        ScratchObservation seen = await new ScratchRun(registry, csharp, plan, scene).PlayAsync(cancellationToken);
+        ScratchPlan plan = context.Plan;
+        ScratchScenePlan scene = plan.Scenes[index];
+        ScratchObservation seen = await new ScratchRun(context, index).PlayAsync(cancellationToken);
         return ScratchVerdict.Judge(seen, new ScratchRules(plan.Patterns, scene.Known, scene.PaceReason, plan.Details));
     }
 
@@ -595,8 +609,15 @@ internal sealed class ScratchRun
         GodotSession session;
         try
         {
-            session = await _registry.ReserveScratchAsync(_plan.ProjectDir, _scene.Name, _scene.ResPath, _plan.SessionPrefix);
+            session = await _registry.ReserveScratchAsync(
+                _plan.ProjectDir,
+                _scene.Name,
+                _scene.ResPath,
+                _plan.SessionPrefix,
+                held: _observer is not null
+            );
             _session = session;
+            _observer?.SessionHeld(_index, session);
             await session.LaunchAsync(LaunchRequestFor(session), cancellationToken);
         }
         catch (SessionException e)
@@ -778,6 +799,7 @@ internal sealed class ScratchRun
         foreach (int index in _walk.Played)
         {
             _inFlight = index;
+            _observer?.StepStarted(_index, index, _names[index], _names.Count, _walk.RemainingSecondsAtMost(index));
             ScratchStep step = await PlayStepAsync(session, index, limit);
             _steps.Add(step);
             if (StopsAfter(step, _plan.Patterns, _plan.KeepGoing))

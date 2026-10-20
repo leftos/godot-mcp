@@ -222,7 +222,7 @@ public sealed class SessionNameTests : IAsyncDisposable
 
     /// <summary>Reserves a scratch scene's session under the folder's own name, the prefix a run without options.session uses.</summary>
     private Task<GodotSession> ReserveScratchAsync(string projectDir, string scene, string resPath) =>
-        _harness.Sessions.ReserveScratchAsync(projectDir, scene, resPath, SessionRegistry.NameFor(null, projectDir));
+        _harness.Sessions.ReserveScratchAsync(projectDir, scene, resPath, SessionRegistry.NameFor(null, projectDir), held: false);
 
     /// <summary>The refusal of a start under 'Sky.Client' while a session on <paramref name="holderDir"/> holds it live.</summary>
     private static string LiveSkyClientRefusal(string holderDir) =>

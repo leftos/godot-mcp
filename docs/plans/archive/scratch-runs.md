@@ -1,6 +1,6 @@
 # Scratch runs: a step's end, and runs in the background
 
-Status: part A (GMCP-181, a step's end) is built; part B (GMCP-200, background runs) is ruled, not built, and builds on it. Its rulings are in DECISIONS.md decision 28.
+Status: done. Part A (GMCP-181, a step's end) and part B (GMCP-200, background runs) are built; their rulings are in DECISIONS.md decision 28.
 
 Part A's shape is the owner's ruling; every other ruling below is an orchestrator decision under CLAUDE.md's autonomy rule (the recommended option), recorded on its issue and open to the owner.
 
@@ -49,6 +49,24 @@ From the map of `src/GodotMcp.Server/Session/ScratchRun.cs` and `Tools/ScratchTo
 - **Server exit**: `Shutdown` stops every background run within its cap and writes `interrupted` and the completion line. A server killed outright leaves `running`; `serverPid` lets a reader tell.
 - **Old files** are left in place.
 - **No feature branch**: the mode is opt-in and additive, and CLAUDE.md lands every item on `main`.
+
+**Part B's rulings from the invariant pass** (actors: the call, the run task and its up-to-4 scene threads, `scratch_status` readers and stops, a second `run_scratches`, `Shutdown`, `Dispose`, outside file readers, other tools on the scratch sessions):
+
+- **Registry**: a `ScratchRuns` object owned by `SessionRegistry` (tool instances are per call; `Shutdown` reaches only what the registry owns), with its own lock, keyed by the plan's normalised project folder with the OS path comparer. One lock covers the live check, the insert and a `closed` flag that `Shutdown` sets, so no run registers once shutdown has begun. `SessionRegistry._lock` is never held while taking it, nor the other way round.
+- **Order inside the call**: plan (every refusal as today), register, create both files, start the task with `Task.Run(body)` and no token, return. Nothing awaits the request token after registering; the background run is given its own `CancellationTokenSource`, disposed only after the task ends. A failure after registering removes the entry.
+- **One final state, one completion line**: a per-run lock and a terminal flag. The first end reason recorded wins: stop gives `stopped`, shutdown gives `interrupted`, a return gives `done`, an exception gives `failed` (with `error`, and the completion line `finished: failed: <one line>`; a prep failure lands here, since nobody listens for a throw). A reason is recorded before the token is cancelled. The final write puts the status file first, then the completion line, then sets the flag; every write after that is skipped. Two writers can make it: the run task normally, and `Shutdown` as the fallback once its deadline passes.
+- **Status writes**: full snapshots, written to a unique temp name and moved into place. An event write that fails (a reader holding the file open makes `File.Move` fail) is logged to stderr and skipped. The final write retries for about 1 s. A write inside a scene's ceiling (the step-start write) is never retried and never fails a scene. The server reads with `FileShare.ReadWrite | FileShare.Delete`, and TOOLS.md tells outside readers to open, read and close.
+- **A cancelled scene** invents no verdict: the run token's cancellation passes through the runner's catches, and every game is stopped. A scene mid-step at a stop or shutdown takes the run's final word (`stopped` or `interrupted`), keeping its `step` and `stepName`, with no verdict. Queued scenes stay `queued`. Statuses come from the run's own snapshot, not `RunAsync`'s results.
+- **Replay alone**: the scene goes back to `queued`, logs `scene <scene> start alone`, and ends with one verdict line carrying its final verdict, its seconds summed as the synchronous result sums them.
+- **Scenes are keyed by plan index** in play order, since a scene may be listed twice.
+- **Shutdown**: `ScratchRuns.Interrupt()` runs before the registry's games stop. It sets `closed`, records `interrupted` and cancels every run. The games then stop as today, and the runs are awaited only until the existing shutdown deadline, never a fresh one. `Finish(interrupted)` writes whatever is left. An entry with no task yet is finished by `Shutdown` itself.
+- **The entry is removed** in the run task's finally, after the final write and after every game has stopped, and only while the entry is still this run. The final snapshot stays in a small in-memory list of finished runs (the last 20), so `scratch_status` stays exact even if the final file write failed.
+- **A second call**: while a background run is live on the project, any `run_scratches` on it is refused, background or not. A synchronous run registers nothing.
+- **Run id**: `scratch-<runId>.log` is created with `CreateNew`, and a collision draws new hex up to 5 times. `scratch_status` checks the id against `^\d{8}T\d{6}-[0-9a-f]{4}$` before building any path.
+- **`scratch_status`**: for this server's live or finished run, it returns the snapshot plus `live: true|false`. Otherwise it returns the file as it is, never rewritten, with `live: false`, and refuses `stop` naming the file's `serverPid`. An unknown id is an error naming the path it looked for. A stop on a finished run returns its status and writes nothing. A stop records `stopped`, cancels, waits for the run task, then returns the final status.
+- **Log lines** have CR, LF and control characters stripped from scene and step names. The completion pattern a harness waits on is anchored: `^godot-mcp scratch run \S+ finished:`.
+- **Unnamed tool calls**: a tool called without `session` never resolves to a session a live background run holds (`FindSession`'s "only live session" and "only one" branches, and `FindSessionIn`). An explicit name works as before, so `stop_project` by name turns that scene red.
+- **Tests**: a new itest class `ScratchBackgroundTests`, in its own itest group `scratchbackground`, because the `scratch` group sits at its ceiling (GMCP-206).
 
 ## 4. Steps
 

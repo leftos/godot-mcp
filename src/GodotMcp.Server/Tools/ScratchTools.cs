@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Numerics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
 using ModelContextProtocol;
@@ -19,6 +20,8 @@ namespace GodotMcp.Server.Tools;
 internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp)
 {
     internal const string ToolName = "run_scratches";
+
+    internal const string StatusToolName = "scratch_status";
 
     /// <summary>A step's pace when neither options.pace nor the profile's scratch.pace sets one, in seconds.</summary>
     internal const double DefaultPace = 0.5;
@@ -61,7 +64,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "first error entry is always kept; cut names the budget a step's detail ran over and the session whose "
             + "get_debug_output holds the full log; exit.error is an error in the pace "
             + "after the last step, killed a game the stop had to kill; seconds covers both plays of a scene played again. The "
-            + "project is prepared once for the whole run."
+            + "project is prepared once for the whole run. options.background true returns {runId, statusFile, logFile, scenes} "
+            + "at once and plays the run on in the server; read or stop it with scratch_status. While a background run is live on "
+            + "the project, every run_scratches on it is refused."
     )]
     public async Task<string> RunScratchesAsync(
         [Description("The folder that holds the project's project.godot.")] string projectPath,
@@ -71,15 +76,17 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         )]
             string[]? scenes = null,
         [Description(
-            "{pace, userArgs, prepare, details, parallel, session, keepGoing, steps}: pace in seconds for every step (else scratch.pace's "
-                + "for the step, else for the scene, else 0.5); userArgs appended after the profile's; prepare as run_project's; "
+            "{pace, userArgs, prepare, details, parallel, session, keepGoing, steps, background}: pace in seconds for every step "
+                + "(else scratch.pace's for the step, else for the scene, else 0.5); userArgs appended after the profile's; "
+                + "prepare as run_project's; "
                 + "details true lists every scene's steps and gives every step its full detail; parallel the scenes at once, 1 to 4 "
                 + "(else scratch.parallel, else 1); "
                 + "session a prefix for the scenes' session names, in place of the project folder's; keepGoing true (default false) "
                 + "plays a scene's next step after one red on a pushed error or a matching line, but a step whose own call failed "
                 + "(the game gone or stuck) still stops the scene; steps [3, \"name\", \"2-5\"] plays only those steps, by index, name or "
                 + "inclusive range, in ascending order, and never runs the others, so a later step that depends on a skipped one is "
-                + "the caller's choice."
+                + "the caller's choice; background true returns {runId, statusFile, logFile, scenes} at once and plays the run on "
+                + "in the server, read and ended with scratch_status."
         )]
             ScratchOptions? options = null,
         CancellationToken cancellationToken = default
@@ -87,8 +94,15 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     {
         try
         {
-            ScratchPlan plan = Plan(projectPath, scenes, options ?? new ScratchOptions());
-            ScratchRunResult result = await ScratchRun.RunAsync(sessions, csharp, plan, cancellationToken);
+            ScratchOptions given = options ?? new ScratchOptions();
+            ScratchPlan plan = Plan(projectPath, scenes, given);
+            if (given.Background ?? false)
+            {
+                return StartBackground(plan);
+            }
+
+            sessions.ScratchRuns.RefuseLive(plan.ProjectDir);
+            ScratchRunResult result = await ScratchRun.RunAsync(sessions, csharp, plan, observer: null, cancellationToken);
             return JsonSerializer.Serialize(result, ToolJson.Options);
         }
         catch (SessionException e)
@@ -99,6 +113,131 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         {
             throw new McpException($"A file operation failed: {e.Message}", e);
         }
+    }
+
+    [McpServerTool(Name = StatusToolName, ReadOnly = false, Destructive = false, OpenWorld = false, Idempotent = false)]
+    [Description(
+        "Reads a background scratch run (run_scratches with options.background), or ends it with stop: true. Returns its status "
+            + "{runId, state, serverPid, startedAt, updatedAt, scenes: [{scene, state, step?, stepName?, total?, elapsedSeconds?, "
+            + "remainingSecondsAtMost?, verdict?}], result?, error?, live}: state is running, done, stopped, interrupted (the server "
+            + "exited) or failed (with error); scenes in play order, each queued, playing (its step index, name and the scene's "
+            + "step count, remainingSecondsAtMost the paces still to come, launch left out) or done (its verdict), or the run's own "
+            + "final word for a scene it ended mid-step; result, once done, is the object run_scratches returns without background; "
+            + "startedAt and updatedAt are UTC ISO 8601. live is true while this server still plays the run. A run of this server is "
+            + "read from memory; any other run's status file, <project>/.godot/godot-mcp/scratch-<runId>.json, is returned as it "
+            + "is, with live false: one a server killed outright left says running, and its serverPid tells whose it was. "
+            + "stop: true ends a live run of this server as a cancelled call ends (its games stopped), writes stopped and the "
+            + "completion line, and returns the final status once the run has ended; a run this server finished is returned "
+            + "unchanged, and a stop of a run read from its status file (another server's, or one this server no longer keeps) is "
+            + "refused."
+    )]
+    public async Task<string> ScratchStatusAsync(
+        [Description("The folder that holds the project's project.godot.")] string projectPath,
+        [Description("The run's id, as run_scratches returned it: <UTC yyyyMMddTHHmmss>-<4 hex>, e.g. 20261019T222144-3f2a.")] string runId,
+        [Description("true ends the run and returns its final status; default false only reads it.")] bool? stop = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        if (!ScratchBackgroundRun.IsRunId(runId))
+        {
+            throw new McpException(
+                $"runId '{runId}' is not a scratch run id; one looks like 20261019T222144-3f2a, as run_scratches with options.background "
+                    + "returned it."
+            );
+        }
+
+        try
+        {
+            string projectDir = ProjectDir(projectPath);
+            JsonObject status = await StatusAsync(projectDir, runId, stop ?? false, cancellationToken);
+            return status.ToJsonString(ToolJson.Options);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new McpException($"A file operation failed: {e.Message}", e);
+        }
+        catch (JsonException e)
+        {
+            throw new McpException($"Scratch run {runId}'s status file is not JSON: {e.Message}", e);
+        }
+    }
+
+    /// <summary>
+    /// Registers a background run of the plan, creates its files and starts its task with no token; returns its id, files and
+    /// scenes. A failure after registering removes the entry.
+    /// </summary>
+    /// <exception cref="SessionException">A background run is live on the project, or the server is shutting down.</exception>
+    private string StartBackground(ScratchPlan plan)
+    {
+        ScratchBackgroundRun run = sessions.ScratchRuns.Register(plan, sessions.ServerProcessId, ScratchRunIo.System);
+        try
+        {
+            run.CreateFiles();
+        }
+        catch
+        {
+            sessions.ScratchRuns.Remove(run);
+            run.EndTask();
+            throw;
+        }
+
+        run.Start(() => run.PlayAsync(sessions, csharp, plan));
+        return JsonSerializer.Serialize(new ScratchBackgroundStart(run.RunId, run.StatusFile, run.LogFile, run.Scenes), ToolJson.Options);
+    }
+
+    /// <summary>
+    /// The run's status with live: this server's live run (stopped first when asked), else its finished run, else the status
+    /// file as it is.
+    /// </summary>
+    private async Task<JsonObject> StatusAsync(string projectDir, string runId, bool stop, CancellationToken cancellationToken)
+    {
+        if (sessions.ScratchRuns.Find(projectDir, runId) is { } run)
+        {
+            (ScratchRunStatus status, bool live) = stop ? await run.StopAsync(cancellationToken) : run.Read();
+            return WithLive(JsonSerializer.SerializeToNode(status, ToolJson.Options)!.AsObject(), live);
+        }
+
+        return sessions.ScratchRuns.FindFinished(projectDir, runId) is { } finished
+            ? WithLive(JsonSerializer.SerializeToNode(finished, ToolJson.Options)!.AsObject(), live: false)
+            : WithLive(StatusFile(projectDir, runId, stop), live: false);
+    }
+
+    /// <summary>The run's status file as it is; a stop is refused, since the run is not live in this server.</summary>
+    /// <exception cref="McpException">No status file, one that is not a JSON object, or a stop.</exception>
+    private JsonObject StatusFile(string projectDir, string runId, bool stop)
+    {
+        string path = ScratchBackgroundRun.StatusPath(projectDir, runId);
+        if (!File.Exists(path))
+        {
+            throw new McpException(
+                $"No scratch run {runId} on {projectDir}: looked for its status file {path}. Pass the runId run_scratches returned, "
+                    + "with the same projectPath."
+            );
+        }
+
+        using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        JsonObject status =
+            (JsonNode.Parse(stream) as JsonObject) ?? throw new McpException($"{path} is not a scratch run's status file: it holds no JSON object.");
+        if (stop)
+        {
+            throw new McpException(NotLive(status, runId, path));
+        }
+
+        return status;
+    }
+
+    /// <summary>Why a stop of a run read from its status file is refused, whichever server's process id the file names.</summary>
+    private string NotLive(JsonObject status, string runId, string path)
+    {
+        int? serverPid = status["serverPid"] is JsonValue pid && pid.TryGetValue(out int held) ? held : null;
+        return $"scratch run {runId} is not live in this server ({sessions.ServerProcessId}); its status file {path} names process id "
+            + $"{serverPid?.ToString(CultureInfo.InvariantCulture) ?? "(none)"}, and only a live run can be stopped.";
+    }
+
+    private static JsonObject WithLive(JsonObject status, bool live)
+    {
+        status["live"] = live;
+        return status;
     }
 
     /// <summary>The checked call: the project, each scene with its pace and user arguments, and the profile's patterns.</summary>
@@ -419,5 +558,16 @@ internal sealed record ScratchOptions(
             + "scene turns that scene red before any step plays. A later step that depends on a skipped one is the caller's choice. "
             + "The scene's result lists the played indices as selected."
     )]
-        JsonElement[]? Steps = null
+        JsonElement[]? Steps = null,
+    [property: Description(
+        "true returns at once, once the plan is checked, with {runId, statusFile, logFile, scenes} (scenes the names in play "
+            + "order), and the run plays on in the server, ended only by scratch_status {stop: true} or the server's exit, never by "
+            + "the call's end. statusFile is <project>/.godot/godot-mcp/scratch-<runId>.json, the run's status rewritten whole at "
+            + "each scene's start and end and each step's start; logFile is scratch-<runId>.log beside it, one line per event, each "
+            + "starting 'godot-mcp scratch run <runId> ', the last the completion line, matching ^godot-mcp scratch run \\S+ "
+            + "finished: (done with passed and the counts, stopped, interrupted, or failed with the error). Read the run with "
+            + "scratch_status; open, read and close the files, never hold them open. While it runs, every run_scratches on the "
+            + "project is refused. Default false."
+    )]
+        bool? Background = null
 );

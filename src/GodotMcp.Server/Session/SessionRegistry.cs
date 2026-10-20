@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text.RegularExpressions;
@@ -116,6 +117,9 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// <summary>The dormant games on armed folders: <see cref="DormantGames.Default"/> unless set, as a test sets a fake process boundary.</summary>
     internal DormantGames Dormant { get; init; } = DormantGames.Default;
 
+    /// <summary>The background scratch runs, which <see cref="Shutdown"/> interrupts before the games stop.</summary>
+    internal ScratchRuns ScratchRuns { get; } = new();
+
     /// <summary>The sessions' input captures, by session name, kept past the session they came from.</summary>
     internal CaptureStore Captures { get; } = new();
 
@@ -141,7 +145,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         {
             Mute = request.Mute,
         };
-        GodotSession created = await ReserveAsync(spec, defaultName: session is null, completeUnderLock: static ready => ready);
+        GodotSession created = await ReserveAsync(
+            spec,
+            defaultName: session is null,
+            completeUnderLock: static ready => ready,
+            heldByScratchRun: false
+        );
         return await created.LaunchAsync(request with { ProjectPath = projectDir }, cancellationToken);
     }
 
@@ -168,7 +177,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         GodotSession created = await ReserveAsync(
             spec,
             defaultName: request.Session is null,
-            completeUnderLock: attach => attach with { JoinPid = ChooseDormantGame(projectDir, request.Pid) }
+            completeUnderLock: attach => attach with { JoinPid = ChooseDormantGame(projectDir, request.Pid) },
+            heldByScratchRun: false
         );
         return await created.AttachAsync(bridgeScript, request.Wait, cancellationToken);
     }
@@ -429,10 +439,13 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// override file of every folder a session used or was armed, since none of them outlives the server. It runs from the
     /// host's stop, the process's exit and <see cref="Dispose"/>: the first call stops the games, and a later one waits for
     /// that and stops only the sessions no earlier pass has covered. Once it has begun, no run starts
-    /// (<see cref="RefuseStartAtShutdown"/>).
+    /// (<see cref="RefuseStartAtShutdown"/>). Every background scratch run is interrupted first, waited for only until
+    /// <see cref="ShutdownCap"/> from the pass's start, and finished as interrupted if it has not ended by then.
     /// </summary>
     public void Shutdown()
     {
+        long started = Stopwatch.GetTimestamp();
+        Task[] scratchRuns = ScratchRuns.Interrupt();
         GodotSession[] sessions;
         string[] armed;
         Task gamesStopped;
@@ -456,6 +469,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         {
             try
             {
+                ScratchRuns.AwaitInterrupted(scratchRuns, ShutdownCap - Stopwatch.GetElapsedTime(started));
                 Volatile.Read(ref _headlessHosts)?.Shutdown();
             }
             finally
@@ -680,7 +694,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// live settings as a preview does (<see cref="FolderSettingsForPreview"/>), so it is never refused for differing from the
     /// sessions it shares the override.cfg with.
     /// </summary>
-    internal async Task<GodotSession> ReserveScratchAsync(string projectDir, string scene, string resPath, string prefix)
+    internal async Task<GodotSession> ReserveScratchAsync(string projectDir, string scene, string resPath, string prefix, bool held)
     {
         string owner = ProjectPaths.Normalise(projectDir) + "|" + resPath;
         string baseName = ScratchName(prefix, scene);
@@ -693,7 +707,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                 string name = FreeScratchName(baseName, owner);
                 ArmSettings settings = FolderSettingsForPreview(projectDir);
                 return ready with { Name = name, Quiet = settings.Quiet, ShutOutRealGamepads = settings.ShutOutRealGamepads, Mute = settings.Mute };
-            }
+            },
+            heldByScratchRun: held
         );
         lock (_lock)
         {
@@ -941,7 +956,13 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
             GodotSession[] live =
             [
-                .. Ordered().Where(other => other.IsLive && other.Kind != SessionKind.Process && ProjectPaths.AreSame(other.ProjectDir, projectDir)),
+                .. Ordered()
+                    .Where(other =>
+                        other.IsLive
+                        && other.Kind != SessionKind.Process
+                        && !ScratchRuns.Holds(other)
+                        && ProjectPaths.AreSame(other.ProjectDir, projectDir)
+                    ),
             ];
             return live.Length <= 1
                 ? live.FirstOrDefault()
@@ -974,7 +995,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
     }
 
-    /// <summary>The named session, else the only live one, else the only one there is; the caller holds the lock.</summary>
+    /// <summary>
+    /// The named session, else the only live one, else the only one there is, an unnamed call never answered by a session a
+    /// live background scratch run holds; the caller holds the lock.
+    /// </summary>
     private GodotSession? FindSession(string? session)
     {
         if (session is not null)
@@ -983,14 +1007,15 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                 ?? throw new SessionException($"No session named '{session}'. Live sessions: {DescribeLive()}.{DescribeStopped()}");
         }
 
-        GodotSession[] live = [.. _sessions.Values.Where(candidate => candidate.IsLive)];
+        GodotSession[] free = [.. _sessions.Values.Where(candidate => !ScratchRuns.Holds(candidate))];
+        GodotSession[] live = [.. free.Where(candidate => candidate.IsLive)];
         if (live.Length == 1)
         {
             return live[0];
         }
 
-        return live.Length == 0 && _sessions.Count <= 1
-            ? _sessions.Values.FirstOrDefault()
+        return live.Length == 0 && free.Length <= 1
+            ? free.FirstOrDefault()
             : throw new SessionException(
                 $"Several sessions exist (live: {DescribeLive()}); pass session to choose one. "
                     + "Pass the session run_project or attach_project returned on every call: "
@@ -1010,7 +1035,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         CheckName(chosen);
         RefuseStartAtShutdown();
         SessionSpec spec = new(chosen, projectDir, SessionKind.Process, ShutOutRealGamepads: false, Quiet: false);
-        return await ReserveAsync(spec, defaultName, completeUnderLock: chosen => chosen);
+        return await ReserveAsync(spec, defaultName, completeUnderLock: chosen => chosen, heldByScratchRun: false);
     }
 
     /// <summary>
@@ -1025,7 +1050,16 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// <exception cref="SessionException">
     /// The name is live, <paramref name="completeUnderLock"/> refused, or the folder's live sessions rule the new one out.
     /// </exception>
-    private async Task<GodotSession> ReserveAsync(SessionSpec spec, bool defaultName, Func<SessionSpec, SessionSpec> completeUnderLock)
+    /// <param name="heldByScratchRun">
+    /// Whether a background scratch run takes the session: it is marked held (<see cref="ScratchRuns.Hold"/>) before the lock
+    /// is let go, so no unnamed call resolves to it even while it is pending.
+    /// </param>
+    private async Task<GodotSession> ReserveAsync(
+        SessionSpec spec,
+        bool defaultName,
+        Func<SessionSpec, SessionSpec> completeUnderLock,
+        bool heldByScratchRun
+    )
     {
         GodotSession created;
         GodotSession? replaced;
@@ -1040,6 +1074,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             replaced = _sessions.GetValueOrDefault(spec.Name);
             CheckCanStart(spec, replaced);
             created = new GodotSession(spec, this);
+            if (heldByScratchRun)
+            {
+                // A lock-free write, so the registry's lock never takes ScratchRuns' own.
+                ScratchRuns.Hold(created);
+            }
+
             _sessions[spec.Name] = created;
         }
 
@@ -1051,6 +1091,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             }
             catch
             {
+                ScratchRuns.Release(created);
                 Forget(created);
                 created.Dispose();
                 throw;
@@ -1503,7 +1544,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                 return _sessions.GetValueOrDefault(session) is { Kind: SessionKind.Process } named ? named : null;
             }
 
-            GodotSession[] live = [.. _sessions.Values.Where(candidate => candidate.IsLive)];
+            GodotSession[] live = [.. _sessions.Values.Where(candidate => candidate.IsLive && !ScratchRuns.Holds(candidate))];
             return live is [{ Kind: SessionKind.Process } only] ? only : null;
         }
     }

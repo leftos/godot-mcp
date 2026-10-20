@@ -62,6 +62,10 @@ A scene whose root also has a public `GetStepUntil(int)` returns, per step, a `w
 
 Its folder, paces, known-red scenes and patterns live in `godot-mcp.json`'s `scratch` section; `get_debug_output {session}` with the scene's `session` reads its whole output afterwards.
 
+A run of many minutes goes in the background: `run_scratches` with `options.background: true` returns `{runId, statusFile, logFile, scenes}` at once and plays on in the server (one background run per project; `run_scratches` on it is refused until it ends). Wait on its log with a `Monitor` matching `^godot-mcp scratch run \S+ finished:` (the completion line: `done, passed …`, `stopped`, `interrupted` or `failed: …`) rather than holding a call open. Give that wait a time limit, the scenes' paces plus a minute or two: a server killed outright (an install, a crash) never writes the line, and `scratch_status` then answers `live: false` with `state: running`.
+
+Then read the verdict with `scratch_status {projectPath, runId}`; `stop: true` ends it. Its sessions are skipped by calls that name no `session`, so name one to drive or read it.
+
 **Input.**
 
 `click`, `drag` (a GUI drag starts only past 10 px), `type_text` (into the focused Control: click the LineEdit first), `key` (`Enter`, `Escape`, `A`, with `action` `press`/`release` to hold one), `mouse_button` (a press or release by hand, for paths `drag` cannot draw; `action: "move"` only moves), `hover` (the pointer over a Control, waiting for its tooltip and returning its text and rect; hover while the game runs, since a paused Control never starts its tooltip timer, then pause if needed), `scroll` (wheel notches at a target, `notches` and `options.factor` for how far, `options.via: "pan"` for a trackpad pan; a ScrollContainer moves an eighth of its page per notch, and a child with mouse filter Stop swallows the wheel unless it sets `force_pass_scroll_events`; a click on a tab scrolled out of a tab bar is refused naming the `scroll` call, or the arrow clicks, that bring it in).

@@ -12,6 +12,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | Look at a game a launcher or a player already has running | `arm_project` before it starts, then `attach_project` at any time | a delayed launcher timed against `attach_project` |
 | See one scene without playing | `preview_scene` | `run_project` with `scene` plus `take_screenshot` plus `stop_project` |
 | Play a project's scratch scenes step by step and get a verdict each | `run_scratches` | a `Run-Scratches.ps1` script parsing a `--scratch-auto` log |
+| Run scratch scenes for many minutes without holding a call open | `run_scratches` with `options.background`, then a `Monitor` on its log, `scratch_status` to read or stop it | a foreground `run_scratches` call that outlives the client's tool timeout |
 | Pick a thing to click | `get_ui_elements` (Controls, with viewport rects) | guessing coordinates from a screenshot |
 | Click, drag, type | `click`, `drag`, `type_text`, `key` | `simulate_input`, which is for event sequences the gestures cannot make |
 | Pick an option from a dropdown or a menu (`OptionButton`, `MenuButton`, `PopupMenu`) | `click` with `{element: <the button>, item: {text}}`, which opens the popup first | setting `selected` and emitting `item_selected` by hand; clicking the button, then coordinates read off a screenshot |
@@ -324,7 +325,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
   Without `options.details` a failing step carries its `error` cut at 500 characters, at most 3 `errors` (messages cut at 500) and 5 `lines` then `… N more`, within 1500 characters. With `options.details` each step gets 20 `errors` (messages cut at 2000), 20 `lines` and 4000 characters.
 
   Past its budget a step drops lines, then `errors` from the end, and ends with a `cut` note naming the session whose `get_debug_output` holds the full log; the first `errors` entry is always kept, and `cut` is set only when something was dropped. `failures[].error` is cut at 200 characters without `options.details` and 500 with; `failedAt.error`, a step's `error` and `status`, and each line are cut at 500. Nothing caps the whole result.
-- **Use:** in place of a project's `Run-Scratches.ps1`. `projectPath`, `scenes` (scene names in `scratch.folder`, or `res://` paths; left out: every `.tscn` directly in `scratch.folder`, in name order), `options {pace, userArgs, prepare, details, parallel, session, keepGoing, steps}`: `pace` in seconds (above 0, at most 120) for every step of every scene of this call, step paces of the profile included,
+- **Use:** in place of a project's `Run-Scratches.ps1`. `projectPath`, `scenes` (scene names in `scratch.folder`, or `res://` paths; left out: every `.tscn` directly in `scratch.folder`, in name order), `options {pace, userArgs, prepare, details, parallel, session, keepGoing, steps, background}`: `pace` in seconds (above 0, at most 120) for every step of every scene of this call, step paces of the profile included,
 
   `parallel` 1 to 4 (overrides the profile's), `userArgs` appended after the profile's, `prepare` `auto` (default) or `never`.
 
@@ -353,6 +354,15 @@ For an agent driving a Godot project through this server: which tool fits a job,
   Scenes start `parallel` at a time: those listed in `scenes` in that order, a folder run's largest pace (a scene's or a step's) first (equal paces in name order), so a slow scene does not start last and end the run alone; the result keeps the order given, name order for a folder run.
 
   With `parallel` above 1, a `red` or `killed` scene (not `known`, not one red before any step played, a boot error included) is played once more alone after the others finish: `alone: true` when that replay is green (the entry is the replay's and counts as green), else `alone: false` with the first run's entry and the replay's failure as `aloneFailedAt`; `seconds` covers both runs. An alone replay plays the scene again with the same `keepGoing`; `aloneFailedAt` is its first failed step.
+- **Background:** `options.background: true` returns `{runId, statusFile, logFile, scenes}` at once, once the plan is checked (`scenes` the names in play order), and plays the run on in the server, so a run of many minutes holds no call open. It ends only by `scratch_status {stop: true}`, by finishing, or by the server's exit, never by the call's end.
+
+  One background run is live per project per server: while it is, every `run_scratches` on that project, background or not, is refused with "background scratch run <runId> is still running on this project; read it with scratch_status, or end it with scratch_status {stop: true}". Read and end the run with `scratch_status`.
+
+  The run's files are in `<project>/.godot/godot-mcp/`. `scratch-<runId>.json` is its status, rewritten whole at each scene's start and end and each step's start; `scratch-<runId>.log` is one line per event, each starting `godot-mcp scratch run <runId> `: `scene <scene> start` (`start alone` for a replay), `scene <scene> step <i>/<total> <name>` (`i` 0-based, as in `options.steps`, `total` the scene's step count), `scene <scene> <verdict> in <seconds> s`, and last the completion line. The run id is `<UTC yyyyMMddTHHmmss>-<4 hex>`.
+
+  The log's last line is the completion line: `finished: done, passed <true|false>, green <n>, red <n>, killed <n>, known <n>`, `finished: stopped`, `finished: interrupted` or `finished: failed: <one line>`. Wait for it with a `Monitor` on the log (`tail -n +1 -F` the file, matching `^godot-mcp scratch run \S+ finished:`), or poll `scratch_status` until `live` is false, instead of holding a call open. A reader opens, reads and closes the files, never holds them open.
+
+  The run's scene sessions are listed like a foreground run's, but an unnamed tool call never resolves to a session a live background run holds; name it (`session`) to drive or read one. The server's exit interrupts the run within the shutdown cap: the files say `interrupted`. A server killed outright writes no completion line and leaves `running` in the status file, with its `serverPid`; `pwsh run.ps1 install` kills running servers this way. So give the wait a time limit: the scenes' paces plus a minute or two for launch and prep. When it passes with no completion line, call `scratch_status`; `live: false` with `state: running` means the server that played the run is gone, and the run must be started again.
 - **A headless session draws no frames:** a frame tool (`take_screenshot`, `save_screenshot`, `capture_frames`, a screenshot baseline or comparison, a stepped screenshot) sent to a scratch session gets the headless refusal and does not turn the step red; `get_game_state`, `get_ui_elements` and `run_script` work.
 - **Edges:** the prep runs once for the whole run, so a stale C# assembly is built, and a red build refuses the whole run; `prep` is the block `run_project` reports (`build` and `import` `skipped` with `prepare: never`).
 
@@ -367,6 +377,16 @@ For an agent driving a Godot project through this server: which tool fits a job,
   A step's ceiling is each step's pace + 10 s, the last step's pace once more, and 10 s for the markers, in load-adjusted time; past it, or when the game stops answering, the scene is `killed` and its game stopped. An error or a failed wait in the pace after the last step, or a stop that had to kill the game, turns an otherwise green scene red, with the reason in `exit`.
 
   A pattern that takes over 1 s on a line fails that step naming the pattern. A project with `application/run/flush_stdout_on_print.debug` off buffers stdout, so the markers never arrive: the error says so. `--scratch-auto` is refused in any user arguments: the server walks the steps. It cannot run inside `batch_drive`.
+
+### `scratch_status`
+
+- **Does:** reads a background scratch run (`run_scratches` with `options.background`), or with `stop: true` ends it. Returns `{runId, state, serverPid, startedAt, updatedAt, scenes: [{scene, state, step?, stepName?, total?, elapsedSeconds?, remainingSecondsAtMost?, verdict?}], result?, error?, live}`.
+
+  `state` is `running`, `done`, `stopped`, `interrupted` (the server exited) or `failed` (with `error`). `scenes` are in play order, each `queued`, `playing` (with its step index, name and the scene's step count, `remainingSecondsAtMost` the paces still to come) or `done` (with its `verdict`), or the run's final word for a scene the end cut off mid-step. `result`, once `done`, is the object `run_scratches` returns without background. `startedAt` and `updatedAt` are UTC ISO 8601.
+- **Use:** `projectPath`, `runId` (as `run_scratches` returned it), `stop` (default false). `live` is true while this server still plays the run, until its final write has ended; the status may already show the final state while `live` is still true. A run of this server is read from memory; any other run's status file is returned as it is, with `live` false: one a server killed outright left says `running`, and its `serverPid` tells whose it was.
+- **Edges:** `stop: true` ends a live run of this server as a cancelled call ends (its games stopped), writes `stopped` and the completion line, and returns the final status once the run has ended; the first end reason wins, so a run that has already finished is returned unchanged.
+
+  A stop of a run read from its status file is refused, naming the process id the file gives: another server's run, or one this server no longer keeps. A `runId` not of the form `20261019T222144-3f2a` is refused, and so is one with no status file under `projectPath`. It is not read-only: it can stop a run, so it is in the drive class.
 
 ## Drive input
 

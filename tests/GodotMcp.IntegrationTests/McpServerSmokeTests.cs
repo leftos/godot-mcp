@@ -108,6 +108,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 "save_scene",
                 "save_screenshot",
                 "save_screenshot_baseline",
+                "scratch_status",
                 "scroll",
                 "set_node_properties",
                 "set_property",
@@ -219,6 +220,7 @@ public sealed class McpServerSmokeTests : IDisposable
             ["save_scene"] = changesTheGame,
             ["save_screenshot"] = changesTheGame,
             ["save_screenshot_baseline"] = changesTheGame,
+            ["scratch_status"] = changesTheGame,
             ["scroll"] = changesTheGame,
             ["set_node_properties"] = changesTheGame,
             ["set_property"] = changesTheGame,
@@ -243,7 +245,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(71, actual.Count);
+        Assert.Equal(72, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

@@ -2,6 +2,17 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- `run_scratches` takes `options.background`: it returns a run id at once and plays on, writing a status file and a log ending in a completion line.
+- `scratch_status` reads a background scratch run's progress and result, or stops it.
+
+### Changed
+
+- A tool call that names no session never picks a session a background scratch run is playing.
+
 ## 0.18.0 - 2026-10-19
 
 ### Added
