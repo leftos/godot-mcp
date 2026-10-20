@@ -24,7 +24,7 @@ log, and the job's timeout-minutes bounds it in place of the ceiling and watchdo
            first checks that every `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly
            one group, every listed class exists, every group is in exactly one lane that names only groups, and the
            heavy groups and rules tables name only groups, and stops with status 1 before running anything when not.
-           It then builds the project once in Release
+           It then builds the project once in Release, on this machine (gate's --local) until GATE-557 is fixed
            (.tmp/itest-build.log, ceiling 300 s) and runs each group as its own gate in a process of its own
            (.tmp/itest-<group>.log, ceiling 300 s, dotnet test -c Release --no-build; the csharp group's gate runs
            itest-csharp, below, with a ceiling of 420 s for its publishes, and the capture group's itest-capture, below,
@@ -324,6 +324,8 @@ $itestRules = @(
 )
 $itestNamespace = 'GodotMcp.IntegrationTests'
 $itestProject = 'tests/GodotMcp.IntegrationTests/GodotMcp.IntegrationTests.csproj'
+# The itest build's gate runs it on this machine (--local) with this reason, until GATE-557 is fixed.
+$itestBuildLocalReason = 'GATE-557: a routed itest build leaves a nothing-back record, and the parallel lanes then build one tree at once'
 $unitTestProject = 'tests/GodotMcp.Tests/GodotMcp.Tests.csproj'
 # The configuration every build of this script and every test run uses: a test run is preceded by the build of its own
 # project here and passes -c Release --no-build, so it never builds a configuration of its own.
@@ -420,7 +422,8 @@ function Invoke-Gated {
         [Parameter(Mandatory)] [string]$Program,
         [Parameter(Mandatory)] [string[]]$Arguments,
         [Parameter(Mandatory)] [ValidateSet('heavy', 'light')] [string]$Slot,
-        [switch]$NoMarkers
+        [switch]$NoMarkers,
+        [string]$LocalReason
     )
     $log = Join-Path $logDir "$Name.log"
     Write-Host "$Program $($Arguments -join ' ')  (log: $log, ceiling: $TimeoutSeconds s, slot: $Slot)"
@@ -434,6 +437,9 @@ function Invoke-Gated {
     $gateOptions = @('run', '--log', $log, '--timeout', $TimeoutSeconds, '--slot', $Slot, '--tail', 15)
     if ($NoMarkers) {
         $gateOptions += '--no-markers'
+    }
+    if ($LocalReason) {
+        $gateOptions += @('--local', '--reason', $LocalReason)
     }
     & $gate @gateOptions -- $Program @Arguments | Out-Host
     $status = $LASTEXITCODE
@@ -449,20 +455,23 @@ function Invoke-Logged {
         [Parameter(Mandatory)] [string]$Name,
         [Parameter(Mandatory)] [int]$TimeoutSeconds,
         [Parameter(Mandatory)] [string[]]$Arguments,
-        [Parameter(Mandatory)] [ValidateSet('heavy', 'light')] [string]$Slot
+        [Parameter(Mandatory)] [ValidateSet('heavy', 'light')] [string]$Slot,
+        [string]$LocalReason
     )
-    return Invoke-Gated -Name $Name -TimeoutSeconds $TimeoutSeconds -Program 'dotnet' -Arguments $Arguments -Slot $Slot
+    return Invoke-Gated -Name $Name -TimeoutSeconds $TimeoutSeconds -Program 'dotnet' -Arguments $Arguments -Slot $Slot -LocalReason $LocalReason
 }
 
 # Builds a test project in $configuration, warnings as errors, under its own gate, so the run after it has nothing to
-# build and the runner loads that build. Returns the build's status.
+# build and the runner loads that build. With -LocalReason the gate runs it on this machine (--local). Returns the
+# build's status.
 function Invoke-TestBuild {
     param(
         [Parameter(Mandatory)] [string]$Name,
-        [Parameter(Mandatory)] [string]$Project
+        [Parameter(Mandatory)] [string]$Project,
+        [string]$LocalReason
     )
     $arguments = @('build', (Join-Path $root $Project), '-c', $configuration, '-warnaserror')
-    return Invoke-Logged -Name $Name -TimeoutSeconds 300 -Arguments $arguments -Slot heavy
+    return Invoke-Logged -Name $Name -TimeoutSeconds 300 -Arguments $arguments -Slot heavy -LocalReason $LocalReason
 }
 
 # The program and arguments of an integration test run: dotnet with the given arguments, on Windows through
@@ -1055,7 +1064,7 @@ function Get-ItestLaneCount {
 function Invoke-ItestByGroup {
     param([Parameter(Mandatory)] [string[]]$Groups)
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject
+    $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject -LocalReason $itestBuildLocalReason
     if ($build -ne 0) {
         return $build
     }
@@ -1092,7 +1101,7 @@ function Get-ItestRunGroup {
 # helper published inside it) when a filter selects a csharp class.
 function Invoke-ItestFiltered {
     param([Parameter(Mandatory)] [string[]]$Filters)
-    $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject
+    $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject -LocalReason $itestBuildLocalReason
     if ($build -ne 0) {
         return $build
     }
