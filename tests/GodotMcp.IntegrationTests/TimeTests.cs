@@ -513,6 +513,24 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.True(stillPaused);
     }
 
+    // The signal is connected before the call, which runs in the next process_frame even on a paused tree, so the emission
+    // fire_now makes inside the call is the one the wait meets.
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task WaitForSignalMeetsAnEmissionItsCallMakesAtOnceEvenWhilePaused()
+    {
+        await AddTimeProbeAsync(TestContext.Current.CancellationToken);
+        await FrameAsync("pause");
+
+        JsonObject waited = await WaitAsync(
+            new WaitCondition(Node: "TimeProbe", Signal: "fired"),
+            new WaitOptions(Call: new MethodCall("TimeProbe", "fire_now", Json("[7]")))
+        );
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Equal("[7]", waited["args"]!.ToJsonString());
+        Assert.Equal(7, waited["call"]!["value"]!.GetValue<int>());
+    }
+
     // A signal wait's node is resolved once, up front; TimeProbe/Missing is not there to resolve.
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForSignalOnAMissingNodeIsRefusedNamingTheBaseAndItsChildren()

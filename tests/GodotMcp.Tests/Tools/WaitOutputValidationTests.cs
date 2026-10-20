@@ -154,7 +154,7 @@ public sealed class WaitOutputValidationTests
         );
 
         Assert.Equal(
-            "options.call is taken only by a gameMs, frames, exists, property, expression, text, settled or state wait; "
+            "options.call is taken only by a gameMs, frames, exists, property, expression, text, settled, state or signal wait; "
                 + "this condition is output.",
             refused.Message
         );

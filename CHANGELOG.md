@@ -13,6 +13,8 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `batch_drive` takes parallel groups: up to 8 steps on different sessions at once, each sent before the next starts, a failure cancelling the rest.
 - `batch_drive` results carry `startedAt`, and every step's `startMs` and `endMs`, on one clock across sessions.
 - `wait_for {uiChanged: "now"}` takes its UI snapshot when the wait starts, so a parallel group's wait sees another session's input change it.
+- `run_scratches` ends a step once the condition its scene's `GetStepUntil(i)` gives holds, within the step's pace of game time.
+- `wait_for` signal waits take `options.call`, connecting before the call, so a signal the call emits at once is caught.
 
 ## 0.17.1 - 2026-10-17
 

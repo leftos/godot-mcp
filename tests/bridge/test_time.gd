@@ -45,11 +45,63 @@ func test_json_equal_compares_other_values_by_type_and_value() -> void:
 
 func test_paused_refusal_lets_only_a_check_once_wait_run_while_paused() -> void:
 	var time: Node = _time_script.new()
-	assert_eq(time._paused_refusal(true, 1), time.PAUSED_REFUSAL, "a timed wait while paused")
-	assert_eq(time._paused_refusal(true, 0), "", "a check-once wait while paused")
-	assert_eq(time._paused_refusal(false, 1), "", "a timed wait while running")
-	assert_eq(time._paused_refusal(false, 0), "", "a check-once wait while running")
+	assert_eq(
+		time._paused_refusal(true, 1, false), time.PAUSED_REFUSAL, "a timed wait while paused"
+	)
+	assert_eq(time._paused_refusal(true, 0, false), "", "a check-once wait while paused")
+	assert_eq(time._paused_refusal(false, 1, false), "", "a timed wait while running")
+	assert_eq(time._paused_refusal(false, 0, false), "", "a check-once wait while running")
 	time.free()
+
+
+func test_paused_refusal_lets_a_game_time_limited_wait_run_while_paused() -> void:
+	var time: Node = _time_script.new()
+	assert_eq(time._paused_refusal(true, 1, true), "", "a limitGameMs wait while paused")
+	assert_eq(time._paused_refusal(true, 1, false), time.PAUSED_REFUSAL, "a plain wait is refused")
+	time.free()
+
+
+func test_a_limited_poll_stops_once_the_seen_game_time_reaches_the_limit() -> void:
+	var clock: Dictionary = {"seconds": 0.0, "seen": 0.0, "frames": 0}
+	var params: Dictionary = {"limitGameMs": 100, "_gameClock": clock}
+	_time_script.advance_game_clock(clock, false, 0.06)
+	_time_script.advance_game_clock(clock, false, 0.06)
+	assert_true(not _time_script._stops_polling(params), "120 ms counted, 60 ms seen: goes on")
+	_time_script.advance_game_clock(clock, false, 0.06)
+	assert_true(_time_script._stops_polling(params), "120 ms seen: stops")
+
+
+func test_a_condition_met_on_the_frame_the_limit_is_reached_wins() -> void:
+	var time: Node = _time_script.new()
+	var clock: Dictionary = {"seconds": 0.0, "seen": 0.0, "frames": 0}
+	var params: Dictionary = {"limitGameMs": 100, "_gameClock": clock}
+	_time_script.advance_game_clock(clock, false, 0.1)
+	_time_script.advance_game_clock(clock, false, 0.05)
+	var outcome: Dictionary = time._poll(func() -> Array: return [true, 1], 60000.0, params)
+	time._add_game_ms(outcome, params)
+	assert_eq(outcome["result"]["met"], true, "met in the frame its limit was reached")
+	assert_eq(outcome["result"]["gameMs"], 100, "the game time the check saw, not the frame's own")
+	time.free()
+
+
+func test_a_wait_without_a_game_time_limit_never_stops_on_game_time() -> void:
+	var time: Node = _time_script.new()
+	var params: Dictionary = {}
+	assert_true(not time._start_game_limit(params).is_valid(), "no clock without limitGameMs")
+	assert_true(not params.has("_gameClock"), "no clock in the params")
+	assert_true(not _time_script._stops_polling(params), "no game-time stop")
+	assert_true(time._keeps_polling([false, 0], 100000, 10, 5000.0, params), "goes on")
+	time.free()
+
+
+func test_a_paused_frame_moves_the_seen_game_time_to_the_counted_one_only() -> void:
+	var clock: Dictionary = {"seconds": 0.0, "seen": 0.0, "frames": 0}
+	_time_script.advance_game_clock(clock, false, 0.1)
+	_time_script.advance_game_clock(clock, true, 0.5)
+	assert_approx(clock["seconds"], 0.1, "the paused frame added nothing")
+	assert_approx(clock["seen"], 0.1, "the frame before it is seen")
+	_time_script.advance_game_clock(clock, true, 0.5)
+	assert_approx(clock["seen"], 0.1, "a second paused frame adds nothing either")
 
 
 func test_poll_with_timeout_zero_checks_once_without_a_frame() -> void:
@@ -356,8 +408,61 @@ func test_a_then_pause_while_a_capture_runs_fails_and_leaves_the_tree_running() 
 	_free_then_rig(rig)
 
 
+func test_a_signal_wait_connects_before_its_call_so_an_emission_the_call_makes_is_met() -> void:
+	var rig: Dictionary = _then_rig()
+	var params: Dictionary = {
+		"node": "CallTarget",
+		"signal": "pinged",
+		"call": {"node": "CallTarget", "method": "ping", "args": [4]},
+	}
+	var hold: Dictionary = {}
+	var caught: Variant = rig["time"].signal_probe(params, hold)
+	var outcome: Dictionary = await rig["time"]._call_and_poll_signal(caught, params, 1000, hold)
+	assert_true(outcome.has("result"), "the wait answers: %s" % outcome)
+	assert_eq(outcome["result"]["met"], true, "the emission inside the call is caught")
+	assert_eq(outcome["result"]["args"], [4], "with its arguments")
+	assert_eq(outcome["result"]["call"], {"value": 4}, "and the call's value")
+	assert_eq(rig["target"].get_signal_connection_list("pinged").size(), 0, "released")
+	_free_then_rig(rig)
+
+
+func test_a_signal_wait_whose_call_fails_fails_and_releases_its_connection() -> void:
+	var rig: Dictionary = _then_rig()
+	var params: Dictionary = {
+		"node": "CallTarget", "signal": "pinged", "call": {"node": "CallTarget", "method": "fail"}
+	}
+	var hold: Dictionary = {}
+	var caught: Variant = rig["time"].signal_probe(params, hold)
+	var outcome: Dictionary = await rig["time"]._call_and_poll_signal(caught, params, 1000, hold)
+	assert_eq(outcome, {"error": "the method failed"}, "the call's error fails the wait")
+	assert_eq(rig["target"].get_signal_connection_list("pinged").size(), 0, "released")
+	_free_then_rig(rig)
+
+
+func test_a_signal_wait_connects_in_its_calls_frame_so_an_earlier_emission_is_not_met() -> void:
+	var rig: Dictionary = _then_rig()
+	var params: Dictionary = {
+		"node": "CallTarget",
+		"signal": "pinged",
+		"call": {"node": "CallTarget", "method": "ping", "args": [4]},
+	}
+	var outcomes: Array = []
+	var waiting := func() -> void:
+		outcomes.append(await rig["time"]._wait_for_signal(params, 1000, test_frame))
+	waiting.call()
+	assert_eq(outcomes, [], "the wait holds for the call's frame")
+	rig["target"].pinged.emit(9)
+	test_frame.emit()
+	assert_eq(outcomes.size(), 1, "the wait answers in the call's frame")
+	assert_eq(outcomes[0]["result"]["met"], true, "met: %s" % outcomes[0])
+	assert_eq(outcomes[0]["result"]["args"], [4], "by the call's emission, not the one before it")
+	assert_eq(rig["target"].get_signal_connection_list("pinged").size(), 0, "released")
+	_free_then_rig(rig)
+
+
 ## A clock whose bridge is a stand-in holding the inspector, the JSON module and an unregistered
-## logger, and CallTarget, a node outside any tree with add(a, b), scale_now() and fail().
+## logger, and CallTarget, a node outside any tree with signal pinged(n), ping(n), which emits it
+## and returns n, add(a, b), scale_now() and fail().
 func _then_rig() -> Dictionary:
 	var bridge: Node = _compile(
 		(
@@ -385,8 +490,15 @@ func _then_rig() -> Dictionary:
 				[
 					"extends Node",
 					"",
+					"signal pinged(n: int)",
+					"",
 					"var logger: Logger",
 					"var calls: int = 0",
+					"",
+					"",
+					"func ping(n: int) -> int:",
+					"\tpinged.emit(n)",
+					"\treturn n",
 					"",
 					"",
 					"func add(a: int, b: int) -> int:",

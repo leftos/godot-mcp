@@ -1,9 +1,12 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Tools;
+using ModelContextProtocol;
 
 namespace GodotMcp.Server.Session;
 
@@ -109,9 +112,11 @@ internal readonly record struct LineMark(long Stdout, long Stderr);
 /// error feed's entries so far, the boot's: an error among them fails the scene before any step plays (the lines printed so far
 /// are never judged). A step pace keyed to no single step, or an options.steps token naming none, refuses the scene before any
 /// step plays. Then per step it plays (every step, or those options.steps selects, in ascending order) it calls PlayStep, waits
-/// the step's pace in game time, reads GetStatus and takes the feed's entries since the last window, stopping at the first
-/// failed step, or with the plan's keep-going only at one whose call failed; after the last step played it waits that step's
-/// pace once more, then stops the game gracefully and reads the lines it printed after the steps.
+/// the step's pace in game time (for a root that has GetStepUntil and a step it gives a condition, plays the step inside one
+/// wait_for on that condition instead, PlayStep the wait's call, until it holds or the pace has passed in game time), reads
+/// GetStatus and takes the feed's entries since the last window, stopping at the first failed step, or with the plan's
+/// keep-going only at one whose call failed; after the last step played it waits that step's pace once more, then stops the
+/// game gracefully and reads the lines it printed after the steps.
 /// Each window of output (the launch, each step, the pace after the last) ends at a marker line the game prints to stdout
 /// and to stderr, since the two streams arrive apart. The session stays in the registry, stopped, so get_debug_output can
 /// read it.
@@ -120,6 +125,17 @@ internal sealed class ScratchRun
 {
     /// <summary>The scratch protocol: the methods a scratch scene's root implements.</summary>
     public static readonly IReadOnlyList<string> Protocol = ["PlayStep", "GetStepCount", "GetStepName", "GetStatus"];
+
+    /// <summary>
+    /// The protocol's optional method: a root that has it gives each step a wait_for condition (empty or null for a paced step),
+    /// and the runner plays such a step inside one wait on it.
+    /// </summary>
+    internal const string UntilMethod = "GetStepUntil";
+
+    private const string BridgeRefusalPrefix = "The bridge refused 'wait_for': ";
+
+    /// <summary>The until wait's parameter, sent by the runner alone, of the game milliseconds the bridge ends it at, not met.</summary>
+    private const string LimitGameMsField = "limitGameMs";
 
     /// <summary>The start of every marker line the runner has the game print; such lines are never judged or listed.</summary>
     internal const string MarkerPrefix = "[godot-mcp] scratch ";
@@ -138,6 +154,7 @@ internal sealed class ScratchRun
     private static readonly LineMark EveryLine = new(long.MaxValue, long.MaxValue);
 
     private readonly SessionRegistry _registry;
+    private readonly CSharpBridge _csharp;
     private readonly ScratchPlan _plan;
     private readonly ScratchScenePlan _scene;
     private readonly string _nonce = Guid.NewGuid().ToString("N")[..12];
@@ -154,10 +171,12 @@ internal sealed class ScratchRun
     private List<string> _paceLines = [];
     private string? _afterError;
     private long _feedMark;
+    private bool _hasUntil;
 
-    private ScratchRun(SessionRegistry registry, ScratchPlan plan, ScratchScenePlan scene)
+    private ScratchRun(SessionRegistry registry, CSharpBridge csharp, ScratchPlan plan, ScratchScenePlan scene)
     {
         _registry = registry;
+        _csharp = csharp;
         _plan = plan;
         _scene = scene;
     }
@@ -166,17 +185,23 @@ internal sealed class ScratchRun
     /// Prepares the project once when the plan says so, then plays the scenes, starting them in <see cref="StartOrder"/> at most
     /// the plan's parallel at once, and judges each; a scene red or killed beside others is then played once more alone, one at a time in
     /// order. The result lists the scenes in the plan's order, whatever finished first, with what the prep did.
+    /// <paramref name="csharp"/> readies the C# helper a state until reads a C# node's state with.
     /// </summary>
     /// <exception cref="SessionException">The prep failed.</exception>
-    public static async Task<ScratchRunResult> RunAsync(SessionRegistry registry, ScratchPlan plan, CancellationToken cancellationToken)
+    public static async Task<ScratchRunResult> RunAsync(
+        SessionRegistry registry,
+        CSharpBridge csharp,
+        ScratchPlan plan,
+        CancellationToken cancellationToken
+    )
     {
         PrepResult prep = plan.Prepare ? await registry.PrepareFolderAsync(plan.ProjectDir, cancellationToken) : PrepResult.Skipped;
-        ScratchSceneResult[] scenes = await PlayBesideAsync(registry, plan, cancellationToken);
+        ScratchSceneResult[] scenes = await PlayBesideAsync(registry, csharp, plan, cancellationToken);
         for (int index = 0; index < scenes.Length; index++)
         {
             if (ScratchVerdict.PlaysAgainAlone(scenes[index], plan.Parallel))
             {
-                ScratchSceneResult replay = await PlayOneAsync(registry, plan, plan.Scenes[index], cancellationToken);
+                ScratchSceneResult replay = await PlayOneAsync(registry, csharp, plan, plan.Scenes[index], cancellationToken);
                 scenes[index] = ScratchVerdict.Alone(scenes[index], replay);
             }
         }
@@ -188,7 +213,12 @@ internal sealed class ScratchRun
     /// Plays every scene, each started once a slot is free, in <see cref="StartOrder"/>, its result kept at its place in the
     /// plan; waits for every scene started, even when a scene throws or the call is cancelled, so no game outlives the call.
     /// </summary>
-    private static async Task<ScratchSceneResult[]> PlayBesideAsync(SessionRegistry registry, ScratchPlan plan, CancellationToken cancellationToken)
+    private static async Task<ScratchSceneResult[]> PlayBesideAsync(
+        SessionRegistry registry,
+        CSharpBridge csharp,
+        ScratchPlan plan,
+        CancellationToken cancellationToken
+    )
     {
         var results = new ScratchSceneResult[plan.Scenes.Count];
         using SemaphoreSlim slots = new(plan.Parallel, plan.Parallel);
@@ -213,7 +243,7 @@ internal sealed class ScratchRun
         {
             try
             {
-                results[index] = await PlayOneAsync(registry, plan, plan.Scenes[index], cancellationToken);
+                results[index] = await PlayOneAsync(registry, csharp, plan, plan.Scenes[index], cancellationToken);
             }
             finally
             {
@@ -235,12 +265,13 @@ internal sealed class ScratchRun
 
     private static async Task<ScratchSceneResult> PlayOneAsync(
         SessionRegistry registry,
+        CSharpBridge csharp,
         ScratchPlan plan,
         ScratchScenePlan scene,
         CancellationToken cancellationToken
     )
     {
-        ScratchObservation seen = await new ScratchRun(registry, plan, scene).PlayAsync(cancellationToken);
+        ScratchObservation seen = await new ScratchRun(registry, csharp, plan, scene).PlayAsync(cancellationToken);
         return ScratchVerdict.Judge(seen, new ScratchRules(plan.Patterns, scene.Known, scene.PaceReason, plan.Details));
     }
 
@@ -374,6 +405,93 @@ internal sealed class ScratchRun
 
     /// <summary>A pace as the game milliseconds a step waits: at least 1.</summary>
     internal static int GameMs(double pace) => (int)Math.Max(1, Math.Round(pace * 1000));
+
+    /// <summary>
+    /// The bridge's wait_for parameters for step <paramref name="index"/>'s GetStepUntil answer: its condition checked as wait_for
+    /// checks one, <paramref name="paceMs"/> its timeoutMs and its limitGameMs (the game time the bridge ends the wait at, not
+    /// met, a parameter only the runner sends), and PlayStep(index) on <paramref name="rootPath"/> its call. Neither parameters
+    /// nor an error for null or an empty dictionary, a paced step; an error for any other answer, or a condition wait_for refuses.
+    /// </summary>
+    internal static (JsonObject? Wait, string? Error) UntilWait(JsonNode? answer, int index, string name, int paceMs, string rootPath)
+    {
+        if (answer is null || answer is JsonObject { Count: 0 })
+        {
+            return (null, null);
+        }
+
+        if (answer is not JsonObject condition)
+        {
+            return (null, $"{UntilMethod}({index}) returned {answer.ToJsonString()}, not a wait_for condition");
+        }
+
+        try
+        {
+            WaitCondition until = condition.Deserialize<WaitCondition>(ToolJson.Options)!;
+            MethodCall play = new(rootPath, "PlayStep", JsonSerializer.SerializeToElement(new[] { index }));
+            JsonObject wait = RuntimeTools.BuildWaitParameters(until, paceMs, new WaitOptions(Call: play));
+            wait[LimitGameMsField] = paceMs;
+            return (wait, null);
+        }
+        catch (Exception e) when (e is McpException or JsonException)
+        {
+            return (null, UntilRefused(index, name, e.Message));
+        }
+    }
+
+    /// <summary>Why a step failed when its until was not met within its pace.</summary>
+    internal static string UntilNotMet(int index, string name, double pace) =>
+        $"step {index} '{name}': its until was not met within its pace of {pace.ToString(CultureInfo.InvariantCulture)} s; "
+        + $"give it a longer scratch.pace, or check the condition {UntilMethod} gives";
+
+    /// <summary>
+    /// Why a step whose until's wait ended unmet failed: not met within its pace when the bridge counted the whole pace of game
+    /// time; else the release of <paramref name="releaseSeconds"/> real seconds ended the wait first, the game's clock stood still.
+    /// </summary>
+    internal static string UntilMissed(int index, string name, ScratchUntil until, double pace, double releaseSeconds) =>
+        until.GameMs >= GameMs(pace)
+            ? UntilNotMet(index, name, pace)
+            : $"step {index} '{name}': its until was not met within "
+                + $"{releaseSeconds.ToString("0.#", CultureInfo.InvariantCulture)} s: the game's clock stood still (is it paused?)";
+
+    /// <summary>Why a step failed when its until was refused, by the server's checks or the bridge.</summary>
+    internal static string UntilRefused(int index, string name, string refusal) => $"step {index} '{name}': its until was refused: {refusal}";
+
+    /// <summary>Why a step failed when its until's wait failed on the connection or the session rather than a refusal.</summary>
+    internal static string UntilWaitFailed(int index, string name, string message) => $"step {index} '{name}': its until's wait failed: {message}";
+
+    /// <summary>
+    /// Why a step failed when the bridge refused its until's wait with <paramref name="error"/>: when the step's feed
+    /// <paramref name="errors"/> logged that same error (PlayStep, the wait's call, raised it), that feed entry as a paced step's
+    /// thrown PlayStep reads (its message, then its file and line when it has them); else the until's refusal, the bridge's
+    /// wrapper cut from the text.
+    /// </summary>
+    /// <returns>The step's error, and the feed entry it was read from, or null when it is the until's refusal.</returns>
+    internal static (string Error, ErrorEntry? Raised) UntilFailure(int index, string name, string error, IReadOnlyList<ErrorEntry> errors)
+    {
+        string said = error.StartsWith(BridgeRefusalPrefix, StringComparison.Ordinal) ? error[BridgeRefusalPrefix.Length..] : error;
+        ErrorEntry? raised = errors.FirstOrDefault(entry => entry.IsError && entry.Message == said);
+        return raised is null ? (UntilRefused(index, name, said), null) : (ScratchVerdict.FeedError([raised])!, raised);
+    }
+
+    /// <summary>
+    /// An exception from the until's wait as the step's play takes it: a connection or session failure (a disposed connection
+    /// included) as why the step failed (<see cref="UntilWaitFailed"/>); any other refusal as the bridge's text, which the caller
+    /// judges once the step's feed entries are in (<see cref="UntilFailure"/>).
+    /// </summary>
+    internal static (string? Error, string? Refusal) UntilCaught(int index, string name, Exception e) =>
+        e is ObjectDisposedException or IOException or SessionException ? (UntilWaitFailed(index, name, e.Message), null) : (null, e.Message);
+
+    /// <summary>A met or timed-out wait_for reply's figures as a step's until carries them.</summary>
+    internal static ScratchUntil UntilFigures(JsonNode? reply) =>
+        new(
+            reply?["met"] is JsonValue met && met.TryGetValue(out bool isMet) && isMet,
+            Figure(reply, "gameMs"),
+            Figure(reply, "elapsedMs"),
+            Figure(reply, "frames")
+        );
+
+    /// <summary>A whole-number field of a wait_for reply; 0 when the reply lacks it.</summary>
+    private static int Figure(JsonNode? reply, string field) => reply?[field] is JsonValue value && value.TryGetValue(out int figure) ? figure : 0;
 
     /// <summary>The note line of GetStatus's text, its second line; empty when it has none.</summary>
     internal static string StatusLine(JsonNode? status)
@@ -552,28 +670,42 @@ internal sealed class ScratchRun
         return _rootPath.Length > 0 ? null : $"{_scene.ResPath} has no current scene once started; is it a scene file the game can run?";
     }
 
-    /// <summary>Null when the scene's root has every protocol method; else why not, naming the root and what it lacks.</summary>
+    /// <summary>
+    /// Null when the scene's root has every protocol method, noting whether it also has GetStepUntil; else why not, naming the
+    /// root and what it lacks.
+    /// </summary>
     private async Task<string?> CheckProtocolAsync(GodotSession session, CancellationToken cancellationToken)
     {
         List<string> missing = [];
         foreach (string method in Protocol)
         {
-            (JsonNode? has, string? error) = await CallAsync(session, "has_method", [method], cancellationToken);
+            (bool found, string? error) = await HasMethodAsync(session, method, cancellationToken);
             if (error is not null)
             {
                 return error;
             }
 
-            if (has is not JsonValue value || !value.TryGetValue(out bool found) || !found)
+            if (!found)
             {
                 missing.Add(method);
             }
         }
 
-        return missing.Count == 0
-            ? null
-            : $"the scene root {_rootPath} lacks {string.Join(", ", missing)}; a scratch scene implements PlayStep(int), GetStepCount(), "
+        if (missing.Count > 0)
+        {
+            return $"the scene root {_rootPath} lacks {string.Join(", ", missing)}; a scratch scene implements PlayStep(int), GetStepCount(), "
                 + "GetStepName(int) and GetStatus()";
+        }
+
+        (_hasUntil, string? untilError) = await HasMethodAsync(session, UntilMethod, cancellationToken);
+        return untilError;
+    }
+
+    /// <summary>Whether the scene's root has <paramref name="method"/>, or why has_method failed.</summary>
+    private async Task<(bool Found, string? Error)> HasMethodAsync(GodotSession session, string method, CancellationToken cancellationToken)
+    {
+        (JsonNode? has, string? error) = await CallAsync(session, "has_method", [method], cancellationToken);
+        return (has is JsonValue value && value.TryGetValue(out bool found) && found, error);
     }
 
     /// <summary>
@@ -646,7 +778,7 @@ internal sealed class ScratchRun
         foreach (int index in _walk.Played)
         {
             _inFlight = index;
-            ScratchStep step = await PlayStepAsync(session, index, GameMs(_walk.Paces[index].Seconds), limit);
+            ScratchStep step = await PlayStepAsync(session, index, limit);
             _steps.Add(step);
             if (StopsAfter(step, _plan.Patterns, _plan.KeepGoing))
             {
@@ -658,21 +790,84 @@ internal sealed class ScratchRun
         await PaceAfterAsync(session, _walk.AfterGameMs, limit);
     }
 
-    private async Task<ScratchStep> PlayStepAsync(GodotSession session, int index, int gameMs, CancellationToken limit)
+    /// <summary>
+    /// Plays one step: paced (PlayStep, then a wait of its pace in game time), or for a step whose GetStepUntil gives a condition,
+    /// inside one wait_for on it; then GetStatus and the window. The bridge's refusal of the until's wait is judged once the
+    /// step's feed entries are in (<see cref="UntilFailure"/>); a connection or session failure is the step's error at once.
+    /// </summary>
+    private async Task<ScratchStep> PlayStepAsync(GodotSession session, int index, CancellationToken limit)
     {
-        (_, string? error) = await CallAsync(session, "PlayStep", [index], limit);
-        error ??= await WaitAsync(session, gameMs, limit);
+        int gameMs = GameMs(_walk.Paces[index].Seconds);
+        (JsonObject? wait, string? untilError) = _hasUntil ? await ReadUntilAsync(session, index, gameMs, limit) : (null, null);
+        StepPlay played =
+            untilError is not null ? new StepPlay(untilError, null, null)
+            : wait is null ? new StepPlay(await PlayPacedAsync(session, index, gameMs, limit), null, null)
+            : await PlayInsideUntilAsync(session, index, wait, limit);
         (JsonNode? status, string? statusError) = await CallAsync(session, "GetStatus", [], limit);
         (List<string> lines, long dropped, string? markerError) = await CloseWindowAsync(session, $"step {index}", limit);
+        IReadOnlyList<ErrorEntry> errors = TakeErrors(session.Errors, ref _feedMark);
+        (string? error, ErrorEntry? raised) = played.BridgeError is { } bridgeError
+            ? UntilFailure(index, _names[index], bridgeError, errors)
+            : (played.Error, null);
         return new ScratchStep(index, _names[index], gameMs)
         {
+            Until = played.Until,
             CallError = error ?? statusError ?? markerError,
+            CallErrorEntry = raised,
             Status = StatusLine(status),
-            Errors = TakeErrors(session.Errors, ref _feedMark),
+            Errors = errors,
             Lines = lines,
             Dropped = dropped,
         };
     }
+
+    /// <summary>PlayStep, then a wait of the step's pace in game time: null, or why the call or the wait failed.</summary>
+    private async Task<string?> PlayPacedAsync(GodotSession session, int index, int gameMs, CancellationToken limit)
+    {
+        (_, string? error) = await CallAsync(session, "PlayStep", [index], limit);
+        return error ?? await WaitAsync(session, gameMs, limit);
+    }
+
+    /// <summary>
+    /// GetStepUntil(index) as the until's wait parameters (none for a paced step), with the C# helper a state condition reads a
+    /// C# node's state with, as wait_for adds it; or why the step fails.
+    /// </summary>
+    private async Task<(JsonObject? Wait, string? Error)> ReadUntilAsync(GodotSession session, int index, int gameMs, CancellationToken limit)
+    {
+        (JsonNode? answer, string? error) = await CallAsync(session, UntilMethod, [index], limit);
+        if (error is not null)
+        {
+            return (null, error);
+        }
+
+        (JsonObject? wait, string? untilError) = UntilWait(answer, index, _names[index], gameMs, _rootPath);
+        RuntimeTools.AddConditionStateHelper(wait, _csharp, session.ProjectDir);
+        return (wait, untilError);
+    }
+
+    /// <summary>
+    /// One wait_for on the step's until, PlayStep its call, which the bridge ends at the step's pace in game time, released at
+    /// that pace plus the step allowance as a pace wait is: its figures and, when not met, why the step fails
+    /// (<see cref="UntilMissed"/>); the bridge's refusal, judged by the caller; or why the wait failed on the connection.
+    /// </summary>
+    private async Task<StepPlay> PlayInsideUntilAsync(GodotSession session, int index, JsonObject wait, CancellationToken limit)
+    {
+        TimeSpan release = TimeSpan.FromMilliseconds(wait["timeoutMs"]!.GetValue<int>()) + StepAllowance;
+        try
+        {
+            ScratchUntil until = UntilFigures(await session.SendAsync("wait_for", wait, release + ReplyAllowance, limit, release));
+            string? notMet = until.Met ? null : UntilMissed(index, _names[index], until, _walk.Paces[index].Seconds, release.TotalSeconds);
+            return new StepPlay(notMet, null, until);
+        }
+        catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
+        {
+            (string? error, string? refusal) = UntilCaught(index, _names[index], e);
+            return new StepPlay(error, refusal, null);
+        }
+    }
+
+    /// <summary>How a step's play went: why it failed, or the bridge's refusal of its until's wait, and the until's figures.</summary>
+    private readonly record struct StepPlay(string? Error, string? BridgeError, ScratchUntil? Until);
 
     /// <summary>The pace after the last step: an error in the feed during it, or a wait not met, fails the scene's exit.</summary>
     private async Task PaceAfterAsync(GodotSession session, int gameMs, CancellationToken limit)

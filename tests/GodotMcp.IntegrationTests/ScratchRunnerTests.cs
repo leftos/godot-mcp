@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
@@ -24,7 +25,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
 
     public ScratchRunnerTests()
     {
-        _scratch = new ScratchTools(_harness.Sessions);
+        _scratch = new ScratchTools(_harness.Sessions, TestCSharp.Unused());
         CopyFolder(Path.Combine(RepoPaths.InputProbe, "scratch"), Path.Combine(_probe.Directory, "scratch"));
     }
 
@@ -362,6 +363,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         JsonArray details = scene["details"]!.AsArray();
         Assert.Equal(["quick", "slow", "settle", "last"], details.Select(step => step!["name"]!.GetValue<string>()));
         Assert.Equal([250, 1000, 500, 250], details.Select(step => step!["gameMs"]!.GetValue<int>()));
+        Assert.All(details, step => Assert.Null(step!["until"]));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -438,20 +440,27 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
     }
 
     [Fact(Timeout = CSharpTestTimeoutMs)]
-    public async Task ACSharpStepThatThrowsIsRedWithItsExceptionAndAReadyThatThrowsIsRedAtTheBoot()
+    public async Task ACSharpStepThatThrowsIsRedWithItsExceptionAReadyThatThrowsIsRedAtTheBootAndAnUntilEndsAStep()
     {
         using var csProbe = CsProbeProject.Unbuilt();
         CopyFolder(Path.Combine(RepoPaths.Root, "tests", "fixtures", "CsProbe", "Scratch"), Path.Combine(csProbe.Directory, "Scratch"));
 
         JsonObject result = await RunAsync(
             csProbe.Directory,
-            ["res://Scratch/ScratchThrow.tscn", "res://Scratch/ScratchBootThrow.tscn"],
-            options: null,
+            [
+                "res://Scratch/ScratchThrow.tscn",
+                "res://Scratch/ScratchBootThrow.tscn",
+                "res://Scratch/ScratchUntil.tscn",
+                "res://Scratch/ScratchUntilThrow.tscn",
+            ],
+            new ScratchOptions(Pace: 2, Details: true),
             TestContext.Current.CancellationToken
         );
 
         JsonArray scenes = result["scenes"]!.AsArray();
-        Assert.Equal(2, scenes.Count);
+        Assert.Equal(4, scenes.Count);
+        AssertCSharpUntils(scenes[2]!, scenes[3]!);
+        Assert.Null(scenes[0]!["details"]![0]!["until"]);
         JsonNode step = scenes[0]!;
         JsonNode stepFailedAt = step["failedAt"]!;
         Assert.Equal("red", step["verdict"]!.GetValue<string>());
@@ -488,12 +497,39 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Contains(_harness.Sessions.List(includeStopped: true), session => session.Name == "agent-a.scratch-ScratchGreen");
     }
 
+    // ScratchUntil's signal until, a 0.3 s timer, ends its step inside the 2 s pace of game time the run gives every scene: a
+    // headless frame's delta is its real frame time, and the C# helper loads in the first frame. ScratchUntilThrow's PlayStep throws
+    // inside its until's wait, which reads as its feed entry's message, file and line, and stops the scene before its second step.
+    private static void AssertCSharpUntils(JsonNode until, JsonNode thrown)
+    {
+        Assert.True(until["verdict"]!.GetValue<string>() == "green", until.ToJsonString());
+        JsonNode waited = Assert.Single(until["details"]!.AsArray())!;
+        Assert.Equal("ended", Status(waited));
+        AssertUntilMetInGameTime(waited, 2000);
+
+        Assert.Equal("red", thrown["verdict"]!.GetValue<string>());
+        Assert.Equal((1, 2), (thrown["steps"]!["played"]!.GetValue<int>(), thrown["steps"]!["total"]!.GetValue<int>()));
+        string error = thrown["failedAt"]!["error"]!.GetValue<string>();
+        Assert.Contains("InvalidOperationException: scratch until step threw", error, StringComparison.Ordinal);
+        Assert.True(Regex.IsMatch(error, @"ScratchUntilThrow\.cs:line \d+"), error);
+        Assert.False(error.StartsWith("step 0", StringComparison.Ordinal), error);
+    }
+
     private async Task<JsonObject> RunAsync(string projectDir, string[]? scenes, ScratchOptions? options, CancellationToken cancellation) =>
         JsonNode.Parse(await _scratch.RunScratchesAsync(projectDir, scenes, options, cancellation))!.AsObject();
 
-    private static JsonObject Single(JsonObject result) => Assert.Single(result["scenes"]!.AsArray())!.AsObject();
+    internal static JsonObject Single(JsonObject result) => Assert.Single(result["scenes"]!.AsArray())!.AsObject();
 
-    private static string Status(JsonNode step) => step["status"]!.GetValue<string>();
+    internal static string Status(JsonNode step) => step["status"]!.GetValue<string>();
+
+    // The proof a step ended at its until and not its pace: met, with the game time the bridge counted under the pace's
+    // milliseconds (each fixture's until holds 0.6 s of game time or less into a pace of 1 s or 2 s); game time, so load-proof.
+    internal static void AssertUntilMetInGameTime(JsonNode step, int paceMs)
+    {
+        Assert.True(step["until"]!["met"]!.GetValue<bool>(), step.ToJsonString());
+        Assert.InRange(step["until"]!["gameMs"]!.GetValue<int>(), 0, paceMs - 1);
+        Assert.Null(step["gameMs"]);
+    }
 
     private static JsonElement[] Tokens(string json) => JsonSerializer.Deserialize<JsonElement[]>(json)!;
 
@@ -508,7 +544,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
             result["killed"]!.GetValue<int>()
         );
 
-    private static void CopyFolder(string source, string destination)
+    internal static void CopyFolder(string source, string destination)
     {
         Directory.CreateDirectory(destination);
         foreach (string file in Directory.EnumerateFiles(source))

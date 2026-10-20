@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Numerics;
 using System.Text.Json;
+using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
@@ -15,7 +16,7 @@ namespace GodotMcp.Server.Tools;
 /// because batch_drive plays every RuntimeTools tool on a session, and a scratch run starts its own.
 /// </summary>
 [McpServerToolType]
-internal sealed class ScratchTools(SessionRegistry sessions)
+internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp)
 {
     internal const string ToolName = "run_scratches";
 
@@ -30,7 +31,11 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         "Plays scratch scenes and reports a verdict for each: every scene runs in a fresh headless game session "
             + "(<folder>.scratch-<scene>, or '<options.session>.scratch-<scene>'), its root is called through the scratch protocol "
             + "(GetStepCount, GetStepName(i), then per step "
-            + "PlayStep(i), a wait of the pace in game time, GetStatus), and a scene stops at its first failed step unless "
+            + "PlayStep(i), a wait of the pace in game time, GetStatus). A root that also has a public GetStepUntil(i) gives each step a "
+            + "wait_for condition (an empty dictionary, or null, for a paced step): such a step is played inside one wait_for on it, "
+            + "PlayStep(i) as the wait's options.call, until the condition holds or its pace has passed in game time; a condition not "
+            + "met in that time, or refused, is red and stops the scene, even with options.keepGoing; the step's details carry until "
+            + "{met, gameMs, elapsedMs, frames} in place of gameMs. A scene stops at its first failed step unless "
             + "options.keepGoing; options.steps [3, \"name\", \"2-5\"] plays only those steps, by index, name or inclusive range, in "
             + "ascending order, and never runs the others, so a later step that depends on a skipped one is the caller's choice. "
             + "A step fails "
@@ -48,7 +53,7 @@ internal sealed class ScratchTools(SessionRegistry sessions)
             + "failedAt is the first failed step and failures [{index, name, error}] "
             + "every one; failedAt.pattern {pattern, reason?} names the scratch.patterns entry a failing line matched; details "
             + "lists every played step of a red or killed scene, or of any scene with options.details, by its status line "
-            + "{index, name, ok, gameMs, status}; without details, a failing step carries its error, its first 3 errors and 5 "
+            + "{index, name, ok, gameMs?, until?, status}; without details, a failing step carries its error, its first 3 errors and 5 "
             + "lines in at most 1500 characters; details: true gives every step's full detail, 20 errors, 20 lines, 4000 "
             + "characters ({error, errors, errorsOmitted?, lines, cut?}); errors [{message, file, line, count?}] are folded with "
             + "a count (errorsOmitted counts the rest), messages cut at 500 characters without details and 2000 with; "
@@ -83,7 +88,7 @@ internal sealed class ScratchTools(SessionRegistry sessions)
         try
         {
             ScratchPlan plan = Plan(projectPath, scenes, options ?? new ScratchOptions());
-            ScratchRunResult result = await ScratchRun.RunAsync(sessions, plan, cancellationToken);
+            ScratchRunResult result = await ScratchRun.RunAsync(sessions, csharp, plan, cancellationToken);
             return JsonSerializer.Serialize(result, ToolJson.Options);
         }
         catch (SessionException e)
@@ -378,7 +383,8 @@ internal sealed class ScratchTools(SessionRegistry sessions)
 internal sealed record ScratchOptions(
     [property: Description(
         "Seconds of game time every step plays before the next, above 0 and at most 120, its scratch.pace steps entries "
-            + "included; else the profile's scratch.pace for the step, else for the scene, else 0.5."
+            + "included; else the profile's scratch.pace for the step, else for the scene, else 0.5. For a step whose scene gives a "
+            + "GetStepUntil condition, the pace is the most game time the step may take before its condition holds."
     )]
         double? Pace = null,
     [property: Description("User arguments appended after the profile's scratch.userArgs (else its top-level userArgs); --scratch-auto is refused.")]

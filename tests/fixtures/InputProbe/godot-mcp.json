@@ -20,7 +20,16 @@
         "steps": {
           "arm": { "seconds": 2, "reason": "its timer fires 3 s after it, inside the wait after it" }
         }
-      }
+      },
+      "ScratchUntilExpression": {
+        "seconds": 2,
+        "reason": "each step's until holds 0.3 s of game time after it",
+        "steps": {
+          "scaled": { "seconds": 1, "reason": "its until holds at 0.6 s of game time, 1.2 s of real time at time_scale 0.5" }
+        }
+      },
+      "ScratchUntilNever": 1,
+      "ScratchUntilSignal": 2
     },
     "known": {
       "ScratchLeak": "leaks a node at exit on purpose, so the runner's leak check has a scene to find"

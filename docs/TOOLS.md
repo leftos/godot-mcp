@@ -299,9 +299,15 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `run_scratches`
 
-- **Does:** plays each scratch scene in its own fresh headless game session, `parallel` at a time (default one after another), walking its steps itself, and gives each a verdict: `{passed, green, red, known, noSteps, killed, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, scenes: [{scene, verdict, steps: {played, total}, selected?, pace, paceReason?, seconds, session, failedAt?: {index, name, error, status, pattern?: {pattern, reason?}}, failures?: [{index, name, error}], alone?, aloneFailedAt?, details?: [{index, name, ok, gameMs, status, error?, errors?: [{message, file, line, count?}], errorsOmitted?, lines?, cut?}], exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?}]}`.
+- **Does:** plays each scratch scene in its own fresh headless game session, `parallel` at a time (default one after another), walking its steps itself, and gives each a verdict: `{passed, green, red, known, noSteps, killed, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, scenes: [{scene, verdict, steps: {played, total}, selected?, pace, paceReason?, seconds, session, failedAt?: {index, name, error, status, pattern?: {pattern, reason?}}, failures?: [{index, name, error}], alone?, aloneFailedAt?, details?: [{index, name, ok, gameMs?, until?: {met, gameMs, elapsedMs, frames}, status, error?, errors?: [{message, file, line, count?}], errorsOmitted?, lines?, cut?}], exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?}]}`.
 
   A scratch scene's root implements the **scratch protocol**: `PlayStep(int)`, `GetStepCount()`, `GetStepName(int)` and `GetStatus()`. Per step the server calls `PlayStep`, waits the scene's **pace** in game time (`wait_for {gameMs}`), then reads `GetStatus()` (its second line is `status`).
+
+  A root that also has a public `GetStepUntil(i)` (C# or GDScript; an optional fifth method, found by `has_method`) gives each step a `wait_for` condition, as `{node, property, equals}` or `{expression}` would be written (an empty dictionary, or null, for a paced step, which plays as above). Such a step is played inside one `wait_for` on that condition with `PlayStep(i)` as the wait's `options.call`, so the wait's clock starts in `PlayStep`'s frame and ends when the condition holds, with the step's pace as the most game time it may take; then `GetStatus()` is read as usual. A `state` condition on a C# node is read through the C# helper, as `wait_for` reads one.
+
+  A condition not met in the pace's game time, one `wait_for` refuses (`options.call` included), and an answer that is not a `wait_for` condition are each red and stop the scene, even with `options.keepGoing`, since the next `PlayStep` would start on a step still running. The step's detail carries `until {met, gameMs, elapsedMs, frames}` in place of `gameMs`: `gameMs` the game time from `PlayStep`'s frame to the met or limit frame, `elapsedMs` and `frames` as `wait_for` reports them.
+
+  The errors read `step <i> '<name>': its until was not met within its pace of <p> s; give it a longer scratch.pace, or check the condition GetStepUntil gives`, `step <i> '<name>': its until was refused: <why>`, `GetStepUntil(<i>) returned <value>, not a wait_for condition`, `step <i> '<name>': its until was not met within <r> s: the game's clock stood still (is it paused?)` (the real-time backstop of the pace + 10 s ended the wait before the game counted the pace) and `step <i> '<name>': its until's wait failed: <message>` (the connection or session failed). A `PlayStep` that throws inside an until reads as its feed entry, `<message> (<file>:<line>)`, as a paced step's does.
 
   A step fails on an error from the call, an engine error, `push_error` or C# exception in the error feed since the step began (never a text search), or a stdout or stderr line in the step's window matching one of the project's `scratch.patterns`; the scene stops at the first failed step unless `options.keepGoing`.
 
@@ -311,7 +317,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   Verdicts: `green` (every step clean, exit 0, no leak), `red`, `no-steps` (`GetStepCount()` is 0; red at index -1 under `options.steps`), `known` (a `known` scene that went red, or that played only some steps, all green), `known-now-green` (every step played and green; counts as red until its `known` entry goes), `killed` (past its ceiling or stuck).
 
-  `passed` is true when nothing is red or killed. `details` comes for a red or killed scene, or for every scene with `options.details`, and lists every played step as `{index, name, ok, gameMs, status}`; only a failing step carries `error`, `errors` and `lines`, and `options.details` adds those for the green steps too, and keeps their `[scratch]` notes (a failing step keeps its own always).
+  `passed` is true when nothing is red or killed. `details` comes for a red or killed scene, or for every scene with `options.details`, and lists every played step as `{index, name, ok, gameMs?, until?, status}` (`gameMs` the pace, or for a step played on an until `until` in its place); only a failing step carries `error`, `errors` and `lines`, and `options.details` adds those for the green steps too, and keeps their `[scratch]` notes (a failing step keeps its own always).
 
   A step's `errors` are folded by message, file and line into `{message, file, line, count?}` entries as `get_errors` reports them (`count` only above 1); distinct entries past the cap are counted in `errorsOmitted`, which also counts errors the size budget dropped.
 
@@ -337,6 +343,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
   it says why the scene needs that pace, and the reason comes back as `paceReason` on a `red` or `killed` scene whose pace came from the profile, the failed step's own reason when that step has a pace of its own (none when its pace is a bare number), since a step that ran into the next is usually a pace set too short),
 
   `known {<Scene>: reason}`, `patterns` (case-sensitive regexes, each a string or `{pattern, reason}` with both keys; a step failed by a matching line names the first matching entry as `failedAt.pattern`, with its reason; default `^SCRIPT ERROR|^ERROR:|ObjectDB instances? (was|were) leaked`; `[]` turns line matching off), `parallel` (1 to 4, default 1).
+
+  For a step played on an until, the pace is the most game time the step may take before its condition holds, and the ceiling below still counts it in full.
 
   A `steps` key matching no step, a name matching more than one step, or two keys naming one step makes the scene red before it plays (names are known only after launch). The wait after the last step uses that step's pace, and the ceiling sums each step's pace plus 10 s, plus the last step's pace and 10 s for the markers.
 
@@ -739,11 +747,13 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   So a `timeoutMs` is never a pause: to hold for a span of the game's own time (a shot 0.5 s into an effect), wait `{gameMs: N}` (1 to 120000 ms of process delta over unpaused frames, so it follows `time_scale` and load does not stretch it) or `{frames: N}` (1 to 7200 unpaused process frames), each alone, counted from the first frame after the request; `value` is the game ms (whole) or frames reached, up to one frame past N. Left out, their `timeoutMs` is N + 10000 for `gameMs` and 10 s + 100 ms a frame for `frames`, and a settled wait's is 10 s + 100 ms for each of the `stable` + 1 frames it reads, so it grows with `stable` (10200 for 1, 70100 for 600); each is at most 600000.
 
-  A `gameMs`, `frames`, `exists`, `property`, `expression`, `text`, `settled` or `state` wait takes `options.call {node, method, args?}` or `{tool, args?}`, as `capture_frames` does: the method or game tool is called in the frame the checks start (the next process frame), so a `gameMs` or `frames` count runs from the call's entry, and another wait's first check follows the call in that frame, its `frames` and `elapsedMs` counted from that check (a wait met there reports `frames: 0`).
+  A `gameMs`, `frames`, `exists`, `property`, `expression`, `text`, `settled`, `state` or `signal` wait takes `options.call {node, method, args?}` or `{tool, args?}`, as `capture_frames` does: the method or game tool is called in the frame the checks start (the next process frame), so a `gameMs` or `frames` count runs from the call's entry, and another wait's first check follows the call in that frame, its `frames` and `elapsedMs` counted from that check (a wait met there reports `frames: 0`).
+
+  A `signal` wait connects before the call, so a signal the call emits at once is caught, and it does not catch an emission from the frames before the call.
 
   The result adds `call` as `capture_frames`' does; a refused or erroring call fails the wait. A check-once wait (`timeoutMs: 0`) with a call waits for the next frame, calls, then checks once.
 
-  A `signal`, `uiChanged` or `output` wait refuses `options.call` (`options.call is taken only by a gameMs, frames, exists, property, expression, text, settled or state wait; this condition is {kind}.`), and `batch_drive`'s wait assertion has none: put a `call_method` step before it.
+  A `uiChanged` or `output` wait refuses `options.call` (`options.call is taken only by a gameMs, frames, exists, property, expression, text, settled, state or signal wait; this condition is {kind}.`), and `batch_drive`'s wait assertion has none: put a `call_method` step before it.
 
   In a recording (`run_project` `options.record`) a bridge wait counts clip time instead, 60 movie frames a second, however slowly the game runs, so a timed-out `expression: "false"` wait holds a still of exactly that length in the clip, and the result adds `clipMs`, the clip time waited (`elapsedMs` stays real time).
 
@@ -815,7 +825,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   `after` starts the scan after that line number on both streams: `after: 0` scans every line still held (the last 500 of each stream), and left out, only lines printed after the call are read. Line numbers carry over a restart, as `get_debug_output`'s do, so a mark taken before one still finds the lines printed since. In a Movie Maker recording `timeoutMs` still counts load-adjusted time: no clip time is involved in a check the server makes.
 
-  It takes no `options.call`, `options.edge`, `then` or `screenshot`: `options.call is taken only by a gameMs, frames, exists, property, expression, text, settled or state wait; this condition is output.`
+  It takes no `options.call`, `options.edge`, `then` or `screenshot`: `options.call is taken only by a gameMs, frames, exists, property, expression, text, settled, state or signal wait; this condition is output.`
 
   An `edge` refusal reads `options.edge applies to exists, property, expression, text and state waits; this condition is output.`; `then` and `screenshot` are refused as `options.then needs a wait that meets on a game frame; an output wait meets on a printed line.` and `options.screenshot needs a wait that meets on a game frame; an output wait meets on a printed line.`
 

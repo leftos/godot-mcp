@@ -1,6 +1,6 @@
 # Scratch runs: a step's end, and runs in the background
 
-Status: ruled, not built. GMCP-181 (a step's end) lands first; GMCP-200 (background runs) builds on it. Both land on `main`, one commit each.
+Status: part A (GMCP-181, a step's end) is built; part B (GMCP-200, background runs) is ruled, not built, and builds on it. Its rulings are in DECISIONS.md decision 28.
 
 Part A's shape is the owner's ruling; every other ruling below is an orchestrator decision under CLAUDE.md's autonomy rule (the recommended option), recorded on its issue and open to the owner.
 
@@ -34,7 +34,7 @@ From the map of `src/GodotMcp.Server/Session/ScratchRun.cs` and `Tools/ScratchTo
 - **An answer that is neither a dictionary nor null** turns the step red the same way: `GetStepUntil(<i>) returned <value>, not a wait_for condition`.
 - **The pace after the last step is unchanged** (the full last pace, for late errors), and so is the scene's ceiling (a step's wait never passes its pace).
 - **The pace's clock is game time for every step.** A step with an `until` ends when its condition holds or when the game time since `PlayStep` reaches the pace, whichever comes first: the runner passes the bridge an internal game-time limit beside the condition, and the bridge adds up frame deltas as a `gameMs` wait does. The wait's `timeoutMs` is the pace plus 10 s, as a paced step's wait has, a backstop only for a game whose clock stands still, answered with the paced wait's "clock stood still" error. A busy machine slows the game's clock with the step, so a step that fits its pace in game time stays green under load. The limit is not a public `wait_for` option.
-- **Result**: a step with an `until` carries `until: {met, elapsedMs, frames}` in `details` (the wait's own figures); its `gameMs` is left out. A paced step's entry is unchanged.
+- **Result**: a step with an `until` carries `until: {met, gameMs, elapsedMs, frames}` in `details` (the wait's own figures, `gameMs` the game time its check could see, from `PlayStep`'s frame) in place of the step's `gameMs`. A paced step's entry is unchanged.
 
 ### B. Background runs (GMCP-200)
 

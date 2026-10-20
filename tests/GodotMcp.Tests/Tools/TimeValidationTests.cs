@@ -814,22 +814,33 @@ public sealed class TimeValidationTests : IDisposable
     public void AWaitWithoutACallSendsNone() =>
         Assert.False(RuntimeTools.BuildWaitParameters(new WaitCondition(GameMs: 500), null, new WaitOptions()).ContainsKey("call"));
 
-    [Theory]
-    [InlineData("signal")]
-    [InlineData("uiChanged")]
-    public async Task ACallOnASignalOrUiChangedWaitIsRefused(string kind)
+    [Fact]
+    public async Task ACallOnAUiChangedWaitIsRefused()
     {
-        WaitCondition condition = kind == "signal" ? new(Node: "Main", Signal: "fired") : new(UiChanged: Json("true"));
         WaitOptions options = new(Call: new MethodCall("TimeProbe", "start_clock"));
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
-            _tools.WaitForAsync(condition, 1000, options, cancellationToken: TestContext.Current.CancellationToken)
+            _tools.WaitForAsync(new WaitCondition(UiChanged: Json("true")), 1000, options, cancellationToken: TestContext.Current.CancellationToken)
         );
 
         Assert.Equal(
-            $"options.call is taken only by a gameMs, frames, exists, property, expression, text, settled or state wait; this condition is {kind}.",
+            "options.call is taken only by a gameMs, frames, exists, property, expression, text, settled, state or signal wait; "
+                + "this condition is uiChanged.",
             refused.Message
         );
+    }
+
+    [Fact]
+    public void ACallOnASignalWaitIsAcceptedAndSent()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(
+            new WaitCondition(Node: "Main", Signal: "fired"),
+            1000,
+            new WaitOptions(Call: new MethodCall("TimeProbe", "start_clock"))
+        );
+
+        Assert.Equal("signal", parameters["kind"]!.GetValue<string>());
+        Assert.Equal("{\"node\":\"TimeProbe\",\"method\":\"start_clock\",\"args\":[]}", parameters["call"]!.ToJsonString());
     }
 
     [Fact]

@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Wire;
 using ModelContextProtocol;
@@ -115,7 +116,7 @@ internal sealed partial class RuntimeTools
         TimeSpan allowance = StepAllowance(parameters["count"]?.GetValue<int>() ?? 1);
         BridgeCall call = new("frame_control", "frame", parameters, allowance + WaitReplyAllowance, action == "step" ? allowance : null);
         GodotSession target = Find(session);
-        AddConditionStateHelper(parameters["until"] as JsonObject, target);
+        AddConditionStateHelper(parameters["until"] as JsonObject, csharp, target.ProjectDir);
         BridgeResult result = parameters.ContainsKey("input")
             ? await CallUnderInputGateAsync(target, call, cancellationToken)
             : await CallWithErrorsAsync(target, call, cancellationToken);
@@ -175,7 +176,8 @@ internal sealed partial class RuntimeTools
             + "captures the frame the condition was met on as take_screenshot does, for a scene that changes faster than a "
             + "following take_screenshot can catch, adding screenshot to the result (a timed-out wait captures nothing, and a "
             + "frame that was not drawn gives a warning instead). options.call {node, method, args}, or {tool, args} for a game "
-            + "tool, with any wait but a signal or uiChanged one, calls it in the frame the checks start: a gameMs or frames count "
+            + "tool, with any wait but a uiChanged one, calls it in the frame the checks start (a signal wait connects first, so a "
+            + "signal the call emits at once is caught): a gameMs or frames count "
             + "runs from its entry, and another wait's first check follows it in that frame, its frames and elapsedMs counted "
             + "from there (a coroutine or a Task is not awaited). It adds call: {value}, its return value as call_method returns "
             + "it, with tool and type for a game tool; a refused call, or an error it raises, fails the wait. options.then {call?, "
@@ -328,7 +330,7 @@ internal sealed partial class RuntimeTools
     /// {screenshot, previewMaxWidth} when <paramref name="options"/> asks for the capture, call when it gives one, and then
     /// when it gives one.</summary>
     /// <exception cref="McpException">The condition, gameMs, frames or timeoutMs is refused as the other form refuses them, a
-    /// call is given to a signal or uiChanged wait, then is empty or its timeScale is out of range, or a call or
+    /// call is given to a uiChanged or output wait, then is empty or its timeScale is out of range, or a call or
     /// then.call gives both forms or neither, args of the other form's shape, or an empty node, method or tool name.</exception>
     internal static JsonObject BuildWaitParameters(WaitCondition? condition, int? timeoutMs, WaitOptions? options)
     {
@@ -383,10 +385,10 @@ internal sealed partial class RuntimeTools
     private static void AddWaitCall(JsonObject parameters, MethodCall call)
     {
         string kind = parameters["kind"]!.GetValue<string>();
-        parameters["call"] = kind is not ("signal" or "uiChanged" or "output")
+        parameters["call"] = kind is not ("uiChanged" or "output")
             ? CallOptionParameters(call, "options.call")
             : throw new McpException(
-                "options.call is taken only by a gameMs, frames, exists, property, expression, text, settled or state wait; "
+                "options.call is taken only by a gameMs, frames, exists, property, expression, text, settled, state or signal wait; "
                     + $"this condition is {kind}."
             );
     }
@@ -507,7 +509,7 @@ internal sealed partial class RuntimeTools
 
         await PrepareGameToolCallsAsync("wait_for", parameters, session, cancellationToken);
         GodotSession target = Find(session);
-        AddConditionStateHelper(parameters, target);
+        AddConditionStateHelper(parameters, csharp, target.ProjectDir);
         int timeoutMs = parameters["timeoutMs"]!.GetValue<int>();
         TimeSpan release = WaitRelease(parameters, timeoutMs, target.ActiveRecording is not null);
         BridgeCall call = new("wait_for", "wait_for", parameters, release + WaitReplyAllowance, timeoutMs > 0 ? release : null);
@@ -641,13 +643,13 @@ internal sealed partial class RuntimeTools
     /// <summary>
     /// Adds to a state condition's parameters the C# helper's extension, or csharpError, why it cannot run, as a state read
     /// takes them (<see cref="AddStateHelper"/>), so the bridge reads a C# node's _McpState at each check; any other condition,
-    /// or none, is left as it is.
+    /// or none, is left as it is. A wait_for and a scratch step's until share it.
     /// </summary>
-    private void AddConditionStateHelper(JsonObject? condition, GodotSession target)
+    internal static void AddConditionStateHelper(JsonObject? condition, CSharpBridge csharp, string projectDir)
     {
         if (condition?["kind"]?.GetValue<string>() == "state")
         {
-            AddStateHelper(condition, csharp.PrepareForState(target.ProjectDir));
+            AddStateHelper(condition, csharp.PrepareForState(projectDir));
         }
     }
 

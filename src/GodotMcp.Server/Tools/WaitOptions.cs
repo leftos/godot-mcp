@@ -11,8 +11,9 @@ internal sealed record WaitOptions(
     )]
         bool? Screenshot = null,
     [property: Description(
-        "Any wait but signal and uiChanged: {node, method, args}, a method the bridge calls in the frame the checks start, with "
-            + "no round trip between: a gameMs or frames count runs from the method's entry, and an exists, property or "
+        "Any wait but uiChanged and output: {node, method, args}, a method the bridge calls in the frame the checks start (a "
+            + "signal wait connects before the call, so a signal the call emits at once is caught), with no round trip between: "
+            + "a gameMs or frames count runs from the method's entry, and an exists, property or "
             + "expression wait's first check follows the call in its frame, its frames and elapsedMs counted from there (an "
             + "edge wait's baseline check comes before the call, so an effect the call makes at once is a rise); a coroutine is "
             + "not awaited. Or {tool, args: {...}} "

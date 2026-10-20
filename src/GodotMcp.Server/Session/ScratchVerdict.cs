@@ -7,13 +7,22 @@ using GodotMcp.Server.Tools;
 namespace GodotMcp.Server.Session;
 
 /// <summary>
-/// One step as the runner played it: its index and name, the game milliseconds it waited, the error of a call that failed
-/// (PlayStep, the wait or GetStatus), the second line of GetStatus, the error feed's entries since the step's mark, and every
-/// stdout then stderr line of the step's window.
+/// One step as the runner played it: its index and name, its pace in game milliseconds, the error of a call that failed
+/// (PlayStep, the wait, GetStepUntil or GetStatus, or the until's), the second line of GetStatus, the error feed's entries since
+/// the step's mark, and every stdout then stderr line of the step's window.
 /// </summary>
 internal sealed record ScratchStep(int Index, string Name, int GameMs)
 {
+    /// <summary>The figures of the wait_for the step played inside, for a step whose GetStepUntil gave a condition; else null.</summary>
+    public ScratchUntil? Until { get; init; }
+
     public string? CallError { get; init; }
+
+    /// <summary>
+    /// The feed entry CallError was read from (an until's wait the bridge refused with an error the feed also logged), so the step's
+    /// error is that entry cut to each budget with its file and line kept; else null.
+    /// </summary>
+    public ErrorEntry? CallErrorEntry { get; init; }
 
     public string Status { get; init; } = string.Empty;
 
@@ -114,10 +123,18 @@ internal sealed record ScratchError(string Message, string File, int Line)
 }
 
 /// <summary>
-/// One step as a red or killed scene, or options.details, lists it: its status line always; its detail (error, errors, lines)
-/// when it failed or options.details asked for every step's, cut to fit a budget when it ran over.
+/// One step as a red or killed scene, or options.details, lists it: its status line always, with its pace in game milliseconds,
+/// or for a step played inside a wait on its until that wait's figures; its detail (error, errors, lines) when it failed or
+/// options.details asked for every step's, cut to fit a budget when it ran over.
 /// </summary>
-internal sealed record ScratchStepResult(int Index, string Name, bool Ok, int GameMs, string Status)
+internal sealed record ScratchStepResult(
+    int Index,
+    string Name,
+    bool Ok,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? GameMs,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ScratchUntil? Until,
+    string Status
+)
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<ScratchError>? Errors { get; init; }
@@ -136,6 +153,12 @@ internal sealed record ScratchStepResult(int Index, string Name, bool Ok, int Ga
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Cut { get; init; }
 }
+
+/// <summary>
+/// A step's until wait as it ended: whether its condition was met, the game milliseconds the bridge counted from PlayStep's frame
+/// to the met or limit frame, and the real milliseconds and frames it took.
+/// </summary>
+internal sealed record ScratchUntil(bool Met, int GameMs, int ElapsedMs, int Frames);
 
 /// <summary>A step that failed: its index, its name and why.</summary>
 internal sealed record ScratchStepFailure(int Index, string Name, string Error);
@@ -273,7 +296,7 @@ internal static partial class ScratchVerdict
     {
         if (step.CallError is not null)
         {
-            return OutputBuffer.Cut(step.CallError, max);
+            return step.CallErrorEntry is { } entry ? FeedError([entry], max)! : OutputBuffer.Cut(step.CallError, max);
         }
 
         return FeedError(step.Errors, max)
@@ -519,7 +542,14 @@ internal static partial class ScratchVerdict
     private static ScratchStepResult StepResult(ScratchStep step, ScratchRules rules, string session)
     {
         string? error = StepError(step, rules.Patterns);
-        ScratchStepResult listed = new(step.Index, step.Name, error is null, step.GameMs, OutputBuffer.Cut(step.Status, MaxCopyChars));
+        ScratchStepResult listed = new(
+            step.Index,
+            step.Name,
+            error is null,
+            step.Until is null ? step.GameMs : null,
+            step.Until,
+            OutputBuffer.Cut(step.Status, MaxCopyChars)
+        );
         if (error is null && !rules.Details)
         {
             return listed;

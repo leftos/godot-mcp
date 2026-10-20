@@ -56,6 +56,12 @@ func record_then() -> int:
 	return then_frame
 
 
+## Emits fired(value) at once and returns value, for a signal wait whose options.call emits it.
+func fire_now(value: int) -> int:
+	fired.emit(value)
+	return value
+
+
 ## Calls a method on a null instance, a GDScript runtime error that ends this method with null.
 func fail_on_null() -> int:
 	var missing: Node = null

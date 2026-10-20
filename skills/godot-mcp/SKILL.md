@@ -58,6 +58,8 @@ Every other runtime tool refuses it, except `restart_project`, which stops it an
 
 A project whose scratch scenes implement `PlayStep(int)`, `GetStepCount()`, `GetStepName(int)` and `GetStatus()` runs them with `run_scratches {projectPath}` (or `scenes: [...]` for a few) in place of its `Run-Scratches.ps1`: each scene plays in a fresh headless game, each step paced in game time, and a red scene names its failing step with the errors from the error feed (identical ones folded with a count) and the matching output lines, cut to a small budget (`options.details` adds the green steps' detail and a larger budget), and stops there unless `options.keepGoing` plays on so `failures` lists every red step, and `options.steps` plays only some steps (indices, names or ranges like `"2-5"`).
 
+A scene whose root also has a public `GetStepUntil(int)` returns, per step, a `wait_for` condition (an empty dictionary, or null, for a paced step): the step is then played inside one `wait_for` on it, `PlayStep` as its `options.call`, and ends when the condition holds instead of after the full pace. The pace is the most game time such a step may take: a condition not met in it is red and stops the scene, even with `options.keepGoing`, and the step's detail carries `until {met, gameMs, elapsedMs, frames}` in place of `gameMs`.
+
 Its folder, paces, known-red scenes and patterns live in `godot-mcp.json`'s `scratch` section; `get_debug_output {session}` with the scene's `session` reads its whole output afterwards.
 
 **Input.**

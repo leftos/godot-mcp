@@ -413,8 +413,8 @@ func wait_for(params: Dictionary) -> Dictionary:
 	var kind: String = str(params.get("kind", ""))
 	var timeout_ms: int = int(params.get("timeoutMs", 10000))
 	if kind == "signal":
-		return await _wait_for_signal(params, timeout_ms)
-	var refusal: String = _paused_refusal(get_tree().paused, timeout_ms)
+		return await _wait_for_signal(params, timeout_ms, get_tree().process_frame)
+	var refusal: String = _paused_refusal(get_tree().paused, timeout_ms, params.has("limitGameMs"))
 	if not refusal.is_empty():
 		return {"error": refusal}
 	if kind in GAME_TIME_KINDS:
@@ -460,9 +460,11 @@ static func _with_call(outcome: Dictionary, called: Dictionary) -> Dictionary:
 
 ## Why a non-signal wait cannot run now, or empty: a pausable node's state cannot change while
 ## the tree is paused, so a non-signal wait could only time out; only a check-once wait
-## (timeout_ms 0) runs while paused.
-func _paused_refusal(paused: bool, timeout_ms: int) -> String:
-	return PAUSED_REFUSAL if paused and timeout_ms > 0 else ""
+## (timeout_ms 0) runs while paused. A wait with a game-time limit (a scratch step's until, whose
+## call may pause the tree itself) is never refused: on a paused tree it ends at the server's
+## real-time backstop, which reads it as a clock that stood still.
+func _paused_refusal(paused: bool, timeout_ms: int, limited: bool) -> String:
+	return PAUSED_REFUSAL if paused and timeout_ms > 0 and not limited else ""
 
 
 ## Waits for params.gameMs milliseconds of game time or params.frames unpaused process frames,
@@ -474,7 +476,7 @@ func _paused_refusal(paused: bool, timeout_ms: int) -> String:
 func _wait_for_game_time(
 	kind: String, params: Dictionary, timeout_ms: int, frame: Signal
 ) -> Dictionary:
-	var clock: Dictionary = {"seconds": 0.0, "frames": 0}
+	var clock: Dictionary = {"seconds": 0.0, "seen": 0.0, "frames": 0}
 	var called: Dictionary = {}
 	var failed: String = await _start_with_call(params, called, clock, frame)
 	if not failed.is_empty():
@@ -510,8 +512,13 @@ func _tick_game_clock(clock: Dictionary) -> void:
 	advance_game_clock(clock, get_tree().paused, get_process_delta_time())
 
 
-## Adds a frame of delta seconds to clock {seconds, frames}; a paused frame adds nothing.
+## Adds a frame of delta seconds to clock {seconds, seen, frames}; a paused frame adds nothing.
+## seen keeps the game time from before this frame: SceneTree::process emits process_frame, where
+## the tick runs, before this frame's nodes, timers and tweens run (scene/main/scene_tree.cpp
+## L712-728 in 4.7.2), so a check in this emission sees only the game time the earlier frames
+## played.
 static func advance_game_clock(clock: Dictionary, paused: bool, delta: float) -> void:
+	clock["seen"] = clock["seconds"]
 	if paused:
 		return
 	clock["seconds"] += delta
@@ -527,13 +534,49 @@ func _check_game_time(kind: String, target: int, clock: Dictionary) -> Array:
 	return [reached >= target, reached]
 
 
+## Polls probe as _poll_and_capture does; with params.limitGameMs (a scratch step's until, which
+## the server alone sends), also ends the wait not met once the game time counted from now, the
+## call's frame, reaches that limit (_start_game_limit), and adds that game time to the result as
+## gameMs.
+func _poll_capturing(probe: Callable, timeout_ms: int, params: Dictionary) -> Dictionary:
+	var tick: Callable = _start_game_limit(params)
+	var outcome: Dictionary = await _poll_and_capture(probe, timeout_ms, params)
+	if tick.is_valid():
+		get_tree().process_frame.disconnect(tick)
+		_add_game_ms(outcome, params)
+	return outcome
+
+
+## With params.limitGameMs: a game clock in params._gameClock, counting this frame and every later
+## process frame as a gameMs wait counts them (_tick_game_clock, as _start_with_call starts it),
+## which ends the poll once the game time a check can see (its seen) reaches the limit
+## (_stops_polling). Returns the clock's tick, connected to the tree's process_frame, or a null
+## Callable without a limit.
+func _start_game_limit(params: Dictionary) -> Callable:
+	if not params.has("limitGameMs"):
+		return Callable()
+	var clock: Dictionary = {"seconds": 0.0, "seen": 0.0, "frames": 0}
+	params["_gameClock"] = clock
+	_tick_game_clock(clock)
+	var tick: Callable = _tick_game_clock.bind(clock)
+	get_tree().process_frame.connect(tick)
+	return tick
+
+
+## Adds gameMs, the whole game milliseconds params._gameClock's last check could see, to outcome's
+## result.
+static func _add_game_ms(outcome: Dictionary, params: Dictionary) -> void:
+	if outcome.has("result"):
+		outcome["result"]["gameMs"] = floori(float(params["_gameClock"]["seen"]) * 1000.0)
+
+
 ## Polls probe as _poll does, for params.backstopMs when the server sends one, else timeout_ms,
 ## until a cancel of the request; with params.screenshot a met wait also captures the frame it was
 ## met on: a waiting one checks probe at each frame's draw instead (_check_at_draws), a
 ## check-once one captures the draw of the frame it runs in. A met wait also runs params.then in
 ## the met frame (_finish_then). Returns _poll's outcome, its result with then and screenshot or
 ## warning when met and captured, or {error} when then.call failed.
-func _poll_capturing(probe: Callable, timeout_ms: int, params: Dictionary) -> Dictionary:
+func _poll_and_capture(probe: Callable, timeout_ms: int, params: Dictionary) -> Dictionary:
 	var bound_ms: float = _bound_ms(params, timeout_ms)
 	if not bool(params.get("screenshot", false)):
 		return _finish_then(await _poll(probe, bound_ms, params), params, {})
@@ -585,16 +628,27 @@ func _poll(probe: Callable, bound_ms: float, params: Dictionary = {}) -> Diction
 
 
 ## Whether a poll goes on after seeing seen, frames frames and elapsed_ms real ms in: not met and
-## not failed, within bound_ms, not cancelled, and, for a frame-counted wait, short of
-## params.timeoutFrames.
+## not failed, within bound_ms, not stopped (_stops_polling), and, for a frame-counted wait, short
+## of params.timeoutFrames.
 static func _keeps_polling(
 	seen: Array, frames: int, elapsed_ms: int, bound_ms: float, params: Dictionary
 ) -> bool:
 	if seen.size() != 2 or seen[0]:
 		return false
-	if elapsed_ms >= bound_ms or params.get("_cancelled", false):
+	if elapsed_ms >= bound_ms or _stops_polling(params):
 		return false
 	return not params.has("timeoutFrames") or frames < int(params["timeoutFrames"])
+
+
+## Whether the request's params end its poll: marked _cancelled (the server's cancel), or a
+## params._gameClock whose seen game time has reached params.limitGameMs (_start_game_limit).
+static func _stops_polling(params: Dictionary) -> bool:
+	if params.get("_cancelled", false):
+		return true
+	var clock: Variant = params.get("_gameClock")
+	if not clock is Dictionary:
+		return false
+	return floori(float(clock["seen"]) * 1000.0) >= int(params["limitGameMs"])
 
 
 ## Adds clipMs, the clip time frames movie frames make (frames x 1000 / the recording's rate), to
@@ -782,28 +836,51 @@ func _capture_this_frame() -> Image:
 
 
 ## Resolves on params.node's next emission of params.signal, with its arguments. await has no
-## timeout, so a variadic lambda catches the emission and the wait polls it once a frame.
-func _wait_for_signal(params: Dictionary, timeout_ms: int) -> Dictionary:
+## timeout, so a variadic lambda catches the emission and the wait polls it once a frame. With
+## params.call, the node and its signal are checked now, and the signal is connected in frame's
+## next emission (the tree's process_frame), right before the method is called there, as a probe
+## wait calls it (_start_probe_wait): an emission the call makes at once is caught, and one in the
+## frames before the call is not. SceneTree emits process_frame every frame, paused or not
+## (scene/main/scene_tree.cpp L713 in 4.7.2), so a signal wait on a paused tree reaches its call
+## too.
+func _wait_for_signal(params: Dictionary, timeout_ms: int, frame: Signal) -> Dictionary:
+	var source: Variant = _signal_source(params)
+	if source is String:
+		return {"error": source}
+	if params.get("call") is Dictionary:
+		await frame
 	var hold: Dictionary = {}
 	var caught: Variant = signal_probe(params, hold)
 	if caught is String:
 		return {"error": caught}
+	return await _call_and_poll_signal(caught, params, timeout_ms, hold)
+
+
+## Calls params.call, if any (_call_once), then polls caught, the connected signal probe, and
+## releases hold's connection either way. Returns the signal outcome, with call: {value} when a
+## method was called, or {error} when the call failed.
+func _call_and_poll_signal(
+	caught: Callable, params: Dictionary, timeout_ms: int, hold: Dictionary
+) -> Dictionary:
+	var called: Dictionary = {}
+	var failed: String = _call_once(params, called)
+	if not failed.is_empty():
+		hold["release"].call()
+		return {"error": failed}
 	var outcome: Dictionary = await _poll_capturing(caught, timeout_ms, params)
 	hold["release"].call()
-	return _as_signal_outcome(outcome)
+	return _with_call(_as_signal_outcome(outcome), called)
 
 
 ## A probe met once params.node has emitted params.signal since now, with that first emission's
 ## arguments as its value, connected now; hold.release disconnects it. A String saying why when
 ## the node or its signal is missing. A step's until shares it.
 func signal_probe(params: Dictionary, hold: Dictionary) -> Variant:
-	var node_name: String = _text(params, "node")
+	var found: Variant = _signal_source(params)
+	if found is String:
+		return found
+	var node: Node = found
 	var signal_name: String = _text(params, "signal")
-	var node: Node = bridge._find_node(node_name)
-	if node == null:
-		return bridge._inspect.not_found(node_name, "get_scene_tree lists the nodes' paths")
-	if not node.has_signal(signal_name):
-		return "%s has no signal '%s'" % [node.get_path(), signal_name]
 	var fired: Array = []
 	var on_signal := func(...args: Array) -> void:
 		if fired.is_empty():
@@ -817,6 +894,18 @@ func signal_probe(params: Dictionary, hold: Dictionary) -> Variant:
 			source.disconnect(signal_name, on_signal)
 	return func() -> Array:
 		return [not fired.is_empty(), null if fired.is_empty() else bridge._json.to_json(fired[0])]
+
+
+## params.node when it is there and has params.signal; else a String saying which is missing.
+func _signal_source(params: Dictionary) -> Variant:
+	var node_name: String = _text(params, "node")
+	var signal_name: String = _text(params, "signal")
+	var node: Node = bridge._find_node(node_name)
+	if node == null:
+		return bridge._inspect.not_found(node_name, "get_scene_tree lists the nodes' paths")
+	if not node.has_signal(signal_name):
+		return "%s has no signal '%s'" % [node.get_path(), signal_name]
+	return node
 
 
 ## A signal wait's outcome: the arguments as args instead of value, and no last.
