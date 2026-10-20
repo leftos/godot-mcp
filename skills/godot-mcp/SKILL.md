@@ -82,7 +82,7 @@ The injected pad never shows in `Input.get_connected_joypads()`. Without `device
 
 While paused, `wait_for` accepts a signal wait, an output wait or a check-once wait (`timeoutMs: 0`): that set is how you assert on an exact frame. A condition already true is met at frame 0: `wait_for` with `options.edge: true` (an exists, property or expression wait with a timeout) waits for it to turn true after being false.
 
-`watch` records how properties and expressions moved frame by frame, and the signals fired meanwhile (`tracks.signals`): `start` it, drive with any tools (input, waits, steps), `stop` it for each track's change points and range; `run` does it in one call over a `window` of `frames` or `gameMs`. One watch per game run: always `stop` the one you started.
+`watch` records how properties and expressions moved frame by frame, and the signals fired meanwhile (`tracks.signals`): `start` it, drive with any tools (input, waits, steps), `stop` it for each track's change points and range; `run` does it in one call over a `window` of `frames` or `gameMs`. Every point, event and voice ends with `at`, its drive-clock ms, comparable with `wait_for`'s `metAt` and `batch_drive`'s `startMs`. One watch per game run: always `stop` the one you started.
 
 **Inspecting and changing the live game.**
 
@@ -149,6 +149,8 @@ Prefer it for any change of more than one edit, then `validate`, then `preview_s
 - "Paused under a debugger": a debugger holds the game at a breakpoint; continue it there (the `debug-live` skill), never restart it. A debugger attaches to `list_sessions`' `gameProcessId`, not `processId`; `stop_project` ends its debug session too.
 - A class you do not know (an engine node, or the game's own `class_name`): `describe_class` lists its properties, typed method signatures and signals, from the running game or headless, and suggests close names for a typo.
 - A value that moves over time (a tween, a velocity, the focus owner): `watch {action: "run", tracks: {properties: [{node, property}]}, window: {frames: 60}}` samples it each frame in one call and returns only the changes, with `min`/`max` and the frames they came at; an expression track (`{name, expression: "root.gui_get_focus_owner()"}`) watches what is no property, and `minDelta` thins a value that moves every frame.
+
+  To line up two games (a host and a guest), `watch` each and compare the items' `at`: it is on the drive clock, as `metAt` and `startMs` are, and `clockErrorMs` bounds its error.
 
   To see what happened while you acted (a dialog leaving after a click, a value across stepped frames), `watch start` first and `watch stop` after. A hitch: add `monitors: ["frame_ms"]` to the tracks, and its `spikes` name the frames over budget beside the signals and values of the moment (a hitch is one long frame, then one near 0).
 

@@ -28,10 +28,11 @@ internal static class WatchTimeline
     /// <summary>The most heard ranges a bus keeps: the first half and the last half.</summary>
     internal const int MaxHeardRanges = 50;
 
-    /// <summary>Where the bridge's event names the signal track it belongs to, after [frame, gameMs, node, signal, args].</summary>
+    /// <summary>Where the bridge's event names the signal track it belongs to, after [frame, gameMs, node, signal, args] and
+    /// before at, so an event the timeline keeps is [frame, gameMs, node, signal, args, at].</summary>
     private const int EventTrackIndex = 5;
 
-    /// <summary>Where a voice, [frame, gameMs, event, path, {...}], names its player.</summary>
+    /// <summary>Where a voice, [frame, gameMs, event, path, {...}, at], names its player.</summary>
     private const int VoicePlayerIndex = 3;
 
     /// <summary>Where a voice holds its {stream?, bus?, maxPolyphony?, position?, reason?}.</summary>

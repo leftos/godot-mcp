@@ -172,13 +172,14 @@ static func _path_of(node: Node) -> String:
 	return str(node.get_path()) if node.is_inside_tree() else str(node.name)
 
 
-## Reads every followed player at frame, stamped game_ms, and lets go of the freed ones.
-static func sample(state: Dictionary, frame: int, game_ms: int) -> void:
+## Reads every followed player at frame, stamped game_ms and usec (the frame's tick), and lets go
+## of the freed ones.
+static func sample(state: Dictionary, frame: int, game_ms: int, usec: int) -> void:
 	if state.is_empty():
 		return
 	var players: Dictionary = state["players"]
 	var gone: Array = []
-	var stamp: Array = [frame, game_ms]
+	var stamp: Array = [frame, game_ms, usec]
 	for id: int in players:
 		if not _read(state, players[id], stamp):
 			gone.append(id)
@@ -266,9 +267,9 @@ static func _voice_info(state: Dictionary, player: Variant) -> Dictionary:
 	return info
 
 
-## Counts a voice event and keeps it as [frame, gameMs, event, path, info] while its path holds
-## fewer than VOICE_EVENTS and the watch fewer than MAX_VOICES; a start or an end is also counted
-## in its path's voiceCounts.
+## Counts a voice event and keeps it as [frame, gameMs, event, path, info, ticks] while its path
+## holds fewer than VOICE_EVENTS and the watch fewer than MAX_VOICES; a start or an end is also
+## counted in its path's voiceCounts.
 static func _record(
 	state: Dictionary, entry: Dictionary, stamp: Array, event: String, info: Dictionary
 ) -> void:
@@ -284,7 +285,7 @@ static func _record(
 	if int(kept.get(path, 0)) >= VOICE_EVENTS or voices.size() >= MAX_VOICES:
 		return
 	kept[path] = int(kept.get(path, 0)) + 1
-	voices.append([stamp[0], stamp[1], event, path, info])
+	voices.append([stamp[0], stamp[1], event, path, info, stamp[2]])
 
 
 ## Disconnects node_added and each living player's finished, and lets go of their callables, which

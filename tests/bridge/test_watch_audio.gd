@@ -63,7 +63,7 @@ func test_a_play_is_a_start_with_its_stream_and_bus() -> void:
 	}
 	assert_eq(
 		audio["voices"],
-		[[1, 16, "start", "Hit", hit_start], [2, 32, "start", "Tone", tone_start]],
+		[[1, 16, "start", "Hit", hit_start, 0], [2, 32, "start", "Tone", tone_start, 0]],
 		"each play is a start at the next sample, with its stream and bus"
 	)
 	var counts: Dictionary = {"starts": 1, "ends": 0}
@@ -115,10 +115,10 @@ func test_an_end_is_finished_freed_or_stopped_in_that_order() -> void:
 	assert_eq(
 		ends,
 		[
-			[2, 32, "end", "Finished", {"reason": "finished"}],
-			[2, 32, "end", "FinishedThenFreed", {"reason": "finished"}],
-			[2, 32, "end", "Freed", {"reason": "freed"}],
-			[2, 32, "end", "Stopped", {"reason": "stopped"}],
+			[2, 32, "end", "Finished", {"reason": "finished"}, 0],
+			[2, 32, "end", "FinishedThenFreed", {"reason": "finished"}, 0],
+			[2, 32, "end", "Freed", {"reason": "freed"}, 0],
+			[2, 32, "end", "Stopped", {"reason": "stopped"}, 0],
 		],
 		"finished before freed before stopped"
 	)
@@ -191,11 +191,33 @@ func test_a_voice_is_read_in_a_paused_frame() -> void:
 	assert_eq(
 		audio["voices"],
 		[
-			[1, 16, "start", "Menu", {"bus": "Effects"}],
-			[2, 16, "end", "Menu", {"reason": "finished"}],
+			[1, 16, "start", "Menu", {"bus": "Effects"}, 0],
+			[2, 16, "end", "Menu", {"reason": "finished"}, 0],
 		],
 		"both in paused frames, at the game time the pause holds"
 	)
+	_free(rig)
+
+
+func test_a_voice_carries_its_frames_start_tick_unpaused_and_paused() -> void:
+	var rig: Dictionary = _rig()
+	var player: Node = _player(rig["sounds"], "Menu")
+	var ticks: Array = []
+	rig["watch"].usec_clock = func() -> int:
+		ticks.append(1000 + 7 * ticks.size())
+		return ticks[-1]
+	_begin(rig)
+	_frame(rig, 0)
+	player.play()
+	var started: int = 1000 + 7 * ticks.size()
+	_frame(rig, 1)
+	player.voices.clear()
+	player.finished.emit()
+	var ended: int = 1000 + 7 * ticks.size()
+	rig["watch"].advance(rig["watch"]._watch, true, 2, 0.016, 2)
+	assert_true(ticks.size() > 3, "an unpaused frame reads more ticks than its start: %s" % [ticks])
+	var stamps: Array = _stop(rig)["voices"].map(func(voice: Array) -> Variant: return voice[5])
+	assert_eq(stamps, [started, ended], "each voice carries its frame's first tick")
 	_free(rig)
 
 
@@ -292,7 +314,7 @@ func test_a_3d_player_out_of_the_tree_starts_with_no_position_and_logs_no_error(
 	_frame(rig, 1)
 	var audio: Dictionary = _stop(rig)
 	var start: Dictionary = {"bus": "Effects", "position": null}
-	assert_eq(audio["voices"], [[1, 16, "start", "Pooled", start]], "position null")
+	assert_eq(audio["voices"], [[1, 16, "start", "Pooled", start, 0]], "position null")
 	pooled.free()
 	_free(rig)
 

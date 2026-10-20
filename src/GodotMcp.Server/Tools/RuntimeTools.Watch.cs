@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Text.Json.Nodes;
+using GodotMcp.Server.Session;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
@@ -44,10 +45,10 @@ internal sealed partial class RuntimeTools
             + "stamped with the frame it fires in, so a signal emitted beside that value in frame N's _process is stamped N. "
             + "Frames that find "
             + "the game paused are not sampled nor counted toward the window, and are listed in paused; frame_control steps count. "
-            + "The timeline: {startFrame, frames, gameMs, wallMs, paused?: [[from, to]], stopped?, call?, tracks: [{name?, node?, "
-            + "property?, first, last, changes, points: [[frame, gameMs, value]], dropped?, cut?, min?, max?, minAt?, maxAt?}], "
-            + "events?: [[frame, gameMs, node, signal, args]], eventCounts?: {\"<node>:<signal>\": n}, eventsDropped?, eventsCut?, skipped?, "
-            + "skippedTotal?}. "
+            + "The timeline: {startFrame, frames, gameMs, wallMs, clockErrorMs?, paused?: [[from, to]], stopped?, call?, tracks: [{name?, "
+            + "node?, property?, first, last, changes, points: [[frame, gameMs, value, at]], dropped?, cut?, min?, max?, minAt?, maxAt?}], "
+            + "events?: [[frame, gameMs, node, signal, args, at]], eventCounts?: {\"<node>:<signal>\": n}, eventsDropped?, eventsCut?, "
+            + "skipped?, skippedTotal?}. "
             + "startFrame is Engine.get_process_frames() at the watch's first frame (Engine.get_physics_frames() with unit "
             + "physics) and every frame counts from 0 there; gameMs "
             + "is game time since then; frames and gameMs count the unpaused frames sampled. points are the change points: a "
@@ -60,14 +61,16 @@ internal sealed partial class RuntimeTools
             + "deadline passed: the window's allowance, 10 s + 100 ms a frame or gameMs + 10 s, at most 600 s, plus the time a "
             + "started watch spends paused, up to 600 s). events lists every signal track's emissions in order, at most 300 shared "
             + "fairly across signal tracks (each keeps its earliest), and eventCounts counts every emission; a freed emitter's "
-            + "signals stop. tracks.monitors adds monitors?: [{name, samples, p50, p95, p99, max, maxAt, mean, spikes?: [[frame, "
+            + "signals stop. Every point, event and voice ends with at, its time on the drive clock in ms (null when the session's "
+            + "clock cannot convert it); the timeline carries clockErrorMs once when any was converted. "
+            + "tracks.monitors adds monitors?: [{name, samples, p50, p95, p99, max, maxAt, mean, spikes?: [[frame, "
             + "value]], over?, custom?, nonNumeric?}], each read once a sampled frame and summarised in the game: frame_ms (the wall "
             + "time between frames, over: {budget, count, frames} against options.budgetMs, a hitch reading as one long frame), "
             + "a built-in monitor by its Performance.get_monitor_name path (object/nodes, raster/total_draw_calls), or a custom "
             + "monitor id; warning? says when a reading misleads. "
             + "tracks.audio.players follows every AudioStreamPlayer, 2D and 3D at or under players.under (default the root), "
             + "found at start or added during the window (at most 200 at a time, the rest counted in playersSkipped), and adds "
-            + "audio: {voices: [[frame, gameMs, event, path, {stream?, bus?, maxPolyphony?, position?, reason?}]], voiceCounts: "
+            + "audio: {voices: [[frame, gameMs, event, path, {stream?, bus?, maxPolyphony?, position?, reason?}, at]], voiceCounts: "
             + "{\"<path>\": {starts, ends}}, voiceCountsCut?, voicesDropped?, voicesCut?, playersFollowed?, playersSkipped?}; "
             + "start's reply adds audio: {driver, mixRate, bridgeMuted, players?: {count, playing: [{path, stream, bus, ...}]}, "
             + "playersSkipped?}, the players keys with a players track. event is start (a new playback: with unit process, a "
@@ -121,13 +124,20 @@ internal sealed partial class RuntimeTools
     {
         JsonObject parameters = BuildWatchParameters(action, tracks, window, options);
         await PrepareGameToolCallsAsync("watch", parameters, session, cancellationToken);
-        BridgeResult result = await CallWithErrorsAsync(Find(session), WatchCall(action, parameters), cancellationToken);
+        GodotSession target = Find(session);
+        BridgeResult result = await CallWithErrorsAsync(target, WatchCall(action, parameters), cancellationToken);
         JsonObject reply =
             result.Reply?.DeepClone() as JsonObject
             ?? throw new McpException($"The bridge's watch reply is not an object: {result.Reply?.ToJsonString() ?? "null"}.");
         CutMethodValue(reply["call"] as JsonObject);
-        JsonObject shaped = action == "start" ? reply : WatchTimeline.Shape(reply, WatchTimeline.MaxResultLength);
-        return ErrorReport.AddTo(shaped, result.Errors).ToJsonString();
+        if (action == "start")
+        {
+            return ErrorReport.AddTo(reply, result.Errors).ToJsonString();
+        }
+
+        SessionClock clock = await target.RefreshClockAsync(cancellationToken);
+        WatchStamps.Stamp(reply, clock);
+        return ErrorReport.AddTo(WatchTimeline.Shape(reply, WatchTimeline.MaxResultLength), result.Errors).ToJsonString();
     }
 
     /// <summary>

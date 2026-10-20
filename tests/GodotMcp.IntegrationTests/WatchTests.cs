@@ -374,6 +374,16 @@ public sealed class WatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
         // change's; each is floored to a millisecond.
         double deltaMs = (await RunAsync($"return scene_tree.root.get_node(\"{jumper}\").moved_delta")).GetValue<double>() * 1000;
         Assert.InRange(Int(points[1]![1]) - Int(moved[1]) - deltaMs, -1, 1);
+        // Each point and the event end with at, the drive time of their tick; wall gaps are not held to gameMs, which load moves.
+        string json = timeline.ToJsonString();
+        Assert.All(points, point => Assert.True(point!.AsArray().Count == 4, json));
+        Assert.True(moved.Count == 6, json);
+        double[] stamps = [.. points.Select(point => point![3]?.GetValue<double>() ?? throw new InvalidOperationException($"no at: {json}"))];
+        Assert.True(stamps.Zip(stamps.Skip(1)).All(pair => pair.Second >= pair.First), json);
+        double movedAt = moved[5]?.GetValue<double>() ?? throw new InvalidOperationException($"the event has no at: {json}");
+        // The emission runs in frame N's _process: after the first point's frame-start tick, before point 1's at N + 1.
+        Assert.InRange(movedAt, stamps[0], stamps[1]);
+        Assert.True(timeline["clockErrorMs"]!.GetValue<double>() >= 0, json);
     }
 
     [Fact(Timeout = TestTimeoutMs)]

@@ -46,7 +46,7 @@ func test_the_window_counts_only_unpaused_frames_and_lists_the_paused_ones() -> 
 	assert_eq(result["wallMs"], 40, "from the first frame to the last")
 	assert_eq(result["paused"], [[1, 2]], "the paused frames, joined")
 	assert_true(not result.has("stopped"), "the window ran to its end")
-	assert_eq(result["tracks"][0]["points"], [[0, 0, 0.0]], "a still value is one point")
+	assert_eq(result["tracks"][0]["points"], [[0, 0, 0.0, 0]], "a still value is one point")
 	assert_eq(result["tracks"][0]["changes"], 0, "no change")
 	_free(rig)
 
@@ -65,7 +65,8 @@ func test_a_freed_node_is_recorded_once_and_its_track_stops() -> void:
 	watch.advance(running, false, 2, 0.25, 20)
 	var track: Dictionary = watch.stop()["result"]["tracks"][0]
 	var freed: Dictionary = {"$freed": true}
-	assert_eq(track["points"], [[0, 0, {"x": 0.0, "y": 0.0}], [1, 250, freed]], "freed once")
+	var points: Array = [[0, 0, {"x": 0.0, "y": 0.0}, 0], [1, 250, freed, 0]]
+	assert_eq(track["points"], points, "freed once")
 	assert_eq(track["last"], freed, "the last sample")
 	assert_eq(track["changes"], 1, "one change")
 	_free(rig)
@@ -185,7 +186,7 @@ func test_an_engine_error_a_called_method_raises_stays_out_of_the_feed_and_reads
 	assert_eq(logger.take_pending(), [[], 0], "and the bridge's logger kept none of it")
 	assert_true(is_same(running["tracks"][0]["last"], child), "the track then reads the child")
 	var track: Dictionary = watch.stop()["result"]["tracks"][0]
-	assert_eq(track["points"][0], [0, 0, null], "the frame before the child reads null")
+	assert_eq(track["points"][0], [0, 0, null, 0], "the frame before the child reads null")
 	_free(rig)
 
 
@@ -213,7 +214,7 @@ func test_an_error_game_code_an_expression_calls_raises_still_reaches_the_feed()
 	var messages: Array = entries.map(func(entry: Dictionary) -> String: return entry["message"])
 	assert_eq(messages, ["shout"], "the game's error lands, get_child's does not")
 	var tracks: Array = watch.stop()["result"]["tracks"]
-	assert_eq(tracks[1]["points"], [[0, 0, 1]], "the game method's value")
+	assert_eq(tracks[1]["points"], [[0, 0, 1, 0]], "the game method's value")
 	_free(rig)
 
 
@@ -465,9 +466,9 @@ func test_a_node_signal_is_recorded_with_its_frame_game_time_and_arguments() -> 
 	mover.emit_signal("ping")
 	var result: Dictionary = watch.stop()["result"]
 	var events: Array = [
-		[0, 0, "Mover", "hit", [1, "two", {"x": 3.0, "y": 4.0}], 0],
-		[1, 250, "Mover", "ping", [], 1],
-		[2, 500, "Mover", "ping", [], 1],
+		[0, 0, "Mover", "hit", [1, "two", {"x": 3.0, "y": 4.0}], 0, 0],
+		[1, 250, "Mover", "ping", [], 1, 0],
+		[2, 500, "Mover", "ping", [], 1, 0],
 	]
 	assert_eq(
 		result["events"], events, "each stamped with its frame and the clock before its delta"
@@ -647,7 +648,50 @@ func test_a_node_two_tracks_name_is_connected_and_counted_once() -> void:
 	mover.emit_signal("ping")
 	var result: Dictionary = watch.stop()["result"]
 	assert_eq(result["eventCounts"], {"Mover:ping": 1}, "counted once")
-	assert_eq(result["events"], [[0, 0, "Mover", "ping", [], 0]], "one event, the first track's")
+	var events: Array = [[0, 0, "Mover", "ping", [], 0, 0]]
+	assert_eq(result["events"], events, "one event, the first track's")
+	_free(rig)
+
+
+func test_a_point_carries_its_frames_start_tick_shared_by_every_track_in_the_frame() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var ticks: Array = _tick_counter(watch)
+	var params: Dictionary = {
+		"properties":
+		[{"node": "Mover", "property": "rotation"}, {"node": "Mover", "property": "z_index"}],
+		"frames": 5,
+	}
+	watch.begin(params, test_frame)
+	var running: Dictionary = watch._watch
+	var starts: Array = []
+	for frame in 2:
+		rig["mover"].rotation = frame
+		rig["mover"].z_index = frame
+		starts.append(_tick_at(ticks.size()))
+		watch.advance(running, false, frame, 0.25, frame)
+	assert_true(ticks.size() > 2, "the frames read more ticks than their starts: %s" % [ticks])
+	var tracks: Array = watch.stop()["result"]["tracks"]
+	for track: Dictionary in tracks:
+		var stamps: Array = track["points"].map(func(point: Array) -> Variant: return point[3])
+		assert_eq(stamps, starts, "each point carries its frame's first tick")
+	_free(rig)
+
+
+func test_an_event_carries_its_own_tick_last() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var mover: Node = rig["mover"]
+	mover.add_user_signal("ping")
+	_count_frames(watch, 0)
+	var ticks: Array = _tick_counter(watch)
+	watch.begin({"signals": [{"node": "Mover", "signal": "ping"}], "frames": 5}, test_frame)
+	watch.advance(watch._watch, false, 0, 0.25, 0)
+	var emitted: int = _tick_at(ticks.size())
+	mover.emit_signal("ping")
+	var events: Array = watch.stop()["result"]["events"]
+	assert_eq(events[0].size(), 7, "[frame, gameMs, node, signal, args, track, ticks]")
+	assert_eq(events[0][-1], emitted, "the tick read at the emission, after the frame's")
 	_free(rig)
 
 
@@ -709,7 +753,22 @@ func _rig() -> Dictionary:
 	bridge._inspect = inspect
 	var watch: Node = _watch_script.new()
 	watch.bridge = bridge
+	watch.usec_clock = func() -> int: return 0
 	return {"top": top, "mover": mover, "bridge": bridge, "watch": watch}
+
+
+## Has the watch's microsecond clock answer _tick_at(n) at its nth read, and returns the reads.
+func _tick_counter(watch: Node) -> Array:
+	var ticks: Array = []
+	watch.usec_clock = func() -> int:
+		ticks.append(_tick_at(ticks.size()))
+		return ticks[-1]
+	return ticks
+
+
+## The tick a _tick_counter clock answers at its index-th read.
+static func _tick_at(index: int) -> int:
+	return 1000 + 7 * index
 
 
 func _free(rig: Dictionary) -> void:

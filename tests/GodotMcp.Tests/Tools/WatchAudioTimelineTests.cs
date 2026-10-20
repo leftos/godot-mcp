@@ -28,7 +28,7 @@ public sealed class WatchAudioTimelineTests
         Assert.Equal(20, kept.Count(item => Player(item) == "/root/Quiet"));
         Assert.Equal(279, kept.Where(item => Player(item) == "/root/Busy").Max(item => item![0]!.GetValue<int>()));
         Assert.Equal(["/root/Busy", "/root/Quiet", "/root/Busy", "/root/Quiet"], kept.Take(4).Select(Player));
-        Assert.All(kept, item => Assert.Equal(5, item!.AsArray().Count));
+        Assert.All(kept, item => Assert.Equal(6, item!.AsArray().Count));
     }
 
     [Fact]
@@ -263,7 +263,7 @@ public sealed class WatchAudioTimelineTests
     }
 
     private static JsonArray Voice(int frame, string player, string voiceEvent = "start", string stream = "res://hit.wav") =>
-        [frame, frame * 16, voiceEvent, player, new JsonObject { ["stream"] = stream, ["bus"] = "Master" }];
+        [frame, frame * 16, voiceEvent, player, new JsonObject { ["stream"] = stream, ["bus"] = "Master" }, 5_000.5 + (frame * 16)];
 
     private static JsonObject Timeline(JsonObject audio) =>
         new()

@@ -144,7 +144,7 @@ public sealed class WatchTimelineTests
         Assert.Equal(279, kept.Where(item => item![2]!.GetValue<string>() == "/root/E0").Max(item => item![0]!.GetValue<int>()));
         // Emission order: E0 then E1 in each of the first 20 frames, then E0 alone.
         Assert.Equal(["/root/E0", "/root/E1", "/root/E0", "/root/E1"], kept.Take(4).Select(item => item![2]!.GetValue<string>()));
-        Assert.All(kept, item => Assert.Equal(5, item!.AsArray().Count));
+        Assert.All(kept, item => Assert.Equal(6, item!.AsArray().Count));
         Assert.Equal(500 + 20 - 300, shaped["eventsDropped"]!.GetValue<int>());
         Assert.False(shaped.ContainsKey("eventTracks"), "the bridge's per-track counts are not in the result");
     }
@@ -211,8 +211,46 @@ public sealed class WatchTimelineTests
         Assert.False(shaped["tracks"]![0]!.AsObject().ContainsKey("cut"));
     }
 
-    /// <summary>Adds the bridge's events, each [frame, gameMs, node, signal, args, track], and each track's kept and total
-    /// counts.</summary>
+    [Fact]
+    public void APointsAtSurvivesItsValuesPreview()
+    {
+        JsonObject reply = Timeline(Track("Label", "text", [Point(0, new string('a', 300))]));
+
+        JsonArray point = WatchTimeline.Shape(reply, WatchTimeline.MaxResultLength)["tracks"]![0]!["points"]![0]!.AsArray();
+
+        Assert.True(point[2] is JsonObject, point.ToJsonString());
+        Assert.Equal(At(0), point[3]!.GetValue<double>());
+    }
+
+    [Fact]
+    public void ThePointsAThinningCutKeepsHoldTheirAt()
+    {
+        JsonObject reply = Timeline(Track("Player", "position", [.. Enumerable.Range(0, 10).Select(frame => Point(frame, frame))]));
+
+        JsonArray points = WatchTimeline.Shape(reply, 50)["tracks"]![0]!["points"]!.AsArray();
+
+        Assert.Equal([At(0), At(9)], points.Select(point => point![3]!.GetValue<double>()));
+    }
+
+    [Fact]
+    public void TheEventsTheFairShareKeepsEndWithTheirAt()
+    {
+        List<JsonArray> events = [];
+        for (int frame = 0; frame < 300; frame++)
+        {
+            events.AddRange([Event(frame, 0), Event(frame, 1)]);
+        }
+
+        JsonObject shaped = WatchTimeline.Shape(WithEvents(Timeline(), events, (300, 300), (300, 300)), WatchTimeline.MaxResultLength);
+
+        JsonArray kept = shaped["events"]!.AsArray();
+
+        Assert.Equal(300, kept.Count);
+        Assert.All(kept, item => Assert.Equal(At(item![0]!.GetValue<int>()), item[5]!.GetValue<double>()));
+    }
+
+    /// <summary>Adds the bridge's events, each [frame, gameMs, node, signal, args, track, at] (at converted already), and each
+    /// track's kept and total counts.</summary>
     private static JsonObject WithEvents(JsonObject reply, IEnumerable<JsonArray> events, params (int Kept, int Total)[] counts)
     {
         reply["events"] = new JsonArray([.. events]);
@@ -222,7 +260,7 @@ public sealed class WatchTimelineTests
     }
 
     private static JsonArray Event(int frame, int track, JsonArray? args = null) =>
-        [frame, frame * 16, $"/root/E{track}", "fired", args ?? [], track];
+        [frame, frame * 16, $"/root/E{track}", "fired", args ?? [], track, At(frame)];
 
     private static JsonObject Timeline(params JsonObject[] tracks) =>
         new()
@@ -245,5 +283,8 @@ public sealed class WatchTimelineTests
             ["points"] = points,
         };
 
-    private static JsonArray Point(int frame, JsonNode? value) => [frame, frame * 16, value];
+    private static JsonArray Point(int frame, JsonNode? value) => [frame, frame * 16, value, At(frame)];
+
+    /// <summary>The drive time an item of <paramref name="frame"/> carries, as the server converts it before the shape.</summary>
+    private static double At(int frame) => 5_000.5 + (frame * 16);
 }

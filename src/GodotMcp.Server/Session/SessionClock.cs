@@ -86,20 +86,41 @@ internal sealed class SessionClock
     /// </summary>
     public bool TryToDriveMs(long ticksUsec, out double driveMs, out double errorMs)
     {
+        if (!TryGetOffset(out double offsetMs, out errorMs))
+        {
+            driveMs = 0;
+            return false;
+        }
+
+        driveMs = ToDriveMs(offsetMs, ticksUsec);
+        return true;
+    }
+
+    /// <summary>
+    /// Reads both bounds once: <paramref name="offsetMs"/> is their midpoint, unrounded, and <paramref name="errorMs"/> their
+    /// half-width rounded to 0.1 ms; false before a pong gave both bounds. Readings converted with one offset
+    /// (<see cref="ToDriveMs"/>) keep their order even if a pong narrows the bounds meanwhile.
+    /// </summary>
+    public bool TryGetOffset(out double offsetMs, out double errorMs)
+    {
         lock (_lock)
         {
             if (_lowerMs is not { } lower || _upperMs is not { } upper)
             {
-                driveMs = 0;
+                offsetMs = 0;
                 errorMs = 0;
                 return false;
             }
 
-            driveMs = Math.Round(((lower + upper) / 2) + (ticksUsec / 1000.0), 1);
+            offsetMs = (lower + upper) / 2;
             errorMs = Math.Round((upper - lower) / 2, 1);
             return true;
         }
     }
+
+    /// <summary>A remote reading of <paramref name="ticksUsec"/> as drive time through <paramref name="offsetMs"/>
+    /// (<see cref="TryGetOffset"/>), rounded to 0.1 ms.</summary>
+    public static double ToDriveMs(double offsetMs, long ticksUsec) => Math.Round(offsetMs + (ticksUsec / 1000.0), 1);
 
     /// <summary>The bounds' half-width, or infinite while one of them is missing.</summary>
     private double HalfWidth()

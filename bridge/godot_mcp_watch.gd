@@ -414,9 +414,10 @@ static func _connection_key(node: Node, signal_name: String) -> String:
 
 
 ## Records an emission of signal track index's signal by the node at path: counted always, and kept
-## as [frame, gameMs, node, signal, args, track] while the track holds fewer than TRACK_EVENTS, its
-## arguments converted to JSON now. A watch that ended records nothing (an emission calls the slots
-## it copied before a disconnect).
+## as [frame, gameMs, node, signal, args, track, ticks] while the track holds fewer than
+## TRACK_EVENTS, its arguments converted to JSON now and ticks the usec_clock read at the emission,
+## mid-frame. A watch that ended records nothing (an emission calls the slots it copied before a
+## disconnect).
 func _record(watch: Dictionary, index: int, path: String, args: Array) -> void:
 	if watch["state"] != "running":
 		return
@@ -430,7 +431,9 @@ func _record(watch: Dictionary, index: int, path: String, args: Array) -> void:
 		return
 	track["kept"] = int(track["kept"]) + 1
 	var stamp: Array = _stamp(watch)
-	var event: Array = [stamp[0], stamp[1], path, signal_name, bridge._json.to_json(args), index]
+	var event: Array = [
+		stamp[0], stamp[1], path, signal_name, bridge._json.to_json(args), index, usec_clock.call()
+	]
 	(watch["events"] as Array).append(event)
 
 
@@ -587,7 +590,7 @@ func advance(watch: Dictionary, paused: bool, frame_count: int, delta: float, no
 	if paused:
 		_note_paused(watch, frame, now_ms)
 		_monitors_script.stamp(watch["perf"], now_usec)
-		_audio_script.sample(watch["audio"], frame, watch["frame_ms"])
+		_audio_script.sample(watch["audio"], frame, watch["frame_ms"], now_usec)
 	else:
 		_sample(watch, frame, now_usec)
 		_time_script.advance_game_clock(watch["clock"], false, delta)
@@ -642,24 +645,24 @@ static func _past_deadline(watch: Dictionary, now_ms: int) -> bool:
 	return now_ms - int(watch["began_ms"]) > allowed
 
 
-## Samples every track still sampling at frame, stamped with the game time so far, the audio
-## players' voices and the buses' levels, then every monitor, which measures frame_ms to now_usec
-## (the frame's stamp) and the sampling's own time from began.
+## Samples every track still sampling at frame, stamped with the game time so far and now_usec (the
+## frame's stamp), the audio players' voices and the buses' levels, then every monitor, which
+## measures frame_ms to now_usec and the sampling's own time from began.
 func _sample(watch: Dictionary, frame: int, now_usec: int) -> void:
 	var began: int = usec_clock.call()
 	var game_ms: int = floori(float(watch["clock"]["seconds"]) * 1000.0)
 	for track: Dictionary in watch["tracks"]:
 		if not track["done"]:
-			_sample_track(track, frame, game_ms)
-	_audio_script.sample(watch["audio"], frame, game_ms)
+			_sample_track(track, frame, game_ms, now_usec)
+	_audio_script.sample(watch["audio"], frame, game_ms, now_usec)
 	_audio_script.sample_levels(watch["audio"], frame)
 	_monitors_script.sample(watch["perf"], frame, now_usec, began, usec_clock)
 
 
 ## Reads the track, adds the value to its summary, and keeps it as a change point when it differs
 ## from the last one kept (the first always is). A kept container is copied, since the game may
-## change the one it read in place.
-func _sample_track(track: Dictionary, frame: int, game_ms: int) -> void:
+## change the one it read in place. The point carries usec, the frame's tick.
+func _sample_track(track: Dictionary, frame: int, game_ms: int, usec: int) -> void:
 	var value: Variant = _read(track)
 	var copy: Variant = value.duplicate(true) if value is Array or value is Dictionary else value
 	track["samples"] = int(track["samples"]) + 1
@@ -669,7 +672,7 @@ func _sample_track(track: Dictionary, frame: int, game_ms: int) -> void:
 		return
 	track["has_kept"] = true
 	track["last_kept"] = copy
-	_keep(track, [frame, game_ms, bridge._json.to_json(value)])
+	_keep(track, [frame, game_ms, bridge._json.to_json(value), usec])
 
 
 ## Whether value is a change from last: numbers, and each component of two vectors of one type, by
@@ -730,8 +733,8 @@ static func _extend(track: Dictionary, index: int, component: Variant, frame: in
 		track["max_at"][index] = frame
 
 
-## Keeps point [frame, gameMs, value]: among the first FIRST_POINTS, else in the ring of the last
-## LAST_POINTS, over its oldest once it is full.
+## Keeps point [frame, gameMs, value, ticks]: among the first FIRST_POINTS, else in the ring of the
+## last LAST_POINTS, over its oldest once it is full.
 static func _keep(track: Dictionary, point: Array) -> void:
 	track["kept"] = int(track["kept"]) + 1
 	var first_points: Array = track["first_points"]

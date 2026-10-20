@@ -10,6 +10,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `scratch_status` reads a background scratch run's progress and result, or stops it.
 - `batch_drive` entries carry `errorsElsewhere`, the errors the batch's other sessions raised meanwhile, and `no_errors` takes `sessions: "all"` or a list.
 - `wait_for` results carry `metAt` and `clockErrorMs` on the drive clock, re-pinging a loose clock first; an output wait reports when the server read its line.
+- `watch` points, events and voices end with `at`, their time on the drive clock, with one `clockErrorMs`, so two games' watches line up.
 
 ### Changed
 
