@@ -269,7 +269,7 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   On a machine with no GPU, Godot falls back to ANGLE on Direct3D 11 WARP, which makes a window only in a logged-on console session: in an ssh session 0 it logs `Failed to create ANGLE OpenGL window.` and the bridge never connects.
 
-  `.gate/desktop.toml` declares the commands that need the build box's console desktop (`itest-csharp`, and the `tools/hidden-desktop.ps1` runs of `PrepTests` and `RestartTests`). The gate routes one there only while the PC's `%LOCALAPPDATA%\gate\remote.json` lists the pattern under both `repos` and `desktop`, else it runs on this machine.
+  `.gate/desktop.toml` declares the commands that need the build box's console desktop (`itest-csharp`, and the `tools/hidden-desktop.ps1` runs of `PrepTests`, `RestartTests` and the `headless` group's classes). The gate routes one there only while the PC's `%LOCALAPPDATA%\gate\remote.json` lists the pattern under both `repos` and `desktop`, else it runs on this machine.
 
   A change to those commands' text updates the file, whose patterns must equal `remote.json`'s letter for letter; a file the gate cannot read keeps every routed godot-mcp command on this machine.
 
