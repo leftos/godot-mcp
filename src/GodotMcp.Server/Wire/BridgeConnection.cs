@@ -66,6 +66,15 @@ internal sealed class BridgeConnection : IAsyncDisposable
     public long? WindowHandle { get; init; }
 
     /// <summary>
+    /// The bridge's own reading of <c>Time.get_ticks_usec()</c>, as its hello carried it; null when the hello carried none (a
+    /// bridge older than the field).
+    /// </summary>
+    public long? HelloTicksUsec { get; init; }
+
+    /// <summary>The drive time the hello was read, the latest moment its remote ticks can be from; 0 when none was read.</summary>
+    public double HelloReceivedMs { get; init; }
+
+    /// <summary>
     /// Sends one command and waits for its reply's <c>result</c> for <paramref name="timeout"/> of load-adjusted time, bounded by
     /// <see cref="LoadClock.BackstopFactor"/> times it in wall time. With <paramref name="release"/>, the request carries
     /// <c>backstopMs</c>, <see cref="LoadClock.BackstopFactor"/> times the release in milliseconds, as the bridge's own
@@ -160,7 +169,7 @@ internal sealed class BridgeConnection : IAsyncDisposable
 
     /// <summary>
     /// Sends one command and waits for its reply's <c>result</c> for <paramref name="timeout"/> of wall time, whatever the
-    /// machine's load: the pings that tell a busy game from a stuck one, a cancel, and the shutdown.
+    /// machine's load: the pings that tell a busy game from a stuck one, a clock ping, a cancel, and the shutdown.
     /// </summary>
     /// <exception cref="TimeoutException">No reply within <paramref name="timeout"/>; a later reply is dropped.</exception>
     /// <exception cref="InvalidOperationException">The bridge answered <c>ok: false</c>.</exception>
@@ -176,6 +185,36 @@ internal sealed class BridgeConnection : IAsyncDisposable
         catch (TimeoutException e)
         {
             throw new TimeoutException(TimedOut(command, id, timeout, string.Empty), e);
+        }
+        finally
+        {
+            _pending.TryRemove(id, out _);
+        }
+    }
+
+    /// <summary>
+    /// Sends the clock's ping and reports the pong's remote ticks with the drive times the request went out and its reply was
+    /// matched, or null when the pong carries no ticks (a bridge older than the field). As a ping's, its wait is wall time; its
+    /// write is the raw path, which never releases a parallel group's next member, unlike <see cref="SendAsync"/>'s watched write.
+    /// Its <c>sentMs</c> is read before the write, possibly before a queued write's turn, so the bound stays valid: a queued
+    /// write only loosens it.
+    /// </summary>
+    /// <exception cref="TimeoutException">No reply within <paramref name="timeout"/>; a later reply is dropped.</exception>
+    /// <exception cref="InvalidOperationException">The bridge answered <c>ok: false</c>.</exception>
+    /// <exception cref="IOException">The connection ended before the reply.</exception>
+    public async Task<(long TicksUsec, double SentMs, double ReceivedMs)?> ClockPingAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        (long id, PendingRequest pending) = Register("ping");
+        try
+        {
+            double sentMs = DriveClock.NowMs;
+            await WriteAsync(Request(id, "ping", []), cancellationToken);
+            JsonNode? reply = await pending.Reply.Task.WaitAsync(timeout, cancellationToken);
+            return reply is JsonObject pong && HandshakeExpectation.ReadTicksUsec(pong) is { } ticks ? (ticks, sentMs, pending.ReceivedMs) : null;
+        }
+        catch (TimeoutException e)
+        {
+            throw new TimeoutException(TimedOut("ping", id, timeout, string.Empty), e);
         }
         finally
         {
@@ -320,6 +359,7 @@ internal sealed class BridgeConnection : IAsyncDisposable
             return;
         }
 
+        pending.ReceivedMs = DriveClock.NowMs;
         if (IsSuccess(reply))
         {
             pending.Reply.TrySetResult(reply["result"]?.DeepClone());
@@ -427,6 +467,9 @@ internal sealed class BridgeConnection : IAsyncDisposable
         public string Command { get; } = command;
 
         public TaskCompletionSource<JsonNode?> Reply { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>The drive time the reply was matched, stamped by the read loop as it hands the reply over.</summary>
+        public double ReceivedMs { get; set; }
 
         /// <summary>Whether the request's frame has gone out to the bridge; only a written request can be running there.</summary>
         public bool IsWritten => _written;

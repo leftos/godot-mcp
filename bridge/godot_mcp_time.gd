@@ -607,7 +607,8 @@ func _seed_edge(probe: Callable, params: Dictionary) -> String:
 ## Checks probe now and then once a frame until it is met, cannot be met, bound_ms has passed,
 ## params.timeoutFrames frames have passed (a recording's wait, which the server counts in movie
 ## frames), or the request's params are marked _cancelled (the server's cancel). Returns {result:
-## {met, elapsedMs, frames, value | last}}, plus clipMs for a frame-counted wait, or {error}.
+## {met, elapsedMs, frames, value | last, ticksUsec when met}}, plus clipMs for a frame-counted
+## wait, or {error}; ticksUsec is the bridge's reading as the check met, for the drive clock.
 func _poll(probe: Callable, bound_ms: float, params: Dictionary = {}) -> Dictionary:
 	var began: int = Time.get_ticks_msec()
 	var frames: int = 0
@@ -622,6 +623,8 @@ func _poll(probe: Callable, bound_ms: float, params: Dictionary = {}) -> Diction
 		"met": seen[0], "elapsedMs": Time.get_ticks_msec() - began, "frames": frames
 	}
 	result["value" if seen[0] else "last"] = seen[1]
+	if seen[0]:
+		result["ticksUsec"] = Time.get_ticks_usec()
 	if params.has("timeoutFrames"):
 		_add_clip_ms(result, frames)
 	return {"result": result}

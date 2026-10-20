@@ -70,6 +70,7 @@ public sealed class MultiSessionTests : IAsyncDisposable
         Assert.True(joined["met"]!.GetValue<bool>(), joined.ToJsonString());
         Assert.Equal("stdout", joined["value"]!["stream"]!.GetValue<string>());
         Assert.True(joined["value"]!["lineNumber"]!.GetValue<long>() > 0, joined.ToJsonString());
+        Assert.True(joined["value"]!["at"]!.GetValue<double>() >= 0, joined.ToJsonString());
         Assert.True(connected["met"]!.GetValue<bool>(), connected.ToJsonString());
         Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
         Assert.False(batch.ContainsKey("failedAt"), batch.ToJsonString());
@@ -142,6 +143,35 @@ public sealed class MultiSessionTests : IAsyncDisposable
         Assert.True(connected["met"]!.GetValue<bool>(), connected.ToJsonString());
         Assert.True(passed["passed"]!.GetValue<bool>(), passed.ToJsonString());
         Assert.All(passed["steps"]![0]!["members"]!.AsArray(), member => Assert.True(member!["ok"]!.GetValue<bool>(), passed.ToJsonString()));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AGuestsMetStampFallsAfterTheHostsClickStart()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        (JsonObject joined, JsonObject connected) = await LaunchPairAsync(cancellation);
+        BatchStep mirrored = new(
+            Assert: "wait",
+            Node: "Mirror",
+            Property: "text",
+            EqualsValue: JsonSerializer.SerializeToElement("presses: 1"),
+            Session: "guest"
+        );
+
+        JsonObject passed = await GroupAsync(mirrored, HostClick("Send"), cancellation);
+        await _harness.Sessions.StopAsync("host", cancellation);
+        await _harness.Sessions.StopAsync("guest", cancellation);
+
+        Assert.True(joined["met"]!.GetValue<bool>(), joined.ToJsonString());
+        Assert.True(connected["met"]!.GetValue<bool>(), connected.ToJsonString());
+        Assert.True(passed["passed"]!.GetValue<bool>(), passed.ToJsonString());
+        JsonArray members = passed["steps"]![0]!["members"]!.AsArray();
+        JsonObject result = members[0]!["result"]!.AsObject();
+        double clickStart = members[1]!["startMs"]!.GetValue<double>();
+        double metAt = result["metAt"]!.GetValue<double>();
+        Assert.True(result["clockErrorMs"]!.GetValue<double>() >= 0, passed.ToJsonString());
+        Assert.True(clickStart < metAt, $"the guest met at {metAt} ms, before the host's click started at {clickStart}: {passed.ToJsonString()}");
+        Assert.True(metAt < clickStart + 500, $"the guest met {metAt - clickStart} ms after the host's click started: {passed.ToJsonString()}");
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

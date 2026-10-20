@@ -9,6 +9,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `run_scratches` takes `options.background`: it returns a run id at once and plays on, writing a status file and a log ending in a completion line.
 - `scratch_status` reads a background scratch run's progress and result, or stops it.
 - `batch_drive` entries carry `errorsElsewhere`, the errors the batch's other sessions raised meanwhile, and `no_errors` takes `sessions: "all"` or a list.
+- `wait_for` results carry `metAt` and `clockErrorMs`, and an output wait reports when the server read the line, all on the drive clock.
 
 ### Changed
 

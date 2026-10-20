@@ -213,6 +213,20 @@ func test_welcome_marks_the_connection_accepted_and_replies() -> void:
 	_free_bridge(bridge)
 
 
+func test_pong_carries_the_bridge_ticks() -> void:
+	var bridge: Node = _recording_bridge()
+	var before: int = Time.get_ticks_usec()
+	bridge._handle_ping(5, {})
+	var after: int = Time.get_ticks_usec()
+	assert_eq(bridge.sent.size(), 1, "one reply")
+	assert_eq(bridge.sent[0].get("id"), 5, "to the ping")
+	assert_eq(bridge.sent[0].get("ok"), true, "an ok reply")
+	var ticks: Variant = bridge.sent[0].get("result", {}).get("ticksUsec")
+	assert_true(ticks is int, "the pong carries the bridge's ticks")
+	assert_true(int(ticks) >= before and int(ticks) <= after, "read while the ping was handled")
+	_free_bridge(bridge)
+
+
 func test_a_launched_game_never_welcomed_does_not_quit_on_a_lost_connection() -> void:
 	var bridge: Node = _recording_bridge()
 	bridge._endpoint_source = _dormant_script.SOURCE_ENV

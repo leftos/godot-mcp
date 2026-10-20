@@ -65,6 +65,51 @@ public sealed class OutputBufferTests
         Assert.Equal(new string('y', OutputBuffer.MaxLineLength) + "… (+234 chars)", page.Lines[1]);
     }
 
+    [Fact]
+    public void ReceiptTimesRollWithTheRingAndKeepTheirLines()
+    {
+        OutputBuffer buffer = new(3);
+        buffer.Add("a", 1.5);
+        buffer.Add("b", 2.5);
+        buffer.Add("c", 3.5);
+        buffer.Add("d", 4.5);
+
+        OutputPage raw = buffer.Raw();
+
+        Assert.Equal(2, raw.FirstLine);
+        Assert.Equal(["b", "c", "d"], raw.Lines);
+        Assert.Equal([2.5, 3.5, 4.5], raw.Times!);
+    }
+
+    [Fact]
+    public void APageKeepsTheTimesOfItsLines()
+    {
+        OutputBuffer buffer = new(10);
+        for (int line = 1; line <= 5; line++)
+        {
+            buffer.Add($"line {line}", line * 10.0);
+        }
+
+        OutputPage page = buffer.Page(2, null);
+
+        Assert.Equal(4, page.FirstLine);
+        Assert.Equal(["line 4", "line 5"], page.Lines);
+        Assert.Equal([40.0, 50.0], page.Times!);
+    }
+
+    [Fact]
+    public void AnAddWithoutATimeStampsTheDriveClock()
+    {
+        OutputBuffer buffer = new(10);
+        buffer.Add("stamped", 1.5);
+        double before = DriveClock.NowMs;
+        buffer.Add("now");
+        double after = DriveClock.NowMs;
+
+        Assert.Equal(1.5, buffer.Raw().Times![0]);
+        Assert.InRange(buffer.Raw().Times![1], before, after);
+    }
+
     private static OutputBuffer Filled(int capacity, int lines)
     {
         OutputBuffer buffer = new(capacity);

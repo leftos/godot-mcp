@@ -41,7 +41,7 @@ public sealed class BridgeConnectionTests : IDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         Task<BridgeConnection> accept = AcceptAsync(cancellation);
-        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
         await using BridgeConnection connection = await accept;
 
         Task<JsonNode?> sent = connection.SendAsync(
@@ -73,7 +73,7 @@ public sealed class BridgeConnectionTests : IDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         Task<BridgeConnection> accept = AcceptAsync(cancellation);
-        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
         await using BridgeConnection connection = await accept;
         using var caller = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
 
@@ -98,7 +98,7 @@ public sealed class BridgeConnectionTests : IDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         Task<BridgeConnection> accept = AcceptAsync(cancellation);
-        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
         await using BridgeConnection connection = await accept;
 
         // Which of the two paths runs first is up to the thread pool, so the race is run several times.
@@ -131,7 +131,7 @@ public sealed class BridgeConnectionTests : IDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         Task<BridgeConnection> accept = AcceptAsync(cancellation);
-        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
         await using BridgeConnection connection = await accept;
         using var caller = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
 
@@ -155,7 +155,7 @@ public sealed class BridgeConnectionTests : IDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         Task<BridgeConnection> accept = AcceptAsync(cancellation);
-        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
         await using BridgeConnection connection = await accept;
 
         Task<JsonNode?> sent = connection.SendAsync("wait_for", new JsonObject { ["timeoutMs"] = 10_000 }, TimeSpan.FromSeconds(15), cancellation);
@@ -173,7 +173,7 @@ public sealed class BridgeConnectionTests : IDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         Task<BridgeConnection> accept = AcceptAsync(cancellation);
-        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
         await using BridgeConnection connection = await accept;
 
         Task<JsonNode?> sent = connection.SendAsync(
@@ -196,7 +196,7 @@ public sealed class BridgeConnectionTests : IDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         Task<BridgeConnection> accept = AcceptAsync(cancellation);
-        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
         await using BridgeConnection connection = await accept;
 
         // Half of the machine busy with other work: after the first sample, 2 s of wall time per second of the timeout.
@@ -222,7 +222,7 @@ public sealed class BridgeConnectionTests : IDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         Task<BridgeConnection> accept = AcceptAsync(cancellation);
-        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
         await using BridgeConnection connection = await accept;
 
         // A saturated machine and a fake time that never moves: a load-adjusted ping would never time out.
@@ -240,7 +240,7 @@ public sealed class BridgeConnectionTests : IDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         Task<BridgeConnection> accept = AcceptAsync(cancellation);
-        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
         await bridge.WriteAsync(ErrorsFrame("early"), cancellation);
         await using BridgeConnection connection = await accept;
 
@@ -259,7 +259,7 @@ public sealed class BridgeConnectionTests : IDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         Task<BridgeConnection> accept = AcceptAsync(cancellation);
-        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
         await using BridgeConnection connection = await accept;
         List<string> received = [];
         connection.OnErrors(frame => received.Add(MessageIn(frame)));
@@ -278,7 +278,7 @@ public sealed class BridgeConnectionTests : IDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         Task<BridgeConnection> accept = AcceptAsync(cancellation);
-        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
         await using BridgeConnection connection = await accept;
         int calls = 0;
         connection.OnErrors(_ =>
@@ -300,7 +300,7 @@ public sealed class BridgeConnectionTests : IDisposable
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         Task<BridgeConnection> accept = AcceptAsync(cancellation);
-        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
         await using BridgeConnection connection = await accept;
         List<string> captured = [];
         List<string> errors = [];

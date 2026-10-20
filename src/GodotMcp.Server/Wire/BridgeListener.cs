@@ -182,10 +182,11 @@ internal sealed class BridgeListener : IDisposable
     {
         FrameDecoder decoder = new();
         JsonObject hello;
+        double receivedMs;
         try
         {
             client.NoDelay = true;
-            hello = await ReadHelloAsync(client, decoder, stopping);
+            (hello, receivedMs) = await ReadHelloAsync(client, decoder, stopping);
         }
         catch (Exception e)
             when (e is IOException or InvalidDataException or OperationCanceledException or ObjectDisposedException or SocketException)
@@ -212,21 +213,25 @@ internal sealed class BridgeListener : IDisposable
         {
             Window = HandshakeExpectation.ReadWindow(hello),
             WindowHandle = HandshakeExpectation.ReadWindowHandle(hello),
+            HelloTicksUsec = HandshakeExpectation.ReadTicksUsec(hello),
+            HelloReceivedMs = receivedMs,
         };
         await HandOverAsync(waiter, connection);
     }
 
     /// <summary>
-    /// Reads the connection's hello, or ends at the point the connection is refused: five seconds after the accept, or, if a
-    /// session is still waiting for a bridge, the moment the last waiter ends.
+    /// Reads the connection's hello and stamps the drive time it was read, the latest moment the hello's remote ticks can be
+    /// from, or ends at the point the connection is refused: five seconds after the accept, or, if a session is still waiting
+    /// for a bridge, the moment the last waiter ends.
     /// </summary>
-    private async Task<JsonObject> ReadHelloAsync(TcpClient client, FrameDecoder decoder, CancellationToken stopping)
+    private async Task<(JsonObject Hello, double ReceivedMs)> ReadHelloAsync(TcpClient client, FrameDecoder decoder, CancellationToken stopping)
     {
         using var hello = CancellationTokenSource.CreateLinkedTokenSource(stopping);
         Task abandoned = HoldUntilAbandonedAsync(hello);
         try
         {
-            return await ReadFirstFrameAsync(client.GetStream(), decoder, hello.Token);
+            JsonObject frame = await ReadFirstFrameAsync(client.GetStream(), decoder, hello.Token);
+            return (frame, DriveClock.NowMs);
         }
         finally
         {

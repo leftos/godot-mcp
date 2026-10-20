@@ -50,11 +50,14 @@ internal sealed partial class GodotSession
             await _gate.WaitAsync(cancellationToken);
             try
             {
-                _attached = await InjectAndAwaitBridgeAsync(bridgeScript, wait, cancellationToken);
-                GameProcessId = _attached.GameProcessId;
-                WindowHandle = _attached.WindowHandle;
+                BridgeConnection attached = await InjectAndAwaitBridgeAsync(bridgeScript, wait, cancellationToken);
+                // The clock is replaced before the connection is published, so no call converts a new game's stamp on the old clock.
+                await StartClockAsync(attached);
+                _attached = attached;
+                GameProcessId = attached.GameProcessId;
+                WindowHandle = attached.WindowHandle;
                 MarkGameStarted();
-                _ = ClearSnapshotsWhenClosedAsync(_attached);
+                _ = ClearSnapshotsWhenClosedAsync(attached);
                 // Last, since it cannot fail: an attach that fails after it would leave the handle open.
                 KeepAttachedGameHandle();
             }

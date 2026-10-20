@@ -394,6 +394,7 @@ func _process(_delta: float) -> void:
 				"pid": OS.get_process_id(),
 				"window": {"width": window_size.x, "height": window_size.y},
 				"hwnd": _window.native_handle(),
+				"ticksUsec": Time.get_ticks_usec(),
 			}
 		)
 	_flush_errors()
@@ -632,8 +633,10 @@ func _command_handlers() -> Dictionary:
 	}
 
 
+## Answers with the bridge's own ticks, read as the ping is handled: the server bounds the game's
+## clock offset from the times it sent the ping and read the reply.
 func _handle_ping(id: int, _params: Dictionary) -> void:
-	_reply_ok(id, {"pong": true})
+	_reply_ok(id, {"pong": true, "ticksUsec": Time.get_ticks_usec()})
 
 
 ## The server accepted this bridge's hello for a run it launched: from here a lost connection

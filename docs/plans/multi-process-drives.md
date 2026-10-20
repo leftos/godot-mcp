@@ -219,6 +219,17 @@ Where the clock shows:
 
 So "the guest showed the host's lock-in 46 ms after the host's click step began" is `metAt - startMs`, two numbers of one result, and a watch on each game lines up on `at`.
 
+**Step 8's rulings** (from its map, `.tmp/map-gmcp47-step8.md` at the time). Settled by the recommended option under CLAUDE.md's autonomy rule, and reversible:
+
+- **The estimate**: the offset is the midpoint of the tightest bounds, and `clockErrorMs` is half their width, both rounded to 0.1 ms as every drive stamp is, so a difference of two of a game's stamps is exact only to that error, and `metAt - startMs` may sit a little either side of the truth. A session with no pong yet has no offset, and a stamp it cannot convert is reported without `metAt` rather than guessed.
+- **A disagreement**: a pong whose interval misses the held bounds, from a reordered reply or a clock that jumped, replaces them; a hello that cannot sit above a pong's lower bound is ignored, since the pongs are the tighter evidence.
+- **The hello's bound**: a hello carries no send time, so it can only tighten the upper bound, which the pongs then narrow; a bridge too old to send `ticksUsec` is still accepted and simply leaves the bounds to its pongs.
+- **The handshake pings**: five pings go out 7 ms apart from one start, each written without awaiting the last; `run_project` and `attach_project` then await all five, about 40 ms, so the first call after a launch converts. A ping that fails or times out does not fail the launch; it leaves the bounds as they are.
+- **What is converted**: only a bridge tick. The five handshake pings and the `wait_for` stamp land here; the extra ping before converting a stamp wider than 2 ms, and the later random-gap pings, wait for step 9, since the handshake's five measured 1.4-1.9 ms (section 4), inside that trigger, and step 9 is what ages a clock over a long watch.
+- **Where `clockErrorMs` goes**: on a result whose stamp was converted, a met `wait_for` and the `batch_drive` entries that carry one; never beside an output wait's `at`, which is the server's own receipt time, and never on a timed-out or cancelled wait, which has no met stamp.
+- **The name**: the bridge's field is `ticksUsec` on the hello, on a pong and on a met reply, and the server strips it from every reply it forwards, so a raw tick never reaches the client.
+- **Where it lives**: `Session/SessionClock.cs`, one per session, replaced at each handshake; a clock ping is the connection's own raw send, never the watched send a batch member's flow uses, so a ping never releases the next parallel member early.
+
 ### Interactions
 
 - **Sessions**: process sessions share the name space and `list_sessions`; a name refused or replaced as a run's is. `stop_project {projectPath}` stops the folder's game session and warm host as today, never a process session, which is stopped by name.

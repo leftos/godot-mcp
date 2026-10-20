@@ -2,8 +2,11 @@ using System.Text.RegularExpressions;
 
 namespace GodotMcp.Server.Session;
 
-/// <summary>A line an output wait matched: the stream, its number in that stream, the raw line, and its capture groups.</summary>
-internal readonly record struct OutputMatch(string Stream, long LineNumber, string Line, IReadOnlyList<string?> Groups);
+/// <summary>
+/// A line an output wait matched: the stream, its number in that stream, the raw line, its capture groups, and the drive time
+/// the server received it (null when the page carried no times).
+/// </summary>
+internal readonly record struct OutputMatch(string Stream, long LineNumber, string Line, IReadOnlyList<string?> Groups, double? AtMs = null);
 
 /// <summary>The line scan behind wait_for's output condition: lines numbered after a mark, stdout first when the stream is any.</summary>
 internal static class OutputWait
@@ -70,12 +73,15 @@ internal static class OutputWait
                     groups.Add(Captured(match.Groups[group]));
                 }
 
-                return new OutputMatch(stream, number, page.Lines[index], groups);
+                return new OutputMatch(stream, number, page.Lines[index], groups, ReceivedAt(page, index));
             }
         }
 
         return null;
     }
+
+    /// <summary>The receipt time of <paramref name="page"/>'s line at <paramref name="index"/>, or null when it carries none.</summary>
+    private static double? ReceivedAt(OutputPage page, int index) => page.Times is { } times && index < times.Count ? times[index] : null;
 
     private static string? Captured(Group group) => group.Success ? group.Value : null;
 }

@@ -140,6 +140,39 @@ public sealed class HandshakeExpectationTests
         Assert.Null(_expected.FindMismatch(hello));
     }
 
+    [Theory]
+    [InlineData("{\"ticksUsec\":4242}", 4242L)]
+    [InlineData("{\"ticksUsec\":4242.0}", 4242L)]
+    [InlineData("{\"ticksUsec\":8589934592}", 8_589_934_592L)]
+    public void ReadsTheBridgeTicksFromTheHellosJsonText(string ticks, long expected)
+    {
+        JsonObject hello = Hello(Token, BridgeProjectPath, ticks);
+
+        Assert.Equal(expected, HandshakeExpectation.ReadTicksUsec(hello));
+        Assert.Null(_expected.FindMismatch(hello));
+    }
+
+    [Theory]
+    [InlineData("{\"ticksUsec\":\"4242\"}")]
+    [InlineData("{\"ticksUsec\":42.5}")]
+    [InlineData("{\"ticksUsec\":-1}")]
+    public void AHelloWithoutUsableTicksHasNoneAndStillMatches(string ticks)
+    {
+        JsonObject hello = Hello(Token, BridgeProjectPath, ticks);
+
+        Assert.Null(HandshakeExpectation.ReadTicksUsec(hello));
+        Assert.Null(_expected.FindMismatch(hello));
+    }
+
+    [Fact]
+    public void AHelloWithoutTicksUsecHasNoTicks()
+    {
+        JsonObject hello = Hello(Token, BridgeProjectPath);
+
+        Assert.Null(HandshakeExpectation.ReadTicksUsec(hello));
+        Assert.Null(_expected.FindMismatch(hello));
+    }
+
     /// <summary>The hello's base fields, plus <paramref name="extra"/>'s fields as the bridge writes them: as JSON text.</summary>
     private static JsonObject Hello(string token, string projectPath, string extra)
     {

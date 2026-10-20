@@ -83,8 +83,9 @@ internal sealed record WaitCondition(
         string? State = null,
     [property: Description(
         "An output wait: a .NET regular expression matched against a line the session's game printed. Met, value is {line, "
-            + "stream, lineNumber, groups}, groups its capture groups (the whole match excluded), null for a group that did not "
-            + "match. The server answers it from the captured output, so it works while the game is paused."
+            + "stream, lineNumber, groups, at}, groups its capture groups (the whole match excluded), null for a group that did not "
+            + "match, and at the server's read time of the line on the drive clock, not the game's print time. The server answers "
+            + "it from the captured output, so it works while the game is paused."
     )]
         string? Output = null,
     [property: Description("With output: match stdout, stderr or any (the default); any scans stdout first.")] string? Stream = null,

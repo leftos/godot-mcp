@@ -7,9 +7,10 @@ namespace GodotMcp.Server.Wire;
 
 /// <summary>
 /// What the bridge's first frame must carry for the run the server launched: <c>{type: "hello", token, projectPath}</c>.
-/// The hello's <c>pid</c>, the game's own process id, is read by <see cref="ReadProcessId"/>, and its <c>window</c>, the game
-/// window's size, by <see cref="ReadWindow"/>, and its <c>hwnd</c>, the main window's native handle, by
-/// <see cref="ReadWindowHandle"/>; none is checked.
+/// The hello's <c>pid</c>, the game's own process id, is read by <see cref="ReadProcessId"/>, its <c>window</c>, the game
+/// window's size, by <see cref="ReadWindow"/>, its <c>hwnd</c>, the main window's native handle, by
+/// <see cref="ReadWindowHandle"/>, and its <c>ticksUsec</c>, the bridge's own clock, by <see cref="ReadTicksUsec"/>; none is
+/// checked.
 /// </summary>
 internal sealed record HandshakeExpectation(string Token, string ProjectPath)
 {
@@ -85,6 +86,29 @@ internal sealed record HandshakeExpectation(string Token, string ProjectPath)
     /// <summary><paramref name="number"/> as a window handle, or null when it is 0 or not a whole number that fits a long.</summary>
     private static long? WholeNumberHandle(double number) =>
         number != 0 && number >= long.MinValue && number < long.MaxValue && number == Math.Floor(number) ? (long)number : null;
+
+    /// <summary>
+    /// The bridge's own clock, which the hello carries as <c>ticksUsec</c>: microseconds since the game's engine started. Null
+    /// when it carries none (a bridge older than the field), a negative value, or a fraction. GDScript's JSON may write it as a
+    /// float, and a long drive passes <see cref="int.MaxValue"/>, so it is read as a 64-bit whole number.
+    /// </summary>
+    internal static long? ReadTicksUsec(JsonObject hello) => ReadTicksUsec(hello["ticksUsec"]);
+
+    /// <summary><paramref name="node"/> as the bridge's ticks, a non-negative whole number; null for anything else.</summary>
+    internal static long? ReadTicksUsec(JsonNode? node)
+    {
+        if (node is not JsonValue value)
+        {
+            return null;
+        }
+
+        if (value.TryGetValue(out long whole))
+        {
+            return whole >= 0 ? whole : null;
+        }
+
+        return value.TryGetValue(out double number) && number >= 0 && number < long.MaxValue && number == Math.Floor(number) ? (long)number : null;
+    }
 
     /// <summary>A positive whole number, which GDScript's JSON may write as a float; null for anything else.</summary>
     private static int? ReadPositiveInt(JsonNode? node)

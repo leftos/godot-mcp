@@ -53,9 +53,16 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     private static readonly TimeSpan DebuggerPingTimeout = TimeSpan.FromMilliseconds(500);
     private const int FailureStderrLines = 20;
 
+    // The clock's handshake: five pings 7 ms apart from one start, so they land at different points of the 60 fps frame, each
+    // answered or abandoned within ClockPingTimeout of wall time; the design's ~40 ms for all five.
+    private static readonly TimeSpan ClockPingGap = TimeSpan.FromMilliseconds(7);
+    private static readonly TimeSpan ClockPingTimeout = TimeSpan.FromMilliseconds(500);
+    private const int ClockPingCount = 5;
+
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ILogger _logger = registry.Logger;
     private volatile bool _pending = true;
+    private volatile SessionClock _clock = new();
     private GodotRun? _run;
 
     public string Name { get; } = spec.Name;
@@ -104,6 +111,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>The snapshots snapshot_subtree took of the current game; emptied when the run stops, exits or restarts.</summary>
     public SnapshotStore Snapshots { get; } = new();
+
+    /// <summary>
+    /// The session's clock offset from the drive clock, replaced at each handshake: the hello's upper bound and the five
+    /// handshake pings', then each pong a later clock ping brings.
+    /// </summary>
+    internal SessionClock Clock => _clock;
 
     /// <summary>Whether the session is starting, its run is running, or its attached game is still connected.</summary>
     public bool IsLive => _pending || HasGame;
@@ -651,6 +664,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         GodotRun run = prepared.Run;
         int processId = run.Process.Id;
         BridgeConnection connection = await WaitForHandshakeAsync(run, new HandshakeExpectation(prepared.Token, ProjectDir), cancellationToken);
+        // The clock is replaced before the connection is published, so no call converts a new run's stamp on the old run's clock.
+        await StartClockAsync(connection);
         connection.OnErrors(Errors.Receive);
         connection.OnCaptured(ReceiveCaptured);
         run.Connection = connection;
@@ -749,6 +764,57 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         catch (Exception e) when (e is IOException or InvalidOperationException)
         {
             Log.WelcomeUnanswered(_logger, e, ProjectDir);
+        }
+    }
+
+    /// <summary>
+    /// Replaces the session's clock from the connection just handshaken and sends its five handshake pings, started 7 ms apart
+    /// from one start and awaited together, so every later stamp converts. A ping that fails or times out leaves the bounds as
+    /// they are and never fails the launch or the attach.
+    /// </summary>
+    private async Task StartClockAsync(BridgeConnection connection)
+    {
+        SessionClock clock = new();
+        if (connection.HelloTicksUsec is long hello)
+        {
+            clock.AddHello(hello, connection.HelloReceivedMs);
+        }
+
+        _clock = clock;
+        long started = Stopwatch.GetTimestamp();
+        List<Task> pings = [];
+        for (int index = 0; index < ClockPingCount; index++)
+        {
+            pings.Add(PingClockAsync(connection, clock, started, index));
+        }
+
+        await Task.WhenAll(pings);
+    }
+
+    /// <summary>One handshake ping, sent once its gap from the handshake's start has passed, feeding the clock its pong.</summary>
+    private static async Task PingClockAsync(BridgeConnection connection, SessionClock clock, long started, int index)
+    {
+        try
+        {
+            TimeSpan due = ClockPingGap * index;
+            TimeSpan spent = Stopwatch.GetElapsedTime(started);
+            if (due > spent)
+            {
+                await Task.Delay(due - spent);
+            }
+
+            if (await connection.ClockPingAsync(ClockPingTimeout, CancellationToken.None) is { } sample)
+            {
+                clock.Add(sample.TicksUsec, sample.SentMs, sample.ReceivedMs);
+            }
+        }
+        catch (TimeoutException)
+        {
+            // A ping the game does not answer leaves the bounds to the pongs that do; the handshake is not failed for it.
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException)
+        {
+            // The connection ended or the bridge refused the ping: the clock keeps the bounds it already has.
         }
     }
 

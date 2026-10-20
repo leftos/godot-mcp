@@ -40,8 +40,8 @@ public sealed class BridgeListenerTests : IDisposable
         Task<BridgeConnection> second = _listener.AcceptBridgeAsync(new HandshakeExpectation("BBBB", ProjectDir), timeout.Token);
 
         string[] dialOrder = secondDialsFirst ? ["BBBB", "AAAA"] : ["AAAA", "BBBB"];
-        using FakeBridge earlier = await FakeBridge.DialAsync(_listener.Port, dialOrder[0], ProjectDir, cancellation);
-        using FakeBridge later = await FakeBridge.DialAsync(_listener.Port, dialOrder[1], ProjectDir, cancellation);
+        using FakeBridge earlier = await FakeBridge.DialAsync(_listener.Port, dialOrder[0], ProjectDir, cancellation, answerPings: false);
+        using FakeBridge later = await FakeBridge.DialAsync(_listener.Port, dialOrder[1], ProjectDir, cancellation, answerPings: false);
         FakeBridge firstBridge = secondDialsFirst ? later : earlier;
         FakeBridge secondBridge = secondDialsFirst ? earlier : later;
         await using BridgeConnection firstConnection = await first;

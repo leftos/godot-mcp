@@ -154,11 +154,14 @@ internal sealed partial class RuntimeTools
             + "An output condition waits for a line the run prints: {output} is a regular expression matched against stdout and/or "
             + "stderr, with stream (stdout, stderr, or any by default) and after (a line number to scan after). The server answers "
             + "it from the captured output, so it works while the game is paused; met, its value is {line, stream, lineNumber, "
-            + "groups}. "
+            + "groups, at}, at the server's read time of the line on the drive clock, not the game's print time. "
             + "Returns "
             + "{met, elapsedMs, value}, with frames as well except for an output wait (args instead of value for a signal; the "
-            + "game ms or frames reached for gameMs and frames); on timeout {met: false, elapsedMs, last}, with frames as well "
-            + "except for an output wait, the last value seen (a signal wait's timeout has no last), which is not an error. "
+            + "game ms or frames reached for gameMs and frames); a met bridge wait adds metAt, the drive time of the frame whose "
+            + "check met, with clockErrorMs, the half-width of the clock's bounds, both left out until the session's clock has "
+            + "bounds; on timeout {met: false, elapsedMs, last}, with "
+            + "frames as well except for an output wait, the last value seen (a signal wait's timeout has no last), which is not an "
+            + "error. "
             + "elapsedMs is real time; in a recording "
             + "the result adds clipMs, the clip time waited (frames x 1000 / 60). While the game is paused only a "
             + "signal wait, an output wait or a check-once wait (timeoutMs 0) is accepted; a pause during a gameMs or frames wait stops its "
@@ -513,7 +516,40 @@ internal sealed partial class RuntimeTools
         int timeoutMs = parameters["timeoutMs"]!.GetValue<int>();
         TimeSpan release = WaitRelease(parameters, timeoutMs, target.ActiveRecording is not null);
         BridgeCall call = new("wait_for", "wait_for", parameters, release + WaitReplyAllowance, timeoutMs > 0 ? release : null);
-        return await CallWithErrorsAsync(target, call, cancellationToken);
+        BridgeResult result = await CallWithErrorsAsync(target, call, cancellationToken);
+        StampMet(result.Reply as JsonObject, target.Clock);
+        return result;
+    }
+
+    /// <summary>
+    /// A met wait's stamp: converts the bridge's <c>ticksUsec</c> through the session's clock into <c>metAt</c> (drive-clock
+    /// ms, 0.1 ms) and <c>clockErrorMs</c>, and drops the raw tick so it never reaches the client. A reply without a tick, a
+    /// wait that did not meet, and a session whose clock has no bounds yet each get no stamp; the tick is dropped either way.
+    /// </summary>
+    private static void StampMet(JsonObject? reply, SessionClock clock)
+    {
+        if (reply is null || !reply.Remove("ticksUsec", out JsonNode? tick))
+        {
+            return;
+        }
+
+        if (reply["met"] is not JsonValue met || !met.TryGetValue(out bool isMet) || !isMet)
+        {
+            return;
+        }
+
+        if (HandshakeExpectation.ReadTicksUsec(tick) is not { } ticksUsec)
+        {
+            return;
+        }
+
+        if (!clock.TryToDriveMs(ticksUsec, out double driveMs, out double errorMs))
+        {
+            return;
+        }
+
+        reply["metAt"] = driveMs;
+        reply["clockErrorMs"] = errorMs;
     }
 
     /// <summary>
@@ -603,7 +639,8 @@ internal sealed partial class RuntimeTools
         }
     }
 
-    /// <summary>The met answer: {met, elapsedMs, value: {line, stream, lineNumber, groups}}.</summary>
+    /// <summary>The met answer: {met, elapsedMs, value: {line, stream, lineNumber, groups, at}}, at the drive time the line was
+    /// received.</summary>
     private static JsonObject OutputMet(OutputMatch match, int elapsedMs)
     {
         JsonArray groups = [];
@@ -612,17 +649,23 @@ internal sealed partial class RuntimeTools
             groups.Add((JsonNode?)group);
         }
 
+        JsonObject value = new()
+        {
+            ["line"] = OutputBuffer.Cut(match.Line, OutputBuffer.MaxLineLength),
+            ["stream"] = match.Stream,
+            ["lineNumber"] = match.LineNumber,
+            ["groups"] = groups,
+        };
+        if (match.AtMs is { } at)
+        {
+            value["at"] = at;
+        }
+
         return new JsonObject
         {
             ["met"] = true,
             ["elapsedMs"] = elapsedMs,
-            ["value"] = new JsonObject
-            {
-                ["line"] = OutputBuffer.Cut(match.Line, OutputBuffer.MaxLineLength),
-                ["stream"] = match.Stream,
-                ["lineNumber"] = match.LineNumber,
-                ["groups"] = groups,
-            },
+            ["value"] = value,
         };
     }
 

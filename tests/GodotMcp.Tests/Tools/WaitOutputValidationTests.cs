@@ -268,5 +268,25 @@ public sealed class WaitOutputValidationTests
         Assert.Equal("condition.output took over 1 s to match a line; simplify the pattern.", error);
     }
 
+    [Fact]
+    public void AMatchCarriesTheReceiptTimeOfItsLine()
+    {
+        OutputPage stdout = new(40, ["skip", "joined"], [40.5, 40.7]);
+
+        (OutputMatch? match, _) = OutputWait.Scan(stdout, new OutputPage(null, []), "stdout", Pattern("joined"), 0, 0);
+
+        Assert.Equal(40.7, match!.Value.AtMs.GetValueOrDefault());
+    }
+
+    [Fact]
+    public void AMatchOnAPageWithoutTimesHasNoReceiptTime()
+    {
+        OutputPage stdout = new(1, ["joined"]);
+
+        (OutputMatch? match, _) = OutputWait.Scan(stdout, new OutputPage(null, []), "stdout", Pattern("joined"), 0, 0);
+
+        Assert.Null(match!.Value.AtMs);
+    }
+
     private static Regex Pattern(string pattern) => ScratchProfile.Compile(pattern);
 }
