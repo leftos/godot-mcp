@@ -64,6 +64,34 @@ func test_a_lost_connection_hands_the_pointer_back() -> void:
 	bridge.free()
 
 
+## A motion's velocity over the last process frame's time, as the popup item probe needs: PopupMenu
+## ignores a motion without velocity (scene/gui/popup_menu.cpp L750 in 4.7.2). An instance outside
+## the tree has no process time (node.cpp L1015-1020), so seconds is the 0.001 floor here.
+func test_a_motion_carries_the_velocity_of_its_relative() -> void:
+	var bridge: Node = _bridge_script.new()
+	var gestures: Node = _input_script.new()
+	gestures.bridge = bridge
+	var relative := Vector2(4, -3)
+	var motion: InputEventMouseMotion = gestures.motion_event(Vector2(40, 30), relative, 0)
+	var seconds: float = maxf(gestures.get_process_delta_time(), 0.001)
+	assert_approx(motion.velocity.x, relative.x / seconds, "the velocity follows the relative")
+	assert_approx(motion.velocity.y, relative.y / seconds, "the velocity follows the relative")
+	assert_eq(motion.screen_velocity, motion.velocity, "the screen velocity equals the velocity")
+	gestures.free()
+	bridge.free()
+
+
+func test_a_motion_that_moves_nowhere_carries_no_velocity() -> void:
+	var bridge: Node = _bridge_script.new()
+	var gestures: Node = _input_script.new()
+	gestures.bridge = bridge
+	var motion: InputEventMouseMotion = gestures.motion_event(Vector2(40, 30), Vector2.ZERO, 0)
+	assert_eq(motion.velocity, Vector2.ZERO, "a motion with no relative has no velocity")
+	assert_eq(motion.screen_velocity, Vector2.ZERO, "and no screen velocity")
+	gestures.free()
+	bridge.free()
+
+
 ## A mouse motion without the injected mark, as the real mouse sends one.
 func _real_motion() -> InputEventMouseMotion:
 	var motion := InputEventMouseMotion.new()

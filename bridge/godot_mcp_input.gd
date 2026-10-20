@@ -833,8 +833,10 @@ func send_motion(window_point: Vector2, relative: Vector2, button_mask: int) -> 
 	dispatch(motion_event(window_point, relative, button_mask))
 
 
-## A new mouse motion at a window point, carrying relative and button_mask, marked as injected;
-## the pointer moves to it now.
+## A new mouse motion at a window point, carrying relative, button_mask and the velocity over the
+## last process frame's time, marked as injected; the pointer moves to it now. Input fills in no
+## velocity for an event it is given (core/input/input.cpp L865-890), and PopupMenu ignores a
+## zero-velocity motion (scene/gui/popup_menu.cpp L750 in 4.7.2).
 func motion_event(
 	window_point: Vector2, relative: Vector2, button_mask: int
 ) -> InputEventMouseMotion:
@@ -844,6 +846,9 @@ func motion_event(
 	motion.global_position = window_point
 	motion.relative = relative
 	motion.screen_relative = relative
+	var seconds: float = maxf(get_process_delta_time(), 0.001)
+	motion.velocity = relative / seconds
+	motion.screen_velocity = relative / seconds
 	motion.button_mask = button_mask
 	bridge._pointer = window_point
 	bridge._owns_pointer = true

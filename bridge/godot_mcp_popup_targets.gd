@@ -535,19 +535,14 @@ func _find(probe: Dictionary) -> Variant:
 	return probe_failure(probe["label"], probe["named"], readings, target)
 
 
-## Moves the pointer to a viewport point as a player's mouse moves over a popup: PopupMenu ignores
-## a motion without velocity (scene/gui/popup_menu.cpp L750 in 4.7.2) and Input fills in none for
-## an event it is given (core/input/input.cpp L865-890), so this motion carries its relative over
-## the last process frame's time.
+## Moves the pointer to a viewport point as a player's mouse moves over a popup, with the velocity
+## the motion_event it builds carries.
 func move(point: Vector2) -> void:
 	var window_point: Vector2 = gestures.to_window(point)
 	var relative: Vector2 = window_point - gestures.bridge._pointer
 	var motion: InputEventMouseMotion = gestures.motion_event(
 		window_point, relative, gestures.bridge._held_mask
 	)
-	var seconds: float = maxf(get_process_delta_time(), 0.001)
-	motion.velocity = relative / seconds
-	motion.screen_velocity = relative / seconds
 	gestures.dispatch(motion)
 
 
