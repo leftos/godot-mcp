@@ -8,8 +8,9 @@ namespace CsProbe;
 /// The C# nodes get_game_state's tests read: added as this node's children when it enters the tree, each in the mcp_state
 /// group, in this order: a private _McpState returning a record, an internal one returning a Godot Dictionary, one that
 /// throws, one returning a Task, one with both _McpState and a Godot-visible _mcp_state, one with neither, one whose
-/// call throws (a Span return), one with only a Godot-visible _mcp_state, one returning the process frame it is read in, and
-/// one whose turn Arm advances three process frames later.
+/// call throws (a Span return), one with only a Godot-visible _mcp_state, one returning the process frame it is read in,
+/// one whose turn Arm advances three process frames later, and two returning a Godot collection past the value budget:
+/// an array of ints, and a dictionary of them.
 /// </summary>
 public partial class CsState : Node
 {
@@ -25,6 +26,8 @@ public partial class CsState : Node
         Mark(new VisibleState(), "Visible");
         Mark(new FrameState(), "Frame");
         Mark(new CounterState(), "Counter");
+        Mark(new HugeState(), "Huge");
+        Mark(new HugeDictionaryState(), "HugeDictionary");
     }
 
     private void Mark(Node node, string name)
@@ -126,4 +129,34 @@ public partial class CounterState : Node
     }
 
     private object _McpState() => new { Turn = _turn, Seats = new[] { new Seat("alex", 7 + _turn) } };
+}
+
+/// <summary>An _McpState returning a Godot array of 6000 ints, past the values one read writes.</summary>
+public partial class HugeState : Node
+{
+    private Godot.Collections.Array _McpState()
+    {
+        Godot.Collections.Array items = [];
+        for (int index = 0; index < 6000; index++)
+        {
+            items.Add(index);
+        }
+
+        return items;
+    }
+}
+
+/// <summary>An _McpState returning a Godot dictionary of 6000 int entries, past the values one read writes.</summary>
+public partial class HugeDictionaryState : Node
+{
+    private Godot.Collections.Dictionary _McpState()
+    {
+        Godot.Collections.Dictionary entries = [];
+        for (int index = 0; index < 6000; index++)
+        {
+            entries[$"k{index}"] = index;
+        }
+
+        return entries;
+    }
 }

@@ -27,7 +27,7 @@ internal sealed class GodotFormatter(int maxDepth) : IValueFormatter
         switch (value)
         {
             case Variant variant:
-                json = Nested(variant.Obj);
+                json = Content(variant.Obj);
                 return true;
             case GodotObject godotObject:
                 json = Object(godotObject);
@@ -58,7 +58,10 @@ internal sealed class GodotFormatter(int maxDepth) : IValueFormatter
         type == typeof(Godot.Collections.Dictionary)
         || (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Godot.Collections.Dictionary<,>));
 
-    /// <summary>A dictionary's key-value pairs, whatever their types, as an object keyed by each key's text.</summary>
+    /// <summary>
+    /// A dictionary's key-value pairs, whatever their types, as an object keyed by each key's text, the first key past the budget
+    /// mapped to one marker and the keys after it left out.
+    /// </summary>
     private JsonObject Map(IEnumerable entries)
     {
         JsonObject map = [];
@@ -66,6 +69,11 @@ internal sealed class GodotFormatter(int maxDepth) : IValueFormatter
         {
             Type pair = entry.GetType();
             object? key = pair.GetProperty("Key")!.GetValue(entry);
+            if (ValueWriter.BudgetSpent)
+            {
+                map[KeyText(key)] = JsonValue.Create(ValueWriter.SizeLimit);
+                break;
+            }
             map[KeyText(key)] = Nested(pair.GetProperty("Value")!.GetValue(entry));
         }
         return map;
@@ -75,6 +83,16 @@ internal sealed class GodotFormatter(int maxDepth) : IValueFormatter
     {
         object? inner = key is Variant variant ? variant.Obj : key;
         return Convert.ToString(inner, CultureInfo.InvariantCulture) ?? "";
+    }
+
+    /// <summary>
+    /// A variant's content, written in the variant's place: the write that handed the variant back took the one value the pair
+    /// costs, so that value is given back and the content takes it in the variant's place, making the pair cost one in all.
+    /// </summary>
+    private JsonNode? Content(object? inner)
+    {
+        ValueWriter.RefundOneValue();
+        return Nested(inner);
     }
 
     private JsonNode? Nested(object? inner)

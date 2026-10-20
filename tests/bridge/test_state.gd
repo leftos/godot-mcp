@@ -218,8 +218,11 @@ func test_shared_references_stop_quickly_at_the_size_limit() -> void:
 	var elapsed: int = Time.get_ticks_msec() - started
 	for cell: Dictionary in cells:
 		cell["n"].clear()
-	assert_eq(written["cells"][0]["id"], 0, "the first cell is written")
-	assert_eq(written["cells"][63], SIZE_LIMIT, "the last cell is past the limit")
+	var written_cells: Array = written["cells"]
+	assert_eq(written_cells[0]["id"], 0, "the first cell is written")
+	assert_eq(written_cells.count(SIZE_LIMIT), 1, "one marker ends the list")
+	assert_eq(written_cells[-1], SIZE_LIMIT, "the marker is its last element")
+	assert_true(written_cells.size() < 64, "the walk stopped before the last cell")
 	assert_true(elapsed < 5000, "the write stops quickly: %d ms" % elapsed)
 	_free(rig)
 
@@ -228,13 +231,44 @@ func test_a_self_appending_array_stops_at_the_size_limit() -> void:
 	var rig: Dictionary = _rig()
 	var looped: Node = _add(rig["game"], "Looped", STATE_SOURCE, true)
 	var items: Array = []
-	for _index in 3:
+	for _index in 4:
 		items.append(items)
 	looped.state = items
 	var written: Variant = _first_state(rig, 8)
 	items.clear()
 	assert_eq(typeof(written[0]), TYPE_ARRAY, "the first branch is written")
-	assert_eq(written[2], SIZE_LIMIT, "the third branch is past the limit")
+	assert_eq(written.count(SIZE_LIMIT), 1, "one marker ends the list")
+	assert_eq(written[-1], SIZE_LIMIT, "the marker is its last element")
+	assert_true(written.size() < 4, "the walk stopped before the last branch")
+	_free(rig)
+
+
+func test_a_huge_array_is_written_as_the_budget_and_one_marker() -> void:
+	var rig: Dictionary = _rig()
+	var huge: Node = _add(rig["game"], "Huge", STATE_SOURCE, true)
+	huge.state = range(100000)
+	var started: int = Time.get_ticks_msec()
+	var written: Variant = _first_state(rig, 8)
+	var elapsed: int = Time.get_ticks_msec() - started
+	assert_eq(written.size(), 5000, "the Array takes one value, then 4999 of its own")
+	assert_eq(written[4998], 4998, "the last value written")
+	assert_eq(written[-1], SIZE_LIMIT, "the marker is its last element")
+	assert_true(elapsed < 5000, "the write stops quickly: %d ms" % elapsed)
+	_free(rig)
+
+
+func test_a_huge_dictionary_ends_at_the_one_marker_key() -> void:
+	var rig: Dictionary = _rig()
+	var huge: Node = _add(rig["game"], "Huge", STATE_SOURCE, true)
+	var fields: Dictionary = {}
+	for index in 6000:
+		fields["k%d" % index] = index
+	huge.state = fields
+	var written: Variant = _first_state(rig, 4)
+	fields.clear()
+	assert_eq(written.size(), 5000, "the Dictionary takes one value, then 4999 of its own")
+	assert_eq(written["k4999"], SIZE_LIMIT, "the first key past the budget maps to the marker")
+	assert_true(not written.has("k5000"), "the keys after it are left out")
 	_free(rig)
 
 

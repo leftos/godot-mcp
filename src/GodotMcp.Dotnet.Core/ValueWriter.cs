@@ -12,7 +12,10 @@ namespace GodotMcp.Dotnet.Core;
 /// </summary>
 public static class ValueWriter
 {
-    /// <summary>What <see cref="WriteBounded"/> writes for each value past its budget, as the bridge's state reader does.</summary>
+    /// <summary>
+    /// What <see cref="WriteBounded"/> writes in place of the first value past its budget, which ends that collection's walk, as the
+    /// bridge's state reader does.
+    /// </summary>
     public const string SizeLimit = "<size limit>";
 
     /// <summary>
@@ -34,8 +37,8 @@ public static class ValueWriter
 
     /// <summary>
     /// Writes <paramref name="value"/> as <see cref="Write"/> does, taking one of <paramref name="maxValues"/> for each value
-    /// written, a null, a collection and a marker included; once none is left, each further value is
-    /// <see cref="SizeLimit"/>, so a huge collection writes that marker for its remaining elements.
+    /// written, a null, a collection and a marker included. Once none is left the walk stops: the collection whose element was cut
+    /// ends with one <see cref="SizeLimit"/>, its remaining elements are not visited, and each collection around it ends the same way.
     /// </summary>
     public static JsonNode? WriteBounded(object? value, IValueFormatter formatter, int maxDepth, int maxValues)
     {
@@ -51,14 +54,28 @@ public static class ValueWriter
             _threadBudget = outer;
         }
     }
+
+    /// <summary>
+    /// Gives back the one value the <see cref="WriteBounded"/> in progress on this thread just took, for a formatter that writes a
+    /// value as a wrapper whose content stands in its place, as a Godot variant does; nothing outside such a write.
+    /// </summary>
+    internal static void RefundOneValue() => _threadBudget?.Refund();
+
+    /// <summary>Whether the <see cref="WriteBounded"/> in progress on this thread has spent its values; false outside one.</summary>
+    internal static bool BudgetSpent => _threadBudget?.Spent ?? false;
 }
 
 /// <summary>How many more values a bounded write may take.</summary>
 internal sealed class ValueBudget(int left)
 {
+    private readonly int _most = left;
+
     private int _left = left;
 
     public static ValueBudget Unbounded() => new(int.MaxValue);
+
+    /// <summary>Whether no value is left: a collection whose walk meets it ends with its one marker.</summary>
+    public bool Spent => _left <= 0;
 
     /// <summary>Takes one value; false when none was left.</summary>
     public bool Take()
@@ -67,8 +84,21 @@ internal sealed class ValueBudget(int left)
         {
             return false;
         }
+
         _left--;
         return true;
+    }
+
+    /// <summary>
+    /// Gives back one value <see cref="Take"/> just took, never above the budget it started with: a formatter that writes a value
+    /// as a wrapper hands that value's content back to the writer, which takes for the content in the wrapper's place.
+    /// </summary>
+    public void Refund()
+    {
+        if (_left < _most)
+        {
+            _left++;
+        }
     }
 }
 
@@ -187,14 +217,25 @@ internal sealed class ValueWalk(IValueFormatter formatter, int maxDepth, ValueBu
         }
         if (IsCollection(value))
         {
-            JsonArray array = [];
-            foreach (object? item in (IEnumerable)value)
-            {
-                array.Add(Write(item, childDepth));
-            }
-            return array;
+            return WriteCollection((IEnumerable)value, childDepth);
         }
         return value is IEnumerable ? Marker(TypeNames.Format(value.GetType())) : WriteObject(value, childDepth);
+    }
+
+    /// <summary>The collection's items in an array, ending at one marker once the budget is spent.</summary>
+    private JsonArray WriteCollection(IEnumerable items, int childDepth)
+    {
+        JsonArray array = [];
+        foreach (object? item in items)
+        {
+            if (budget.Spent)
+            {
+                array.Add(JsonValue.Create(ValueWriter.SizeLimit));
+                break;
+            }
+            array.Add(Write(item, childDepth));
+        }
+        return array;
     }
 
     /// <summary>A materialised collection; a lazy sequence is not enumerated, since enumerating it runs game code and may not end.</summary>
@@ -218,20 +259,59 @@ internal sealed class ValueWalk(IValueFormatter formatter, int maxDepth, ValueBu
         }
         if (entries.TrueForAll(entry => IsStringLike(entry.Key)))
         {
-            JsonObject map = [];
-            foreach (DictionaryEntry entry in entries)
-            {
-                map[Convert.ToString(entry.Key, CultureInfo.InvariantCulture)!] = Write(entry.Value, childDepth);
-            }
-            return map;
+            return WriteNamedEntries(entries, childDepth);
         }
+        return WritePairs(entries, childDepth);
+    }
+
+    /// <summary>The entries under their keys' text, the first key past the budget mapped to one marker and the keys after it left out.</summary>
+    private JsonObject WriteNamedEntries(List<DictionaryEntry> entries, int childDepth)
+    {
+        JsonObject map = [];
+        foreach (DictionaryEntry entry in entries)
+        {
+            string key = Convert.ToString(entry.Key, CultureInfo.InvariantCulture)!;
+            if (budget.Spent)
+            {
+                map[key] = JsonValue.Create(ValueWriter.SizeLimit);
+                break;
+            }
+            map[key] = Write(entry.Value, childDepth);
+        }
+        return map;
+    }
+
+    /// <summary>
+    /// The entries as key/value pairs, the pair whose key takes the last value carrying the marker, and the keys after it left out.
+    /// </summary>
+    private JsonArray WritePairs(List<DictionaryEntry> entries, int childDepth)
+    {
         JsonArray pairs = [];
         foreach (DictionaryEntry entry in entries)
         {
-            pairs.Add(new JsonObject { ["key"] = Write(entry.Key, childDepth), ["value"] = Write(entry.Value, childDepth) });
+            if (budget.Spent)
+            {
+                pairs.Add(EndPair(entry.Key));
+                break;
+            }
+            JsonNode? key = Write(entry.Key, childDepth);
+            if (budget.Spent)
+            {
+                pairs.Add(new JsonObject { ["key"] = key, ["value"] = JsonValue.Create(ValueWriter.SizeLimit) });
+                break;
+            }
+            pairs.Add(new JsonObject { ["key"] = key, ["value"] = Write(entry.Value, childDepth) });
         }
         return pairs;
     }
+
+    /// <summary>The pair that ends a pairs list: the key's own text, and the marker its value would have been.</summary>
+    private static JsonObject EndPair(object key) =>
+        new()
+        {
+            ["key"] = JsonValue.Create(Convert.ToString(key, CultureInfo.InvariantCulture)),
+            ["value"] = JsonValue.Create(ValueWriter.SizeLimit),
+        };
 
     private static bool IsStringLike(object key) => key is string or Enum or Guid or decimal || key.GetType().IsPrimitive;
 
@@ -251,10 +331,20 @@ internal sealed class ValueWalk(IValueFormatter formatter, int maxDepth, ValueBu
         );
         foreach (PropertyInfo property in properties)
         {
+            if (budget.Spent)
+            {
+                map[property.Name] = JsonValue.Create(ValueWriter.SizeLimit);
+                return map;
+            }
             map[property.Name] = ReadProperty(value, property, childDepth);
         }
         foreach (FieldInfo field in hierarchy.SelectMany(type => type.GetFields(Declared).OrderBy(f => f.MetadataToken)))
         {
+            if (budget.Spent)
+            {
+                map[field.Name] = JsonValue.Create(ValueWriter.SizeLimit);
+                return map;
+            }
             map[field.Name] = Write(field.GetValue(value), childDepth);
         }
         return map;

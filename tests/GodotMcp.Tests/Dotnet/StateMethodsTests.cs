@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -120,18 +121,66 @@ public sealed class StateMethodsTests
     }
 
     [Fact]
-    public void AStatePastTheValueBudgetWritesTheSizeLimitMarkerForTheRestQuickly()
+    public void AStatePastTheValueBudgetEndsAtTheSizeLimitMarkerQuickly()
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
         JsonArray state = Read(new HugeState())["state"]!.AsArray();
         clock.Stop();
 
-        // The array itself is one of the values, so 4999 of its elements are written before the marker.
-        Assert.Equal(1_000_000, state.Count);
-        Assert.Equal(StateMethods.MaxValues - 1, state.TakeWhile(item => item!.GetValueKind() == JsonValueKind.Number).Count());
+        // The array itself is one of the values, so 4999 of its elements are written before the one marker that ends it.
+        Assert.Equal(StateMethods.MaxValues, state.Count);
         Assert.Equal(StateMethods.MaxValues - 2, state[StateMethods.MaxValues - 2]!.GetValue<int>());
-        Assert.All(state.Skip(StateMethods.MaxValues - 1), item => Assert.Equal(ValueWriter.SizeLimit, item!.GetValue<string>()));
+        Assert.Equal(ValueWriter.SizeLimit, state[^1]!.GetValue<string>());
         Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"the write took {clock.Elapsed}");
+    }
+
+    [Fact]
+    public void AStateDictionaryPastTheValueBudgetEndsItsNextKeyAtTheSizeLimitMarker()
+    {
+        JsonObject state = Read(new HugeDictionaryState())["state"]!.AsObject();
+
+        // The dictionary itself is one of the values, so 4999 of its entries are written before the marker's key.
+        Assert.Equal(StateMethods.MaxValues, state.Count);
+        Assert.Equal(ValueWriter.SizeLimit, state[$"k{StateMethods.MaxValues - 1:D4}"]!.GetValue<string>());
+        Assert.False(state.ContainsKey($"k{StateMethods.MaxValues:D4}"), $"{state.Count} keys written");
+    }
+
+    [Fact]
+    public void ANestedCollectionPastTheBudgetEndsItsEnclosingListAtOneMarker()
+    {
+        JsonArray outer = Read(new NestedHugeState())["state"]!["lists"]!.AsArray();
+
+        // The first list is written whole; the second is cut, ending in its own marker; and the list holding both ends with
+        // its one marker, after which the lists it still held are not visited.
+        Assert.Equal(4000, outer[0]!.AsArray().Count);
+        Assert.Equal(ValueWriter.SizeLimit, outer[1]!.AsArray()[^1]!.GetValue<string>());
+        Assert.Equal(ValueWriter.SizeLimit, outer[^1]!.GetValue<string>());
+        Assert.All(outer.Take(outer.Count - 1), item => Assert.IsType<JsonArray>(item));
+        Assert.True(outer.Count < 10, $"{outer.Count} of the 10 lists are written");
+    }
+
+    [Fact]
+    public void APairDictionaryPastTheValueBudgetEndsWithOneMarkerPair()
+    {
+        JsonArray pairs = Read(new HugePairDictionaryState())["state"]!.AsArray();
+
+        // The dictionary itself is one value and each pair two, so the 2500th pair's key takes the last one: that pair carries
+        // the marker and no pair follows it.
+        Assert.Equal(1, pairs.Count(pair => pair!.AsObject()["value"]!.GetValueKind() == JsonValueKind.String));
+        Assert.Equal(ValueWriter.SizeLimit, pairs[^1]!.AsObject()["value"]!.GetValue<string>());
+        Assert.Equal(JsonValueKind.Number, pairs[^2]!.AsObject()["value"]!.GetValueKind());
+        Assert.True(pairs.Count < 3000, $"{pairs.Count} pairs written");
+    }
+
+    [Fact]
+    public void AStateOfExactlyTheBudgetCarriesNoMarker()
+    {
+        JsonArray state = Read(new ExactBudgetState())["state"]!.AsArray();
+
+        // The list itself is one value, so 4999 ints fill the budget exactly: nothing was cut, so nothing is marked.
+        Assert.Equal(StateMethods.MaxValues - 1, state.Count);
+        Assert.All(state, item => Assert.Equal(JsonValueKind.Number, item!.GetValueKind()));
+        Assert.Equal(StateMethods.MaxValues - 2, state[^1]!.GetValue<int>());
     }
 
     [Fact]
@@ -209,5 +258,69 @@ public sealed class StateMethodsTests
             json = null;
             return false;
         }
+    }
+
+    /// <summary>A state of 6000 entries, past the values one node's state writes; its sorted keys fix the order it walks.</summary>
+    private sealed class HugeDictionaryState
+    {
+        private readonly SortedDictionary<string, int> _entries = new(
+            Enumerable.Range(0, 6000).ToDictionary(index => $"k{index:D4}", index => index)
+        );
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage(
+            "CodeQuality",
+            "IDE0051:Remove unused private members",
+            Justification = "The state method is found and called by reflection."
+        )]
+        private SortedDictionary<string, int> _McpState() => _entries;
+    }
+
+    /// <summary>A state of ten lists of 4000 numbers, past the values one node's state writes.</summary>
+    private sealed class NestedHugeState
+    {
+        private readonly List<List<int>> _lists = [.. Enumerable.Range(0, 10).Select(_ => Enumerable.Range(0, 4000).ToList())];
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage(
+            "CodeQuality",
+            "IDE0051:Remove unused private members",
+            Justification = "The state method is found and called by reflection."
+        )]
+        private object _McpState() => new { lists = _lists };
+    }
+
+    /// <summary>A key the writer cannot write as an object's key text, so the dictionary holding it lists key/value pairs.</summary>
+    private readonly record struct PairKey(int Value) : IComparable<PairKey>
+    {
+        public int CompareTo(PairKey other) => Value.CompareTo(other.Value);
+
+        public override string ToString() => Value.ToString(CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>A state of 3000 entries under pair keys, past the values one node's state writes; its sorted keys fix the order it walks.</summary>
+    private sealed class HugePairDictionaryState
+    {
+        private readonly SortedDictionary<PairKey, int> _entries = new(
+            Enumerable.Range(0, 3000).ToDictionary(index => new PairKey(index), index => index)
+        );
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage(
+            "CodeQuality",
+            "IDE0051:Remove unused private members",
+            Justification = "The state method is found and called by reflection."
+        )]
+        private SortedDictionary<PairKey, int> _McpState() => _entries;
+    }
+
+    /// <summary>A state of exactly the values one node's state writes: the list itself and 4999 ints.</summary>
+    private sealed class ExactBudgetState
+    {
+        private readonly List<int> _items = [.. Enumerable.Range(0, 4999)];
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage(
+            "CodeQuality",
+            "IDE0051:Remove unused private members",
+            Justification = "The state method is found and called by reflection."
+        )]
+        private List<int> _McpState() => _items;
     }
 }

@@ -23,8 +23,8 @@ const DEFAULT_MAX_DEPTH := 4
 ## The most paths omitted lists; its count is whole.
 const MAX_OMITTED_PATHS := 20
 const NO_METHOD := "in the mcp_state group but has no _mcp_state method"
-## The most values written for one node, containers and leaves counted; past it every further value
-## is SIZE_LIMIT, so shared references that fan out stop quickly.
+## The most values written for one node, containers and leaves counted; past it the collection being
+## written ends with SIZE_LIMIT, so shared references that fan out stop quickly.
 const MAX_VALUES := 5000
 const SIZE_LIMIT := "<size limit>"
 const RAISED := "_mcp_state raised: %s"
@@ -306,8 +306,9 @@ static func _type_name(node: Node) -> String:
 
 ## value as JSON: a Dictionary or Array at depth (the returned value is at 0) below max_depth is
 ## written element by element, one at max_depth or deeper as its depth-limit marker, and any
-## other value through to_json. Each value written takes one of _values_left; once none is left,
-## every further value is SIZE_LIMIT.
+## other value through to_json. Each value written takes one of _values_left; once none is left the
+## collection being written ends with SIZE_LIMIT, the values after it are not visited, and so does
+## each collection around it.
 func _written(value: Variant, depth: int, max_depth: int) -> Variant:
 	if _values_left <= 0:
 		return SIZE_LIMIT
@@ -320,15 +321,22 @@ func _written(value: Variant, depth: int, max_depth: int) -> Variant:
 	return _written_container(value, depth, max_depth)
 
 
-## A Dictionary or Array below max_depth written element by element, its elements at depth + 1.
+## A Dictionary or Array below max_depth written element by element, its elements at depth + 1; once
+## no value is left, the one marker ends it and the elements after it are not visited.
 func _written_container(value: Variant, depth: int, max_depth: int) -> Variant:
 	if typeof(value) == TYPE_ARRAY:
 		var items: Array = []
 		for item: Variant in value:
+			if _values_left <= 0:
+				items.append(SIZE_LIMIT)
+				break
 			items.append(_written(item, depth + 1, max_depth))
 		return items
 	var fields: Dictionary = {}
 	for key: Variant in value:
+		if _values_left <= 0:
+			fields[str(key)] = SIZE_LIMIT
+			break
 		fields[str(key)] = _written(value[key], depth + 1, max_depth)
 	return fields
 

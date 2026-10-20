@@ -64,6 +64,8 @@ public sealed class CSharpStateTests(SharedCsProbeSession shared) : IClassFixtur
         "Visible",
         "Frame",
         "Counter",
+        "Huge",
+        "HugeDictionary",
         "GdFrame",
     ];
 
@@ -102,7 +104,7 @@ public sealed class CSharpStateTests(SharedCsProbeSession shared) : IClassFixtur
         Assert.False(nodes[8]!.AsObject().ContainsKey("warning"), nodes[8]!.ToJsonString());
         // Both languages read in the frame the result names, so a read that waited a frame would show here.
         long frame = result["frame"]!.GetValue<long>();
-        Assert.Equal((frame, frame), (nodes[9]!["state"]!.GetValue<long>(), nodes[11]!["state"]!.GetValue<long>()));
+        Assert.Equal((frame, frame), (nodes[9]!["state"]!.GetValue<long>(), nodes[13]!["state"]!.GetValue<long>()));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -170,6 +172,52 @@ public sealed class CSharpStateTests(SharedCsProbeSession shared) : IClassFixtur
         Assert.Equal("""{"hp":7}""", nodes[2]!["state"]!.ToJsonString());
         Assert.Equal("InvalidOperationException: state broke", Error(nodes[3]!));
         Assert.Equal("{}", nodes[5]!["state"]!.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AGodotArrayPastTheValueBudgetReadsAs4999ValuesAndOneMarker()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddStatesAsync(cancellation);
+
+        // One value is the Godot array itself, so 4999 of its 6000 ints are written and the rest is one marker.
+        JsonObject read = JsonNode
+            .Parse(
+                await _tools.GetGameStateAsync(
+                    $"{States}/Huge",
+                    new StateOptions(Keys: ["[4998]", "[4999]", "[5000]"]),
+                    cancellationToken: cancellation
+                )
+            )!
+            .AsObject();
+        JsonObject state = read["nodes"]![0]!["state"]!.AsObject();
+
+        Assert.Equal(4998, state["[4998]"]!.GetValue<int>());
+        Assert.Equal("<size limit>", state["[4999]"]!.GetValue<string>());
+        Assert.False(state.ContainsKey("[5000]"), state.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AGodotDictionaryPastTheValueBudgetReadsWithOneMarkerKey()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddStatesAsync(cancellation);
+
+        // One value is the Godot dictionary itself, so 4999 of its 6000 entries are written and the next key holds the marker.
+        JsonObject read = JsonNode
+            .Parse(
+                await _tools.GetGameStateAsync(
+                    $"{States}/HugeDictionary",
+                    new StateOptions(Keys: ["k4998", "k4999", "k5000"]),
+                    cancellationToken: cancellation
+                )
+            )!
+            .AsObject();
+        JsonObject state = read["nodes"]![0]!["state"]!.AsObject();
+
+        Assert.Equal(4998, state["k4998"]!.GetValue<int>());
+        Assert.Equal("<size limit>", state["k4999"]!.GetValue<string>());
+        Assert.False(state.ContainsKey("k5000"), state.ToJsonString());
     }
 
     [Fact(Timeout = TestTimeoutMs)]

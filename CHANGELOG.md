@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - A scene edit whose splice would give two nodes one `unique_id` now falls back to the full save with a warning.
+- `get_game_state` stops at the 5000-value budget, ending a cut collection with one `"<size limit>"`, and a C# Godot collection counts once.
 
 ## 0.19.0 - 2026-10-20
 
