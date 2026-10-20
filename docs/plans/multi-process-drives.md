@@ -214,7 +214,7 @@ Where the clock shows:
 
 - `batch_drive`: the result's `startedAt`, and on every entry `startMs` and `endMs` (exact: the server's own clock).
 - `wait_for`: `metAt`, the drive time of the frame whose check met (the bridge adds its ticks to the met reply), with `clockErrorMs`; an output wait's `value.at` is the server's receipt time of the line.
-- The watch ([timeline-watch.md](./archive/timeline-watch.md), decision 29): each point and event gains a fourth element, its drive time (the bridge keeps one `ticks_usec` per kept point), and the result `clockErrorMs`. This changes decision 29's point shape `[frame, gameMs, value]`, so it waits on question 8 and on the watch's own landing (GMCP-19).
+- The watch ([timeline-watch.md](./archive/timeline-watch.md), decision 29): each point, event and voice gains a last element, its drive time (the bridge keeps one `ticks_usec` per kept point), and the result `clockErrorMs`. This changes decision 29's point shape `[frame, gameMs, value]`, so it waits on question 8 and on the watch's own landing (GMCP-19).
 - A process session's output lines: the receipt time, shown in `wait_for {output}`'s `at`; `get_debug_output` is unchanged.
 
 So "the guest showed the host's lock-in 46 ms after the host's click step began" is `metAt - startMs`, two numbers of one result, and a watch on each game lines up on `at`.
@@ -229,6 +229,18 @@ So "the guest showed the host's lock-in 46 ms after the host's click step began"
 - **Where `clockErrorMs` goes**: on a result whose stamp was converted, a met `wait_for` and the `batch_drive` entries that carry one; never beside an output wait's `at`, which is the server's own receipt time, and never on a timed-out or cancelled wait, which has no met stamp.
 - **The name**: the bridge's field is `ticksUsec` on the hello, on a pong and on a met reply, and the server strips it from every reply it forwards, so a raw tick never reaches the client.
 - **Where it lives**: `Session/SessionClock.cs`, one per session, replaced at each handshake; a clock ping is the connection's own raw send, never the watched send a batch member's flow uses, so a ping never releases the next parallel member early.
+
+**Step 9's rulings** (from its map, `.tmp/map-gmcp47-step9.md` at the time). Settled by the recommended option under CLAUDE.md's autonomy rule, and reversible:
+
+- **Where `at` sits**: last in every item, so no existing index moves. A point is `[frame, gameMs, value, at]`, an event `[frame, gameMs, node, signal, args, at]` (once the server drops the bridge's track index), and a voice `[frame, gameMs, event, path, info, at]`. "Fourth element" above is literal only for a point.
+- **What gets `at`**: points, signal events and audio voices. Voices are the audio track's events, and lining up a sound across processes is a main use. Monitor spikes, `minAt`/`maxAt` and `heard` ranges stay frame-only.
+- **Which tick**: a point or voice carries the frame-start tick that `advance` already reads, shared by every track in the frame and matching "sampled at its start". A signal event fires mid-frame, so it reads its own tick when it is kept.
+- **A tick that cannot be converted** (no bounds, or a bridge too old to send one): `at` is `null`, so every item keeps its length and a client can index it blindly. The result then has no `clockErrorMs`. The raw tick never reaches the client.
+- **`clockErrorMs`**: once, at the top level of the timeline beside `gameMs` and `wallMs`. It is read from one set of bounds before the walk, so every item shares it, and it is left out when nothing was converted.
+- **Rounding and order**: `at` is rounded to 0.1 ms, as `metAt` is. Times are converted before `WatchTimeline.Shape`, so the 40000-character budget (unchanged) counts the real length.
+- **The extra ping**: before converting a watch result or a met wait, a session whose bounds are wider than 2 ms (or missing) sends one more clock ping. It goes on the raw path, is awaited, and a timeout or a closed connection leaves the bounds as they are. A late ping is valid for earlier stamps because the offset is constant (section 2).
+- **The random-gap pings** are not in this step. The extra ping already restores precision before every conversion. The random-gap pings would tighten 1.4-1.9 ms to 0.2-0.3 ms but need a loop with a lifetime of its own, so they are booked as their own item.
+- **Recording and pause**: the watch has no clip time, so a recorded session's `at` is drive time with nothing to keep apart. A watch samples only unpaused frames, so a gap in `at` includes paused wall time that `gameMs` does not.
 
 ### Interactions
 
