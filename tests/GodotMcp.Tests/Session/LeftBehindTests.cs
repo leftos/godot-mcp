@@ -13,8 +13,10 @@ namespace GodotMcp.Tests.Session;
 public sealed partial class LeftBehindTests
 {
     private const string WindowsOnly = "The Toolhelp listing is Windows only; elsewhere nothing is listed.";
-    private static readonly TimeSpan ChildAppearWait = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan ExitWait = TimeSpan.FromSeconds(5);
+
+    // Hang guards: a passing run never waits them out, so they are sized past the longest stall a busy machine gives a child.
+    private static readonly TimeSpan ChildAppearWait = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan ExitWait = TimeSpan.FromMinutes(2);
 
     [Fact]
     public void AProcessIsNamedByItsImageAndItsId() =>
@@ -76,17 +78,22 @@ public sealed partial class LeftBehindTests
         Assert.Empty(listed);
     }
 
+    // The ping outlives any test run, about ten minutes, so only EndAsync ends it: one that ended on its own could leave the
+    // listing after its parent's exit with nothing to find.
     private static Process StartParentWithPing() =>
-        Process.Start(new ProcessStartInfo("cmd.exe", "/c ping -n 30 127.0.0.1 >nul") { UseShellExecute = false, CreateNoWindow = true })!;
+        Process.Start(new ProcessStartInfo("cmd.exe", "/c ping -n 600 127.0.0.1 >nul") { UseShellExecute = false, CreateNoWindow = true })!;
 
     private static bool IsPing(string described) => described.StartsWith("PING.EXE (pid ", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>The first listed child <paramref name="match"/> accepts, or null when none appears within <see cref="ChildAppearWait"/>.</summary>
+    /// <summary>
+    /// The first listed child <paramref name="match"/> accepts, or null when none appears within <see cref="ChildAppearWait"/>
+    /// or the parent exits first.
+    /// </summary>
     private static async Task<string?> WaitUntilListedAsync(Process parent, Func<string, bool> match)
     {
         var waited = Stopwatch.StartNew();
         string? found = LeftBehind.Find(parent, NullLogger.Instance).FirstOrDefault(match);
-        while (found is null && waited.Elapsed < ChildAppearWait)
+        while (found is null && !parent.HasExited && waited.Elapsed < ChildAppearWait)
         {
             await Task.Delay(TimeSpan.FromMilliseconds(100), TestContext.Current.CancellationToken);
             found = LeftBehind.Find(parent, NullLogger.Instance).FirstOrDefault(match);

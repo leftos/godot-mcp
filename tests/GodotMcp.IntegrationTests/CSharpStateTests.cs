@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
+using GodotMcp.Server.CSharp;
+using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using ModelContextProtocol.Protocol;
 
@@ -17,6 +19,9 @@ public sealed class CSharpStateTests(SharedCsProbeSession shared) : IClassFixtur
 {
     private const int TestTimeoutMs = 150_000;
     private const int ScriptTimeoutMs = 10_000;
+
+    // A hang guard: a helper load that has not ended in two minutes of load-adjusted time is broken, not slow.
+    private const int HelperLoadGuardMs = 120_000;
     private const string States = "/root/States";
 
     private const string AddStatesScript = """
@@ -69,6 +74,8 @@ public sealed class CSharpStateTests(SharedCsProbeSession shared) : IClassFixtur
         "GdFrame",
     ];
 
+    private readonly SessionRegistry _sessions = shared.Sessions;
+    private readonly CSharpBridge _bridge = shared.Bridge;
     private readonly RuntimeTools _tools = new(shared.Sessions, shared.Bridge);
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -269,10 +276,15 @@ public sealed class CSharpStateTests(SharedCsProbeSession shared) : IClassFixtur
         Assert.True(reply["value"]?.GetValue<bool>() == true, reply.ToJsonString());
     }
 
-    /// <summary>Adds the States node with its C# children and the GDScript node second among them, once for the game.</summary>
+    /// <summary>
+    /// Adds the States node with its C# children and the GDScript node second among them, once for the game, and loads the C#
+    /// helper into the game: the first helper call of a game loads it on the game's main thread, about 2 s alone but past the
+    /// state read's fixed 10 s on a busy machine, so a ping whose timeout is a hang guard pays it before any test reads.
+    /// </summary>
     private async Task AddStatesAsync(CancellationToken cancellation)
     {
         JsonNode reply = JsonNode.Parse(await _tools.RunScriptAsync(AddStatesScript, ScriptTimeoutMs, cancellationToken: cancellation))!;
         Assert.True(reply["value"]?.GetValue<bool>() == true, reply.ToJsonString());
+        await _bridge.SendAsync(_sessions.Resolve(null), """{"op":"ping"}""", HelperLoadGuardMs, HelperLoadGuardMs, cancellation);
     }
 }

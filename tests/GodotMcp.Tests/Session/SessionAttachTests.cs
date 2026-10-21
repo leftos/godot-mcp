@@ -12,6 +12,10 @@ namespace GodotMcp.Tests.Session;
 /// <summary>Attaching, detaching and restarting a session, and the folder's prep lock around them.</summary>
 public sealed class SessionAttachTests : IAsyncDisposable
 {
+    // OverrideFolders.RetryBudgetMs: how long, in load-adjusted time, a refused open of the list is retried before the work
+    // goes ahead without it.
+    private static readonly TimeSpan ListRetryBudget = TimeSpan.FromSeconds(2);
+
     private readonly RegistryHarness _harness = new();
 
     public ValueTask DisposeAsync() => _harness.DisposeAsync();
@@ -660,28 +664,52 @@ public sealed class SessionAttachTests : IAsyncDisposable
     }
 
     // Another server holding the folder list stands for its write of an attach file between this one's token read and delete:
-    // the removal must wait for it. The hold stays well inside the list's 2 s retry budget.
+    // the removal must wait for it. The list's retry budget is 2 s on the harness's load clock, after which the removal goes
+    // ahead without the list. That clock counts this test process's own work as the server's, so a stall the suite's own
+    // parallel tests cause does not stretch it: an attempt whose hold the test measured at 2 s of wall time or past it (no
+    // less than the budget's load-adjusted time) proves nothing, and is made once more on a fresh folder.
     [Fact]
     public async Task AConnectedAttachWaitsForTheFolderListBeforeRemovingItsFile()
     {
+        HeldRemoval first = await HoldTheListAcrossAConnectedAttachAsync("alpha", "server");
+        HeldRemoval held = first.Hold < ListRetryBudget ? first : await HoldTheListAcrossAConnectedAttachAsync("beta", "second");
+
+        Assert.True(
+            held.Hold < ListRetryBudget,
+            $"the list was held {first.Hold.TotalMilliseconds:0} ms, then {held.Hold.TotalMilliseconds:0} ms: "
+                + "past the removal's retry budget both times"
+        );
+        Assert.True(held.KeptWhileHeld);
+        Assert.False(held.LeftAfter);
+    }
+
+    /// <summary>
+    /// Starts an attach on <paramref name="folder"/>, holds the folder list, dials the game in, and releases the hold 300 ms
+    /// later; returns whether the attach file was still there with the attach unfinished at the release, whether it was left
+    /// once the attach ended, and how long the list was held, from the hold's start until its release had returned.
+    /// </summary>
+    private async Task<HeldRemoval> HoldTheListAcrossAConnectedAttachAsync(string folder, string session)
+    {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        string alpha = _harness.Project("alpha");
-        string attachFile = AttachFile.PathIn(alpha);
+        string project = _harness.Project(folder);
+        string attachFile = AttachFile.PathIn(project);
         Task<AttachResult> attach = _harness.Sessions.AttachAsync(
-            new AttachRequest(alpha, "server", RegistryHarness.LongWait, false, false, null),
+            new AttachRequest(project, session, RegistryHarness.LongWait, false, false, null),
             cancellation
         );
         // The override is written after the attach file and takes the list too, so the hold starts once both are in place.
-        await RegistryHarness.WaitUntilAsync(() => File.Exists(attachFile) && File.Exists(OverrideFile.PathIn(alpha)));
+        await RegistryHarness.WaitUntilAsync(() => File.Exists(attachFile) && File.Exists(OverrideFile.PathIn(project)));
         string token = JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>();
         using ManualResetEventSlim held = new();
         using ManualResetEventSlim release = new();
+        Stopwatch holding = new();
         var holder = Task.Run(
             () =>
                 _harness.Sessions.OverrideFolders.Hold(
                     "the test's hold",
                     () =>
                     {
+                        holding.Start();
                         held.Set();
                         release.Wait(cancellation);
                     }
@@ -690,15 +718,15 @@ public sealed class SessionAttachTests : IAsyncDisposable
         );
         held.Wait(cancellation);
 
-        using FakeBridge game = await FakeBridge.DialAsync(_harness.Listener.Port, token, alpha, cancellation);
+        using FakeBridge game = await FakeBridge.DialAsync(_harness.Listener.Port, token, project, cancellation);
         await Task.Delay(300, cancellation);
         bool keptWhileHeld = File.Exists(attachFile) && !attach.IsCompleted;
         release.Set();
         await holder;
+        holding.Stop();
         await attach;
 
-        Assert.True(keptWhileHeld);
-        Assert.False(File.Exists(attachFile));
+        return new HeldRemoval(keptWhileHeld, File.Exists(attachFile), holding.Elapsed);
     }
 
     [Fact]
@@ -717,4 +745,6 @@ public sealed class SessionAttachTests : IAsyncDisposable
             refused.Message
         );
     }
+
+    private sealed record HeldRemoval(bool KeptWhileHeld, bool LeftAfter, TimeSpan Hold);
 }

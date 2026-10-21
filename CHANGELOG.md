@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- Servers starting together on a busy machine no longer write a project's `override.cfg` without holding the shared folder list.
+
 ## 0.20.0 - 2026-10-20
 
 ### Added

@@ -502,26 +502,27 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.Equal("done", waited["last"]!.GetValue<string>());
     }
 
+    // The wait arms the probe itself: arm's timer runs in real time from its call, so an arm sent ahead of the wait could fire
+    // before the wait connects on a busy machine, and the wait would then run out its timeout.
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForSignalReturnsArgs()
     {
         await AddTimeProbeAsync(TestContext.Current.CancellationToken);
-        await ArmAsync(500);
 
-        JsonObject waited = await WaitAsync(new WaitCondition(Node: "TimeProbe", Signal: "fired"));
+        JsonObject waited = await WaitAsync(new WaitCondition(Node: "TimeProbe", Signal: "fired"), ArmedByTheWait(500));
 
         Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
         Assert.Equal("[500]", waited["args"]!.ToJsonString());
     }
 
+    // Armed by the wait, as in WaitForSignalReturnsArgs; the emission comes in a frame after the call's, on a paused tree.
     [Fact(Timeout = TestTimeoutMs)]
     public async Task WaitForSignalWhilePaused()
     {
         await AddTimeProbeAsync(TestContext.Current.CancellationToken);
         await FrameAsync("pause");
-        await ArmAsync(300);
 
-        JsonObject waited = await WaitAsync(new WaitCondition(Node: "TimeProbe", Signal: "fired"));
+        JsonObject waited = await WaitAsync(new WaitCondition(Node: "TimeProbe", Signal: "fired"), ArmedByTheWait(300));
         bool stillPaused = (await RunAsync("return scene_tree.paused")).GetValue<bool>();
 
         Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
@@ -577,16 +578,17 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.True(waited["value"]!.GetValue<bool>(), waited.ToJsonString());
     }
 
-    // Armed is added by arm(300), so [0] fails on every check before then: each counts as not met.
+    // Armed is added by arm(300), so [0] fails on every check before then: each counts as not met. The wait arms the probe
+    // itself, and its first check follows the call in the same frame, before arm's timer can run, so at least that check
+    // fails however late the request arrives.
     [Fact(Timeout = TestTimeoutMs)]
     public async Task AnExpressionMetAfterFailedChecksCountsThem()
     {
         await AddTimeProbeAsync(TestContext.Current.CancellationToken);
-        await ArmAsync(300);
 
         const string Expression =
             "node.find_children('Armed', '', false, false).size() > 0 and node.find_children('Armed', '', false, false)[0].name == 'Armed'";
-        JsonObject waited = await WaitAsync(new WaitCondition(Node: "TimeProbe", Expression: Expression));
+        JsonObject waited = await WaitAsync(new WaitCondition(Node: "TimeProbe", Expression: Expression), ArmedByTheWait(300));
 
         Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
         Assert.True(waited["failedChecks"]?["count"]?.GetValue<int>() >= 1, waited.ToJsonString());
@@ -1594,14 +1596,19 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await AddTimeProbeAsync(cancellation);
-        await ArmAsync(500);
-        CaptureStart start = new(Node: "TimeProbe", Property: "state", EqualsValue: Json("\"done\""), TimeoutMs: 5000);
+        CaptureStart start = new(
+            Node: "TimeProbe",
+            Property: "state",
+            EqualsValue: Json("\"done\""),
+            TimeoutMs: 5000,
+            Call: new MethodCall("TimeProbe", "arm", Json("[500]"))
+        );
 
         JsonObject captured = await CaptureFramesAsync([0, 0.1], new CaptureFramesOptions(Start: start), cancellation);
 
-        // arm(500) sets state to done half a second after the call, so the start is met in a frame well after the capture's
-        // request; the point at 0 is due in the clock's first frame, the met frame itself. A capture counting from its call
-        // would take it about half a second before the start.
+        // The start's own call to arm(500) sets state to done half a second later, however late the request came, so the start
+        // is met in a frame well after the capture's request; the point at 0 is due in the clock's first frame, the met frame
+        // itself. A capture counting from its call would take it about half a second before the start.
         JsonArray points = captured["points"]!.AsArray();
         long metFrame = captured["start"]!["frame"]!.GetValue<long>();
         Assert.True(captured["start"]!["met"]!.GetValue<bool>(), captured.ToJsonString());
@@ -1695,8 +1702,13 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await AddTimeProbeAsync(cancellation);
-        await ArmAsync(300);
-        CaptureStart start = new(Node: "TimeProbe", Property: "state", EqualsValue: Json("\"done\""), Then: new WaitThen(TimeScale: 8));
+        CaptureStart start = new(
+            Node: "TimeProbe",
+            Property: "state",
+            EqualsValue: Json("\"done\""),
+            Then: new WaitThen(TimeScale: 8),
+            Call: new MethodCall("TimeProbe", "arm", Json("[300]"))
+        );
         try
         {
             var watch = Stopwatch.StartNew();
@@ -2205,6 +2217,9 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         );
 
     private Task<JsonNode> ArmAsync(int ms) => RunAsync($"{Probe}.arm({ms})\n\treturn true");
+
+    /// <summary>A wait's options that call TimeProbe.arm(ms) in the frame its checks start, after a signal wait has connected.</summary>
+    private static WaitOptions ArmedByTheWait(int ms) => new(Call: new MethodCall("TimeProbe", "arm", Json($"[{ms}]")));
 
     /// <summary>Adds UntilGrower, with no children and <see cref="GrowerScript"/>, armed when <paramref name="armed"/>; returns its path.</summary>
     private async Task<string> AddGrowerAsync(bool armed, CancellationToken cancellationToken)

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using GodotMcp.Server.Session;
 using GodotMcp.TestSupport;
+using Microsoft.Extensions.Time.Testing;
 
 namespace GodotMcp.Tests.Session;
 
@@ -252,6 +253,60 @@ public sealed class OverrideOwnersTests : IDisposable
         Assert.Equal([foreign], ArmFile.Read(live)!.Owners);
         Assert.Equal([live], File.ReadAllLines(list));
         Assert.Empty(_errors.ToString());
+    }
+
+    // The list's retry budget runs on the load clock: a busy machine stretches it past its 2 s of wall time, and once it has
+    // passed in load-adjusted time the work goes ahead without the list and says so.
+    [Fact]
+    public async Task AHoldPastTheRetryBudgetOnTheLoadClockGoesAheadWithoutTheListAndSaysSo()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        FakeLoadSource machine = new(time, processors: 4);
+        using LoadClock clock = new(time, machine);
+        string list = _temp.Combine("cache", "override-folders.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(list)!);
+        OverrideFolders folders = new(list, _errors) { Clock = clock };
+        using FileStream otherServer = new(list, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        using ManualResetEventSlim ran = new();
+        // Every processor busy with other work: the clock runs at its 5% floor, so 4 s of wall time is 0.2 s of the budget.
+        machine.SetLoad(busyShare: 1, ownCores: 0);
+
+        var holding = Task.Run(() => folders.Hold("the test's work", ran.Set), cancellation);
+        // The fresh clock reads the machine first when the hold starts its budget.
+        await WaitUntilAsync(() => machine.Reads > 0 || holding.IsCompleted);
+        Advance(time, TimeSpan.FromSeconds(4));
+        // Past the budget in wall time too, so a budget counted in wall time has given up by now.
+        await Task.Delay(TimeSpan.FromSeconds(2.5), cancellation);
+        bool waitedUnderLoad = !ran.IsSet;
+        machine.SetLoad(busyShare: 0, ownCores: 0);
+        Advance(time, TimeSpan.FromSeconds(5));
+        await holding.WaitAsync(TimeSpan.FromMinutes(2), cancellation);
+
+        Assert.True(waitedUnderLoad, _errors.ToString());
+        Assert.True(ran.IsSet);
+        Assert.StartsWith($"godot-mcp: opening {list} for the test's work failed: IOException: ", _errors.ToString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>Advances <paramref name="time"/> by <paramref name="span"/> 100 ms at a time, so the clock's timers fire as they fall due.</summary>
+    private static void Advance(FakeTimeProvider time, TimeSpan span)
+    {
+        var step = TimeSpan.FromMilliseconds(100);
+        for (TimeSpan passed = TimeSpan.Zero; passed < span; passed += step)
+        {
+            time.Advance(step);
+        }
+    }
+
+    /// <summary>Waits for <paramref name="condition"/>, failing after two minutes, a hang guard.</summary>
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var waited = Stopwatch.StartNew();
+        while (!condition())
+        {
+            Assert.True(waited.Elapsed < TimeSpan.FromMinutes(2), "the condition did not hold within 2 minutes");
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
     }
 
     private static void WriteArm(string project, string owners)

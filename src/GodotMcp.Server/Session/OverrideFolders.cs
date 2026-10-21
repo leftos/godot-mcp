@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 
 namespace GodotMcp.Server.Session;
@@ -6,8 +5,9 @@ namespace GodotMcp.Server.Session;
 /// <summary>
 /// The machine-wide list of the project folders servers have written a marked <c>override.cfg</c> in, one folder a line, so
 /// a server that starts after another was killed removes the file the killed one left (<see cref="Sweep"/>). Every server
-/// opens the list alone (no sharing), retrying a refusal for up to <see cref="RetryBudgetMs"/>, since several may start or
-/// launch at once; a list it cannot open or write is reported and never stops the server.
+/// opens the list alone (no sharing), retrying a refusal for up to <see cref="RetryBudgetMs"/> of load-adjusted time
+/// (<see cref="Clock"/>), since several may start or launch at once; a list it cannot open or write is reported and never
+/// stops the server.
 /// </summary>
 /// <param name="listPath">The list file.</param>
 /// <param name="errors">Where failures are reported: stderr in the server.</param>
@@ -25,6 +25,9 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
     public static OverrideFolders Default { get; } = new(DefaultPath, Console.Error);
 
     public string ListPath => listPath;
+
+    /// <summary>The clock the retry budget runs on: a busy machine stretches it, so a peer's short hold is never outlasted.</summary>
+    public LoadClock Clock { get; init; } = LoadClock.Shared;
 
     /// <summary>
     /// Adds the folder to the list, then runs <paramref name="write"/> while the list is still held, so a sweep never finds
@@ -182,10 +185,13 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
         }
     }
 
-    /// <summary>The list opened alone, created when missing; null, reported, when it stays refused past the retry budget.</summary>
+    /// <summary>
+    /// The list opened alone, created when missing; null, reported, when it stays refused past the retry budget, counted in
+    /// <see cref="Clock"/>'s load-adjusted time.
+    /// </summary>
     private FileStream? TryOpen(string purpose)
     {
-        var clock = Stopwatch.StartNew();
+        using LoadDeadline budget = Clock.Start(TimeSpan.FromMilliseconds(RetryBudgetMs));
         while (true)
         {
             try
@@ -193,7 +199,7 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
                 Directory.CreateDirectory(Path.GetDirectoryName(listPath)!);
                 return new FileStream(listPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
-            catch (IOException) when (clock.ElapsedMilliseconds < RetryBudgetMs)
+            catch (IOException) when (!budget.Expired)
             {
                 Thread.Sleep(RetryIntervalMs);
             }
