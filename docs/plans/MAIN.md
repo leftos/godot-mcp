@@ -11,21 +11,8 @@
 
 ## Do first
 
-- [ ] GMCP-27 Find why CSharpStateTests' first get_game_state timed out cold · release vNext — Urgent · Singles
-- [ ] GMCP-42 Fix LeftBehindTests' child-listing flake under load · release vNext — Urgent · Singles
-- [ ] GMCP-51 Fix TimeTests' WaitForSignalWhilePaused flake under load · release vNext — Urgent · Singles
-- [ ] GMCP-147 Load-proof the capture group's helper-exit and drag-clip itests · release vNext — Urgent · Singles
-- [ ] GMCP-167 Scratch runner itest's wall-clock xunit timeout trips on a busy machine · release vNext — Urgent · Singles
-- [ ] GMCP-85 Fix SessionAttachTests' folder-list attach flake under load · release vNext — Urgent · Singles
-- [ ] GMCP-107 Fix ScratchRunnerTests' ceiling-kill flake: a step past its ceiling read red, not killed · release vNext — Urgent · Singles
-- [ ] GMCP-150 Load-proof WatchdogTests' stop-kills-a-stuck-game itest · release vNext — Urgent · Singles
-- [ ] GMCP-151 Load-proof SessionLifecycleTests' two slow-to-quit itests · release vNext — Urgent · Singles
-- [ ] GMCP-155 Load-proof the real-time unit tests that set a helper frame limit before the start · release vNext — Urgent · Singles
-- [ ] GMCP-201 RealtimeRecordingTests: the deadline file write is denied under the routed full suite · release vNext — Urgent · Singles
-- [ ] GMCP-203 Load-proof ProcessSessionTests' restart test: its pid-file wait times out on a busy machine · release vNext — Urgent · Singles
-- [ ] GMCP-205 Load-proof RealtimeSessionEndTests' helper-kill timing on the builder · release vNext — Urgent · Singles
-- [ ] GMCP-206 Bring the scratch itest group back under its 300 s ceiling · release vNext — Urgent · Singles
-- [ ] GMCP-226 Load-proof three tests that failed once under three test lanes · release vNext — Urgent · Singles
+- [ ] GMCP-237 Load-proof RealtimeRecordingTests.TheClipCountsFramesFromBytes: its fixed 300 ms wait loses to a starved machine · release vNext — Urgent · No project
+- [ ] GMCP-246 Load-proof ItemTargetTests' hover-off-a-span and refused-span wall-clock budgets · release vNext — Urgent · No project
 
 ## Ideas from the survey and the projects
 
@@ -113,6 +100,14 @@
 - [ ] GMCP-229 Measure whether capture_frames falls back to main-thread saves on a 4-core pool
 - [ ] GMCP-235 wait_for output misses a background scratch session's step lines and overruns its timeoutMs
 - [ ] GMCP-236 watch start reaches the game 3.5-4 s late, missing a scratch step's first frames
+- [ ] GMCP-238 Replace the deadline file's move retry with a POSIX-semantics rename
+- [ ] GMCP-239 A real-time clip loses the frames written while its encoder stalls, coming out shorter than its span
+- [ ] GMCP-240 frame_control step: a call made after the until's signal connects, so a step can arm what it waits for
+- [ ] GMCP-241 ScratchCSharpStateTests: warm the C# helper before the first C# until, as CSharpStateTests now does
+- [ ] GMCP-243 Count the server-exit ShutdownCap on the load-adjusted clock
+- [ ] GMCP-244 Turn the remaining must-beat wall-clock bounds in lifecycle, time, TempDirectory and GodotRun into hang guards
+- [ ] GMCP-245 pytest: pass --reason with --local in the drive and itest-csharp tests the gate now refuses
+- [ ] GMCP-247 CaptureHelperTests: skip, not fail, when a topmost window has the foreground
 
 ## Docs
 
