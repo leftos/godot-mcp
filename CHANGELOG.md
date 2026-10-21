@@ -6,6 +6,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- A real-time recording no longer fails to start, or kills its capture helper at a stop, when the helper is reading its deadline file at that moment.
 - Servers starting together on a busy machine no longer write a project's `override.cfg` without holding the shared folder list.
 
 ## 0.20.0 - 2026-10-20

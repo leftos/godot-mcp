@@ -172,10 +172,10 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
         _fake.BeforeProbe = async _ =>
         {
             probing.TrySetResult();
-            await listed.Task.WaitAsync(TimeSpan.FromSeconds(60), Token);
+            await listed.Task.WaitAsync(RegistryHarness.HangGuard, Token);
         };
         Task<string> start = _tools.RecordMarkAsync("start", cancellationToken: Token);
-        await probing.Task.WaitAsync(TimeSpan.FromSeconds(60), Token);
+        await probing.Task.WaitAsync(RegistryHarness.HangGuard, Token);
 
         RecordingResult? whileStarting = ListedRecording();
         listed.TrySetResult();
@@ -205,7 +205,7 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
                 TaskScheduler.Default
             )
             .Unwrap();
-        await remuxing.Task.WaitAsync(TimeSpan.FromSeconds(60), Token);
+        await remuxing.Task.WaitAsync(RegistryHarness.HangGuard, Token);
         Task<DetachResult> detach = await RunUntilItWaitsAsync(() => _harness.Sessions.DetachAsync(Game, Token));
 
         release.TrySetResult();
@@ -241,7 +241,7 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
         string path = await StartAsync();
         (TaskCompletionSource remuxing, TaskCompletionSource release) = HoldRemux();
         game.Dispose();
-        await remuxing.Task.WaitAsync(TimeSpan.FromSeconds(60), Token);
+        await remuxing.Task.WaitAsync(RegistryHarness.HangGuard, Token);
         // Both wait on the clip when it is finished; which takes it first is the thread pool's choice.
         Task<StopResult> stop = await RunUntilItWaitsAsync(() => _harness.Sessions.StopAsync(Game, Token));
         Task<string> mark = await RunUntilItWaitsAsync(() => _tools.RecordMarkAsync("stop", session: Game, cancellationToken: Token));
@@ -312,10 +312,10 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
         _fake.BeforeProbe = async _ =>
         {
             probing.TrySetResult();
-            await stopped.Task.WaitAsync(TimeSpan.FromSeconds(60), Token);
+            await stopped.Task.WaitAsync(RegistryHarness.HangGuard, Token);
         };
         Task<string> start = _tools.RecordMarkAsync("start", session: Game, cancellationToken: Token);
-        await probing.Task.WaitAsync(TimeSpan.FromSeconds(60), Token);
+        await probing.Task.WaitAsync(RegistryHarness.HangGuard, Token);
         Task quit = QuitOnFirstRequestAsync(game);
 
         StopResult result = await _harness.Sessions.StopAsync(Game, Token);
@@ -416,7 +416,12 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
 
             RecordingResult recording = (await stop).Recording ?? throw new InvalidOperationException("stop_project returned no recording.");
             TimeSpan killedAfter = (fake.HelperKilledAt ?? throw new InvalidOperationException("the helper was never killed.")) - armedAt;
-            Assert.True(killedAfter >= TimeSpan.FromSeconds(10), $"the helper was killed {killedAfter.TotalSeconds} s after its ceiling was armed");
+            // Only the ceiling kills at or after it ends; a kill before it is another path's, such as a deadline move the
+            // helper's read of the file refused, which the warning names.
+            Assert.True(
+                killedAfter >= TimeSpan.FromSeconds(10),
+                $"the helper was killed {killedAfter.TotalSeconds} s after its ceiling was armed: {recording.Warning}"
+            );
             Assert.Equal(path, Assert.Single(recording.Clips!));
             Assert.Equal(
                 "the capture helper did not exit within 10 s of the recording's end and was killed; the clip may end earlier or later "
@@ -612,7 +617,7 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
         _fake.BeforeRemux = async () =>
         {
             remuxing.TrySetResult();
-            await release.Task.WaitAsync(TimeSpan.FromSeconds(60), Token);
+            await release.Task.WaitAsync(RegistryHarness.HangGuard, Token);
         };
         return (remuxing, release);
     }
@@ -638,7 +643,7 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
     {
         string attachFile = AttachFile.PathIn(request.ProjectPath);
         Task<AttachResult> attach = _harness.Sessions.AttachAsync(request, Token);
-        await RegistryHarness.WaitUntilAsync(() => File.Exists(attachFile));
+        await RegistryHarness.WaitUntilAsync(() => File.Exists(attachFile), attach);
         JsonNode written = JsonNode.Parse(File.ReadAllText(attachFile))!;
         int pid = _harness.StartOwnedGame().Id;
         FakeHello hello = new() { ProcessId = pid, WindowHandle = FakeRealtime.Hwnd };

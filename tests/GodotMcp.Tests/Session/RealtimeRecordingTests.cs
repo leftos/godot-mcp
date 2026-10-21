@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
 using GodotMcp.TestSupport;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 
 namespace GodotMcp.Tests.Session;
@@ -106,6 +107,8 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         RealtimeStopped stopped = await recording.StopAsync(Token);
         DateTimeOffset after = DateTimeOffset.UtcNow;
 
+        // A helper killed, as one is when its deadline cannot be moved, never reads the deadline it ends on.
+        Assert.True(_fake.HelperKilledAt is null, $"the helper was killed rather than ended by its deadline: {stopped.Warning}");
         Assert.InRange(_fake.DeadlineAtHelperEnd ?? DateTimeOffset.MaxValue, before - Slack, after);
         ToolProcessRequest remux = Assert.Single(_fake.Runs, run => run.Arguments.Contains("-movflags"));
         Assert.Equal(RealtimeEncode.RemuxArguments(recording.Paths.Mkv, recording.Paths.Mp4, isHevc: false), remux.Arguments);
@@ -139,7 +142,7 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         // At 1 fps the fake's frames, 20 ms apart, never fall below the rate a low-rate warning needs, so no warning may come.
         RealtimeRecording recording = await _fake.StartAsync(fps: 1, maxSeconds: 1);
 
-        RealtimeOutcome outcome = await recording.Finished.WaitAsync(TimeSpan.FromSeconds(20), Token);
+        RealtimeOutcome outcome = await recording.Finished.WaitAsync(RegistryHarness.HangGuard, Token);
 
         Assert.Null(outcome.Error);
         Assert.Null(outcome.Stopped?.Warning);
@@ -157,8 +160,11 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         _fake.HelperFrameLimit = 3;
         _fake.HelperExit = 5;
         _fake.HelperLines = ["capturing", "the game's audio could not be read: the stream was never opened."];
+        // Held at its limit until the start has returned, so its exit cannot come before the start sees the encoder open.
+        _fake.HelperEndRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         RealtimeRecording recording = await _fake.StartAsync(audioPid: GamePid);
-        await recording.Finished.WaitAsync(TimeSpan.FromSeconds(20), Token);
+        _fake.HelperEndRelease.TrySetResult();
+        await recording.Finished.WaitAsync(RegistryHarness.HangGuard, Token);
 
         SessionException failed = await Assert.ThrowsAsync<SessionException>(() => recording.StopAsync(Token));
 
@@ -182,8 +188,11 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         _fake.FrameInterval = TimeSpan.FromMilliseconds(5);
         _fake.HelperFrameLimit = 5;
         _fake.HelperExit = 3;
+        // Held at its limit until the start has returned, so its exit cannot come before the start sees the encoder open.
+        _fake.HelperEndRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         RealtimeRecording recording = await _fake.StartAsync();
-        await recording.Finished.WaitAsync(TimeSpan.FromSeconds(20), Token);
+        _fake.HelperEndRelease.TrySetResult();
+        await recording.Finished.WaitAsync(RegistryHarness.HangGuard, Token);
 
         RealtimeStopped stopped = await recording.StopAsync(Token);
 
@@ -234,7 +243,7 @@ public sealed partial class RealtimeRecordingTests : IDisposable
                 bothProbing.TrySetResult();
             }
 
-            await bothProbing.Task.WaitAsync(TimeSpan.FromSeconds(10), Token);
+            await bothProbing.Task.WaitAsync(RegistryHarness.HangGuard, Token);
         };
 
         RealtimeRecording[] recordings = await Task.WhenAll(
@@ -270,7 +279,7 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         _fake.HelperSilent = true;
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(Token);
         Task<RealtimeRecording> start = _fake.StartAsync(cancellationToken: cancel.Token);
-        await RegistryHarness.WaitUntilAsync(() => _fake.Events.Contains("start:helper"));
+        await RegistryHarness.WaitUntilAsync(() => _fake.Events.Contains("start:helper"), start);
 
         await cancel.CancelAsync();
 
@@ -283,7 +292,7 @@ public sealed partial class RealtimeRecordingTests : IDisposable
     {
         RealtimeRecording recording = await _fake.StartAsync();
         RealtimeStopped stopped;
-        // Held without delete sharing, the deadline file cannot be replaced by the stop's move.
+        // Held open for the whole stop, the deadline file cannot be replaced by the stop's move however often it is tried.
         using (new FileStream(recording.Paths.Deadline, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
             stopped = await recording.StopAsync(Token);
@@ -294,6 +303,30 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         Assert.Contains("could not be written", warning, StringComparison.Ordinal);
         Assert.Contains("The capture helper was killed instead, so the clip ends there.", warning, StringComparison.Ordinal);
         Assert.False(File.Exists(recording.Paths.Deadline + ".tmp"), "the deadline's temporary file was left behind");
+    }
+
+    [Fact]
+    public async Task AStopWhoseDeadlineMoveMeetsAReadOfTheFileTriesAgainAndEndsTheCaptureByTheDeadline()
+    {
+        RealtimeRecording recording = await _fake.StartAsync();
+        // Held as the helper holds the file while it reads it, shared for delete, which Windows still refuses to replace; let go
+        // at the first retry the recording logs, so the move's next try finds the file free.
+        FileStream read = new(recording.Paths.Deadline, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        _fake.OnLog = _ => read.Dispose();
+        RealtimeStopped stopped;
+        try
+        {
+            stopped = await recording.StopAsync(Token);
+        }
+        finally
+        {
+            await read.DisposeAsync();
+        }
+
+        Assert.DoesNotContain("could not be written", stopped.Warning ?? "", StringComparison.Ordinal);
+        Assert.True(_fake.HelperKilledAt is null, $"the helper was killed rather than ended by its deadline: {stopped.Warning}");
+        Assert.NotNull(_fake.DeadlineAtHelperEnd);
+        Assert.Contains(_fake.LogLines, line => line.Contains(recording.Paths.Deadline, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -357,11 +390,12 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         FakeTimeProvider clockTime = new();
         using FakeRealtime fake = new(clockTime) { HelperSilent = true };
         Task<RealtimeRecording> start = fake.StartAsync();
-        await RegistryHarness.WaitUntilAsync(() => fake.Events.Contains("start:helper"));
+        await RegistryHarness.WaitUntilAsync(() => fake.Events.Contains("start:helper"), start);
 
-        // Advanced until the start ends, bounded in wall time, so a busy machine slow to set the allowance's timer still sees it pass.
+        // Advanced until the start ends, so a busy machine slow to set the allowance's timer still sees it pass; the wall-time
+        // bound is only a hang guard.
         var wall = System.Diagnostics.Stopwatch.StartNew();
-        while (!start.IsCompleted && wall.Elapsed < TimeSpan.FromSeconds(30))
+        while (!start.IsCompleted && wall.Elapsed < RegistryHarness.HangGuard)
         {
             clockTime.Advance(TimeSpan.FromMilliseconds(500));
             await Task.Delay(10, Token);
@@ -623,6 +657,7 @@ internal sealed class FakeRealtime : IDisposable
             Clock = _clock,
             Start = StartProcess,
             Run = RunAsync,
+            Logger = new CallbackLogger(this),
         };
     }
 
@@ -654,6 +689,12 @@ internal sealed class FakeRealtime : IDisposable
     public int? HelperFrameLimit { get; set; }
 
     public int HelperExit { get; set; }
+
+    /// <summary>
+    /// Awaited by a helper at its <see cref="HelperFrameLimit"/> before it exits, so a test can hold its end until the start has
+    /// returned; null, it exits at once.
+    /// </summary>
+    public TaskCompletionSource? HelperEndRelease { get; set; }
 
     public string[] HelperLines { get; set; } = ["fake capture"];
 
@@ -702,6 +743,12 @@ internal sealed class FakeRealtime : IDisposable
     public TimeSpan FrameInterval { get; set; } = TimeSpan.FromMilliseconds(20);
 
     public Func<ToolProcessRequest, Task>? BeforeProbe { get; set; }
+
+    /// <summary>Called with each line the recording logs, on the thread that logs it, after the line is in <see cref="LogLines"/>.</summary>
+    public Action<string>? OnLog { get; set; }
+
+    /// <summary>Every line the recording logged, in order.</summary>
+    public ConcurrentQueue<string> LogLines { get; } = new();
 
     public ConcurrentQueue<string> Events { get; } = new();
 
@@ -925,6 +972,22 @@ internal sealed class FakeRealtime : IDisposable
 
         File.Copy(arguments[arguments.IndexOf("-i") + 1], arguments[^1], overwrite: true);
         return Exit(0);
+    }
+
+    /// <summary>The recording's log: each line kept in <see cref="LogLines"/>, then handed to <see cref="OnLog"/>.</summary>
+    private sealed class CallbackLogger(FakeRealtime owner) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            string line = formatter(state, exception);
+            owner.LogLines.Enqueue(line);
+            owner.OnLog?.Invoke(line);
+        }
     }
 
     /// <summary>The helper's probe: its size on stdout and its exit status.</summary>
@@ -1161,9 +1224,9 @@ internal sealed class FakeHelper : IRealtimeProcess
         {
             while (true)
             {
-                if (_owner.HelperFrameLimit is { } limit && written >= limit)
+                if (await EndAtLimitAsync(written) is { } limitExit)
                 {
-                    code = _owner.HelperExit;
+                    code = limitExit;
                     break;
                 }
 
@@ -1200,5 +1263,21 @@ internal sealed class FakeHelper : IRealtimeProcess
         await _writer.DisposeAsync();
         FakeRealtime.Log(_request, _owner.HelperLines);
         _exit.TrySetResult(FakeRealtime.Exit(code));
+    }
+
+    /// <summary>At the frame limit, waits for the test's release, if one is set, and gives the exit status; null below it.</summary>
+    private async Task<int?> EndAtLimitAsync(int written)
+    {
+        if (_owner.HelperFrameLimit is not { } limit || written < limit)
+        {
+            return null;
+        }
+
+        if (_owner.HelperEndRelease is { } release)
+        {
+            await release.Task.WaitAsync(_killed.Token);
+        }
+
+        return _owner.HelperExit;
     }
 }

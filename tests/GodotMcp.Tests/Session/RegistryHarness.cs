@@ -16,6 +16,9 @@ internal sealed class RegistryHarness : IAsyncDisposable
 {
     public static readonly TimeSpan LongWait = TimeSpan.FromSeconds(60);
 
+    /// <summary>The one bound on a test's wait for an event: a passing run never reaches it, so it fires only on a broken product.</summary>
+    public static readonly TimeSpan HangGuard = TimeSpan.FromMinutes(5);
+
     private readonly TempDirectory _temp = new();
     private readonly List<(Task Attach, CancellationTokenSource Cancel)> _waiting = [];
     private readonly List<Process> _games = [];
@@ -29,7 +32,7 @@ internal sealed class RegistryHarness : IAsyncDisposable
         Listener = new BridgeListener(NullLogger<BridgeListener>.Instance) { Clock = clock };
         Sessions = new SessionRegistry(Listener, NullLogger<GodotSession>.Instance)
         {
-            OverrideFolders = new OverrideFolders(_temp.Combine("override-folders.txt"), TextWriter.Null),
+            OverrideFolders = new OverrideFolders(_temp.Combine("override-folders.txt"), TextWriter.Null) { Clock = clock },
             Dormant = new DormantGames(_ => new ProcessStart(Exists: true, StartTime: null), TextWriter.Null),
         };
     }
@@ -118,7 +121,7 @@ internal sealed class RegistryHarness : IAsyncDisposable
         CancellationTokenSource cancel = new();
         Task attach = Sessions.AttachAsync(new AttachRequest(projectDir, name, LongWait, false, false, null), cancel.Token);
         _waiting.Add((attach, cancel));
-        await WaitUntilAsync(() => Sessions.List(includeStopped: true).Any(session => session.Name == name));
+        await WaitUntilAsync(() => Sessions.List(includeStopped: true).Any(session => session.Name == name), attach);
     }
 
     /// <summary>
@@ -130,7 +133,7 @@ internal sealed class RegistryHarness : IAsyncDisposable
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         string attachFile = AttachFile.PathIn(projectDir);
         Task<AttachResult> attach = Sessions.AttachAsync(new AttachRequest(projectDir, name, LongWait, false, false, null), cancellation);
-        await WaitUntilAsync(() => File.Exists(attachFile));
+        await WaitUntilAsync(() => File.Exists(attachFile), attach);
         string token = JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>();
         FakeBridge game = await FakeBridge.DialAsync(Listener.Port, token, projectDir, hello, cancellation);
         await attach;
@@ -199,13 +202,42 @@ internal sealed class RegistryHarness : IAsyncDisposable
         await WaitUntilAsync(() => !Sessions.Resolve(name).IsLive);
     }
 
+    /// <summary>
+    /// Polls until <paramref name="condition"/> holds. Its only bound is <see cref="HangGuard"/>, which a passing run never
+    /// reaches however busy the machine is; it fails a wait whose product is broken.
+    /// </summary>
     public static async Task WaitUntilAsync(Func<bool> condition)
     {
-        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        DateTime guard = DateTime.UtcNow + HangGuard;
         while (!condition())
         {
-            Assert.True(DateTime.UtcNow < deadline, "the condition did not hold within 10 s");
+            Assert.True(DateTime.UtcNow < guard, $"the condition did not hold within its {HangGuard} hang guard");
             await Task.Delay(20, TestContext.Current.CancellationToken);
         }
     }
+
+    /// <summary>
+    /// Polls until <paramref name="condition"/> holds while <paramref name="running"/> runs, as <see cref="WaitUntilAsync(Func{bool})"/>
+    /// does, and fails at once, with how <paramref name="running"/> ended, when it ends first: what the wait is for comes from
+    /// it, so it can no longer come.
+    /// </summary>
+    public static async Task WaitUntilAsync(Func<bool> condition, Task running)
+    {
+        DateTime guard = DateTime.UtcNow + HangGuard;
+        while (!condition())
+        {
+            if (running.IsCompleted)
+            {
+                // Read again: what the wait is for may have come just before the task it comes from ended.
+                Assert.True(condition(), $"the condition can no longer hold: what it comes from ended first ({Describe(running)})");
+                return;
+            }
+
+            Assert.True(DateTime.UtcNow < guard, $"the condition did not hold within its {HangGuard} hang guard");
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+    }
+
+    private static string Describe(Task ended) =>
+        ended.Exception?.GetBaseException() is { } fault ? $"{ended.Status}: {fault.GetType().Name}: {fault.Message}" : ended.Status.ToString();
 }

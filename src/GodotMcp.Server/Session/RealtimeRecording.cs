@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Session;
 
@@ -96,7 +97,7 @@ internal sealed record RealtimePaths(string Mkv, string Mp4, string Deadline, st
 /// the game quits. One task owns the end however it comes: ffmpeg finalises the file, it is remuxed to an .mp4 and the
 /// outcome kept, so a stop only moves the deadline to now and waits for it, and no process outlives the recording.
 /// </summary>
-internal sealed class RealtimeRecording
+internal sealed partial class RealtimeRecording
 {
     public const string Mode = "realtime";
 
@@ -119,6 +120,15 @@ internal sealed class RealtimeRecording
     private const double LowRateShare = 0.9;
 
     private const int LastLineCount = 3;
+
+    /// <summary>The Win32 error a file operation fails with when another handle's sharing mode refuses it.</summary>
+    private const int SharingViolation = 32;
+
+    /// <summary>How long a deadline move refused because the file is held is tried again before it fails.</summary>
+    private static readonly TimeSpan DeadlineMoveRetryWindow = TimeSpan.FromSeconds(2);
+
+    /// <summary>The pause before a held deadline move is tried again.</summary>
+    private static readonly TimeSpan DeadlineMoveRetryPause = TimeSpan.FromMilliseconds(50);
 
     /// <summary>How long a session's end waits for the helper to exit once the capture is ended, in load-adjusted time, before it kills it.</summary>
     private static readonly TimeSpan HelperExitCeiling = TimeSpan.FromSeconds(10);
@@ -268,7 +278,7 @@ internal sealed class RealtimeRecording
 
             try
             {
-                WriteDeadline(Paths.Deadline, _environment.Time.GetUtcNow());
+                WriteDeadline(_environment.Logger, Paths.Deadline, _environment.Time.GetUtcNow());
                 return;
             }
             catch (SessionException e)
@@ -344,13 +354,13 @@ internal sealed class RealtimeRecording
     /// be moved is deleted.
     /// </summary>
     /// <exception cref="SessionException">The file could not be written.</exception>
-    private static void WriteDeadline(string path, DateTimeOffset end)
+    private static void WriteDeadline(ILogger logger, string path, DateTimeOffset end)
     {
         string temporary = path + ".tmp";
         try
         {
             File.WriteAllText(temporary, end.UtcDateTime.ToString("o", CultureInfo.InvariantCulture) + "\n");
-            File.Move(temporary, path, overwrite: true);
+            MoveDeadline(logger, temporary, path);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -358,6 +368,41 @@ internal sealed class RealtimeRecording
             throw new SessionException(Join(" ", [written, DeleteFiles([temporary])])!, e);
         }
     }
+
+    /// <summary>
+    /// Moves the deadline's temporary over its file. The helper opens the file to read it many times a second, and Windows
+    /// refuses to replace a file while any handle holds it, even one shared for delete, so a move that meets a read is refused.
+    /// That refusal, or a scanner holding either file, is tried again, logged each time, every
+    /// <see cref="DeadlineMoveRetryPause"/> for up to <see cref="DeadlineMoveRetryWindow"/>; any other error, or a hold that
+    /// outlasts the window, is thrown.
+    /// </summary>
+    private static void MoveDeadline(ILogger logger, string temporary, string path)
+    {
+        int retries = (int)(DeadlineMoveRetryWindow / DeadlineMoveRetryPause);
+        for (int retry = 1; ; retry++)
+        {
+            try
+            {
+                File.Move(temporary, path, overwrite: true);
+                return;
+            }
+            // The one known transient: a reader holding the file at the move. Nothing else is tried again.
+            catch (Exception e) when (retry <= retries && IsHeldFile(e))
+            {
+                DeadlineMoveRetried(logger, e, path, retry, retries);
+                Thread.Sleep(DeadlineMoveRetryPause);
+            }
+        }
+    }
+
+    /// <summary>Whether a file operation failed because another handle held the file: access denied, or a sharing violation.</summary>
+    private static bool IsHeldFile(Exception e) => e is UnauthorizedAccessException || (e is IOException && (e.HResult & 0xFFFF) == SharingViolation);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "The deadline file {Path} was held at its move, as by the capture helper reading it; trying again ({Retry} of {Retries})."
+    )]
+    private static partial void DeadlineMoveRetried(ILogger logger, Exception exception, string path, int retry, int retries);
 
     /// <summary>Creates the recordings folder.</summary>
     /// <exception cref="SessionException">It could not be created.</exception>
@@ -644,7 +689,7 @@ internal sealed class RealtimeRecording
     )
     {
         var cap = TimeSpan.FromSeconds(context.Start.MaxSeconds);
-        WriteDeadline(context.Paths.Deadline, context.Environment.Time.GetUtcNow() + FirstFrameAllowance + cap);
+        WriteDeadline(context.Environment.Logger, context.Paths.Deadline, context.Environment.Time.GetUtcNow() + FirstFrameAllowance + cap);
         string? audioPipe = context.AudioPid is null ? null : RealtimeAudio.NewPipeName();
         RealtimePipeline pipeline = await RealtimePipeline.StartAsync(
             context.Environment,
@@ -656,7 +701,7 @@ internal sealed class RealtimeRecording
             FirstFrameEnd end = await WaitForEncoderAsync(context.Environment.Clock, pipeline, cancellationToken);
             if (end == FirstFrameEnd.Opened)
             {
-                WriteDeadline(context.Paths.Deadline, pipeline.Pump.FirstBytesUtc + cap);
+                WriteDeadline(context.Environment.Logger, context.Paths.Deadline, pipeline.Pump.FirstBytesUtc + cap);
                 return (pipeline, null);
             }
 

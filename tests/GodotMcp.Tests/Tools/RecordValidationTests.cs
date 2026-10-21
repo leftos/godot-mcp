@@ -248,16 +248,18 @@ public sealed class RecordValidationTests : IAsyncDisposable
         _fake.BeforeProbe = async _ =>
         {
             probing.TrySetResult();
-            await detached.Task.WaitAsync(TimeSpan.FromSeconds(10), Token);
+            await detached.Task.WaitAsync(RegistryHarness.HangGuard, Token);
         };
         Task<string> start = _tools.RecordMarkAsync("start", cancellationToken: Token);
-        await probing.Task.WaitAsync(TimeSpan.FromSeconds(10), Token);
+        await probing.Task.WaitAsync(RegistryHarness.HangGuard, Token);
 
         DetachResult result = await _harness.Sessions.DetachAsync(Game, Token);
         detached.TrySetResult();
 
         string path = JsonNode.Parse(await start)!["path"]!.GetValue<string>();
         await RegistryHarness.WaitUntilAsync(() => File.Exists(path));
+        // A helper killed, as one is when its deadline cannot be moved, never reads the deadline it ends on.
+        Assert.True(_fake.HelperKilledAt is null, "the helper was killed rather than ended by its deadline");
         Assert.NotNull(_fake.DeadlineAtHelperEnd);
         Assert.Null(result.Recording);
     }
@@ -289,7 +291,7 @@ public sealed class RecordValidationTests : IAsyncDisposable
             new AttachRequest(projectDir, Game, RegistryHarness.LongWait, false, true, null),
             Token
         );
-        await RegistryHarness.WaitUntilAsync(() => File.Exists(attachFile));
+        await RegistryHarness.WaitUntilAsync(() => File.Exists(attachFile), attach);
         string token = JsonNode.Parse(File.ReadAllText(attachFile))!["token"]!.GetValue<string>();
         _games.Add(await FakeBridge.DialAsync(_harness.Listener.Port, token, projectDir, new FakeHello { WindowHandle = FakeRealtime.Hwnd }, Token));
         await attach;

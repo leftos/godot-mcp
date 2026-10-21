@@ -74,6 +74,9 @@ internal sealed class RealtimeEnvironment
     /// <summary>Runs a process to its end: an encoder probe, or the remux.</summary>
     public required Func<ToolProcessRequest, CancellationToken, Task<ToolProcessResult>> Run { get; init; }
 
+    /// <summary>Where the recording logs what it works around, such as a deadline file held at its move.</summary>
+    public required ILogger Logger { get; init; }
+
     /// <summary>The encoder probes, kept for the environment's life; a start failure's cooldown runs on <see cref="Time"/>.</summary>
     public EncoderProbeCache Encoders => LazyInitializer.EnsureInitialized(ref _encoders, () => new EncoderProbeCache(Time));
 
@@ -90,5 +93,6 @@ internal sealed class RealtimeEnvironment
             Clock = LoadClock.Shared,
             Start = request => new ToolRealtimeProcess(ToolProcess.Start(request, logger)),
             Run = (request, cancellationToken) => ToolProcess.RunAsync(request, logger, cancellationToken),
+            Logger = logger,
         };
 }
