@@ -9,11 +9,6 @@
 - [?] GMCP-231 wait_for: no full-size crop of the frame a wait met
 - [?] GMCP-230 run_scratches: a partial run cannot keep a scene's setup step
 
-## Do first
-
-- [ ] GMCP-237 Load-proof RealtimeRecordingTests.TheClipCountsFramesFromBytes: its fixed 300 ms wait loses to a starved machine · release vNext — Urgent · No project
-- [ ] GMCP-246 Load-proof ItemTargetTests' hover-off-a-span and refused-span wall-clock budgets · release vNext — Urgent · No project
-
 ## Ideas from the survey and the projects
 
 - [ ] GMCP-68 Adopt driving lessons from the sibling projects
@@ -108,6 +103,8 @@
 - [ ] GMCP-244 Turn the remaining must-beat wall-clock bounds in lifecycle, time, TempDirectory and GodotRun into hang guards
 - [ ] GMCP-245 pytest: pass --reason with --local in the drive and itest-csharp tests the gate now refuses
 - [ ] GMCP-247 CaptureHelperTests: skip, not fail, when a topmost window has the foreground
+- [ ] GMCP-248 Keep the tooltip span probe's 250 ms wall-clock budget from changing answers on a starved game
+- [ ] GMCP-249 Let run.ps1 run one test method, for a load-burn of one case
 
 ## Docs
 
