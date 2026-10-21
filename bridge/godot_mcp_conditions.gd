@@ -136,9 +136,10 @@ func _state_probe(params: Dictionary, _failures: Dictionary) -> Variant:
 ## is missing or its state lacks key, and failed for a node outside the mcp_state group or one
 ## whose state cannot be read. helper carries the C# helper's extension, or csharpError.
 func _check_state(node_name: String, key: String, wanted: Variant, helper: Dictionary) -> Array:
-	var node: Node = bridge._find_node(node_name)
+	var looked: Array = _lookup(node_name)
+	var node: Node = looked[0]
 	if node == null:
-		return _missing(node_name)
+		return looked[1]
 	var reader: Node = bridge._state
 	if not node.is_in_group(State.GROUP):
 		return [false, null, NOT_MARKED % reader.path_of.call(node)]
@@ -230,12 +231,12 @@ static func settled_state() -> Dictionary:
 
 
 ## Reads the node's watched value (_settled_reading) and counts it into state (settled_answer) at
-## this process frame; while the node is missing, _missing's answer resets the count.
+## this process frame; while the node is missing, _lookup's answer resets the count.
 func _check_settled(node_name: String, property: String, needed: int, state: Dictionary) -> Array:
-	var node: Node = bridge._find_node(node_name)
-	var reading: Array = _missing(node_name)
-	if node != null:
-		reading = _settled_reading(node, node_name, property)
+	var found: Array = _lookup(node_name)
+	var reading: Array = found[1]
+	if found[0] != null:
+		reading = _settled_reading(found[0], node_name, property)
 	return settled_answer(state, reading, Engine.get_process_frames(), needed)
 
 
@@ -327,13 +328,13 @@ func _text_scope(targets: Node, under: String) -> Variant:
 	return named[0] if named.size() == 1 else null
 
 
-## The node a path or a unique name names; null while it is missing, or _missing's failure text
-## when it starts with a unique name more than one scene holds.
+## The node a path or a unique name names; null while it is missing, or the failure text of a
+## path starting with a unique name more than one scene holds.
 func _node_at_path(node_name: String) -> Variant:
-	var found: Node = bridge._find_node(node_name)
-	if found != null:
-		return found
-	var missing: Array = _missing(node_name)
+	var found: Array = _lookup(node_name)
+	if found[0] != null:
+		return found[0]
+	var missing: Array = found[1]
 	return missing[2] if missing.size() > 2 else null
 
 
@@ -348,28 +349,41 @@ func _check_ui_changed() -> Array:
 
 
 func _check_exists(node_name: String, wanted: bool) -> Array:
-	var present: bool = bridge._find_node(node_name) != null
-	var missing: Array = [] if present else _missing(node_name)
+	var found: Array = _lookup(node_name)
+	var present: bool = found[0] != null
+	var missing: Array = found[1]
 	if missing.size() > 2:
 		return missing
 	return [present == wanted, present]
 
 
-## A probe's answer while its node is missing: not met, or failed when the name starts with a
-## unique name more than one scene holds, which no wait can settle.
-func _missing(node_name: String) -> Array:
+## The root a unique name is looked up from: get_tree().root, read only here, so a test can stand
+## in for it with no live tree. A path or a bare name goes through the bridge's _find_node, and an
+## expression's inputs come from the main loop.
+func _tree_root() -> Node:
+	return get_tree().root
+
+
+## The node a check names, and the answer it gives while the node is missing: [the node or null,
+## [false, null], or [false, null, why no wait can settle a unique name more than one scene
+## holds]]. A unique name walks the scenes once (the inspector's unique_lookup), any other name
+## through the bridge's lookup.
+func _lookup(node_name: String) -> Array:
 	if not node_name.begins_with("%"):
-		return [false, null]
-	var ambiguity: String = bridge._inspect.unique_ambiguity(get_tree().root, node_name)
-	return [false, null] if ambiguity.is_empty() else [false, null, ambiguity]
+		return [bridge._find_node(node_name), [false, null]]
+	var found: Array = bridge._inspect.unique_lookup(_tree_root(), node_name)
+	var ambiguity: String = found[1]
+	var missing: Array = [false, null] if ambiguity.is_empty() else [false, null, ambiguity]
+	return [found[0], missing]
 
 
 ## The property (a path such as position:x) as run_script returns values, compared in JSON
 ## space; not met while the node is missing, and failed once it is found without the property.
 func check_property(node_name: String, property: String, wanted: Variant) -> Array:
-	var node: Node = bridge._find_node(node_name)
+	var found: Array = _lookup(node_name)
+	var node: Node = found[0]
 	if node == null:
-		return _missing(node_name)
+		return found[1]
 	var read: Array = _read_property(node, property)
 	if read.size() > 2:
 		return read
@@ -468,9 +482,10 @@ func _run_expression(expression: Expression, node_name: String, failures: Dictio
 	var inputs: Array = [tree.root, tree, Input, Engine]
 	var node: Node = null
 	if not node_name.is_empty():
-		node = bridge._find_node(node_name)
+		var found: Array = _lookup(node_name)
+		node = found[0]
 		if node == null:
-			return _missing(node_name)
+			return found[1]
 		inputs.append(node)
 	var value: Variant = _execute(expression, inputs, node, failures)
 	if expression.has_execute_failed():

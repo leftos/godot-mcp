@@ -71,6 +71,26 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         + "func _mcp_state() -> Dictionary:\\n\\treturn {'turn': turn, 'seats': [{'name': 'alex', 'hp': hp}]}\\n";
     private const string Keeper = "scene_tree.root.get_node(\"Keeper\")";
 
+    // Two scene-like owners under the root, UniqueA and UniqueB, each holding a Label Shared saved with a unique name and marked
+    // for state, so a wait naming %Shared is ambiguous.
+    private const string UniqueOwnersScript =
+        "for owner_name in [\"UniqueA\", \"UniqueB\"]:\n\t\t"
+        + "var scene := Node.new()\n\t\t"
+        + "scene.name = owner_name\n\t\t"
+        + "scene_tree.root.add_child(scene)\n\t\t"
+        + "var shared := Label.new()\n\t\t"
+        + "shared.name = \"Shared\"\n\t\t"
+        + "shared.text = \"Deal\"\n\t\t"
+        + "scene.add_child(shared)\n\t\t"
+        + "shared.add_to_group(\"mcp_state\")\n\t\t"
+        + "shared.owner = scene\n\t\t"
+        + "shared.unique_name_in_owner = true\n\t"
+        + "return true";
+
+    // The refusal a wait on %Shared gives once both of UniqueOwnersScript's scenes hold it.
+    private const string AmbiguousShared =
+        "'%Shared' is a unique name in 2 scenes: /root/UniqueA, /root/UniqueB; put its owner's path first, as in " + "/root/UniqueA/%Shared.";
+
     // Covers the 1920 x 1080 frame with random noise on a top layer, so a PNG of it cannot compress and its encode is the
     // slowest a frame can cost; returns the window size.
     private const string NoiseCoverScript =
@@ -925,6 +945,111 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
             failed.Message,
             StringComparison.Ordinal
         );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnExistsWaitOnAnAmbiguousUniqueNameFailsAtOnce()
+    {
+        await RunAsync(UniqueOwnersScript);
+        WaitCondition condition = new(Node: "%Shared", Exists: true);
+
+        McpException failed = await Assert.ThrowsAsync<McpException>(() => WaitAsync(condition, TestContext.Current.CancellationToken));
+
+        Assert.StartsWith("wait_for failed: ", failed.Message, StringComparison.Ordinal);
+        Assert.Contains(AmbiguousShared, failed.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task APropertyWaitOnAnAmbiguousUniqueNameFailsAtOnce()
+    {
+        await RunAsync(UniqueOwnersScript);
+        WaitCondition condition = new(Node: "%Shared", Property: "text", EqualsValue: Json("\"Deal\""));
+
+        McpException failed = await Assert.ThrowsAsync<McpException>(() => WaitAsync(condition, TestContext.Current.CancellationToken));
+
+        Assert.Contains(AmbiguousShared, failed.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStateWaitOnAnAmbiguousUniqueNameFailsAtOnce()
+    {
+        await RunAsync(UniqueOwnersScript);
+        WaitCondition condition = new(Node: "%Shared", State: "turn", EqualsValue: Json("1"));
+
+        McpException failed = await Assert.ThrowsAsync<McpException>(() => WaitAsync(condition, TestContext.Current.CancellationToken));
+
+        Assert.Contains(AmbiguousShared, failed.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AnExpressionWaitOnAnAmbiguousUniqueNameFailsAtOnce()
+    {
+        await RunAsync(UniqueOwnersScript);
+        WaitCondition condition = new(Node: "%Shared", Expression: "node != null");
+
+        McpException failed = await Assert.ThrowsAsync<McpException>(() => WaitAsync(condition, TestContext.Current.CancellationToken));
+
+        Assert.Contains(AmbiguousShared, failed.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStableWaitOnAnAmbiguousUniqueNameFailsAtOnce()
+    {
+        await RunAsync(UniqueOwnersScript);
+        WaitCondition condition = new(Node: "%Shared", Stable: 1);
+
+        McpException failed = await Assert.ThrowsAsync<McpException>(() => WaitAsync(condition, TestContext.Current.CancellationToken));
+
+        Assert.Contains(AmbiguousShared, failed.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATextWaitUnderAnAmbiguousUniqueNameFailsAtOnce()
+    {
+        await RunAsync(UniqueOwnersScript);
+        WaitCondition condition = new(Text: "Deal", Under: "%Shared");
+
+        McpException failed = await Assert.ThrowsAsync<McpException>(() => WaitAsync(condition, TestContext.Current.CancellationToken));
+
+        Assert.Contains(AmbiguousShared, failed.Message, StringComparison.Ordinal);
+    }
+
+    // The first holder's Shared script: its probe getter counts the wait's reads, and the third read defers the second holder, so
+    // the wait checks with one holder twice before %Shared turns ambiguous; the value it reads is never the wanted one.
+    private const string WatchfulSharedScript =
+        "extends Label\n\nvar reads := 0\n\n\nvar probe: int:\n\tget:\n\t\treads += 1\n\t\t"
+        + "if reads == 3:\n\t\t\tadd_second.call_deferred()\n\t\treturn 0\n\n\n"
+        + "func add_second() -> void:\n\t"
+        + "var second := Node.new()\n\tsecond.name = 'UniqueB'\n\tget_tree().root.add_child(second)\n\t"
+        + "var late := Label.new()\n\tlate.name = 'Shared'\n\tlate.text = 'Deal'\n\tsecond.add_child(late)\n\t"
+        + "late.owner = second\n\tlate.unique_name_in_owner = true\n";
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitOnAUniqueNameFailsOnceASecondSceneHoldsIt()
+    {
+        // The wait reads UniqueA's Shared at each check and the property never equals 1; once the third read has deferred UniqueB's
+        // Shared, the next check finds two holders and ends the wait, which a timeout would answer met: false instead.
+        string source = WatchfulSharedScript.Replace("\n", "\\n").Replace("\t", "\\t");
+        await RunAsync(
+            "var script := GDScript.new()\n\t"
+                + $"script.source_code = \"{source}\"\n\t"
+                + "script.reload()\n\t"
+                + "var first := Node.new()\n\t"
+                + "first.name = \"UniqueA\"\n\t"
+                + "scene_tree.root.add_child(first)\n\t"
+                + "var shared := Label.new()\n\t"
+                + "shared.name = \"Shared\"\n\t"
+                + "shared.set_script(script)\n\t"
+                + "first.add_child(shared)\n\t"
+                + "shared.owner = first\n\t"
+                + "shared.unique_name_in_owner = true\n\t"
+                + "return true"
+        );
+        WaitCondition condition = new(Node: "%Shared", Property: "probe", EqualsValue: Json("1"));
+
+        McpException failed = await Assert.ThrowsAsync<McpException>(() => WaitAsync(condition, TestContext.Current.CancellationToken));
+
+        Assert.Contains(AmbiguousShared, failed.Message, StringComparison.Ordinal);
     }
 
     [Fact(Timeout = TestTimeoutMs)]

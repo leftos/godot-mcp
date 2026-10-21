@@ -551,7 +551,24 @@ func find_unique(root: Node, node_name: String) -> Node:
 	var matches: Array = unique_matches(root, segment)
 	if matches.size() != 1:
 		return null
-	var found: Node = matches[0][1]
+	return _unique_node(matches[0][1], segment, node_name)
+
+
+## [the node a path starting at a unique name names, the refusal for one that more than one scene
+## holds]: one walk of the owners, giving find_unique's node when exactly one holds the first
+## segment, and _ambiguity's text otherwise ("" when none or one does), so a caller that needs both
+## walks the scenes once.
+func unique_lookup(root: Node, node_name: String) -> Array:
+	var segment: String = node_name.get_slice("/", 0)
+	var matches: Array = unique_matches(root, segment)
+	if matches.size() == 1:
+		return [_unique_node(matches[0][1], segment, node_name), ""]
+	return [null, _ambiguity(segment, matches)]
+
+
+## The node a unique first segment that one owner holds names: the match, or the rest of the path
+## read from it.
+static func _unique_node(found: Node, segment: String, node_name: String) -> Node:
 	var rest: String = node_name.substr(segment.length() + 1)
 	return found if rest.is_empty() else found.get_node_or_null(NodePath(rest))
 
@@ -564,8 +581,10 @@ func unique_matches(root: Node, segment: String) -> Array:
 	var matches: Array = []
 	var reached: Array[Node] = []
 	var queue: Array[Node] = [root]
-	while not queue.is_empty():
-		var node: Node = queue.pop_front()
+	var next: int = 0
+	while next < queue.size():
+		var node: Node = queue[next]
+		next += 1
 		queue.append_array(node.get_children())
 		if not _is_scene_owner(root, node):
 			continue
@@ -592,14 +611,6 @@ func unique_refusal(root: Node, node_name: String) -> String:
 	if matches.is_empty():
 		return UNIQUE_MISSING % [node_name, segment]
 	return _ambiguity(segment, matches)
-
-
-## Why a path starting at a unique name more than one scene holds names no node, or "".
-func unique_ambiguity(root: Node, node_name: String) -> String:
-	if not node_name.begins_with("%"):
-		return ""
-	var segment: String = node_name.get_slice("/", 0)
-	return _ambiguity(segment, unique_matches(root, segment))
 
 
 static func _ambiguity(segment: String, matches: Array) -> String:

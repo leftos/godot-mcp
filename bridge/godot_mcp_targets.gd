@@ -703,8 +703,10 @@ func _find_input_node(element: String) -> Variant:
 func _nodes_named(node_name: String) -> Array[Node]:
 	var named: Array[Node] = []
 	var queue: Array[Node] = [get_tree().root]
-	while not queue.is_empty():
-		var node: Node = queue.pop_front()
+	var next: int = 0
+	while next < queue.size():
+		var node: Node = queue[next]
+		next += 1
 		if str(node.name) == node_name:
 			named.append(node)
 		queue.append_array(node.get_children())
