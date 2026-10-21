@@ -153,7 +153,11 @@ The server's own work is its own CPU plus that of a job object (`OwnWork`) that 
   A bridge or tool timeout keeps its usual text at the ceiling and adds the backstop clause (see [A request's path](#a-requests-path)) at the backstop.
 - **Wall time**: the pings (the hang probe's 2 s, the debugger check's 500 ms), the `shutdown` reply, the `cancel` itself, the listener's 5 s hello read, and the kill and exit graces (a killed tree's and git's 5 s, the output drain, a recording's 10 s wait for the game to exit).
 
-The integration tests' `SessionHarness` runs its requests' and tools' ceilings on a wall-time clock, so another build loading the machine cannot move a short ceiling into its backstop and change the text a test asserts, and sets the registry's `LaunchClock` to the load-adjusted clock, so a launch's handshake and an attach's wait for its game wait out the load as they do in the server (`LaunchClock` is `Clock` unless set); the unit tests cover the load with `FakeTimeProvider` and `FakeLoadSource`.
+The integration tests' `SessionHarness` runs its requests' and tools' ceilings on a wall-time clock, so another build loading the machine cannot move a short ceiling into its backstop and change the text a test asserts, and sets the registry's `LaunchClock` to the load-adjusted clock, so a launch's handshake and an attach's wait for its game wait out the load as they do in the server (`LaunchClock` is `Clock` unless set).
+
+It also sets the registry's `HandshakeTimeout` (the server's 15 s unless set) to 2 minutes, for a launch and a warm headless host's hello alike: the gate runs the test host, the console wrapper and the game's early boot at BelowNormal, where a Normal-priority load on every core stops them, so the 15 s handshake's 75 s wall-time backstop (5 times its budget) would fail a launch the machine merely starved. The 2 minutes make the backstop 600 s, under the 900 s xUnit hang guard (`TestTimeouts.OwnLaunchMs`).
+
+The unit tests cover the load with `FakeTimeProvider` and `FakeLoadSource`.
 
 ## Session lifecycle
 

@@ -27,6 +27,8 @@ pwsh run.ps1 drive -Calls <file.json>     # drive this tree's own server build a
 prek run --all-files                      # the lint hooks (CSharpier, line length, build, gdformat, gdlint, gdcomplexity, ruff); no test
 ```
 
+A `run.ps1` command writes its `.tmp/<command>.log` itself, so a shell redirect never targets that same file: the gate then cannot replace its earlier log ("cannot remove the earlier …\.tmp\format-check.log … os error 32"). Redirect to another name, or not at all.
+
 The gate's kill line (exit 124) says why: `STALLED` (no output and no CPU for 120 s) has hung, so read the log; `TIMED OUT` kept working past the load-adjusted ceiling, so read the log before touching the ceiling; `BACKSTOP` with a low "machine free" figure means the machine was busy, so re-run it once alone. Never re-run a command to read its output differently: read the log. The gate is developed in its own repo (`X:\dev\gate`); a finding about it goes to the orchestrator.
 
 ## Non-negotiables

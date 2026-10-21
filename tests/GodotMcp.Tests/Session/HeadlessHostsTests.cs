@@ -41,6 +41,7 @@ public sealed class HeadlessHostsTests : IDisposable
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(300);
     private readonly TempDirectory _temp = new();
     private readonly FakeTimeProvider _time = new();
+    private readonly FakeLoadSource _machine;
     private readonly LoadClock _clock;
     private readonly BridgeListener _listener;
     private readonly SessionRegistry _registry;
@@ -53,7 +54,8 @@ public sealed class HeadlessHostsTests : IDisposable
 
     public HeadlessHostsTests()
     {
-        _clock = new LoadClock(_time, new FakeLoadSource(_time, processors: 4));
+        _machine = new FakeLoadSource(_time, processors: 4);
+        _clock = new LoadClock(_time, _machine);
         _listener = new BridgeListener(NullLogger<BridgeListener>.Instance) { Clock = _clock };
         _registry = new SessionRegistry(_listener, _log)
         {
@@ -239,6 +241,38 @@ public sealed class HeadlessHostsTests : IDisposable
         Assert.True(host.Killed, "the host was killed");
         Assert.True(host.Disposed, "and let go of");
         Assert.Null(Hosts.ProcessIdOf(game));
+    }
+
+    // The itest harness's budget: a hang guard in minutes, since the gate starts the games at BelowNormal and a Normal-priority
+    // load on every core stops them before they dial. Other work keeps 92% of the machine busy (the failing run's 8% free) and
+    // holds the host's hello back for 80 s of wall time, past 5 x the default 15 s handshake.
+    [Fact]
+    public async Task AHostStarvedPastTheDefaultBackstopIsWaitedForUnderALongerHandshake()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using SessionRegistry registry = new(_listener, _log)
+        {
+            OverrideFolders = new OverrideFolders(_temp.Combine("override-folders-long.txt"), TextWriter.Null),
+            Dormant = new DormantGames(_ => new ProcessStart(Exists: true, StartTime: null), TextWriter.Null),
+            HostLauncher = Launch,
+            ServerProcessId = ServerPid,
+            HandshakeTimeout = TimeSpan.FromMinutes(2),
+        };
+        string game = Game("game");
+        _machine.SetLoad(busyShare: 0.92, ownCores: 0);
+        _dialGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        Task<HeadlessHost?> acquire = registry.HeadlessHosts.AcquireAsync(game, What(game), cancellation);
+        // The launch runs synchronously up to the wait for its hello, which the gate holds back.
+        FakeHost host = Assert.Single(_launched);
+        Advance(TimeSpan.FromSeconds(80));
+        // Real time for a backstop the fake clock set off to end the wait, if it was going to.
+        await Task.Delay(Settle, cancellation);
+        _dialGate.SetResult();
+        HeadlessHost? started = await acquire.WaitAsync(Wait, cancellation);
+
+        Assert.NotNull(started);
+        Assert.Equal(host.Id, registry.HeadlessHosts.ProcessIdOf(game));
     }
 
     [Fact]

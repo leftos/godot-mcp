@@ -584,7 +584,7 @@ internal sealed class HeadlessHost
         CancellationToken cancellationToken
     )
     {
-        using LoadDeadline deadline = registry.LaunchClock.Start(GodotSession.HandshakeTimeout, cancellationToken);
+        using LoadDeadline deadline = registry.LaunchClock.Start(registry.HandshakeTimeout, cancellationToken);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         Task<BridgeConnection> accept = registry.Listener.AcceptBridgeAsync(new HandshakeExpectation(launch.Token, launch.ProjectDir), timeout.Token);
         Task exited = process.WaitForExitAsync(timeout.Token);
@@ -610,7 +610,7 @@ internal sealed class HeadlessHost
         string backstop = deadline.Reason == DeadlineReason.Backstop ? deadline.BackstopClause() : string.Empty;
         string failed = exitedEarly
             ? $"{what} ended (Godot exited {code}) before its warm headless host connected"
-            : $"{what} did not start: its warm headless host did not connect within {GodotSession.HandshakeTimeout.TotalSeconds:0} s{backstop}, "
+            : $"{what} did not start: its warm headless host did not connect within {LoadDeadline.Seconds(deadline.Budget)} s{backstop}, "
                 + "so it was stopped with its whole process tree";
         throw new SessionException($"{failed}. The last lines of its log, {log}:\n{tail}");
     }

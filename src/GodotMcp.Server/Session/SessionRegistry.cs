@@ -79,6 +79,13 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         init => _launchClock = value;
     }
 
+    /// <summary>
+    /// The load-adjusted time a launch's handshake and a warm headless host's hello are waited for: the server's own
+    /// <see cref="GodotSession.HandshakeTimeout"/> unless set, as the itest harness sets it to a hang guard in minutes, since
+    /// the gate starts the games at BelowNormal and a load on every core stops them before they dial.
+    /// </summary>
+    internal TimeSpan HandshakeTimeout { get; init; } = GodotSession.HandshakeTimeout;
+
     internal ILogger Logger => logger;
 
     /// <summary>

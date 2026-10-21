@@ -746,7 +746,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     private async Task<BridgeConnection> WaitForHandshakeAsync(GodotRun run, HandshakeExpectation expected, CancellationToken cancellationToken)
     {
-        using LoadDeadline deadline = registry.LaunchClock.Start(HandshakeTimeout, cancellationToken);
+        using LoadDeadline deadline = registry.LaunchClock.Start(registry.HandshakeTimeout, cancellationToken);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         Task<BridgeConnection> accept = registry.Listener.AcceptBridgeAsync(expected, timeout.Token);
         Task exited = run.Process.WaitForExitAsync(timeout.Token);
@@ -909,7 +909,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         string backstop = deadline.Reason == DeadlineReason.Backstop ? deadline.BackstopClause() : string.Empty;
         string what = exitedEarly
             ? $"Godot exited with code {run.ExitCode} before the bridge connected"
-            : $"the bridge did not connect within {HandshakeTimeout.TotalSeconds:0} s{backstop}, so Godot was stopped";
+            : $"the bridge did not connect within {LoadDeadline.Seconds(deadline.Budget)} s{backstop}, so Godot was stopped";
         string stderr = string.Join('\n', run.Stderr.Tail(FailureStderrLines));
         return new SessionException(
             $"Launching {run.ProjectDir} failed: {what}. Check that the project runs on its own "

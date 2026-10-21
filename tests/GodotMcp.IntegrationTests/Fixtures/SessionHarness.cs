@@ -37,6 +37,10 @@ internal sealed class SessionHarness : IAsyncDisposable
         Sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance)
         {
             LaunchClock = LoadClock.Shared,
+            // A hang guard in minutes, not a bound a launch must beat: the gate starts the test host, the wrapper and Godot's
+            // early boot at BelowNormal, and a Normal-priority load on every core stops them before they dial. Its backstop is
+            // 600 s of wall time, under the xUnit hang guard a test that launches a game carries (TestTimeouts.OwnLaunchMs).
+            HandshakeTimeout = TimeSpan.FromMinutes(2),
             LaunchesUnfocused = launchesUnfocused,
         };
         if (launchesUnfocused)
