@@ -27,6 +27,12 @@ public sealed partial class RealtimeRecordingTests : IDisposable
 
     private static readonly TimeSpan Slack = TimeSpan.FromSeconds(2);
 
+    /// <summary>
+    /// The frames the clip holds before the stop; 20, not 2, since the clip's length is rounded to 3 dp and a very short
+    /// clip's frames/seconds then drifts past its average fps's 0.2 tolerance.
+    /// </summary>
+    private const int FramesBeforeStop = 20;
+
     private readonly FakeRealtime _fake = new();
 
     private static CancellationToken Token => TestContext.Current.CancellationToken;
@@ -124,7 +130,9 @@ public sealed partial class RealtimeRecordingTests : IDisposable
     public async Task TheClipCountsFramesFromBytes()
     {
         RealtimeRecording recording = await _fake.StartAsync();
-        await Task.Delay(300, Token);
+        // The clip's frames are the bytes ffmpeg took, so whole frames is the count the clip reports: waited for on the
+        // bytes themselves, however busy the machine is; the recording ending first fails the wait at once.
+        await RegistryHarness.WaitUntilAsync(() => _fake.FfmpegBytes >= FramesBeforeStop * FakeRealtime.FrameBytes, recording.Finished);
 
         RealtimeStopped stopped = await recording.StopAsync(Token);
 
