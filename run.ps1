@@ -117,7 +117,8 @@ log, and the job's timeout-minutes bounds it in place of the ceiling and watchdo
            .tmp/gdtest-import.log, ceiling 120 s) when a test script is newer than the last import, so the project's
            global class list holds every script's class_name, then runs godot --headless --path tests/bridge --script
            res://run_tests.gd. Each failure prints as "FAIL <file>::<test>: <message>", then
-           "gdtest: <passed> passed, <failed> failed"; ceiling 60 s
+           "gdtest: <passed> passed, <failed> failed"; on a failure it then prints every FAIL line of the log after the
+           tail, under a "gdtest: FAIL lines from .tmp/gdtest.log:" header, or says the log has none; ceiling 60 s
   pytest   the Python tools' tests (tests/tools) under pytest, which uv supplies together with gdtoolkit; ceiling 120 s
   drive    drives this tree's own server with the tool calls of -Calls <file.json>, a JSON array of
            {"tool": "<name>", "arguments": {...}} objects (arguments optional). It first builds the server project
@@ -580,6 +581,24 @@ function Invoke-GdtestImport {
     }
     Set-Content -LiteralPath $gdtestStamp -Value '' -NoNewline
     return 0
+}
+
+# Prints every FAIL line of gdtest's log after a failed run, under a header. The tail above is the log's last 15 lines,
+# which end with the watch test's expected "ERROR: shout" backtrace on every run, and stdout and stderr are not kept in
+# time order, so a failure's FAIL lines sit further up. A log with no FAIL line (a crash, a gate kill) says so, and so
+# does a missing log, never throwing.
+function Show-GdtestFailures {
+    param([Parameter(Mandatory)] [string]$Log)
+    $failures = @()
+    if (Test-Path -LiteralPath $Log -PathType Leaf) {
+        $failures = @(Get-Content -LiteralPath $Log | Where-Object { $_ -match '^FAIL ' })
+    }
+    if ($failures.Count -eq 0) {
+        Write-Host 'gdtest: no FAIL line in .tmp/gdtest.log; read the log for the cause'
+        return
+    }
+    Write-Host 'gdtest: FAIL lines from .tmp/gdtest.log:'
+    $failures | ForEach-Object { Write-Host $_ }
 }
 
 # xUnit v3 under Microsoft Testing Platform takes several classes after one --filter-class and runs a test in any of
@@ -1525,7 +1544,11 @@ try {
                 exit $import
             }
             $arguments = @('--headless', '--path', $gdtestDir, '--script', 'res://run_tests.gd')
-            exit (Invoke-Gated -Name 'gdtest' -TimeoutSeconds 60 -Program (Get-GodotPath) -Arguments $arguments -Slot light)
+            $status = Invoke-Gated -Name 'gdtest' -TimeoutSeconds 60 -Program (Get-GodotPath) -Arguments $arguments -Slot light
+            if ($status -ne 0) {
+                Show-GdtestFailures -Log (Join-Path $logDir 'gdtest.log')
+            }
+            exit $status
         }
         'pytest' {
             $arguments = @('run', '--quiet', '--with', 'pytest', '--with', 'gdtoolkit>=4,<5', 'pytest', '-q', 'tests/tools')
