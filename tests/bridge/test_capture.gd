@@ -248,8 +248,15 @@ func test_injected_pad_events_are_recorded_as_sent() -> void:
 	pads.play_raw_button({"button": "A", "pressed": true})
 	pads.play_raw_motion({"axis": "LEFT_X", "value": 0.5})
 	pads.play_raw_button({"button": "A", "pressed": false})
+	# The stall a busy machine can put between two sends, which the capture records as a wait.
+	capture._last_ms -= _capture_script.MIN_WAIT_MS
 	pads.play_raw_motion({"axis": "LEFT_X", "value": 0.0})
-	var shape: Array = _events(capture).map(
+	# These events are stamped on the real clock, so a stall puts a wait among them; timing is
+	# not this test's claim (see test_gaps_of_twenty_ms_or_more_become_waits).
+	var sent_events: Array = _events(capture).filter(
+		func(item: Dictionary) -> bool: return item["type"] != "wait"
+	)
+	var shape: Array = sent_events.map(
 		func(item: Dictionary) -> String:
 			if item["type"] == "joypad_button":
 				return "button %s %s" % [item["button"], item["pressed"]]
@@ -258,7 +265,7 @@ func test_injected_pad_events_are_recorded_as_sent() -> void:
 	var expected: Array = [
 		"button A true", "joypad_motion LEFT_X 0.5", "button A false", "joypad_motion LEFT_X 0.0"
 	]
-	assert_eq(shape, expected, "the pad's injected events, as sent")
+	assert_eq(shape, expected, "the pad's injected events, as sent, a stall between them or not")
 	assert_true(not bridge._dispatching, "dispatching is over once the events are sent")
 	capture.free()
 	pads.free()
