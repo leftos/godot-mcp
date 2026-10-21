@@ -9,6 +9,11 @@
 - [?] GMCP-231 wait_for: no full-size crop of the frame a wait met
 - [?] GMCP-230 run_scratches: a partial run cannot keep a scene's setup step
 
+## Do first
+
+- [ ] GMCP-255 stop_project returns killed: true while a starved killed game still holds the project folder · release vNext — Urgent · Singles
+- [ ] GMCP-260 RuntimeReadTests.AResetRelaunchesAStoppedGame hits the launch backstop on a starved machine · release vNext — Urgent · Singles
+
 ## Ideas from the survey and the projects
 
 - [ ] GMCP-68 Adopt driving lessons from the sibling projects
@@ -32,13 +37,8 @@
 
 ## Singles
 
-- [ ] GMCP-32 Find which tests leak fixture folders in %TEMP%\godot-mcp-tests
-- [ ] GMCP-34 Serve the cs_* tools and run_csharp from the cached helper copy
-- [ ] GMCP-36 Test wait_for on an ambiguous %Name and cut its per-frame tree walk
 - [ ] GMCP-37 Add Integration Footguns, Test locations and Deep docs to ARCHITECTURE.md
-- [ ] GMCP-38 Carry get_ui_elements rects out of SubViewports
 - [ ] GMCP-1 stop_project refuses to clear a dead server's leftover override.cfg
-- [ ] GMCP-48 Free the wait's on_draw state: a Dictionary-Callable cycle in the time module
 - [ ] GMCP-145 Fail a launch fast on Godot's no-GL ANGLE error, and keep windowed heavy itest groups local
 - [ ] GMCP-174 move_node re-bases relative NodePaths and rewrites an untouched node's anchors
 - [ ] GMCP-175 cs_set refuses an enum by name: the value arrives JSON-quoted twice
@@ -105,6 +105,14 @@
 - [ ] GMCP-247 CaptureHelperTests: skip, not fail, when a topmost window has the foreground
 - [ ] GMCP-248 Keep the tooltip span probe's 250 ms wall-clock budget from changing answers on a starved game
 - [ ] GMCP-249 Let run.ps1 run one test method, for a load-burn of one case
+- [ ] GMCP-250 Serialise C# helper copy misses so a concurrent prune cannot delete another call's in-flight copy
+- [ ] GMCP-251 Compare the C# helper's build stamp without building a string per call
+- [ ] GMCP-252 Point the startup sweep and the headless clean-up at RemoveIfStale
+- [ ] GMCP-253 Release this server's own override entry when a release fails or an attach is forgotten
+- [ ] GMCP-254 Decide what an override write does when the folder list stays busy past 2 s
+- [ ] GMCP-257 Run every teardown step in RegistryHarness and HangProbeTests when an earlier one throws
+- [ ] GMCP-258 Decide whether wait_for stable watches a Control's carried root-viewport rect
+- [ ] GMCP-259 Give the itest harness its own override-folders list
 
 ## Docs
 
