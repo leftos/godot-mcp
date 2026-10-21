@@ -4,9 +4,7 @@
 
 ## Do first
 
-- [ ] GMCP-255 stop_project returns killed: true while a starved killed game still holds the project folder · release vNext — Urgent · Singles
-- [ ] GMCP-261 Find why the watch feed gdtest failed twice on CI and make it hold · release vNext — Urgent · Singles
-- [ ] GMCP-260 RuntimeReadTests.AResetRelaunchesAStoppedGame hits the launch backstop on a starved machine · release vNext — Urgent · Singles
+- [ ] GMCP-268 ScratchUntilRunTests: a scratch game sat idle 3 s in teardown after its quit · release vNext — Urgent · Singles
 
 ## Ideas from the survey and the projects
 
@@ -85,7 +83,6 @@
 - [ ] GMCP-204 run_scratches until: clearer refusals for raw JSON errors, output/uiChanged kinds, and a paused tree
 - [ ] GMCP-208 Let the install stop running servers gracefully so background scratch runs end interrupted
 - [ ] GMCP-209 run_scratches details: a compact per-step form and a capped result
-- [ ] GMCP-214 run_scratches: a timeScale option that launches with --time-scale and scales pace and kill bounds
 - [ ] GMCP-215 frame_control reads its saved image on a cancelled token, losing a step that ran
 - [ ] GMCP-216 A cancel mid-write may leave a partial frame on the bridge connection
 - [ ] GMCP-217 run.ps1: spell gated test commands so they route to the builder from a worktree
@@ -111,6 +108,12 @@
 - [ ] GMCP-257 Run every teardown step in RegistryHarness and HangProbeTests when an earlier one throws
 - [ ] GMCP-258 Decide whether wait_for stable watches a Control's carried root-viewport rect
 - [ ] GMCP-259 Give the itest harness its own override-folders list
+- [ ] GMCP-262 Upload .tmp logs as a CI artifact when the job fails
+- [ ] GMCP-263 Give a cleanly quit game's console wrapper a load-adjusted exit wait
+- [ ] GMCP-264 stop_project: wait for or name a quit game's children still holding the folder
+- [ ] GMCP-265 Lead a backstop's failure text with the wall time that passed
+- [ ] GMCP-266 Log a launch's handshake times
+- [ ] GMCP-267 stop_project: warn when a run's game had no handle to wait on
 
 ## Docs
 
