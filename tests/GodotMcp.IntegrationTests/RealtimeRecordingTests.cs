@@ -32,14 +32,10 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
     /// <summary>How long after a stop the helper may still capture: it reads its deadline file every 200 ms.</summary>
     private const double DeadlinePollSeconds = 0.2;
 
-    /// <summary>
-    /// How long before start answers a clip may begin: the clip holds every frame from the first, and start answers only once
-    /// ffmpeg has opened its encoder, which measured 0.1 to 0.3 s after the first frame (libx264 about 0.15 s, h264_nvenc about
-    /// 0.25 s, at -stats_period 0.1); doubled for a loaded machine.
-    /// </summary>
-    private const double EncoderOpenLagSeconds = 0.6;
-
     private const double LengthTolerance = 0.2;
+
+    /// <summary>The capture helper's line when the window's closing ended its capture.</summary>
+    private const string WindowClosedLine = "the window closed, so the capture ended";
 
     /// <summary>
     /// The mean difference, in levels of 255 per channel, a clip's frame may have from a screenshot of the same still: the
@@ -53,6 +49,18 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
     private const string QuitSoonScript =
         "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
         + "\tscene_tree.create_timer(0.3).timeout.connect(scene_tree.quit)\n\treturn true\n";
+
+    // A node whose exit blocks the game's main thread for 30 s: the game acknowledges a quit and holds its window open past
+    // any stop's grace, until the stop kills it.
+    private const string HoldsQuitScript =
+        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
+        + "\tvar script := GDScript.new()\n"
+        + "\tscript.source_code = \"extends Node\\n\\n\\nfunc _exit_tree() -> void:\\n\\tOS.delay_msec(30000)\\n\"\n"
+        + "\tscript.reload()\n"
+        + "\tvar node := Node.new()\n"
+        + "\tnode.set_script(script)\n"
+        + "\tscene_tree.root.add_child(node)\n"
+        + "\treturn true\n";
 
     private static readonly string[] GodotMcpVariables =
     [
@@ -103,18 +111,29 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
         bool found = await Poll.UntilAsync(
             () =>
             {
+                CaptureWindows.ThrowIfEnded(_harness, game);
                 game.Refresh();
                 main = game.MainWindowHandle;
                 return main != nint.Zero;
             },
-            TimeSpan.FromSeconds(10),
+            CaptureWindows.HangGuard,
             Token
         );
 
-        Assert.True(found, $"the game (pid {game.Id}) showed no main window in 10 s");
+        Assert.True(
+            found,
+            FormattableString.Invariant($"the game (pid {game.Id}) showed no main window in {CaptureWindows.HangGuard.TotalSeconds} s")
+        );
         Assert.Equal((long)main, session.WindowHandle);
     }
 
+    /// <summary>
+    /// The clip spans the marks: it holds every frame from the first, which reaches ffmpeg before start answers, to the
+    /// capture's end, which comes after stop is called, so it lasts at least the time between start's answer and stop's call.
+    /// Every frame it holds was stamped after start was asked for and before stop answered, so it lasts at most that.
+    /// Both bounds are read from the marks' own calls and answers, so a busy machine moves them with the clip: the encoder's
+    /// opening, which start waits for, can take seconds then, and the clip starts that long before start answers.
+    /// </summary>
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ADragOfKnownDurationMakesAClipOfTheWallClockBetweenTheMarks()
     {
@@ -126,23 +145,16 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
         await _tools.DragAsync(new(null, 100, 100), new(null, 300, 200), 1500, "left", cancellationToken: Token);
         TimeSpan stopping = wall.Elapsed;
         JsonNode stopped = await MarkAsync("stop");
+        TimeSpan answered = wall.Elapsed;
 
         double between = (stopping - started).TotalSeconds;
+        double around = answered.TotalSeconds;
         (double seconds, _, _) = await ProbeClipAsync(ClipPath(stopped));
-        // The clip may run longer than the marks' gap by the encoder-open lag before start answered and the deadline poll after
-        // stop; it may not run shorter than the gap beyond the probe's rounding.
-        double longest = between + DeadlinePollSeconds + EncoderOpenLagSeconds;
         Assert.True(
-            seconds >= between - LengthTolerance && seconds <= longest,
-            FormattableString.Invariant($"the clip lasts {seconds:F3} s; the marks were {between:F3} s apart, ")
-                + FormattableString.Invariant($"so it must last {between - LengthTolerance:F3} to {longest:F3} s: ")
-                + FormattableString.Invariant(
-                    $"at least the gap less {LengthTolerance} s, at most the gap plus {DeadlinePollSeconds} s (the helper reads its deadline "
-                )
-                + FormattableString.Invariant(
-                    $"every 0.2 s after stop) plus {EncoderOpenLagSeconds} s (the clip begins at the first frame, up to about 0.3 s before "
-                )
-                + "start answers once ffmpeg has opened its encoder)"
+            seconds >= between - LengthTolerance && seconds <= around + LengthTolerance,
+            FormattableString.Invariant($"the clip lasts {seconds:F3} s; start answered and stop was called {between:F3} s apart, ")
+                + FormattableString.Invariant($"and start was asked for and stop answered {around:F3} s apart, so it must last ")
+                + FormattableString.Invariant($"{between - LengthTolerance:F3} to {around + LengthTolerance:F3} s")
         );
     }
 
@@ -229,10 +241,18 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
         Assert.Equal("realtime", stopped["mode"]!.GetValue<string>());
     }
 
+    /// <summary>
+    /// A stop_project ends the capture before it quits the game, so the clip ends at the stop rather than at the window's
+    /// teardown. The order is read from the capture helper's log, which says when the window's closing ended the capture.
+    /// The game holds its quit in a node's exit for longer than the stop's grace, so its window stays until the stop kills it
+    /// seconds after the quit was asked for, and the helper, which reads its deadline every 0.2 s, has seen the stop long
+    /// before; a stop that quit the game first would leave the capture running until the kill closed the window.
+    /// </summary>
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStopProjectEndsTheRecordingAtTheStopAndReturnsItsClip()
     {
         await LaunchAsync(quiet: false, TestContext.Current.CancellationToken);
+        await _tools.RunScriptAsync(HoldsQuitScript, 10_000, cancellationToken: Token);
         var wall = Stopwatch.StartNew();
         string path = (await MarkAsync("start"))["path"]!.GetValue<string>();
         TimeSpan started = wall.Elapsed;
@@ -259,11 +279,17 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
         Assert.False(File.Exists(Path.ChangeExtension(path, ".mkv")), "the .mkv was not deleted after the remux");
         double between = (stopping - started).TotalSeconds;
         (double seconds, _, _) = await ProbeClipAsync(path);
-        double longest = between + DeadlinePollSeconds + EncoderOpenLagSeconds;
         Assert.True(
-            seconds >= between - LengthTolerance && seconds <= longest,
+            seconds >= between - LengthTolerance,
             FormattableString.Invariant($"the clip lasts {seconds:F3} s; start answered and stop_project was called {between:F3} s apart, ")
-                + FormattableString.Invariant($"so it must last {between - LengthTolerance:F3} to {longest:F3} s")
+                + FormattableString.Invariant($"so it must last at least {between - LengthTolerance:F3} s")
+        );
+        string said = ReadCaptureLog(path);
+        // The helper's frame count is its last line, so a log that has it holds every line the capture's end wrote.
+        Assert.Contains(" frames in ", said, StringComparison.Ordinal);
+        Assert.False(
+            said.Contains(WindowClosedLine, StringComparison.Ordinal),
+            $"the capture ended when the game's window closed, not at the stop before the quit; the helper said: {said}"
         );
     }
 
@@ -332,14 +358,25 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
         Assert.True(seconds >= 0.5 - LengthTolerance, FormattableString.Invariant($"the clip lasts {seconds:F3} s"));
     }
 
+    /// <summary>
+    /// A maxSeconds cap ends the capture by itself, and the clip waits for the next stop. The cap counts from the first frame,
+    /// so the clip lasts at least the cap. How far past it the capture ran is read from the helper's frame count, which a
+    /// busy machine can only lower: the helper writes at most one frame per tick of its rate, from after start was asked
+    /// for until its deadline, the first frame's time plus the cap, which start moves there once the encoder has opened and
+    /// the helper reads within 0.2 s. A cap the capture ignored, or counted from start's own allowance, runs to many more.
+    /// </summary>
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AMaxSecondsEndFinishesTheClipForTheNextStopWithNoWarning()
     {
         const int MaxSeconds = 2;
         await LaunchAsync(quiet: false, TestContext.Current.CancellationToken);
+        var wall = Stopwatch.StartNew();
         string answer = await _tools.RecordMarkAsync("start", new RecordMarkOptions(MaxSeconds: MaxSeconds), cancellationToken: Token);
+        double startTook = wall.Elapsed.TotalSeconds;
         _recording = true;
-        string path = JsonNode.Parse(answer)!["path"]!.GetValue<string>();
+        JsonNode started = JsonNode.Parse(answer)!;
+        string path = started["path"]!.GetValue<string>();
+        int fps = started["fps"]!.GetValue<int>();
 
         bool finished = await Poll.UntilAsync(() => ListedRecording()?.Clips is not null, CaptureWindows.HangGuard, Token);
         StopResult stopped = await _harness.Sessions.StopAsync(Session, Token);
@@ -352,11 +389,20 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
         // A busy machine may warn of a low frame rate; the cap itself is no warning.
         Assert.True(recording.Warning is null || recording.Warning.StartsWith("the capture got", StringComparison.Ordinal), recording.Warning);
         (double seconds, _, _) = await ProbeClipAsync(path);
-        double longest = MaxSeconds + DeadlinePollSeconds + LengthTolerance;
         Assert.True(
-            seconds >= MaxSeconds - LengthTolerance && seconds <= longest,
-            FormattableString.Invariant($"the clip lasts {seconds:F3} s; with maxSeconds {MaxSeconds} it must last ")
-                + FormattableString.Invariant($"{MaxSeconds - LengthTolerance:F3} to {longest:F3} s")
+            seconds >= MaxSeconds - LengthTolerance,
+            FormattableString.Invariant($"the clip lasts {seconds:F3} s; with maxSeconds {MaxSeconds} it must last at least ")
+                + FormattableString.Invariant($"{MaxSeconds - LengthTolerance:F3} s")
+        );
+        string said = ReadCaptureLog(path);
+        Match written = FramesLine().Matches(said).LastOrDefault() ?? throw new InvalidOperationException($"the helper said no frame count: {said}");
+        int frames = int.Parse(written.Groups[1].Value, CultureInfo.InvariantCulture);
+        // The first frame goes out before the helper's timer starts, and a tick the helper missed fires once when it catches up.
+        double most = fps * (MaxSeconds + startTook + DeadlinePollSeconds) + 2;
+        Assert.True(
+            frames <= most,
+            FormattableString.Invariant($"the helper wrote {frames} frames at {fps} fps; start took {startTook:F3} s and maxSeconds is ")
+                + FormattableString.Invariant($"{MaxSeconds}, so a capture the cap ended writes at most {most:F0}; the helper said: {said}")
         );
     }
 
@@ -367,7 +413,18 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
             new AttachRequest(_probe.Directory, null, TimeSpan.FromSeconds(60), null, false, null),
             TestContext.Current.CancellationToken
         );
-        Assert.True(await Poll.UntilAsync(() => File.Exists(AttachFile.PathIn(_probe.Directory)), TimeSpan.FromSeconds(10), Token));
+        string attachFile = AttachFile.PathIn(_probe.Directory);
+        bool written = await Poll.UntilAsync(() => attach.IsCompleted || File.Exists(attachFile), CaptureWindows.HangGuard, Token);
+        if (attach.IsFaulted)
+        {
+            // The attach failed before a game could answer it; awaiting it fails the test with the attach's own error.
+            await attach;
+        }
+
+        Assert.True(
+            written && File.Exists(attachFile),
+            FormattableString.Invariant($"attach_project wrote no attach file {attachFile} in {CaptureWindows.HangGuard.TotalSeconds} s")
+        );
         using Process game = StartGameByHand();
         try
         {
@@ -552,6 +609,18 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
         return game;
     }
 
+    /// <summary>
+    /// The capture helper's log for the clip at <paramref name="clipPath"/>, which the recording keeps beside it as
+    /// <c>&lt;stem&gt;-capture.log</c>; read once the recording has finished, opened to share with any writer still closing it.
+    /// </summary>
+    private static string ReadCaptureLog(string clipPath)
+    {
+        string log = Path.ChangeExtension(clipPath, null) + "-capture.log";
+        using FileStream stream = new(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using StreamReader reader = new(stream);
+        return reader.ReadToEnd();
+    }
+
     private static double MeanDifference(byte[] first, byte[] second)
     {
         long total = 0;
@@ -656,6 +725,9 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
 
     [GeneratedRegex(@"max_volume: (-?\d+(?:\.\d+)?) dB")]
     private static partial Regex MaxVolumeLine();
+
+    [GeneratedRegex(@"(\d+) frames in ")]
+    private static partial Regex FramesLine();
 
     private static async Task<(byte[] Output, string Errors, int ExitCode)> RunAsync(string program, IReadOnlyList<string> arguments)
     {

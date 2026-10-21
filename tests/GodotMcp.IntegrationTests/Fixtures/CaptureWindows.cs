@@ -207,8 +207,9 @@ internal static class CaptureWindows
     /// <summary>
     /// Fails unless the game's main window was restored at the InputProbe's size: a window left minimized can stop drawing,
     /// which would fail a capture test for the wrong reason. The restore lands at Godot's first message pump, before the
-    /// launch answers; the wait is a hang guard (<see cref="HangGuard"/>), and it ends at once when the game exits or the
-    /// harness's restore loop fails.
+    /// launch answers, and Windows applies it in steps on Godot's thread: the window stops being minimized before it gets its
+    /// size back, and a minimized window's client is 0x0. So the wait is for both, the state the test needs, and is a hang
+    /// guard (<see cref="HangGuard"/>) that ends at once when the game exits or the harness's restore loop fails.
     /// </summary>
     public static async Task AssertRestoredAsync(SessionHarness harness, int gameProcessId, nint window, CancellationToken cancellationToken)
     {
@@ -217,20 +218,21 @@ internal static class CaptureWindows
             () =>
             {
                 ThrowIfEnded(harness, game);
-                return !IsMinimized(window);
+                return !IsMinimized(window) && ClientSize(window) == (ProbeClientWidth, ProbeClientHeight);
             },
             HangGuard,
             cancellationToken
         );
         (int width, int height) = ClientSize(window);
-        string state = FormattableString.Invariant(
-            $"the game's (pid {gameProcessId}) main window {window} is minimized={IsMinimized(window)} with a {width}x{height} client"
-        );
         Assert.True(
-            restored && (width, height) == (ProbeClientWidth, ProbeClientHeight),
+            restored,
             FormattableString.Invariant(
-                $"{state}, not restored at the project's {ProbeClientWidth}x{ProbeClientHeight}: the harness did not restore it"
+                $"the game's (pid {gameProcessId}) main window {window} is minimized={IsMinimized(window)} with a {width}x{height} client "
             )
+                + FormattableString.Invariant(
+                    $"{HangGuard.TotalSeconds} s on, not restored at the project's {ProbeClientWidth}x{ProbeClientHeight}: "
+                )
+                + "the harness did not restore it"
         );
     }
 
