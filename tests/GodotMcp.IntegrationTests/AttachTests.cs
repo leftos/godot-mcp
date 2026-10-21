@@ -56,7 +56,10 @@ public sealed class AttachTests : IAsyncDisposable
         bool overrideWhileAttached = File.Exists(_probe.OverrideFile);
         JsonNode? pong = await _harness.Sessions.Resolve(null).SendAsync("ping", null, PingTimeout, cancellation);
         int gameProcessId = (await RunAsync("return OS.get_process_id()")).GetValue<int>();
-        _games.Add(Process.GetProcessById(gameProcessId));
+        var joined = Process.GetProcessById(gameProcessId);
+        // Reading Handle opens the process handle and keeps it on the object, so the pid cannot be reused before the kill.
+        _ = joined.Handle;
+        _games.Add(joined);
         int? listedGameProcessId = Assert.Single(_harness.Sessions.List(includeStopped: true)).GameProcessId;
         McpException output = Assert.Throws<McpException>(() => _project.GetDebugOutput(10));
         string attachedName = _harness.Sessions.Resolve(null).Name;
@@ -97,6 +100,8 @@ public sealed class AttachTests : IAsyncDisposable
         StartGame();
         await attach;
         var game = Process.GetProcessById((await RunAsync("return OS.get_process_id()")).GetValue<int>());
+        // Reading Handle opens the process handle and keeps it on the object, so the pid cannot be reused before the kill.
+        _ = game.Handle;
         _games.Add(game);
         JsonNode stopped = JsonNode.Parse(await _project.StopProjectAsync(cancellationToken: cancellation))!;
 
@@ -127,7 +132,10 @@ public sealed class AttachTests : IAsyncDisposable
             "return {\"pid\": OS.get_process_id(), \"x\": DisplayServer.window_get_position().x, "
                 + "\"focused\": DisplayServer.window_is_focused(), \"maxFps\": Engine.max_fps}"
         );
-        _games.Add(Process.GetProcessById(state["pid"]!.GetValue<int>()));
+        var parked = Process.GetProcessById(state["pid"]!.GetValue<int>());
+        // Reading Handle opens the process handle and keeps it on the object, so the pid cannot be reused before the kill.
+        _ = parked.Handle;
+        _games.Add(parked);
 
         Assert.True(attached["quiet"]!.GetValue<bool>(), attached.ToJsonString());
         Assert.True(state["x"]!.GetValue<int>() <= -9000, state.ToJsonString());
@@ -159,7 +167,10 @@ public sealed class AttachTests : IAsyncDisposable
         StartGame();
         await attach;
         JsonNode result = await RunForResultAsync("push_error(\"attached probe error\")\n\treturn OS.get_process_id()");
-        _games.Add(Process.GetProcessById(result["value"]!.GetValue<int>()));
+        var erring = Process.GetProcessById(result["value"]!.GetValue<int>());
+        // Reading Handle opens the process handle and keeps it on the object, so the pid cannot be reused before the kill.
+        _ = erring.Handle;
+        _games.Add(erring);
 
         JsonNode error = Assert.Single(result["errors"]!.AsArray())!;
         Assert.Equal("attached probe error", error["message"]!.GetValue<string>());
@@ -176,6 +187,8 @@ public sealed class AttachTests : IAsyncDisposable
         StartGame();
         await attach;
         var game = Process.GetProcessById((await RunAsync("return OS.get_process_id()")).GetValue<int>());
+        // Reading Handle opens the process handle and keeps it on the object, so the pid cannot be reused before the kill.
+        _ = game.Handle;
         _games.Add(game);
         string before = await SnapshotIdAsync(cancellation);
         string after = await SnapshotIdAsync(cancellation);

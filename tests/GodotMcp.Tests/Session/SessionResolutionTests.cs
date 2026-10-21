@@ -247,6 +247,7 @@ public sealed class SessionResolutionTests : IAsyncDisposable
 
         SessionInfo listed = Assert.Single(_harness.Sessions.List(includeStopped: true));
 
-        Assert.Equal(new SessionInfo("server", alpha, "attach", true, null, pid), listed);
+        Assert.NotNull(listed.GameStartTime);
+        Assert.Equal(new SessionInfo("server", alpha, "attach", true, null, pid) { GameStartTime = listed.GameStartTime }, listed);
     }
 }

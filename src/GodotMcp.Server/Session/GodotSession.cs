@@ -89,6 +89,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     public int? GameProcessId { get; private set; }
 
     /// <summary>
+    /// The game's creation time, read from the handle the server keeps on it from the hello; null without a kept handle or when
+    /// it could not be read. It tells the game apart from a later process that took its pid.
+    /// </summary>
+    public DateTime? GameStartTime { get; private set; }
+
+    /// <summary>
     /// The game's main window handle, as its bridge's hello reported it; null before the handshake, from an older bridge, and
     /// for a headless game.
     /// </summary>
@@ -670,10 +676,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         connection.OnCaptured(ReceiveCaptured);
         run.Connection = connection;
         GameProcessId = connection.GameProcessId;
+        GameStartTime = null;
         WindowHandle = connection.WindowHandle;
         if (GameProcessId is int gameProcessId)
         {
             run.KeepGameHandle(gameProcessId, _logger);
+            GameStartTime = StartTimeOf(run.Game);
         }
 
         await WelcomeAsync(connection);
@@ -687,6 +695,20 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             Warning = GodotCommandLine.DescribeWindowMismatch(GodotCommandLine.RequestedWindowSize(request.EngineArgs), connection.Window),
         };
         return (started, prepared.Previous, prepared.PreviousRecording);
+    }
+
+    /// <summary>The creation time of a game the server holds a handle on; null without one, or when it cannot be read.</summary>
+    private static DateTime? StartTimeOf(Process? game)
+    {
+        try
+        {
+            return game?.StartTime;
+        }
+        catch (Exception e) when (e is InvalidOperationException or Win32Exception)
+        {
+            // The handle is still kept; only a pid check against the game's creation time is lost.
+            return null;
+        }
     }
 
     /// <summary>

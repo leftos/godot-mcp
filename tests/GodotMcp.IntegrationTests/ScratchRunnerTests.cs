@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -495,6 +496,31 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal("green", scene["verdict"]!.GetValue<string>());
         Assert.Equal("agent-a.scratch-ScratchGreen", scene["session"]!.GetValue<string>());
         Assert.Contains(_harness.Sessions.List(includeStopped: true), session => session.Name == "agent-a.scratch-ScratchGreen");
+    }
+
+    /// A scratch's session is stopped once its scene quits and its game has exited, yet it still names the game's pid: the
+    /// harness must not open whatever process Windows has since handed that pid.
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task TheHarnessDoesNotOpenAProcessThatTookAStoppedScratchGamesPid()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Single(await RunAsync(_probe.Directory, ["ScratchQuit"], options: null, cancellation));
+        SessionInfo stopped = _harness.Sessions.List(includeStopped: true).Single(s => s.Name == "InputProbe.scratch-ScratchQuit");
+        Assert.False(stopped.Live);
+        Assert.NotNull(stopped.GameProcessId);
+        using Process bystander = Process.Start(
+            new ProcessStartInfo("ping.exe", "-n 600 127.0.0.1") { CreateNoWindow = true, UseShellExecute = false }
+        )!;
+        try
+        {
+            using Process? opened = SessionHarness.OpenGame(stopped with { GameProcessId = bystander.Id });
+            Assert.Null(opened);
+        }
+        finally
+        {
+            bystander.Kill();
+            await bystander.WaitForExitAsync(cancellation);
+        }
     }
 
     // ScratchUntil's signal until, a 0.3 s timer, ends its step inside the 2 s pace of game time the run gives every scene: a

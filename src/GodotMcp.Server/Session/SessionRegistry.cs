@@ -1569,6 +1569,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         new(session.Name, session.ProjectDir, KindName(session.Kind), session.IsLive, session.ProcessId, session.GameProcessId)
         {
             Recording = session.RecordingState,
+            GameStartTime = session.GameStartTime,
         };
 
     private static string KindName(SessionKind kind) =>
@@ -1628,6 +1629,10 @@ internal sealed record SessionInfo(string Name, string ProjectPath, string Kind,
 {
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public RecordingResult? Recording { get; init; }
+
+    /// <summary>The game's creation time (<see cref="GodotSession.GameStartTime"/>); not part of list_sessions.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTime? GameStartTime { get; init; }
 }
 
 /// <summary>

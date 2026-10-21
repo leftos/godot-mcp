@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
@@ -255,7 +256,14 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
 
         Assert.NotEqual(first.ProcessId, second.ProcessId);
         Assert.NotNull(listed.GameProcessId);
-        Assert.Equal(new SessionInfo("a", ProjectPaths.Normalise(_probe.Directory), "run", true, second.ProcessId, listed.GameProcessId), listed);
+        Assert.NotNull(listed.GameStartTime);
+        Assert.Equal(
+            new SessionInfo("a", ProjectPaths.Normalise(_probe.Directory), "run", true, second.ProcessId, listed.GameProcessId)
+            {
+                GameStartTime = listed.GameStartTime,
+            },
+            listed
+        );
         Assert.True(answered);
     }
 
@@ -573,6 +581,13 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         // The old game never finishes quitting, so the restart stays in flight through its stop's grace, past both refusal checks.
         await tools.RunScriptAsync(IgnoresQuitScript, 10_000, "held", cancellation);
         Task<object> restart = _harness.Sessions.RestartAsync("held", prepare: false, cancellation);
+        // Opened as the restart returns, before the registry stops its game, so the handle holds the pid while it is the game's.
+        Task<Process?> restarted = restart.ContinueWith(
+            completed => OpenRunning(((RestartResult)completed.Result).ProcessId),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously | TaskContinuationOptions.OnlyOnRanToCompletion,
+            TaskScheduler.Default
+        );
         await Task.Delay(RestartPastItsChecks, cancellation);
         try
         {
@@ -590,24 +605,48 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         }
         finally
         {
-            if (restart.IsCompletedSuccessfully)
-            {
-                EndIfRunning(((RestartResult)await restart).ProcessId);
-            }
+            await EndIfRunningAsync(restarted);
         }
     }
 
-    /// <summary>Kills a process the test left behind, with its tree, when it still runs.</summary>
-    private static void EndIfRunning(int processId)
+    /// <summary>A process by id with its handle held, so its pid cannot be reused before the test ends it; null if unopenable.</summary>
+    private static Process? OpenRunning(int processId)
     {
+        Process? process = null;
         try
         {
-            using var process = Process.GetProcessById(processId);
-            process.Kill(entireProcessTree: true);
+            process = Process.GetProcessById(processId);
+            _ = process.Handle;
+            return process;
         }
-        catch (Exception e) when (e is ArgumentException or InvalidOperationException)
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException or Win32Exception)
         {
-            // It is gone already.
+            // It is gone already, or cannot be opened.
+            process?.Dispose();
+            return null;
+        }
+    }
+
+    /// <summary>Kills the process the restart started, through the handle held since it returned, with its tree when it still runs.</summary>
+    private static async Task EndIfRunningAsync(Task<Process?> restarted)
+    {
+        Process? process;
+        try
+        {
+            process = await restarted;
+        }
+        catch (TaskCanceledException)
+        {
+            // The restart failed, so it started no process to end.
+            return;
+        }
+
+        using (process)
+        {
+            if (process is { HasExited: false })
+            {
+                process.Kill(entireProcessTree: true);
+            }
         }
     }
 

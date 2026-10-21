@@ -197,6 +197,7 @@ internal sealed partial class GodotSession
     /// </summary>
     private void KeepAttachedGameHandle()
     {
+        GameStartTime = null;
         if (GameProcessId is not int pid)
         {
             return;
@@ -209,6 +210,7 @@ internal sealed partial class GodotSession
             // Reading Handle opens the process handle and keeps it on the object, which keeps the exit code readable.
             _ = game.Handle;
             _attachedGame = game;
+            GameStartTime = StartTimeOf(game);
         }
         catch (Exception e) when (e is ArgumentException or InvalidOperationException or Win32Exception)
         {

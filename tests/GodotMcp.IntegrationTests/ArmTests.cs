@@ -285,7 +285,10 @@ public sealed class ArmTests : IAsyncDisposable
             cancellationToken
         );
         Assert.True(appeared, $"no dormant file appeared under {DormantGames.FolderIn(_probe.Directory)} within {DormantWait.TotalSeconds:0} s");
-        _games.Add(Process.GetProcessById(pid));
+        var dormant = Process.GetProcessById(pid);
+        // Reading Handle opens the process handle and keeps it on the object, so the pid cannot be reused before the kill.
+        _ = dormant.Handle;
+        _games.Add(dormant);
         return pid;
     }
 

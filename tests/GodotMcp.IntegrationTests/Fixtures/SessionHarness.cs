@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Wire;
@@ -202,31 +203,53 @@ internal sealed class SessionHarness : IAsyncDisposable
         return window != nint.Zero;
     }
 
-    /// <summary>Opens a handle on every session's game, live or long stopped; a session without the bridge's pid is skipped.</summary>
+    /// <summary>Opens a handle on every session's game, live or long stopped, that <see cref="OpenGame"/> still finds running.</summary>
     private List<Process> OpenGames()
     {
         List<Process> games = [];
         foreach (SessionInfo session in Sessions.List(includeStopped: true))
         {
-            if (session.GameProcessId is not int processId)
+            if (OpenGame(session) is Process game)
             {
-                continue;
-            }
-
-            try
-            {
-                var game = Process.GetProcessById(processId);
-                // Reading Handle opens the process handle and keeps it on the object, so the handle is held before the stop frees the pid.
-                _ = game.Handle;
                 games.Add(game);
-            }
-            catch (ArgumentException)
-            {
-                // The game exited before its session was disposed.
             }
         }
 
         return games;
+    }
+
+    /// <summary>
+    /// Opens a handle on the session's game only when the process holding its pid is the game: its creation time, read on the
+    /// held handle, must equal the one the server read from its own handle at the hello. A stopped session keeps its game's pid
+    /// long after the game exits, and Windows may have handed that pid to an unrelated process. Null when the session has no
+    /// pid or no recorded creation time, the pid names no process, the open or read fails, or the creation times differ.
+    /// </summary>
+    internal static Process? OpenGame(SessionInfo session)
+    {
+        if (session.GameProcessId is not int processId || session.GameStartTime is not DateTime started)
+        {
+            return null;
+        }
+
+        Process? game = null;
+        try
+        {
+            game = Process.GetProcessById(processId);
+            // Reading Handle opens the process handle and keeps it on the object, so the handle is held before the stop frees the
+            // pid, and the creation time below is read from the process that handle names.
+            _ = game.Handle;
+            if (game.StartTime == started)
+            {
+                return game;
+            }
+        }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException or Win32Exception)
+        {
+            // The game exited before its session was disposed, or its process cannot be opened or read.
+        }
+
+        game?.Dispose();
+        return null;
     }
 
     /// <summary>
