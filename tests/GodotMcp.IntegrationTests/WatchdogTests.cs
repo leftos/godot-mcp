@@ -15,7 +15,10 @@ namespace GodotMcp.IntegrationTests;
 public sealed partial class WatchdogTests : IAsyncDisposable
 {
     private const int TestTimeoutMs = 180_000;
-    private const string BlockMainThread = "OS.delay_msec(20000)\n\treturn true";
+
+    // Blocks the main thread for twice the test's own timeout, so however late a busy machine lets a stop decide, the game is
+    // still stuck: only a kill ends it.
+    private static readonly string BlockMainThread = $"OS.delay_msec({2 * TestTimeoutMs})\n\treturn true";
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
     private readonly RuntimeTools _tools;
@@ -78,14 +81,12 @@ public sealed partial class WatchdogTests : IAsyncDisposable
         // The timed-out call's own probe proves the main thread is inside the delay before stop is asked.
         McpException timedOut = await Assert.ThrowsAsync<McpException>(() => RunScriptAsync(BlockMainThread, 1000));
         Assert.Contains("its main thread is stuck", timedOut.Message, StringComparison.Ordinal);
-        var elapsed = Stopwatch.StartNew();
         StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
-        elapsed.Stop();
 
         Assert.True(stopped.Killed);
-        // The slow path a stuck game's stop rules out is the graceful one: the 2 s ping, then the session's 2 s shutdown reply
-        // wait and 3 s exit grace before the same kill.
-        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(7), $"stop took {elapsed.Elapsed.TotalSeconds:0.00} s, past the 7 s of a graceful stop");
+        // The slow path a stuck game's stop rules out is the graceful one: a quit asked, then its grace, before the same kill. Its
+        // reason says it was killed when the ping went unanswered, without a quit asked.
+        Assert.Equal(GameKillReason.Silent, stopped.KillReason);
         Assert.False(_harness.Sessions.GetDebugOutput(null, 1, null).Running);
     }
 

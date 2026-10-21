@@ -20,7 +20,6 @@ internal sealed class FakeBridge : IDisposable
     private const int GracefulStopMs = 5_000;
     private readonly TcpClient _client;
     private readonly bool _answerPings;
-    private readonly TimeSpan _handshakePongDelay;
     private readonly FrameDecoder _frames = new();
     private readonly Channel<JsonObject> _requests = Channel.CreateUnbounded<JsonObject>();
     private readonly CancellationTokenSource _stopping = new();
@@ -37,17 +36,9 @@ internal sealed class FakeBridge : IDisposable
     /// is false, answering the handshake's clock pings at once; the pump reads the server's requests from the moment it is made.
     /// </summary>
     public FakeBridge(TcpClient client, bool answerPings = true)
-        : this(client, answerPings, TimeSpan.Zero) { }
-
-    /// <summary>
-    /// Stands in for a game's bridge on <paramref name="client"/>, as the public constructor does, with each handshake pong held
-    /// back by <paramref name="handshakePongDelay"/>.
-    /// </summary>
-    private FakeBridge(TcpClient client, bool answerPings, TimeSpan handshakePongDelay)
     {
         _client = client;
         _answerPings = answerPings;
-        _handshakePongDelay = handshakePongDelay;
         _pump = Task.Run(PumpAsync);
     }
 
@@ -97,7 +88,7 @@ internal sealed class FakeBridge : IDisposable
         }
 
         await client.GetStream().WriteAsync(FrameCodec.EncodeJson(frame), cancellationToken);
-        return new FakeBridge(client, answerPings, hello.HandshakePongDelay);
+        return new FakeBridge(client, answerPings);
     }
 
     /// <summary>
@@ -247,12 +238,6 @@ internal sealed class FakeBridge : IDisposable
             return;
         }
 
-        if (_pingsAnswered < HandshakePingCount)
-        {
-            // Holding a handshake pong back widens the bounds it gives, as a game slow to answer does; later pongs are prompt.
-            await Task.Delay(_handshakePongDelay, _stopping.Token);
-        }
-
         _pingsAnswered++;
         await ReplyAsync(frame, new JsonObject { ["pong"] = true, ["ticksUsec"] = (long)(DriveClock.NowMs * 1000) }, _stopping.Token);
     }
@@ -314,15 +299,11 @@ internal sealed class FakeBridge : IDisposable
 }
 
 /// <summary>
-/// The pid and window handle a fake game's hello carries, each when it is not null, and how long the fake holds back each of
-/// its handshake pongs.
+/// The pid and window handle a fake game's hello carries, each when it is not null.
 /// </summary>
 internal sealed record FakeHello
 {
     public int? ProcessId { get; init; }
 
     public long? WindowHandle { get; init; }
-
-    /// <summary>How long each of the handshake's five pongs is held back; zero answers them at once.</summary>
-    public TimeSpan HandshakePongDelay { get; init; }
 }

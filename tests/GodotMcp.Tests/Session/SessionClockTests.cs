@@ -13,8 +13,20 @@ namespace GodotMcp.Tests.Session;
 /// </summary>
 public sealed class SessionClockTests
 {
-    // Each handshake pong held back this long bounds the offset to about 10 ms, a half-width near 5 ms: wider than 2 ms.
-    private static readonly TimeSpan SlowHandshake = TimeSpan.FromMilliseconds(10);
+    /// <summary>The half-width of the bounds <see cref="StageWideBounds"/> leaves: wider than 2 ms.</summary>
+    internal const double WideErrorMs = 5;
+
+    /// <summary>
+    /// Gives a handshaken session's clock wide bounds without wall time: a pong interval 1000 s off any the handshake's round
+    /// trips can give, so the bounds start over from it, <see cref="WideErrorMs"/> either side of its midpoint. The handshake's
+    /// own pings are awaited inside the attach, so none can narrow it later.
+    /// </summary>
+    internal static void StageWideBounds(SessionClock clock)
+    {
+        const double sentMs = 1_000_000;
+        clock.Add(0, sentMs, sentMs + (2 * WideErrorMs));
+        Assert.Equal(WideErrorMs, clock.ErrorMs);
+    }
 
     [Fact]
     public void NoBoundsBeforeTheFirstPong()
@@ -136,7 +148,6 @@ public sealed class SessionClockTests
     [Fact]
     public async Task AHandshakenSessionsClockHasFiniteBounds()
     {
-        CancellationToken cancellation = TestContext.Current.CancellationToken;
         await using RegistryHarness harness = new();
         string alpha = harness.Project("alpha");
         using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
@@ -208,10 +219,9 @@ public sealed class SessionClockTests
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await using RegistryHarness harness = new();
         string alpha = harness.Project("alpha");
-        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello { HandshakePongDelay = SlowHandshake });
+        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
         RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
-        double handshakeErrorMs = harness.Sessions.Resolve("server").Clock.ErrorMs;
-        Assert.True(handshakeErrorMs > 2, $"the slow handshake left a half-width of {handshakeErrorMs} ms");
+        StageWideBounds(harness.Sessions.Resolve("server").Clock);
         long ticksUsec = (long)(DriveClock.NowMs * 1000);
 
         Task<string> wait = tools.WaitForAsync(new WaitCondition(Node: "Main", Exists: true), 1_000, "server", cancellation);
@@ -237,9 +247,9 @@ public sealed class SessionClockTests
     {
         await using RegistryHarness harness = new();
         string alpha = harness.Project("alpha");
-        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello { HandshakePongDelay = SlowHandshake });
+        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
         RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
-        double handshakeErrorMs = harness.Sessions.Resolve("server").Clock.ErrorMs;
+        StageWideBounds(harness.Sessions.Resolve("server").Clock);
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
 
         Task<string> wait = tools.WaitForAsync(new WaitCondition(Node: "Main", Exists: true), 1_000, "server", cancel.Token);
@@ -251,7 +261,7 @@ public sealed class SessionClockTests
 
         Assert.True(result["met"]!.GetValue<bool>(), result.ToJsonString());
         Assert.True(result["metAt"] is JsonValue, result.ToJsonString());
-        Assert.Equal(handshakeErrorMs, result["clockErrorMs"]!.GetValue<double>());
+        Assert.Equal(WideErrorMs, result["clockErrorMs"]!.GetValue<double>());
     }
 
     // The tool form reads the screenshot the bridge saved after the ping; a cancel during the ping must not fail that read.
@@ -260,8 +270,9 @@ public sealed class SessionClockTests
     {
         await using RegistryHarness harness = new();
         string alpha = harness.Project("alpha");
-        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello { HandshakePongDelay = SlowHandshake });
+        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
         RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
+        StageWideBounds(harness.Sessions.Resolve("server").Clock);
         string shot = Path.Combine(alpha, "met.png");
         byte[] picture = [137, 80, 78, 71];
         await File.WriteAllBytesAsync(shot, picture, TestContext.Current.CancellationToken);
@@ -317,8 +328,9 @@ public sealed class SessionClockTests
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await using RegistryHarness harness = new();
         string alpha = harness.Project("alpha");
-        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello { HandshakePongDelay = SlowHandshake });
+        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
         RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
+        StageWideBounds(harness.Sessions.Resolve("server").Clock);
         JsonObject timedOut = new()
         {
             ["met"] = false,
@@ -339,16 +351,16 @@ public sealed class SessionClockTests
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await using RegistryHarness harness = new();
         string alpha = harness.Project("alpha");
-        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello { HandshakePongDelay = SlowHandshake });
+        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
         RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
-        double handshakeErrorMs = harness.Sessions.Resolve("server").Clock.ErrorMs;
+        StageWideBounds(harness.Sessions.Resolve("server").Clock);
 
         JsonObject result = await ReplyToWaitAsync(tools, game, MetReply((long)(DriveClock.NowMs * 1000)), cancellation);
 
         JsonObject ping = await game.ReadRequestAsync(cancellation);
         Assert.Equal("ping", ping["command"]?.GetValue<string>());
         Assert.True(result["metAt"] is JsonValue, result.ToJsonString());
-        Assert.Equal(handshakeErrorMs, result["clockErrorMs"]!.GetValue<double>());
+        Assert.Equal(WideErrorMs, result["clockErrorMs"]!.GetValue<double>());
     }
 
     [Fact]
@@ -357,16 +369,16 @@ public sealed class SessionClockTests
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await using RegistryHarness harness = new();
         string alpha = harness.Project("alpha");
-        FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello { HandshakePongDelay = SlowHandshake });
+        FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
         GodotSession session = harness.Sessions.Resolve("server");
-        double handshakeErrorMs = session.Clock.ErrorMs;
+        StageWideBounds(session.Clock);
 
         game.Dispose();
         await RegistryHarness.WaitUntilAsync(() => !session.HasGame);
         SessionClock refreshed = await session.RefreshClockAsync(cancellation);
 
         Assert.Same(session.Clock, refreshed);
-        Assert.Equal(handshakeErrorMs, refreshed.ErrorMs);
+        Assert.Equal(WideErrorMs, refreshed.ErrorMs);
     }
 
     private static JsonObject MetReply(long ticksUsec) =>

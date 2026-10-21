@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
@@ -44,8 +45,12 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
         + "\treturn scene_tree.root.get_node(\"Main/SmallButton\").press_count\n";
 
-    // How long a step that waits on the process's own output may take; the ticker prints at once and then once a second.
-    private static readonly TimeSpan Wait = TimeSpan.FromSeconds(30);
+    // A hang guard on a wait for the process's own output, its child's pid or a process's end: the ticker prints at once and then
+    // once a second, but it and its child each start through pwsh, which a busy machine can hold for tens of seconds.
+    private static readonly TimeSpan Wait = TimeSpan.FromMinutes(2);
+
+    // The HResult of an IOException for ERROR_SHARING_VIOLATION.
+    private const int SharingViolation = unchecked((int)0x80070020);
 
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
@@ -88,7 +93,7 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         string session = started["session"]!.GetValue<string>();
         int processId = started["processId"]!.GetValue<int>();
         string log = started["log"]!.GetValue<string>();
-        int childPid = await WaitForChildPidAsync();
+        int childPid = await WaitForChildPidAsync(session, null);
 
         Assert.Equal(Session, session);
         Assert.True(processId > 0);
@@ -141,7 +146,7 @@ public sealed class ProcessSessionTests : IAsyncDisposable
 
         JsonObject started = JsonNode.Parse(await _process.RunProcessAsync(_probe.Directory, "once", cancellationToken: cancellation))!.AsObject();
         string session = started["session"]!.GetValue<string>();
-        int childPid = await WaitForChildPidAsync();
+        int childPid = await WaitForChildPidAsync(session, null);
 
         await WaitUntilNotLiveAsync(session);
 
@@ -208,7 +213,8 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         Assert.EndsWith("\nstderr:\n(none)", refused.Message, StringComparison.Ordinal);
         Assert.Empty(JsonNode.Parse(_project.ListSessions(includeStopped: true))!["sessions"]!.AsArray());
 
-        int childPid = await WaitForChildPidAsync();
+        // The refused session is no longer listed, so there is no session whose stop could end the wait early.
+        int childPid = await WaitForChildPidAsync(null, null);
         await WaitForGoneAsync(childPid);
     }
 
@@ -243,7 +249,7 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         JsonObject started = JsonNode.Parse(await _process.RunProcessAsync(_probe.Directory, "ticker", cancellationToken: cancellation))!.AsObject();
         string session = started["session"]!.GetValue<string>();
         int firstProcessId = started["processId"]!.GetValue<int>();
-        int firstChildPid = await WaitForChildPidAsync();
+        int firstChildPid = await WaitForChildPidAsync(session, null);
         await WaitForTickerLineAsync(session);
         long after = JsonNode.Parse(_project.GetDebugOutput(limit: 100, session: session))!["stdoutTotalLines"]!.GetValue<long>();
 
@@ -259,7 +265,7 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         );
         Assert.Equal(started["log"]!.GetValue<string>(), restarted["log"]!.GetValue<string>());
 
-        int secondChildPid = await WaitForNewChildPidAsync(firstChildPid);
+        int secondChildPid = await WaitForChildPidAsync(session, firstChildPid);
         await WaitForGoneAsync(firstChildPid);
         using (var secondChild = Process.GetProcessById(secondChildPid))
         {
@@ -426,34 +432,72 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         }
     }
 
-    private async Task<int> WaitForChildPidAsync()
+    /// <summary>
+    /// Waits for the ticker's child to write its pid, one other than <paramref name="oldPid"/> when that is given. Fails at once
+    /// when <paramref name="session"/> is given and stops first, else at the <see cref="Wait"/> guard, naming the last pid read.
+    /// </summary>
+    private async Task<int> WaitForChildPidAsync(string? session, int? oldPid)
     {
         string pidFile = Path.Combine(_probe.Directory, "ticker-child.pid");
-        using CancellationTokenSource timeout = new(Wait);
+        var guard = Stopwatch.StartNew();
+        int? last = null;
         while (true)
         {
-            if (File.Exists(pidFile) && int.TryParse((await File.ReadAllTextAsync(pidFile, timeout.Token)).Trim(), out int pid))
+            // The session's state is read before the file, so a pid written before the session stopped is still found.
+            bool stopped = HasStopped(session);
+            last = ReadPid(pidFile) ?? last;
+            if (last is int pid && pid != oldPid)
             {
                 return pid;
             }
 
-            await Task.Delay(TimeSpan.FromMilliseconds(50), timeout.Token);
+            if (stopped || guard.Elapsed >= Wait)
+            {
+                Assert.Fail(ChildPidMissing(pidFile, oldPid, last, stopped ? $"the session '{session}' stopped first" : null));
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50), TestContext.Current.CancellationToken);
         }
     }
 
-    private async Task<int> WaitForNewChildPidAsync(int oldPid)
+    /// <summary>Why <see cref="WaitForChildPidAsync"/> failed: the pid it waited for, the last one it read, and why it gave up.</summary>
+    private static string ChildPidMissing(string pidFile, int? oldPid, int? last, string? stopped)
     {
-        string pidFile = Path.Combine(_probe.Directory, "ticker-child.pid");
-        using CancellationTokenSource timeout = new(Wait);
-        while (true)
-        {
-            if (File.Exists(pidFile) && int.TryParse((await File.ReadAllTextAsync(pidFile, timeout.Token)).Trim(), out int pid) && pid != oldPid)
-            {
-                return pid;
-            }
+        string wanted = oldPid is null ? "a pid" : $"a pid other than {oldPid}";
+        string why = stopped ?? $"none came within {Wait.TotalMinutes:0} min";
+        string read = last?.ToString(CultureInfo.InvariantCulture) ?? "none";
+        return $"The ticker's child did not write {wanted} to {pidFile}: {why}; the last pid read was {read}.";
+    }
 
-            await Task.Delay(TimeSpan.FromMilliseconds(50), timeout.Token);
+    /// <summary>
+    /// The pid in the ticker child's pid file; null while the file is missing or not a pid yet, or a sharing violation says
+    /// the child is still writing or renaming it.
+    /// </summary>
+    private static int? ReadPid(string pidFile)
+    {
+        try
+        {
+            using FileStream stream = new(pidFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using StreamReader reader = new(stream);
+            return int.TryParse(reader.ReadToEnd().Trim(), out int pid) ? pid : null;
         }
+        catch (IOException e) when (e is FileNotFoundException || e.HResult == SharingViolation)
+        {
+            // Not written yet, or held by its writer for a moment: the next poll reads it again.
+            return null;
+        }
+    }
+
+    /// <summary>Whether a session is given and is no longer listed live.</summary>
+    private bool HasStopped(string? session)
+    {
+        if (session is null)
+        {
+            return false;
+        }
+
+        JsonArray sessions = JsonNode.Parse(_project.ListSessions(includeStopped: true))!["sessions"]!.AsArray();
+        return !sessions.Any(entry => entry!["name"]!.GetValue<string>() == session && entry!["live"]!.GetValue<bool>());
     }
 
     private static async Task WaitForGoneAsync(int pid)

@@ -58,12 +58,9 @@ public sealed class WatchStampWireTests
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         await using RegistryHarness harness = new();
         string alpha = harness.Project("alpha");
-        // Each handshake pong held back 10 ms leaves a half-width near 5 ms: wider than 2 ms.
-        FakeHello hello = new() { HandshakePongDelay = TimeSpan.FromMilliseconds(10) };
-        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", hello);
+        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello());
         RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
-        double handshakeErrorMs = harness.Sessions.Resolve("server").Clock.ErrorMs;
-        Assert.True(handshakeErrorMs > 2, $"the slow handshake left a half-width of {handshakeErrorMs} ms");
+        SessionClockTests.StageWideBounds(harness.Sessions.Resolve("server").Clock);
         WatchTracks tracks = new(
             Properties: [new WatchPropertyTrack("Main", "position:x")],
             Signals: [new WatchSignalTrack(Node: "Main", Signal: "moved")]

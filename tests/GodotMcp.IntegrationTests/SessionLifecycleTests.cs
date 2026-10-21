@@ -24,47 +24,19 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
         + "\treturn OS.create_process(\"ping\", [\"-n\", \"10\", \"127.0.0.1\"])\n";
 
-    // Adds a node whose _exit_tree blocks for 5 s, so the game is still shutting down when the stop's grace ends.
-    private const string SlowToQuitScript =
-        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
-        + "\tvar script := GDScript.new()\n"
-        + "\tscript.source_code = \"extends Node\\n\\n\\nfunc _exit_tree() -> void:\\n\\tOS.delay_msec(5000)\\n\"\n"
-        + "\tscript.reload()\n"
-        + "\tvar node := Node.new()\n"
-        + "\tnode.set_script(script)\n"
-        + "\tscene_tree.root.add_child(node)\n"
-        + "\treturn true\n";
+    // Adds a node whose _exit_tree blocks for twice the test's own timeout: the game acknowledges the quit and is still shutting
+    // down, its bridge's connection still open, however late a busy machine lets the stop decide; only a kill ends it. The node
+    // is the root's last child, so it leaves the tree before the bridge does.
+    private static readonly string NeverFinishesQuittingScript = ExitTreeBlocksScript(2 * TestTimeouts.OwnLaunchMs);
 
-    // The same, but blocking 1.2 s: the game quits, only just inside the stop's 3 s grace.
-    private const string SlowButInTimeScript =
-        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
-        + "\tvar script := GDScript.new()\n"
-        + "\tscript.source_code = \"extends Node\\n\\n\\nfunc _exit_tree() -> void:\\n\\tOS.delay_msec(1200)\\n\"\n"
-        + "\tscript.reload()\n"
-        + "\tvar node := Node.new()\n"
-        + "\tnode.set_script(script)\n"
-        + "\tscene_tree.root.add_child(node)\n"
-        + "\treturn true\n";
-
-    // The same, but blocking 30 s: the game acknowledges the quit and never finishes it within any grace.
-    private const string IgnoresQuitScript =
-        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
-        + "\tvar script := GDScript.new()\n"
-        + "\tscript.source_code = \"extends Node\\n\\n\\nfunc _exit_tree() -> void:\\n\\tOS.delay_msec(30000)\\n\"\n"
-        + "\tscript.reload()\n"
-        + "\tvar node := Node.new()\n"
-        + "\tnode.set_script(script)\n"
-        + "\tscene_tree.root.add_child(node)\n"
-        + "\treturn true\n";
+    // Blocking 1.2 s: the game quits, only just inside the stop's 3 s grace.
+    private static readonly string SlowButInTimeScript = ExitTreeBlocksScript(1200);
 
     // The probe's user argument naming the file its main scene writes as it leaves the tree (tests/fixtures/InputProbe/main.gd).
     private const string ExitMarkerArg = "--exit-marker=";
 
-    // A stop's grace for a game that acknowledged the quit, in the harness's wall time.
-    private static readonly TimeSpan QuitGrace = TimeSpan.FromSeconds(3);
-
-    // The least one game that never finishes quitting costs a stop: the grace, then the second its state is sampled before the kill.
-    private static readonly TimeSpan IgnoredQuitCost = QuitGrace + TimeSpan.FromSeconds(1);
+    // A hang guard on the wait of one game's stop for the other's at the server's exit: games that share one grace meet at once.
+    private static readonly TimeSpan GraceMeetingWait = TimeSpan.FromMinutes(2);
 
     private static readonly TimeSpan ChildExitWait = TimeSpan.FromSeconds(5);
 
@@ -383,7 +355,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
         await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
-        await tools.RunScriptAsync(SlowToQuitScript, 10_000, null, cancellation);
+        await tools.RunScriptAsync(NeverFinishesQuittingScript, 10_000, null, cancellation);
 
         StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
 
@@ -406,7 +378,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
         await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
-        await tools.RunScriptAsync(SlowToQuitScript, 10_000, null, cancellation);
+        await tools.RunScriptAsync(NeverFinishesQuittingScript, 10_000, null, cancellation);
 
         StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
 
@@ -460,7 +432,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
         await _harness.Sessions.LaunchAsync(Request(), null, cancellation);
-        await tools.RunScriptAsync(SlowToQuitScript, 10_000, null, cancellation);
+        await tools.RunScriptAsync(NeverFinishesQuittingScript, 10_000, null, cancellation);
 
         var restarted = (RestartResult)await _harness.Sessions.RestartAsync(null, prepare: false, cancellation);
         await _harness.Sessions.StopAsync(null, cancellation);
@@ -515,17 +487,34 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
             foreach (string name in new[] { "first", "second" })
             {
                 await _harness.Sessions.LaunchAsync(Request(), name, cancellation);
-                await tools.RunScriptAsync(IgnoresQuitScript, 10_000, name, cancellation);
+                await tools.RunScriptAsync(NeverFinishesQuittingScript, 10_000, name, cancellation);
                 games.Add(OpenGame(name));
             }
 
-            var shutdown = Stopwatch.StartNew();
-            _harness.Sessions.Shutdown();
-            TimeSpan elapsed = shutdown.Elapsed;
+            // The stop reads the state of a game still running after its grace, after asking it to quit and before killing it. Each
+            // read waits here for the other game's: games that share one grace both reach it, while stops one after the other
+            // would hold the first game's kill until the second game's grace, which would never start.
+            TaskCompletionSource bothGracesEnded = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            int gracesEnded = 0;
+            _harness.Sessions.DescribeGameProcess = async processId =>
+            {
+                if (Interlocked.Increment(ref gracesEnded) == games.Count)
+                {
+                    bothGracesEnded.SetResult();
+                }
 
+                await bothGracesEnded.Task.WaitAsync(GraceMeetingWait, cancellation);
+                return $"state of {processId}";
+            };
+
+            _harness.Sessions.Shutdown();
+
+            Assert.True(
+                bothGracesEnded.Task.IsCompletedSuccessfully,
+                $"{Volatile.Read(ref gracesEnded)} of {games.Count} games had been asked to quit and run out their grace when the shutdown "
+                    + "returned: the games did not share one grace"
+            );
             Assert.All(games, game => Assert.True(game.HasExited, $"the game (pid {game.Id}) outlived the shutdown"));
-            // At least the grace, since each game was asked to quit first; under two ignored quits one after the other, since they share it.
-            Assert.InRange(elapsed, QuitGrace, 2 * IgnoredQuitCost);
             Assert.False(File.Exists(_probe.OverrideFile));
         }
         finally
@@ -544,7 +533,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
         string marker = Path.Combine(Path.GetDirectoryName(_probe.Directory)!, "exit-marker.txt");
         await _harness.Sessions.LaunchAsync(Request(), "failing", cancellation);
-        await tools.RunScriptAsync(IgnoresQuitScript, 10_000, "failing", cancellation);
+        await tools.RunScriptAsync(NeverFinishesQuittingScript, 10_000, "failing", cancellation);
         await _harness.Sessions.LaunchAsync(Request(userArgs: [ExitMarkerArg + marker]), "quitting", cancellation);
         using Process failing = OpenGame("failing");
         // The stop reads the state of a game still running after its grace; for this one the read fails with an unexpected exception.
@@ -579,7 +568,7 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         RuntimeTools tools = new(_harness.Sessions, TestCSharp.Unused());
         await _harness.Sessions.LaunchAsync(Request(), "held", cancellation);
         // The old game never finishes quitting, so the restart stays in flight through its stop's grace, past both refusal checks.
-        await tools.RunScriptAsync(IgnoresQuitScript, 10_000, "held", cancellation);
+        await tools.RunScriptAsync(NeverFinishesQuittingScript, 10_000, "held", cancellation);
         Task<object> restart = _harness.Sessions.RestartAsync("held", prepare: false, cancellation);
         // Opened as the restart returns, before the registry stops its game, so the handle holds the pid while it is the game's.
         Task<Process?> restarted = restart.ContinueWith(
@@ -608,6 +597,17 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
             await EndIfRunningAsync(restarted);
         }
     }
+
+    /// <summary>A run_script script that adds a node whose _exit_tree blocks the main thread for <paramref name="milliseconds"/>.</summary>
+    private static string ExitTreeBlocksScript(int milliseconds) =>
+        "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
+        + "\tvar script := GDScript.new()\n"
+        + $"\tscript.source_code = \"extends Node\\n\\n\\nfunc _exit_tree() -> void:\\n\\tOS.delay_msec({milliseconds})\\n\"\n"
+        + "\tscript.reload()\n"
+        + "\tvar node := Node.new()\n"
+        + "\tnode.set_script(script)\n"
+        + "\tscene_tree.root.add_child(node)\n"
+        + "\treturn true\n";
 
     /// <summary>A process by id with its handle held, so its pid cannot be reused before the test ends it; null if unopenable.</summary>
     private static Process? OpenRunning(int processId)
