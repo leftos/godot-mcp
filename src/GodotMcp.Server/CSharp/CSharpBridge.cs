@@ -88,10 +88,10 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
         envelope["error"] is JsonValue message && message.TryGetValue(out string? text) ? text : "no message";
 
     /// <summary>
-    /// Sends one helper request through the bridge, copying the helper into the cache first. <paramref name="timeoutMs"/> is how
-    /// long the server waits for the reply; <paramref name="pendingTimeoutMs"/> (<see cref="DefaultPendingTimeoutMs"/> when null)
-    /// is how long the bridge polls a call the helper answers as pending, and the request's release: both in load-adjusted
-    /// time, after which the server cancels the call and the bridge forgets it.
+    /// Sends one helper request through the bridge, to the copy <see cref="PrepareExtension"/> finds.
+    /// <paramref name="timeoutMs"/> is how long the server waits for the reply; <paramref name="pendingTimeoutMs"/>
+    /// (<see cref="DefaultPendingTimeoutMs"/> when null) is how long the bridge polls a call the helper answers as pending, and
+    /// the request's release: both in load-adjusted time, after which the server cancels the call and the bridge forgets it.
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// The project cannot be asked, the helper's copy could not be prepared, the bridge answered nothing, or the helper
@@ -105,13 +105,7 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
         CancellationToken cancellation
     )
     {
-        string? extension = findExtension();
-        if (Refusal(session.ProjectDir, extension) is { } refusal)
-        {
-            throw new InvalidOperationException(refusal);
-        }
-
-        string copied = PrepareCopy(extension!);
+        string copied = PrepareExtension(session.ProjectDir);
         int pending = pendingTimeoutMs ?? DefaultPendingTimeoutMs;
         JsonObject parameters = new()
         {
@@ -161,7 +155,8 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
 
     /// <summary>
     /// The path of the helper's copy the game loads, made when it is not there yet and found again as
-    /// <see cref="PrepareForState"/> finds it; a game tool called in a frame of capture_frames, wait_for or watch names it.
+    /// <see cref="PrepareForState"/> finds it; every caller that needs the copy takes it here: a cs_* call or run_csharp
+    /// sending it to the bridge, and a game tool called in a frame of capture_frames, wait_for or watch naming it.
     /// </summary>
     /// <exception cref="InvalidOperationException">The project cannot be asked, or the helper's copy could not be prepared.</exception>
     public string PrepareExtension(string projectDir)
@@ -176,20 +171,11 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
     }
 
     /// <summary>
-    /// The folder of the helper's managed dlls inside the copy the game loads, making the copy when it is not there yet; a
-    /// snippet compiles against those dlls.
+    /// The folder of the helper's managed dlls inside the copy <see cref="PrepareExtension"/> finds; a snippet compiles
+    /// against those dlls.
     /// </summary>
     /// <exception cref="InvalidOperationException">The project cannot be asked, or the helper's copy could not be prepared.</exception>
-    public string PrepareHelperFolder(string projectDir)
-    {
-        string? extension = findExtension();
-        if (Refusal(projectDir, extension) is { } refusal)
-        {
-            throw new InvalidOperationException(refusal);
-        }
-
-        return Path.Combine(Path.GetDirectoryName(PrepareCopy(extension!))!, HelperFolderName);
-    }
+    public string PrepareHelperFolder(string projectDir) => Path.Combine(Path.GetDirectoryName(PrepareExtension(projectDir))!, HelperFolderName);
 
     /// <summary>
     /// The copy of the helper the game loads. A file-system error here becomes an <see cref="InvalidOperationException"/>, so
@@ -208,8 +194,9 @@ internal sealed class CSharpBridge(HelperCache cache, Func<string?> findExtensio
     }
 
     /// <summary>
-    /// <see cref="PrepareCopy"/>'s path, kept per helper build folder beside the <see cref="Stamp"/> it was made at, so a
-    /// read while the build is unchanged costs a listing of its files instead of a hash of their bytes.
+    /// Every use of the helper finds its copy here: <see cref="PrepareCopy"/>'s path, kept per helper build folder beside the
+    /// <see cref="Stamp"/> it was made at, so a read while the build is unchanged costs a listing of its files instead of a
+    /// hash of their bytes.
     /// </summary>
     /// <exception cref="InvalidOperationException">The helper's build could not be listed, or its copy could not be prepared.</exception>
     private string CachedCopy(string extension)
