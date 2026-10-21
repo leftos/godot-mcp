@@ -149,6 +149,61 @@ public sealed class ScratchValidationTests : IDisposable
         Assert.EndsWith("it must be a number of seconds above 0 and at most 120.", message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(0.0, "0")]
+    [InlineData(-1.0, "-1")]
+    [InlineData(0.009, "0.009")]
+    [InlineData(1e-9, "1E-09")]
+    [InlineData(100.5, "100.5")]
+    public void ATimeScaleOutsideAHundredthToAHundredIsRefused(double scale, string shown) =>
+        Assert.Equal(
+            $"options.timeScale must be at least 0.01 and at most 100; got {shown}.",
+            Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(TimeScale: scale)))
+        );
+
+    [Theory]
+    [InlineData(0.01)]
+    [InlineData(0.5)]
+    [InlineData(100.0)]
+    public void ATimeScaleRidesOnThePlanAndEveryScene(double scale)
+    {
+        ScratchPlan plan = Plan(["res://Other.tscn"], new ScratchOptions(TimeScale: scale));
+
+        Assert.Equal(scale, plan.TimeScale);
+        Assert.Equal(scale, Assert.Single(plan.Scenes).TimeScale);
+    }
+
+    [Fact]
+    public void TheTimeScaleIsOneByDefault()
+    {
+        ScratchPlan plan = Plan(["res://Other.tscn"]);
+
+        Assert.Equal(1.0, plan.TimeScale);
+        Assert.Equal(1.0, Assert.Single(plan.Scenes).TimeScale);
+    }
+
+    [Fact]
+    public void AProfilesTimeScaleOptOutBeatsOptionsTimeScaleAndOptionsPaceKeepsIt()
+    {
+        WriteProfile(
+            """
+            {
+              "scratch": {
+                "folder": "Scratch",
+                "pace": { "Beta": { "seconds": 2, "reason": "its physics needs real frames", "timeScale": 1 } }
+              }
+            }
+            """
+        );
+
+        ScratchPlan scaled = Plan(null, new ScratchOptions(TimeScale: 4));
+        ScratchPlan paced = Plan(null, new ScratchOptions(Pace: 1, TimeScale: 4));
+
+        Assert.Equal(4.0, scaled.TimeScale);
+        Assert.Equal([4.0, 1.0], scaled.Scenes.Select(scene => scene.TimeScale));
+        Assert.Equal([4.0, 1.0], paced.Scenes.Select(scene => scene.TimeScale));
+    }
+
     [Fact]
     public void ThePaceIsTheOptionsElseTheProfilesElseTheDefault()
     {

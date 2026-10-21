@@ -63,6 +63,9 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
     /// </summary>
     public IReadOnlyList<int>? Selected { get; init; }
 
+    /// <summary>The time scale the scene's game ran at when it differs from the call's (its profile pace opted out); else null.</summary>
+    public double? TimeScale { get; init; }
+
     public string? Refusal { get; init; }
 
     public ScratchFailure? Kill { get; init; }
@@ -87,7 +90,8 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
 internal sealed record ScratchRules(IReadOnlyList<ScratchPattern> Patterns, string? Known, string? PaceReason, bool Details);
 
 /// <summary>
-/// run_scratches' result: whether every scene passed, the count of each verdict, what the prep did, and one entry a scene.
+/// run_scratches' result: whether every scene passed, the count of each verdict, what the prep did, one entry a scene, and the
+/// call's time scale when it is not 1.
 /// </summary>
 internal sealed record ScratchRunResult(
     bool Passed,
@@ -98,7 +102,12 @@ internal sealed record ScratchRunResult(
     int Killed,
     PrepResult Prep,
     IReadOnlyList<ScratchSceneResult> Scenes
-);
+)
+{
+    /// <summary>options.timeScale, the time scale the scenes' games ran at; null at 1.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? TimeScale { get; init; }
+}
 
 /// <summary>A scene's steps played and in all.</summary>
 internal sealed record ScratchStepCount(int Played, int Total);
@@ -197,6 +206,13 @@ internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchS
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<int>? Selected { get; init; }
+
+    /// <summary>
+    /// The time scale the scene's game ran at when it differs from the call's, as when its profile pace has "timeScale": 1;
+    /// null otherwise.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? TimeScale { get; init; }
 
     /// <summary>The profile's reason for the scene's pace, when the scene came out red or killed; null otherwise.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -336,6 +352,7 @@ internal static partial class ScratchVerdict
         )
         {
             Selected = seen.Selected,
+            TimeScale = seen.TimeScale,
             PaceReason = shown is Red or Killed ? PaceReasonAt(seen, failedAt, rules.PaceReason) : null,
             FailedAt = failedAt,
             Failures = Failures(seen, rules.Patterns, rules.Details ? MaxCopyChars : MaxFailureIndexChars),
@@ -376,14 +393,18 @@ internal static partial class ScratchVerdict
         failedAt is { Index: >= 0 } failure && failure.Index < seen.StepPaceReasons.Count ? seen.StepPaceReasons[failure.Index] : sceneReason;
 
     /// <summary>
-    /// The run's result: each verdict counted, known-now-green among the red, and the prep; it passed when none is red or killed.
+    /// The run's result: each verdict counted, known-now-green among the red, the prep, and the call's
+    /// <paramref name="timeScale"/> when it is not 1; it passed when none is red or killed.
     /// </summary>
-    public static ScratchRunResult Summarise(IReadOnlyList<ScratchSceneResult> scenes, PrepResult prep)
+    public static ScratchRunResult Summarise(IReadOnlyList<ScratchSceneResult> scenes, PrepResult prep, double timeScale)
     {
         int Count(params string[] verdicts) => scenes.Count(scene => verdicts.Contains(scene.Verdict, StringComparer.Ordinal));
         int red = Count(Red, KnownNowGreen);
         int killed = Count(Killed);
-        return new ScratchRunResult(red == 0 && killed == 0, Count(Green), red, Count(KnownRed), Count(NoSteps), killed, prep, scenes);
+        return new ScratchRunResult(red == 0 && killed == 0, Count(Green), red, Count(KnownRed), Count(NoSteps), killed, prep, scenes)
+        {
+            TimeScale = timeScale == 1 ? null : timeScale,
+        };
     }
 
     /// <summary>

@@ -59,8 +59,9 @@ internal sealed partial class ProjectProfile
     private static readonly string[] ProcessKeys = ["command", "cwd", "env", "ready", "description"];
     private static readonly string[] ReadyKeys = ["output", "timeoutMs"];
     private const string StepsKey = "steps";
+    private const string TimeScaleKey = "timeScale";
     private static readonly string[] StepPaceKeys = ["seconds", "reason"];
-    private static readonly string[] PaceKeys = [.. StepPaceKeys, StepsKey];
+    private static readonly string[] PaceKeys = [.. StepPaceKeys, StepsKey, TimeScaleKey];
     private static readonly string[] PatternKeys = ["pattern", "reason"];
 
     private readonly ProfileValues _defaults;
@@ -624,15 +625,34 @@ internal sealed partial class ProjectProfile
     }
 
     /// <summary>
-    /// A scene's object pace: "seconds" and "reason", in either order, the reason why the scene needs it, and the optional
-    /// "steps", the paces of single steps.
+    /// A scene's object pace: "seconds" and "reason", in either order, the reason why the scene needs it, the optional
+    /// "steps", the paces of single steps, and the optional "timeScale", which can only be 1 and keeps the scene at normal speed.
     /// </summary>
     private static ScratchPace ReadObjectPace(string scene, JsonElement value, Place place)
     {
         Place pace = new(place.Path, $"scratch, pace of \"{scene}\"");
         Dictionary<string, JsonElement> keys = Keys(value, PaceKeys, pace);
-        ScratchPace read = ReadSecondsAndReason(keys, pace);
+        bool normalSpeed = keys.TryGetValue(TimeScaleKey, out JsonElement scale);
+        if (normalSpeed)
+        {
+            CheckNormalSpeed(scale, pace);
+        }
+
+        ScratchPace read = ReadSecondsAndReason(keys, pace) with { NormalSpeed = normalSpeed };
         return keys.TryGetValue(StepsKey, out JsonElement steps) ? read with { Steps = ReadStepPaces(scene, steps, pace) } : read;
+    }
+
+    /// <summary>Refuses a pace's "timeScale" other than 1, the only value it takes.</summary>
+    private static void CheckNormalSpeed(JsonElement value, Place pace)
+    {
+        if (value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out double scale) || scale != 1)
+        {
+            throw Refused(
+                pace,
+                $"\"{TimeScaleKey}\" is {Shown(value)}; a pace entry's \"timeScale\" can only be 1, which keeps the scene at normal speed. "
+                    + "Remove it, or set it to 1"
+            );
+        }
     }
 
     /// <summary>
@@ -677,7 +697,8 @@ internal sealed partial class ProjectProfile
     }
 
     private static string MissingPaceKey(string key) =>
-        $"\"{key}\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or write the pace as a bare number of seconds";
+        $"\"{key}\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or write the pace as a bare number of "
+        + "seconds, which cannot carry a timeScale";
 
     private static string ReadPaceReason(JsonElement value, Place place) =>
         value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } reason
@@ -883,6 +904,9 @@ internal sealed record ScratchPace(double Seconds, string? Reason)
 {
     /// <summary>The paces of single steps, keyed by a step's index or its name; empty when the profile sets none.</summary>
     public IReadOnlyDictionary<string, ScratchPace> Steps { get; init; } = ReadOnlyDictionary<string, ScratchPace>.Empty;
+
+    /// <summary>Whether a scene's pace has "timeScale": 1, which keeps the scene's game at normal speed whatever options.timeScale says.</summary>
+    public bool NormalSpeed { get; init; }
 }
 
 /// <summary>A pattern a step's output line fails it by, and why; the reason is null for a bare string.</summary>

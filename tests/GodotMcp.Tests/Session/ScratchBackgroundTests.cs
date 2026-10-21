@@ -56,6 +56,24 @@ public sealed partial class ScratchBackgroundTests : IDisposable
     }
 
     [Fact]
+    public void ARunningStatusAtATimeScaleNamesItAndTheSceneThatOptedOut()
+    {
+        ScratchPlan normal = Plan(Project("scaled"), "A", "B");
+        ScratchPlan plan = normal with { Scenes = [normal.Scenes[0] with { TimeScale = 4 }, normal.Scenes[1]], TimeScale = 4 };
+        ScratchBackgroundRun run = new ScratchRuns().Register(plan, ServerPid, Io());
+        run.CreateFiles();
+        run.SceneStarted(0);
+
+        JsonObject status = StatusFile(run);
+
+        Assert.Equal("running", status["state"]!.GetValue<string>());
+        Assert.Equal(4, status["timeScale"]!.GetValue<double>());
+        Assert.Null(status["scenes"]![0]!["timeScale"]);
+        Assert.Equal(1, status["scenes"]![1]!["timeScale"]!.GetValue<double>());
+        Assert.Null(StatusFile(Started(new ScratchRuns(), "normal", "A"))["timeScale"]);
+    }
+
+    [Fact]
     public void NothingIsRunningOrPlayingAfterTheCompletionLine()
     {
         ScratchBackgroundRun run = Started(new ScratchRuns(), "after", "A", "B");
@@ -125,11 +143,28 @@ public sealed partial class ScratchBackgroundTests : IDisposable
     [Fact]
     public void RemainingTimeCountsThePlayedStepsToComeTheCurrentOneAndTheLastPaceOnceMore()
     {
-        ScratchWalk walk = new([new ScratchPace(1, null), new ScratchPace(2, null), new ScratchPace(0.5, null), new ScratchPace(3, null)], [0, 1, 3]);
+        ScratchWalk walk = new(
+            [new ScratchPace(1, null), new ScratchPace(2, null), new ScratchPace(0.5, null), new ScratchPace(3, null)],
+            [0, 1, 3],
+            1
+        );
 
         Assert.Equal(9, walk.RemainingSecondsAtMost(0));
         Assert.Equal(8, walk.RemainingSecondsAtMost(1));
         Assert.Equal(6, walk.RemainingSecondsAtMost(3));
+    }
+
+    [Fact]
+    public void RemainingTimeAtATimeScaleIsTheWallTimeThePacesTake()
+    {
+        ScratchWalk walk = new(
+            [new ScratchPace(1, null), new ScratchPace(2, null), new ScratchPace(0.5, null), new ScratchPace(3, null)],
+            [0, 1, 3],
+            4
+        );
+
+        Assert.Equal(2.25, walk.RemainingSecondsAtMost(0));
+        Assert.Equal(1.5, walk.RemainingSecondsAtMost(3));
     }
 
     [Fact]
@@ -538,7 +573,7 @@ public sealed partial class ScratchBackgroundTests : IDisposable
     private static ScratchPlan Plan(string projectDir, params string[] scenes) =>
         new(
             projectDir,
-            [.. scenes.Select(scene => new ScratchScenePlan(scene, $"res://scratch/{scene}.tscn", 1, []))],
+            [.. scenes.Select(scene => new ScratchScenePlan(scene, $"res://scratch/{scene}.tscn", 1, []) { TimeScale = 1 })],
             [],
             Prepare: false,
             Details: false
@@ -549,9 +584,10 @@ public sealed partial class ScratchBackgroundTests : IDisposable
             SessionPrefix = "p",
             KeepGoing = false,
             Steps = null,
+            TimeScale = 1,
         };
 
-    private static ScratchRunResult Passed() => ScratchVerdict.Summarise([], PrepResult.Skipped);
+    private static ScratchRunResult Passed() => ScratchVerdict.Summarise([], PrepResult.Skipped, timeScale: 1);
 
     private static ScratchSceneResult Green(string scene) =>
         new(scene, ScratchVerdict.Green, new ScratchStepCount(1, 1), 1, 1.5, $"p.scratch-{scene}") { Exit = new ScratchExit(0) };

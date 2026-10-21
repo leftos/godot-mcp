@@ -42,5 +42,13 @@ public sealed class ScratchRunOrderTests
         Assert.Equal([2, 3, 1, 0], ScratchRun.StartOrder(scenes, listed: false));
     }
 
-    private static ScratchScenePlan Scene(string name, double pace) => new(name, $"res://scratch/{name}.tscn", pace, []);
+    [Fact]
+    public void AFolderRunOrdersByTheWallTimeAPaceTakesAtItsScenesTimeScale()
+    {
+        ScratchScenePlan[] scenes = [Scene("A", 8) with { TimeScale = 4 }, Scene("B", 3), Scene("C", 1) with { TimeScale = 4 }];
+
+        Assert.Equal([1, 0, 2], ScratchRun.StartOrder(scenes, listed: false));
+    }
+
+    private static ScratchScenePlan Scene(string name, double pace) => new(name, $"res://scratch/{name}.tscn", pace, []) { TimeScale = 1 };
 }

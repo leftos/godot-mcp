@@ -292,6 +292,52 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AScaledRunPlaysEachStepsPaceInGameTimeAndNamesItsTimeScale()
+    {
+        JsonObject result = await RunAsync(
+            _probe.Directory,
+            ["ScratchStepPace"],
+            new ScratchOptions(Details: true, TimeScale: 4),
+            TestContext.Current.CancellationToken
+        );
+
+        JsonObject scene = Single(result);
+        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
+        Assert.Equal(4, result["timeScale"]!.GetValue<double>());
+        Assert.Null(scene["timeScale"]);
+        JsonArray details = scene["details"]!.AsArray();
+        Assert.Equal([250, 1000, 500, 250], details.Select(step => step!["gameMs"]!.GetValue<int>()));
+        Assert.Equal("quick at time_scale 4.0", Status(details[0]!));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ASceneWhosePaceOptsOutOfTheTimeScaleRunsAtNormalSpeedAndSaysSo()
+    {
+        string profile = """
+            {
+              "scratch": {
+                "folder": "scratch",
+                "pace": { "ScratchStepPace": { "seconds": 0.25, "reason": "its steps only leave a note", "timeScale": 1 } }
+              }
+            }
+            """;
+        await File.WriteAllTextAsync(Path.Combine(_probe.Directory, ProjectProfile.FileName), profile, TestContext.Current.CancellationToken);
+
+        JsonObject result = await RunAsync(
+            _probe.Directory,
+            ["ScratchStepPace"],
+            new ScratchOptions(Details: true, TimeScale: 4),
+            TestContext.Current.CancellationToken
+        );
+
+        JsonObject scene = Single(result);
+        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
+        Assert.Equal("quick at time_scale 1.0", Status(scene["details"]![0]!));
+        Assert.Equal(4, result["timeScale"]!.GetValue<double>());
+        Assert.Equal(1, scene["timeScale"]!.GetValue<double>());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task TheWaitAfterTheLastStepIsThatStepsOwnPace()
     {
         JsonObject scene = Single(

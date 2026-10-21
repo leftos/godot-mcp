@@ -144,7 +144,7 @@ public sealed class ScratchVerdictTests
             }
         );
 
-        ScratchRunResult run = ScratchVerdict.Summarise([result], PrepResult.Skipped);
+        ScratchRunResult run = ScratchVerdict.Summarise([result], PrepResult.Skipped, timeScale: 1);
 
         Assert.Equal(ScratchVerdict.Red, result.Verdict);
         Assert.Null(result.Known);
@@ -267,7 +267,7 @@ public sealed class ScratchVerdictTests
     {
         ScratchSceneResult killed = ScratchVerdict.Judge(Seen(Step(0)) with { Kill = new ScratchFailure(0, "step0", "ceiling", "") }, Plain);
 
-        ScratchRunResult run = ScratchVerdict.Summarise([killed], PrepResult.Skipped);
+        ScratchRunResult run = ScratchVerdict.Summarise([killed], PrepResult.Skipped, timeScale: 1);
 
         Assert.Equal((false, 0, 0, 1), (run.Passed, run.Green, run.Red, run.Killed));
     }
@@ -286,7 +286,7 @@ public sealed class ScratchVerdictTests
             }
         );
 
-        ScratchRunResult run = ScratchVerdict.Summarise([result], PrepResult.Skipped);
+        ScratchRunResult run = ScratchVerdict.Summarise([result], PrepResult.Skipped, timeScale: 1);
 
         Assert.Equal(ScratchVerdict.Killed, result.Verdict);
         Assert.Equal((false, 0, 1), (run.Passed, run.Known, run.Killed));
@@ -306,7 +306,7 @@ public sealed class ScratchVerdictTests
             }
         );
 
-        ScratchRunResult run = ScratchVerdict.Summarise([result], PrepResult.Skipped);
+        ScratchRunResult run = ScratchVerdict.Summarise([result], PrepResult.Skipped, timeScale: 1);
 
         Assert.Equal(ScratchVerdict.Red, result.Verdict);
         Assert.Equal(-1, result.FailedAt!.Index);
@@ -390,7 +390,7 @@ public sealed class ScratchVerdictTests
     {
         ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0)), Plain with { Known = "flaky tray" });
 
-        ScratchRunResult run = ScratchVerdict.Summarise([result], PrepResult.Skipped);
+        ScratchRunResult run = ScratchVerdict.Summarise([result], PrepResult.Skipped, timeScale: 1);
 
         Assert.Equal(ScratchVerdict.KnownNowGreen, result.Verdict);
         Assert.Equal("flaky tray", result.Known);
@@ -405,7 +405,7 @@ public sealed class ScratchVerdictTests
         ScratchSceneResult known = ScratchVerdict.Judge(Seen(Step(0) with { CallError = "x" }), Plain with { Known = "why" });
         ScratchSceneResult empty = ScratchVerdict.Judge(Seen(), Plain);
 
-        ScratchRunResult run = ScratchVerdict.Summarise([green, known, empty], PrepResult.Skipped);
+        ScratchRunResult run = ScratchVerdict.Summarise([green, known, empty], PrepResult.Skipped, timeScale: 1);
 
         Assert.Equal((true, 1, 0, 1, 1, 0), (run.Passed, run.Green, run.Red, run.Known, run.NoSteps, run.Killed));
         Assert.Equal([green, known, empty], run.Scenes);
@@ -525,7 +525,7 @@ public sealed class ScratchVerdictTests
         ScratchSceneResult replay = ScratchVerdict.Judge(Seen(Step(0)) with { Seconds = 1.5 }, Plain);
 
         ScratchSceneResult entry = ScratchVerdict.Alone(first, replay);
-        ScratchRunResult run = ScratchVerdict.Summarise([entry], PrepResult.Skipped);
+        ScratchRunResult run = ScratchVerdict.Summarise([entry], PrepResult.Skipped, timeScale: 1);
 
         Assert.Equal(ScratchVerdict.Green, entry.Verdict);
         Assert.True(entry.Alone);
@@ -551,7 +551,7 @@ public sealed class ScratchVerdictTests
         Assert.Equal(3.0, entry.Seconds);
         Assert.False(json["alone"]!.GetValue<bool>());
         Assert.Equal(1, json["aloneFailedAt"]!["index"]!.GetValue<int>());
-        Assert.Equal(1, ScratchVerdict.Summarise([entry], PrepResult.Skipped).Red);
+        Assert.Equal(1, ScratchVerdict.Summarise([entry], PrepResult.Skipped, timeScale: 1).Red);
     }
 
     [Fact]
@@ -602,7 +602,7 @@ public sealed class ScratchVerdictTests
             ImportMs = 1200,
         };
 
-        ScratchRunResult run = ScratchVerdict.Summarise([ScratchVerdict.Judge(Seen(Step(0)), Plain)], prep);
+        ScratchRunResult run = ScratchVerdict.Summarise([ScratchVerdict.Judge(Seen(Step(0)), Plain)], prep, timeScale: 1);
         JsonObject json = JsonNode.Parse(JsonSerializer.Serialize(run, ToolJson.Options))!.AsObject();
         JsonObject shown = json["prep"]!.AsObject();
 
@@ -718,13 +718,81 @@ public sealed class ScratchVerdictTests
 
     [Fact]
     public void TheCeilingBudgetsEachStepThePaceAfterAndTheMarkers() =>
-        Assert.Equal(TimeSpan.FromSeconds((3 * 10.5) + 0.5 + 10), ScratchRun.Ceiling([0.5, 0.5, 0.5]));
+        Assert.Equal(TimeSpan.FromSeconds((3 * 10.5) + 0.5 + 10), ScratchRun.Ceiling([0.5, 0.5, 0.5], 1));
 
     [Fact]
     public void TheCeilingSumsEachStepsOwnPaceAndWaitsTheLastStepsPaceAfter()
     {
-        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 30 + 10), ScratchRun.Ceiling([0.5, 30]));
-        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 10.5 + 0.5 + 10), ScratchRun.Ceiling([0.5, 30, 0.5]));
+        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 30 + 10), ScratchRun.Ceiling([0.5, 30], 1));
+        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 10.5 + 0.5 + 10), ScratchRun.Ceiling([0.5, 30, 0.5], 1));
+    }
+
+    [Fact]
+    public void AtATimeScaleTheCeilingDividesOnlyThePaces() => Assert.Equal(TimeSpan.FromSeconds(48), ScratchRun.Ceiling([8, 32], 4));
+
+    [Fact]
+    public void AScaledWalksKillReasonGivesItsWallFiguresAtItsTimeScaleAndKeepsItsPaceAfterInGameTime()
+    {
+        ScratchWalk walk = new([new(8, null), new(32, null)], [0, 1], 4);
+
+        Assert.Equal(TimeSpan.FromSeconds(48), walk.Ceiling);
+        Assert.Equal(32000, walk.AfterGameMs);
+        Assert.Equal(
+            "the scene passed its ceiling of 48 s of load-adjusted time (each of its 2 steps' pace at time scale 4 + 10 s, the last "
+                + "step's pace once more, and 10 s for the markers), so its game was stopped",
+            walk.CeilingReason(string.Empty)
+        );
+    }
+
+    [Fact]
+    public void AWaitIsReleasedAtItsGameTimeAtTheScenesTimeScalePlusTheStepAllowance()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(50), ScratchRun.Release(20000, 0.5));
+        Assert.Equal(TimeSpan.FromSeconds(15), ScratchRun.Release(20000, 4));
+        Assert.Equal(TimeSpan.FromSeconds(30), ScratchRun.Release(20000, 1));
+    }
+
+    [Fact]
+    public void AScaledScenesGameLaunchesWithItsTimeScaleAndANormalOneAsBefore()
+    {
+        Assert.Equal(["--headless", "--time-scale", "4"], ScratchRun.EngineArgs(4));
+        Assert.Equal(["--headless", "--time-scale", "2.5"], ScratchRun.EngineArgs(2.5));
+        Assert.Equal(["--headless"], ScratchRun.EngineArgs(1));
+    }
+
+    [Fact]
+    public void TheRunsResultNamesItsTimeScaleOnlyWhenItIsNotOne()
+    {
+        ScratchSceneResult scene = ScratchVerdict.Judge(Seen(Step(0)), Plain);
+
+        JsonObject scaled = JsonNode
+            .Parse(JsonSerializer.Serialize(ScratchVerdict.Summarise([scene], PrepResult.Skipped, 4), ToolJson.Options))!
+            .AsObject();
+        JsonObject normal = JsonNode
+            .Parse(JsonSerializer.Serialize(ScratchVerdict.Summarise([scene], PrepResult.Skipped, 1), ToolJson.Options))!
+            .AsObject();
+
+        Assert.Equal(4, scaled["timeScale"]!.GetValue<double>());
+        Assert.False(normal.ContainsKey("timeScale"));
+        Assert.False(scaled["scenes"]![0]!.AsObject().ContainsKey("timeScale"));
+    }
+
+    [Fact]
+    public void ASceneThatRanAtAnotherScaleThanTheCallsCarriesItRefusedOrKilledToo()
+    {
+        ScratchSceneResult green = ScratchVerdict.Judge(Seen(Step(0)) with { TimeScale = 1 }, Plain);
+        ScratchSceneResult refused = ScratchVerdict.Judge(Seen() with { TimeScale = 1, Refusal = "the scene root lacks GetStatus" }, Plain);
+        ScratchSceneResult killed = ScratchVerdict.Judge(
+            Seen(Step(0)) with
+            {
+                TimeScale = 1,
+                Kill = new ScratchFailure(0, "step0", "ceiling", ""),
+            },
+            Plain
+        );
+
+        Assert.Equal(1, Json(green)["timeScale"]!.GetValue<double>());
+        Assert.Equal((1.0, 1.0), (refused.TimeScale, killed.TimeScale));
     }
 
     [Fact]
@@ -885,7 +953,7 @@ public sealed class ScratchVerdictTests
     {
         ScratchPace[] paces = [new(0.5, null), new(30, null), new(2, null), new(0.5, null)];
 
-        ScratchWalk walk = new(paces, [0, 2]);
+        ScratchWalk walk = new(paces, [0, 2], 1);
 
         Assert.Equal(TimeSpan.FromSeconds(10.5 + 12 + 2 + 10), walk.Ceiling);
         Assert.Equal(2000, walk.AfterGameMs);
@@ -901,7 +969,7 @@ public sealed class ScratchVerdictTests
         Assert.Equal(
             "the scene passed its ceiling of 21 s of load-adjusted time (its 1 step's pace + 10 s, the last step's pace once more, and "
                 + "10 s for the markers), so its game was stopped",
-            new ScratchWalk([new(30, null), new(0.5, null)], [1]).CeilingReason(string.Empty)
+            new ScratchWalk([new(30, null), new(0.5, null)], [1], 1).CeilingReason(string.Empty)
         );
 
     [Fact]
@@ -915,7 +983,7 @@ public sealed class ScratchVerdictTests
         };
 
         ScratchSceneResult result = ScratchVerdict.Judge(partial, Plain with { Known = "step 5 crashes until the pool fix" });
-        ScratchRunResult run = ScratchVerdict.Summarise([result], PrepResult.Skipped);
+        ScratchRunResult run = ScratchVerdict.Summarise([result], PrepResult.Skipped, timeScale: 1);
 
         Assert.Equal(ScratchVerdict.KnownRed, result.Verdict);
         Assert.Equal("step 5 crashes until the pool fix", result.Known);
@@ -962,7 +1030,12 @@ public sealed class ScratchVerdictTests
     private static IReadOnlyList<ScratchStepToken> Tokens(string json) => ScratchTools.StepTokens(JsonSerializer.Deserialize<JsonElement[]>(json))!;
 
     private static ScratchScenePlan PacedScene(Dictionary<string, ScratchPace> stepPaces) =>
-        new("Paced", "res://scratch/Paced.tscn", 0.5, []) { PaceReason = "the scene settles", StepPaces = stepPaces };
+        new("Paced", "res://scratch/Paced.tscn", 0.5, [])
+        {
+            PaceReason = "the scene settles",
+            StepPaces = stepPaces,
+            TimeScale = 1,
+        };
 
     [Fact]
     public void TwoRedStepsAreBothFailuresWithFailedAtTheFirstAndEachDetailsItsError()

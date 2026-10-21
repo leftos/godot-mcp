@@ -60,6 +60,10 @@ internal sealed record ScratchRunStatus(
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Error { get; init; }
+
+    /// <summary>options.timeScale, the time scale the run's games run at; null at 1.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? TimeScale { get; init; }
 }
 
 /// <summary>One scene of a background run's status: queued, playing (with its step), done (with its verdict), or the run's final word.</summary>
@@ -82,6 +86,10 @@ internal sealed record ScratchSceneStatus(string Scene, string State)
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Verdict { get; init; }
+
+    /// <summary>The time scale the scene's game runs at when it differs from the run's (its profile pace has "timeScale": 1); else null.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? TimeScale { get; init; }
 }
 
 /// <summary>What run_scratches with options.background returns: the run's id, its two files, and its scenes in play order.</summary>
@@ -125,6 +133,7 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
     private readonly SceneState[] _scenes;
     private readonly int[] _slotOf;
     private readonly string _startedAt;
+    private readonly double? _timeScale;
     private readonly CancellationTokenSource _cancel = new();
     private readonly List<GodotSession> _held = [];
     private readonly TaskCompletionSource _finalWritten = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -146,7 +155,8 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
         ProjectDir = plan.ProjectDir;
         ServerPid = serverPid;
         int[] order = ScratchRun.StartOrder(plan.Scenes, plan.Listed);
-        _scenes = [.. order.Select(index => new SceneState(plan.Scenes[index].Name))];
+        _scenes = [.. order.Select(index => new SceneState(plan.Scenes[index].Name, OwnTimeScale(plan.Scenes[index], plan)))];
+        _timeScale = plan.TimeScale == 1 ? null : plan.TimeScale;
         _slotOf = new int[order.Length];
         for (int slot = 0; slot < order.Length; slot++)
         {
@@ -690,8 +700,12 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
         {
             Result = end == ScratchEnd.Done ? _result : null,
             Error = end == ScratchEnd.Failed ? _error : null,
+            TimeScale = _timeScale,
         };
     }
+
+    /// <summary>The time scale a scene's game runs at when it differs from the call's, as for a profile pace's opt-out; else null.</summary>
+    private static double? OwnTimeScale(ScratchScenePlan scene, ScratchPlan plan) => scene.TimeScale == plan.TimeScale ? null : scene.TimeScale;
 
     private string CompletionText() =>
         _reason switch
@@ -807,9 +821,12 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
     private static partial Regex RunIdForm();
 
     /// <summary>One scene's state in the run, changed only under the run's lock.</summary>
-    private sealed class SceneState(string name)
+    private sealed class SceneState(string name, double? timeScale)
     {
         public string Name { get; } = name;
+
+        /// <summary>The time scale the scene's game runs at when it differs from the call's; else null.</summary>
+        public double? TimeScale { get; } = timeScale;
 
         public string State { get; set; } = Queued;
 
@@ -858,6 +875,7 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
                 ElapsedSeconds = State == Playing ? ElapsedAt(now) : Elapsed,
                 RemainingSecondsAtMost = Remaining,
                 Verdict = Verdict,
+                TimeScale = TimeScale,
             };
     }
 }

@@ -12,8 +12,8 @@ namespace GodotMcp.Server.Session;
 
 /// <summary>
 /// A scratch scene to play: its name (the file's, without .tscn), its res:// path, its pace in seconds, the user arguments it
-/// starts with, the reason the profile knows it to fail, if any, the profile's reason for its pace, if any, and the paces of
-/// single steps, keyed by a step's index or its name.
+/// starts with, the reason the profile knows it to fail, if any, the profile's reason for its pace, if any, the paces of
+/// single steps, keyed by a step's index or its name, and the time scale its game runs at.
 /// </summary>
 internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace, IReadOnlyList<string> UserArgs)
 {
@@ -25,6 +25,9 @@ internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace
     /// The paces of single steps and why, keyed by a step's index or its name, resolved once the scene has named its steps.
     /// </summary>
     public IReadOnlyDictionary<string, ScratchPace> StepPaces { get; init; } = ReadOnlyDictionary<string, ScratchPace>.Empty;
+
+    /// <summary>The time scale the scene's game runs at: the call's options.timeScale, or 1 when its profile pace opts out.</summary>
+    public required double TimeScale { get; init; }
 
     /// <summary>The largest pace the scene holds: its own, or one of its steps'.</summary>
     public double LargestPace => StepPaces.Values.Select(step => step.Seconds).Append(Pace).Max();
@@ -56,7 +59,8 @@ internal readonly partial record struct ScratchStepToken(string Text, bool IsNum
 /// <summary>
 /// A checked run_scratches call: the project, its scenes in order, the patterns, whether to prepare and list every step, how
 /// many scenes play at once, whether the call listed its scenes rather than leaving them to the folder, the prefix each
-/// scene's session is named with, whether a scene plays on past a failed step, and the steps options.steps selects.
+/// scene's session is named with, whether a scene plays on past a failed step, the steps options.steps selects, and the
+/// call's time scale.
 /// </summary>
 internal sealed record ScratchPlan(
     string ProjectDir,
@@ -77,36 +81,42 @@ internal sealed record ScratchPlan(
 
     /// <summary>options.steps' tokens, which every scene resolves against its own step names; null plays every step.</summary>
     public required IReadOnlyList<ScratchStepToken>? Steps { get; init; }
+
+    /// <summary>options.timeScale, the time scale the scenes' games run at unless a scene's profile pace opts out; 1 by default.</summary>
+    public required double TimeScale { get; init; }
 }
 
 /// <summary>
-/// A scene's step paces by index and the steps a run plays of them, ascending: what its ceiling, its pace after the last step
-/// played and its kill reason count.
+/// A scene's step paces by index, the steps a run plays of them, ascending, and the time scale its game runs at: what its
+/// ceiling, its pace after the last step played and its kill reason count. A pace is game time, so at time scale N it takes
+/// pace / N of wall time.
 /// </summary>
-internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyList<int> Played)
+internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyList<int> Played, double TimeScale)
 {
-    public static readonly ScratchWalk None = new([], []);
+    public static readonly ScratchWalk None = new([], [], 1);
 
     /// <summary>The ceiling of the played steps, from each one's pace; see <see cref="ScratchRun.Ceiling"/>.</summary>
-    public TimeSpan Ceiling => ScratchRun.Ceiling([.. Played.Select(step => Paces[step].Seconds)]);
+    public TimeSpan Ceiling => ScratchRun.Ceiling([.. Played.Select(step => Paces[step].Seconds)], TimeScale);
 
     /// <summary>The game milliseconds waited after the last step played: that step's own pace.</summary>
     public int AfterGameMs => ScratchRun.GameMs(Paces[Played[^1]].Seconds);
 
     /// <summary>
-    /// The most seconds the scene's steps can still take once <paramref name="step"/> starts: the pace of each played step not
-    /// yet started, the step's own, and the pace after the last step played; the launch and the prep are left out.
+    /// The most wall seconds the scene's steps can still take once <paramref name="step"/> starts: the pace of each played step
+    /// not yet started, the step's own, and the pace after the last step played, each divided by the time scale; the launch
+    /// and the prep are left out.
     /// </summary>
     public double RemainingSecondsAtMost(int step) =>
-        Played.Where(played => played >= step).Sum(played => Paces[played].Seconds) + Paces[Played[^1]].Seconds;
+        (Played.Where(played => played >= step).Sum(played => Paces[played].Seconds) + Paces[Played[^1]].Seconds) / TimeScale;
 
     /// <summary>Why a scene was killed at its ceiling, with <paramref name="backstop"/> appended to the budget's terms.</summary>
     public string CeilingReason(string backstop)
     {
         string seconds = Ceiling.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
         string each = Played.Count == 1 ? "its 1 step's" : $"each of its {Played.Count} steps'";
+        string scaled = TimeScale == 1 ? string.Empty : $" at time scale {TimeScale.ToString(CultureInfo.InvariantCulture)}";
         return $"the scene passed its ceiling of {seconds} s of load-adjusted time "
-            + $"({each} pace + 10 s, the last step's pace once more, and 10 s for the markers){backstop}, so its game was stopped";
+            + $"({each} pace{scaled} + 10 s, the last step's pace once more, and 10 s for the markers){backstop}, so its game was stopped";
     }
 }
 
@@ -226,7 +236,7 @@ internal sealed class ScratchRun
             }
         }
 
-        return ScratchVerdict.Summarise(scenes, prep);
+        return ScratchVerdict.Summarise(scenes, prep, plan.TimeScale);
     }
 
     /// <summary>
@@ -272,13 +282,13 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// The places in <paramref name="scenes"/> in the order the scenes start: a listed run's own order; a folder run's by the
-    /// largest pace a scene holds, its own or a step's, longest first, so the slowest scenes do not start last, with equal paces in
-    /// the folder's name order.
+    /// wall time of the largest pace a scene holds, its own or a step's, divided by the scene's time scale, longest first, so the
+    /// slowest scenes do not start last, with equal times in the folder's name order.
     /// </summary>
     internal static int[] StartOrder(IReadOnlyList<ScratchScenePlan> scenes, bool listed)
     {
         IEnumerable<int> places = Enumerable.Range(0, scenes.Count);
-        return listed ? [.. places] : [.. places.OrderByDescending(place => scenes[place].LargestPace)];
+        return listed ? [.. places] : [.. places.OrderByDescending(place => scenes[place].LargestPace / scenes[place].TimeScale)];
     }
 
     private static async Task<ScratchSceneResult> PlayOneAsync(RunContext context, int index, CancellationToken cancellationToken)
@@ -290,11 +300,29 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// The ceiling of a scene's steps, load-adjusted, from each step's pace: each step's pace and 10 s, the last step's pace once
-    /// more for the pace after it, and 10 s more for the launch and pace markers.
+    /// The ceiling of a scene's steps, load-adjusted, from each step's pace in game time at <paramref name="timeScale"/>: each
+    /// step's pace / timeScale and 10 s, the last step's pace / timeScale once more for the pace after it, and 10 s more for the
+    /// launch and pace markers.
     /// </summary>
-    internal static TimeSpan Ceiling(IReadOnlyList<double> paces) =>
-        TimeSpan.FromSeconds(paces.Sum(pace => pace + StepAllowance.TotalSeconds) + (paces.Count > 0 ? paces[^1] : 0) + StepAllowance.TotalSeconds);
+    internal static TimeSpan Ceiling(IReadOnlyList<double> paces, double timeScale) =>
+        TimeSpan.FromSeconds(
+            paces.Sum(pace => (pace / timeScale) + StepAllowance.TotalSeconds)
+                + (paces.Count > 0 ? paces[^1] / timeScale : 0)
+                + StepAllowance.TotalSeconds
+        );
+
+    /// <summary>
+    /// The engine arguments a scene's game launches with: headless, and at a <paramref name="timeScale"/> other than 1 Godot's
+    /// --time-scale, which scales every process and physics step.
+    /// </summary>
+    internal static string[] EngineArgs(double timeScale) =>
+        timeScale == 1 ? ["--headless"] : ["--headless", "--time-scale", timeScale.ToString(CultureInfo.InvariantCulture)];
+
+    /// <summary>
+    /// The real time a wait of <paramref name="gameMs"/> game milliseconds is released at when the game's clock stands still: that
+    /// game time at <paramref name="timeScale"/>, plus the step allowance.
+    /// </summary>
+    internal static TimeSpan Release(int gameMs, double timeScale) => TimeSpan.FromMilliseconds(gameMs / timeScale) + StepAllowance;
 
     /// <summary>
     /// Each of the steps <paramref name="names"/> lists' pace and why: the scene's, or a step pace keyed by the step's index, else
@@ -639,7 +667,15 @@ internal sealed class ScratchRun
     }
 
     private LaunchRequest LaunchRequestFor(GodotSession session) =>
-        new(_plan.ProjectDir, _scene.ResPath, ["--headless"], _scene.UserArgs, session.Quiet, session.ShutOutRealGamepads, Prepare: false)
+        new(
+            _plan.ProjectDir,
+            _scene.ResPath,
+            EngineArgs(_scene.TimeScale),
+            _scene.UserArgs,
+            session.Quiet,
+            session.ShutOutRealGamepads,
+            Prepare: false
+        )
         {
             Mute = session.Mute,
         };
@@ -778,12 +814,12 @@ internal sealed class ScratchRun
 
         if (_plan.Steps is null)
         {
-            _walk = new ScratchWalk(paces, [.. Enumerable.Range(0, _names.Count)]);
+            _walk = new ScratchWalk(paces, [.. Enumerable.Range(0, _names.Count)], _scene.TimeScale);
             return null;
         }
 
         (int[] played, string? stepsError) = ResolveSteps(_plan.Steps, _scene.Name, _names);
-        _walk = new ScratchWalk(paces, played);
+        _walk = new ScratchWalk(paces, played, _scene.TimeScale);
         return stepsError;
     }
 
@@ -824,7 +860,7 @@ internal sealed class ScratchRun
         StepPlay played =
             untilError is not null ? new StepPlay(untilError, null, null)
             : wait is null ? new StepPlay(await PlayPacedAsync(session, index, gameMs, limit), null, null)
-            : await PlayInsideUntilAsync(session, index, wait, limit);
+            : await PlayInsideUntilAsync(session, index, wait, gameMs, limit);
         (JsonNode? status, string? statusError) = await CallAsync(session, "GetStatus", [], limit);
         (List<string> lines, long dropped, string? markerError) = await CloseWindowAsync(session, $"step {index}", limit);
         IReadOnlyList<ErrorEntry> errors = TakeErrors(session.Errors, ref _feedMark);
@@ -869,12 +905,12 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// One wait_for on the step's until, PlayStep its call, which the bridge ends at the step's pace in game time, released at
-    /// that pace plus the step allowance as a pace wait is: its figures and, when not met, why the step fails
-    /// (<see cref="UntilMissed"/>); the bridge's refusal, judged by the caller; or why the wait failed on the connection.
+    /// that pace at the scene's time scale plus the step allowance as a pace wait is: its figures and, when not met, why the
+    /// step fails (<see cref="UntilMissed"/>); the bridge's refusal, judged by the caller; or why the wait failed on the connection.
     /// </summary>
-    private async Task<StepPlay> PlayInsideUntilAsync(GodotSession session, int index, JsonObject wait, CancellationToken limit)
+    private async Task<StepPlay> PlayInsideUntilAsync(GodotSession session, int index, JsonObject wait, int gameMs, CancellationToken limit)
     {
-        TimeSpan release = TimeSpan.FromMilliseconds(wait["timeoutMs"]!.GetValue<int>()) + StepAllowance;
+        TimeSpan release = Release(gameMs, _scene.TimeScale);
         try
         {
             ScratchUntil until = UntilFigures(await session.SendAsync("wait_for", wait, release + ReplyAllowance, limit, release));
@@ -999,10 +1035,13 @@ internal sealed class ScratchRun
         }
     }
 
-    /// <summary>wait_for {gameMs}: null once the game's clock has run that long; else why it did not.</summary>
-    private static async Task<string?> WaitAsync(GodotSession session, int gameMs, CancellationToken limit)
+    /// <summary>
+    /// wait_for {gameMs}: null once the game's clock has run that long; else why it did not. Released at that game time at the
+    /// scene's time scale plus the step allowance.
+    /// </summary>
+    private async Task<string?> WaitAsync(GodotSession session, int gameMs, CancellationToken limit)
     {
-        TimeSpan release = TimeSpan.FromMilliseconds(gameMs) + StepAllowance;
+        TimeSpan release = Release(gameMs, _scene.TimeScale);
         JsonObject parameters = new()
         {
             ["gameMs"] = gameMs,
@@ -1041,6 +1080,7 @@ internal sealed class ScratchRun
             StepPaceReasons = [.. _walk.Paces.Select(pace => pace.Reason)],
             AfterError = _afterError,
             Selected = _plan.Steps is null || _walk.Played.Count == 0 ? null : _walk.Played,
+            TimeScale = _scene.TimeScale == _plan.TimeScale ? null : _scene.TimeScale,
         };
 
     private static int WholeNumber(JsonNode? node) =>

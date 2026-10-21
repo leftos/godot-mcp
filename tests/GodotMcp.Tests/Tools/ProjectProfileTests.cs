@@ -480,6 +480,22 @@ public sealed class ProjectProfileTests : IDisposable
     }
 
     [Fact]
+    public void AnObjectPacesTimeScaleOfOneKeepsTheSceneAtNormalSpeed()
+    {
+        Write(
+            """
+            { "scratch": { "pace": { "A": { "seconds": 2, "reason": "physics", "timeScale": 1 }, "B": { "seconds": 2, "reason": "why" }, "C": 2 } } }
+            """
+        );
+
+        ScratchProfile scratch = ProjectProfile.Load(_temp.Path).Scratch!;
+
+        Assert.Equal((2.0, "physics", true), (scratch.Pace["A"].Seconds, scratch.Pace["A"].Reason, scratch.Pace["A"].NormalSpeed));
+        Assert.False(scratch.Pace["B"].NormalSpeed);
+        Assert.False(scratch.Pace["C"].NormalSpeed);
+    }
+
+    [Fact]
     public void APaceWithoutStepsHasNone()
     {
         Write("""{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "why" }, "B": 2 } } }""");
@@ -573,17 +589,17 @@ public sealed class ProjectProfileTests : IDisposable
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 3 } } } }""",
         "(scratch, pace of \"A\"): \"reason\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or "
-            + "write the pace as a bare number of seconds."
+            + "write the pace as a bare number of seconds, which cannot carry a timeScale."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "reason": "x" } } } }""",
         "(scratch, pace of \"A\"): \"seconds\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or "
-            + "write the pace as a bare number of seconds."
+            + "write the pace as a bare number of seconds, which cannot carry a timeScale."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": {} } } }""",
         "(scratch, pace of \"A\"): \"seconds\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or "
-            + "write the pace as a bare number of seconds."
+            + "write the pace as a bare number of seconds, which cannot carry a timeScale."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 0, "reason": "x" } } } }""",
@@ -603,7 +619,21 @@ public sealed class ProjectProfileTests : IDisposable
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "x", "why": "y" } } } }""",
-        "(scratch, pace of \"A\"): unknown key \"why\"; the allowed keys are seconds, reason, steps. Remove or rename it."
+        "(scratch, pace of \"A\"): unknown key \"why\"; the allowed keys are seconds, reason, steps, timeScale. Remove or rename it."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "x", "timeScale": 2 } } } }""",
+        "(scratch, pace of \"A\"): \"timeScale\" is 2; a pace entry's \"timeScale\" can only be 1, which keeps the scene at normal speed. "
+            + "Remove it, or set it to 1."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 3, "reason": "x", "timeScale": "1" } } } }""",
+        "(scratch, pace of \"A\"): \"timeScale\" is a string; a pace entry's \"timeScale\" can only be 1, which keeps the scene at normal "
+            + "speed. Remove it, or set it to 1."
+    )]
+    [InlineData(
+        """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": { "seconds": 3, "reason": "y", "timeScale": 1 } } } } } }""",
+        "(scratch, pace of \"A\", step \"2\"): unknown key \"timeScale\"; the allowed keys are seconds, reason. Remove or rename it."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": { "seconds": 3, "reason": "y", "steps": {} } } } } } }""",
@@ -620,7 +650,7 @@ public sealed class ProjectProfileTests : IDisposable
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "Fight": { "seconds": 3 } } } } } }""",
         "(scratch, pace of \"A\", step \"Fight\"): \"reason\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or "
-            + "write the pace as a bare number of seconds."
+            + "write the pace as a bare number of seconds, which cannot carry a timeScale."
     )]
     [InlineData(
         """{ "scratch": { "pace": { "A": { "seconds": 1, "reason": "x", "steps": { "2": "3" } } } } }""",
@@ -638,7 +668,7 @@ public sealed class ProjectProfileTests : IDisposable
     [InlineData(
         """{ "scratch": { "pace": { "A": { "reason": "x", "steps": { "2": 1 } } } } }""",
         "(scratch, pace of \"A\"): \"seconds\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or "
-            + "write the pace as a bare number of seconds."
+            + "write the pace as a bare number of seconds, which cannot carry a timeScale."
     )]
     [InlineData("""{ "scratch": { "pace": { "A": 1, "A": 2 } } }""", "(scratch): the scene \"A\" appears twice in \"pace\"; keep one.")]
     [InlineData(

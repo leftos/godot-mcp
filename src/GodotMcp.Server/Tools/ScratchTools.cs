@@ -26,6 +26,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     /// <summary>A step's pace when neither options.pace nor the profile's scratch.pace sets one, in seconds.</summary>
     internal const double DefaultPace = 0.5;
 
+    /// <summary>The smallest options.timeScale: a wait's wall time is its pace divided by the scale.</summary>
+    internal const double MinTimeScale = 0.01;
+
     private const string SceneEnding = ".tscn";
     private const string ScratchAuto = "--scratch-auto";
 
@@ -45,14 +48,17 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "on an error the game logs (push_error, an engine error, a C# exception) or a stdout or stderr line matching the "
             + "profile's scratch.patterns; after the steps the game is stopped and a non-zero exit or an ObjectDB leak turns the "
             + "scene red. Settings live in godot-mcp.json's scratch section {folder, userArgs, pace, known, patterns, parallel}. Scenes "
-            + "start parallel at a time: those listed in scenes in that order, a folder run's largest profile pace (a scene's or "
-            + "one of its steps') first; with more than one, a red or killed scene (not known, not refused before its first "
+            + "start parallel at a time: those listed in scenes in that order, a folder run's largest pace (a scene's or "
+            + "one of its steps') divided by the scene's time scale first; with more than one, a red or killed scene (not known, "
+            + "not refused before its first "
             + "step) is played once more alone after the others: green alone, its entry is the replay's with alone: true and counts "
             + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
             + "{passed, green, red, known, noSteps, killed, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, "
-            + "scenes: [{scene, verdict, steps: {played, total}, selected?, pace, paceReason?, seconds, session, "
+            + "scenes: [{scene, verdict, steps: {played, total}, selected?, timeScale?, pace, paceReason?, seconds, session, "
             + "failedAt?, failures?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?, alone?, "
-            + "aloneFailedAt?}]}, scenes in the order given; selected lists the indices options.steps played from; "
+            + "aloneFailedAt?}], timeScale?}, scenes in the order given; selected lists the indices options.steps played from; "
+            + "timeScale is options.timeScale when it is not 1, and a scene's own timeScale (1) shows its game ran at another speed "
+            + "than the call's, its scratch.pace entry having \"timeScale\": 1; "
             + "failedAt is the first failed step and failures [{index, name, error}] "
             + "every one; failedAt.pattern {pattern, reason?} names the scratch.patterns entry a failing line matched; details "
             + "lists every played step of a red or killed scene, or of any scene with options.details, by its status line "
@@ -76,8 +82,11 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         )]
             string[]? scenes = null,
         [Description(
-            "{pace, userArgs, prepare, details, parallel, session, keepGoing, steps, background}: pace in seconds for every step "
-                + "(else scratch.pace's for the step, else for the scene, else 0.5); userArgs appended after the profile's; "
+            "{pace, timeScale, userArgs, prepare, details, parallel, session, keepGoing, steps, background}: pace in seconds for every "
+                + "step (else scratch.pace's for the step, else for the scene, else 0.5); timeScale the games' time scale, from 0.01 to "
+                + "100 (default 1), each game launched with --time-scale, so a pace of p s takes p / timeScale s of wall time and "
+                + "the kill bound shrinks with it, a scene whose scratch.pace entry has \"timeScale\": 1 kept at normal speed; userArgs "
+                + "appended after the profile's; "
                 + "prepare as run_project's; "
                 + "details true lists every scene's steps and gives every step its full detail; parallel the scenes at once, 1 to 4 "
                 + "(else scratch.parallel, else 1); "
@@ -119,10 +128,13 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     [Description(
         "Reads a background scratch run (run_scratches with options.background), or ends it with stop: true. Returns its status "
             + "{runId, state, serverPid, startedAt, updatedAt, scenes: [{scene, state, step?, stepName?, total?, elapsedSeconds?, "
-            + "remainingSecondsAtMost?, verdict?}], result?, error?, live}: state is running, done, stopped, interrupted (the server "
-            + "exited) or failed (with error); scenes in play order, each queued, playing (its step index, name and the scene's "
-            + "step count, remainingSecondsAtMost the paces still to come, launch left out) or done (its verdict), or the run's own "
-            + "final word for a scene it ended mid-step; result, once done, is the object run_scratches returns without background; "
+            + "remainingSecondsAtMost?, verdict?, timeScale?}], timeScale?, result?, error?, live}: state is running, done, stopped, "
+            + "interrupted (the server exited) or failed (with error); scenes in play order, each queued, playing (its step index, "
+            + "name and the scene's step count, remainingSecondsAtMost the wall seconds the paces still to come take at the scene's "
+            + "time scale, launch left out) or done (its verdict), or the run's own final word for a scene it ended mid-step; "
+            + "timeScale is options.timeScale when it is not 1, and a scene's own timeScale (1) shows its game runs at another "
+            + "speed than the run's, its scratch.pace entry having \"timeScale\": 1; "
+            + "result, once done, is the object run_scratches returns without background; "
             + "startedAt and updatedAt are UTC ISO 8601. live is true while this server still plays the run. A run of this server is "
             + "read from memory; any other run's status file, <project>/.godot/godot-mcp/scratch-<runId>.json, is returned as it "
             + "is, with live false: one a server killed outright left says running, and its serverPid tells whose it was. "
@@ -250,6 +262,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         var profile = ProjectProfile.Load(projectDir);
         ScratchProfile scratch = profile.Scratch ?? ScratchProfile.None;
         CheckPace(options.Pace);
+        CheckTimeScale(options.TimeScale);
         CheckParallel(options.Parallel);
         bool prepare = RunOptions.ParsePrepare(options.Prepare);
         string prefix = SessionPrefix(options.Session, projectDir);
@@ -267,6 +280,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             SessionPrefix = prefix,
             KeepGoing = options.KeepGoing ?? false,
             Steps = StepTokens(options.Steps),
+            TimeScale = options.TimeScale ?? 1,
         };
     }
 
@@ -350,7 +364,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     /// <summary>
     /// One scene's plan: options.pace else the profile's pace for the scene else the default, and the profile's reason for the
     /// pace and its step paces, kept only when the pace came from the profile rather than from options.pace, which paces every
-    /// step.
+    /// step; and options.timeScale, else 1, unless the profile's pace has "timeScale": 1, which keeps the scene at normal speed
+    /// even beside options.pace.
     /// </summary>
     private static ScratchScenePlan ScenePlan(
         string name,
@@ -366,6 +381,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             Known = scratch.Known.GetValueOrDefault(name),
             PaceReason = options.Pace is null ? entry?.Reason : null,
             StepPaces = StepPaces(entry, options),
+            TimeScale = entry is { NormalSpeed: true } ? 1 : options.TimeScale ?? 1,
         };
     }
 
@@ -471,6 +487,21 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         }
     }
 
+    /// <exception cref="McpException">
+    /// The time scale is below <see cref="MinTimeScale"/>, whose waits would overflow the deadlines, or above
+    /// <see cref="RuntimeTools.MaxTimeScale"/>.
+    /// </exception>
+    private static void CheckTimeScale(double? timeScale)
+    {
+        if (timeScale is { } scale && scale is not (>= MinTimeScale and <= RuntimeTools.MaxTimeScale))
+        {
+            throw new McpException(
+                $"options.timeScale must be at least {MinTimeScale.ToString(CultureInfo.InvariantCulture)} and at most "
+                    + $"{RuntimeTools.MaxTimeScale.ToString(CultureInfo.InvariantCulture)}; got {scale.ToString(CultureInfo.InvariantCulture)}."
+            );
+        }
+    }
+
     /// <summary>The profile's scratch.userArgs, else its top-level userArgs, then options.userArgs.</summary>
     /// <exception cref="McpException">The user arguments hold --scratch-auto.</exception>
     private static List<string> UserArgs(ProjectProfile profile, ScratchProfile scratch, ScratchOptions options)
@@ -517,8 +548,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     }
 }
 
-/// <summary>run_scratches' pace, user arguments, prepare, whether every scene lists its steps, how many scenes play at once, the
-/// prefix for the scenes' session names, and whether a scene plays on past a failed step.</summary>
+/// <summary>run_scratches' pace, time scale, user arguments, prepare, whether every scene lists its steps, how many scenes play at
+/// once, the prefix for the scenes' session names, and whether a scene plays on past a failed step.</summary>
 internal sealed record ScratchOptions(
     [property: Description(
         "Seconds of game time every step plays before the next, above 0 and at most 120, its scratch.pace steps entries "
@@ -526,6 +557,12 @@ internal sealed record ScratchOptions(
             + "GetStepUntil condition, the pace is the most game time the step may take before its condition holds."
     )]
         double? Pace = null,
+    [property: Description(
+        "Time scale the scenes' games run at, from 0.01 to 100 (default 1): each game launches with --time-scale, so a pace "
+            + "of p s of game time takes p / timeScale s of wall time and the kill bound shrinks with it. A scene whose profile pace "
+            + "entry has \"timeScale\": 1 runs at normal speed."
+    )]
+        double? TimeScale = null,
     [property: Description("User arguments appended after the profile's scratch.userArgs (else its top-level userArgs); --scratch-auto is refused.")]
         string[]? UserArgs = null,
     [property: Description(RunOptions.PrepareDescription)] string? Prepare = null,

@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `run_scratches` takes `options.timeScale` to run the scenes' games faster or slower, dividing the kill bound; a scene's pace entry can opt out.
+
 ### Fixed
 
 - `stop_project` waits for a killed game on load-adjusted time and warns when it still runs, instead of returning while it holds the project folder.
