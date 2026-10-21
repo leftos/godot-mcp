@@ -6,6 +6,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- `get_ui_elements` reports a Control's rect in root-viewport coordinates inside SubViewports, windows and canvas layers, centred where a click on it lands.
 - A `wait_for` with `screenshot` no longer keeps its state alive in the game after it ends.
 - A real-time recording no longer fails to start, or kills its capture helper at a stop, when the helper is reading its deadline file at that moment.
 - `run_scratches` no longer marks a step red with a marker timeout when a busy machine delays reading the step's end lines.

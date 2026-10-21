@@ -794,7 +794,7 @@ func _gather_controls(node: Node, visible_only: bool, skip: Callable, into: Arra
 
 
 func _describe_control(control: Control) -> Dictionary:
-	var rect: Rect2 = control.get_global_rect()
+	var rect: Rect2 = _gestures._targets.viewport_rect(control)
 	var element: Dictionary = {
 		"path": str(control.get_path()),
 		"name": str(control.name),
@@ -915,8 +915,10 @@ func _find_node(element: String) -> Node:
 	if element.contains("/"):
 		return root.get_node_or_null(NodePath(element))
 	var queue: Array[Node] = [root]
-	while not queue.is_empty():
-		var node: Node = queue.pop_front()
+	var next: int = 0
+	while next < queue.size():
+		var node: Node = queue[next]
+		next += 1
 		if str(node.name) == element:
 			return node
 		queue.append_array(node.get_children())

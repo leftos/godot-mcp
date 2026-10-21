@@ -70,12 +70,26 @@ public sealed class WorldTargetTests(SharedProbeSession shared) : IAsyncLifetime
         + "inner.position = Vector2(20, 10)\n\t"
         + "inner.size = Vector2(100, 60)\n\t";
 
+    // Inside NestedBlock's Deep: a Button named DeepButton at the SubViewport's (30, 20), 40 x 20, counting its presses.
+    private const string DeepButtonBlock =
+        "var deep_button := Button.new()\n\t"
+        + "deep_button.name = \"DeepButton\"\n\t"
+        + "deep_button.position = Vector2(30, 20)\n\t"
+        + "deep_button.size = Vector2(40, 20)\n\t"
+        + "deep_button.set_meta(\"presses\", 0)\n\t"
+        + "deep_button.pressed.connect(func() -> void: deep_button.set_meta(\"presses\", int(deep_button.get_meta(\"presses\")) + 1))\n\t"
+        + "deep.add_child(deep_button)\n\t";
+
     // Waits a few physics ticks, so the shapes are in their spaces before a click picks them.
     private const string Settle = "for tick in 3:\n\t\tawait scene_tree.physics_frame\n\treturn true";
 
     // A SubViewportContainer at (100, 40), 320 x 200, stretched with shrink 2 over a 160 x 100 SubViewport: a SubViewport
     // point p lands at (100, 40) + 2p in the root.
     private static readonly string Stretched = Container(true, 320, 200);
+
+    // Stretched turned 0.3 radians about its (100, 40) corner: a rect inside it is a parallelogram in the root, so only
+    // the centre the listing reports is asserted against the click's aim.
+    private static readonly string Rotated = Container(true, 320, 200) + "container.rotation = 0.3\n\t";
 
     private readonly SharedProbeSession _shared = shared;
     private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());
@@ -258,6 +272,50 @@ public sealed class WorldTargetTests(SharedProbeSession shared) : IAsyncLifetime
         AssertAimed(clicked["aimedAt"]!, "control", "/root/Screen/World/SubButton", "Button", 340, 180);
         Assert.EndsWith("/Screen", clicked["pressedOn"]!["path"]!.GetValue<string>(), StringComparison.Ordinal);
         Assert.Equal(1, await PressesAsync("Screen/World/SubButton", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AControlInASubViewportContainerListsItsRectInTheRoot()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(HideMain + Stretched + SubButtonBlock + Settle, cancellation);
+
+        JsonNode rect = await ElementRectAsync("Button", "/root/Screen/World/SubButton", cancellation);
+        JsonNode clicked = await ClickAsync(new InputTarget("SubButton"), cancellation);
+
+        // The SubViewport's (100, 60) to (140, 80) through the container's shrink 2: (100, 40) + 2 * (100, 60).
+        Assert.Equal(300.0, rect["x"]!.GetValue<double>(), 0.5);
+        Assert.Equal(160.0, rect["y"]!.GetValue<double>(), 0.5);
+        Assert.Equal(80.0, rect["width"]!.GetValue<double>(), 0.5);
+        Assert.Equal(40.0, rect["height"]!.GetValue<double>(), 0.5);
+        AssertAimed(clicked["aimedAt"]!, "control", "/root/Screen/World/SubButton", "Button", 340, 180);
+        AssertRectCentreIsAim(rect, clicked["aimedAt"]!);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ANestedSubViewportControlsRectCentreIsItsAim()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(HideMain + Stretched + NestedBlock + DeepButtonBlock + Settle, cancellation);
+
+        JsonNode rect = await ElementRectAsync("Button", "/root/Screen/World/Inner/Deep/DeepButton", cancellation);
+        JsonNode clicked = await ClickAsync(new InputTarget("DeepButton"), cancellation);
+
+        Assert.Equal("/root/Screen/World/Inner/Deep/DeepButton", clicked["aimedAt"]!["path"]!.GetValue<string>());
+        AssertRectCentreIsAim(rect, clicked["aimedAt"]!);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ARotatedContainersControlsRectCentreIsItsAim()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(HideMain + Rotated + SubButtonBlock + Settle, cancellation);
+
+        JsonNode rect = await ElementRectAsync("Button", "/root/Screen/World/SubButton", cancellation);
+        JsonNode clicked = await ClickAsync(new InputTarget("SubButton"), cancellation);
+
+        Assert.Equal("/root/Screen/World/SubButton", clicked["aimedAt"]!["path"]!.GetValue<string>());
+        AssertRectCentreIsAim(rect, clicked["aimedAt"]!);
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -741,6 +799,24 @@ public sealed class WorldTargetTests(SharedProbeSession shared) : IAsyncLifetime
         Assert.Equal(className, aimed["class"]!.GetValue<string>());
         Assert.Equal(x, aimed["x"]!.GetValue<double>(), 0.5);
         Assert.Equal(y, aimed["y"]!.GetValue<double>(), 0.5);
+    }
+
+    // The rect get_ui_elements lists for the element at path, from the list filtered to classFilter.
+    private async Task<JsonNode> ElementRectAsync(string classFilter, string path, CancellationToken cancellation)
+    {
+        string json = await _tools.GetUiElementsAsync(true, classFilter, limit: 500, cancellationToken: cancellation);
+        JsonArray elements = JsonNode.Parse(json)!["elements"]!.AsArray();
+        return Assert.Single(elements, element => element!["path"]!.GetValue<string>() == path)!["rect"]!;
+    }
+
+    // Whether the listing's rect puts its centre where the click aimed, within a pixel: the property a Control's rect and its
+    // aim must keep however many containers, windows and rotations the Control sits under.
+    private static void AssertRectCentreIsAim(JsonNode rect, JsonNode aimed)
+    {
+        double x = rect["x"]!.GetValue<double>() + (rect["width"]!.GetValue<double>() / 2);
+        double y = rect["y"]!.GetValue<double>() + (rect["height"]!.GetValue<double>() / 2);
+        Assert.Equal(x, aimed["x"]!.GetValue<double>(), 1.0);
+        Assert.Equal(y, aimed["y"]!.GetValue<double>(), 1.0);
     }
 
     private async Task AssertRefusedAsync(InputTarget target, string expected, CancellationToken cancellation)

@@ -64,7 +64,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   Two sessions on one folder need distinct names: pass `options.session` to `run_project` or `attach_project`. The headless tools and `preview_scene` take `projectPath` instead and no session.
 - **Errors ride along.** A runtime tool's result carries `errors` (file, line, stack) for every error the game raised while the call ran, and the call still succeeds, except `run_script` and `call_method` as their sections say. The key is present only when the game raised an error during the call: its absence means none. Read `errors` in every result before the next step.
-- **Viewport coordinates.** Every `x`, `y` an input tool takes is in viewport coordinates, as `get_ui_elements` reports rects; the bridge maps them to the window whether it is stretched or letterboxed.
+- **Viewport coordinates.** Every `x`, `y` an input tool takes is in root-viewport coordinates, as `get_ui_elements` reports rects; the bridge maps them to the window whether it is stretched or letterboxed.
 
   A screenshot's pixels are the window's, which differ from the viewport's when the project stretches (a 640x360 viewport in a 1000x900 letterboxed window captures 1000x562), so a point read off a screenshot is not a viewport point; a `crop` is in viewport coordinates, so a rect `get_ui_elements` or `hover` reports crops as it is, at the window's scale. Aim at `{element}` where a Control or a world node exists.
 - **Paging.** Long lists come back one page at a time with `total`, `offset` and, while more remain, `next`: pass `next` as the next call's `offset`. A value longer than its budget comes back as `{valuePreview, valueLength}`.
@@ -282,7 +282,9 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `get_ui_elements`
 
-- **Does:** lists the game's Controls depth first: path, name, class, `rect` in viewport coordinates, visible, and where they apply `text`, `disabled` and `tooltip`.
+- **Does:** lists the game's Controls depth first: path, name, class, `rect` in root-viewport coordinates, visible, and where they apply `text`, `disabled` and `tooltip`.
+
+  The `rect` is the bounding box of the Control's rect carried out through every `SubViewportContainer`, embedded window, CanvasLayer, Camera2D and rotation as an input tool's aim is, so its centre is where a click on it lands (`aimedAt`); a Control in the root viewport with no rotation or canvas offset reports its global rect.
 
   `text` is the text the Control shows, the one a `{text}` target matches: a Button's (CheckBox, OptionButton and MenuButton included), a Label's and a LinkButton's translated text (an `uppercase` Label upper-cased), a LineEdit's placeholder while it is empty (a `secret` one's secret character, once per character), a RichTextLabel's text without BBCode.
 
@@ -818,7 +820,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
   A first check that already finds it true is not met, so a condition already true waits for its next rise (with `options.call`, the baseline check runs in the call's frame before the call, so an effect the call makes at once is met as a rise), and one true for the whole wait times out with `met: false` and `last` the true value.
 
   A check whose expression fails to run does not count as false. Use it to start a `then` on the event itself, not on a state that held before the wait: a `visibility_changed` signal wait is no substitute, since it fires on hide too. Any other condition is refused (`options.edge applies to exists, property, expression, text and state waits; this condition is {kind}.`), and so is `timeoutMs: 0` (`timeoutMs 0 checks once, which an edge wait cannot meet; give it a timeout.`).
-- **Wait for a caption:** `{text: "Deal"}` waits until exactly one visible Control shows that text, matched as a click's `{text}` target is: the shown text trimmed equals the given text trimmed, case kept. Met, `value` is `{path, shown, rect}`, `rect` `{x, y, width, height}` in viewport coordinates as `get_ui_elements` gives it; unmet, `last` is null.
+- **Wait for a caption:** `{text: "Deal"}` waits until exactly one visible Control shows that text, matched as a click's `{text}` target is: the shown text trimmed equals the given text trimmed, case kept. Met, `value` is `{path, shown, rect}`, `rect` `{x, y, width, height}` in root-viewport coordinates as `get_ui_elements` gives it; unmet, `last` is null.
 
   `under` names the node whose visible Controls are scanned (as `node` is named; the whole tree when left out), and a text with a `node` is refused (`a text condition takes no node; scope it with under.`). `exists: false` waits for the text to go: met with `value` null, and `last` the held Control while it shows.
 
