@@ -50,26 +50,60 @@ internal sealed class RegistryHarness : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        foreach ((Task attach, CancellationTokenSource cancel) in _waiting)
+        bool failed = false;
+        try
         {
-            await cancel.CancelAsync();
-            // A waiting join the test dialled has ended with its game connected; the rest end cancelled.
-            if (!attach.IsCompletedSuccessfully)
+            foreach ((Task attach, CancellationTokenSource cancel) in _waiting)
             {
-                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => attach);
+                await cancel.CancelAsync();
+                // A waiting join the test dialled has ended with its game connected; the rest end cancelled.
+                if (!attach.IsCompletedSuccessfully)
+                {
+                    await Assert.ThrowsAnyAsync<OperationCanceledException>(() => attach);
+                }
+
+                cancel.Dispose();
             }
 
-            cancel.Dispose();
+            Sessions.Dispose();
+            Listener.Dispose();
+            foreach (Process game in _games)
+            {
+                EndStandInGame(game);
+            }
         }
-
-        Sessions.Dispose();
-        Listener.Dispose();
-        foreach (Process game in _games)
+        catch
         {
-            EndStandInGame(game);
+            failed = true;
+            throw;
         }
+        finally
+        {
+            if (failed)
+            {
+                DisposeFolderQuietly(_temp);
+            }
+            else
+            {
+                _temp.Dispose();
+            }
+        }
+    }
 
-        _temp.Dispose();
+    /// <summary>
+    /// Deletes the harness's folder once its teardown has already failed: a delete that throws must not replace the
+    /// failure the test is owed, so it is reported and the folder left to the next sweep.
+    /// </summary>
+    public static void DisposeFolderQuietly(TempDirectory folder)
+    {
+        try
+        {
+            folder.Dispose();
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine($"godot-mcp-tests: the folder {folder.Path} of a failed teardown stayed: {e.Message}");
+        }
     }
 
     /// <summary>

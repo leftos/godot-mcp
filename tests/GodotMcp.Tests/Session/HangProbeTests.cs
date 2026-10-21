@@ -46,16 +46,36 @@ public sealed partial class HangProbeTests : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
-        _game?.Dispose();
-        _sessions.Dispose();
-        _listener.Dispose();
-        if (_gameProcess is not null)
+        bool failed = false;
+        try
         {
-            RegistryHarness.EndStandInGame(_gameProcess);
+            _game?.Dispose();
+            _sessions.Dispose();
+            _listener.Dispose();
+            if (_gameProcess is not null)
+            {
+                RegistryHarness.EndStandInGame(_gameProcess);
+            }
+
+            _wallClock.Dispose();
+        }
+        catch
+        {
+            failed = true;
+            throw;
+        }
+        finally
+        {
+            if (failed)
+            {
+                RegistryHarness.DisposeFolderQuietly(_temp);
+            }
+            else
+            {
+                _temp.Dispose();
+            }
         }
 
-        _wallClock.Dispose();
-        _temp.Dispose();
         return ValueTask.CompletedTask;
     }
 
