@@ -32,6 +32,19 @@ public sealed class RestartResultTests
     public void BothAreJoinedWithTheDebuggerFirst() => Assert.Equal($"{Debugger} {Size}", GodotSession.JoinWarnings(Debugger, Size));
 
     [Fact]
+    public void ThreePartsJoinInTheirOrderWithNullsSkipped()
+    {
+        const string Kill =
+            "The killed game (pid 42) was still running after 5 s of load-adjusted time (wall 5 s, machine free 100% on average); "
+            + "its project folder stays in use until it is gone.";
+
+        Assert.Equal($"{Debugger} {Kill} {Size}", GodotSession.JoinWarnings(Debugger, Kill, Size));
+        Assert.Equal($"{Kill} {Size}", GodotSession.JoinWarnings(null, Kill, Size));
+        Assert.Equal($"{Debugger} {Size}", GodotSession.JoinWarnings(Debugger, null, Size));
+        Assert.Equal(Kill, GodotSession.JoinWarnings(null, Kill, null));
+    }
+
+    [Fact]
     public void ARestartWithoutAWindowWritesNoWindowKey()
     {
         RestartResult result = new("probe", @"X:\probe", 1, 2, 0, PrepResult.Skipped, @"F:\Godot\godot.exe")

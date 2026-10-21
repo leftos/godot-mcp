@@ -138,7 +138,7 @@ internal sealed partial class GodotSession
             KillReason = ended.KillReason,
             QuitMs = ended.QuitMs,
             Recording = recording,
-            Warning = debugged ?? ended.Warning,
+            Warning = JoinWarnings(debugged, ended.Warning),
         };
     }
 
@@ -150,7 +150,7 @@ internal sealed partial class GodotSession
     {
         if (game is not null)
         {
-            return await StopGameAsync(attached, game, () => TerminateAsync(game), () => Task.FromResult<IReadOnlyList<string>>([]));
+            return await StopGameAsync(attached, game, () => KillAndWaitAsync(wrapper: null, game), () => Task.FromResult<IReadOnlyList<string>>([]));
         }
 
         await AskToQuitAsync(attached);

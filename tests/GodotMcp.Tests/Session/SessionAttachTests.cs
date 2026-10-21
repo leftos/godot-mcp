@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Tests.Wire;
+using GodotMcp.TestSupport;
 using Microsoft.Extensions.Time.Testing;
 using ModelContextProtocol;
 
@@ -311,6 +312,75 @@ public sealed class SessionAttachTests : IAsyncDisposable
         Assert.Null(stopped.KillReason);
         Assert.NotNull(stopped.QuitMs);
         Assert.True(child.HasExited);
+    }
+
+    // The stand-in's exit is held by the test's own debugger until the stop has returned, so the killed game is still not gone
+    // when the stop's wait ends, however busy the machine is: the stop must have spent its load-adjusted wait and say so, after
+    // the debugger's own warning, which the hold also makes true.
+    [Fact]
+    public async Task AStopWhoseKilledGameIsNotGoneWhenItsWaitEndsSaysItIsStillRunning()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The exit is held through the Win32 debug API.");
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        string alpha = harness.Project("alpha");
+        Process child = harness.StartOwnedGame();
+        using ExitHold hold = await ExitHold.AttachAsync(child, RegistryHarness.HangGuard);
+        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello { ProcessId = child.Id });
+
+        Task<StopResult> stop = harness.Sessions.StopAsync("server", cancellation);
+        await RegistryHarness.AdvanceUntilDoneAsync(time, stop, cancellation);
+        StopResult stopped = await stop.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        bool goneWhenTheStopReturned = child.WaitForExit(0);
+        hold.Release();
+
+        Assert.False(goneWhenTheStopReturned);
+        Assert.True(stopped.Killed);
+        Assert.Equal(GameKillReason.Silent, stopped.KillReason);
+        Assert.Null(stopped.GameExitCode);
+        Assert.StartsWith(
+            $"A debugger was attached to the game (pid {child.Id}); its debug session ended with the game. "
+                + $"The killed game (pid {child.Id}) was still running after 5 s of load-adjusted time (wall ",
+            stopped.Warning,
+            StringComparison.Ordinal
+        );
+        Assert.EndsWith("; its project folder stays in use until it is gone.", stopped.Warning, StringComparison.Ordinal);
+    }
+
+    // The grace has run out when the game is killed: a kill wait on the grace's deadline would end at once, so a warning that
+    // reports a 5 s wait proves the kill waited on a deadline of its own.
+    [Fact]
+    public async Task AGraceKillWhoseGameIsNotGoneWaitsItsOwnKillWaitAndSaysSo()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The exit is held through the Win32 debug API.");
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        string alpha = harness.Project("alpha");
+        Process child = harness.StartOwnedGame();
+        harness.Sessions.DescribeGameProcess = _ => Task.FromResult("sampled");
+        using ExitHold hold = await ExitHold.AttachAsync(child, RegistryHarness.HangGuard);
+        using FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello { ProcessId = child.Id });
+        Task<StopResult> stop = harness.Sessions.StopAsync("server", cancellation);
+        await game.AnswerOneAsync("pong", cancellation);
+        await game.AnswerOneAsync("quit", cancellation);
+
+        await RegistryHarness.AdvanceUntilDoneAsync(time, stop, cancellation);
+        StopResult stopped = await stop.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        bool goneWhenTheStopReturned = child.WaitForExit(0);
+        hold.Release();
+
+        Assert.False(goneWhenTheStopReturned);
+        Assert.True(stopped.Killed);
+        Assert.StartsWith("the game acknowledged the quit but was still shutting down after ", stopped.KillReason, StringComparison.Ordinal);
+        Assert.Contains(
+            $"The killed game (pid {child.Id}) was still running after 5 s of load-adjusted time (wall ",
+            stopped.Warning,
+            StringComparison.Ordinal
+        );
     }
 
     [Fact]

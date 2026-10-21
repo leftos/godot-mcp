@@ -92,5 +92,14 @@ public sealed class GameKillReasonTests
     }
 
     [Fact]
+    public void AKillWaitTheBackstopEndedNamesTheKillWaitWhileTheGraceTextIsUnchanged()
+    {
+        GraceSpent backstopped = new(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(25), TimeSpan.FromSeconds(1.2), 0.08, Backstop: true);
+
+        Assert.Equal("25 s of wall time, 5 x its 5 s kill wait (load-adjusted 1.2 s, machine free 8% on average)", backstopped.TextFor("kill wait"));
+        Assert.Equal("25 s of wall time, 5 x its 5 s grace (load-adjusted 1.2 s, machine free 8% on average)", backstopped.Text);
+    }
+
+    [Fact]
     public void ASilentGameSaysItWasKilledAtOnce() => Assert.Equal("the game did not answer a ping, so it was killed at once", GameKillReason.Silent);
 }

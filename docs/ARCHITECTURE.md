@@ -151,7 +151,7 @@ The server's own work is its own CPU plus that of a job object (`OwnWork`) that 
 - **Kill text**: a prep, headless or ffmpeg process killed by any of the three says `did not finish within 300 s of load-adjusted time (wall 812 s, machine free 37% on average)` at the ceiling, and `did not finish (<detail>)` for the other two: `stalled: no output and no CPU for 120 s`, or `ran 1500 s of wall time, 5 x its 300 s ceiling (load-adjusted 118 s, machine free 8% on average)`.
 
   A bridge or tool timeout keeps its usual text at the ceiling and adds the backstop clause (see [A request's path](#a-requests-path)) at the backstop.
-- **Wall time**: the pings (the hang probe's 2 s, the debugger check's 500 ms), the `shutdown` reply, the `cancel` itself, the listener's 5 s hello read, and the kill and exit graces (a killed tree's and git's 5 s, the output drain, a recording's 10 s wait for the game to exit).
+- **Wall time**: the pings (the hang probe's 2 s, the debugger check's 500 ms), the `shutdown` reply, the `cancel` itself, the listener's 5 s hello read, and the kill and exit graces (the shutdown kill's and git's 5 s, the output drain, a recording's 10 s wait for the game to exit).
 
 The integration tests' `SessionHarness` runs its requests' and tools' ceilings on a wall-time clock, so another build loading the machine cannot move a short ceiling into its backstop and change the text a test asserts, and sets the registry's `LaunchClock` to the load-adjusted clock, so a launch's handshake and an attach's wait for its game wait out the load as they do in the server (`LaunchClock` is `Clock` unless set).
 
@@ -241,11 +241,17 @@ The unit tests cover the load with `FakeTimeProvider` and `FakeLoadSource`.
 
   The grace waits on the game's own process (`GodotRun.Game`, kept from the hello) when there is one, not the wrapper: on Windows `Godot_console.exe` puts the game in a job object and waits for every process in it, so a game that quit leaving a child running would read as a kill.
 
-  Once the game is gone the wrapper gets 1 s to follow; one still running is ended (`TerminateAsync`, not a kill), which ends the job, and the processes the game started are listed first (`LeftBehind`, a Toolhelp snapshot by parent pid and start time) as `leftRunning`.
+  Once the game is gone the wrapper gets 1 s to follow; one still running is ended (`RunKill.KillAndWaitAsync` on the wrapper alone, not reported as a kill), which ends the job, and the processes the game started are listed first (`LeftBehind`, a Toolhelp snapshot by parent pid and start time) as `leftRunning`.
 
-  A real kill records `killReason` (`GameKillReason`) and makes `gameExitCode` null. The ping, the shutdown and these graces are wall time, not load-adjusted. Either way the override is removed if no other live session uses the folder.
+  A real kill records `killReason` (`GameKillReason`) and makes `gameExitCode` null. The ping and the shutdown are wall time.
 
-  An attached session is stopped by the same `StopGameAsync`, watching and killing the game's own process: `AttachAsync` opens a handle on the hello's `pid` (`KeepAttachedGameHandle`) so its exit code stays readable; with no handle (no `pid`, or it could not be opened) the game is only asked to quit, the stop waits the grace for its connection to close, and a `warning` says it may still be running.
+  A kill is `RunKill.KillAndWaitAsync`: it kills the game's own process (`GodotRun.Game`, when the run holds a handle) and the console wrapper, each with its tree, then waits for both on one deadline of 5 s of load-adjusted time on `registry.LaunchClock`, with a 25 s wall backstop. It does not wait to read the game's exit code.
+
+  A game still running after the wait adds `The killed game (pid N) was still running after <GraceSpent.TextFor("kill wait")>; its project folder stays in use until it is gone.` to `warning`, and a wrapper alone adds `The killed console wrapper (pid N) was still running after <spent>.` `JoinWarnings` joins the parts of `warning` with one space, in the order debugger, kill wait, window size; `restart_project`'s replaced game warns the same way.
+
+  Either way the override is removed if no other live session uses the folder.
+
+  An attached session is stopped by the same `StopGameAsync`, watching and killing the game's own process: `AttachAsync` opens a handle on the hello's `pid` (`KeepAttachedGameHandle`) so its exit code stays readable; with no handle (no `pid`, or it could not be opened) the game is only asked to quit, the stop waits the grace for its connection to close, and a `warning` says it may still be running. An attached game's kill is `RunKill.KillAndWaitAsync` on the game alone.
 
   The session then ends as a detach does (`EndAttachmentAsync`), forgotten rather than kept as stopped, with `exitCode` null.
 - **Restart** (a run: `restart_project` → `GodotSession.RestartAsync`, in `GodotSession.Restart.cs`): under the session's gate and with the session pending throughout (its name never frees), prep runs while the old game still runs, counting only other sessions' games for the import refusal; then the old run stops as a stop does but keeps the folder reserved and the override in place, and the stored `LaunchRequest` starts again under the prep lock.
@@ -296,7 +302,7 @@ The unit tests cover the load with `FakeTimeProvider` and `FakeLoadSource`.
   The interrupted runs are waited for only until the same cap, measured from the pass's start (`ScratchRuns.AwaitInterrupted`), and a run still live then is finished as interrupted, so its status file and completion line say so before the headless hosts stop.
 
   Once the exit has begun, `run_project`, `restart_project`, `preview_scene` and `run_scratches` are refused ("The godot-mcp server is shutting down; no game can start now."), checked before the prep and again after it, since a game started then would never be stopped. Then the headless hosts are stopped all at once and every folder's files released.
-- **Shutdown bound**: the games' part is at most 10 s (the cap, which includes the wait for a start in flight) plus up to 5 s waiting for the killed games to be gone (`KillWait`); a headless host's stop takes about 3 s plus up to 5 s waiting on a kill, all hosts concurrently; their release takes up to `ReleaseLimit` (about 20 s).
+- **Shutdown bound**: a stop the shutdown pass runs takes up to the kill wait's 25 s wall backstop under load, which can outlast the cap; the shutdown then falls back to `KillAtShutdownAsync`, bounded by the cap. The games' part is at most 10 s (the cap, which includes the wait for a start in flight) plus up to 5 s waiting for the killed games to be gone (`KillWait`); a headless host's stop takes about 3 s plus up to 5 s waiting on a kill, all hosts concurrently; their release takes up to `ReleaseLimit` (about 20 s).
 
   One `Shutdown` is therefore about 43 s at worst and a few seconds typically (one grace plus the host stops); these figures are derived from the constants, not measured.
 - **Shutdown failures**: any exception in one session's stop writes `godot-mcp: stopping the game of <dir> at shutdown failed: <message>` to stderr and the other sessions go on; a tree kill that fails partway writes `godot-mcp: cleanup of <dir> at shutdown failed: …`, a failed kill step `godot-mcp: killing the game of <dir> at shutdown failed: <message>`, a game still running 5 s after its kill `godot-mcp: the game of <dir> was still running 5 s after its kill at shutdown.` (not printed for a process released during the wait), and a failed host stop `godot-mcp: stopping the warm headless host of <dir> at shutdown failed: <message>`.

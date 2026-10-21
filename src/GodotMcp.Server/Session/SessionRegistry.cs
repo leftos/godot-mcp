@@ -71,7 +71,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// <summary>
     /// The clock a launch's handshake and an attach's wait for its game run on: <see cref="Clock"/> unless set. A harness that
     /// keeps <see cref="Clock"/> on wall time, so short ceilings keep their text, sets it to a load-adjusted clock, so a game
-    /// slow to start on a busy machine is waited for.
+    /// slow to start on a busy machine is waited for. A stop's wait for a killed game runs on it too.
     /// </summary>
     internal LoadClock LaunchClock
     {

@@ -6,6 +6,8 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- `stop_project` waits for a killed game on load-adjusted time and warns when it still runs, instead of returning while it holds the project folder.
+- A stop's `warning` keeps its kill or unkillable text when a debugger was attached, instead of showing only the debugger's.
 - `get_ui_elements` reports a Control's rect in root-viewport coordinates inside SubViewports, windows and canvas layers, centred where a click on it lands.
 - A `wait_for` with `screenshot` no longer keeps its state alive in the game after it ends.
 - A real-time recording no longer fails to start, or kills its capture helper at a stop, when the helper is reading its deadline file at that moment.

@@ -168,8 +168,8 @@ internal sealed class GodotRun(string projectDir, IRunProcess launcher, GodotRun
 
     /// <summary>
     /// Lets go of the game's handle and keeps its exit code, so a later call returns the same. It waits up to
-    /// <see cref="GameExitWait"/> for a game still ending; null with no handle, while the game still runs, or after
-    /// <see cref="MarkKilled"/>.
+    /// <see cref="GameExitWait"/> for a game still ending, unless the game was killed, whose kill has already waited for it;
+    /// null with no handle, while the game still runs, or after <see cref="MarkKilled"/>.
     /// </summary>
     public async Task<int?> ReleaseGameAsync()
     {
@@ -181,7 +181,10 @@ internal sealed class GodotRun(string projectDir, IRunProcess launcher, GodotRun
         _game = null;
         using (game)
         {
-            _gameExitCode = await ReadExitCodeAsync(game);
+            if (!_killed)
+            {
+                _gameExitCode = await ReadExitCodeAsync(game);
+            }
         }
 
         return _killed ? null : _gameExitCode;

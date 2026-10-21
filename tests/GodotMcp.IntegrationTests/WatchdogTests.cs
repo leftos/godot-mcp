@@ -103,6 +103,7 @@ public sealed partial class WatchdogTests : IAsyncDisposable
         // Windows refuses to rename a folder that is a live process's current directory, as it refuses to delete it. The moved
         // folder stays inside the probe's temp folder, which the class's dispose deletes.
         Assert.True(stopped.Killed);
+        Assert.Null(stopped.Warning);
         Assert.Null(Record.Exception(() => Directory.Move(_probe.Directory, _probe.Directory + "-moved")));
     }
 

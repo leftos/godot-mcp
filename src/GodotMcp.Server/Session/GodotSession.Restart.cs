@@ -91,17 +91,13 @@ internal sealed partial class GodotSession
     }
 
     /// <summary>
-    /// The replaced game's debugger warning and the relaunched game's window-size warning as <see cref="RestartResult.Warning"/>
-    /// reports them: the debugger text first, separated by one space, either alone when only one is set, null when both are.
+    /// Warnings as a stop's or a restart's warning reports them: in the order given (the debugger's, the kill wait's, then the
+    /// relaunched window's size), separated by one space, each null one skipped; null when every one is.
     /// </summary>
-    internal static string? JoinWarnings(string? debugger, string? window)
+    internal static string? JoinWarnings(params string?[] warnings)
     {
-        if (debugger is null)
-        {
-            return window;
-        }
-
-        return window is null ? debugger : $"{debugger} {window}";
+        string[] set = [.. warnings.OfType<string>()];
+        return set.Length == 0 ? null : string.Join(' ', set);
     }
 
     /// <summary>

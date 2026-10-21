@@ -5,6 +5,7 @@ using GodotMcp.Server.Wire;
 using GodotMcp.Tests.Wire;
 using GodotMcp.TestSupport;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 
 namespace GodotMcp.Tests.Session;
 
@@ -269,6 +270,22 @@ internal sealed class RegistryHarness : IAsyncDisposable
 
             Assert.True(DateTime.UtcNow < guard, $"the condition did not hold within its {HangGuard} hang guard");
             await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Advances <paramref name="time"/> 100 ms at a time, pausing 5 ms of real time after each step, until <paramref name="task"/>
+    /// completes. Its only bound is <see cref="HangGuard"/> in real time: fake time runs ahead of real time, so work slow on a busy
+    /// machine must not run it past a cap the waits under test have not reached.
+    /// </summary>
+    public static async Task AdvanceUntilDoneAsync(FakeTimeProvider time, Task task, CancellationToken cancellationToken)
+    {
+        DateTime guard = DateTime.UtcNow + HangGuard;
+        while (!task.IsCompleted)
+        {
+            Assert.True(DateTime.UtcNow < guard, $"the task did not complete within its {HangGuard} hang guard");
+            time.Advance(TimeSpan.FromMilliseconds(100));
+            await Task.Delay(TimeSpan.FromMilliseconds(5), cancellationToken);
         }
     }
 

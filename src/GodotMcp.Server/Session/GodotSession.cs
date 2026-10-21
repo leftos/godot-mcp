@@ -512,7 +512,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>
     /// How <see cref="EndRunAsync"/> ended a run: whether the game had to be killed and why, the processes it left running
-    /// when it quit, how long a quit took, and the warning when a debugger was attached to it.
+    /// when it quit, how long a quit took, and its warnings, joined: a debugger attached to it, and what the kill left still
+    /// running after its kill wait.
     /// </summary>
     private readonly record struct RunEnd(bool Killed, string? Warning, string? KillReason, IReadOnlyList<string> LeftRunning, int? QuitMs);
 
@@ -977,20 +978,21 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <summary>
     /// Stops a game through its bridge <paramref name="connection"/>: a silent one is ended with <paramref name="kill"/> at once;
     /// one that answers is asked to quit, and killed if <paramref name="watched"/> has not exited within the grace, counted in
-    /// load-adjusted time on the registry's clock with its backstop, and the kill says what the game was doing. After a quit,
-    /// <paramref name="afterQuit"/> ends what the game left behind and returns it, as leftRunning lists it.
+    /// load-adjusted time on the registry's clock with its backstop, and the kill says what the game was doing. The kill's own
+    /// warning, when what it killed was still running after its wait, is the end's. After a quit, <paramref name="afterQuit"/>
+    /// ends what the game left behind and returns it, as leftRunning lists it.
     /// </summary>
     private async Task<RunEnd> StopGameAsync(
         BridgeConnection? connection,
         Process watched,
-        Func<Task> kill,
+        Func<Task<string?>> kill,
         Func<Task<IReadOnlyList<string>>> afterQuit
     )
     {
         if (await IsSilentAsync(connection))
         {
-            await kill();
-            return new RunEnd(Killed: true, Warning: null, GameKillReason.Silent, LeftRunning: [], QuitMs: null);
+            string? stillRunning = await kill();
+            return new RunEnd(Killed: true, stillRunning, GameKillReason.Silent, LeftRunning: [], QuitMs: null);
         }
 
         Task<long>? closedAt = connection is null ? null : ClosedAtAsync(connection.Closed);
@@ -1006,8 +1008,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             if (!watched.WaitForExit(0))
             {
                 Log.ExitGraceExpired(_logger, ProjectDir, spent.Text);
-                await kill();
-                return new RunEnd(Killed: true, Warning: null, reason, LeftRunning: [], QuitMs: null);
+                string? stillRunning = await kill();
+                return new RunEnd(Killed: true, stillRunning, reason, LeftRunning: [], QuitMs: null);
             }
         }
 
@@ -1064,7 +1066,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
         IReadOnlyList<string> leftRunning = LeftBehind.Find(game, _logger);
         Log.GameLeftProcessesRunning(_logger, run.ProjectDir, leftRunning.Count == 0 ? "no process it could list" : string.Join(", ", leftRunning));
-        await TerminateAsync(run.Process);
+        // The game quit, so the wrapper still running is no kill the stop reports: its wait is only logged.
+        _ = await KillAndWaitAsync(run.Process, game: null);
         return leftRunning;
     }
 
@@ -1073,8 +1076,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// is asked to quit and killed after the grace; then its connection is closed.
     /// </summary>
     /// <returns>
-    /// Whether the game had to be killed and why, the processes it left running when it quit, and the warning when a debugger
-    /// was attached to it as it was ended.
+    /// Whether the game had to be killed and why, the processes it left running when it quit, and the warnings when a debugger
+    /// was attached to it as it was ended and when what the stop killed was still running after its kill wait, in that order.
     /// </returns>
     private async Task<RunEnd> EndRunAsync(GodotRun run)
     {
@@ -1090,7 +1093,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
         return ended with
         {
-            Warning = warning,
+            Warning = JoinWarnings(warning, ended.Warning),
         };
     }
 
@@ -1110,7 +1113,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
-    private async Task KillAsync(GodotRun run)
+    /// <summary>
+    /// Kills a run: its game's own process when the run holds a handle on it, and its console wrapper, each with everything it
+    /// started, and waits for both (<see cref="KillAndWaitAsync"/>).
+    /// </summary>
+    /// <returns>The warning when either was still running after the kill wait; null when both are gone.</returns>
+    private Task<string?> KillAsync(GodotRun run)
     {
         if (ReferenceEquals(run, _run) && _recording is { } recording)
         {
@@ -1118,29 +1126,15 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
 
         run.MarkKilled();
-        await TerminateAsync(run.Process);
+        return KillAndWaitAsync(run.Process, run.Game);
     }
 
     /// <summary>
-    /// Kills <paramref name="process"/> (a run's process, or an attached game's own) and everything it started, and waits up
-    /// to <see cref="KillWait"/> for it to exit.
+    /// Kills <paramref name="game"/> and <paramref name="wrapper"/>, each that is given, and waits for both on one deadline of
+    /// load-adjusted time on the registry's launch clock (<see cref="RunKill.KillAndWaitAsync"/>).
     /// </summary>
-    private async Task TerminateAsync(Process process)
-    {
-        try
-        {
-            process.Kill(entireProcessTree: true);
-        }
-        catch (Exception e) when (e is Win32Exception or InvalidOperationException)
-        {
-            Log.KillFailed(_logger, e, ProjectDir);
-        }
-
-        if (!await ProcessExit.WaitUntilGoneAsync(process, KillWait))
-        {
-            Log.StillRunningAfterKill(_logger, ProjectDir, KillWait.TotalSeconds);
-        }
-    }
+    private Task<string?> KillAndWaitAsync(Process? wrapper, Process? game) =>
+        RunKill.KillAndWaitAsync(wrapper, game, registry.LaunchClock, _logger, ProjectDir);
 
     /// <summary>
     /// Releases the folder once the session's current run has exited. The exit of a run a restart has replaced only logs:

@@ -14,9 +14,9 @@ internal enum QuitRequest
 }
 
 /// <summary>
-/// The stop's grace as it ended: its budget of load-adjusted time, the wall and load-adjusted time it ran, the share of the
-/// machine free on average, and whether its backstop (<see cref="LoadClock.BackstopFactor"/> times the budget in wall time)
-/// ended it rather than the budget.
+/// A stop's deadline as it ended, its grace or its kill wait: its budget of load-adjusted time, the wall and load-adjusted
+/// time it ran, the share of the machine free on average, and whether its backstop (<see cref="LoadClock.BackstopFactor"/>
+/// times the budget in wall time) ended it rather than the budget.
 /// </summary>
 internal readonly record struct GraceSpent(TimeSpan Grace, TimeSpan Wall, TimeSpan Adjusted, double MeanFree, bool Backstop)
 {
@@ -37,16 +37,19 @@ internal readonly record struct GraceSpent(TimeSpan Grace, TimeSpan Wall, TimeSp
     /// "3 s of load-adjusted time (wall 8.4 s, machine free 37% on average)", or at the backstop
     /// "15 s of wall time, 5 x its 3 s grace (load-adjusted 1.2 s, machine free 8% on average)".
     /// </summary>
-    public string Text
+    public string Text => TextFor("grace");
+
+    /// <summary>
+    /// <see cref="Text"/> for a deadline that is not a grace: its backstop branch names the budget
+    /// <paramref name="budgetName"/>, as in "25 s of wall time, 5 x its 5 s kill wait (…)".
+    /// </summary>
+    public string TextFor(string budgetName)
     {
-        get
-        {
-            string free = $"machine free {LoadDeadline.Percent(MeanFree)}% on average";
-            return Backstop
-                ? $"{LoadDeadline.Seconds(Wall)} s of wall time, {LoadClock.BackstopFactor} x its {LoadDeadline.Seconds(Grace)} s grace "
-                    + $"(load-adjusted {LoadDeadline.Seconds(Adjusted)} s, {free})"
-                : $"{LoadDeadline.Seconds(Grace)} s of load-adjusted time (wall {LoadDeadline.Seconds(Wall)} s, {free})";
-        }
+        string free = $"machine free {LoadDeadline.Percent(MeanFree)}% on average";
+        return Backstop
+            ? $"{LoadDeadline.Seconds(Wall)} s of wall time, {LoadClock.BackstopFactor} x its {LoadDeadline.Seconds(Grace)} s {budgetName} "
+                + $"(load-adjusted {LoadDeadline.Seconds(Adjusted)} s, {free})"
+            : $"{LoadDeadline.Seconds(Grace)} s of load-adjusted time (wall {LoadDeadline.Seconds(Wall)} s, {free})";
     }
 }
 

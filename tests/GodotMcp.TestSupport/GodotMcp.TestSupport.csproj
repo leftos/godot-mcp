@@ -4,6 +4,8 @@
     <RootNamespace>GodotMcp.TestSupport</RootNamespace>
     <IsPackable>false</IsPackable>
     <IsTestProject>false</IsTestProject>
+    <!-- LibraryImport's generated P/Invoke stubs are unsafe code (ExitHold.cs). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
