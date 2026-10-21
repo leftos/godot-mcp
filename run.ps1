@@ -19,7 +19,7 @@ log, and the job's timeout-minutes bounds it in place of the ceiling and watchdo
            then its dotnet test -c Release --no-build; ceiling 180 s
   itest    the integration tests against the real Godot (GODOT_PATH, else a Godot*console*.exe on PATH), in the class
            groups of the table at the top of this script, which run in the three lanes of the table below it: timing
-           (lifecycle, input, time, recording, capture, reads, scratch, scratchuntil: the groups that
+           (lifecycle, input, time, recording, capture, reads, scratch, scratchfolder, scratchuntil: the groups that
            assert wall-clock times), build (prep, scene, csharp) and untimed (sessions, headless, nodes, scratchbackground). It
            first checks that every `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly
            one group, every listed class exists, every group is in exactly one lane that names only groups, and the
@@ -190,6 +190,7 @@ $itestGroups = [ordered]@{
     nodes     = @('HeadlessPropertyTests', 'HeadlessSignalTests')
     csharp    = @('CSharpToolTests', 'GameToolTests', 'CSharpStateTests', 'CSharpWatchTests', 'CSharpFiredSignalsTests', 'ScratchCSharpStateTests')
     scratch   = @('ScratchRunnerTests')
+    scratchfolder = @('ScratchFolderTests')
     scratchuntil = @('ScratchUntilRunTests')
     scratchbackground = @('ScratchBackgroundTests')
 }
@@ -198,7 +199,7 @@ $itestGroups = [ordered]@{
 # builds and headless runs split between them beside the session tests. Every group is in exactly one lane; itest
 # refuses to run while one is not.
 $itestLanes = [ordered]@{
-    timing  = @('lifecycle', 'input', 'time', 'recording', 'capture', 'reads', 'scratch', 'scratchuntil')
+    timing  = @('lifecycle', 'input', 'time', 'recording', 'capture', 'reads', 'scratch', 'scratchfolder', 'scratchuntil')
     build   = @('prep', 'scene', 'csharp')
     untimed = @('sessions', 'headless', 'nodes', 'scratchbackground')
 }
@@ -245,7 +246,7 @@ $itestRules = @(
     @('src/GodotMcp.Server/Session/Realtime*.cs', @('capture')),
     @('src/GodotMcp.Server/Session/GodotSession.Realtime.cs', @('capture')),
     @('src/GodotMcp.Server/Session/Installation.cs', $itestEveryGroup),
-    @('src/GodotMcp.Server/Session/Scratch*.cs', @('scratch', 'scratchuntil', 'scratchbackground', 'csharp')),
+    @('src/GodotMcp.Server/Session/Scratch*.cs', @('scratch', 'scratchfolder', 'scratchuntil', 'scratchbackground', 'csharp')),
     @('src/GodotMcp.Server/Session/**', 'all'),
     @('src/GodotMcp.Server/Wire/**', 'all'),
     @('src/GodotMcp.Server/*.cs', 'all'),
@@ -266,7 +267,7 @@ $itestRules = @(
     @('src/GodotMcp.Server/Tools/HeadlessTools.Batch*.cs', 'scene'),
     @('src/GodotMcp.Server/Tools/HeadlessTools.Properties*.cs', 'nodes'),
     @('src/GodotMcp.Server/Tools/HeadlessTools.Signals*.cs', 'nodes'),
-    @('src/GodotMcp.Server/Tools/HeadlessTools.cs', @('headless', 'scratch', 'scratchuntil', 'scratchbackground')),
+    @('src/GodotMcp.Server/Tools/HeadlessTools.cs', @('headless', 'scratch', 'scratchfolder', 'scratchuntil', 'scratchbackground')),
     @('src/GodotMcp.Server/Tools/HeadlessTools*.cs', 'headless'),
     @('src/GodotMcp.Server/Tools/InputTarget.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Input*.cs', 'input'),
@@ -276,27 +277,27 @@ $itestRules = @(
     @('src/GodotMcp.Server/Tools/RuntimeTools.Capture*.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Watch*.cs', @('time', 'csharp')),
     @('src/GodotMcp.Server/Tools/Watch*.cs', @('time', 'csharp')),
-    @('src/GodotMcp.Server/Tools/RuntimeTools.Time*.cs', @('time', 'scratch', 'scratchuntil', 'scratchbackground', 'csharp')),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Time*.cs', @('time', 'scratch', 'scratchfolder', 'scratchuntil', 'scratchbackground', 'csharp')),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Frames*.cs', 'time'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Batch*.cs', 'time'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Record*.cs', @('recording', 'capture')),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Inspect*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Snapshot*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Baseline*.cs', 'reads'),
-    @('src/GodotMcp.Server/Tools/RuntimeTools.Preview*.cs', @('reads', 'scratch', 'scratchuntil', 'scratchbackground')),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Preview*.cs', @('reads', 'scratch', 'scratchfolder', 'scratchuntil', 'scratchbackground')),
     @('src/GodotMcp.Server/Tools/RuntimeTools.State*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/State*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.CSharp*.cs', 'csharp'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.RunCSharp*.cs', 'csharp'),
     @('src/GodotMcp.Server/Tools/RuntimeTools*.cs', $itestRuntimeGroups),
     @('src/GodotMcp.Server/Tools/ProjectTools*.cs', @('lifecycle', 'sessions', 'prep')),
-    @('src/GodotMcp.Server/Tools/ScratchTools*.cs', @('scratch', 'scratchuntil', 'scratchbackground', 'csharp')),
+    @('src/GodotMcp.Server/Tools/ScratchTools*.cs', @('scratch', 'scratchfolder', 'scratchuntil', 'scratchbackground', 'csharp')),
     @('src/GodotMcp.Server/Tools/**', 'all'),
     @('src/GodotMcp.Server/CSharp/**', 'csharp'),
     @('src/GodotMcp.Dotnet*/**', 'csharp'),
     @('dotnet/**', 'csharp'),
     @('src/GodotMcp.Server/Agents/**', 'none'),
-    @('tests/GodotMcp.IntegrationTests/ScratchRunnerTests.cs', @('scratch', 'scratchuntil', 'scratchbackground')),
+    @('tests/GodotMcp.IntegrationTests/ScratchRunnerTests.cs', @('scratch', 'scratchfolder', 'scratchuntil', 'scratchbackground')),
     @('tests/GodotMcp.IntegrationTests/*.cs', 'class'),
     @('docs/**', 'none'),
     @('**/*.md', 'none'),

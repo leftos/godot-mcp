@@ -933,18 +933,25 @@ internal sealed class ScratchRun
             : (lines, dropped, null);
     }
 
+    /// <summary>
+    /// The markers' line numbers once both streams hold them, or null when <see cref="StepAllowance"/> of load-adjusted time
+    /// passes first, on the registry's clock as every other wait of the walk: the server's own output readers starve with
+    /// the server on a loaded machine, so a wall-time wait would end before they have read lines the game already printed.
+    /// The output is read once more after the deadline is seen to expire, so lines read meanwhile still count.
+    /// </summary>
     private async Task<LineMark?> WaitForMarkersAsync(GodotSession session, string marker, CancellationToken limit)
     {
-        long started = Stopwatch.GetTimestamp();
+        using LoadDeadline allowance = _registry.Clock.Start(StepAllowance, limit);
         while (true)
         {
+            bool expired = allowance.Expired;
             (OutputPage stdout, OutputPage stderr, _) = Output(session);
             if (Markers(stdout, stderr, _mark, marker) is { } found)
             {
                 return found;
             }
 
-            if (Stopwatch.GetElapsedTime(started) > StepAllowance)
+            if (expired)
             {
                 return null;
             }

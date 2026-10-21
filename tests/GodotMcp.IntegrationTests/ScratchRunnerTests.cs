@@ -13,16 +13,15 @@ namespace GodotMcp.IntegrationTests;
 /// run_scratches against the scratch scenes of the InputProbe fixture (its scratch folder and godot-mcp.json) and a C# one of
 /// CsProbe's, in the real Godot: each verdict, the step list, the sessions the scenes ran in, and a C# exception reported as
 /// the failing step's error; an error at the boot, GDScript's or a C# _Ready's, is red before any step. The fixtures' copies
-/// take top-level files only, so each test copies the scratch folder in.
+/// take top-level files only, so each test copies the scratch folder in. The facts that play the whole folder are
+/// <see cref="ScratchFolderTests"/>'.
 /// </summary>
 public sealed class ScratchRunnerTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 180_000;
-    private const int CSharpTestTimeoutMs = 300_000;
-
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
     private readonly ScratchTools _scratch;
+    private CsProbeProject? _csProbe;
 
     public ScratchRunnerTests()
     {
@@ -32,85 +31,20 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await _harness.DisposeAsync();
-        _probe.Dispose();
+        // A game holds its project's folder until it exits, and the harness kills and waits for every game still running, so
+        // the copies are deleted only once it is done.
+        try
+        {
+            await _harness.DisposeAsync();
+        }
+        finally
+        {
+            _probe.Dispose();
+            _csProbe?.Dispose();
+        }
     }
 
-    private const int ParallelTestTimeoutMs = 300_000;
-
-    private static readonly string[] FolderScenes =
-    [
-        "ScratchBeside",
-        "ScratchBootError",
-        "ScratchBusy",
-        "ScratchFlood",
-        "ScratchGreen",
-        "ScratchLateError",
-        "ScratchLateLine",
-        "ScratchLaunchNoise",
-        "ScratchLeak",
-        "ScratchMarker",
-        "ScratchNoProtocol",
-        "ScratchNoSteps",
-        "ScratchPushError",
-        "ScratchQuit",
-        "ScratchStepPace",
-        "ScratchStepPaceAfter",
-        "ScratchTwoRed",
-    ];
-
-    private static readonly string[] FolderVerdicts =
-    [
-        "green",
-        "red",
-        "killed",
-        "red",
-        "green",
-        "red",
-        "red",
-        "green",
-        "known",
-        "green",
-        "red",
-        "no-steps",
-        "red",
-        "red",
-        "green",
-        "red",
-        "red",
-    ];
-
-    [Fact(Timeout = TestTimeoutMs)]
-    public async Task TheScratchFolderPlaysEachSceneToItsVerdict()
-    {
-        JsonObject result = await RunAsync(_probe.Directory, scenes: null, options: null, TestContext.Current.CancellationToken);
-
-        AssertFolderVerdicts(result);
-        JsonNode prep = result["prep"]!;
-        Assert.False(string.IsNullOrEmpty(prep["build"]!.GetValue<string>()), result.ToJsonString());
-        Assert.False(string.IsNullOrEmpty(prep["import"]!.GetValue<string>()), result.ToJsonString());
-        JsonArray scenes = result["scenes"]!.AsArray();
-        Assert.All(scenes, scene => Assert.Null(scene!["alone"]));
-        Assert.Equal(
-            [1, 0.5, 0.1, 0.5, 0.5, 2, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5, 0.5, 0.25, 0.1, 0.5],
-            scenes.Select(scene => scene!["pace"]!.GetValue<double>())
-        );
-        Assert.Equal("boot", scenes[1]!["failedAt"]!["name"]!.GetValue<string>());
-    }
-
-    [Fact(Timeout = ParallelTestTimeoutMs)]
-    public async Task ThreeAtOnceTheFolderPlaysToTheSameVerdictsInTheListedOrder()
-    {
-        JsonObject result = await RunAsync(_probe.Directory, scenes: null, new ScratchOptions(Parallel: 3), TestContext.Current.CancellationToken);
-
-        AssertFolderVerdicts(result);
-        JsonArray scenes = result["scenes"]!.AsArray();
-        Assert.Null(scenes[1]!["alone"]);
-        Assert.False(scenes[2]!["alone"]!.GetValue<bool>());
-        Assert.Null(scenes[10]!["alone"]);
-    }
-
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ASceneRedOnlyBesideAnotherIsPlayedAgainAloneAndPasses()
     {
         JsonObject result = await RunAsync(
@@ -133,17 +67,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal(2, result["green"]!.GetValue<int>());
     }
 
-    private static void AssertFolderVerdicts(JsonObject result)
-    {
-        JsonArray scenes = result["scenes"]!.AsArray();
-        Assert.Equal(FolderScenes, scenes.Select(scene => scene!["scene"]!.GetValue<string>()));
-        Assert.Equal(FolderVerdicts, scenes.Select(scene => scene!["verdict"]!.GetValue<string>()));
-        Assert.Equal(FolderScenes.Select(name => "InputProbe.scratch-" + name), scenes.Select(scene => scene!["session"]!.GetValue<string>()));
-        Assert.False(result["passed"]!.GetValue<bool>());
-        Assert.Equal((5, 9, 1, 1, 1), Counts(result));
-    }
-
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnErrorAtTheBootIsRedAtTheBootAndNoStepPlays()
     {
         JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchBootError"], options: null, TestContext.Current.CancellationToken));
@@ -156,7 +80,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Null(scene["details"]);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task LaunchLinesAreNeverJudgedAndARenamedRootIsFound()
     {
         JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchLaunchNoise"], options: null, TestContext.Current.CancellationToken));
@@ -167,7 +91,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Contains("ERROR: launch noise", output.Stderr);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ARootWithoutTheProtocolIsRedBeforeAnyStep()
     {
         JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchNoProtocol"], options: null, TestContext.Current.CancellationToken));
@@ -179,7 +103,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal(0, scene["steps"]!["played"]!.GetValue<int>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStepPastItsCeilingIsKilledAndItsGameStopped()
     {
         JsonObject result = await RunAsync(_probe.Directory, ["ScratchBusy"], options: null, TestContext.Current.CancellationToken);
@@ -194,7 +118,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.False(_harness.Sessions.GetDebugOutput("InputProbe.scratch-ScratchBusy", 1, before: null).Running);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnErrorInThePaceAfterTheLastStepIsRedInTheExit()
     {
         string profile = """{ "scratch": { "folder": "scratch", "patterns": [], "pace": { "ScratchLateError": 2 } } }""";
@@ -208,7 +132,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Contains("late error after the last step", scene["exit"]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AGreenSceneStopsCleanlyAndItsSessionKeepsItsOutput()
     {
         JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchGreen"], options: null, TestContext.Current.CancellationToken));
@@ -225,7 +149,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.False(output.Running);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStepThatPushesAnErrorIsTheFailedStepAndTheRestNeverPlay()
     {
         JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchPushError"], options: null, TestContext.Current.CancellationToken));
@@ -245,7 +169,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.EndsWith("scratch_push_error.gd", error["file"]!.GetValue<string>(), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task KeepGoingReportsEveryRedStepAndWithoutItTheSceneStopsAtTheFirst()
     {
         JsonObject kept = Single(
@@ -271,7 +195,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal(2, stopped["steps"]!["played"]!.GetValue<int>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task KeepGoingStillStopsAtAStepThatLeftTheGameUnableToAnswer()
     {
         JsonObject scene = Single(
@@ -286,7 +210,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal(["calm", "quit"], scene["details"]!.AsArray().Select(step => step!["name"]!.GetValue<string>()));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStepThatErrorsEveryFrameListsItOnceWithItsCount()
     {
         string raw = await _scratch.RunScratchesAsync(
@@ -305,7 +229,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.True(raw.Length < 60_000, $"{raw.Length} characters");
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ALineATimerPrintsFailsTheStepItPrintedIn()
     {
         JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchLateLine"], options: null, TestContext.Current.CancellationToken));
@@ -317,7 +241,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Empty(scene["details"]![1]!["errors"]!.AsArray());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ALeakAtExitIsFoundAndAKnownSceneReportsItsReason()
     {
         JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchLeak"], options: null, TestContext.Current.CancellationToken));
@@ -328,7 +252,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Null(scene["failedAt"]);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DetailsListAGreenScenesStepsAndAKnownGreenSceneCountsAsRed()
     {
         string profile = """{ "scratch": { "folder": "scratch", "known": { "ScratchGreen": "was flaky" } } }""";
@@ -352,7 +276,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.All(details, step => Assert.Equal(250, step!["gameMs"]!.GetValue<int>()));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStepWithItsOwnPaceWaitsItAndTheOtherStepsWaitTheScenes()
     {
         JsonObject scene = Single(
@@ -367,7 +291,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.All(details, step => Assert.Null(step!["until"]));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task TheWaitAfterTheLastStepIsThatStepsOwnPace()
     {
         JsonObject scene = Single(
@@ -380,7 +304,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Contains("error in the last step's pace after it", scene["exit"]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStepPaceKeyThatMatchesNoStepIsRedBeforeAnyStepPlays()
     {
         string profile = """
@@ -405,7 +329,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal((0, 3), (scene["steps"]!["played"]!.GetValue<int>(), scene["steps"]!["total"]!.GetValue<int>()));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task StepsPlaysOnlyTheSelectedStepsAndTheOthersNeverRun()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -440,10 +364,10 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Null(unknown["selected"]);
     }
 
-    [Fact(Timeout = CSharpTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ACSharpStepThatThrowsIsRedWithItsExceptionAReadyThatThrowsIsRedAtTheBootAndAnUntilEndsAStep()
     {
-        using var csProbe = CsProbeProject.Unbuilt();
+        CsProbeProject csProbe = _csProbe = CsProbeProject.Unbuilt();
         CopyFolder(Path.Combine(RepoPaths.Root, "tests", "fixtures", "CsProbe", "Scratch"), Path.Combine(csProbe.Directory, "Scratch"));
 
         JsonObject result = await RunAsync(
@@ -482,7 +406,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal(0, boot["steps"]!["played"]!.GetValue<int>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AScratchRunNamesItsSessionsAfterThePrefixItWasGiven()
     {
         JsonObject result = await RunAsync(
@@ -560,15 +484,6 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
     private static JsonElement[] Tokens(string json) => JsonSerializer.Deserialize<JsonElement[]>(json)!;
 
     private static IEnumerable<int> Indices(JsonNode indices) => indices.AsArray().Select(index => index!.GetValue<int>());
-
-    private static (int Green, int Red, int Known, int NoSteps, int Killed) Counts(JsonObject result) =>
-        (
-            result["green"]!.GetValue<int>(),
-            result["red"]!.GetValue<int>(),
-            result["known"]!.GetValue<int>(),
-            result["noSteps"]!.GetValue<int>(),
-            result["killed"]!.GetValue<int>()
-        );
 
     internal static void CopyFolder(string source, string destination)
     {

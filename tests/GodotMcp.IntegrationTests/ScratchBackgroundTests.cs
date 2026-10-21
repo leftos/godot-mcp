@@ -16,10 +16,11 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed partial class ScratchBackgroundTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 180_000;
     private const string Scene = "ScratchGreen";
 
-    private static readonly TimeSpan WaitCeiling = TimeSpan.FromSeconds(60);
+    // A hang guard for each wait on the run's files, never reached by a passing run: on a loaded machine the run's launch and
+    // its scene's ceiling may each run to their backstops, 5 times their load-adjusted budgets in wall time, about 6 minutes.
+    private static readonly TimeSpan WaitCeiling = TimeSpan.FromMinutes(10);
 
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
@@ -37,7 +38,7 @@ public sealed partial class ScratchBackgroundTests : IAsyncDisposable
         _probe.Dispose();
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ABackgroundRunReturnsAtOnceShowsItsPlayingSceneAndEndsWithItsCompletionLineAndTheSyncResultsShape()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -65,7 +66,8 @@ public sealed partial class ScratchBackgroundTests : IAsyncDisposable
             .Parse(await _scratch.RunScratchesAsync(_probe.Directory, [Scene], new ScratchOptions(Pace: 1), cancellation))!
             .AsObject();
 
-        Assert.Equal($"godot-mcp scratch run {runId} finished: done, passed true, green 1, red 0, killed 0, known 0", completion);
+        string expected = $"godot-mcp scratch run {runId} finished: done, passed true, green 1, red 0, killed 0, known 0";
+        Assert.True(completion == expected, $"expected \"{expected}\", got \"{completion}\"; the run's status: {status.ToJsonString()}");
         Assert.Equal(("done", false), (status["state"]!.GetValue<string>(), status["live"]!.GetValue<bool>()));
         JsonObject result = status["result"]!.AsObject();
         Assert.Equal(Keys(synchronous), Keys(result));
@@ -76,7 +78,7 @@ public sealed partial class ScratchBackgroundTests : IAsyncDisposable
         Assert.Contains($"godot-mcp scratch run {runId} scene {Scene} step 0/3 open", lines);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStopMidRunEndsItStoppedWithItsCompletionLineAndNoGameLeftRunning()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -93,7 +95,7 @@ public sealed partial class ScratchBackgroundTests : IAsyncDisposable
         Assert.Empty(_harness.Sessions.List(includeStopped: false));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ASecondRunWhileOneIsLiveIsRefused()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -110,7 +112,7 @@ public sealed partial class ScratchBackgroundTests : IAsyncDisposable
         Assert.Equal("stopped", (await StatusAsync(runId, stop: true, cancellation))["state"]!.GetValue<string>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task TheServersExitMidRunEndsItInterrupted()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

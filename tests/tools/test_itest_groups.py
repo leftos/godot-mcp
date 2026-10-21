@@ -10,9 +10,28 @@ from pathlib import Path
 import pytest
 
 RUN_PS1 = Path(__file__).resolve().parents[2] / "run.ps1"
-ALL_GROUPS = ["lifecycle", "sessions", "input", "reads", "time", "prep", "recording", "capture", "headless", "scene", "nodes", "csharp", "scratch"]
+ALL_GROUPS = [
+    "lifecycle",
+    "sessions",
+    "input",
+    "reads",
+    "time",
+    "prep",
+    "recording",
+    "capture",
+    "headless",
+    "scene",
+    "nodes",
+    "csharp",
+    "scratch",
+    "scratchfolder",
+    "scratchuntil",
+    "scratchbackground",
+]
 # Every group a rule's 'all' selects: all of them but the visible-desktop ones.
 ALL_BUT_VISIBLE = [group for group in ALL_GROUPS if group != "capture"]
+# The groups that play scratch scenes, which a change to the scratch runner or the runtime tools it drives selects.
+SCRATCH_GROUPS = ["scratch", "scratchfolder", "scratchuntil", "scratchbackground"]
 GROUP_LINE = re.compile(r"^itest-groups: (\w+) \(from (.+)\)$", re.MULTILINE)
 # The files the repo holds at its first commit; each test changes some of them, or adds a file, after it.
 STUBS = [
@@ -76,12 +95,12 @@ def test_a_headless_file_selects_the_headless_groups_and_reads(repo: Path) -> No
 
 def test_a_runtime_tools_part_selects_its_group(repo: Path) -> None:
     _change(repo, "src/GodotMcp.Server/Tools/RuntimeTools.Time.cs")
-    assert _selected(_itest_groups(repo)) == ["time", "scratch"]
+    assert _selected(_itest_groups(repo)) == ["time", "csharp", *SCRATCH_GROUPS]
 
 
-def test_a_scratch_tools_part_selects_the_scratch_group(repo: Path) -> None:
+def test_a_scratch_tools_part_selects_the_scratch_groups_and_csharp(repo: Path) -> None:
     _change(repo, "src/GodotMcp.Server/Tools/ScratchTools.cs")
-    assert _selected(_itest_groups(repo)) == ["scratch"]
+    assert _selected(_itest_groups(repo)) == ["csharp", *SCRATCH_GROUPS]
 
 
 def test_a_state_file_beside_the_runtime_tools_selects_reads(repo: Path) -> None:

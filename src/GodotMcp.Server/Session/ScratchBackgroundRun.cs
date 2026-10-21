@@ -90,8 +90,8 @@ internal sealed record ScratchBackgroundStart(string RunId, string StatusFile, s
 /// <summary>
 /// One background scratch run: its id, project and files, the snapshot its status file holds, and its end. Every write goes
 /// under the run's lock; the first end reason recorded wins, and the final write puts the status file first, then the completion
-/// line, then marks the run finished, after which every write is skipped. A write a reader blocks is reported and skipped, never
-/// thrown; the final one is retried for about a second.
+/// line, then marks the run finished, after which every write is skipped. A status file's move a holder refuses is retried for
+/// half a second; a write that still fails is reported and skipped, never thrown, and the final one is retried for about a second.
 /// </summary>
 [SuppressMessage(
     "Design",
@@ -112,6 +112,12 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
     private const int IdAttempts = 5;
     private static readonly TimeSpan FinalRetry = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan FinalRetryPause = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan MoveRetry = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan MoveRetryPause = TimeSpan.FromMilliseconds(50);
+
+    // The Win32 error codes in an IOException's HResult for a file another handle holds.
+    private const int SharingViolation = 32;
+    private const int LockViolation = 33;
 
     private readonly Lock _gate = new();
     private readonly ScratchRuns _owner;
@@ -285,7 +291,7 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
                 string path = StatusPath(ProjectDir, _runId);
                 temp = TempPath(path);
                 File.WriteAllText(temp, JsonSerializer.Serialize(SnapshotLocked(), ToolJson.Options));
-                File.Move(temp, path, overwrite: true);
+                MoveIntoPlace(temp, path);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
@@ -538,7 +544,8 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
             string? line = change(_scenes[_slotOf[scene]]);
             _updatedAt = Stamp(_io.Now());
 
-            // Tried once and never retried: a step's start is written inside the scene's ceiling, which no write may fail.
+            // Tried once, its move retried only within MoveIntoPlace's short window: a step's start is written inside the
+            // scene's ceiling, which no write may fail.
             TryWriteStatus(SnapshotLocked());
             if (line is not null)
             {
@@ -705,7 +712,10 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
             _ => "failed",
         };
 
-    /// <summary>Writes the snapshot to a unique temp file and moves it into place; a failure is reported and skipped.</summary>
+    /// <summary>
+    /// Writes the snapshot to a unique temp file and moves it into place (<see cref="MoveIntoPlace"/>); a failure is reported
+    /// and skipped.
+    /// </summary>
     private bool TryWriteStatus(ScratchRunStatus status)
     {
         string path = StatusPath(ProjectDir, _runId);
@@ -713,7 +723,7 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
         try
         {
             File.WriteAllText(temp, JsonSerializer.Serialize(status, ToolJson.Options));
-            File.Move(temp, path, overwrite: true);
+            MoveIntoPlace(temp, path);
             return true;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -723,6 +733,42 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
             return false;
         }
     }
+
+    /// <summary>
+    /// Moves the temp file over the status file. A move refused because another handle holds the target (an outside reader
+    /// that does not share delete, a scanner or an indexer, which let go within moments) is retried every
+    /// <see cref="MoveRetryPause"/>, each retry reported, until <see cref="MoveRetry"/> has passed since the first try; any
+    /// other failure, or the refusal past that window, goes on to the caller.
+    /// </summary>
+    /// <exception cref="IOException">The move failed.</exception>
+    /// <exception cref="UnauthorizedAccessException">The move was refused.</exception>
+    private void MoveIntoPlace(string temp, string path)
+    {
+        long started = Stopwatch.GetTimestamp();
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Move(temp, path, overwrite: true);
+                return;
+            }
+            catch (Exception e) when (IsHeldTarget(e) && Stopwatch.GetElapsedTime(started) < MoveRetry)
+            {
+                // The one marked retry: a target another handle holds, never any other failure.
+                _io.Errors.WriteLine(
+                    $"godot-mcp: moving scratch run {_runId}'s status file into place at {path} was refused, so it is tried again "
+                        + $"(try {attempt + 1}): {e.Message}"
+                );
+                Thread.Sleep(MoveRetryPause);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether a move failed because another handle holds its target: access denied, or a sharing or lock violation.
+    /// </summary>
+    private static bool IsHeldTarget(Exception e) =>
+        e is UnauthorizedAccessException || (e is IOException && (e.HResult & 0xFFFF) is SharingViolation or LockViolation);
 
     /// <summary>Appends one line to the run's log; a failure is reported and skipped.</summary>
     private bool TryAppend(string line)

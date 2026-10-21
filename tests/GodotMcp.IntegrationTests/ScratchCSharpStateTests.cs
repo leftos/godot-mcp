@@ -15,10 +15,9 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class ScratchCSharpStateTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 300_000;
-
     private readonly SessionHarness _harness = new();
     private readonly TempDirectory _cache = new();
+    private readonly CsProbeProject _csProbe = CsProbeProject.Unbuilt();
     private readonly ScratchTools _scratch;
 
     public ScratchCSharpStateTests() =>
@@ -26,16 +25,23 @@ public sealed class ScratchCSharpStateTests : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        // The game holds the helper's copy until it exits, so it is stopped before the cache is deleted.
-        await _harness.DisposeAsync();
-        _cache.Dispose();
+        // The game holds the probe's folder and the helper's copy until it exits, and the harness kills and waits for every game
+        // still running, so both folders are deleted only once it is done.
+        try
+        {
+            await _harness.DisposeAsync();
+        }
+        finally
+        {
+            _csProbe.Dispose();
+            _cache.Dispose();
+        }
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStepWhoseUntilIsACSharpNodesStateEndsGreenWhenTheStateHolds()
     {
-        using var csProbe = CsProbeProject.Unbuilt();
-        string scratch = Path.Combine(csProbe.Directory, "Scratch");
+        string scratch = Path.Combine(_csProbe.Directory, "Scratch");
         Directory.CreateDirectory(scratch);
         foreach (string name in new[] { "ScratchUntilState.cs", "ScratchUntilState.tscn" })
         {
@@ -43,7 +49,7 @@ public sealed class ScratchCSharpStateTests : IAsyncDisposable
         }
 
         string json = await _scratch.RunScratchesAsync(
-            csProbe.Directory,
+            _csProbe.Directory,
             ["res://Scratch/ScratchUntilState.tscn"],
             new ScratchOptions(Pace: 2, Details: true),
             TestContext.Current.CancellationToken

@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
@@ -413,6 +414,32 @@ public sealed partial class ScratchBackgroundTests : IDisposable
         Assert.Empty(Directory.GetFiles(ProjectPrep.LogFolder(run.ProjectDir), "*.tmp"));
     }
 
+    /// <summary>
+    /// An error writer that keeps every line, counts the status move's retry reports, and runs <see cref="OnRetry"/> at the
+    /// first: the seam a holder lets go at, with no timing.
+    /// </summary>
+    private sealed class RetryWatchingWriter : TextWriter
+    {
+        private readonly StringBuilder _text = new();
+
+        public Action OnRetry { get; set; } = static () => { };
+
+        public int Retries { get; private set; }
+
+        public string Text => _text.ToString();
+
+        public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
+
+        public override void WriteLine(string? value)
+        {
+            _text.AppendLine(value);
+            if (value is not null && value.Contains("status file into place", StringComparison.Ordinal) && ++Retries == 1)
+            {
+                OnRetry();
+            }
+        }
+    }
+
     /// <summary>An error writer whose first line blocks until released, so a run can be held between its end's start and its final write.</summary>
     private sealed class BlockingWriter : TextWriter
     {
@@ -438,6 +465,45 @@ public sealed partial class ScratchBackgroundTests : IDisposable
 
             base.Dispose(disposing);
         }
+    }
+
+    [Fact]
+    public void AStatusMoveAHolderRefusesIsTriedAgainAndLandsOnceTheHolderLetsGo()
+    {
+        using RetryWatchingWriter errors = new();
+        ScratchBackgroundRun run = new ScratchRuns().Register(Plan(Project("held-move"), "A"), ServerPid, new ScratchRunIo(() => _now, errors));
+        run.CreateFiles();
+        FileStream holder = new(run.StatusFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        // The holder lets go when the first retry is reported, so the next try finds the target free.
+        errors.OnRetry = holder.Dispose;
+
+        run.SceneStarted(0);
+
+        holder.Dispose();
+        Assert.Equal(1, errors.Retries);
+        Assert.DoesNotContain("so the write was skipped", errors.Text, StringComparison.Ordinal);
+        Assert.Equal("playing", StatusFile(run)["scenes"]![0]!["state"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void AStatusMoveHeldPastTheRetryWindowIsReportedAndSkipped()
+    {
+        using RetryWatchingWriter errors = new();
+        ScratchBackgroundRun run = new ScratchRuns().Register(Plan(Project("held-long"), "A"), ServerPid, new ScratchRunIo(() => _now, errors));
+        run.CreateFiles();
+
+        using (new FileStream(run.StatusFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            run.SceneStarted(0);
+        }
+
+        Assert.True(errors.Retries >= 1, errors.Text);
+        Assert.Contains(
+            $"writing scratch run {run.RunId}'s status file {run.StatusFile} failed, so the write was skipped",
+            errors.Text,
+            StringComparison.Ordinal
+        );
+        Assert.Equal("queued", StatusFile(run)["scenes"]![0]!["state"]!.GetValue<string>());
     }
 
     [GeneratedRegex(@"^godot-mcp scratch run \S+ finished:")]

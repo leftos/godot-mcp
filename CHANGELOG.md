@@ -7,6 +7,8 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - A real-time recording no longer fails to start, or kills its capture helper at a stop, when the helper is reading its deadline file at that moment.
+- `run_scratches` no longer marks a step red with a marker timeout when a busy machine delays reading the step's end lines.
+- A background `run_scratches` run's status file no longer misses an update while another process is reading it.
 - Servers starting together on a busy machine no longer write a project's `override.cfg` without holding the shared folder list.
 
 ## 0.20.0 - 2026-10-20
