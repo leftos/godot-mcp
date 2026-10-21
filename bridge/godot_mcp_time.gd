@@ -680,9 +680,12 @@ func _check_at_draws(probe: Callable, drawn: Dictionary) -> Callable:
 	return _checked_since_draw.bind(drawn)
 
 
+## Disconnects the wait's per-draw check and erases it from drawn: the handler is bound to drawn, so
+## erasing it here ends the Dictionary-Callable cycle the refcount would never free.
 func _stop_draw_checks(drawn: Dictionary) -> void:
 	if drawn.has("on_draw"):
 		RenderingServer.frame_post_draw.disconnect(drawn["on_draw"])
+		drawn.erase("on_draw")
 
 
 ## Checks drawn.probe inside a frame_post_draw, until a check is met or fails; the met one

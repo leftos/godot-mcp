@@ -460,6 +460,22 @@ func test_a_signal_wait_connects_in_its_calls_frame_so_an_earlier_emission_is_no
 	_free_then_rig(rig)
 
 
+func test_stopping_draw_checks_lets_the_wait_state_go() -> void:
+	var time: Node = _time_script.new()
+	var drawn: Dictionary = {}
+	time._check_at_draws(func() -> Array: return [false, null], drawn)
+	var on_draw: Callable = drawn["on_draw"]
+	assert_true(
+		RenderingServer.frame_post_draw.is_connected(on_draw), "the wait checks at each draw"
+	)
+	time._stop_draw_checks(drawn)
+	assert_true(
+		not RenderingServer.frame_post_draw.is_connected(on_draw), "the draw check is disconnected"
+	)
+	assert_true(not drawn.has("on_draw"), "the state no longer holds the Callable bound to it")
+	time.free()
+
+
 ## A clock whose bridge is a stand-in holding the inspector, the JSON module and an unregistered
 ## logger, and CallTarget, a node outside any tree with signal pinged(n), ping(n), which emits it
 ## and returns n, add(a, b), scale_now() and fail().

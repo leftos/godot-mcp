@@ -6,6 +6,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- A `wait_for` with `screenshot` no longer keeps its state alive in the game after it ends.
 - A real-time recording no longer fails to start, or kills its capture helper at a stop, when the helper is reading its deadline file at that moment.
 - `run_scratches` no longer marks a step red with a marker timeout when a busy machine delays reading the step's end lines.
 - A background `run_scratches` run's status file no longer misses an update while another process is reading it.
