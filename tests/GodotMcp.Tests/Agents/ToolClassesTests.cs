@@ -24,6 +24,7 @@ public sealed class ToolClassesTests
     [InlineData("run_project", ToolClasses.Drive)]
     [InlineData("run_process", ToolClasses.Drive)]
     [InlineData("run_scratches", ToolClasses.Drive)]
+    [InlineData("save_screenshot", ToolClasses.Drive)]
     [InlineData("get_scene_tree", ToolClasses.Read)]
     [InlineData("take_screenshot", ToolClasses.Read)]
     [InlineData("capture_frames", ToolClasses.Read)]
@@ -44,7 +45,6 @@ public sealed class ToolClassesTests
     [InlineData("get_game_state", ToolClasses.Read)]
     [InlineData("diff_snapshots", ToolClasses.Read)]
     [InlineData("watch", ToolClasses.Read)]
-    [InlineData("save_screenshot", ToolClasses.EditScene)]
     public void AnOverriddenToolGetsItsOverride(string tool, string expected)
     {
         Assert.Equal(expected, ToolClasses.Overrides[tool].Class);
@@ -58,7 +58,7 @@ public sealed class ToolClassesTests
             .ServedTools()
             .ToDictionary(t => t.Tool.Name!, t => ToolClasses.FromAttributes(t.Tool, t.ToolType), StringComparer.Ordinal);
 
-        Assert.Equal(8, ToolClasses.Overrides.Count);
+        Assert.Equal(7, ToolClasses.Overrides.Count);
         Assert.All(
             ToolClasses.Overrides,
             o =>

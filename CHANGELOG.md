@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Changed
+
+- `save_screenshot` is in the `drive` class beside `save_screenshot_baseline`, so agents that drive the game get it without the scene-editing tools.
+
 ## 0.21.0 - 2026-10-21
 
 ### Added

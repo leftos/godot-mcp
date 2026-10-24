@@ -32,7 +32,7 @@ internal sealed partial class RuntimeTools
 
     /// <summary>
     /// The tools a batch step may name: every tool declared on this class but batch_drive itself and save_screenshot, which
-    /// writes a project file, a power batch_drive's edit-live class does not grant.
+    /// writes a file into the project.
     /// </summary>
     internal static readonly IReadOnlySet<string> BatchableTools = FindBatchableTools();
 

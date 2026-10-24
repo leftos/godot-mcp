@@ -282,7 +282,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   Those refusals read "path must not contain ':' after the drive: <path>", "path <path> uses a short (8.3) name; use the folder's full name", "path <path> leads through a link to <resolved>, outside the project <project root> and the checkout's .tmp folder <tmp folder>; save inside either" (for a path in the project whose link leads out of it: "…, outside the project; save inside the project"; or "…, under .godot/, which the editor owns; pick a tracked folder") and "path <path> leads through a link at <link path> that cannot be followed: <message>".
 
-  It is in the file-editing class (`edit-scene`), not `read`, so an agent allowed to edit no file does not gain this power, and `batch_drive` refuses it as a step.
+  It is in the `drive` class beside `save_screenshot_baseline`, not `read`, so an agent that only reads does not gain this power, and `batch_drive` refuses it as a step.
 
 ### `get_ui_elements`
 
@@ -1094,7 +1094,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   An error raised inside a member's call reaches the agent only through that member's `errors`, so a member whose result has no `errors` field (a screenshot assertion, a failed property assertion) does not show it; a final `no_errors {sessions: "all"}` still catches it. One gap remains: an error in the next step's own session that lands between one step's end and the next step's call can show on no entry (a short window, GMCP-211); a final `no_errors {sessions: "all"}` catches it. A session restarted mid-batch (`restart_project`) keeps its feed and numbering, so its cursor carries on; one relaunched under the same name is a new session the batch does not follow.
 
-  `take_screenshot` and `compare_screenshot` steps are forced to `path_only` and images dropped. Not batchable: the lifecycle tools, `preview_scene`, `save_screenshot` (it writes a project file, which `batch_drive`'s class does not grant) and the headless tools. The whole batch stops after 300 s of load-adjusted time.
+  `take_screenshot` and `compare_screenshot` steps are forced to `path_only` and images dropped. Not batchable: the lifecycle tools, `preview_scene`, `save_screenshot` (it writes a file into the project) and the headless tools. The whole batch stops after 300 s of load-adjusted time.
   A `fired` assertion checks the `fired` list of the nearest earlier tool step (assertion steps between are skipped), so it follows a `click`, `mouse_button`, `drag`, `key` or `type_text`; with no tool step before it the batch is refused at validation (`step {index}: assert 'fired' needs a tool step before it, whose fired list it checks.`).
   `node` matches an entry whose absolute node equals it or ends with `/` + it on a segment boundary: `Ready` and `Main/Ready` match `/root/Main/Ready`, `/Main/Ready` does not (no slash trimming). `signal` is the signal name.
   `equals` is a JSON array compared as JSON with the entry's whole `args` (an entry with no `args` reads as `[]`); absent or null, any args match. A non-array `equals` is refused (`equals must be an array of the emission's arguments; got {json}.`). A folded entry with `count` matches like any other, its args being the run's last.
