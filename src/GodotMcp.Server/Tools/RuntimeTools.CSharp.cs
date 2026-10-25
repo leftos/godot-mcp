@@ -104,7 +104,7 @@ internal sealed partial class RuntimeTools
     public async Task<string> CsSetAsync(
         [Description(CsTargetDescription)] CSharpTarget target,
         [Description("The property, field, list index or dictionary key to set, by name or dotted path: Pending.Count, Items[2].")] string member,
-        [Description("The new value, as JSON.")] JsonElement value,
+        [Description(NewValueDescription)] JsonElement value,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )

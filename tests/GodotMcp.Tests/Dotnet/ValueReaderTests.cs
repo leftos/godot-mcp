@@ -73,6 +73,21 @@ public sealed class ValueReaderTests
     }
 
     [Fact]
+    public void AnEnumNameGivenAsAJsonQuotedStringReads()
+    {
+        Assert.Equal(Color.Green, Read<Color>("\"\\\"Green\\\"\""));
+        Assert.Equal(Access.Read | Access.Write, Read<Access>("\"\\\"Read, Write\\\"\""));
+    }
+
+    [Fact]
+    public void AnUnknownEnumNameInJsonQuotesIsRefusedAsGiven() =>
+        Assert.Equal("expected one of Red, Green, Blue (or its number), got \"\\\"Purple\\\"\"", Refusal<Color>("\"\\\"Purple\\\"\""));
+
+    [Fact]
+    public void ALoneQuoteForAnEnumIsRefused() =>
+        Assert.Equal("expected one of Red, Green, Blue (or its number), got \"\\\"\"", Refusal<Color>("\"\\\"\""));
+
+    [Fact]
     public void AnUnknownEnumNameIsRefused() =>
         Assert.Equal("expected one of Red, Green, Blue (or its number), got \"Purple\"", Refusal<Color>("\"Purple\""));
 

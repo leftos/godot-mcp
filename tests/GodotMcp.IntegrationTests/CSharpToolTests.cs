@@ -313,6 +313,27 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
     }
 
     [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task SetConvertsAnEnumGivenAsAJsonQuotedName()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTargetsAsync(cancellation);
+        CSharpTarget target = new(Node: TargetsPath);
+
+        try
+        {
+            JsonObject set = await SetAsync(target, "Mood", "\"Angry\"", cancellation);
+            JsonObject read = await GetAsync(target, "Mood", null, cancellation);
+
+            Assert.Equal("Angry", set["after"]?.GetValue<string>());
+            Assert.Equal("Angry", read["value"]?.GetValue<string>());
+        }
+        finally
+        {
+            await SetAsync(target, "Mood", "Calm", cancellation);
+        }
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
     public async Task KeepReturnsAHandleUsableAsATarget()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

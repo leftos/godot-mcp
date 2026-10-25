@@ -31,12 +31,15 @@ internal static class EnumReader
 
     private static object FromNames(JsonNode json, Type type)
     {
-        string text = json.GetValue<string>();
+        string text = Unquoted(json.GetValue<string>());
         string[] parts = text.Split(',', StringSplitOptions.TrimEntries);
         string[] names = Enum.GetNames(type);
         bool named = parts.All(part => names.Contains(part, StringComparer.OrdinalIgnoreCase)) && (parts.Length == 1 || IsFlags(type));
         return named && Enum.TryParse(type, text, ignoreCase: true, out object? value) ? value! : throw Refusal(type, json);
     }
+
+    /// <summary>A name the caller wrapped in JSON quotes (<c>"\"Normal\""</c>) reads as the name between them.</summary>
+    private static string Unquoted(string text) => text.Length >= 2 && text[0] == '"' && text[^1] == '"' ? text[1..^1] : text;
 
     private static bool IsFlags(Type type) => type.IsDefined(typeof(FlagsAttribute), inherit: false);
 

@@ -31,6 +31,8 @@ internal sealed partial class RuntimeTools
     private const string ValueNote =
         " Values are JSON as run_script returns them: Vector2/3 as {x, y[, z]}, Color as {r, g, b, a}, Rect2 as "
         + "{x, y, width, height}, a Node as its path, another Object as {class, string}.";
+    private const string NewValueDescription =
+        "The new value as a JSON value: a string as itself (Normal, not \"Normal\"), a number, true or false, an object, an array or null.";
     private static readonly TimeSpan InspectTimeout = TimeSpan.FromSeconds(10);
 
     [McpServerTool(Name = "get_scene_tree", ReadOnly = true, Destructive = false, OpenWorld = false)]
@@ -118,7 +120,7 @@ internal sealed partial class RuntimeTools
     public async Task<string> SetPropertyAsync(
         [Description(NodeDescription)] string node,
         [Description("The property's name, as inspect_node lists it.")] string property,
-        [Description("The new value, as JSON.")] JsonElement value,
+        [Description(NewValueDescription)] JsonElement value,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )

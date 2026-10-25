@@ -952,6 +952,8 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 ### `cs_set`
 
 - **Does:** sets a C# property or field of a `target` and reads it back: `{member, before, after}`. `member` is a name or dotted path whose last segment is a property, field, list index or dictionary key (`Pending.Count`, `Items[2]`, `Scores["key"]`); `value` is JSON converted by the member's type: a record or class from an object, an enum by name or number, a list from an array, an interface or abstract member from `{"$handle": h}` or `{"$node": path}`.
+
+  A string is given as itself (`"value": "Normal"`), not as JSON text holding a string (`"\"Normal\""`); an enum name sent wrapped in quotes anyway reads as the name between them, and an unknown one is refused showing the value as sent. `set_property` reads its `value` the same way, except that a string's quotes are content there and are written into the property.
 - **Use:** to put a C# game object into a state for a test when no method gets it there.
 - **Edges:** writes what reflection allows: non-public and `init` setters and readonly instance fields; refuses a property with no setter (or no getter, since it cannot be read back), a `const`, a `static readonly` field, and a path through a struct, whose set would change a copy (set the struct whole). A list index or dictionary key must already exist.
 
