@@ -1415,6 +1415,106 @@ public sealed class ScratchVerdictTests
         Assert.NotNull(step["cut"]);
     }
 
+    [Fact]
+    public void RedOnlyKeepsARedScenesRedStepsWithTheirReadbackAndItsFailures()
+    {
+        ScratchStep failing = Step(1) with { Status = "note", Errors = [Error("boom", "res://a.gd", 7)], Lines = ["[scratch] before"] };
+        JsonObject run = RunJson(ScratchVerdict.Judge(Seen(Step(0), failing, Step(2) with { CallError = "gone" }), Plain with { Details = true }));
+        JsonObject whole = run["scenes"]![0]!.AsObject();
+
+        JsonObject scene = ScratchView.Result(run, redOnly: true)["scenes"]![0]!.AsObject();
+
+        JsonArray steps = scene["details"]!.AsArray();
+        Assert.Equal([1, 2], steps.Select(step => step!["index"]!.GetValue<int>()));
+        Assert.True(JsonNode.DeepEquals(whole["details"]![1], steps[0]), steps[0]!.ToJsonString());
+        Assert.Equal("note", steps[0]!["status"]!.GetValue<string>());
+        Assert.Equal("boom", steps[0]!["errors"]![0]!["message"]!.GetValue<string>());
+        Assert.Equal(["[scratch] before"], steps[0]!["lines"]!.AsArray().Select(line => line!.GetValue<string>()));
+        Assert.NotNull(steps[1]!["error"]);
+        Assert.True(JsonNode.DeepEquals(whole["failures"], scene["failures"]));
+        Assert.True(JsonNode.DeepEquals(whole["failedAt"], scene["failedAt"]));
+        Assert.Equal(3, whole["details"]!.AsArray().Count);
+    }
+
+    [Fact]
+    public void RedOnlyListsNoStepsOfAGreenSceneAndKeepsItsVerdictSecondsAndTimeScale()
+    {
+        ScratchSceneResult green = ScratchVerdict.Judge(Seen(Step(0), Step(1)), Plain with { Details = true }) with { TimeScale = 1 };
+        JsonObject run = RunJson(green);
+
+        JsonObject scene = ScratchView.Result(run, redOnly: true)["scenes"]![0]!.AsObject();
+
+        Assert.False(scene.ContainsKey("details"), scene.ToJsonString());
+        Assert.Equal(ScratchVerdict.Green, scene["verdict"]!.GetValue<string>());
+        Assert.Equal(green.Seconds, scene["seconds"]!.GetValue<double>());
+        Assert.Equal(1, scene["timeScale"]!.GetValue<double>());
+        Assert.Equal(2, scene["steps"]!["played"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void RedOnlyKeepsTheFailedAtAndExitOfARedSceneWithNoRedStep()
+    {
+        ScratchSceneResult booted = ScratchVerdict.Judge(Seen() with { Total = 2, BootErrors = [Error("boot failure", "", 0)] }, Plain);
+        ScratchSceneResult exited = ScratchVerdict.Judge(Seen(Step(0)) with { ExitCode = 3 }, Plain);
+        JsonObject run = RunJson(booted, exited);
+
+        JsonArray scenes = ScratchView.Result(run, redOnly: true)["scenes"]!.AsArray();
+
+        Assert.NotNull(run["scenes"]![1]!["details"]);
+        Assert.NotNull(run["scenes"]![0]!["failedAt"]);
+        foreach ((JsonNode? before, JsonNode? after) in run["scenes"]!.AsArray().Zip(scenes))
+        {
+            Assert.Equal(ScratchVerdict.Red, after!["verdict"]!.GetValue<string>());
+            Assert.False(after.AsObject().ContainsKey("details"), after.ToJsonString());
+            Assert.True(JsonNode.DeepEquals(before!["failedAt"], after["failedAt"]), after.ToJsonString());
+            Assert.True(JsonNode.DeepEquals(before["exit"], after["exit"]), after.ToJsonString());
+        }
+    }
+
+    [Theory]
+    [InlineData("""{"runId":"20261019T222144-3f2a","state":"running","scenes":[{"scene":"A","state":"playing","step":1,"total":3}]}""")]
+    [InlineData("""{"runId":"20261019T222144-3f2a","state":"done","result":{"passed":false}}""")]
+    [InlineData("""{"state":"done","result":{"scenes":[{"scene":"A","verdict":"red"},{"scene":"B","details":"odd"},7]}}""")]
+    public void RedOnlyPassesAPartialStatusThroughUnchanged(string json)
+    {
+        JsonObject status = JsonNode.Parse(json)!.AsObject();
+
+        JsonObject read = ScratchView.Status(status, redOnly: true);
+
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(json), read), read.ToJsonString());
+    }
+
+    [Fact]
+    public void RedOnlyPrunesAStatusResultAndLeavesTheStatusItReadWhole()
+    {
+        JsonObject status = new()
+        {
+            ["state"] = "done",
+            ["result"] = RunJson(ScratchVerdict.Judge(Seen(Step(0), Step(1) with { CallError = "gone" }), Plain)),
+        };
+        string before = status.ToJsonString();
+
+        JsonObject read = ScratchView.Status(status, redOnly: true);
+
+        Assert.Equal([1], read["result"]!["scenes"]![0]!["details"]!.AsArray().Select(step => step!["index"]!.GetValue<int>()));
+        Assert.Equal(before, status.ToJsonString());
+    }
+
+    [Fact]
+    public void OnlyAllReturnsTheInputUnchanged()
+    {
+        JsonObject run = RunJson(ScratchVerdict.Judge(Seen(Step(0), Step(1) with { CallError = "gone" }), Plain));
+        JsonObject status = new() { ["state"] = "done", ["result"] = run.DeepClone() };
+        string before = (run.ToJsonString(), status.ToJsonString()).ToString();
+
+        Assert.Same(run, ScratchView.Result(run, redOnly: false));
+        Assert.Same(status, ScratchView.Status(status, redOnly: false));
+        Assert.Equal(before, (run.ToJsonString(), status.ToJsonString()).ToString());
+    }
+
+    private static JsonObject RunJson(params ScratchSceneResult[] scenes) =>
+        JsonSerializer.SerializeToNode(ScratchVerdict.Summarise(scenes, PrepResult.Skipped, timeScale: 1), ToolJson.Options)!.AsObject();
+
     private static JsonObject Json(ScratchSceneResult result) => JsonNode.Parse(JsonSerializer.Serialize(result, ToolJson.Options))!.AsObject();
 
     private static List<string> Window(OutputPage stdout, OutputPage stderr, LineMark after, LineMark before) =>

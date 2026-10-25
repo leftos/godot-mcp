@@ -72,7 +72,7 @@ Its folder, paces, known-red scenes and patterns live in `godot-mcp.json`'s `scr
 
 A run of many minutes goes in the background: `run_scratches` with `options.background: true` returns `{runId, statusFile, logFile, scenes}` at once and plays on in the server (one background run per project; `run_scratches` on it is refused until it ends). Wait on its log with a `Monitor` matching `^godot-mcp scratch run \S+ finished:` (the completion line: `done, passed …`, `stopped`, `interrupted` or `failed: …`) rather than holding a call open. Give that wait a time limit, the scenes' paces (each divided by the time scale, the last step's pace once more, in wall time above scale 1) plus a minute or two: a server killed outright (an install, a crash) never writes the line, and `scratch_status` then answers `live: false` with `state: running`.
 
-Then read the verdict with `scratch_status {projectPath, runId}`; `stop: true` ends it. Its sessions are skipped by calls that name no `session`, so name one to drive or read it.
+Then read the verdict with `scratch_status {projectPath, runId}`; `stop: true` ends it. A big run is cheaper to read with `only: "red"`, which keeps every scene's line but lists only the red steps in `details` (a foreground `run_scratches` takes it as `options.only`; a background one refuses it, so pass it here). Its sessions are skipped by calls that name no `session`, so name one to drive or read it.
 
 **Input.**
 

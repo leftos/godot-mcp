@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - `PlayStep` called through `call_method` or an `options.call` takes a scratch step's name, as `run_scratches` reports it, in place of its index.
+- `scratch_status` and `run_scratches` take `only: "red"` to list only each scene's red steps, keeping every scene's verdict line.
 
 ### Fixed
 

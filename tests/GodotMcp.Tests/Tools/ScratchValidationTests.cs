@@ -162,6 +162,28 @@ public sealed class ScratchValidationTests : IDisposable
         );
 
     [Theory]
+    [InlineData("Red")]
+    [InlineData("failed")]
+    [InlineData("")]
+    public void AnOnlyOtherThanAllOrRedIsRefused(string only) =>
+        Assert.Equal($"only must be \"all\" or \"red\", not \"{only}\"", Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Only: only))));
+
+    [Theory]
+    [InlineData("all")]
+    [InlineData("red")]
+    public void OnlyWithBackgroundIsRefused(string only) =>
+        Assert.Equal(
+            "options.only is not read by a background run; pass only to scratch_status, which returns the run's result",
+            Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Background: true, Only: only)))
+        );
+
+    [Theory]
+    [InlineData("all")]
+    [InlineData("red")]
+    public void AllAndRedAreAcceptedAsOnly(string only) =>
+        Assert.Equal("res://Other.tscn", Assert.Single(Plan(["res://Other.tscn"], new ScratchOptions(Only: only)).Scenes).ResPath);
+
+    [Theory]
     [InlineData(0.01)]
     [InlineData(0.5)]
     [InlineData(100.0)]

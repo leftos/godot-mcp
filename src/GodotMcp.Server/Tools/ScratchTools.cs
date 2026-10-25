@@ -29,6 +29,14 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     /// <summary>The smallest options.timeScale: a wait's wall time is its pace divided by the scale.</summary>
     internal const double MinTimeScale = 0.01;
 
+    /// <summary>What only does, for scratch_status' parameter and run_scratches' options.only alike.</summary>
+    internal const string OnlyDescription =
+        "\"all\" (default) returns the whole result; \"red\" keeps every field of every scene and prunes only its details to its "
+        + "red steps (ok false), each with its full readback (status, error, errors, errorsOmitted, lines, cut): a green scene, "
+        + "or a red one with no red step (a boot error, a failed exit, a kill), lists no steps. Applied as the result is read: "
+        + "a background run's status file stays whole, so a later read with \"all\" still sees every step, and a running run's "
+        + "scenes are returned as they are.";
+
     private const string SceneEnding = ".tscn";
     private const string ScratchAuto = "--scratch-auto";
 
@@ -82,7 +90,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         )]
             string[]? scenes = null,
         [Description(
-            "{pace, timeScale, userArgs, prepare, details, parallel, session, keepGoing, steps, background}: pace in seconds for every "
+            "{pace, timeScale, userArgs, prepare, details, parallel, session, keepGoing, steps, background, only}: pace in seconds for every "
                 + "step (else scratch.pace's for the step, else for the scene, else 0.5); timeScale the games' time scale, from 0.01 to "
                 + "100 (default 1), each game launched with --time-scale, so a pace of p s takes p / timeScale s of wall time and "
                 + "the kill bound scales with it, the wait after the last step lasting p s of wall time above 1, a scene whose "
@@ -96,7 +104,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
                 + "(the game gone or stuck) still stops the scene; steps [3, \"name\", \"2-5\"] plays only those steps, by index, name or "
                 + "inclusive range, in ascending order, and never runs the others, so a later step that depends on a skipped one is "
                 + "the caller's choice; background true returns {runId, statusFile, logFile, scenes} at once and plays the run on "
-                + "in the server, read and ended with scratch_status."
+                + "in the server, read and ended with scratch_status; only \"red\" (default \"all\") lists in each scene's details "
+                + "only its red steps, with their full readback, and no step of a green scene, every other scene field kept; it is "
+                + "refused with background, whose result scratch_status's only filters."
         )]
             ScratchOptions? options = null,
         CancellationToken cancellationToken = default
@@ -113,7 +123,13 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
 
             sessions.ScratchRuns.RefuseLive(plan.ProjectDir);
             ScratchRunResult result = await ScratchRun.RunAsync(sessions, csharp, plan, observer: null, cancellationToken);
-            return JsonSerializer.Serialize(result, ToolJson.Options);
+            if (!RedOnly(given.Only))
+            {
+                return JsonSerializer.Serialize(result, ToolJson.Options);
+            }
+
+            JsonObject built = JsonSerializer.SerializeToNode(result, ToolJson.Options)!.AsObject();
+            return ScratchView.Result(built, redOnly: true).ToJsonString(ToolJson.Options);
         }
         catch (SessionException e)
         {
@@ -135,7 +151,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "time scale, launch left out) or done (its verdict), or the run's own final word for a scene it ended mid-step; "
             + "timeScale is options.timeScale when it is not 1, and a scene's own timeScale (1) shows its game runs at another "
             + "speed than the run's, its scratch.pace entry having \"timeScale\": 1; "
-            + "result, once done, is the object run_scratches returns without background; "
+            + "result, once done, is the object run_scratches returns without background; only: \"red\" keeps every scene's line in "
+            + "it and lists in its details only the red steps, with their full readback, the status file left whole; "
             + "startedAt and updatedAt are UTC ISO 8601. live is true while this server still plays the run. A run of this server is "
             + "read from memory; any other run's status file, <project>/.godot/godot-mcp/scratch-<runId>.json, is returned as it "
             + "is, with live false: one a server killed outright left says running, and its serverPid tells whose it was. "
@@ -148,6 +165,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         [Description("The folder that holds the project's project.godot.")] string projectPath,
         [Description("The run's id, as run_scratches returned it: <UTC yyyyMMddTHHmmss>-<4 hex>, e.g. 20261019T222144-3f2a.")] string runId,
         [Description("true ends the run and returns its final status; default false only reads it.")] bool? stop = null,
+        [Description(OnlyDescription)] string? only = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -159,11 +177,12 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             );
         }
 
+        bool redOnly = RedOnly(only);
         try
         {
             string projectDir = ProjectDir(projectPath);
             JsonObject status = await StatusAsync(projectDir, runId, stop ?? false, cancellationToken);
-            return status.ToJsonString(ToolJson.Options);
+            return ScratchView.Status(status, redOnly).ToJsonString(ToolJson.Options);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -265,6 +284,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         CheckPace(options.Pace);
         CheckTimeScale(options.TimeScale);
         CheckParallel(options.Parallel);
+        CheckOnly(options);
         bool prepare = RunOptions.ParsePrepare(options.Prepare);
         string prefix = SessionPrefix(options.Session, projectDir);
         List<string> userArgs = UserArgs(profile, scratch, options);
@@ -516,6 +536,26 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             : userArgs;
     }
 
+    /// <exception cref="McpException">options.only is neither "all" nor "red", or is given with background, which never reads it.</exception>
+    private static void CheckOnly(ScratchOptions options)
+    {
+        _ = RedOnly(options.Only);
+        if (options.Only is not null && (options.Background ?? false))
+        {
+            throw new McpException("options.only is not read by a background run; pass only to scratch_status, which returns the run's result");
+        }
+    }
+
+    /// <summary>Whether only asks for the red steps alone: false for "all" or left out, true for "red".</summary>
+    /// <exception cref="McpException">The value is neither "all" nor "red".</exception>
+    private static bool RedOnly(string? only) =>
+        only switch
+        {
+            null or ScratchView.All => false,
+            ScratchView.Red => true,
+            _ => throw new McpException($"only must be \"all\" or \"red\", not \"{only}\""),
+        };
+
     /// <exception cref="McpException">The number of scenes at once is not from 1 to the most.</exception>
     private static void CheckParallel(int? parallel)
     {
@@ -608,5 +648,9 @@ internal sealed record ScratchOptions(
             + "scratch_status; open, read and close the files, never hold them open. While it runs, every run_scratches on the "
             + "project is refused. Default false."
     )]
-        bool? Background = null
+        bool? Background = null,
+    [property: Description(
+        ScratchTools.OnlyDescription + " Refused with background, which never reads it: pass only to scratch_status, which returns the run's result."
+    )]
+        string? Only = null
 );

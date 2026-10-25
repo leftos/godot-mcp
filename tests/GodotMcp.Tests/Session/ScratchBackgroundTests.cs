@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
@@ -206,6 +207,7 @@ public sealed partial class ScratchBackgroundTests : IDisposable
                 _temp.Combine("no-such-project"),
                 @"..\..\20261019T222144-3f2a",
                 stop: null,
+                only: null,
                 TestContext.Current.CancellationToken
             )
         );
@@ -353,10 +355,10 @@ public sealed partial class ScratchBackgroundTests : IDisposable
         );
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
-            tools.ScratchStatusAsync(project, RunId, stop: true, TestContext.Current.CancellationToken)
+            tools.ScratchStatusAsync(project, RunId, stop: true, only: null, TestContext.Current.CancellationToken)
         );
         JsonObject read = JsonNode
-            .Parse(await tools.ScratchStatusAsync(project, RunId, stop: null, TestContext.Current.CancellationToken))!
+            .Parse(await tools.ScratchStatusAsync(project, RunId, stop: null, only: null, TestContext.Current.CancellationToken))!
             .AsObject();
 
         Assert.Equal(
@@ -366,6 +368,94 @@ public sealed partial class ScratchBackgroundTests : IDisposable
         );
         Assert.Equal(("running", false), (read["state"]!.GetValue<string>(), read["live"]!.GetValue<bool>()));
     }
+
+    [Fact]
+    public async Task ARedOnlyReadOfAFinishedRunListsItsRedStepsAloneAndTheStatusFileKeepsEveryStep()
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("finished-red");
+        ScratchTools tools = new(harness.Sessions, TestCSharp.Unused());
+        ScratchBackgroundRun run = harness.Sessions.ScratchRuns.Register(Plan(project, "A"), ServerPid, Io());
+        run.CreateFiles();
+        run.Finish(RedRun());
+        harness.Sessions.ScratchRuns.Remove(run);
+
+        JsonObject red = await StatusAsync(tools, project, run.RunId, only: "red");
+        JsonObject all = await StatusAsync(tools, project, run.RunId, only: null);
+
+        Assert.Equal([1], StepIndices(red));
+        Assert.Equal(["two"], red["result"]!["scenes"]![0]!["failures"]!.AsArray().Select(failure => failure!["name"]!.GetValue<string>()));
+        Assert.Equal([0, 1], StepIndices(all));
+        Assert.Equal([0, 1], StepIndices(StatusFile(run)));
+    }
+
+    [Fact]
+    public async Task ARedOnlyReadOfAStatusFileListsItsRedStepsAloneAndLeavesTheFileWhole()
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("file-red");
+        ScratchTools tools = new(harness.Sessions, TestCSharp.Unused());
+        const string RunId = "20261019T222144-3f2a";
+        string path = ScratchBackgroundRun.StatusPath(project, RunId);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        JsonObject written = new()
+        {
+            ["runId"] = RunId,
+            ["state"] = "done",
+            ["serverPid"] = 1,
+            ["result"] = JsonSerializer.SerializeToNode(RedRun(), ToolJson.Options),
+        };
+        string text = written.ToJsonString();
+        await File.WriteAllTextAsync(path, text, TestContext.Current.CancellationToken);
+
+        JsonObject red = await StatusAsync(tools, project, RunId, only: "red");
+
+        Assert.Equal([1], StepIndices(red));
+        Assert.Equal("boom", red["result"]!["scenes"]![0]!["details"]![0]!["error"]!.GetValue<string>());
+        Assert.False(red["live"]!.GetValue<bool>());
+        Assert.Equal(text, await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
+    }
+
+    [Theory]
+    [InlineData("Red")]
+    [InlineData("none")]
+    [InlineData("")]
+    public async Task AStatusReadWithAnOnlyOtherThanAllOrRedIsRefused(string only)
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("only");
+        ScratchTools tools = new(harness.Sessions, TestCSharp.Unused());
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => StatusAsync(tools, project, "20261019T222144-3f2a", only));
+
+        Assert.Equal($"only must be \"all\" or \"red\", not \"{only}\"", refused.Message);
+    }
+
+    private static async Task<JsonObject> StatusAsync(ScratchTools tools, string project, string runId, string? only) =>
+        JsonNode.Parse(await tools.ScratchStatusAsync(project, runId, stop: null, only, TestContext.Current.CancellationToken))!.AsObject();
+
+    private static IEnumerable<int> StepIndices(JsonObject status) =>
+        status["result"]!["scenes"]![0]!["details"]!.AsArray().Select(step => step!["index"]!.GetValue<int>());
+
+    /// <summary>A run of one red scene that lists a green step and the red one after it, with its readback.</summary>
+    private static ScratchRunResult RedRun() =>
+        ScratchVerdict.Summarise(
+            [
+                new ScratchSceneResult("A", ScratchVerdict.Red, new ScratchStepCount(2, 2), 1, 1.5, "p.scratch-A")
+                {
+                    FailedAt = new ScratchFailure(1, "two", "boom", "after"),
+                    Failures = [new ScratchStepFailure(1, "two", "boom")],
+                    Details =
+                    [
+                        new ScratchStepResult(0, "one", true, 1000, null, "fine"),
+                        new ScratchStepResult(1, "two", false, 1000, null, "after") { Error = "boom", Lines = ["ERROR: boom"] },
+                    ],
+                    Exit = new ScratchExit(0),
+                },
+            ],
+            PrepResult.Skipped,
+            timeScale: 1
+        );
 
     [Fact]
     public async Task ABackgroundRunWhoseFilesCannotBeMadeLeavesNoEntry()

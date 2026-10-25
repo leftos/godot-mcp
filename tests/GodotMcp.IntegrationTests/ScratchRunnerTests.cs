@@ -196,6 +196,29 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task OnlyRedListsARedScenesRedStepsAloneWithTheirReadback()
+    {
+        JsonObject scene = Single(
+            await RunAsync(
+                _probe.Directory,
+                ["ScratchTwoRed"],
+                new ScratchOptions(KeepGoing: true, Only: "red"),
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Equal("red", scene["verdict"]!.GetValue<string>());
+        Assert.Equal((4, 4), (scene["steps"]!["played"]!.GetValue<int>(), scene["steps"]!["total"]!.GetValue<int>()));
+        JsonArray details = scene["details"]!.AsArray();
+        Assert.Equal([1, 2], details.Select(step => step!["index"]!.GetValue<int>()));
+        Assert.All(details, step => Assert.False(step!["ok"]!.GetValue<bool>()));
+        Assert.Contains("first independent failure", details[0]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Contains("second independent failure", details[1]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Equal([1, 2], scene["failures"]!.AsArray().Select(failure => failure!["index"]!.GetValue<int>()));
+        Assert.Equal(1, scene["failedAt"]!["index"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task KeepGoingStillStopsAtAStepThatLeftTheGameUnableToAnswer()
     {
         JsonObject scene = Single(

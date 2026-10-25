@@ -138,7 +138,7 @@ public sealed partial class ScratchBackgroundTests : IAsyncDisposable
             .AsObject();
 
     private async Task<JsonObject> StatusAsync(string runId, bool? stop, CancellationToken cancellation) =>
-        JsonNode.Parse(await _scratch.ScratchStatusAsync(_probe.Directory, runId, stop, cancellation))!.AsObject();
+        JsonNode.Parse(await _scratch.ScratchStatusAsync(_probe.Directory, runId, stop, only: null, cancellation))!.AsObject();
 
     /// <summary>
     /// Reads the status file until <paramref name="holds"/>, failing as soon as the run is no longer running without it, or once
