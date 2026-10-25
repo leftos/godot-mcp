@@ -1077,6 +1077,28 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
+    public void AJudgedSceneCarriesItsSetupStepsAndOmitsThemWhenItHasNone()
+    {
+        ScratchObservation seen = new("Combat", "probe.scratch-Combat", 0.5, 8)
+        {
+            Steps = [Step(0), Step(5), Step(6), Step(7)],
+            ExitCode = 0,
+            Selected = [5, 6, 7],
+            Setup = [0],
+        };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(seen, Plain);
+        JsonObject json = Json(result);
+        JsonObject plain = Json(ScratchVerdict.Judge(Seen(Step(0)), Plain));
+
+        Assert.Equal([5, 6, 7], result.Selected);
+        Assert.Equal([0], result.Setup);
+        Assert.Equal([5, 6, 7], json["selected"]!.AsArray().Select(index => index!.GetValue<int>()));
+        Assert.Equal([0], json["setup"]!.AsArray().Select(index => index!.GetValue<int>()));
+        Assert.False(plain.ContainsKey("setup"), plain.ToJsonString());
+    }
+
+    [Fact]
     public void AKnownScenePlayedWhollyThroughASelectionIsKnownNowGreen()
     {
         ScratchObservation whole = new("Combat", "probe.scratch-Combat", 0.5, 2)

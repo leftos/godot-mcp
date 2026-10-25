@@ -316,6 +316,41 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task APartialRunPlaysTheScenesSetupStepFirst()
+    {
+        CopyFolder(Path.Combine(RepoPaths.InputProbe, "scratch_setup"), Path.Combine(_probe.Directory, "scratch"));
+        await File.WriteAllTextAsync(
+            Path.Combine(_probe.Directory, ProjectProfile.FileName),
+            """{ "scratch": { "folder": "scratch", "setup": { "ScratchSetupNeeded": ["build"] } } }""",
+            TestContext.Current.CancellationToken
+        );
+        ScratchOptions options = new(Details: true, Steps: Tokens("""["use"]"""));
+
+        JsonObject green = await RunAsync(_probe.Directory, ["ScratchSetupNeeded"], options, TestContext.Current.CancellationToken);
+        JsonObject scene = Single(green);
+
+        Assert.True(scene["verdict"]!.GetValue<string>() == "green", scene.ToJsonString());
+        Assert.Equal([1], scene["selected"]!.AsArray().Select(index => index!.GetValue<int>()));
+        Assert.Equal([0], scene["setup"]!.AsArray().Select(index => index!.GetValue<int>()));
+        Assert.Equal(["build", "use"], scene["details"]!.AsArray().Select(step => step!["name"]!.GetValue<string>()));
+        Assert.Equal(["built", "used"], scene["details"]!.AsArray().Select(step => Status(step!)));
+
+        await File.WriteAllTextAsync(
+            Path.Combine(_probe.Directory, ProjectProfile.FileName),
+            """{ "scratch": { "folder": "scratch" } }""",
+            TestContext.Current.CancellationToken
+        );
+
+        JsonObject red = Single(await RunAsync(_probe.Directory, ["ScratchSetupNeeded"], options, TestContext.Current.CancellationToken));
+
+        Assert.True(red["verdict"]!.GetValue<string>() == "red", red.ToJsonString());
+        Assert.Equal((1, "use"), (red["failedAt"]!["index"]!.GetValue<int>(), red["failedAt"]!["name"]!.GetValue<string>()));
+        Assert.Contains("use ran before build", red["failedAt"]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Equal([1], red["selected"]!.AsArray().Select(index => index!.GetValue<int>()));
+        Assert.False(red.ContainsKey("setup"), red.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStepWithItsOwnPaceWaitsItAndTheOtherStepsWaitTheScenes()
     {
         JsonObject scene = Single(

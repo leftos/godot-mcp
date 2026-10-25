@@ -54,21 +54,26 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "met in that time, or refused, is red and stops the scene, even with options.keepGoing; the step's details carry until "
             + "{met, gameMs, elapsedMs, frames} in place of gameMs. A scene stops at its first failed step unless "
             + "options.keepGoing; options.steps [3, \"name\", \"2-5\"] plays only those steps, by index, name or inclusive range, in "
-            + "ascending order, and never runs the others, so a later step that depends on a skipped one is the caller's choice. "
+            + "ascending order, and never runs the others beyond the setup steps its profile's scratch.setup declares, which a run "
+            + "given options.steps adds to the selection, so a later step that depends on a skipped one is the caller's choice. "
             + "A step fails "
             + "on an error the game logs (push_error, an engine error, a C# exception) or a stdout or stderr line matching the "
             + "profile's scratch.patterns; after the steps the game is stopped and a non-zero exit or an ObjectDB leak turns the "
             + "scene red. Settings live in godot-mcp.json's scratch section "
-            + "{folder, userArgs, engineArgs, pace, ceilings, known, patterns, parallel}. Scenes "
+            + "{folder, userArgs, engineArgs, pace, ceilings, setup, known, patterns, parallel}, where setup {<scene>: [step, ...]} "
+            + "names a scene's declared setup steps, which a run given options.steps adds to the selection; a key is resolved only "
+            + "then, so one naming no step of its scene turns that scene red only on a partial run. Scenes "
             + "start parallel at a time: those listed in scenes in that order, a folder run's largest pace (a scene's or "
             + "one of its steps') divided by the scene's time scale first; with more than one, a red or killed scene (not known, "
             + "not refused before its first "
             + "step) is played once more alone after the others: green alone, its entry is the replay's with alone: true and counts "
             + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
             + "{passed, green, red, known, noSteps, killed, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, "
-            + "scenes: [{scene, verdict, steps: {played, total}, selected?, timeScale?, pace, paceReason?, seconds, session, "
+            + "scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, timeScale?, pace, paceReason?, seconds, session, "
             + "failedAt?, failures?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?, alone?, "
-            + "aloneFailedAt?}], timeScale?}, scenes in the order given; selected lists the indices options.steps played from; "
+            + "aloneFailedAt?}], timeScale?}, scenes in the order given; selected lists the indices options.steps selected, setup the "
+            + "setup steps the run added to them, both fixed when the steps resolve, so a scene stopped at a step, at the boot or by "
+            + "a kill still lists them; "
             + "timeScale is options.timeScale when it is not 1, and a scene's own timeScale (1) shows its game ran at another speed "
             + "than the call's, its scratch.pace entry having \"timeScale\": 1; "
             + "failedAt is the first failed step and failures [{index, name, error}] "
@@ -402,8 +407,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     /// One scene's plan: options.pace else the profile's pace for the scene else the default, and the profile's reason for the
     /// pace and its step paces, kept only when the pace came from the profile rather than from options.pace, which paces every
     /// step; and options.timeScale, else 1, unless the profile's pace has "timeScale": 1, which keeps the scene at normal speed
-    /// even beside options.pace; the ceiling options.ceilings or the profile's scratch.ceilings gives the scene, if either does; and
-    /// the engine arguments its game launches with.
+    /// even beside options.pace; the ceiling options.ceilings or the profile's scratch.ceilings gives the scene, if either does;
+    /// the setup steps the profile's scratch.setup declares for the scene; and the engine arguments its game launches with.
     /// </summary>
     private static ScratchScenePlan ScenePlan(
         string name,
@@ -423,8 +428,13 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             TimeScale = entry is { NormalSpeed: true } ? 1 : options.TimeScale ?? 1,
             EngineArgs = engineArgs,
             Ceiling = CeilingFor(name, scratch, options),
+            Setup = SetupFor(name, scratch),
         };
     }
+
+    /// <summary>The setup steps the profile's scratch.setup declares for the scene; empty when it declares none.</summary>
+    private static IReadOnlyList<string> SetupFor(string name, ScratchProfile scratch) =>
+        scratch.Setup.TryGetValue(name, out IReadOnlyList<string>? setup) ? setup : [];
 
     /// <summary>
     /// The scene's own ceiling: options.ceilings for it, else the profile's scratch.ceilings, else none, which derives it from the
@@ -778,7 +788,8 @@ internal sealed record ScratchOptions(
             + "exact name, or an inclusive range of indices (\"2-5\"); a string is read as an index first, then a name, then a range. "
             + "The union plays in ascending order, each step once, and one list applies to every scene: a token naming no step of a "
             + "scene turns that scene red before any step plays. A later step that depends on a skipped one is the caller's choice. "
-            + "The scene's result lists the played indices as selected."
+            + "Each scene adds the steps its profile's scratch.setup declares for it to this selection, ascending with them; its "
+            + "result lists the selected indices as selected and the added setup steps as setup."
     )]
         JsonElement[]? Steps = null,
     [property: Description(

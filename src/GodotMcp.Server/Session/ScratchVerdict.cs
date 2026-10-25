@@ -63,6 +63,13 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
     /// </summary>
     public IReadOnlyList<int>? Selected { get; init; }
 
+    /// <summary>
+    /// The setup steps the profile declares for the scene that this run added to options.steps' selection, ascending; null when it
+    /// added none. Fixed when the steps resolve, as <see cref="Selected"/> is, so a scene stopped at a step, at the boot or by a
+    /// kill still lists them.
+    /// </summary>
+    public IReadOnlyList<int>? Setup { get; init; }
+
     /// <summary>The time scale the scene's game ran at when it differs from the call's (its profile pace opted out); else null.</summary>
     public double? TimeScale { get; init; }
 
@@ -206,6 +213,14 @@ internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchS
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<int>? Selected { get; init; }
+
+    /// <summary>
+    /// The setup steps the profile declares for the scene that its partial run added to options.steps' selection, ascending; null
+    /// when it added none. Fixed when the steps resolve, as <see cref="Selected"/> is, so a scene stopped at a step, at the boot or
+    /// by a kill still lists them.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<int>? Setup { get; init; }
 
     /// <summary>
     /// The time scale the scene's game ran at when it differs from the call's, as when its profile pace has "timeScale": 1;
@@ -352,6 +367,7 @@ internal static partial class ScratchVerdict
         )
         {
             Selected = seen.Selected,
+            Setup = seen.Setup,
             TimeScale = seen.TimeScale,
             PaceReason = shown is Red or Killed ? PaceReasonAt(seen, failedAt, rules.PaceReason) : null,
             FailedAt = failedAt,
@@ -518,8 +534,8 @@ internal static partial class ScratchVerdict
 
     /// <summary>
     /// The verdict shown for a scene the profile knows to fail; one that failed before any step is red, never known. A green one
-    /// is known-now-green only when it played every step: options.steps playing fewer says nothing of the known failure, so it
-    /// stays known.
+    /// is known-now-green only when the call selected every step: options.steps selecting fewer says nothing of the known failure,
+    /// so it stays known.
     /// </summary>
     private static string Known(string verdict, ScratchFailure? failedAt, string? known, bool partial) =>
         known is null || failedAt is { Index: < 0 } ? verdict

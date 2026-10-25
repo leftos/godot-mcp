@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
@@ -55,7 +56,7 @@ internal sealed partial class ProjectProfile
         ProcessesKey,
     ];
     private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "session", "description"];
-    private static readonly string[] ScratchKeys = ["folder", "userArgs", "engineArgs", "pace", "ceilings", "known", "patterns", "parallel"];
+    private static readonly string[] ScratchKeys = ["folder", "userArgs", "engineArgs", "pace", "ceilings", "setup", "known", "patterns", "parallel"];
     private static readonly string[] ProcessKeys = ["command", "cwd", "env", "ready", "description"];
     private static readonly string[] ReadyKeys = ["output", "timeoutMs"];
     private const string StepsKey = "steps";
@@ -63,6 +64,9 @@ internal sealed partial class ProjectProfile
     private static readonly string[] StepPaceKeys = ["seconds", "reason"];
     private static readonly string[] PaceKeys = [.. StepPaceKeys, StepsKey, TimeScaleKey];
     private static readonly string[] PatternKeys = ["pattern", "reason"];
+
+    /// <summary>What a <c>scratch.setup</c> entry may be, for the refusals that say what one is.</summary>
+    private const string SetupStepShape = "a setup step is a whole number from 0 up, or a non-empty string naming it";
 
     private readonly ProfileValues _defaults;
     private readonly IReadOnlyDictionary<string, ProfileValues> _presets;
@@ -381,6 +385,7 @@ internal sealed partial class ProjectProfile
         )
         {
             Parallel = ReadParallel(scratch, place),
+            Setup = ReadMap<IReadOnlyList<string>>(scratch, "setup", place, (scene, steps) => ReadSetup(scene, steps, place)),
         };
     }
 
@@ -730,6 +735,39 @@ internal sealed partial class ProjectProfile
                     + $"got {Shown(value)}"
             );
 
+    /// <summary>
+    /// One scene's declared setup steps: a non-empty array of step keys, each an index written plainly or a step's exact name,
+    /// which step each names only known once the scene has started.
+    /// </summary>
+    private static List<string> ReadSetup(string scene, JsonElement value, Place place)
+    {
+        string label = $"scratch.setup.{scene}";
+        if (value.ValueKind != JsonValueKind.Array)
+        {
+            throw Refused(place, $"{label} must be an array of setup steps, not {Describe(value.ValueKind)}; {SetupStepShape}");
+        }
+
+        List<string> steps = [];
+        foreach (JsonElement item in value.EnumerateArray())
+        {
+            steps.Add(SetupKey(item, label, steps.Count + 1, place));
+        }
+
+        return steps.Count > 0 ? steps : throw Refused(place, $"{label} must name at least one step; it is empty");
+    }
+
+    /// <summary>One setup entry as it is kept: an index written plainly, or a step's exact name.</summary>
+    private static string SetupKey(JsonElement value, string label, int item, Place place) =>
+        value.ValueKind switch
+        {
+            JsonValueKind.Number when value.TryGetDouble(out double index) && index >= 0 && index <= int.MaxValue && index == Math.Floor(index) => (
+                (int)index
+            ).ToString(CultureInfo.InvariantCulture),
+            JsonValueKind.String when value.GetString() is { Length: > 0 } name => name,
+            JsonValueKind.String => throw Refused(place, $"{label} item {item} is an empty string; {SetupStepShape}"),
+            _ => throw Refused(place, $"{label} item {item} is {Shown(value)}; {SetupStepShape}"),
+        };
+
     /// <summary>The section's <c>patterns</c>, each compiled as written: case-sensitive, anchored only where it anchors itself.</summary>
     private static List<ScratchPattern> ReadPatterns(Dictionary<string, JsonElement> keys, Place place)
     {
@@ -861,8 +899,8 @@ internal sealed partial class ProjectProfile
 /// godot-mcp.json's <c>scratch</c> section: the folder whose scenes run_scratches plays when given none, the user arguments a
 /// scratch run starts with in place of the top-level ones (null when the section sets none), the engine arguments each scene's
 /// game launches with before --, after the runner's own --headless and --time-scale (null when the section sets none), each
-/// scene's pace in seconds and why, each scene's own ceiling of load-adjusted time in seconds, the scenes known to fail with the
-/// reason, the patterns a step's output lines fail it by, and how many scenes play at once.
+/// scene's pace in seconds and why, each scene's own ceiling of load-adjusted time in seconds, each scene's declared setup steps,
+/// the scenes known to fail with the reason, the patterns a step's output lines fail it by, and how many scenes play at once.
 /// </summary>
 internal sealed record ScratchProfile(
     string? Folder,
@@ -888,6 +926,13 @@ internal sealed record ScratchProfile(
 
     /// <summary>How many scenes play at once, from 1 to <see cref="MaxParallel"/>.</summary>
     public int Parallel { get; init; } = DefaultParallel;
+
+    /// <summary>
+    /// Each scene's declared setup steps, by scene name, keyed by a step's index written plainly or its exact name: the steps a
+    /// partial run adds to the ones options.steps selects. Which step a key names is resolved only on a partial run, so a key
+    /// naming no step of its scene turns that scene red only then; empty when the section declares none.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> Setup { get; init; } = ReadOnlyDictionary<string, IReadOnlyList<string>>.Empty;
 
     /// <summary>The patterns of a project that sets none: Godot's own error lines and its leak warning at exit.</summary>
     public static readonly IReadOnlyList<ScratchPattern> DefaultPatterns =

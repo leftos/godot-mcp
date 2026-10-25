@@ -27,7 +27,7 @@ internal sealed record ScratchCeiling(double Seconds, string Source)
 /// A scratch scene to play: its name (the file's, without .tscn), its res:// path, its pace in seconds, the user arguments it
 /// starts with, the engine arguments its game launches with, the ceiling the call or the profile gives it, if any, the reason the
 /// profile knows it to fail, if any, the profile's reason for its pace, if any, the paces of single steps, keyed by a step's index
-/// or its name, and the time scale its game runs at.
+/// or its name, the setup steps the profile declares for it, keyed the same way, and the time scale its game runs at.
 /// </summary>
 internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace, IReadOnlyList<string> UserArgs)
 {
@@ -39,6 +39,12 @@ internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace
     /// The paces of single steps and why, keyed by a step's index or its name, resolved once the scene has named its steps.
     /// </summary>
     public IReadOnlyDictionary<string, ScratchPace> StepPaces { get; init; } = ReadOnlyDictionary<string, ScratchPace>.Empty;
+
+    /// <summary>
+    /// The setup steps the profile declares for the scene, keyed by a step's index written plainly or its exact name: the steps a
+    /// partial run adds to the ones options.steps selects, resolved only then; empty when the profile declares none.
+    /// </summary>
+    public IReadOnlyList<string> Setup { get; init; } = [];
 
     /// <summary>The time scale the scene's game runs at: the call's options.timeScale, or 1 when its profile pace opts out.</summary>
     public required double TimeScale { get; init; }
@@ -171,16 +177,23 @@ internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyLi
 internal readonly record struct LineMark(long Stdout, long Stderr);
 
 /// <summary>
+/// A scene's steps as a run resolves them: the indices options.steps selected (null when the call gave no steps), the setup steps
+/// the run added to that selection, and the union it plays, ascending.
+/// </summary>
+internal sealed record ScratchSelection(int[]? Selected, int[] Setup, int[] Played);
+
+/// <summary>
 /// Plays one scratch scene in a headless game session of its own, as an agent would with the runtime tools: launches it,
 /// asks the game for its current scene's path, checks that root for the scratch protocol, reads its step names and takes the
 /// error feed's entries so far, the boot's: an error among them fails the scene before any step plays (the lines printed so far
 /// are never judged). A step pace keyed to no single step, or an options.steps token naming none, refuses the scene before any
-/// step plays. Then per step it plays (every step, or those options.steps selects, in ascending order) it calls PlayStep, waits
-/// the step's pace in game time (for a root that has GetStepUntil and a step it gives a condition, plays the step inside one
-/// wait_for on that condition instead, PlayStep the wait's call, until it holds or the pace has passed in game time), reads
-/// GetStatus and takes the feed's entries since the last window, stopping at the first failed step, or with the plan's
-/// keep-going only at one whose call failed; after the last step played it waits that step's pace once more, the longer of its
-/// game time and its wall time, then stops the game gracefully and reads the lines it printed after the steps.
+/// step plays. Then per step it plays (every step, or a partial run's selected steps with the setup steps its profile adds to them,
+/// in ascending order) it calls PlayStep, waits the step's pace in game time (for a root that has GetStepUntil and a step it gives
+/// a condition, plays the step inside one wait_for on that condition instead, PlayStep the wait's call, until it holds or the pace
+/// has passed in game time), reads GetStatus and takes the feed's entries since the last window, stopping at the first failed
+/// step, or with the plan's keep-going only at one whose call failed; after the last step played it waits that step's pace once
+/// more, the longer of its game time and its wall time, then stops the game gracefully and reads the lines it printed after the
+/// steps.
 /// Each window of output (the launch, each step, the pace after the last) ends at a marker line the game prints to stdout
 /// and to stderr, since the two streams arrive apart. The session stays in the registry, stopped, so get_debug_output can
 /// read it.
@@ -205,6 +218,7 @@ internal sealed class ScratchRun
     internal const string MarkerPrefix = "[godot-mcp] scratch ";
 
     private const string PaceKeyLabel = "pace.steps key";
+    private const string SetupLabel = "setup";
     private const string StepsTokenLabel = "options.steps token";
 
     private const string CurrentSceneScript =
@@ -227,6 +241,8 @@ internal sealed class ScratchRun
     private readonly List<string> _names = [];
     private readonly List<ScratchStep> _steps = [];
     private ScratchWalk _walk = ScratchWalk.None;
+    private int[]? _selected;
+    private int[] _setupOnly = [];
     private GodotSession? _session;
     private LoadDeadline? _deadline;
     private LineMark _mark;
@@ -832,8 +848,8 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// Reads every step's name, then each step's pace and the steps to play; null, or why a name, a step pace or a step to play
-    /// could not be had.
+    /// Reads every step's name, then each step's pace and the steps to play, a partial run adding its scene's setup steps to the
+    /// ones it selects; null, or why a name, a step pace, a setup step or a step to play could not be had.
     /// </summary>
     private async Task<string?> ReadNamesAsync(GodotSession session, int total, CancellationToken cancellationToken)
     {
@@ -860,9 +876,63 @@ internal sealed class ScratchRun
             return null;
         }
 
-        (int[] played, string? stepsError) = ResolveSteps(_plan.Steps, _scene.Name, _names);
-        _walk = new ScratchWalk(paces, played, _scene.TimeScale) { Given = _scene.Ceiling };
-        return stepsError;
+        (ScratchSelection selection, string? selectError) = SelectSteps(_scene, _plan.Steps, _names);
+        _selected = selection.Selected;
+        _setupOnly = selection.Setup;
+        _walk = new ScratchWalk(paces, selection.Played, _scene.TimeScale) { Given = _scene.Ceiling };
+        return selectError;
+    }
+
+    /// <summary>
+    /// A scene's steps as a run resolves them, from <paramref name="tokens"/> against the scene's <paramref name="names"/>: every
+    /// step of a call that gave no steps, and otherwise the steps the tokens select with the setup steps the profile declares for
+    /// the scene added to them; or why a setup key or a token names no single step, the selection then empty and nothing to play.
+    /// </summary>
+    internal static (ScratchSelection Selection, string? Error) SelectSteps(
+        ScratchScenePlan scene,
+        IReadOnlyList<ScratchStepToken>? tokens,
+        IReadOnlyList<string> names
+    ) => tokens is null ? (new ScratchSelection(null, [], [.. Enumerable.Range(0, names.Count)]), null) : SelectedSteps(scene, tokens, names);
+
+    /// <summary>A partial run's selection, its setup steps and their union; or why a setup key or a token names no single step.</summary>
+    private static (ScratchSelection Selection, string? Error) SelectedSteps(
+        ScratchScenePlan scene,
+        IReadOnlyList<ScratchStepToken> tokens,
+        IReadOnlyList<string> names
+    )
+    {
+        (int[] setup, string? setupError) = SetupSteps(scene, names);
+        if (setupError is not null)
+        {
+            return (new ScratchSelection(null, [], []), setupError);
+        }
+
+        (int[] played, string? stepsError) = ResolveSteps(tokens, scene.Name, names);
+        return stepsError is not null
+            ? (new ScratchSelection(null, [], []), stepsError)
+            : (new ScratchSelection(played, [.. setup.Except(played)], [.. played.Union(setup).Order()]), null);
+    }
+
+    /// <summary>
+    /// The steps the setup keys <paramref name="scene"/> declares name, ascending, each once; or why a key names no single step,
+    /// or two steps. Resolved only on a partial run, so a key naming no step of the scene turns it red only when the call gives
+    /// options.steps.
+    /// </summary>
+    internal static (int[] Steps, string? Error) SetupSteps(ScratchScenePlan scene, IReadOnlyList<string> names)
+    {
+        SortedSet<int> steps = [];
+        foreach (string key in scene.Setup)
+        {
+            (int step, string? error) = StepOf(key, SetupLabel, scene.Name, names);
+            if (error is not null)
+            {
+                return ([], error);
+            }
+
+            steps.Add(step);
+        }
+
+        return ([.. steps], null);
     }
 
     private static string StepName(JsonNode? name) =>
@@ -1124,7 +1194,8 @@ internal sealed class ScratchRun
             Steps = _steps,
             StepPaceReasons = [.. _walk.Paces.Select(pace => pace.Reason)],
             AfterError = _afterError,
-            Selected = _plan.Steps is null || _walk.Played.Count == 0 ? null : _walk.Played,
+            Selected = _selected,
+            Setup = _setupOnly.Length == 0 ? null : _setupOnly,
             TimeScale = _scene.TimeScale == _plan.TimeScale ? null : _scene.TimeScale,
         };
 

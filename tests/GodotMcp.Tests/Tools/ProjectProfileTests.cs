@@ -485,6 +485,50 @@ public sealed class ProjectProfileTests : IDisposable
     }
 
     [Fact]
+    public void ScratchSetupIsReadAsStepKeysPerScene()
+    {
+        Write("""{ "scratch": { "setup": { "Combat": [0, "build", "2"], "Tray": ["open"] } } }""");
+        ScratchProfile set = ProjectProfile.Load(_temp.Path).Scratch!;
+        Write("""{ "scratch": { "folder": "res://Scratch" } }""");
+        ScratchProfile unset = ProjectProfile.Load(_temp.Path).Scratch!;
+
+        Assert.Equal(["0", "build", "2"], set.Setup["Combat"]);
+        Assert.Equal(["open"], set.Setup["Tray"]);
+        Assert.Empty(unset.Setup);
+        Assert.Empty(ScratchProfile.None.Setup);
+    }
+
+    [Theory]
+    [InlineData(
+        """{ "scratch": { "setup": { "Combat": "build" } } }""",
+        "(scratch): scratch.setup.Combat must be an array of setup steps, not a string; a setup step is a whole number from 0 up, "
+            + "or a non-empty string naming it."
+    )]
+    [InlineData("""{ "scratch": { "setup": { "Combat": [] } } }""", "(scratch): scratch.setup.Combat must name at least one step; it is empty.")]
+    [InlineData(
+        """{ "scratch": { "setup": { "Combat": [-1] } } }""",
+        "(scratch): scratch.setup.Combat item 1 is -1; a setup step is a whole number from 0 up, or a non-empty string naming it."
+    )]
+    [InlineData(
+        """{ "scratch": { "setup": { "Combat": [1.5] } } }""",
+        "(scratch): scratch.setup.Combat item 1 is 1.5; a setup step is a whole number from 0 up, or a non-empty string naming it."
+    )]
+    [InlineData(
+        """{ "scratch": { "setup": { "Combat": [""] } } }""",
+        "(scratch): scratch.setup.Combat item 1 is an empty string; a setup step is a whole number from 0 up, or a non-empty " + "string naming it."
+    )]
+    [InlineData(
+        """{ "scratch": { "setup": { "Combat": [true] } } }""",
+        "(scratch): scratch.setup.Combat item 1 is true or false; a setup step is a whole number from 0 up, or a non-empty " + "string naming it."
+    )]
+    public void AMalformedScratchSetupIsRefused(string json, string problem)
+    {
+        Write(json);
+
+        Assert.Equal($"{FilePath} {problem}", Refused(() => ProjectProfile.Load(_temp.Path)));
+    }
+
+    [Fact]
     public void AnObjectPaceReadsItsKeysInEitherOrder()
     {
         Write("""{ "scratch": { "pace": { "A": { "reason": "why", "seconds": 3 } } } }""");
@@ -602,8 +646,8 @@ public sealed class ProjectProfileTests : IDisposable
     [Theory]
     [InlineData(
         """{ "scratch": { "threads": 2 } }""",
-        "(scratch): unknown key \"threads\"; the allowed keys are folder, userArgs, engineArgs, pace, ceilings, known, patterns, "
-            + "parallel. Remove or rename it."
+        "(scratch): unknown key \"threads\"; the allowed keys are folder, userArgs, engineArgs, pace, ceilings, setup, known, "
+            + "patterns, parallel. Remove or rename it."
     )]
     [InlineData("""{ "scratch": { "parallel": 0 } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not 0.")]
     [InlineData("""{ "scratch": { "parallel": 5 } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not 5.")]
