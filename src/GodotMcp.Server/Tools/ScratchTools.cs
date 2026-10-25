@@ -39,6 +39,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
 
     private const string SceneEnding = ".tscn";
     private const string ScratchAuto = "--scratch-auto";
+    private const string UserArgsSeparator = "--";
+    private const string AlternateUserArgsSeparator = "++";
+    private static readonly string[] RunnerEngineArgs = ["--headless", "--time-scale", ScratchAuto];
 
     [McpServerTool(Name = ToolName, ReadOnly = false, Destructive = false, OpenWorld = false, Idempotent = false)]
     [Description(
@@ -55,7 +58,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "A step fails "
             + "on an error the game logs (push_error, an engine error, a C# exception) or a stdout or stderr line matching the "
             + "profile's scratch.patterns; after the steps the game is stopped and a non-zero exit or an ObjectDB leak turns the "
-            + "scene red. Settings live in godot-mcp.json's scratch section {folder, userArgs, pace, known, patterns, parallel}. Scenes "
+            + "scene red. Settings live in godot-mcp.json's scratch section "
+            + "{folder, userArgs, engineArgs, pace, known, patterns, parallel}. Scenes "
             + "start parallel at a time: those listed in scenes in that order, a folder run's largest pace (a scene's or "
             + "one of its steps') divided by the scene's time scale first; with more than one, a red or killed scene (not known, "
             + "not refused before its first "
@@ -90,12 +94,14 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         )]
             string[]? scenes = null,
         [Description(
-            "{pace, timeScale, userArgs, prepare, details, parallel, session, keepGoing, steps, background, only}: pace in seconds for every "
+            "{pace, timeScale, userArgs, engineArgs, prepare, details, parallel, session, keepGoing, steps, background, only}: "
+                + "pace in seconds for every "
                 + "step (else scratch.pace's for the step, else for the scene, else 0.5); timeScale the games' time scale, from 0.01 to "
                 + "100 (default 1), each game launched with --time-scale, so a pace of p s takes p / timeScale s of wall time and "
                 + "the kill bound scales with it, the wait after the last step lasting p s of wall time above 1, a scene whose "
                 + "scratch.pace entry has \"timeScale\": 1 kept at normal speed; userArgs "
                 + "appended after the profile's; "
+                + "engineArgs placed before -- after the profile's scratch.engineArgs; "
                 + "prepare as run_project's; "
                 + "details true lists every scene's steps and gives every step its full detail; parallel the scenes at once, 1 to 4 "
                 + "(else scratch.parallel, else 1); "
@@ -272,9 +278,12 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         return status;
     }
 
-    /// <summary>The checked call: the project, each scene with its pace and user arguments, and the profile's patterns.</summary>
+    /// <summary>
+    /// The checked call: the project, each scene with its pace, user arguments and engine arguments, and the profile's patterns.
+    /// </summary>
     /// <exception cref="McpException">
-    /// The project, the profile, a scene, the pace, the user arguments, prepare or options.steps is refused; nothing has launched.
+    /// The project, the profile, a scene, the pace, the user arguments, the engine arguments, prepare or options.steps is
+    /// refused; nothing has launched.
     /// </exception>
     internal static ScratchPlan Plan(string projectPath, IReadOnlyList<string>? scenes, ScratchOptions options)
     {
@@ -288,10 +297,11 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         bool prepare = RunOptions.ParsePrepare(options.Prepare);
         string prefix = SessionPrefix(options.Session, projectDir);
         List<string> userArgs = UserArgs(profile, scratch, options);
+        List<string> engineArgs = EngineArgs(profile, scratch, options);
         List<ScratchScenePlan> plans = [];
         foreach (string resPath in ResolveScenes(profile, scratch, scenes))
         {
-            plans.Add(ScenePlan(Path.GetFileNameWithoutExtension(resPath), resPath, scratch, options, userArgs));
+            plans.Add(ScenePlan(Path.GetFileNameWithoutExtension(resPath), resPath, scratch, options, userArgs, engineArgs));
         }
 
         return new ScratchPlan(projectDir, plans, scratch.Patterns, prepare, options.Details ?? false)
@@ -386,14 +396,15 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     /// One scene's plan: options.pace else the profile's pace for the scene else the default, and the profile's reason for the
     /// pace and its step paces, kept only when the pace came from the profile rather than from options.pace, which paces every
     /// step; and options.timeScale, else 1, unless the profile's pace has "timeScale": 1, which keeps the scene at normal speed
-    /// even beside options.pace.
+    /// even beside options.pace; and the engine arguments its game launches with.
     /// </summary>
     private static ScratchScenePlan ScenePlan(
         string name,
         string resPath,
         ScratchProfile scratch,
         ScratchOptions options,
-        IReadOnlyList<string> userArgs
+        IReadOnlyList<string> userArgs,
+        IReadOnlyList<string> engineArgs
     )
     {
         ScratchPace? entry = scratch.Pace.GetValueOrDefault(name);
@@ -403,6 +414,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             PaceReason = options.Pace is null ? entry?.Reason : null,
             StepPaces = StepPaces(entry, options),
             TimeScale = entry is { NormalSpeed: true } ? 1 : options.TimeScale ?? 1,
+            EngineArgs = engineArgs,
         };
     }
 
@@ -536,6 +548,71 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             : userArgs;
     }
 
+    /// <summary>
+    /// The profile's scratch.engineArgs, then options.engineArgs, each refused when it holds a null entry or an argument the
+    /// runner sets itself.
+    /// </summary>
+    /// <exception cref="McpException">
+    /// An argument is null, or is or, trimmed, is -- or ++, or is or, trimmed, starts with --headless, --time-scale or
+    /// --scratch-auto.
+    /// </exception>
+    private static List<string> EngineArgs(ProjectProfile profile, ScratchProfile scratch, ScratchOptions options)
+    {
+        CheckEngineArgs(scratch.EngineArgs, profile.FilePath);
+        CheckEngineArgs(options.EngineArgs, "options.engineArgs");
+        return [.. scratch.EngineArgs ?? [], .. options.EngineArgs ?? []];
+    }
+
+    /// <summary>Refuses one source's engine arguments: a null entry, or one the runner sets itself.</summary>
+    /// <exception cref="McpException">An argument is null, is a separator, or starts with an argument the runner sets.</exception>
+    private static void CheckEngineArgs(IReadOnlyList<string>? engineArgs, string source)
+    {
+        if (engineArgs is null)
+        {
+            return;
+        }
+
+        if (engineArgs.Any(arg => arg is null))
+        {
+            throw new McpException($"engineArgs holds a null entry; it came from {source}.");
+        }
+
+        if (RefusedEngineArg(engineArgs) is { } arg)
+        {
+            throw EngineArgRefusal(arg, source);
+        }
+    }
+
+    /// <summary>
+    /// The first engine argument the runner cannot take, as it was given: -- or ++, or one that starts with an argument it sets
+    /// itself, each compared as Godot trims it before parsing (main/main.cpp:1109).
+    /// </summary>
+    private static string? RefusedEngineArg(IReadOnlyList<string> engineArgs)
+    {
+        foreach (string arg in engineArgs)
+        {
+            string trimmed = arg.Trim();
+            if (trimmed is UserArgsSeparator or AlternateUserArgsSeparator)
+            {
+                return arg;
+            }
+
+            if (RunnerEngineArgs.Any(flag => trimmed.StartsWith(flag, StringComparison.Ordinal)))
+            {
+                return arg;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The refusal of an engine argument, naming where it came from.</summary>
+    private static McpException EngineArgRefusal(string arg, string source) =>
+        new(
+            $"run_scratches sets --headless and --time-scale itself and puts the scene's own arguments after --, so engineArgs "
+                + $"cannot hold {arg}; it came from {source}."
+        );
+
     /// <exception cref="McpException">options.only is neither "all" nor "red", or is given with background, which never reads it.</exception>
     private static void CheckOnly(ScratchOptions options)
     {
@@ -589,8 +666,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     }
 }
 
-/// <summary>run_scratches' pace, time scale, user arguments, prepare, whether every scene lists its steps, how many scenes play at
-/// once, the prefix for the scenes' session names, and whether a scene plays on past a failed step.</summary>
+/// <summary>run_scratches' pace, time scale, user arguments, engine arguments, prepare, whether every scene lists its steps, how
+/// many scenes play at once, the prefix for the scenes' session names, and whether a scene plays on past a failed step.</summary>
 internal sealed record ScratchOptions(
     [property: Description(
         "Seconds of game time every step plays before the next, above 0 and at most 120, its scratch.pace steps entries "
@@ -607,6 +684,12 @@ internal sealed record ScratchOptions(
         double? TimeScale = null,
     [property: Description("User arguments appended after the profile's scratch.userArgs (else its top-level userArgs); --scratch-auto is refused.")]
         string[]? UserArgs = null,
+    [property: Description(
+        "Engine arguments placed before -- after the profile's scratch.engineArgs (the top-level engineArgs are not used), both "
+            + "after the runner's own --headless and --time-scale; --, ++ and any argument starting with --headless, --time-scale "
+            + "or --scratch-auto are refused."
+    )]
+        string[]? EngineArgs = null,
     [property: Description(RunOptions.PrepareDescription)] string? Prepare = null,
     [property: Description(
         "true lists every scene's steps and gives every step, green or red, its full detail (error, errors, lines with its "

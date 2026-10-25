@@ -381,6 +381,87 @@ public sealed class ScratchValidationTests : IDisposable
     }
 
     [Fact]
+    public void ProfileEngineArgsComeBeforeTheOptionsOnes()
+    {
+        WriteProfile("""{ "scratch": { "engineArgs": ["--a"] } }""");
+
+        ScratchPlan plan = Plan(["res://Other.tscn"], new ScratchOptions(EngineArgs: ["--b"]));
+
+        Assert.Equal(["--a", "--b"], plan.Scenes[0].EngineArgs);
+    }
+
+    [Theory]
+    [MemberData(nameof(RunnerOwnedEngineArgs))]
+    public void AnEngineArgumentTheRunnerOwnsIsRefusedWhateverItsSource(string argument, bool fromProfile)
+    {
+        string source = "options.engineArgs";
+        ScratchOptions options = new(EngineArgs: [argument]);
+        if (fromProfile)
+        {
+            WriteProfile(JsonSerializer.Serialize(new { scratch = new { engineArgs = new[] { argument } } }));
+            source = ProfilePath;
+            options = new ScratchOptions();
+        }
+
+        string message = Refused(() => Plan(["res://Other.tscn"], options));
+
+        Assert.Equal(
+            "run_scratches sets --headless and --time-scale itself and puts the scene's own arguments after --, so engineArgs "
+                + $"cannot hold {argument}; it came from {source}.",
+            message
+        );
+    }
+
+    /// <summary>Every argument the runner sets itself or takes as its separator, however Godot trims or extends it.</summary>
+    private static readonly string[] RunnerOwnedArgs =
+    [
+        "--",
+        "++",
+        "--headless",
+        "--headless=x",
+        "--time-scale",
+        "--time-scale=2",
+        "--scratch-auto",
+        "--scratch-auto=3",
+        " --",
+        "-- ",
+        " --headless",
+    ];
+
+    /// <summary>Each owner argument from each source: options.engineArgs and the profile.</summary>
+    public static TheoryData<string, bool> RunnerOwnedEngineArgs()
+    {
+        TheoryData<string, bool> cases = [];
+        foreach (string argument in RunnerOwnedArgs)
+        {
+            foreach (bool fromProfile in new[] { false, true })
+            {
+                cases.Add(argument, fromProfile);
+            }
+        }
+
+        return cases;
+    }
+
+    [Fact]
+    public void ANullEngineArgIsRefusedNamingItsSource()
+    {
+        string message = Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(EngineArgs: ["--ok", null!])));
+
+        Assert.Equal("engineArgs holds a null entry; it came from options.engineArgs.", message);
+    }
+
+    [Fact]
+    public void ScratchEngineArgsNeverFallBackToTheTopLevelOnes()
+    {
+        WriteProfile("""{ "engineArgs": ["--headless"], "scratch": { "folder": "Scratch" } }""");
+
+        ScratchPlan plan = Plan(null);
+
+        Assert.All(plan.Scenes, scene => Assert.Empty(scene.EngineArgs));
+    }
+
+    [Fact]
     public void PrepareNeverIsHonouredAndAnUnknownPrepareIsRefused()
     {
         Assert.False(Plan(["res://Other.tscn"], new ScratchOptions(Prepare: "never")).Prepare);

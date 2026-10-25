@@ -12,8 +12,9 @@ namespace GodotMcp.Server.Session;
 
 /// <summary>
 /// A scratch scene to play: its name (the file's, without .tscn), its res:// path, its pace in seconds, the user arguments it
-/// starts with, the reason the profile knows it to fail, if any, the profile's reason for its pace, if any, the paces of
-/// single steps, keyed by a step's index or its name, and the time scale its game runs at.
+/// starts with, the engine arguments its game launches with, the reason the profile knows it to fail, if any, the profile's
+/// reason for its pace, if any, the paces of single steps, keyed by a step's index or its name, and the time scale its game
+/// runs at.
 /// </summary>
 internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace, IReadOnlyList<string> UserArgs)
 {
@@ -28,6 +29,9 @@ internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace
 
     /// <summary>The time scale the scene's game runs at: the call's options.timeScale, or 1 when its profile pace opts out.</summary>
     public required double TimeScale { get; init; }
+
+    /// <summary>The scene's own engine arguments, after the runner's own --headless and --time-scale.</summary>
+    public required IReadOnlyList<string> EngineArgs { get; init; }
 
     /// <summary>The largest pace the scene holds: its own, or one of its steps'.</summary>
     public double LargestPace => StepPaces.Values.Select(step => step.Seconds).Append(Pace).Max();
@@ -318,11 +322,13 @@ internal sealed class ScratchRun
         );
 
     /// <summary>
-    /// The engine arguments a scene's game launches with: headless, and at a <paramref name="timeScale"/> other than 1 Godot's
-    /// --time-scale, which scales every process and physics step.
+    /// The engine arguments a scene's game launches with: headless, at a <paramref name="timeScale"/> other than 1 Godot's
+    /// --time-scale, which scales every process and physics step, and then the scene's own <paramref name="engineArgs"/>.
     /// </summary>
-    internal static string[] EngineArgs(double timeScale) =>
-        timeScale == 1 ? ["--headless"] : ["--headless", "--time-scale", timeScale.ToString(CultureInfo.InvariantCulture)];
+    internal static string[] EngineArgs(double timeScale, IReadOnlyList<string> engineArgs) =>
+        timeScale == 1
+            ? ["--headless", .. engineArgs]
+            : ["--headless", "--time-scale", timeScale.ToString(CultureInfo.InvariantCulture), .. engineArgs];
 
     /// <summary>
     /// The real time a wait of <paramref name="gameMs"/> game milliseconds is released at when the game's clock stands still: that
@@ -652,7 +658,7 @@ internal sealed class ScratchRun
             );
             _session = session;
             _observer?.SessionHeld(_index, session);
-            await session.LaunchAsync(LaunchRequestFor(session), cancellationToken);
+            await session.LaunchAsync(LaunchRequestFor(_plan, _scene, session.Quiet, session.ShutOutRealGamepads, session.Mute), cancellationToken);
         }
         catch (SessionException e)
         {
@@ -672,18 +678,11 @@ internal sealed class ScratchRun
         };
     }
 
-    private LaunchRequest LaunchRequestFor(GodotSession session) =>
-        new(
-            _plan.ProjectDir,
-            _scene.ResPath,
-            EngineArgs(_scene.TimeScale),
-            _scene.UserArgs,
-            session.Quiet,
-            session.ShutOutRealGamepads,
-            Prepare: false
-        )
+    /// <summary>The request a scene's game launches with: its engine arguments, then its user arguments after --.</summary>
+    internal static LaunchRequest LaunchRequestFor(ScratchPlan plan, ScratchScenePlan scene, bool quiet, bool shutOutRealGamepads, bool mute) =>
+        new(plan.ProjectDir, scene.ResPath, EngineArgs(scene.TimeScale, scene.EngineArgs), scene.UserArgs, quiet, shutOutRealGamepads, Prepare: false)
         {
-            Mute = session.Mute,
+            Mute = mute,
         };
 
     /// <summary>The walk, or the scene killed with the step in flight when its ceiling passes or the game stops answering.</summary>

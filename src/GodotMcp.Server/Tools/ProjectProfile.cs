@@ -55,7 +55,7 @@ internal sealed partial class ProjectProfile
         ProcessesKey,
     ];
     private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "session", "description"];
-    private static readonly string[] ScratchKeys = ["folder", "userArgs", "pace", "known", "patterns", "parallel"];
+    private static readonly string[] ScratchKeys = ["folder", "userArgs", "engineArgs", "pace", "known", "patterns", "parallel"];
     private static readonly string[] ProcessKeys = ["command", "cwd", "env", "ready", "description"];
     private static readonly string[] ReadyKeys = ["output", "timeoutMs"];
     private const string StepsKey = "steps";
@@ -373,6 +373,7 @@ internal sealed partial class ProjectProfile
         return new ScratchProfile(
             ReadString(scratch, "folder", place),
             scratch.ContainsKey("userArgs") ? ReadStrings(scratch, "userArgs", place) : null,
+            scratch.ContainsKey("engineArgs") ? ReadStrings(scratch, "engineArgs", place) : null,
             ReadMap(scratch, "pace", place, (scene, pace) => ReadPace(scene, pace, place)),
             ReadMap(scratch, "known", place, (scene, reason) => ReadReason(scene, reason, place)),
             scratch.ContainsKey("patterns") ? ReadPatterns(scratch, place) : ScratchProfile.DefaultPatterns
@@ -847,12 +848,15 @@ internal sealed partial class ProjectProfile
 
 /// <summary>
 /// godot-mcp.json's <c>scratch</c> section: the folder whose scenes run_scratches plays when given none, the user arguments a
-/// scratch run starts with in place of the top-level ones (null when the section sets none), each scene's pace in seconds and why,
-/// the scenes known to fail with the reason, the patterns a step's output lines fail it by, and how many scenes play at once.
+/// scratch run starts with in place of the top-level ones (null when the section sets none), the engine arguments each scene's
+/// game launches with before --, after the runner's own --headless and --time-scale (null when the section sets none), each
+/// scene's pace in seconds and why, the scenes known to fail with the reason, the patterns a step's output lines fail it by, and
+/// how many scenes play at once.
 /// </summary>
 internal sealed record ScratchProfile(
     string? Folder,
     IReadOnlyList<string>? UserArgs,
+    IReadOnlyList<string>? EngineArgs,
     IReadOnlyDictionary<string, ScratchPace> Pace,
     IReadOnlyDictionary<string, string> Known,
     IReadOnlyList<ScratchPattern> Patterns
@@ -878,6 +882,7 @@ internal sealed record ScratchProfile(
 
     /// <summary>The section of a project that has none: no folder, and the default patterns.</summary>
     public static readonly ScratchProfile None = new(
+        null,
         null,
         null,
         new Dictionary<string, ScratchPace>(),

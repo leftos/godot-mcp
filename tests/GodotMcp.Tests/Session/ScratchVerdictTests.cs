@@ -783,9 +783,16 @@ public sealed class ScratchVerdictTests
     [Fact]
     public void AScaledScenesGameLaunchesWithItsTimeScaleAndANormalOneAsBefore()
     {
-        Assert.Equal(["--headless", "--time-scale", "4"], ScratchRun.EngineArgs(4));
-        Assert.Equal(["--headless", "--time-scale", "2.5"], ScratchRun.EngineArgs(2.5));
-        Assert.Equal(["--headless"], ScratchRun.EngineArgs(1));
+        Assert.Equal(["--headless", "--time-scale", "4"], ScratchRun.EngineArgs(4, []));
+        Assert.Equal(["--headless", "--time-scale", "2.5"], ScratchRun.EngineArgs(2.5, []));
+        Assert.Equal(["--headless"], ScratchRun.EngineArgs(1, []));
+    }
+
+    [Fact]
+    public void AScenesOwnEngineArgsComeAfterItsHeadlessTimeScale()
+    {
+        Assert.Equal(["--headless", "--time-scale", "4", "--fixed-fps", "30"], ScratchRun.EngineArgs(4, ["--fixed-fps", "30"]));
+        Assert.Equal(["--headless", "--fixed-fps", "30"], ScratchRun.EngineArgs(1, ["--fixed-fps", "30"]));
     }
 
     [Fact]
@@ -1063,6 +1070,7 @@ public sealed class ScratchVerdictTests
             PaceReason = "the scene settles",
             StepPaces = stepPaces,
             TimeScale = 1,
+            EngineArgs = [],
         };
 
     [Fact]

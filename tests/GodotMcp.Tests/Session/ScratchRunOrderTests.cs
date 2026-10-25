@@ -50,5 +50,6 @@ public sealed class ScratchRunOrderTests
         Assert.Equal([1, 0, 2], ScratchRun.StartOrder(scenes, listed: false));
     }
 
-    private static ScratchScenePlan Scene(string name, double pace) => new(name, $"res://scratch/{name}.tscn", pace, []) { TimeScale = 1 };
+    private static ScratchScenePlan Scene(string name, double pace) =>
+        new(name, $"res://scratch/{name}.tscn", pace, []) { TimeScale = 1, EngineArgs = [] };
 }

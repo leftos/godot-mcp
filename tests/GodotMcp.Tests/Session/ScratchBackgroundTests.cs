@@ -676,7 +676,7 @@ public sealed partial class ScratchBackgroundTests : IDisposable
     private static ScratchPlan Plan(string projectDir, params string[] scenes) =>
         new(
             projectDir,
-            [.. scenes.Select(scene => new ScratchScenePlan(scene, $"res://scratch/{scene}.tscn", 1, []) { TimeScale = 1 })],
+            [.. scenes.Select(scene => new ScratchScenePlan(scene, $"res://scratch/{scene}.tscn", 1, []) { TimeScale = 1, EngineArgs = [] })],
             [],
             Prepare: false,
             Details: false
