@@ -34,6 +34,19 @@ public sealed partial class PrepTests : IAsyncDisposable
         + "& $command[0] @($command | Select-Object -Skip 1) *> $log\n"
         + "exit $LASTEXITCODE\n";
 
+    // A prep wrapper like RunningWrapper whose log prefixes every line of the command's output with a timestamp and "out", as
+    // a gate's does. It reads the raw argv, since pwsh -File splits a -name:value argument at the colon.
+    private const string PrefixingWrapper =
+        "$raw = [Environment]::GetCommandLineArgs()\n"
+        + "$start = [Array]::IndexOf($raw, '-File') + 2\n"
+        + "$own = @($raw | Select-Object -Skip $start)\n"
+        + "$log = $own[0]\n"
+        + "$command = @($own | Select-Object -Skip 1)\n"
+        + "if ($command.Count -gt 0 -and $command[0] -eq '--') { $command = @($command | Select-Object -Skip 1) }\n"
+        + "& $command[0] @($command | Select-Object -Skip 1) *>&1 | ForEach-Object { \"2026-01-01T00:00:00 out $_\" }"
+        + " | Set-Content -LiteralPath $log\n"
+        + "exit $LASTEXITCODE\n";
+
     // A prep wrapper that runs nothing and says it stopped the command.
     private const string StoppingWrapper = "exit 124\n";
     private readonly SessionHarness _harness = new();
@@ -268,6 +281,89 @@ public sealed partial class PrepTests : IAsyncDisposable
         Assert.Equal("stopped", SavedBuild.Load(csProbe.Directory)?.State);
         Assert.False(File.Exists(marker), "the stopping wrapper ran its command");
         Assert.Empty(_harness.Sessions.List(includeStopped: true));
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task APrefixingPrepWrapperStillListsTheCompileItems()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        WritePrepWrapper(csProbe.Directory, PrefixingWrapper);
+        string logFolder = Path.Combine(csProbe.Directory, ".godot", "godot-mcp");
+
+        IReadOnlyList<string> items = await ProjectPrep.CompileItemsAsync(
+            csProbe.Directory,
+            Path.Combine(csProbe.Directory, "CsProbe.csproj"),
+            NullLogger.Instance,
+            cancellation
+        );
+
+        Assert.Contains(csProbe.SourcePath("CsProbeNode.cs"), items, StringComparer.OrdinalIgnoreCase);
+        Assert.Empty(Directory.GetFiles(logFolder, "compile-items-*"));
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task APlainPrepWrapperListsTheCompileItems()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        WritePrepWrapper(csProbe.Directory, RunningWrapper);
+        string logFolder = Path.Combine(csProbe.Directory, ".godot", "godot-mcp");
+
+        IReadOnlyList<string> items = await ProjectPrep.CompileItemsAsync(
+            csProbe.Directory,
+            Path.Combine(csProbe.Directory, "CsProbe.csproj"),
+            NullLogger.Instance,
+            cancellation
+        );
+
+        Assert.Contains(csProbe.SourcePath("CsProbeNode.cs"), items, StringComparer.OrdinalIgnoreCase);
+        Assert.Empty(Directory.GetFiles(logFolder, "compile-items-*"));
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task APrefixingPrepWrappersBuildDiagnosticsNameTheirOwnFile()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        csProbe.WriteSource("ProbeWarn.cs", "public static class ProbeWarn { public static void M() { int unused; } }\n");
+        WritePrepWrapper(csProbe.Directory, PrefixingWrapper);
+
+        LaunchResult launched = await LaunchAsync(csProbe.Directory, prepare: true, cancellation);
+        await _harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.Equal("built", launched.Prep.Build);
+        BuildDiagnostic warning = Assert.Single(SavedBuild.Load(csProbe.Directory)!.Diagnostics, d => d.Code == "CS0168");
+        Assert.Equal(csProbe.SourcePath("ProbeWarn.cs"), warning.File, ignoreCase: true);
+        Assert.Equal(1, warning.Line);
+    }
+
+    [Fact(Timeout = BuildTestTimeoutMs)]
+    public async Task AStoppedBuildLeavesNoEarlierBuildsDiagnostics()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+        const string warn = "public static class ProbeWarn { public static void M() { int unused; } }\n";
+        csProbe.WriteSource("ProbeWarn.cs", warn);
+        WritePrepWrapper(csProbe.Directory, RunningWrapper);
+
+        LaunchResult launched = await LaunchAsync(csProbe.Directory, prepare: true, cancellation);
+        await _harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.Equal("built", launched.Prep.Build);
+        Assert.Contains(SavedBuild.Load(csProbe.Directory)!.Diagnostics, diagnostic => diagnostic.Code == "CS0168");
+
+        WritePrepWrapper(csProbe.Directory, StoppingWrapper);
+        csProbe.WriteSource("ProbeWarn.cs", warn + "\n");
+        await Assert.ThrowsAsync<SessionException>(() => LaunchAsync(csProbe.Directory, prepare: true, cancellation));
+
+        string log = Path.Combine(csProbe.Directory, ".godot", "godot-mcp", "build.log");
+        Assert.Empty(SavedBuild.Load(csProbe.Directory)!.Diagnostics);
+        Assert.False(File.Exists(Path.Combine(csProbe.Directory, ".godot", "godot-mcp", "build.diagnostics.log")));
+        Assert.False(
+            File.Exists(log) && File.ReadAllText(log).Contains("CS0168", StringComparison.Ordinal),
+            "build.log still holds the earlier build's warning"
+        );
     }
 
     /// <summary>

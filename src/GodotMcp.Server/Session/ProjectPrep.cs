@@ -121,15 +121,19 @@ internal static class ProjectPrep
 
         string csproj = lookup.ProjectFile!;
         string log = Path.Combine(LogFolder(projectDir), "build.log");
+        string diagnosticsLog = BuildDiagnosticsLog(projectDir);
         PrepWrapper? wrap = wrapper.Value;
+        // Both are this build's own: a run whose command never ran leaves no earlier build's log or diagnostics to be read.
+        DeleteLogged(log, context.Logger);
+        DeleteLogged(diagnosticsLog, context.Logger);
         ToolProcessResult built = await RunStepAsync(
-            BuildRequest(Installation.FindDotnet(), csproj, log, need == BuildNeed.Rebuild),
+            BuildRequest(Installation.FindDotnet(), csproj, log, diagnosticsLog, need == BuildNeed.Rebuild),
             "dotnet",
             wrap,
             context.Logger,
             cancellationToken
         );
-        IReadOnlyList<BuildDiagnostic> diagnostics = SaveDiagnostics(projectDir, built, log, wrap);
+        IReadOnlyList<BuildDiagnostic> diagnostics = SaveDiagnostics(projectDir, built, log, diagnosticsLog, wrap);
         long milliseconds = (long)built.Elapsed.TotalMilliseconds;
         if (reportRedBuild && StateOf(built, wrap) == "failed")
         {
@@ -160,11 +164,38 @@ internal static class ProjectPrep
     }
 
     /// <summary>Saves the build's errors and warnings as the project's <see cref="SavedBuild"/>, and returns them.</summary>
-    private static IReadOnlyList<BuildDiagnostic> SaveDiagnostics(string projectDir, ToolProcessResult built, string log, PrepWrapper? wrapper)
+    private static IReadOnlyList<BuildDiagnostic> SaveDiagnostics(
+        string projectDir,
+        ToolProcessResult built,
+        string log,
+        string diagnosticsLog,
+        PrepWrapper? wrapper
+    )
     {
-        IReadOnlyList<BuildDiagnostic> diagnostics = CompilerErrors.ParseDiagnostics(ReadLog(log));
+        IReadOnlyList<BuildDiagnostic> diagnostics = BuildDiagnostics(
+            File.Exists(diagnosticsLog) ? ReadLog(diagnosticsLog) : null,
+            ReadLog(log),
+            built.ExitCode != 0 || built.WasKilled
+        );
         SavedBuild.Save(projectDir, new SavedBuild(DateTime.UtcNow, StateOf(built, wrapper), diagnostics));
         return diagnostics;
+    }
+
+    /// <summary>
+    /// The build's diagnostics: the file logger's, or the build log's where the file logger cannot hold them. MSBuild prints
+    /// what happens before its loggers start (an MSB1009 project that does not exist, a logger that cannot open its file) only
+    /// in the console log, and a routed build's diagnostics file stays on the builder, so a failed build whose file holds no
+    /// error is read from the log instead.
+    /// </summary>
+    internal static IReadOnlyList<BuildDiagnostic> BuildDiagnostics(string? fileLoggerText, string buildLogText, bool failed)
+    {
+        IReadOnlyList<BuildDiagnostic> fromFileLogger = fileLoggerText is null ? [] : CompilerErrors.ParseDiagnostics(fileLoggerText);
+        if (fileLoggerText is null || (failed && !fromFileLogger.Any(diagnostic => diagnostic.Severity == BuildDiagnostic.Error)))
+        {
+            return CompilerErrors.ParseDiagnostics(buildLogText);
+        }
+
+        return fromFileLogger;
     }
 
     /// <summary>A log's text; empty when a wrapper that owns the log never wrote it.</summary>
@@ -181,7 +212,9 @@ internal static class ProjectPrep
     }
 
     // --no-incremental rebuilds every file, so each one's warnings reach the log (learn.microsoft.com/dotnet/core/tools/dotnet-build).
-    private static ToolProcessRequest BuildRequest(string dotnet, string csproj, string log, bool rebuild) =>
+    // MSBuild's own file logger writes the diagnostics, so a prep wrapper that rewrites the console output cannot reach them; its
+    // switches use the /name:value form, which a PowerShell prep wrapper keeps whole where it splits -name:value at the colon.
+    private static ToolProcessRequest BuildRequest(string dotnet, string csproj, string log, string diagnostics, bool rebuild) =>
         DotnetRequest(
             dotnet,
             [
@@ -191,6 +224,8 @@ internal static class ProjectPrep
                 Configuration,
                 "-p:GodotTargetPlatform=windows",
                 "-p:UseSharedCompilation=false",
+                "-fl",
+                $"/flp:LogFile={diagnostics};Verbosity=quiet",
                 .. rebuild ? ["--no-incremental"] : Array.Empty<string>(),
             ],
             csproj,
@@ -209,8 +244,12 @@ internal static class ProjectPrep
     /// <summary>
     /// The full paths of the csproj's <c>Compile</c> items, from MSBuild's evaluation (<c>dotnet msbuild -getItem:Compile</c>,
     /// MSBuild 17.8 and later: learn.microsoft.com/visualstudio/msbuild/evaluate-items-and-properties), with the build's
-    /// configuration and environment. Its output goes to a log of its own (<see cref="CompileItemsLog"/>), so evaluations on
-    /// one folder at once never share a file; the log is deleted once read, and kept when the evaluation failed.
+    /// configuration and environment. MSBuild writes the item list to a JSON file of its own beside the log
+    /// (<c>/getResultOutputFile</c>), which a prep wrapper that rewrites the command's output cannot reach; the log is read
+    /// instead when MSBuild wrote no result file. The switches use MSBuild's <c>/name:value</c> form, because a prep wrapper
+    /// written as a PowerShell script splits a <c>-name:value</c> argument at the colon. Each evaluation has a log and a result
+    /// file of its own (<see cref="CompileItemsLog"/>), so evaluations on one folder at once never share them; both are deleted
+    /// once read, and kept when the evaluation failed.
     /// </summary>
     /// <exception cref="SessionException">dotnet could not be started, hit its ceiling, failed, or wrote no item list.</exception>
     public static async Task<IReadOnlyList<string>> CompileItemsAsync(
@@ -221,11 +260,13 @@ internal static class ProjectPrep
     )
     {
         string log = CompileItemsLog(projectDir);
+        string result = Path.ChangeExtension(log, ".json");
         string[] arguments =
         [
             "msbuild",
             csproj,
-            "-getItem:Compile",
+            "/getItem:Compile",
+            $"/getResultOutputFile:{result}",
             $"-p:Configuration={Configuration}",
             "-p:GodotTargetPlatform=windows",
             "-nologo",
@@ -240,10 +281,11 @@ internal static class ProjectPrep
         );
         string failure = $"dotnet msbuild -getItem:Compile on {csproj}";
         CheckListed(listed, failure, log, wrapper);
+        string output = File.Exists(result) ? ReadLog(result) : ReadLog(log);
         IReadOnlyList<string> items;
         try
         {
-            items = ReadCompileItems(ReadLog(log)) ?? throw new SessionException($"{failure} wrote no item list. Its log: {log}");
+            items = ReadCompileItems(output) ?? throw new SessionException($"{failure} wrote no item list. Its log: {log}");
         }
         catch (JsonException e)
         {
@@ -251,6 +293,7 @@ internal static class ProjectPrep
         }
 
         DeleteLogged(log, logger);
+        DeleteLogged(result, logger);
         if (wrapper is { OwnsLog: true })
         {
             DeleteLogged(PrepWrapper.WrapperLog(log), logger);
@@ -280,6 +323,13 @@ internal static class ProjectPrep
 
     /// <summary>A log path of its own for one Compile-items evaluation: <c>.godot/godot-mcp/compile-items-&lt;guid&gt;.log</c>.</summary>
     internal static string CompileItemsLog(string projectDir) => Path.Combine(LogFolder(projectDir), $"compile-items-{Guid.NewGuid():N}.log");
+
+    /// <summary>
+    /// The build's diagnostics, in a file MSBuild's own file logger writes: <c>.godot/godot-mcp/build.diagnostics.log</c>. It is
+    /// a file of its own because the build log is the one a prep wrapper rewrites (a gate prefixes every line), which would
+    /// land in each diagnostic's file path.
+    /// </summary>
+    internal static string BuildDiagnosticsLog(string projectDir) => Path.Combine(LogFolder(projectDir), "build.diagnostics.log");
 
     /// <summary>Deletes a read log; a failure is logged, so it never replaces the call's own outcome.</summary>
     private static void DeleteLogged(string path, ILogger logger)

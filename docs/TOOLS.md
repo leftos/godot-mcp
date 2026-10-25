@@ -1302,6 +1302,12 @@ Each runs as the wrapper followed by the process's absolute path and arguments, 
 
 A program with a folder in it is relative to the project folder, a bare name is found on `PATH`. When the wrapper takes `{log}`, it writes that log and its own output goes to `build.wrapper.log` / `import.wrapper.log` beside it, and an import's second pass writes `import.2.log`.
 
+`{log}` may hold anything the wrapper writes, such as every line prefixed, because the server reads MSBuild's own files first. The C# build's diagnostics come from MSBuild's quiet file logger (`.godot/godot-mcp/build.diagnostics.log`, from `-fl` and `/flp:LogFile=…;Verbosity=quiet`) and the Compile-items listing from MSBuild's result file (`compile-items-<guid>.json`, from `/getItem:Compile` and `/getResultOutputFile:…`), so `validate`'s C# errors and warnings name their source file under a prefixing wrapper. The switches are on the command line in MSBuild's slash form: a PowerShell wrapper (`pwsh -File`) keeps `/name:value` whole where it splits `-name:value` at the colon, and a gate that routes the build to another machine sees and rewrites the path after the colon.
+
+When MSBuild's file is missing (a routed build's diagnostics file stays on the builder) or a failed build's file logger holds no error (MSBuild's early errors such as MSB1009 reach only the console log), the server reads the captured `build.log` (for the listing, the listing's log) instead, and under a prefixing wrapper those lines keep its prefix. `build.log` and `build.diagnostics.log` are deleted before each build, so a build whose command never ran (a wrapper exiting 124) leaves no earlier build's log or diagnostics. A listing's `.log` and `.json` are deleted once it succeeds and kept when it fails.
+
+The import is read differently: its `ERROR:` check reads the wrapped import output, so an import error a prefixing wrapper rewrites is not detected.
+
 A wrapped process has no stall kill (a gate waiting for a slot is silent), the ceiling still holds, and a wrapper exit of 124 refuses the prep with `the prep wrapper stopped the build (exit 124); its log: …`. `prep.note` says `ran through prepWrapper (<program>)`. A malformed `godot-mcp.json` refuses any prep that runs a process.
 
 ```json

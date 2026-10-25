@@ -178,6 +178,46 @@ public sealed class ProjectPrepChecksTests : IDisposable
     }
 
     [Fact]
+    public void BuildDiagnosticsReadTheFileLoggerWhenItWroteTheBuildsDiagnostics()
+    {
+        const string file = @"D:\t\CsProbe\ProbeWarn.cs";
+        const string project = @" [D:\t\CsProbe\CsProbe.csproj]";
+        string fileLogger = $"{file}(1,62): warning CS0168: The variable 'unused' is declared but never used{project}";
+        const string buildLog = "2026-01-01T00:00:00 out Build succeeded.";
+
+        IReadOnlyList<BuildDiagnostic> diagnostics = ProjectPrep.BuildDiagnostics(fileLogger, buildLog, failed: false);
+
+        Assert.Equal([new BuildDiagnostic(file, 1, 62, "CS0168", "The variable 'unused' is declared but never used", "warning")], diagnostics);
+    }
+
+    [Fact]
+    public void BuildDiagnosticsFallBackToTheBuildLogWhenTheFileLoggerWroteNothing()
+    {
+        const string buildLog = "MSBUILD : error MSB1009: Project file does not exist.";
+
+        IReadOnlyList<BuildDiagnostic> diagnostics = ProjectPrep.BuildDiagnostics(null, buildLog, failed: true);
+
+        BuildDiagnostic error = Assert.Single(diagnostics);
+        Assert.Equal("MSB1009", error.Code);
+        Assert.Equal(BuildDiagnostic.Error, error.Severity);
+    }
+
+    [Fact]
+    public void AFailedBuildWhoseFileLoggerHoldsNoErrorReadsTheBuildLog()
+    {
+        const string file = @"D:\t\CsProbe\CsProbeNode.cs";
+        const string project = @" [D:\t\CsProbe\CsProbe.csproj]";
+        string fileLogger = $"{file}(12,13): warning CS0219: The variable 'unused' is assigned but its value is never used{project}";
+        const string buildLog = "MSBUILD : error MSB1009: Project file does not exist.";
+
+        IReadOnlyList<BuildDiagnostic> diagnostics = ProjectPrep.BuildDiagnostics(fileLogger, buildLog, failed: true);
+
+        BuildDiagnostic error = Assert.Single(diagnostics);
+        Assert.Equal("MSB1009", error.Code);
+        Assert.Equal(BuildDiagnostic.Error, error.Severity);
+    }
+
+    [Fact]
     public void EachCompileItemsEvaluationLogsToAFileOfItsOwn()
     {
         string game = ProjectPrepFixtures.CreateGame(_temp, null, "Solo.csproj");

@@ -548,6 +548,11 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
 
     Ruled out: a `warp_mouse` route, whose effect on a quiet run's hidden desktop is unmeasured.
 
+40. **What the server parses comes from files MSBuild writes itself, never from a prep wrapper's captured output, except as a fallback** (GMCP-276; an orchestrator decision, not an owner ruling). The Compile-items listing reads the item list from MSBuild's `-getResultOutputFile` JSON, and the build's diagnostics come from MSBuild's quiet file logger (`build.diagnostics.log`), so a prepWrapper may prefix or rewrite its log freely.
+    - **The switches use MSBuild's slash form on the command line** (`/flp:`, `/getItem:`, `/getResultOutputFile:`): a PowerShell prepWrapper (`pwsh -File`) splits a `-name:value` argument at the colon but keeps `/name:value` whole, and a gate that routes the build to another machine sees and rewrites the path after the colon, which it cannot do inside an `@` response file (it also does not send git-ignored files).
+    - **Fallback to the captured log**: when MSBuild's file is missing (a routed build's diagnostics file stays on the builder) or a failed build's file logger holds no error (early errors such as MSB1009 reach only the console log), the server reads the captured `build.log` (for the listing, its log), keeping a prefixing wrapper's prefix. `build.log` and `build.diagnostics.log` are deleted before each build.
+    - **The import is not covered**: its `ERROR:` check reads the wrapped import output, so an import error a prefixing wrapper rewrites is not detected.
+
 ## Wire
 
 - **The server listens and the bridge dials in.** The server binds `127.0.0.1:0` and keeps the listener open, then passes the port and a session token to Godot through environment variables (`GODOT_MCP_PORT`, `GODOT_MCP_TOKEN`). This removes the reference server's free-port race and its regex-editing of the port into GDScript.
