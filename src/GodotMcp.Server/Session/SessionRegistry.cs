@@ -71,7 +71,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// <summary>
     /// The clock a launch's handshake and an attach's wait for its game run on: <see cref="Clock"/> unless set. A harness that
     /// keeps <see cref="Clock"/> on wall time, so short ceilings keep their text, sets it to a load-adjusted clock, so a game
-    /// slow to start on a busy machine is waited for. A stop's wait for a killed game runs on it too.
+    /// slow to start on a busy machine is waited for. A stop's wait for a killed game runs on it too, and so does
+    /// preview_scene's whole limit, since that limit encloses a launch.
     /// </summary>
     internal LoadClock LaunchClock
     {
@@ -266,7 +267,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// Runs <paramref name="capture"/> on a preview: the project started on the request's scene under a session of its own
     /// (<see cref="PreviewName"/>), which is stopped and forgotten however the call ends. The session takes the settings of
     /// the live sessions on the folder, whose override.cfg it shares, so it is never refused for differing from them; its run
-    /// is started as the request says. The prep, the launch and the capture share <see cref="PreviewLimit"/>.
+    /// is started as the request says. The prep, the launch and the capture share <see cref="PreviewLimit"/>, which runs on
+    /// <see cref="LaunchClock"/> since it encloses a launch.
     /// </summary>
     /// <exception cref="SessionException">
     /// The project is missing, the prep failed or passed the limit, the launch failed, or the whole call passed the limit.
@@ -278,7 +280,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     )
     {
         string projectDir = NormaliseProjectDir(request.ProjectPath);
-        using LoadDeadline limit = Clock.Start(PreviewLimit, cancellationToken);
+        using LoadDeadline limit = LaunchClock.Start(PreviewLimit, cancellationToken);
         GodotSession session = ReservePreview(projectDir);
         try
         {

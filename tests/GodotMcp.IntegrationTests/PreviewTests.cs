@@ -62,7 +62,7 @@ public sealed class PreviewTests : IAsyncDisposable
         _probe.Dispose();
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task A2DSceneShowsItsSwatchWhereTheSceneDrawsIt()
     {
         List<ContentBlock> blocks = await PreviewAsync("res://preview_2d.tscn", "full", TestContext.Current.CancellationToken);
@@ -79,7 +79,7 @@ public sealed class PreviewTests : IAsyncDisposable
         Assert.Equal("not-needed", reply["prep"]!["import"]!.GetValue<string>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task A3DSceneWithoutACameraGetsOneThatShowsTheBox()
     {
         List<ContentBlock> blocks = await PreviewAsync("res://preview_3d.tscn", "full", TestContext.Current.CancellationToken);
@@ -92,7 +92,7 @@ public sealed class PreviewTests : IAsyncDisposable
         Assert.True(boxPixels > 2000, $"{boxPixels} magenta pixels of {png.Width * png.Height}");
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task A3DSceneWithItsOwnCameraIsShownThroughIt()
     {
         File.WriteAllText(Path.Combine(_probe.Directory, "preview_camera.tscn"), SceneWithCamera.ReplaceLineEndings("\n"));
@@ -125,7 +125,7 @@ public sealed class PreviewTests : IAsyncDisposable
         Assert.Equal("""{"value":"Main"}""", value);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task APreviewLeavesNoSessionAndNoFilesAndAHeadlessToolRunsRightAfter()
     {
         await PreviewAsync("res://preview_2d.tscn", "preview", TestContext.Current.CancellationToken);
