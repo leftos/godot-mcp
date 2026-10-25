@@ -59,7 +59,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "on an error the game logs (push_error, an engine error, a C# exception) or a stdout or stderr line matching the "
             + "profile's scratch.patterns; after the steps the game is stopped and a non-zero exit or an ObjectDB leak turns the "
             + "scene red. Settings live in godot-mcp.json's scratch section "
-            + "{folder, userArgs, engineArgs, pace, known, patterns, parallel}. Scenes "
+            + "{folder, userArgs, engineArgs, pace, ceilings, known, patterns, parallel}. Scenes "
             + "start parallel at a time: those listed in scenes in that order, a folder run's largest pace (a scene's or "
             + "one of its steps') divided by the scene's time scale first; with more than one, a red or killed scene (not known, "
             + "not refused before its first "
@@ -94,14 +94,17 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         )]
             string[]? scenes = null,
         [Description(
-            "{pace, timeScale, userArgs, engineArgs, prepare, details, parallel, session, keepGoing, steps, background, only}: "
-                + "pace in seconds for every "
+            "{pace, timeScale, userArgs, engineArgs, ceilings, prepare, details, parallel, session, keepGoing, steps, background, "
+                + "only}: pace in seconds for every "
                 + "step (else scratch.pace's for the step, else for the scene, else 0.5); timeScale the games' time scale, from 0.01 to "
                 + "100 (default 1), each game launched with --time-scale, so a pace of p s takes p / timeScale s of wall time and "
-                + "the kill bound scales with it, the wait after the last step lasting p s of wall time above 1, a scene whose "
+                + "the ceiling derived from the paces scales with it, while a ceiling given by ceilings or scratch.ceilings is fixed "
+                + "seconds and does not; the wait after the last step lasting p s of wall time above 1, a scene whose "
                 + "scratch.pace entry has \"timeScale\": 1 kept at normal speed; userArgs "
                 + "appended after the profile's; "
                 + "engineArgs placed before -- after the profile's scratch.engineArgs; "
+                + "ceilings {<scene>: seconds} the scene's own ceiling of load-adjusted time from its first step, replacing the one "
+                + "derived from the paces and beating the profile's scratch.ceilings, and not scaled by timeScale; "
                 + "prepare as run_project's; "
                 + "details true lists every scene's steps and gives every step its full detail; parallel the scenes at once, 1 to 4 "
                 + "(else scratch.parallel, else 1); "
@@ -279,11 +282,12 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     }
 
     /// <summary>
-    /// The checked call: the project, each scene with its pace, user arguments and engine arguments, and the profile's patterns.
+    /// The checked call: the project, each scene with its pace, user arguments, engine arguments and ceiling, and the profile's
+    /// patterns.
     /// </summary>
     /// <exception cref="McpException">
-    /// The project, the profile, a scene, the pace, the user arguments, the engine arguments, prepare or options.steps is
-    /// refused; nothing has launched.
+    /// The project, the profile, a scene, the pace, the user arguments, the engine arguments, the ceilings, prepare or
+    /// options.steps is refused; nothing has launched.
     /// </exception>
     internal static ScratchPlan Plan(string projectPath, IReadOnlyList<string>? scenes, ScratchOptions options)
     {
@@ -298,8 +302,10 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         string prefix = SessionPrefix(options.Session, projectDir);
         List<string> userArgs = UserArgs(profile, scratch, options);
         List<string> engineArgs = EngineArgs(profile, scratch, options);
+        List<string> resPaths = ResolveScenes(profile, scratch, scenes);
+        CheckCeilings(options.Ceilings, resPaths);
         List<ScratchScenePlan> plans = [];
-        foreach (string resPath in ResolveScenes(profile, scratch, scenes))
+        foreach (string resPath in resPaths)
         {
             plans.Add(ScenePlan(Path.GetFileNameWithoutExtension(resPath), resPath, scratch, options, userArgs, engineArgs));
         }
@@ -396,7 +402,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     /// One scene's plan: options.pace else the profile's pace for the scene else the default, and the profile's reason for the
     /// pace and its step paces, kept only when the pace came from the profile rather than from options.pace, which paces every
     /// step; and options.timeScale, else 1, unless the profile's pace has "timeScale": 1, which keeps the scene at normal speed
-    /// even beside options.pace; and the engine arguments its game launches with.
+    /// even beside options.pace; the ceiling options.ceilings or the profile's scratch.ceilings gives the scene, if either does; and
+    /// the engine arguments its game launches with.
     /// </summary>
     private static ScratchScenePlan ScenePlan(
         string name,
@@ -415,7 +422,52 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             StepPaces = StepPaces(entry, options),
             TimeScale = entry is { NormalSpeed: true } ? 1 : options.TimeScale ?? 1,
             EngineArgs = engineArgs,
+            Ceiling = CeilingFor(name, scratch, options),
         };
+    }
+
+    /// <summary>
+    /// The scene's own ceiling: options.ceilings for it, else the profile's scratch.ceilings, else none, which derives it from the
+    /// paces.
+    /// </summary>
+    private static ScratchCeiling? CeilingFor(string name, ScratchProfile scratch, ScratchOptions options)
+    {
+        if (options.Ceilings is { } ceilings && ceilings.TryGetValue(name, out double given))
+        {
+            return new ScratchCeiling(given, ScratchCeiling.OptionsSource);
+        }
+
+        return scratch.Ceilings.TryGetValue(name, out double profiled) ? new ScratchCeiling(profiled, ScratchCeiling.ProfileSource) : null;
+    }
+
+    /// <summary>Checks options.ceilings: each key a planned scene, each value a number of seconds above 0 and at most 3600.</summary>
+    /// <exception cref="McpException">A key names no scene of the plan, or a value is outside (0, 3600].</exception>
+    private static void CheckCeilings(Dictionary<string, double>? ceilings, List<string> resPaths)
+    {
+        if (ceilings is null)
+        {
+            return;
+        }
+
+        List<string> names = [.. resPaths.Select(Path.GetFileNameWithoutExtension).Select(name => name!)];
+        foreach ((string scene, double seconds) in ceilings)
+        {
+            if (!names.Contains(scene))
+            {
+                throw new McpException(
+                    $"options.ceilings scene '{scene}' is not in the plan; its scenes are {string.Join(", ", names)}. Pass one of those, "
+                        + "or leave the scene's ceiling to its paces."
+                );
+            }
+
+            if (!ScratchProfile.IsCeiling(seconds))
+            {
+                throw new McpException(
+                    $"options.ceilings.{scene} must be a number of seconds above 0 and at most {ScratchProfile.MaxCeilingSeconds}; "
+                        + $"got {seconds.ToString(CultureInfo.InvariantCulture)}."
+                );
+            }
+        }
     }
 
     /// <summary>The profile's step paces for the scene, none when options.pace paces every step.</summary>
@@ -677,8 +729,9 @@ internal sealed record ScratchOptions(
         double? Pace = null,
     [property: Description(
         "Time scale the scenes' games run at, from 0.01 to 100 (default 1): each game launches with --time-scale, so a pace "
-            + "of p s of game time takes p / timeScale s of wall time and the kill bound scales with it; above 1 the wait after the "
-            + "last step still lasts p s of wall time. A scene whose profile pace "
+            + "of p s of game time takes p / timeScale s of wall time and the ceiling derived from the paces scales with it, while "
+            + "a ceiling given by options.ceilings or the profile's scratch.ceilings is fixed seconds and does not; above 1 the "
+            + "wait after the last step still lasts p s of wall time. A scene whose profile pace "
             + "entry has \"timeScale\": 1 runs at normal speed."
     )]
         double? TimeScale = null,
@@ -690,6 +743,13 @@ internal sealed record ScratchOptions(
             + "or --scratch-auto are refused."
     )]
         string[]? EngineArgs = null,
+    [property: Description(
+        "Per-scene ceilings of load-adjusted time, scene name to seconds from that scene's first step: each above 0 and at most "
+            + "3600, fixed seconds that options.timeScale does not scale, and replacing the ceiling derived from the paces, lower "
+            + "or higher. A scene's entry wins over the profile's scratch.ceilings for the scene; a scene in neither keeps the "
+            + "derived ceiling, and a name that is not a planned scene is refused."
+    )]
+        Dictionary<string, double>? Ceilings = null,
     [property: Description(RunOptions.PrepareDescription)] string? Prepare = null,
     [property: Description(
         "true lists every scene's steps and gives every step, green or red, its full detail (error, errors, lines with its "

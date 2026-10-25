@@ -1008,6 +1008,56 @@ public sealed class ScratchVerdictTests
         );
 
     [Fact]
+    public void ASceneCeilingGivenByTheCallReplacesTheDerivedOne()
+    {
+        ScratchWalk walk = new([new(0.5, null), new(30, null)], [0, 1], 1);
+
+        Assert.Equal(TimeSpan.FromSeconds(90.5), walk.Ceiling);
+        Assert.Equal(TimeSpan.FromSeconds(5), (walk with { Given = new(5, ScratchCeiling.OptionsSource) }).Ceiling);
+        Assert.Equal(TimeSpan.FromSeconds(500), (walk with { Given = new(500, ScratchCeiling.ProfileSource) }).Ceiling);
+    }
+
+    [Fact]
+    public void AGivenCeilingsReasonNamesItsSource()
+    {
+        ScratchWalk walk = new([new(0.5, null), new(30, null)], [0, 1], 1) { Given = new(5, ScratchCeiling.OptionsSource) };
+
+        Assert.Equal(
+            "the scene passed its ceiling of 5 s of load-adjusted time, set by options.ceilings, so its game was stopped",
+            walk.CeilingReason(string.Empty)
+        );
+        Assert.Equal(
+            "the scene passed its ceiling of 5 s of load-adjusted time, set by the profile's scratch.ceilings, so its game was stopped",
+            (walk with { Given = new(5, ScratchCeiling.ProfileSource) }).CeilingReason(string.Empty)
+        );
+        Assert.Equal(
+            "the scene passed its ceiling of 2.5 s of load-adjusted time, set by options.ceilings, so its game was stopped",
+            (walk with { Given = new(2.5, ScratchCeiling.OptionsSource) }).CeilingReason(string.Empty)
+        );
+    }
+
+    [Fact]
+    public void AGivenCeilingsReasonKeepsItsDigits()
+    {
+        ScratchWalk walk = new([new(0.5, null), new(30, null)], [0, 1], 1) { Given = new(0.25, ScratchCeiling.OptionsSource) };
+
+        Assert.Equal(TimeSpan.FromSeconds(0.25), walk.Ceiling);
+        Assert.Equal(
+            "the scene passed its ceiling of 0.25 s of load-adjusted time, set by options.ceilings, so its game was stopped",
+            walk.CeilingReason(string.Empty)
+        );
+    }
+
+    [Fact]
+    public void AGivenCeilingHoldsForAPartialRun()
+    {
+        ScratchWalk paced = new([new(0.5, null), new(30, null), new(2, null)], [0, 2], 1);
+
+        Assert.Equal(TimeSpan.FromSeconds(34.5), paced.Ceiling);
+        Assert.Equal(TimeSpan.FromSeconds(7.5), (paced with { Given = new(7.5, ScratchCeiling.ProfileSource) }).Ceiling);
+    }
+
+    [Fact]
     public void AKnownScenePlayedInPartStaysKnownAndNeverKnownNowGreen()
     {
         ScratchObservation partial = new("Combat", "probe.scratch-Combat", 0.5, 6)

@@ -162,6 +162,53 @@ public sealed class ScratchValidationTests : IDisposable
         );
 
     [Theory]
+    [InlineData(0.0, "0")]
+    [InlineData(-1.0, "-1")]
+    [InlineData(3600.5, "3600.5")]
+    [InlineData(double.NaN, "NaN")]
+    public void AnOptionsCeilingOutsideItsRangeIsRefused(double seconds, string shown)
+    {
+        string message = Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Ceilings: new() { ["Other"] = seconds })));
+
+        Assert.Equal($"options.ceilings.Other must be a number of seconds above 0 and at most 3600; got {shown}.", message);
+    }
+
+    [Fact]
+    public void OptionsCeilingsNamingASceneOutsideThePlanIsRefused()
+    {
+        string message = Refused(() => Plan(["res://Scratch/Beta.tscn"], new ScratchOptions(Ceilings: new() { ["Alpha"] = 5 })));
+
+        Assert.Equal(
+            "options.ceilings scene 'Alpha' is not in the plan; its scenes are Beta. Pass one of those, or leave the scene's ceiling "
+                + "to its paces.",
+            message
+        );
+    }
+
+    [Fact]
+    public void AnOptionsCeilingWinsOverTheProfilesForItsScene()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch", "ceilings": { "Beta": 20, "Alpha": 30 } } }""");
+
+        ScratchPlan plan = Plan(["Beta", "Alpha", "res://Other.tscn"], new ScratchOptions(Ceilings: new() { ["Beta"] = 5 }));
+
+        Assert.Equal(new ScratchCeiling(5, ScratchCeiling.OptionsSource), plan.Scenes[0].Ceiling);
+        Assert.Equal(new ScratchCeiling(30, ScratchCeiling.ProfileSource), plan.Scenes[1].Ceiling);
+        Assert.Null(plan.Scenes[2].Ceiling);
+    }
+
+    [Fact]
+    public void AProfileCeilingForASceneOutsideTheRunIsIgnored()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch", "ceilings": { "Alpha": 30 } } }""");
+
+        ScratchScenePlan planned = Assert.Single(Plan(["Beta"]).Scenes);
+
+        Assert.Equal("Beta", planned.Name);
+        Assert.Null(planned.Ceiling);
+    }
+
+    [Theory]
     [InlineData("Red")]
     [InlineData("failed")]
     [InlineData("")]

@@ -11,10 +11,23 @@ using ModelContextProtocol;
 namespace GodotMcp.Server.Session;
 
 /// <summary>
+/// A scene's ceiling given rather than derived from its paces: how many load-adjusted seconds from the scene's first step, and
+/// what set it, options.ceilings or the profile's scratch.ceilings.
+/// </summary>
+internal sealed record ScratchCeiling(double Seconds, string Source)
+{
+    /// <summary>The source a call's options.ceilings sets a ceiling under.</summary>
+    public const string OptionsSource = "options.ceilings";
+
+    /// <summary>The source the profile's scratch.ceilings sets a ceiling under.</summary>
+    public const string ProfileSource = "the profile's scratch.ceilings";
+}
+
+/// <summary>
 /// A scratch scene to play: its name (the file's, without .tscn), its res:// path, its pace in seconds, the user arguments it
-/// starts with, the engine arguments its game launches with, the reason the profile knows it to fail, if any, the profile's
-/// reason for its pace, if any, the paces of single steps, keyed by a step's index or its name, and the time scale its game
-/// runs at.
+/// starts with, the engine arguments its game launches with, the ceiling the call or the profile gives it, if any, the reason the
+/// profile knows it to fail, if any, the profile's reason for its pace, if any, the paces of single steps, keyed by a step's index
+/// or its name, and the time scale its game runs at.
 /// </summary>
 internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace, IReadOnlyList<string> UserArgs)
 {
@@ -35,6 +48,12 @@ internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace
 
     /// <summary>The largest pace the scene holds: its own, or one of its steps'.</summary>
     public double LargestPace => StepPaces.Values.Select(step => step.Seconds).Append(Pace).Max();
+
+    /// <summary>
+    /// The scene's own ceiling of load-adjusted time from its first step, given by options.ceilings or the profile's
+    /// scratch.ceilings; null derives it from the played steps' paces.
+    /// </summary>
+    public ScratchCeiling? Ceiling { get; init; }
 }
 
 /// <summary>
@@ -100,8 +119,15 @@ internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyLi
 {
     public static readonly ScratchWalk None = new([], [], 1);
 
-    /// <summary>The ceiling of the played steps, from each one's pace; see <see cref="ScratchRun.Ceiling"/>.</summary>
-    public TimeSpan Ceiling => ScratchRun.Ceiling([.. Played.Select(step => Paces[step].Seconds)], TimeScale);
+    /// <summary>The ceiling the call or the profile gives the scene; null derives it from the played steps' paces.</summary>
+    public ScratchCeiling? Given { get; init; }
+
+    /// <summary>
+    /// The scene's ceiling: <see cref="Given"/> when the call or the profile sets one, else that of the played steps, from each
+    /// one's pace; see <see cref="ScratchRun.Ceiling"/>.
+    /// </summary>
+    public TimeSpan Ceiling =>
+        Given is { } given ? TimeSpan.FromSeconds(given.Seconds) : ScratchRun.Ceiling([.. Played.Select(step => Paces[step].Seconds)], TimeScale);
 
     /// <summary>
     /// The game milliseconds waited after the last step played: that step's own pace in game time or in wall time, whichever is
@@ -119,15 +145,26 @@ internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyLi
         + (Paces[Played[^1]].Seconds / Math.Min(1, TimeScale));
 
     /// <summary>Why a scene was killed at its ceiling, with <paramref name="backstop"/> appended to the budget's terms.</summary>
-    public string CeilingReason(string backstop)
+    public string CeilingReason(string backstop) => Given is { } given ? GivenCeilingReason(given, backstop) : PacedCeilingReason(backstop);
+
+    /// <summary>Why a scene was killed at a ceiling the call or the profile gave it, naming the seconds and what set them.</summary>
+    private static string GivenCeilingReason(ScratchCeiling given, string backstop) =>
+        $"the scene passed its ceiling of {GivenSeconds(given)} s of load-adjusted time, set by {given.Source}{backstop}, "
+        + "so its game was stopped";
+
+    /// <summary>Why a scene was killed at the ceiling its paces give, with the terms that ceiling sums.</summary>
+    private string PacedCeilingReason(string backstop)
     {
-        string seconds = Ceiling.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
         string each = Played.Count == 1 ? "its 1 step's" : $"each of its {Played.Count} steps'";
         string scaled = TimeScale == 1 ? string.Empty : $" at time scale {TimeScale.ToString(CultureInfo.InvariantCulture)}";
         string after = TimeScale > 1 ? "once more in wall time" : "once more";
-        return $"the scene passed its ceiling of {seconds} s of load-adjusted time "
+        return $"the scene passed its ceiling of {Seconds(Ceiling)} s of load-adjusted time "
             + $"({each} pace{scaled} + 10 s, the last step's pace {after}, and 10 s for the markers){backstop}, so its game was stopped";
     }
+
+    private static string Seconds(TimeSpan ceiling) => ceiling.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
+
+    private static string GivenSeconds(ScratchCeiling given) => given.Seconds.ToString("0.###", CultureInfo.InvariantCulture);
 }
 
 /// <summary>A line number in each of a session's stdout and stderr: the edge of a step's window.</summary>
@@ -819,12 +856,12 @@ internal sealed class ScratchRun
 
         if (_plan.Steps is null)
         {
-            _walk = new ScratchWalk(paces, [.. Enumerable.Range(0, _names.Count)], _scene.TimeScale);
+            _walk = new ScratchWalk(paces, [.. Enumerable.Range(0, _names.Count)], _scene.TimeScale) { Given = _scene.Ceiling };
             return null;
         }
 
         (int[] played, string? stepsError) = ResolveSteps(_plan.Steps, _scene.Name, _names);
-        _walk = new ScratchWalk(paces, played, _scene.TimeScale);
+        _walk = new ScratchWalk(paces, played, _scene.TimeScale) { Given = _scene.Ceiling };
         return stepsError;
     }
 

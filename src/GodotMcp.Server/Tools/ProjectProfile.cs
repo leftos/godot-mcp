@@ -55,7 +55,7 @@ internal sealed partial class ProjectProfile
         ProcessesKey,
     ];
     private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "session", "description"];
-    private static readonly string[] ScratchKeys = ["folder", "userArgs", "engineArgs", "pace", "known", "patterns", "parallel"];
+    private static readonly string[] ScratchKeys = ["folder", "userArgs", "engineArgs", "pace", "ceilings", "known", "patterns", "parallel"];
     private static readonly string[] ProcessKeys = ["command", "cwd", "env", "ready", "description"];
     private static readonly string[] ReadyKeys = ["output", "timeoutMs"];
     private const string StepsKey = "steps";
@@ -375,6 +375,7 @@ internal sealed partial class ProjectProfile
             scratch.ContainsKey("userArgs") ? ReadStrings(scratch, "userArgs", place) : null,
             scratch.ContainsKey("engineArgs") ? ReadStrings(scratch, "engineArgs", place) : null,
             ReadMap(scratch, "pace", place, (scene, pace) => ReadPace(scene, pace, place)),
+            ReadMap(scratch, "ceilings", place, (scene, ceiling) => ReadCeiling(scene, ceiling, place)),
             ReadMap(scratch, "known", place, (scene, reason) => ReadReason(scene, reason, place)),
             scratch.ContainsKey("patterns") ? ReadPatterns(scratch, place) : ScratchProfile.DefaultPatterns
         )
@@ -719,6 +720,16 @@ internal sealed partial class ProjectProfile
             ? reason
             : throw Refused(place, $"\"known\" of \"{scene}\" must be a non-empty string, the reason the scene is known to fail");
 
+    /// <summary>One scene's ceiling: a number of seconds above 0 and at most <see cref="ScratchProfile.MaxCeilingSeconds"/>.</summary>
+    private static double ReadCeiling(string scene, JsonElement value, Place place) =>
+        value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out double seconds) && ScratchProfile.IsCeiling(seconds)
+            ? seconds
+            : throw Refused(
+                place,
+                $"scratch.ceilings.{scene} must be a number of seconds above 0 and at most {ScratchProfile.MaxCeilingSeconds}; "
+                    + $"got {Shown(value)}"
+            );
+
     /// <summary>The section's <c>patterns</c>, each compiled as written: case-sensitive, anchored only where it anchors itself.</summary>
     private static List<ScratchPattern> ReadPatterns(Dictionary<string, JsonElement> keys, Place place)
     {
@@ -850,20 +861,24 @@ internal sealed partial class ProjectProfile
 /// godot-mcp.json's <c>scratch</c> section: the folder whose scenes run_scratches plays when given none, the user arguments a
 /// scratch run starts with in place of the top-level ones (null when the section sets none), the engine arguments each scene's
 /// game launches with before --, after the runner's own --headless and --time-scale (null when the section sets none), each
-/// scene's pace in seconds and why, the scenes known to fail with the reason, the patterns a step's output lines fail it by, and
-/// how many scenes play at once.
+/// scene's pace in seconds and why, each scene's own ceiling of load-adjusted time in seconds, the scenes known to fail with the
+/// reason, the patterns a step's output lines fail it by, and how many scenes play at once.
 /// </summary>
 internal sealed record ScratchProfile(
     string? Folder,
     IReadOnlyList<string>? UserArgs,
     IReadOnlyList<string>? EngineArgs,
     IReadOnlyDictionary<string, ScratchPace> Pace,
+    IReadOnlyDictionary<string, double> Ceilings,
     IReadOnlyDictionary<string, string> Known,
     IReadOnlyList<ScratchPattern> Patterns
 )
 {
     /// <summary>The longest pace, in seconds: a step's wait is a gameMs wait_for, at most 120000 ms.</summary>
     public const int MaxPaceSeconds = RuntimeTools.MaxWaitGameMs / 1000;
+
+    /// <summary>The longest ceiling a scene can be given, in seconds.</summary>
+    public const int MaxCeilingSeconds = 3600;
 
     /// <summary>How many scenes play at once when neither options.parallel nor the section sets it.</summary>
     public const int DefaultParallel = 1;
@@ -886,12 +901,16 @@ internal sealed record ScratchProfile(
         null,
         null,
         new Dictionary<string, ScratchPace>(),
+        new Dictionary<string, double>(),
         new Dictionary<string, string>(),
         DefaultPatterns
     );
 
     /// <summary>Whether <paramref name="seconds"/> is a pace: above 0 and at most <see cref="MaxPaceSeconds"/>.</summary>
     public static bool IsPace(double seconds) => seconds is > 0 and <= MaxPaceSeconds;
+
+    /// <summary>Whether <paramref name="seconds"/> is a ceiling: above 0 and at most <see cref="MaxCeilingSeconds"/>.</summary>
+    public static bool IsCeiling(double seconds) => seconds is > 0 and <= MaxCeilingSeconds;
 
     /// <summary>Whether <paramref name="parallel"/> is a number of scenes at once: from 1 to <see cref="MaxParallel"/>.</summary>
     public static bool IsParallel(int parallel) => parallel is >= 1 and <= MaxParallel;

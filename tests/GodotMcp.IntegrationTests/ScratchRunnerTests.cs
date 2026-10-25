@@ -119,6 +119,22 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ACeilingBelowASceneLengthKillsItAtThatCeiling()
+    {
+        JsonObject scene = Single(
+            await RunAsync(
+                _probe.Directory,
+                ["ScratchStepPace"],
+                new ScratchOptions(Pace: 2, Ceilings: new() { ["ScratchStepPace"] = 1 }),
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Equal("killed", scene["verdict"]!.GetValue<string>());
+        Assert.Contains("set by options.ceilings", scene["failedAt"]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnErrorInThePaceAfterTheLastStepIsRedInTheExit()
     {
         string profile = """{ "scratch": { "folder": "scratch", "patterns": [], "pace": { "ScratchLateError": 2 } } }""";

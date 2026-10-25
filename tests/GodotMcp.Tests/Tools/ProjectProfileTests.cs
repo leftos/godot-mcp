@@ -456,6 +456,35 @@ public sealed class ProjectProfileTests : IDisposable
     }
 
     [Fact]
+    public void ScratchCeilingsAreReadPerScene()
+    {
+        Write("""{ "scratch": { "ceilings": { "Combat": 12.5, "Tray": 3600 } } }""");
+        ScratchProfile set = ProjectProfile.Load(_temp.Path).Scratch!;
+        Write("""{ "scratch": { "folder": "res://Scratch" } }""");
+        ScratchProfile unset = ProjectProfile.Load(_temp.Path).Scratch!;
+
+        Assert.Equal(2, set.Ceilings.Count);
+        Assert.Equal(12.5, set.Ceilings["Combat"]);
+        Assert.Equal(3600, set.Ceilings["Tray"]);
+        Assert.Empty(unset.Ceilings);
+    }
+
+    [Theory]
+    [InlineData("""{ "scratch": { "ceilings": { "Combat": 0 } } }""", "0")]
+    [InlineData("""{ "scratch": { "ceilings": { "Combat": -1 } } }""", "-1")]
+    [InlineData("""{ "scratch": { "ceilings": { "Combat": 3601 } } }""", "3601")]
+    [InlineData("""{ "scratch": { "ceilings": { "Combat": "12" } } }""", "a string")]
+    public void AScratchCeilingOutsideItsRangeIsRefused(string json, string shown)
+    {
+        Write(json);
+
+        Assert.Equal(
+            $"{FilePath} (scratch): scratch.ceilings.Combat must be a number of seconds above 0 and at most 3600; got {shown}.",
+            Refused(() => ProjectProfile.Load(_temp.Path))
+        );
+    }
+
+    [Fact]
     public void AnObjectPaceReadsItsKeysInEitherOrder()
     {
         Write("""{ "scratch": { "pace": { "A": { "reason": "why", "seconds": 3 } } } }""");
@@ -573,7 +602,8 @@ public sealed class ProjectProfileTests : IDisposable
     [Theory]
     [InlineData(
         """{ "scratch": { "threads": 2 } }""",
-        "(scratch): unknown key \"threads\"; the allowed keys are folder, userArgs, engineArgs, pace, known, patterns, parallel. Remove or rename it."
+        "(scratch): unknown key \"threads\"; the allowed keys are folder, userArgs, engineArgs, pace, ceilings, known, patterns, "
+            + "parallel. Remove or rename it."
     )]
     [InlineData("""{ "scratch": { "parallel": 0 } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not 0.")]
     [InlineData("""{ "scratch": { "parallel": 5 } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not 5.")]

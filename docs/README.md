@@ -30,6 +30,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Capture | `capture_input`'s recording of a session's input, real and sent, as `simulate_input` events with gaps as waits; not the Movie Maker video, which is a recording |
 | Capture helper | `godot-mcp-capture.exe` (`src/GodotMcp.Capture`, shipped in `capture/`): the Windows.Graphics.Capture process that writes a game window's frames to stdout for a real-time recording |
 | Carried node | A node a `move_node` takes along: the moved node and every node under it; the splice keeps their lines from the file as it was |
+| Ceiling (a scratch scene's) | The load-adjusted seconds a scratch scene may take from its first step before its game is stopped and it is `killed`: derived from its steps' paces unless `options.ceilings` or `scratch.ceilings` sets it |
 | Change point | A sample a watch keeps because it differs from the last one kept (numbers by more than 1e-6, or by the track's `minDelta`), stamped `[frame, gameMs, value, at]` (`at` is its drive-clock time); the first sample always is one |
 | Check-once wait | `wait_for` with `timeoutMs: 0`: the condition is checked once, now, even while the game is paused |
 | Clock offset | A session's offset from the drive clock, from its hello's and each pong's `ticksUsec` against the server's send and receipt times: the midpoint of the tightest bounds, whose half-width is a converted stamp's `clockErrorMs` (`SessionClock`) |
