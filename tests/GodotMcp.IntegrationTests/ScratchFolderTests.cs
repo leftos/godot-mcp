@@ -6,13 +6,14 @@ using GodotMcp.TestSupport;
 namespace GodotMcp.IntegrationTests;
 
 /// <summary>
-/// run_scratches over the whole scratch folder of the InputProbe fixture, in the real Godot: every scene to its verdict in the
-/// folder's order, with what the prep did and each scene's pace, one scene at a time and three at once. Each fact plays all 17
-/// scenes, so the class is a group of its own, apart from <see cref="ScratchRunnerTests"/>, whose helpers it shares.
+/// run_scratches over the whole scratch folder of the InputProbe fixture, in the real Godot, one scene at a time: every scene to
+/// its verdict in the folder's order, with what the prep did and each scene's pace. The fact plays all 17 scenes, so the class
+/// is a group of its own, apart from <see cref="ScratchRunnerTests"/>, whose helpers it shares. It holds the folder's scenes and
+/// verdicts, their assertion and the probe's setup and teardown, which <see cref="ScratchFolderParallelTests"/> shares.
 /// </summary>
 public sealed class ScratchFolderTests : IAsyncDisposable
 {
-    private static readonly string[] FolderScenes =
+    internal static readonly string[] FolderScenes =
     [
         "ScratchBeside",
         "ScratchBootError",
@@ -33,7 +34,7 @@ public sealed class ScratchFolderTests : IAsyncDisposable
         "ScratchTwoRed",
     ];
 
-    private static readonly string[] FolderVerdicts =
+    internal static readonly string[] FolderVerdicts =
     [
         "green",
         "red",
@@ -61,27 +62,15 @@ public sealed class ScratchFolderTests : IAsyncDisposable
     public ScratchFolderTests()
     {
         _scratch = new ScratchTools(_harness.Sessions, TestCSharp.Unused());
-        ScratchRunnerTests.CopyFolder(Path.Combine(RepoPaths.InputProbe, "scratch"), Path.Combine(_probe.Directory, "scratch"));
+        CopyScratchFolder(_probe);
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        // A game holds its project's folder until it exits, and the harness kills and waits for every game still running, so
-        // the copy is deleted only once it is done.
-        try
-        {
-            await _harness.DisposeAsync();
-        }
-        finally
-        {
-            _probe.Dispose();
-        }
-    }
+    public ValueTask DisposeAsync() => DisposeProbeAsync(_harness, _probe);
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task TheScratchFolderPlaysEachSceneToItsVerdict()
     {
-        JsonObject result = await RunAsync(options: null, TestContext.Current.CancellationToken);
+        JsonObject result = await RunFolderAsync(_scratch, _probe, options: null, TestContext.Current.CancellationToken);
 
         AssertFolderVerdicts(result);
         JsonNode prep = result["prep"]!;
@@ -96,19 +85,31 @@ public sealed class ScratchFolderTests : IAsyncDisposable
         Assert.Equal("boot", scenes[1]!["failedAt"]!["name"]!.GetValue<string>());
     }
 
-    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
-    public async Task ThreeAtOnceTheFolderPlaysToTheSameVerdictsInTheListedOrder()
-    {
-        JsonObject result = await RunAsync(new ScratchOptions(Parallel: 3), TestContext.Current.CancellationToken);
+    internal static void CopyScratchFolder(ProbeProject probe) =>
+        ScratchRunnerTests.CopyFolder(Path.Combine(RepoPaths.InputProbe, "scratch"), Path.Combine(probe.Directory, "scratch"));
 
-        AssertFolderVerdicts(result);
-        JsonArray scenes = result["scenes"]!.AsArray();
-        Assert.Null(scenes[1]!["alone"]);
-        Assert.False(scenes[2]!["alone"]!.GetValue<bool>());
-        Assert.Null(scenes[10]!["alone"]);
+    internal static async ValueTask DisposeProbeAsync(SessionHarness harness, ProbeProject probe)
+    {
+        // A game holds its project's folder until it exits, and the harness kills and waits for every game still running, so
+        // the copy is deleted only once it is done.
+        try
+        {
+            await harness.DisposeAsync();
+        }
+        finally
+        {
+            probe.Dispose();
+        }
     }
 
-    private static void AssertFolderVerdicts(JsonObject result)
+    internal static async Task<JsonObject> RunFolderAsync(
+        ScratchTools scratch,
+        ProbeProject probe,
+        ScratchOptions? options,
+        CancellationToken cancellation
+    ) => JsonNode.Parse(await scratch.RunScratchesAsync(probe.Directory, scenes: null, options, cancellation))!.AsObject();
+
+    internal static void AssertFolderVerdicts(JsonObject result)
     {
         JsonArray scenes = result["scenes"]!.AsArray();
         Assert.Equal(FolderScenes, scenes.Select(scene => scene!["scene"]!.GetValue<string>()));
@@ -118,10 +119,7 @@ public sealed class ScratchFolderTests : IAsyncDisposable
         Assert.Equal((5, 9, 1, 1, 1), Counts(result));
     }
 
-    private async Task<JsonObject> RunAsync(ScratchOptions? options, CancellationToken cancellation) =>
-        JsonNode.Parse(await _scratch.RunScratchesAsync(_probe.Directory, scenes: null, options, cancellation))!.AsObject();
-
-    private static (int Green, int Red, int Known, int NoSteps, int Killed) Counts(JsonObject result) =>
+    internal static (int Green, int Red, int Known, int NoSteps, int Killed) Counts(JsonObject result) =>
         (
             result["green"]!.GetValue<int>(),
             result["red"]!.GetValue<int>(),

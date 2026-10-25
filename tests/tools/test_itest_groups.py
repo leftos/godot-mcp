@@ -25,13 +25,14 @@ ALL_GROUPS = [
     "csharp",
     "scratch",
     "scratchfolder",
+    "scratchparallel",
     "scratchuntil",
     "scratchbackground",
 ]
 # Every group a rule's 'all' selects: all of them but the visible-desktop ones.
 ALL_BUT_VISIBLE = [group for group in ALL_GROUPS if group != "capture"]
 # The groups that play scratch scenes, which a change to the scratch runner or the runtime tools it drives selects.
-SCRATCH_GROUPS = ["scratch", "scratchfolder", "scratchuntil", "scratchbackground"]
+SCRATCH_GROUPS = ["scratch", "scratchfolder", "scratchparallel", "scratchuntil", "scratchbackground"]
 GROUP_LINE = re.compile(r"^itest-groups: (\w+) \(from (.+)\)$", re.MULTILINE)
 # The files the repo holds at its first commit; each test changes some of them, or adds a file, after it.
 STUBS = [
@@ -171,6 +172,11 @@ def test_an_untracked_test_class_file_selects_the_group_listing_it(repo: Path) -
     result = _itest_groups(repo)
     assert _selected(result) == ["input"]
     assert "itest-groups: input (from tests/GodotMcp.IntegrationTests/InputTests.cs)" in result.stdout
+
+
+def test_a_change_to_the_parallel_scratch_folder_tests_selects_its_own_group(repo: Path) -> None:
+    _change(repo, "tests/GodotMcp.IntegrationTests/ScratchFolderParallelTests.cs")
+    assert _selected(_itest_groups(repo)) == ["scratchparallel"]
 
 
 def test_an_unknown_ref_stops_with_status_2_and_gits_message(repo: Path) -> None:
