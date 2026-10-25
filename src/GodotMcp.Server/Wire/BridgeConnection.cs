@@ -80,7 +80,9 @@ internal sealed class BridgeConnection : IAsyncDisposable
     /// <c>backstopMs</c>, <see cref="LoadClock.BackstopFactor"/> times the release in milliseconds, as the bridge's own
     /// limit, which counts clip time in a recording, where it can fire before this cancel; when the release passes in
     /// load-adjusted time first, a <c>cancel</c> for the request goes to the bridge, which ends the request with its
-    /// usual answer, and the wait goes on for that answer.
+    /// usual answer, and the wait goes on for that answer. A released request's reply allowance, its timeout less its
+    /// release, runs from the moment its cancel goes out, within the backstop: when the server got no CPU until its
+    /// release and its timeout passed together, the cancel goes then and the wait goes on for that allowance.
     /// </summary>
     /// <param name="command">The bridge command.</param>
     /// <param name="parameters">
@@ -89,7 +91,10 @@ internal sealed class BridgeConnection : IAsyncDisposable
     /// <param name="timeout">How long to wait for the reply, in load-adjusted time.</param>
     /// <param name="cancellationToken">Withdraws the wait.</param>
     /// <param name="release">How long the bridge may run the request, in load-adjusted time, before it is cancelled; null sends no cancel.</param>
-    /// <exception cref="LoadTimeoutException">No reply within the timeout; a later reply is dropped.</exception>
+    /// <exception cref="LoadTimeoutException">
+    /// No reply within the timeout, or for a released request within its reply allowance after the cancel went out, whichever
+    /// ends later, and never past the backstop; its deadline measures the whole wait. A later reply is dropped.
+    /// </exception>
     /// <exception cref="InvalidOperationException">The bridge answered <c>ok: false</c>.</exception>
     /// <exception cref="IOException">The connection ended before the reply.</exception>
     public async Task<JsonNode?> SendAsync(
@@ -117,12 +122,7 @@ internal sealed class BridgeConnection : IAsyncDisposable
                 CancelOnce(id, pending);
             }
 
-            return await pending.Reply.Task.WaitAsync(deadline.Token);
-        }
-        catch (OperationCanceledException) when (deadline.Expired)
-        {
-            string backstop = deadline.Reason == DeadlineReason.Backstop ? deadline.BackstopClause() : string.Empty;
-            throw new LoadTimeoutException(TimedOut(command, id, timeout, backstop), deadline);
+            return await WaitReplyAsync(id, pending, deadline, release, cancellationToken);
         }
         catch (OperationCanceledException e) when (cancellationToken.IsCancellationRequested)
         {
@@ -138,6 +138,79 @@ internal sealed class BridgeConnection : IAsyncDisposable
 
             _pending.TryRemove(id, out _);
         }
+    }
+
+    /// <summary>Waits for a written request's reply until <paramref name="deadline"/>, then as <see cref="AfterReplyDeadlineAsync"/> says.</summary>
+    private async Task<JsonNode?> WaitReplyAsync(
+        long id,
+        PendingRequest pending,
+        LoadDeadline deadline,
+        TimeSpan? release,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            return await pending.Reply.Task.WaitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException) when (deadline.Expired)
+        {
+            return await AfterReplyDeadlineAsync(id, pending, deadline, release, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// A released request's reply allowance (its reply timeout less its release) always runs from the moment its cancel went
+    /// out: when the reply deadline ended on its ceiling before that allowance passed, as when the server got no CPU until
+    /// both timers fired together, the cancel goes now if none went, and the wait goes on to the end of the allowance or the
+    /// original backstop, whichever comes first, so the answer to the cancel is still taken. A reply already in is returned.
+    /// </summary>
+    /// <exception cref="LoadTimeoutException">No reply by the end of the wait; its deadline measures the whole wait.</exception>
+    private async Task<JsonNode?> AfterReplyDeadlineAsync(
+        long id,
+        PendingRequest pending,
+        LoadDeadline deadline,
+        TimeSpan? release,
+        CancellationToken cancellationToken
+    )
+    {
+        using LoadDeadline? continued =
+            deadline.Reason == DeadlineReason.Ceiling ? Continuation(id, pending, deadline, release, cancellationToken) : null;
+        LoadDeadline ended = deadline;
+        if (continued is not null)
+        {
+            try
+            {
+                return await pending.Reply.Task.WaitAsync(continued.Token);
+            }
+            catch (OperationCanceledException) when (continued.Expired)
+            {
+                ended = continued;
+            }
+        }
+
+        return pending.Reply.Task.IsCompleted ? await pending.Reply.Task : throw ReplyTimedOut(id, pending, ended);
+    }
+
+    /// <summary>
+    /// The reply deadline continued to the end of a released request's allowance since its cancel went out, sending the cancel
+    /// now if none went; null when the request has no release shorter than its timeout or sent no cancel (its reply is in).
+    /// </summary>
+    private LoadDeadline? Continuation(long id, PendingRequest pending, LoadDeadline deadline, TimeSpan? release, CancellationToken cancellationToken)
+    {
+        if (release is not { } releaseAfter || releaseAfter >= deadline.Budget)
+        {
+            return null;
+        }
+
+        CancelOnce(id, pending);
+        return pending.CancelSentAt is { } sentAt ? deadline.ContinueUntil(sentAt + (deadline.Budget - releaseAfter), cancellationToken) : null;
+    }
+
+    private static LoadTimeoutException ReplyTimedOut(long id, PendingRequest pending, LoadDeadline deadline)
+    {
+        string backstop = deadline.Reason == DeadlineReason.Backstop ? deadline.BackstopClause() : string.Empty;
+        return new LoadTimeoutException(TimedOut(pending.Command, id, deadline.Budget, backstop), deadline);
     }
 
     /// <summary>The parameters as sent: with <c>backstopMs</c> added to a copy when the request has a release, else as given.</summary>
@@ -161,7 +234,7 @@ internal sealed class BridgeConnection : IAsyncDisposable
     /// </summary>
     private void CancelOnce(long id, PendingRequest pending)
     {
-        if (pending.IsWritten && !pending.Reply.Task.IsCompleted && pending.TryClaimCancel())
+        if (pending.IsWritten && !pending.Reply.Task.IsCompleted && pending.TryClaimCancel(_clock.AdjustedNow))
         {
             _ = CancelAsync(id, pending.Command);
         }
@@ -461,8 +534,9 @@ internal sealed class BridgeConnection : IAsyncDisposable
 
     private sealed class PendingRequest(string command)
     {
+        private const long NotClaimed = long.MinValue;
         private volatile bool _written;
-        private int _cancelClaimed;
+        private long _cancelSentAtTicks = NotClaimed;
 
         public string Command { get; } = command;
 
@@ -476,7 +550,10 @@ internal sealed class BridgeConnection : IAsyncDisposable
 
         public void MarkWritten() => _written = true;
 
-        /// <summary>True for the first caller only: the request's one cancel is theirs to send.</summary>
-        public bool TryClaimCancel() => Interlocked.Exchange(ref _cancelClaimed, 1) == 0;
+        /// <summary>The clock's load-adjusted reading when the request's cancel was claimed; null while none was.</summary>
+        public TimeSpan? CancelSentAt => Volatile.Read(ref _cancelSentAtTicks) is var ticks and not NotClaimed ? TimeSpan.FromTicks(ticks) : null;
+
+        /// <summary>True for the first caller only: the request's one cancel is theirs to send, stamped at <paramref name="now"/>.</summary>
+        public bool TryClaimCancel(TimeSpan now) => Interlocked.CompareExchange(ref _cancelSentAtTicks, now.Ticks, NotClaimed) == NotClaimed;
     }
 }

@@ -184,23 +184,27 @@ internal sealed class LoadDeadline : IDisposable
     private readonly Lock _lock = new();
     private readonly long _startWall;
     private readonly TimeSpan _startAdjusted;
+    private readonly TimeSpan _ceiling;
     private readonly ITimer _timer;
     private bool _ended;
     private TimeSpan _endWall;
     private TimeSpan _endAdjusted;
 
     internal LoadDeadline(LoadClock clock, TimeSpan budget, CancellationToken linked)
+        : this(clock, budget, budget, (clock.Reading().Adjusted, clock.Time.GetTimestamp()), linked) { }
+
+    private LoadDeadline(LoadClock clock, TimeSpan budget, TimeSpan ceiling, (TimeSpan Adjusted, long Wall) start, CancellationToken linked)
     {
         _clock = clock;
         Budget = budget;
         Backstop = budget * LoadClock.BackstopFactor;
+        _ceiling = ceiling;
         _cancellation = CancellationTokenSource.CreateLinkedTokenSource(linked);
-        (TimeSpan adjusted, double free) = clock.Reading();
-        _startAdjusted = adjusted;
-        _startWall = clock.Time.GetTimestamp();
+        (_startAdjusted, _startWall) = start;
         lock (_lock)
         {
-            _timer = clock.Time.CreateTimer(_ => Check(), null, NextWait(TimeSpan.Zero, TimeSpan.Zero, free), Timeout.InfiniteTimeSpan);
+            (TimeSpan wall, TimeSpan adjusted) = Elapsed();
+            _timer = clock.Time.CreateTimer(_ => Check(), null, NextWait(wall, adjusted, clock.Free), Timeout.InfiniteTimeSpan);
         }
     }
 
@@ -264,6 +268,16 @@ internal sealed class LoadDeadline : IDisposable
         _cancellation.Dispose();
     }
 
+    /// <summary>
+    /// A deadline that goes on from this one's start with the same budget and backstop, its ceiling reached instead when the
+    /// clock's load-adjusted total reaches <paramref name="adjustedEnd"/>: a wait past the budget that still ends at the backstop,
+    /// its times and free share measured over both waits.
+    /// </summary>
+    /// <param name="adjustedEnd">The clock's load-adjusted reading at which the ceiling is reached.</param>
+    /// <param name="linked">Cancels the deadline's token without a reason.</param>
+    internal LoadDeadline ContinueUntil(TimeSpan adjustedEnd, CancellationToken linked) =>
+        new(_clock, Budget, adjustedEnd - _startAdjusted, (_startAdjusted, _startWall), linked);
+
     internal static string Seconds(TimeSpan span) => span.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
 
     internal static string Percent(double share) => (share * 100).ToString("0", CultureInfo.InvariantCulture);
@@ -289,7 +303,7 @@ internal sealed class LoadDeadline : IDisposable
 
             (TimeSpan wall, TimeSpan adjusted) = Elapsed();
             DeadlineReason? reason =
-                adjusted >= Budget ? DeadlineReason.Ceiling
+                adjusted >= _ceiling ? DeadlineReason.Ceiling
                 : wall >= Backstop ? DeadlineReason.Backstop
                 : null;
             if (reason is not null || _cancellation.IsCancellationRequested)
@@ -316,7 +330,7 @@ internal sealed class LoadDeadline : IDisposable
 
     private TimeSpan NextWait(TimeSpan wall, TimeSpan adjusted, double free)
     {
-        TimeSpan toCeiling = (Budget - adjusted) / free;
+        TimeSpan toCeiling = (_ceiling - adjusted) / free;
         TimeSpan toBackstop = Backstop - wall;
         var wait = TimeSpan.FromTicks(Math.Min(Math.Min(toCeiling.Ticks, toBackstop.Ticks), LoadClock.SamplePeriod.Ticks));
         return wait < MinimumWait ? MinimumWait : wait;

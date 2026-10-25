@@ -14,9 +14,13 @@ namespace GodotMcp.Tests.Wire;
 public sealed class BridgeConnectionTests : IDisposable
 {
     private const string Token = "ERRORS";
+
+    private const string Forgotten =
+        "no longer awaited: the method keeps running on its node; restored Engine.time_scale to 1; restart_project stops it.";
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan Step = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan Quiet = TimeSpan.FromMilliseconds(300);
+    private static readonly TimeSpan HangGuard = TimeSpan.FromMinutes(1);
     private static readonly string ProjectDir = Path.Combine(Path.GetTempPath(), "godot-mcp-connection", "game");
     private readonly FakeTimeProvider _time = new();
     private readonly FakeLoadSource _machine;
@@ -66,6 +70,130 @@ public sealed class BridgeConnectionTests : IDisposable
         Assert.Equal("cancel", cancel["command"]!.GetValue<string>());
         Assert.Equal($$"""{"request":{{request["id"]!.ToJsonString()}}}""", cancel["params"]!.ToJsonString());
         Assert.Equal("stalled", reply["name"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task AReleasedRequestWhoseTimersRanLateStillTakesTheAnswerToItsCancel()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+
+        // call_method as CallStoppableAsync sends it: released at 1 s, its reply waited for 5 s more.
+        Task<JsonNode?> sent = connection.SendAsync("call_method", [], TimeSpan.FromSeconds(6), cancellation, TimeSpan.FromSeconds(1));
+        JsonObject request = await ReadRequiredAsync(bridge, "the request", cancellation);
+        // A server that got no CPU from the write until 7 s later: every timer of the request runs at once, past both limits.
+        _time.Advance(TimeSpan.FromSeconds(7));
+        JsonObject cancel = await ReadRequiredAsync(bridge, "the cancel", cancellation);
+        // The bridge's order for a call_method it stops awaiting: the request's answer, then the cancel's.
+        await bridge.WriteAsync(
+            new JsonObject
+            {
+                ["id"] = request["id"]!.DeepClone(),
+                ["ok"] = false,
+                ["error"] = Forgotten,
+            },
+            cancellation
+        );
+        await bridge.ReplyAsync(cancel, new JsonObject { ["cancelled"] = true }, cancellation);
+
+        InvalidOperationException refused = await Assert.ThrowsAsync<InvalidOperationException>(() => sent.WaitAsync(Wait, cancellation));
+        Assert.Equal($"The bridge refused 'call_method': {Forgotten}", refused.Message);
+    }
+
+    [Fact]
+    public async Task AReleasedRequestWhoseTimersRanLateTimesOutWhenItsCancelGoesUnanswered()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+
+        Task<JsonNode?> sent = connection.SendAsync("call_method", [], TimeSpan.FromSeconds(6), cancellation, TimeSpan.FromSeconds(1));
+        JsonObject request = await ReadRequiredAsync(bridge, "the request", cancellation);
+        _time.Advance(TimeSpan.FromSeconds(7));
+        await ReadRequiredAsync(bridge, "the cancel", cancellation);
+        // A game that answers nothing, not even the cancel: the wait ends at the allowance after the cancel went out.
+        await RunUntilAsync(sent, TimeSpan.FromSeconds(60), cancellation);
+        LoadTimeoutException timedOut = await Assert.ThrowsAsync<LoadTimeoutException>(() => sent.WaitAsync(HangGuard, cancellation));
+
+        Assert.Equal(
+            $"The bridge did not answer 'call_method' (request {request["id"]?.GetValue<long>()}) within 6 s; a late reply will be dropped.",
+            timedOut.Message
+        );
+        // The report covers the whole wait: the 7 s stall and the 5 s allowance after the cancel.
+        Assert.Equal(DeadlineReason.Ceiling, timedOut.Deadline.Reason);
+        Assert.True(timedOut.Deadline.Adjusted >= TimeSpan.FromSeconds(12), $"load-adjusted {timedOut.Deadline.Adjusted}");
+        Assert.True(timedOut.Deadline.Wall >= TimeSpan.FromSeconds(12), $"wall {timedOut.Deadline.Wall}");
+    }
+
+    [Fact]
+    public async Task AReleasedRequestOnASaturatedMachineEndsAtItsReplyBackstop()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+
+        // Every core busy with other work: once sampled, the clock runs at its 5% floor, so both of the request's deadlines
+        // end on their wall backstops, the release at 5 s and the reply at 5 x 6 s = 30 s.
+        _machine.SetLoad(busyShare: 1, ownCores: 0);
+        using (_clock.Start(TimeSpan.FromSeconds(1), cancellation))
+        {
+            Run(TimeSpan.FromSeconds(1.1));
+        }
+
+        Task<JsonNode?> sent = connection.SendAsync("call_method", [], TimeSpan.FromSeconds(6), cancellation, TimeSpan.FromSeconds(1));
+        await ReadRequiredAsync(bridge, "the request", cancellation);
+        // Time stops just past the reply's backstop: a wait that went on past it would never end.
+        Run(TimeSpan.FromSeconds(30.2));
+        LoadTimeoutException timedOut = await Assert.ThrowsAsync<LoadTimeoutException>(() => sent.WaitAsync(HangGuard, cancellation));
+
+        Assert.Equal(DeadlineReason.Backstop, timedOut.Deadline.Reason);
+        Assert.Contains("within 6 s; that is 5 x its 6 s ceiling in wall time, the backstop", timedOut.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AReplyThatLandsAsTheReplyDeadlinePassesIsTaken()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+
+        Task<JsonNode?> sent = connection.SendAsync("call_method", [], TimeSpan.FromSeconds(6), cancellation, TimeSpan.FromSeconds(1));
+        JsonObject request = await ReadRequiredAsync(bridge, "the request", cancellation);
+        // The answer goes out in the same step of time that passes the release and the reply deadline.
+        await bridge.ReplyAsync(request, new JsonObject { ["name"] = "answered" }, cancellation);
+        _time.Advance(TimeSpan.FromSeconds(7));
+        JsonNode? reply = await sent.WaitAsync(HangGuard, cancellation);
+
+        Assert.Equal("answered", reply?["name"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task AReleasedRequestOnARunningServerTimesOutAtItsReplyTimeout()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+
+        Task<JsonNode?> sent = connection.SendAsync("call_method", [], TimeSpan.FromSeconds(6), cancellation, TimeSpan.FromSeconds(1));
+        JsonObject request = await ReadRequiredAsync(bridge, "the request", cancellation);
+        // Time stepped as a running server's timers see it: the cancel goes at the 1 s release.
+        Run(TimeSpan.FromSeconds(1.2));
+        await ReadRequiredAsync(bridge, "the cancel", cancellation);
+        await RunUntilAsync(sent, TimeSpan.FromSeconds(60), cancellation);
+        LoadTimeoutException timedOut = await Assert.ThrowsAsync<LoadTimeoutException>(() => sent.WaitAsync(HangGuard, cancellation));
+
+        Assert.Equal(
+            $"The bridge did not answer 'call_method' (request {request["id"]?.GetValue<long>()}) within 6 s; a late reply will be dropped.",
+            timedOut.Message
+        );
+        Assert.Equal(DeadlineReason.Ceiling, timedOut.Deadline.Reason);
+        Assert.True(timedOut.Deadline.Adjusted >= TimeSpan.FromSeconds(6), $"load-adjusted {timedOut.Deadline.Adjusted}");
     }
 
     [Fact]
@@ -351,6 +479,19 @@ public sealed class BridgeConnectionTests : IDisposable
         for (TimeSpan passed = TimeSpan.Zero; passed < span; passed += Step)
         {
             _time.Advance(Step);
+        }
+    }
+
+    /// <summary>
+    /// Moves the fake time on in steps until <paramref name="task"/> completes or <paramref name="limit"/> has passed, letting the
+    /// thread pool run between steps, so a timer the product starts late still falls due.
+    /// </summary>
+    private async Task RunUntilAsync(Task task, TimeSpan limit, CancellationToken cancellation)
+    {
+        for (TimeSpan passed = TimeSpan.Zero; passed < limit && !task.IsCompleted; passed += Step)
+        {
+            _time.Advance(Step);
+            await Task.WhenAny(task, Task.Delay(TimeSpan.FromMilliseconds(1), cancellation));
         }
     }
 
