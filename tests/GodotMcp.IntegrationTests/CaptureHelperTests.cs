@@ -98,9 +98,10 @@ public sealed class CaptureHelperTests : IAsyncDisposable
     /// unfocused override shows the game's window minimized and the harness restores it at the bottom of the z-order. The
     /// order is read through GetWindow, walking down from the window that was in front: the push is posted after the
     /// restore and lands a few ms after it, so the wait is a hang guard that ends at once when the game exits or the
-    /// harness's restore loop fails. A topmost window in front, such as the taskbar, has every other window below it, so
-    /// the test cannot tell and fails saying so. A foreground that changes during the wait raises the window it activates,
-    /// so the test cannot tell the push from that activation either, and skips.
+    /// harness's restore loop fails. A topmost window in front, such as an always-on-top overlay, has every other window
+    /// below it, and the shell's desktop or taskbar stands under every window, so in either case the test cannot tell and
+    /// skips. A foreground that changes during the wait raises the window it activates, so the test cannot tell the push
+    /// from that activation either, and skips.
     /// </summary>
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AVisibleLaunchEndsBehindTheWindowInFront()
@@ -108,11 +109,7 @@ public sealed class CaptureHelperTests : IAsyncDisposable
         CancellationToken cancellation = TestContext.Current.CancellationToken;
         nint before = CaptureWindows.Foreground();
         Assert.True(before != nint.Zero, "no window had the foreground before the launch, so there is no window to stay in front");
-        Assert.True(
-            (CaptureWindows.ExtendedStyle(before) & CaptureWindows.TopmostStyle) == 0,
-            FormattableString.Invariant($"window {before} (pid {CaptureWindows.OwnerOf(before)}), which has the foreground, is topmost, ")
-                + "so every other window is below it and the test cannot tell; give a window that is not topmost the foreground"
-        );
+        SkipIfTheForegroundCannotBeBehind(before);
         nint window = nint.Parse(await LaunchVisibleAsync(cancellation), CultureInfo.InvariantCulture);
         using var game = Process.GetProcessById(
             _harness.Sessions.Resolve(null).GameProcessId ?? throw new InvalidOperationException("the hello carried no game pid.")
@@ -158,23 +155,53 @@ public sealed class CaptureHelperTests : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Skips the z-order test when the window with the foreground before the launch has no place above the game's window
+    /// to keep: a topmost window has every other window below it, and the shell's desktop or taskbar (a shell window class,
+    /// or a window of the shell's <c>explorer</c>) stands under every window. A process that has exited since the window
+    /// was read is not the shell.
+    /// </summary>
+    private static void SkipIfTheForegroundCannotBeBehind(nint before)
+    {
+        int owner = CaptureWindows.OwnerOf(before);
+        if ((CaptureWindows.ExtendedStyle(before) & CaptureWindows.TopmostStyle) != 0)
+        {
+            Assert.Skip(
+                FormattableString.Invariant($"window {before} (pid {owner}), which has the foreground, is topmost, ")
+                    + "so every other window is below it and the test cannot tell; give a window that is not topmost the foreground"
+            );
+        }
+
+        string name = ProcessNameOf(owner);
+        if (CaptureWindows.HasShellClass(before) || string.Equals(name, "explorer", StringComparison.OrdinalIgnoreCase))
+        {
+            Assert.Skip(
+                FormattableString.Invariant($"window {before} (pid {owner}, {name}), which has the foreground, ")
+                    + "is the shell's desktop or taskbar, which stands under every window, so the test cannot tell; "
+                    + "give an application window the foreground"
+            );
+        }
+    }
+
     /// <summary>A window as its handle, its owner's pid and the owner's image name: <c>hwnd/pid (name)</c>.</summary>
     private static string Describe(nint window)
     {
         int owner = CaptureWindows.OwnerOf(window);
-        string name;
+        return FormattableString.Invariant($"{window}/{owner} ({ProcessNameOf(owner)})");
+    }
+
+    /// <summary>A process's image name without its extension; <c>exited</c> when it has exited since its window was read.</summary>
+    private static string ProcessNameOf(int processId)
+    {
         try
         {
-            using var process = Process.GetProcessById(owner);
-            name = process.ProcessName;
+            using var process = Process.GetProcessById(processId);
+            return process.ProcessName;
         }
-        catch (ArgumentException)
+        catch (Exception exited) when (exited is ArgumentException or InvalidOperationException)
         {
-            // The owner exited since the window was read.
-            name = "exited";
+            return "exited";
         }
-
-        return FormattableString.Invariant($"{window}/{owner} ({name})");
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

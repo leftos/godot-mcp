@@ -45,6 +45,8 @@ internal static class CaptureWindows
     private const uint SnapshotProcesses = 2;
     private const nint Bottom = 1;
 
+    private static readonly HashSet<string> ShellClasses = new(StringComparer.Ordinal) { "Progman", "WorkerW", "Shell_TrayWnd" };
+
     // SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS: the request is posted to Godot's thread, so a
     // game that is not pumping its messages yet never blocks the caller.
     private const uint PushFlags = 0x0001 | 0x0002 | 0x0010 | 0x4000;
@@ -67,6 +69,12 @@ internal static class CaptureWindows
 
     /// <summary>Whether a window still exists.</summary>
     public static bool Exists(nint window) => NativeMethods.IsWindow(window);
+
+    /// <summary>
+    /// Whether a window's class is one of the shell's desktop or taskbar: <c>Progman</c> or <c>WorkerW</c> (the desktop) or
+    /// <c>Shell_TrayWnd</c> (the taskbar).
+    /// </summary>
+    public static bool HasShellClass(nint window) => ShellClasses.Contains(ClassOf(window));
 
     /// <summary>A window's client area size.</summary>
     public static (int Width, int Height) ClientSize(nint window)
