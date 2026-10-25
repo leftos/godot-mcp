@@ -131,7 +131,7 @@ Source: docs/DEVELOPMENT.md:26, docs/DEVELOPMENT.md:48, docs/DEVELOPMENT.md:71-7
 
 A survey of desktop-automation MCP servers (in another project) found none that drives an app from outside its process and fully avoids stealing focus; the ones that never do run a hook inside the app.
 
-Here every runtime call but an output wait goes through the bridge inside the game: the server listens on loopback and the bridge dials in with the session's token, and input, reads and writes all run in the game's own process. An output wait reads the output the server already captured, where the bridge is unreachable, so it also works while the game is paused. A game started without the bridge is joined by arming its folder first (arm-before-start), never by driving its window from outside.
+Here every runtime call but an output wait goes through the bridge inside the game: the server listens on loopback and the bridge dials in with the session's token, and input, reads and writes all run in the game's own process. An output wait reads the output the server already captured, where the bridge is unreachable, so it also works while the game is paused. A game started without the bridge is joined by arming its folder first (arm-before-start), never by driving its window from outside. The route is chosen per game by whether a live bridge answers, and since there is no outside route, there is no outside input mode for a bridge call to carry.
 Source: src/GodotMcp.Server/Wire/BridgeListener.cs:22, src/GodotMcp.Server/Session/GodotCommandLine.cs:316-317, docs/TOOLS.md:81-85. Seen: 0 here (seeded from yaat).
 
 ### Drive the real game, and write down what each lesser route cannot see
@@ -139,7 +139,7 @@ Source: src/GodotMcp.Server/Wire/BridgeListener.cs:22, src/GodotMcp.Server/Sessi
 
 Runtime tools always drive the real game with the bridge in it, never a stand-in. The lesser routes are written down with what they lack: headless tools read the project's files in a headless Godot without running the game, and a headless display never draws; `preview_scene` pauses one scene before its first frame, still runs its `_ready` and the autoloads, and adds a camera to a 3D scene that has none.
 
-In another project a frontend-only route lacked whole subsystems while looking like the app, and a run that "showed nothing" was mistaken for a bug; so a route added here says exactly which subsystems it leaves out.
+In another project a frontend-only route lacked whole subsystems while looking like the app, and a run that "showed nothing" was mistaken for a bug; so a route added here says exactly which subsystems it leaves out. There is no UI Automation fallback here; in another project that route returned none of the app's errors with the call, could not fill a native file picker, reached only the app's own windows and saw nothing on a custom-drawn surface, which a Godot window is throughout.
 Source: src/GodotMcp.Server/Session/GodotCommandLine.cs:293-317, src/GodotMcp.Server/Tools/HeadlessTools.cs:11-15, docs/TOOLS.md:132-134, docs/DEVELOPMENT.md:95. Seen: 0 here (seeded from towercab-3d).
 
 ### Launch isolated and in the background, start driving when the bridge answers, and close what you opened
@@ -193,7 +193,7 @@ Source: docs/DECISIONS.md:38-39, docs/DEVELOPMENT.md:95, docs/DEVELOPMENT.md:232
 
 A quiet run sits on a hidden desktop that the user's mouse and keyboard never reach, so it needs no warning, as would a window created hidden and unfocused and driven over a debugging protocol. A run on the user's own desktop does: a `quiet: false` run, or a game the user started and an agent joined. So would a launch that shows the window even briefly before hiding it, since it can take the focus first; a quiet run's window is created on the hidden desktop and never shows on the user's.
 
-The bridge swallows real mouse input only while a gesture plays or an injected button is held, and never swallows real keys, so a key the user presses or a mouse they move between calls can break the drive. Before driving such a game, tell the user "hands off"; the skill does not say so yet, since it offers `quiet: false` only for watching or playing along.
+The bridge swallows real mouse input only while a gesture plays or an injected button is held, and never swallows real keys, so a key the user presses or a mouse they move between calls can break the drive. In another project real `SendInput` typing gave a field stray letters while the user typed, and even posted input was not fully out of reach, since its UI framework read Shift and Ctrl from the real keyboard. Before driving such a game, tell the user "hands off"; the skill does not say so yet, since it offers `quiet: false` only for watching or playing along.
 Source: ~/.claude/skills/godot-mcp/SKILL.md:51, ~/.claude/skills/godot-mcp/SKILL.md:64, docs/DEVELOPMENT.md:324-335. Seen: 0 here (seeded from towercab-3d).
 
 ### Mark injected pointer events and keep the pointer while a gesture plays

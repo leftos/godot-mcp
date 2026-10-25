@@ -37,8 +37,8 @@
       "user": "5703da5682eac4dc"
     },
     "drive-owned-app-in-process": {
-      "repo": "97aa5515bb72f637",
-      "user": "be66d24a8139e90d"
+      "repo": "cd2c6802fef91361",
+      "user": "251b272a6a8d0e5b"
     },
     "emulation-per-call": {
       "declined": "no CDP or webview",
@@ -47,6 +47,10 @@
     "error-feed-on-results": {
       "repo": "d02388fed30bf627",
       "user": "779511c62a903798"
+    },
+    "fenced-hook-for-third-party-app": {
+      "declined": "godot-mcp drives only the owner's own Godot projects through its injected bridge; no third-party app is in scope (CLAUDE.md, README)",
+      "user": "b80e08d4e363fb72"
     },
     "fixed-tool-surface": {
       "repo": "f8fd0840ae42755a",
@@ -149,8 +153,8 @@
       "user": "818b37ebe7468676"
     },
     "real-app-over-frontend-only": {
-      "repo": "271d0467f0483c69",
-      "user": "5d6fb063892d6fe5"
+      "repo": "701e74eae3278523",
+      "user": "8454655860f455c9"
     },
     "real-devices-leak-in": {
       "repo": "1bf299ad7a9ca3e3",
@@ -185,8 +189,8 @@
       "user": "e1357ad6c047e437"
     },
     "say-hands-off-first": {
-      "repo": "7a298f34d771be9b",
-      "user": "0a6f21fd5739c6de"
+      "repo": "b72fca643c063d7c",
+      "user": "4c60944bbcac704d"
     },
     "semantic-click-first": {
       "declined": "presses through injected pointer input as a player would; never invokes a control's action",
@@ -245,5 +249,5 @@
       "user": "81e92891fb8fe24c"
     }
   },
-  "user_revision": 13
+  "user_revision": 14
 }
