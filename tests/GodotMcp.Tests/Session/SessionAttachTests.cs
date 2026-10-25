@@ -271,7 +271,8 @@ public sealed class SessionAttachTests : IAsyncDisposable
         Assert.True(stopped.Killed);
         Assert.NotNull(stopped.KillReason);
         Assert.StartsWith("the game acknowledged the quit but was still shutting down after ", stopped.KillReason, StringComparison.Ordinal);
-        Assert.Contains("after 3 s of load-adjusted time", stopped.KillReason, StringComparison.Ordinal);
+        // The shared clock reads the real machine's load, so on a busy machine the grace's backstop ends it instead.
+        Assert.Matches(@"after (3 s of load-adjusted time|\d+(\.\d+)? s of wall time, 5 x its 3 s grace) \(", stopped.KillReason);
         Assert.Contains(
             $"the bridge's connection was still open, so the scene tree had not been freed.\nProcess {child.Id}: ",
             stopped.KillReason,
