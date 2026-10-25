@@ -11,8 +11,13 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `run_scratches` takes `engineArgs` in its options and the profile's `scratch` section, placed on each scene's command line before `--`.
 - `scratch_status` and `run_scratches` take `only: "red"` to list only each scene's red steps, keeping every scene's verdict line.
 
+### Changed
+
+- `move_node` rewrites NodePaths into and out of the moved nodes so they still name the same node, listing them in `rewrittenPaths`.
+
 ### Fixed
 
+- `move_node` keeps the moved nodes' own scene-file lines instead of rewriting them in Godot's own form.
 - A released `call_method`, `run_script`, `wait_for` or watch whose server stalled now returns the game's answer to its cancel, not a hang report.
 - `cs_set` reads an enum name sent wrapped in JSON quotes as the name, and `cs_set` and `set_property` say a string value is given as itself.
 

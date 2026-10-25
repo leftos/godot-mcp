@@ -75,6 +75,7 @@ static func apply_add_node(root: Node, params: Dictionary, context: Dictionary) 
 		node.free()
 		return {"error": " ".join(failures)}
 	node.owner = root
+	SceneNodes.note_created(node, context)
 	if placed.has("index"):
 		parent.move_child(node, placed["index"])
 	return {"result": _added_result(root, node, made)}

@@ -39,6 +39,14 @@ const INDEX_RANGE_REFUSAL := (
 	"position.index %d is out of range: %s has %d children once the node is placed, "
 	+ "so index takes %d to %d."
 )
+## The edit context's key under which move_node records each node a move carried, with the path
+## from the root it had before its first move in the edit, and add_node and duplicate_node record
+## each node they create, with "" (no source in the file): {Node: path or ""}.
+const MOVED_KEY := "moved"
+## PROPERTY_HINT_NO_NODEPATH, which scripts are not given: the hint between PROPERTY_HINT_ONESHOT
+## and PROPERTY_HINT_GROUP_ENABLE (4.7.2 core/object/property_info.h L80-82, core_constants.cpp
+## L687-688).
+const NO_NODEPATH_HINT := PROPERTY_HINT_ONESHOT + 1
 
 
 ## Deletes the nodes at params.nodePaths, each with its children: {result: {deleted}}, or {error}
@@ -118,6 +126,7 @@ static func apply_duplicate_node(root: Node, params: Dictionary, context: Dictio
 	var copy: Node = copied["node"]
 	copy.name = named["name"]
 	_place(copy, parent["node"], source, copied["owned"], root)
+	note_created(copy, context)
 	_connect_outbound(copy, copied["outbound"], SCRIPT_CONNECT_FLAGS)
 	return {"result": {"originalPath": found["path"], "newPath": String(root.get_path_to(copy))}}
 
@@ -125,7 +134,12 @@ static func apply_duplicate_node(root: Node, params: Dictionary, context: Dictio
 ## Moves the node at params.nodePath to params.position among its siblings, or under params.parent
 ## (at params.position there, else last), keeping its global transform unless
 ## params.keepGlobalTransform is false, and keeping the scene root the owner of it and of the nodes
-## below it the root owned: {result: {path, previousPath, index}}, or {error} with nothing changed.
+## below it the root owned: {result: {path, previousPath, index, rewrittenPaths}}, or {error} with
+## nothing changed. A stored NodePath of the scene's nodes that pointed at a node, into or out of
+## what the move carried, is rewritten to resolve to that node again, as the editor's reparent
+## rewrites it (_rebase_node_paths); rewrittenPaths lists each as {node, property, from, to}, []
+## when none. A move under another parent records in context, under MOVED_KEY, the path each node
+## it carries had before its first move in the edit (moved_paths reads them for the save).
 static func apply_move_node(root: Node, params: Dictionary, context: Dictionary) -> Dictionary:
 	if params.get("parent") == null and params.get("position") == null:
 		return {"error": MOVE_NEEDS_REFUSAL}
@@ -135,12 +149,19 @@ static func apply_move_node(root: Node, params: Dictionary, context: Dictionary)
 	var node: Node = planned["node"]
 	var parent: Node = planned["parent"]
 	var previous: String = String(root.get_path_to(node))
+	var rewritten: Array = []
 	if parent != node.get_parent():
+		var held: Array = _held_node_paths(root)
+		_note_sources(node, root, context)
 		_reparent(node, parent, root, bool(params.get("keepGlobalTransform", true)))
+		rewritten = _rebase_node_paths(held, root)
 	if planned.has("index"):
 		parent.move_child(node, planned["index"])
 	var result: Dictionary = {
-		"path": String(root.get_path_to(node)), "previousPath": previous, "index": node.get_index()
+		"path": String(root.get_path_to(node)),
+		"previousPath": previous,
+		"index": node.get_index(),
+		"rewrittenPaths": rewritten,
 	}
 	return {"result": result}
 
@@ -164,6 +185,23 @@ static func apply_load_sprite(root: Node, params: Dictionary, context: Dictionar
 	var result: Dictionary = {"path": found["path"], "texture": texture}
 	SceneFiles.note_written(result, written)
 	return {"result": result}
+
+
+## {source path: path now} for each node a move_node of the edit in context carried (MOVED_KEY)
+## that is still in the scene under root, one back at the path it had before its first move
+## included (mapped to that same path, so a carried node over it does not displace it): the save
+## keys a carried node's source record and sections by the path it has now. A node the edit
+## created (recorded with "") has no source and is left out.
+static func moved_paths(root: Node, context: Dictionary) -> Dictionary:
+	var renames: Dictionary = {}
+	var moved: Dictionary = context.get(MOVED_KEY, {})
+	for key: Variant in moved:
+		if not is_instance_valid(key) or String(moved[key]).is_empty():
+			continue
+		var node := key as Node
+		if root.is_ancestor_of(node):
+			renames[moved[key]] = String(root.get_path_to(node))
+	return renames
 
 
 ## The name the editor gives a copy of a node named name among siblings named taken: name itself
@@ -567,6 +605,145 @@ static func _parent_refusal(
 		var named: String = "The scene root" if parent == root else parent_path
 		return "%s already has a child named %s." % [named, node.name]
 	return ""
+
+
+## Records in context, under MOVED_KEY, node and each node below it (an instance's own and internal
+## ones included) as created by the edit, with "": none has a source in the file. Called once each
+## is under its parent.
+static func note_created(node: Node, context: Dictionary) -> void:
+	var moved: Dictionary = context.get_or_add(MOVED_KEY, {})
+	var created: Array[Node] = [node]
+	created.append_array(node.find_children("*", "", true, false))
+	for each: Node in created:
+		moved[each] = ""
+
+
+## Records in context, under MOVED_KEY, the path from root node and each node below it have now,
+## unless the edit recorded one (or "", for a node it created) for it before.
+static func _note_sources(node: Node, root: Node, context: Dictionary) -> void:
+	var moved: Dictionary = context.get_or_add(MOVED_KEY, {})
+	var carried: Array[Node] = [node]
+	carried.append_array(node.find_children("*", "", true, false))
+	for each: Node in carried:
+		if not moved.has(each):
+			moved[each] = String(root.get_path_to(each))
+
+
+## The values of the stored properties of root and every node under it, an instance's own nodes
+## included (a value set there is saved as the instance node's override), that hold a NodePath
+## which resolves to a node, read before a move: each {holder, property, value, targets}, targets
+## the node each NodePath in value (an Array's or Dictionary's values included, in order) resolves
+## to, null for one that resolves to none. As the editor's reparent reads them (4.7.2
+## editor/docks/scene_tree_dock.cpp L2122-2216, every node: L2396-2399), a property hinted
+## PROPERTY_HINT_NO_NODEPATH is left out; a resource's NodePaths and animation tracks are not read.
+static func _held_node_paths(root: Node) -> Array:
+	var held: Array = []
+	var nodes: Array[Node] = [root]
+	nodes.append_array(root.find_children("*", "", true, false))
+	for holder: Node in nodes:
+		for entry: Dictionary in holder.get_property_list():
+			if not _stores_node_paths(entry):
+				continue
+			var value: Variant = holder.get(entry["name"])
+			var targets: Array = []
+			_collect_targets(holder, value, targets)
+			if targets.count(null) < targets.size():
+				var record: Dictionary = {
+					"holder": holder,
+					"property": String(entry["name"]),
+					"value": value,
+					"targets": targets,
+				}
+				held.append(record)
+	return held
+
+
+## Whether a property-list entry is a stored NodePath, Array or Dictionary not hinted
+## PROPERTY_HINT_NO_NODEPATH.
+static func _stores_node_paths(entry: Dictionary) -> bool:
+	if (int(entry["usage"]) & PROPERTY_USAGE_STORAGE) == 0:
+		return false
+	if entry["hint"] == NO_NODEPATH_HINT:
+		return false
+	return entry["type"] in [TYPE_NODE_PATH, TYPE_ARRAY, TYPE_DICTIONARY]
+
+
+## Appends to targets the node each NodePath in value (an Array's or Dictionary's values included,
+## in order) resolves to from holder, or null.
+static func _collect_targets(holder: Node, value: Variant, targets: Array) -> void:
+	match typeof(value):
+		TYPE_NODE_PATH:
+			targets.append(_target_of(holder, value))
+		TYPE_ARRAY:
+			for element: Variant in value:
+				_collect_targets(holder, element, targets)
+		TYPE_DICTIONARY:
+			for element: Variant in (value as Dictionary).values():
+				_collect_targets(holder, element, targets)
+
+
+## The node path resolves to from holder, or null: an empty or absolute path resolves to none, as
+## an edited scene is outside the scene tree.
+static func _target_of(holder: Node, path: NodePath) -> Node:
+	if path.is_empty() or path.is_absolute():
+		return null
+	return holder.get_node_or_null(path)
+
+
+## Sets each property of held (_held_node_paths) whose NodePaths no longer resolve to the nodes
+## they did to the value whose NodePaths do, each the path from its holder to its node with its
+## subnames kept: [{node, property, from, to}], one per NodePath rewritten, node the holder's path
+## from root. A NodePath that still resolves to its node is left as it is.
+static func _rebase_node_paths(held: Array, root: Node) -> Array:
+	var rewritten: Array = []
+	for record: Dictionary in held:
+		var holder: Node = record["holder"]
+		var changes: Array = []
+		var targets: Array = (record["targets"] as Array).duplicate()
+		var value: Variant = _rebased(holder, record["value"], targets, changes)
+		if changes.is_empty():
+			continue
+		holder.set(record["property"], value)
+		var at: String = String(root.get_path_to(holder))
+		for change: Array in changes:
+			var entry: Dictionary = {
+				"node": at, "property": record["property"], "from": change[0], "to": change[1]
+			}
+			rewritten.append(entry)
+	return rewritten
+
+
+## value with each NodePath in it (an Array's or Dictionary's values included) rebased from holder
+## to the node targets, taken from its front in order, names (_rebased_path); changes gains
+## [from, to] for each one rewritten. An Array or Dictionary is copied, so value stays as it is.
+static func _rebased(holder: Node, value: Variant, targets: Array, changes: Array) -> Variant:
+	match typeof(value):
+		TYPE_NODE_PATH:
+			return _rebased_path(holder, value, targets.pop_front() as Node, changes)
+		TYPE_ARRAY:
+			var array: Array = (value as Array).duplicate()
+			for index in array.size():
+				array[index] = _rebased(holder, array[index], targets, changes)
+			return array
+		TYPE_DICTIONARY:
+			var dictionary: Dictionary = (value as Dictionary).duplicate()
+			for key: Variant in dictionary:
+				dictionary[key] = _rebased(holder, dictionary[key], targets, changes)
+			return dictionary
+	return value
+
+
+## path, or, when it no longer resolves from holder to target, the path from holder to target with
+## path's subnames, as the editor rewrites it (4.7.2 editor/docks/scene_tree_dock.cpp L2077-2120);
+## changes gains [from, to] for a rewritten one. A null target leaves path as it is.
+static func _rebased_path(holder: Node, path: NodePath, target: Node, changes: Array) -> NodePath:
+	if target == null or holder.get_node_or_null(path) == target:
+		return path
+	var text: String = String(holder.get_path_to(target))
+	if path.get_subname_count() > 0:
+		text += ":" + String(path.get_concatenated_subnames())
+	changes.append([String(path), text])
+	return NodePath(text)
 
 
 ## Moves node under parent, keeping its global transform when keep, and gives root back node and

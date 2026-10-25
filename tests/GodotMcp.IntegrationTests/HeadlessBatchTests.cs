@@ -102,12 +102,37 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
         Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
         JsonArray entries = batch["steps"]!.AsArray();
         Assert.Equal(1, entries[0]!["result"]!["index"]!.GetValue<int>());
-        Assert.Equal("""{"path":"Go","previousPath":"Go","index":0}""", entries[1]!["result"]!.ToJsonString());
+        Assert.Equal("""{"path":"Go","previousPath":"Go","index":0,"rewrittenPaths":[]}""", entries[1]!["result"]!.ToJsonString());
         string saved = Read(probe.Directory, "stage.tscn");
         int go = saved.IndexOf("[node name=\"Go\" type=\"Node2D\" parent=\".\"", StringComparison.Ordinal);
         int box = saved.IndexOf("[node name=\"Box\" type=\"Node2D\" parent=\".\"]", StringComparison.Ordinal);
         Assert.True(go > 0 && go < box, saved);
         Assert.StartsWith($"[gd_scene format=3 uid=\"{StageUid}\"]", saved, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ABatchMoveRewritesNodePathsAndKeepsAnUntouchedControl()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        File.WriteAllText(Path.Combine(probe.Directory, "rig.tscn"), HeadlessSceneTests.RigScene);
+        JsonObject move = new()
+        {
+            ["nodePath"] = "From/Arm",
+            ["options"] = new JsonObject { ["parent"] = "." },
+        };
+        SceneBatchStep[] steps = [new("move_node", move)];
+
+        JsonObject batch = await BatchAsync(probe.Directory, "rig.tscn", steps, cancellation);
+
+        Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        Assert.Null(batch["warning"]);
+        Assert.Equal(HeadlessSceneTests.RigRewrittenPaths, batch["steps"]![0]!["result"]!["rewrittenPaths"]!.ToJsonString());
+        string saved = Read(probe.Directory, "rig.tscn");
+        Assert.Contains("[node name=\"Arm\" type=\"RemoteTransform2D\" parent=\".\"", saved, StringComparison.Ordinal);
+        Assert.Contains("\nremote_path = NodePath(\"../Hand\")\n", saved, StringComparison.Ordinal);
+        Assert.Contains("\nremote_path = NodePath(\"../Arm\")\n", saved, StringComparison.Ordinal);
+        Assert.Contains(HeadlessSceneTests.RigPanel + "\n[node name=\"To\"", saved, StringComparison.Ordinal);
     }
 
     [Fact(Timeout = TestTimeoutMs)]

@@ -9,6 +9,7 @@ extends RefCounted
 ## outside the editor a binary scene's uid cannot be read back (see SceneFiles.uid_of).
 
 const SceneFiles := preload("scene_files.gd")
+const SceneSplice := preload("scene_splice.gd")
 const Json := preload("../bridge/godot_mcp_json.gd")
 const RES_PREFIX := "res://"
 ## A packed node record's fields before its property count: parent, owner, type, name, instance.
@@ -249,25 +250,29 @@ static func _ends_with_any(text: String, suffixes: Array) -> bool:
 
 ## Packs root, opened from the scene file source ("" for a new scene), and saves it to the text
 ## scene at path with the uid path has (a new one for a new file), as SceneFiles.save_resource_from
-## does: known holds the source's own ext_resource uids, and keep_layout keeps the text source has
-## for every section the save left alone. A save with a source stores no property the source's
-## record for a node did not store when the node loads the same without it, and, when keep_layout,
-## keeps a property the source stored that Godot's pack leaves out when the scene still loads the
-## same (keep_source_set). {uid, warning?} with uid as uid:// text, or {error}.
+## does: known holds the source's own ext_resource uids, and layout is {keep, renames}: keep keeps
+## the text source has for every section the save left alone, and renames maps the path a node a
+## move carried has in source to the one it has now, so its record and sections are matched with
+## the saved ones. A save with a source stores no property the source's record for a node did
+## not store when the node loads the same without it, and, when keep, keeps a property the source
+## stored that Godot's pack leaves out when the scene still loads the same (keep_source_set).
+## {uid, warning?} with uid as uid:// text, or {error}.
 static func save(
-	root: Node, source: String, path: String, known: Dictionary, keep_layout: bool
+	root: Node, source: String, path: String, known: Dictionary, layout: Dictionary
 ) -> Dictionary:
 	var packing: Dictionary = pack_native(root)
 	if packing.has("error"):
 		return {"error": "%s could not be packed: %s" % [path, packing["error"]]}
 	var clauses: PackedStringArray = packing["clashes"]
+	var keep: bool = layout["keep"]
+	var renames: Dictionary = layout["renames"]
 	if not source.is_empty():
-		var kept: String = keep_source_set(packing["packed"], source, keep_layout)
+		var kept: String = keep_source_set(packing["packed"], source, keep, renames)
 		if not kept.is_empty():
 			clauses.append(kept)
-	var layout_from: String = source if keep_layout else ""
+	var file_layout: Dictionary = {"from": source if keep else "", "renames": renames}
 	var saved: Dictionary = SceneFiles.save_resource_from(
-		packing["packed"], path, SceneFiles.uid_for(path), known, layout_from
+		packing["packed"], path, SceneFiles.uid_for(path), known, file_layout
 	)
 	if saved.has("error") or clauses.is_empty():
 		return saved
@@ -290,16 +295,43 @@ static func save(
 ## in position mode reads 0: 4.7.2 class_db.cpp L2184-2196, control.cpp L978-982), so it stores
 ## lines the source never had and leaves out lines the source stored. packed is then instantiated
 ## and each changed property compared with the value it must read; on a mismatch packed's state is
-## put back as it was and the result is the warning saying why, else "".
-static func keep_source_set(packed: PackedScene, source: String, keep_layout: bool) -> String:
+## put back as it was and the result is the warning saying why, else "". renames is {path in
+## source: path now} for the nodes a move carried: a carried node's record is matched with
+## source's record at its source path, and a node at a path a carried node left is new
+## (_source_path). A carried node's pair is judged at its new place, not against the source node
+## at its old one: it is dropped only when packed, instantiated without it, still reads its value
+## there (_keep_unread_carried), since a default that depends on the parent (a Control's
+## layout_mode in or out of a Container) differs between the two places.
+static func keep_source_set(
+	packed: PackedScene, source: String, keep_layout: bool, renames: Dictionary
+) -> String:
 	var scene := ResourceLoader.load(source) as PackedScene
 	var loaded: Node = null
 	if scene != null:
 		loaded = instantiate_native(scene, PackedScene.GEN_EDIT_STATE_MAIN)
 	if loaded == null:
 		return ""
-	var plan: Dictionary = _source_plan(packed.get_state(), scene.get_state(), loaded)
+	var plan: Dictionary = _source_plan(packed.get_state(), scene.get_state(), loaded, renames)
 	var full: Dictionary = packed.get("_bundled")
+	var trimmed: Array = _trimmed(full, plan)
+	if _keep_unread_carried(packed, trimmed, plan):
+		trimmed = _trimmed(full, plan)
+	loaded.free()
+	var dropped: Dictionary = trimmed[1]
+	if not dropped.is_empty():
+		packed.set("_bundled", trimmed[0])
+		var mismatch: String = _drop_mismatch(packed, dropped)
+		if not mismatch.is_empty():
+			packed.set("_bundled", full)
+			return SOURCE_SET_WARNING % [source, mismatch]
+	if not keep_layout:
+		return ""
+	return _restore_source_set(packed, scene, source, renames)
+
+
+## [bundled, dropped]: full, a PackedScene's _bundled state, with each record of plan without the
+## pairs its entry lets go (_source_pairs), and {path: {name: value}} for the pairs let go.
+static func _trimmed(full: Dictionary, plan: Dictionary) -> Array:
 	var dropped: Dictionary = {}
 	var trim := func(
 		bundled: Dictionary, record: int, _head: PackedInt32Array, pairs: PackedInt32Array
@@ -307,27 +339,63 @@ static func keep_source_set(packed: PackedScene, source: String, keep_layout: bo
 		if not plan.has(record):
 			return pairs
 		return _source_pairs(bundled, pairs, plan[record], dropped)
-	var trimmed: Dictionary = _with_pairs(full.duplicate(), trim)
-	loaded.free()
-	if not dropped.is_empty():
-		packed.set("_bundled", trimmed)
-		var mismatch: String = _drop_mismatch(packed, dropped)
-		if not mismatch.is_empty():
-			packed.set("_bundled", full)
-			return SOURCE_SET_WARNING % [source, mismatch]
-	if not keep_layout:
-		return ""
-	return _restore_source_set(packed, scene, source)
+	return [_with_pairs(full.duplicate(), trim), dropped]
+
+
+## Adds to the stored names of each carried entry of plan the properties trimmed ([bundled,
+## dropped], _trimmed) lets go for it that packed, instantiated with trimmed's state, does not read
+## as their value at the node's new place, so a second trim keeps them; whether it added any.
+## packed's state is left as it was.
+static func _keep_unread_carried(packed: PackedScene, trimmed: Array, plan: Dictionary) -> bool:
+	var dropped: Dictionary = trimmed[1]
+	var carried: Array = plan.values().filter(
+		func(entry: Dictionary) -> bool: return entry["carried"] and dropped.has(entry["path"])
+	)
+	if carried.is_empty():
+		return false
+	var full: Dictionary = packed.get("_bundled")
+	packed.set("_bundled", trimmed[0])
+	var check: Node = instantiate_native(packed, PackedScene.GEN_EDIT_STATE_MAIN)
+	packed.set("_bundled", full)
+	if check == null:
+		return false
+	var added: bool = false
+	for entry: Dictionary in carried:
+		var unread: PackedStringArray = _unread(check, entry["path"], dropped[entry["path"]])
+		if not unread.is_empty():
+			var names: PackedStringArray = entry["stored"]
+			names.append_array(unread)
+			entry["stored"] = names
+			added = true
+	check.free()
+	return added
+
+
+## The names of values ({name: value}) the node at path under root does not read as their value;
+## every name when root has no such node.
+static func _unread(root: Node, path: String, values: Dictionary) -> PackedStringArray:
+	var node: Node = root.get_node_or_null(NodePath(path))
+	if node == null:
+		return PackedStringArray(values.keys())
+	var hidden: PackedStringArray = _hidden_names(node)
+	var names: PackedStringArray = []
+	for property: String in values:
+		if not Json.same(_loaded_value(node, property, hidden), values[property]):
+			names.append(property)
+	return names
 
 
 ## Restores into packed each (name, value) pair the scene at source stores that Godot's pack left
 ## out of packed's state (the value is the class default), when the packed scene, instantiated as
 ## it loads, reads that value for the property anyway, so the file keeps the line the source had
 ## without changing how the scene loads. "" on success, else a warning clause after packed's state
-## is put back as it was.
-static func _restore_source_set(packed: PackedScene, scene: PackedScene, source: String) -> String:
+## is put back as it was. renames as keep_source_set takes it.
+static func _restore_source_set(
+	packed: PackedScene, scene: PackedScene, source: String, renames: Dictionary
+) -> String:
 	var state: SceneState = packed.get_state()
-	var missing: Dictionary = _missing_source_values(state, _stored_values(scene.get_state()))
+	var stored: Dictionary = _stored_values(scene.get_state())
+	var missing: Dictionary = _missing_source_values(state, stored, renames)
 	if missing.is_empty():
 		return ""
 	var loaded: Node = instantiate_native(packed, PackedScene.GEN_EDIT_STATE_MAIN)
@@ -354,15 +422,20 @@ static func _restore_source_set(packed: PackedScene, scene: PackedScene, source:
 	return SOURCE_RESTORE_WARNING % [source, mismatch]
 
 
-## {path: {name: value}} for each record of state: the values the source's record for that path
-## holds whose name the record stores no pair for (the properties Godot's pack left out).
-static func _missing_source_values(state: SceneState, stored: Dictionary) -> Dictionary:
+## {path: {name: value}} for each record of state: the values the source's record for its node
+## (at _source_path of path) holds whose name the record stores no pair for (the properties
+## Godot's pack left out).
+static func _missing_source_values(
+	state: SceneState, stored: Dictionary, renames: Dictionary
+) -> Dictionary:
 	var missing: Dictionary = {}
+	var sources: Dictionary = SceneSplice.sources_of(renames)
 	for record in state.get_node_count():
 		var path: String = _plain_path(state.get_node_path(record))
-		if not stored.has(path):
+		var source_path: String = _source_path(path, renames, sources)
+		if not stored.has(source_path):
 			continue
-		var values: Dictionary = (stored[path] as Dictionary).duplicate()
+		var values: Dictionary = (stored[source_path] as Dictionary).duplicate()
 		for pair in state.get_node_property_count(record):
 			values.erase(state.get_node_property_name(record, pair))
 		if not values.is_empty():
@@ -562,21 +635,43 @@ static func _native_pairs(
 	return pairs
 
 
-## {record index: {path, node, stored, hidden}} for each record of state whose node (at path,
-## relative to the root) source_state lists and loaded, source's scene instantiated, holds: node is
-## loaded's node, stored the names source_state's record for it stores, hidden its engine
-## properties a script member hides (_hidden_names).
-static func _source_plan(state: SceneState, source_state: SceneState, loaded: Node) -> Dictionary:
+## {record index: {path, node, stored, hidden, carried}} for each record of state whose node (at
+## path, relative to the root) source_state lists at _source_path of path and loaded, source's
+## scene instantiated, holds there: node is loaded's node, stored the names source_state's record
+## for it stores, hidden its engine properties a script member hides (_hidden_names), carried
+## whether a move carried it (its source path is another).
+static func _source_plan(
+	state: SceneState, source_state: SceneState, loaded: Node, renames: Dictionary
+) -> Dictionary:
 	var stored: Dictionary = _stored_names(source_state)
+	var sources: Dictionary = SceneSplice.sources_of(renames)
 	var plan: Dictionary = {}
 	for record in state.get_node_count():
 		var path: String = _plain_path(state.get_node_path(record))
-		var node: Node = loaded.get_node_or_null(NodePath(path))
-		if stored.has(path) and node != null:
+		var source_path: String = _source_path(path, renames, sources)
+		var node: Node = loaded.get_node_or_null(NodePath(source_path))
+		if stored.has(source_path) and node != null:
 			plan[record] = {
-				"path": path, "node": node, "stored": stored[path], "hidden": _hidden_names(node)
+				"path": path,
+				"node": node,
+				"stored": stored[source_path],
+				"hidden": _hidden_names(node),
+				"carried": source_path != path,
 			}
 	return plan
+
+
+## The path in source of the node at path now, renames being {path in source: path now} for the
+## nodes a move carried and sources its inverse (SceneSplice.sources_of): the source path of the
+## carried node now at path; "" when path is one a carried node left and none took, or one the
+## source's node at which a carried node displaced (SceneSplice.is_displaced), so the node there
+## is new; else path itself.
+static func _source_path(path: String, renames: Dictionary, sources: Dictionary) -> String:
+	if sources.has(path):
+		return sources[path]
+	if renames.has(path) or SceneSplice.is_displaced(path, renames, sources):
+		return ""
+	return path
 
 
 ## {path: names} for each record of state: the names of the properties it stores, by the path of
@@ -610,11 +705,15 @@ static func _source_pairs(
 
 
 ## Whether a pair storing value for property may be left out of the record of entry ({path, node,
-## stored, hidden}): the source's record stores no such property, value is no Object (an Object
-## dropped would stay among the packed variants and still be saved) and entry.node reads value.
+## stored, hidden, carried}): the source's record stores no such property, value is no Object (an
+## Object dropped would stay among the packed variants and still be saved) and entry.node reads
+## value; for a carried node, whose source node is at its old place, the value is judged at its
+## new place instead (_keep_unread_carried).
 static func _droppable(entry: Dictionary, property: String, value: Variant) -> bool:
 	if (entry["stored"] as PackedStringArray).has(property) or typeof(value) == TYPE_OBJECT:
 		return false
+	if entry["carried"]:
+		return true
 	return Json.same(_loaded_value(entry["node"], property, entry["hidden"]), value)
 
 
@@ -646,15 +745,15 @@ static func _path_mismatch(root: Node, path: String, values: Dictionary) -> Stri
 	var node: Node = root.get_node_or_null(NodePath(path))
 	if node == null:
 		return "%s would be missing" % path
-	var hidden: PackedStringArray = _hidden_names(node)
-	for property: String in values:
-		var value: Variant = _loaded_value(node, property, hidden)
-		if not Json.same(value, values[property]):
-			return (
-				"%s.%s would load as %s, not %s"
-				% [path, property, var_to_str(value), var_to_str(values[property])]
-			)
-	return ""
+	var unread: PackedStringArray = _unread(root, path, values)
+	if unread.is_empty():
+		return ""
+	var property: String = unread[0]
+	var value: Variant = _loaded_value(node, property, _hidden_names(node))
+	return (
+		"%s.%s would load as %s, not %s"
+		% [path, property, var_to_str(value), var_to_str(values[property])]
+	)
 
 
 ## {property: value} for each of names: the value the scenes the record at index of state

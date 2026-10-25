@@ -91,6 +91,26 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
     private const string StageB = "[node name=\"B\" type=\"Node2D\" parent=\".\"]\n";
     private const string StageC = "[node name=\"C\" type=\"Node2D\" parent=\".\"]\nposition = Vector2(3, 0)\n";
 
+    // rig.tscn: Rig holding From (with Arm, a RemoteTransform2D pointing out of From at Hand), Hand, Pointer (pointing into From
+    // at Arm), a full-rect Panel and To. Moving From/Arm to the root rewrites both NodePaths and leaves Panel alone; HeadlessBatchTests
+    // moves it in a batch.
+    internal const string RigPanel =
+        "[node name=\"Panel\" type=\"Control\" parent=\".\"]\nlayout_mode = 3\nanchors_preset = 15\nanchor_right = 1.0\n"
+        + "anchor_bottom = 1.0\ngrow_horizontal = 2\ngrow_vertical = 2\n";
+
+    internal const string RigScene =
+        "[gd_scene format=3 uid=\"uid://bqrig0000000a\"]\n\n[node name=\"Rig\" type=\"Node2D\"]\n\n"
+        + "[node name=\"From\" type=\"Node2D\" parent=\".\"]\n\n"
+        + "[node name=\"Arm\" type=\"RemoteTransform2D\" parent=\"From\"]\nremote_path = NodePath(\"../../Hand\")\n\n"
+        + "[node name=\"Hand\" type=\"Node2D\" parent=\".\"]\n\n"
+        + "[node name=\"Pointer\" type=\"RemoteTransform2D\" parent=\".\"]\nremote_path = NodePath(\"../From/Arm\")\n\n"
+        + RigPanel
+        + "\n[node name=\"To\" type=\"Node2D\" parent=\".\"]\n";
+
+    internal const string RigRewrittenPaths =
+        """[{"node":"Arm","property":"remote_path","from":"../../Hand","to":"../Hand"},"""
+        + """{"node":"Pointer","property":"remote_path","from":"../From/Arm","to":"../Arm"}]""";
+
     // screen.tscn: a full-rect Control holding a ColorRect in position mode, which stores no layout_mode (Godot's pack
     // compares a ColorRect's layout_mode with its class default, 3, and would store the 0 it reads).
     private const string ScreenBackdrop =
@@ -1599,7 +1619,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
 
         JsonNode moved = JsonNode.Parse(await MoveAsync(probe.Directory, "stage.tscn", "C", null, new NodePosition(Index: 0), cancellation))!;
 
-        Assert.Equal("""{"path":"C","previousPath":"C","index":0}""", moved.ToJsonString());
+        Assert.Equal("""{"path":"C","previousPath":"C","index":0,"rewrittenPaths":[]}""", moved.ToJsonString());
         string expected =
             StageHeader + StageRoot + "[node name=\"C\" type=\"Node2D\" parent=\".\"]\nposition = Vector2(3, 0)\n\n" + StageA + "\n" + StageB;
         Assert.Equal(expected, File.ReadAllText(Path.Combine(probe.Directory, "stage.tscn")));
@@ -1648,7 +1668,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
             await _tools.MoveNodeAsync(probe.Directory, "nest.tscn", "From/Mover", new MoveNodeOptions("To", KeepGlobalTransform: keep), cancellation)
         )!;
 
-        Assert.Equal("""{"path":"To/Mover","previousPath":"From/Mover","index":1}""", moved.ToJsonString());
+        Assert.Equal("""{"path":"To/Mover","previousPath":"From/Mover","index":1,"rewrittenPaths":[]}""", moved.ToJsonString());
         string[] lines = File.ReadAllLines(Path.Combine(probe.Directory, "nest.tscn"));
         int mover = Array.FindIndex(lines, line => line.StartsWith("[node name=\"Mover\" type=\"Node2D\" parent=\"To\"", StringComparison.Ordinal));
         Assert.True(mover > 0, string.Join("\n", lines));
@@ -1675,7 +1695,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
             await _tools.MoveNodeAsync(probe.Directory, "yard.tscn", "From/Mover", new MoveNodeOptions("To", KeepGlobalTransform: keep), cancellation)
         )!;
 
-        Assert.Equal("""{"path":"To/Mover","previousPath":"From/Mover","index":0}""", moved.ToJsonString());
+        Assert.Equal("""{"path":"To/Mover","previousPath":"From/Mover","index":0,"rewrittenPaths":[]}""", moved.ToJsonString());
         string[] lines = File.ReadAllLines(Path.Combine(probe.Directory, "yard.tscn"));
         int mover = Array.FindIndex(lines, line => line.StartsWith("[node name=\"Mover\" type=\"Node3D\" parent=\"To\"", StringComparison.Ordinal));
         Assert.True(mover > 0, string.Join("\n", lines));
@@ -1698,6 +1718,24 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
 
         JsonNode pressed = Assert.Single(read["signals"]!.AsArray(), entry => entry!["name"]!.GetValue<string>() == "pressed")!;
         Assert.Equal("""[{"target":"Mover","method":"hide"}]""", pressed["connections"]!.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task MoveNodeRewritesNodePathsAndKeepsAnUntouchedControl()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        string path = Path.Combine(probe.Directory, "rig.tscn");
+        File.WriteAllText(path, RigScene);
+
+        JsonNode moved = JsonNode.Parse(await MoveAsync(probe.Directory, "rig.tscn", "From/Arm", ".", null, cancellation))!;
+
+        Assert.Equal(RigRewrittenPaths, moved["rewrittenPaths"]!.ToJsonString());
+        string saved = File.ReadAllText(path);
+        Assert.Contains("parent=\".\"", NodeSection(saved, "Arm").Split('\n')[0], StringComparison.Ordinal);
+        Assert.Contains("\nremote_path = NodePath(\"../Hand\")\n", NodeSection(saved, "Arm"), StringComparison.Ordinal);
+        Assert.Contains("\nremote_path = NodePath(\"../Arm\")\n", NodeSection(saved, "Pointer"), StringComparison.Ordinal);
+        Assert.Equal(NodeSection(RigScene, "Panel"), NodeSection(saved, "Panel"));
     }
 
     [Theory(Timeout = TestTimeoutMs)]
@@ -1750,6 +1788,21 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         NodePosition? position,
         CancellationToken cancellation
     ) => _tools.MoveNodeAsync(projectDir, scene, nodePath, new MoveNodeOptions(parent, position), cancellation);
+
+    /// <summary>
+    /// The section of text whose [node] tag line names name, from that line up to the next section's tag line, its blank lines
+    /// included; "" when text has none.
+    /// </summary>
+    private static string NodeSection(string text, string name)
+    {
+        int start = text.IndexOf($"[node name=\"{name}\"", StringComparison.Ordinal);
+        if (start < 0)
+        {
+            return string.Empty;
+        }
+        int end = text.IndexOf("\n[", start, StringComparison.Ordinal);
+        return end < 0 ? text[start..] : text[start..(end + 1)];
+    }
 
     /// <summary>The names of the scene file's node sections, in file order.</summary>
     private static string[] NodeNames(string directory, string scene) =>

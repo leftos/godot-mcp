@@ -35,13 +35,21 @@ const SAVED_HOLDER := [
 	'[node name="Holder" type="Node2D" parent="." unique_id=44]', 'script = ExtResource("2_fghij")'
 ]
 
+## The rig of the carried-node cases (_rig_original): Arm moves from From to the root.
+const RIG_HEADER := '[gd_scene format=3 uid="uid://bprig0000000a"]'
+const RIG_MAP := {"From/Arm": "Arm"}
+## Arm's lines as the pack writes them when no value changed.
+const RIG_SAME := [
+	"position = Vector2(5, 0)", 'remote_path = NodePath("../../Hand")', "update_rotation = false"
+]
+
 var _splice: GDScript = load(
 	ProjectSettings.globalize_path("res://").path_join(SCENE_SPLICE_SCRIPT).simplify_path()
 )
 
 
 func test_an_unchanged_scene_splices_to_the_original() -> void:
-	var spliced: Dictionary = _splice.splice(_original(), _saved([], _saved_box([])))
+	var spliced: Dictionary = _splice.splice(_original(), _saved([], _saved_box([])), {})
 
 	assert_eq(spliced, {"text": _original()}, "a save that only changed the form keeps the file")
 
@@ -49,7 +57,7 @@ func test_an_unchanged_scene_splices_to_the_original() -> void:
 func test_an_added_node_adds_only_its_section() -> void:
 	var box: Array = _saved_box([]) + ["", MARKER, "position = Vector2(3, 4)"]
 
-	var spliced: Dictionary = _splice.splice(_original(), _saved([], box))
+	var spliced: Dictionary = _splice.splice(_original(), _saved([], box), {})
 
 	var expected: String = _original().replace(
 		'[node name="Holder"', MARKER + "\nposition = Vector2(3, 4)\n\n" + '[node name="Holder"'
@@ -60,7 +68,7 @@ func test_an_added_node_adds_only_its_section() -> void:
 func test_a_changed_property_replaces_only_that_node() -> void:
 	var box: Array = [SAVED_BOX, "position = Vector2(5, 6)", "visible = false"]
 
-	var spliced: Dictionary = _splice.splice(_original(), _saved([], box))
+	var spliced: Dictionary = _splice.splice(_original(), _saved([], box), {})
 
 	var expected: String = _original().replace(
 		'[node name="Box" type="Node2D" parent="."]\nvisible = false\nposition = Vector2(1, 2)\n',
@@ -87,7 +95,7 @@ func test_a_changed_nested_node_keeps_its_header_without_a_unique_id() -> void:
 		)
 	)
 
-	var spliced: Dictionary = _splice.splice(_panel(""), saved)
+	var spliced: Dictionary = _splice.splice(_panel(""), saved, {})
 
 	var expected: String = _panel("").replace(
 		tabs + "\nlayout_mode = 2\n", tabs + "\n" + "\n".join(PackedStringArray(properties)) + "\n"
@@ -116,7 +124,7 @@ func test_a_changed_node_keeps_its_own_unique_id() -> void:
 		]
 	)
 
-	var spliced: Dictionary = _splice.splice(original, saved)
+	var spliced: Dictionary = _splice.splice(original, saved, {})
 
 	assert_eq(spliced, {"text": original + "layer = 2\n"}, "the edited node keeps unique_id=150")
 
@@ -143,7 +151,7 @@ func test_a_saved_tag_without_a_unique_id_gets_the_original_one() -> void:
 		]
 	)
 
-	var spliced: Dictionary = _splice.splice(original, saved)
+	var spliced: Dictionary = _splice.splice(original, saved, {})
 
 	assert_eq(
 		spliced,
@@ -173,7 +181,7 @@ func test_a_changed_node_in_a_crlf_file_keeps_its_line_endings_and_id_state() ->
 		)
 	)
 
-	var spliced: Dictionary = _splice.splice(original.replace("\n", "\r\n"), saved)
+	var spliced: Dictionary = _splice.splice(original.replace("\n", "\r\n"), saved, {})
 
 	var expected: String = _text(
 		head + ["", layer + " unique_id=150]", "layer = 2", "", hud + "]", "visible = false"]
@@ -186,7 +194,7 @@ func test_a_changed_node_in_a_crlf_file_keeps_its_line_endings_and_id_state() ->
 
 
 func test_a_deleted_node_drops_only_its_section() -> void:
-	var spliced: Dictionary = _splice.splice(_original(), _saved([], []))
+	var spliced: Dictionary = _splice.splice(_original(), _saved([], []), {})
 
 	var expected: String = _original().replace(
 		'[node name="Box" type="Node2D" parent="."]\nvisible = false\nposition = Vector2(1, 2)\n\n',
@@ -198,7 +206,7 @@ func test_a_deleted_node_drops_only_its_section() -> void:
 func test_a_new_ext_resource_is_added_after_the_last() -> void:
 	var box: Array = _saved_box(['script = ExtResource("3_klmno")'])
 
-	var spliced: Dictionary = _splice.splice(_original(), _saved([BOX_SCRIPT_EXT], box))
+	var spliced: Dictionary = _splice.splice(_original(), _saved([BOX_SCRIPT_EXT], box), {})
 
 	var expected: String = (
 		_original()
@@ -221,7 +229,7 @@ func test_renumbered_ids_map_back_to_the_originals() -> void:
 		'unique_id=22 instance=ExtResource("1_abcde")]\nposition = Vector2(7, 8)\n'
 	)
 
-	var spliced: Dictionary = _splice.splice(_original(), saved)
+	var spliced: Dictionary = _splice.splice(_original(), saved, {})
 
 	var expected: String = _original().replace(
 		'[node name="Boss" parent="." instance=ExtResource("1")]\n',
@@ -260,7 +268,7 @@ func test_a_sub_resource_is_matched_by_content() -> void:
 		]
 	)
 
-	var spliced: Dictionary = _splice.splice(original, saved)
+	var spliced: Dictionary = _splice.splice(original, saved, {})
 
 	var expected: String = original.replace(
 		(
@@ -278,7 +286,7 @@ func test_a_sub_resource_is_matched_by_content() -> void:
 func test_an_added_connection_adds_only_its_section() -> void:
 	var saved: String = _saved([], _saved_box([])) + "\n" + CONNECTION + "\n"
 
-	var spliced: Dictionary = _splice.splice(_original(), saved)
+	var spliced: Dictionary = _splice.splice(_original(), saved, {})
 
 	assert_eq(spliced, {"text": _original() + "\n" + CONNECTION + "\n"}, "the connection is added")
 
@@ -287,7 +295,7 @@ func test_a_header_without_load_steps_stays_without() -> void:
 	var original: String = _original().replace("load_steps=3 ", "")
 	var box: Array = _saved_box(['script = ExtResource("3_klmno")'])
 
-	var spliced: Dictionary = _splice.splice(original, _saved([BOX_SCRIPT_EXT], box))
+	var spliced: Dictionary = _splice.splice(original, _saved([BOX_SCRIPT_EXT], box), {})
 
 	assert_true(spliced.has("text"), "the edit splices")
 	var header: String = str(spliced.get("text", "")).get_slice("\n", 0)
@@ -297,7 +305,7 @@ func test_a_header_without_load_steps_stays_without() -> void:
 func test_a_duplicate_key_falls_back() -> void:
 	var original: String = _original() + '\n[node name="Box" type="Node2D" parent="."]\n'
 
-	var spliced: Dictionary = _splice.splice(original, _saved([], _saved_box([])))
+	var spliced: Dictionary = _splice.splice(original, _saved([], _saved_box([])), {})
 
 	assert_eq(
 		spliced,
@@ -309,7 +317,7 @@ func test_a_duplicate_key_falls_back() -> void:
 func test_an_unknown_id_falls_back() -> void:
 	var original: String = _original().replace('ExtResource("2")', 'ExtResource("9")')
 
-	var spliced: Dictionary = _splice.splice(original, _saved([], _saved_box([])))
+	var spliced: Dictionary = _splice.splice(original, _saved([], _saved_box([])), {})
 
 	assert_eq(
 		spliced,
@@ -322,7 +330,7 @@ func test_a_colliding_new_id_falls_back() -> void:
 	var new_ext: String = '[ext_resource type="Script" path="res://box.gd" id="1"]'
 	var box: Array = _saved_box(['script = ExtResource("1")'])
 
-	var spliced: Dictionary = _splice.splice(_original(), _saved([new_ext], box))
+	var spliced: Dictionary = _splice.splice(_original(), _saved([new_ext], box), {})
 
 	assert_eq(
 		spliced,
@@ -346,7 +354,7 @@ func test_the_self_check_falls_back_when_an_edit_would_be_lost() -> void:
 
 
 func test_identical_sub_resources_splice_without_falling_back() -> void:
-	var spliced: Dictionary = _splice.splice(_shapes(), _saved_shapes("Vector2(2, 2)", false))
+	var spliced: Dictionary = _splice.splice(_shapes(), _saved_shapes("Vector2(2, 2)", false), {})
 
 	var expected: String = _shapes().replace(
 		(
@@ -362,7 +370,7 @@ func test_identical_sub_resources_splice_without_falling_back() -> void:
 
 
 func test_an_added_identical_sub_resource_is_added() -> void:
-	var spliced: Dictionary = _splice.splice(_shapes(), _saved_shapes("Vector2(1, 1)", true))
+	var spliced: Dictionary = _splice.splice(_shapes(), _saved_shapes("Vector2(1, 1)", true), {})
 
 	var expected: String = (
 		_shapes().replace("load_steps=3", "load_steps=4").replace(
@@ -383,7 +391,7 @@ func test_a_reordered_node_takes_its_saved_place() -> void:
 		SAVED_HEAD, [SAVED_LEVEL, SAVED_HOLDER, SAVED_BOSS, _saved_box([])]
 	)
 
-	var spliced: Dictionary = _splice.splice(_original(), saved)
+	var spliced: Dictionary = _splice.splice(_original(), saved, {})
 
 	var expected: String = _nodes_text(ORIGINAL_HEAD, [LEVEL, HOLDER, BOSS, BOX])
 	assert_eq(spliced, {"text": expected}, "Holder moves first, every node keeping its own text")
@@ -395,7 +403,7 @@ func test_a_move_and_an_add_splice_in_the_saved_order() -> void:
 		SAVED_HEAD, [SAVED_LEVEL, SAVED_HOLDER, SAVED_BOSS, _saved_box([]), marker]
 	)
 
-	var spliced: Dictionary = _splice.splice(_original(), saved)
+	var spliced: Dictionary = _splice.splice(_original(), saved, {})
 
 	var expected: String = _nodes_text(ORIGINAL_HEAD, [LEVEL, HOLDER, BOSS, BOX, marker])
 	assert_eq(spliced, {"text": expected}, "the moved node and the new one take their saved places")
@@ -409,7 +417,7 @@ func test_a_reparented_node_moves_to_its_new_parent() -> void:
 	]
 	var saved: String = _nodes_text(SAVED_HEAD, [SAVED_LEVEL, SAVED_BOSS, SAVED_HOLDER, moved_box])
 
-	var spliced: Dictionary = _splice.splice(_original(), saved)
+	var spliced: Dictionary = _splice.splice(_original(), saved, {})
 
 	var expected: String = _nodes_text(ORIGINAL_HEAD, [LEVEL, BOSS, HOLDER, moved_box])
 	assert_eq(spliced, {"text": expected}, "Box leaves its old place and follows its new parent")
@@ -479,6 +487,144 @@ func test_self_check_passes_distinct_and_absent_unique_ids() -> void:
 	var failure: String = _splice.self_check(spliced, saved)
 
 	assert_eq(failure, "", "distinct ids and a node without one pass")
+
+
+func test_a_carried_node_keyed_through_the_map_keeps_its_lines() -> void:
+	var spliced: Dictionary = _splice.splice(_rig_original(), _rig_saved(RIG_SAME), RIG_MAP)
+
+	assert_eq(spliced, {"text": _rig_moved()}, "only the tag line's parent= and the from= change")
+
+
+func test_a_carried_node_keeps_its_line_endings() -> void:
+	var original: String = _rig_original().replace("\n", "\r\n")
+
+	var spliced: Dictionary = _splice.splice(original, _rig_saved(RIG_SAME), RIG_MAP)
+
+	assert_eq(spliced, {"text": _rig_moved().replace("\n", "\r\n")}, "a CRLF file stays CRLF")
+
+
+func test_a_carried_node_takes_only_its_changed_lines() -> void:
+	var arm: Array = [
+		"position = Vector2(5, 0)", 'remote_path = NodePath("../Hand")', "z_index = 2"
+	]
+
+	var spliced: Dictionary = _splice.splice(_rig_original(), _rig_saved(arm), RIG_MAP)
+
+	var expected: String = _rig_moved().replace(
+		'update_rotation = false\nremote_path = NodePath("../../Hand")\nposition = Vector2(5, 0)\n',
+		'remote_path = NodePath("../Hand")\nposition = Vector2(5, 0)\nz_index = 2\n'
+	)
+	assert_eq(
+		spliced,
+		{"text": expected},
+		"a changed line in place, a line saved dropped left out, a new line appended"
+	)
+
+
+func test_a_new_node_at_the_path_a_carried_node_left_is_new() -> void:
+	var fresh: String = '[node name="Arm" type="Node2D" parent="From" unique_id=5]'
+	var saved: String = _rig_saved(RIG_SAME).replace(
+		'[node name="Arm" type="RemoteTransform2D"',
+		fresh + '\n\n[node name="Arm" type="RemoteTransform2D"'
+	)
+
+	var spliced: Dictionary = _splice.splice(_rig_original(), saved, RIG_MAP)
+
+	var expected: String = _rig_moved().replace(
+		'[node name="From" type="Node2D" parent="."]\n\n',
+		'[node name="From" type="Node2D" parent="."]\n\n' + fresh + "\n\n"
+	)
+	assert_eq(spliced, {"text": expected}, "the new node is added, the carried one keeps its lines")
+	assert_eq(_splice.self_check(expected, saved), "", "the spliced text reads as saved")
+
+
+func test_a_carried_nodes_new_lines_go_before_and_after_its_script_as_godot_writes_them() -> void:
+	var original: String = _text(
+		[
+			RIG_HEADER,
+			"",
+			'[ext_resource type="Script" path="res://arm.gd" id="1"]',
+			"",
+			'[node name="Rig" type="Node2D"]',
+			"",
+			'[node name="From" type="Node2D" parent="."]',
+			"",
+			'[node name="Arm" type="Node2D" parent="From"]',
+			"z_index = 2",
+			'script = ExtResource("1")',
+			"speed = 3",
+		]
+	)
+	var saved: String = _text(
+		[
+			RIG_HEADER,
+			"",
+			'[ext_resource type="Script" path="res://arm.gd" id="1_abcde"]',
+			"",
+			'[node name="Rig" type="Node2D" unique_id=1]',
+			"",
+			'[node name="From" type="Node2D" parent="." unique_id=2]',
+			"",
+			'[node name="Arm" type="Node2D" parent="." unique_id=3]',
+			"z_index = 2",
+			"position = Vector2(5, 0)",
+			'script = ExtResource("1_abcde")',
+			"speed = 3",
+			"range = 9",
+		]
+	)
+
+	var spliced: Dictionary = _splice.splice(original, saved, RIG_MAP)
+
+	var expected: String = original.replace('parent="From"]', 'parent="."]').replace(
+		"z_index = 2\n", "z_index = 2\nposition = Vector2(5, 0)\n"
+	)
+	assert_eq(
+		spliced,
+		{"text": expected + "range = 9\n"},
+		"the new engine property before script =, the new member after it"
+	)
+
+
+func test_a_path_is_displaced_at_or_under_a_carried_nodes_new_path_unless_carried() -> void:
+	var renames: Dictionary = {"A": "B/A", "B/A": "C"}
+	var sources: Dictionary = _splice.sources_of(renames)
+
+	var displaced := func(path: String) -> bool: return _splice.is_displaced(path, renames, sources)
+
+	assert_true(not displaced.call("B/A"), "a carried node's own source path, though one took it")
+	assert_true(displaced.call("C"), "the path a carried node took")
+	assert_true(displaced.call("B/A/K"), "a path under one a carried node took")
+	assert_true(not displaced.call("B/AB"), "a sibling whose name begins like that path")
+
+
+func test_a_carried_nodes_new_lines_side_by_side_keep_their_saved_order() -> void:
+	var hand: String = 'remote_path = NodePath("../../Hand")'
+	var arm: Array = [
+		hand,
+		"visible = false",
+		"z_index = 2",
+		"position = Vector2(5, 0)",
+		"update_rotation = false"
+	]
+
+	var spliced: Dictionary = _splice.splice(_rig_original(), _rig_saved(arm), RIG_MAP)
+
+	var expected: String = _rig_moved().replace(
+		hand + "\n", hand + "\nvisible = false\nz_index = 2\n"
+	)
+	assert_eq(spliced, {"text": expected}, "both after the line before them in saved, in order")
+
+
+func test_a_carried_nodes_new_first_line_goes_right_after_its_tag_line() -> void:
+	var arm: Array = ["z_index = 2"] + RIG_SAME
+
+	var spliced: Dictionary = _splice.splice(_rig_original(), _rig_saved(arm), RIG_MAP)
+
+	var expected: String = _rig_moved().replace(
+		'parent="."]\nupdate_rotation', 'parent="."]\nz_index = 2\nupdate_rotation'
+	)
+	assert_eq(spliced, {"text": expected}, "the first line saved has stays first")
 
 
 ## head's lines, then each node's lines, a blank line before each.
@@ -592,3 +738,51 @@ func _saved_box(extra: Array) -> Array:
 
 func _text(lines: Array) -> String:
 	return "\n".join(PackedStringArray(lines)) + "\n"
+
+
+## Rig holding Hand, From with Arm (a RemoteTransform2D whose lines are not in the pack's order)
+## and a connection from Arm, as a hand-written file has it before Arm moves to the root.
+func _rig_original() -> String:
+	return _text(
+		[
+			RIG_HEADER,
+			"",
+			'[node name="Rig" type="Node2D"]',
+			"",
+			'[node name="Hand" type="Node2D" parent="."]',
+			"",
+			'[node name="From" type="Node2D" parent="."]',
+			"",
+			'[node name="Arm" type="RemoteTransform2D" parent="From"]',
+			"update_rotation = false",
+			'remote_path = NodePath("../../Hand")',
+			"position = Vector2(5, 0)",
+			"",
+			'[connection signal="ready" from="From/Arm" to="Hand" method="hide"]',
+		]
+	)
+
+
+## _rig_original with Arm at the root: only its tag line's parent= and the connection's from=.
+func _rig_moved() -> String:
+	return _rig_original().replace('parent="From"]', 'parent="."]').replace(
+		'from="From/Arm"', 'from="Arm"'
+	)
+
+
+## The rig as Godot saves it once Arm is at the root, Arm's property lines being arm.
+func _rig_saved(arm: Array) -> String:
+	var lines: Array = [
+		RIG_HEADER,
+		"",
+		'[node name="Rig" type="Node2D" unique_id=1]',
+		"",
+		'[node name="Hand" type="Node2D" parent="." unique_id=2]',
+		"",
+		'[node name="From" type="Node2D" parent="." unique_id=3]',
+		"",
+		'[node name="Arm" type="RemoteTransform2D" parent="." unique_id=4]',
+	]
+	lines.append_array(arm)
+	lines.append_array(["", '[connection signal="ready" from="Arm" to="Hand" method="hide"]'])
+	return _text(lines)

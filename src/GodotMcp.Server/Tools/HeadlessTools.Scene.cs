@@ -242,11 +242,13 @@ internal sealed partial class HeadlessTools
             + "options.parent and options.position is needed. Refused: the scene's root; a node inside an instanced scene or one "
             + "the scene inherits from its base scene, since the file cannot record their move; a parent inside an instanced "
             + "scene (an instance's own root may be the parent); a parent that is the node or below it; a parent that already "
-            + "has a child of the node's name; an index out of range, or a sibling the parent does not have. NodePath-typed "
-            + "properties of other nodes that point at the moved node are not rewritten; Node-typed exports and signal "
-            + "connections follow it, since the save recomputes them. Returns {path, previousPath, index, uidFilesWritten?, "
-            + "warning?, errors?}: "
-            + "the node's path from the scene's root after and before the move, and its index among its siblings."
+            + "has a child of the node's name; an index out of range, or a sibling the parent does not have. A stored NodePath "
+            + "property (an Array's or Dictionary's NodePaths included) of the scene's nodes that points into or out of the "
+            + "moved subtree is rewritten to resolve to the same node, as the editor's reparent rewrites it; animation track "
+            + "paths and NodePaths inside resources are not. Node-typed exports and signal connections follow the node, since "
+            + "the save recomputes them. Returns {path, previousPath, index, rewrittenPaths, uidFilesWritten?, warning?, "
+            + "errors?}: the node's path from the scene's root after and before the move, its index among its siblings, and "
+            + "each NodePath rewritten as {node, property, from, to}, [] when none."
             + WriteNote
             + EditNote
     )]

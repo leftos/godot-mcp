@@ -34,16 +34,19 @@ const UID_FILE_EXTENSIONS: Array[String] = ["gd", "cs", "gdshader", "gdshaderinc
 static func save_resource(
 	resource: Resource, path: String, uid: int, known: Dictionary, keep_layout: bool
 ) -> Dictionary:
-	return save_resource_from(resource, path, uid, known, path if keep_layout else "")
+	var layout: Dictionary = {"from": path if keep_layout else "", "renames": {}}
+	return save_resource_from(resource, path, uid, known, layout)
 
 
-## save_resource, the text kept for the sections the save left alone read from the file at
-## layout_from before the save ("" keeps none): path itself for an edit in place, the source scene
-## for a save-as, whose file takes the saved header (its own uid, in Godot's form) and the source's
-## text for everything else. Only a text scene or resource is spliced.
+## save_resource, with layout {from, renames}: the text kept for the sections the save left alone
+## is read from the file at from before the save ("" keeps none): path itself for an edit in place,
+## the source scene for a save-as, whose file takes the saved header (its own uid, in Godot's form)
+## and the source's text for everything else. renames maps the path a node a move carried has in
+## that file to the one it has now (SceneSplice.splice). Only a text scene or resource is spliced.
 static func save_resource_from(
-	resource: Resource, path: String, uid: int, known: Dictionary, layout_from: String
+	resource: Resource, path: String, uid: int, known: Dictionary, layout: Dictionary
 ) -> Dictionary:
+	var layout_from: String = layout["from"]
 	var error: int = DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	if error != OK and error != ERR_ALREADY_EXISTS:
 		return {"error": "cannot create the folder of %s: %s" % [path, error_string(error)]}
@@ -65,7 +68,7 @@ static func save_resource_from(
 	var saved: Dictionary = {"uid": ResourceUID.id_to_text(uid)}
 	note_written(saved, written)
 	if not original.is_empty():
-		var warning: String = _splice_into(path, original, layout_from != path)
+		var warning: String = _splice_into(path, original, layout_from != path, layout["renames"])
 		if not warning.is_empty():
 			saved["warning"] = warning
 	return saved
@@ -105,12 +108,15 @@ static func _layout_source(layout_from: String, path: String) -> String:
 
 ## Splices the file at path, as just saved, into original and writes the result back: "", or the
 ## warning that the file stays in Godot's own form and why. With own_header (a save-as), original's
-## header line is first replaced by the saved one, so the file keeps its own uid.
-static func _splice_into(path: String, original: String, own_header: bool) -> String:
+## header line is first replaced by the saved one, so the file keeps its own uid. renames as
+## SceneSplice.splice takes it.
+static func _splice_into(
+	path: String, original: String, own_header: bool, renames: Dictionary
+) -> String:
 	var saved: String = FileAccess.get_file_as_string(path)
 	if own_header:
 		original = _with_header_of(original, saved)
-	var spliced: Dictionary = SceneSplice.splice(original, saved)
+	var spliced: Dictionary = SceneSplice.splice(original, saved, renames)
 	var reason: String = spliced.get("fallback", "")
 	if reason.is_empty():
 		var file := FileAccess.open(path, FileAccess.WRITE)

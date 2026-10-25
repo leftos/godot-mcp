@@ -14,7 +14,11 @@ extends RefCounted
 ## sub_resource by its canonical form and its place among the sub_resources with that form, in
 ## file order, since its id is the saver's and equal resources are common. Two sections compare
 ## by their canonical form: the tag line without unique_id=, id= and uid=, the property lines
-## sorted, and each ExtResource("<id>") or SubResource("<id>") replaced by what it names.
+## sorted, and each ExtResource("<id>") or SubResource("<id>") replaced by what it names. An
+## original node a move carried, and its connections and editable section, are keyed by the paths
+## it has in saved (renames), so they match their saved sections; a carried node's changed section
+## keeps its original lines in their order, only the tag line and the lines whose value changed
+## taken from saved (_carried_lines).
 
 ## The tags that open a section.
 const OPENERS: Array[String] = [
@@ -44,12 +48,15 @@ static var _load_steps := RegEx.create_from_string(" load_steps=\\d+")
 ## original with the sections saved changed, added or deleted relative to it taken from saved, and
 ## every other section as original has it: {text}, or {fallback: <reason>} when a section cannot
 ## be mapped (a duplicate key, a reference to no section, a new id the output already uses) or the
-## result would not read as saved does. Line endings follow original's.
-static func splice(original: String, saved: String) -> Dictionary:
+## result would not read as saved does. Line endings follow original's. renames maps the path
+## from the root a node a move carried has in original to the one it has in saved: original's
+## sections are keyed by the paths renames gives (_parse), so a carried node's sections match its
+## saved ones and a new node at a path a carried node left is new.
+static func splice(original: String, saved: String, renames: Dictionary) -> Dictionary:
 	if original.contains("\r\n"):
 		saved = saved.replace("\r\n", "\n").replace("\n", "\r\n")
-	var before: Dictionary = _parse(original)
-	var after: Dictionary = _parse(saved)
+	var before: Dictionary = _parse(original, renames)
+	var after: Dictionary = _parse(saved, {})
 	for doc: Dictionary in [before, after]:
 		if not doc["error"].is_empty():
 			return {"fallback": doc["error"]}
@@ -62,10 +69,11 @@ static func splice(original: String, saved: String) -> Dictionary:
 
 ## "" when spliced and saved hold the same sections, each by its key with an equal canonical form
 ## (the gd_scene header left out), their node sections in the same order, and no two nodes of
-## spliced sharing a unique_id; else what differs.
+## spliced sharing a unique_id; else what differs. Both are texts after the edit, so their paths
+## need no map.
 static func self_check(spliced: String, saved: String) -> String:
-	var mine: Dictionary = _parse(spliced)
-	var theirs: Dictionary = _parse(saved)
+	var mine: Dictionary = _parse(spliced, {})
+	var theirs: Dictionary = _parse(saved, {})
 	for doc: Dictionary in [mine, theirs]:
 		if not doc["error"].is_empty():
 			return doc["error"]
@@ -136,9 +144,12 @@ static func _section(raw: String) -> Dictionary:
 
 
 ## text parsed: {sections, by_key: {key: section}, ids: {kind: {id: section}}, canons: {id: canon},
-## occurrences: {sub_resource key: count}, visiting, error}; each section gains its head (tag
-## line), id, canon and key. error is "" or why the text cannot be spliced.
-static func _parse(text: String) -> Dictionary:
+## occurrences: {sub_resource key: count}, visiting, renames, sources (renames inverted, built once
+## for every key, sources_of), error}; each section gains its head (tag line), id, canon, key and
+## renamed. A node whose path renames holds is keyed by the path renames gives it, and is renamed;
+## a connection's from and to and an editable's path go through renames too. error is "" or why
+## the text cannot be spliced.
+static func _parse(text: String, renames: Dictionary) -> Dictionary:
 	var doc: Dictionary = {
 		"sections": sections_of(text),
 		"by_key": {},
@@ -146,6 +157,8 @@ static func _parse(text: String) -> Dictionary:
 		"canons": {},
 		"occurrences": {},
 		"visiting": {},
+		"renames": renames,
+		"sources": sources_of(renames),
 		"error": "",
 	}
 	if doc["sections"][0]["kind"] != HEADER_KIND:
@@ -177,7 +190,9 @@ static func _key(section: Dictionary, doc: Dictionary) -> void:
 		return
 	var kind: String = section["kind"]
 	section["canon"] = _sub_canon(section["id"], doc) if kind == SUB_KIND else _canon(section, doc)
-	section["key"] = _key_of(section)
+	var keyed: Dictionary = _key_of(section, doc["renames"], doc["sources"])
+	section["key"] = keyed["key"]
+	section["renamed"] = keyed["renamed"]
 	if kind == SUB_KIND:
 		var place: int = doc["occurrences"].get(section["key"], 0) + 1
 		doc["occurrences"][section["key"]] = place
@@ -187,26 +202,97 @@ static func _key(section: Dictionary, doc: Dictionary) -> void:
 	doc["by_key"][section["key"]] = section
 
 
-static func _key_of(section: Dictionary) -> String:
+## {key, renamed}: section's key, its paths taken through renames (sources its inverse,
+## sources_of), and whether it is a node section renames moved.
+static func _key_of(section: Dictionary, renames: Dictionary, sources: Dictionary) -> Dictionary:
 	var head: String = section["head"]
-	var key: String = HEADER_KIND
 	match section["kind"]:
 		EXT_KIND:
-			key = "ext_resource path=" + _quoted(head, "path")
+			return {"key": "ext_resource path=" + _quoted(head, "path"), "renamed": false}
 		SUB_KIND:
-			key = "sub_resource " + section["canon"]
+			return {"key": "sub_resource " + section["canon"], "renamed": false}
 		"node":
-			var parent: String = _quoted(head, "parent")
-			var parent_key: String = "(root)" if parent.is_empty() else "parent=" + parent
-			key = "node %s name=%s" % [parent_key, _quoted(head, "name")]
+			return _node_key(head, renames, sources)
 		"connection":
-			var fields: PackedStringArray = []
-			for field: String in ["signal", "from", "to", "method"]:
-				fields.append("%s=%s" % [field, _quoted(head, field)])
-			key = "connection " + " ".join(fields)
+			return {"key": _connection_key(head, renames, sources), "renamed": false}
 		"editable":
-			key = "editable path=" + _quoted(head, "path")
-	return key
+			return {"key": _editable_key(head, renames, sources), "renamed": false}
+	return {"key": HEADER_KIND, "renamed": false}
+
+
+## Whether the node at path, from the root, in original was displaced by a move: path is not one a
+## move carried (a key of renames) but is, or lies under, the path a carried node has in saved (a
+## key of sources, renames inverted by sources_of), so the node original had there is gone from
+## saved. Its sections key as deleted (_node_key, _connection_key, _editable_key), and SceneEdit
+## gives a node there no source. One lookup in sources for path and for each path above it.
+static func is_displaced(path: String, renames: Dictionary, sources: Dictionary) -> bool:
+	if renames.has(path):
+		return false
+	var above: String = path
+	while not sources.has(above):
+		var cut: int = above.rfind("/")
+		if cut < 0:
+			return false
+		above = above.left(cut)
+	return true
+
+
+## renames ({path in original: path in saved}) inverted: {path in saved: path in original}.
+static func sources_of(renames: Dictionary) -> Dictionary:
+	var sources: Dictionary = {}
+	for source: String in renames:
+		sources[renames[source]] = source
+	return sources
+
+
+## {key, renamed} of the node section whose tag line is head: keyed by its parent and name, or, for
+## a node whose path renames holds (renamed), by the parent and name of the path renames gives it;
+## the root by having no parent; a displaced node (is_displaced) by a key no saved section has.
+static func _node_key(head: String, renames: Dictionary, sources: Dictionary) -> Dictionary:
+	var parent: String = _quoted(head, "parent")
+	var name: String = _quoted(head, "name")
+	if parent.is_empty():
+		return {"key": "node (root) name=%s" % name, "renamed": false}
+	var path: String = name if parent == "." else parent + "/" + name
+	if is_displaced(path, renames, sources):
+		return {"key": "node displaced path=%s" % path, "renamed": false}
+	var renamed: bool = renames.has(path)
+	if renamed:
+		var moved: String = _moved_path(path, renames)
+		parent = "." if moved.get_base_dir().is_empty() else moved.get_base_dir()
+		name = moved.get_file()
+	return {"key": "node parent=%s name=%s" % [parent, name], "renamed": renamed}
+
+
+## The path a node had at path, from the root, has in saved: the one renames ({path in original:
+## path in saved}) gives it, else path itself.
+static func _moved_path(path: String, renames: Dictionary) -> String:
+	return renames.get(path, path)
+
+
+## The key of the connection section whose tag line is head: its signal, from, to and method, from
+## and to taken through renames; when from or to is displaced (is_displaced), one no saved section
+## has, with from and to as head writes them, so two such connections keep keys of their own.
+static func _connection_key(head: String, renames: Dictionary, sources: Dictionary) -> String:
+	var from: String = _quoted(head, "from")
+	var to: String = _quoted(head, "to")
+	var kind: String = "connection"
+	if is_displaced(from, renames, sources) or is_displaced(to, renames, sources):
+		kind = "connection displaced"
+	else:
+		from = _moved_path(from, renames)
+		to = _moved_path(to, renames)
+	var fields: Array = [kind, _quoted(head, "signal"), from, to, _quoted(head, "method")]
+	return "%s signal=%s from=%s to=%s method=%s" % fields
+
+
+## The key of the editable section whose tag line is head: its path taken through renames, or one
+## no saved section has when the path is displaced (is_displaced).
+static func _editable_key(head: String, renames: Dictionary, sources: Dictionary) -> String:
+	var path: String = _quoted(head, "path")
+	if is_displaced(path, renames, sources):
+		return "editable displaced path=" + path
+	return "editable path=" + _moved_path(path, renames)
 
 
 ## section's canonical form: its tag line without the saver's attributes, then its property lines
@@ -317,8 +403,8 @@ static func _id_map(before: Dictionary, after: Dictionary) -> Dictionary:
 
 
 ## original's sections that saved still has, as {kind, key, content, sep}: the original's text when
-## the canonical forms match, else saved's with its ids mapped back and the original's unique_id
-## state. A dropped section's blank lines go to the section before it.
+## the canonical forms match, else as _changed_content gives it. A dropped section's blank lines go
+## to the section before it.
 static func _kept_entries(
 	before: Dictionary, after: Dictionary, ids: Dictionary
 ) -> Array[Dictionary]:
@@ -332,12 +418,65 @@ static func _kept_entries(
 		var saved: Dictionary = after["by_key"][key]
 		entry["content"] = section["content"]
 		if saved["canon"] != section["canon"]:
-			var content: String = _mapped(saved, ids).replace(
-				' id="%s"' % saved["id"], ' id="%s"' % section["id"]
-			)
-			entry["content"] = _with_unique_id_of(section["head"], content)
+			entry["content"] = _changed_content(section, saved, ids)
 		entries.append(entry)
 	return entries
+
+
+## The text of original's section whose saved form differs: saved's with its ids mapped back and
+## the original's unique_id state; for a node a move carried (renamed), its lines as
+## _carried_lines keeps them.
+static func _changed_content(section: Dictionary, saved: Dictionary, ids: Dictionary) -> String:
+	var content: String = _mapped(saved, ids).replace(
+		' id="%s"' % saved["id"], ' id="%s"' % section["id"]
+	)
+	if section["renamed"]:
+		content = _carried_lines(section["content"], content)
+	return _with_unique_id_of(section["head"], content)
+
+
+## A carried node's section from original, its text before the move, and saved, its saved text
+## with ids mapped back: saved's tag line, then original's properties in their order, each as saved
+## writes it (so one whose value changed takes the saved line in place) and one saved does not
+## have dropped, then each property only saved has placed by _with_saved_only. Line endings follow
+## original's.
+static func _carried_lines(original: String, saved: String) -> String:
+	var theirs: PackedStringArray = _lines_of(saved)
+	var saved_entries: PackedStringArray = _entries(theirs.slice(1))
+	var wanted: Dictionary = {}
+	for entry: String in saved_entries:
+		wanted[_entry_name(entry)] = entry
+	var lines: PackedStringArray = [theirs[0]]
+	for entry: String in _entries(_lines_of(original).slice(1)):
+		var name: String = _entry_name(entry)
+		if wanted.has(name):
+			lines.append(wanted[name])
+			wanted.erase(name)
+	lines = _with_saved_only(lines, saved_entries, wanted)
+	var text: String = "\n".join(lines) + ("\n" if original.ends_with("\n") else "")
+	return text.replace("\n", "\r\n") if original.contains("\r\n") else text
+
+
+## lines (a tag line, then entries) with each entry of saved_entries that only (by name) holds put
+## right after the latest line of lines that an entry before it in saved_entries is, or right
+## after the tag line when none is. saved_entries being in Godot's order, a new engine property
+## lands before script = and a new script member after it, as Godot writes them.
+static func _with_saved_only(
+	lines: PackedStringArray, saved_entries: PackedStringArray, only: Dictionary
+) -> PackedStringArray:
+	var anchor: int = 0
+	for entry: String in saved_entries:
+		if only.has(_entry_name(entry)):
+			anchor += 1
+			lines.insert(anchor, entry)
+		else:
+			anchor = maxi(anchor, lines.find(entry))
+	return lines
+
+
+## The property name a property entry (_entries) opens with, the text before its "=".
+static func _entry_name(entry: String) -> String:
+	return entry.get_slice("=", 0).strip_edges()
 
 
 ## content with its tag line's unique_id as head has it: none when head has none, else head's,
