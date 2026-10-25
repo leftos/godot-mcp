@@ -149,7 +149,9 @@ Point the game's data folder at a scratch folder, so the developer's saves, sett
 
 The rest holds: the game is ready when the bridge says hello, not when the process starts (`run_project` returns once it connects); the agent starts the game itself, quiet and in the background, and stops it when finished; a game the user started is joined through arming and left running at detach.
 
-Being able to launch and attach is what turns a "the human runs the game" step in a plan into an agent-run check. A server's relative defaults resolve against its own checkout, so a worktree session passes absolute paths (in another project screenshots had landed in the main checkout and the wrong build was launched).
+Being able to launch and attach is what turns a "the human runs the game" step in a plan into an agent-run check. A server's relative defaults resolve against its own checkout, so a worktree session passes absolute paths (in another project screenshots had landed in the main checkout and the wrong build was launched). An agent tool shell's working folder can reset to the main checkout between calls, so a launch from the shell (`pwsh run.ps1 drive`) names its tree explicitly, never the shell's folder (measured in another project).
+
+Another project hit two stop traps on Windows that do not reach a Godot game here: .NET's `CloseMainWindow()` cannot find a hidden window, and a window-state plugin that saves the visible flag makes the next launch start hidden. `stop_project` asks the bridge to quit and kills the game when it outlives its grace, ending the console wrapper's job with it, and Godot keeps no window state.
 Source: src/GodotMcp.Server/Session/OverrideFile.cs:129-138, src/GodotMcp.Server/Session/GodotCommandLine.cs:316-353, docs/TOOLS.md:66-68, docs/TOOLS.md:81-89. Seen: 0 here (seeded from towercab-3d, yaat).
 
 ### Build before launch, and build before stopping on a restart
@@ -175,6 +177,8 @@ Windows clamps an off-screen initial position onto the primary screen and the wi
 
 So on Windows a quiet run is started on a hidden desktop (`<station>\godot-mcp-<server pid>` in the server's own window station, `CreateProcessW` with `lpDesktop` naming that station: a child named on `WinSta0` from an ssh session or a service cannot start), where screenshots, input and recording all work (parking it off-screen from app code had left it visible about 300 ms at (0,0)). Another project hides its window with DWM cloaking set before the first show instead, exiting if the cloak fails so no uncloaked window reaches the desktop.
 
+A third route, for an app whose window framework reads its window config at launch (Tauri, Electron), is a dev-only agent launch flag that merges a config overlay creating the window hidden and unfocused, with any window-state plugin kept off that window, since such a plugin restores a saved window with a show and then a focus call; Godot reads its window settings from `override.cfg` the same way, which is where the no-focus flag goes.
+
 On a shared desktop, "not activated" needs the window style: showing a window without activating it (`SW_SHOWNOACTIVATE`) leaves it activatable, so when the window in front of it is minimised Windows hands the foreground to the next top-level window in Z order, which can be the game; only `WS_EX_NOACTIVATE` stops that, and Godot's no-focus flag sets it.
 
 A window launched from a process that holds the foreground right (an agent's shell under the user's focused app) is created above every window and paints over the user's app while focus stays put, so a visible launch that must stay out of the way is moved to the bottom of the Z order: the integration harness restores the window with `SW_SHOWNOACTIVATE` and only then pushes it to `HWND_BOTTOM`, since pushing first left it on top in 1 run of 3.
@@ -187,7 +191,7 @@ Source: docs/DECISIONS.md:38-39, docs/DEVELOPMENT.md:95, docs/DEVELOPMENT.md:232
 ### Say "hands off" before driving a game on the user's desktop
 <!-- rule: say-hands-off-first -->
 
-A quiet run sits on a hidden desktop that the user's mouse and keyboard never reach, so it needs no warning. A run on the user's own desktop does: a `quiet: false` run, or a game the user started and an agent joined.
+A quiet run sits on a hidden desktop that the user's mouse and keyboard never reach, so it needs no warning, as would a window created hidden and unfocused and driven over a debugging protocol. A run on the user's own desktop does: a `quiet: false` run, or a game the user started and an agent joined. So would a launch that shows the window even briefly before hiding it, since it can take the focus first; a quiet run's window is created on the hidden desktop and never shows on the user's.
 
 The bridge swallows real mouse input only while a gesture plays or an injected button is held, and never swallows real keys, so a key the user presses or a mouse they move between calls can break the drive. Before driving such a game, tell the user "hands off"; the skill does not say so yet, since it offers `quiet: false` only for watching or playing along.
 Source: ~/.claude/skills/godot-mcp/SKILL.md:51, ~/.claude/skills/godot-mcp/SKILL.md:64, docs/DEVELOPMENT.md:324-335. Seen: 0 here (seeded from towercab-3d).

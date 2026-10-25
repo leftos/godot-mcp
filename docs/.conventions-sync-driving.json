@@ -81,8 +81,8 @@
       "user": "3a775768199ca968"
     },
     "launch-isolated-lifecycle": {
-      "repo": "ba8b10f4f53bc325",
-      "user": "28a150edc237b497"
+      "repo": "ea09701290e7c2fc",
+      "user": "62499bb81d1253b2"
     },
     "load-adjusted-timeouts": {
       "repo": "77b136246e790850",
@@ -145,8 +145,8 @@
       "user": "ebfaa4da3ea3e159"
     },
     "quiet-by-default": {
-      "repo": "38b3704fdbb92c35",
-      "user": "6f85f9f72b58cf63"
+      "repo": "69751e2ae440cbac",
+      "user": "818b37ebe7468676"
     },
     "real-app-over-frontend-only": {
       "repo": "271d0467f0483c69",
@@ -162,7 +162,7 @@
     },
     "record-steady-never-minimize": {
       "declined": "records through the engine's own movie writer, not window capture",
-      "user": "c7abbb984fdaa216"
+      "user": "cb214e1ee0ff9370"
     },
     "recording-shellout-hardening": {
       "repo": "180bd1b71cf01750",
@@ -185,8 +185,8 @@
       "user": "e1357ad6c047e437"
     },
     "say-hands-off-first": {
-      "repo": "e072f433addb36f7",
-      "user": "3876083c457cc8f6"
+      "repo": "7a298f34d771be9b",
+      "user": "0a6f21fd5739c6de"
     },
     "semantic-click-first": {
       "declined": "presses through injected pointer input as a player would; never invokes a control's action",
@@ -207,6 +207,14 @@
     "test-server-over-stdio": {
       "repo": "9a6f7375af87e7be",
       "user": "8c8df5532748dcfb"
+    },
+    "transport-sole-stream-disposer": {
+      "declined": "the bridge connects over loopback TCP; the only named pipe is a one-instance Windows audio pipe to ffmpeg",
+      "user": "abda32b30dc2e4b1"
+    },
+    "ui-post-with-request-token": {
+      "declined": "the bridge runs every request on the engine's main thread itself; nothing posts across threads to a UI dispatcher",
+      "user": "d6b8e2f928716062"
     },
     "unified-log-tail": {
       "repo": "b7ddd89cb6b25bdb",
@@ -237,5 +245,5 @@
       "user": "81e92891fb8fe24c"
     }
   },
-  "user_revision": 10
+  "user_revision": 13
 }
