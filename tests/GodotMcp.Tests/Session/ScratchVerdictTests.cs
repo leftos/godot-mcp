@@ -728,17 +728,45 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
-    public void AtATimeScaleTheCeilingDividesOnlyThePaces() => Assert.Equal(TimeSpan.FromSeconds(48), ScratchRun.Ceiling([8, 32], 4));
+    public void AtATimeScaleTheCeilingDividesTheStepPacesButNotThePaceAfter() =>
+        Assert.Equal(TimeSpan.FromSeconds(72), ScratchRun.Ceiling([8, 32], 4));
 
     [Fact]
-    public void AScaledWalksKillReasonGivesItsWallFiguresAtItsTimeScaleAndKeepsItsPaceAfterInGameTime()
+    public void AScaledWalksKillReasonGivesItsWallFiguresAtItsTimeScaleAndHoldsItsPaceAfterInWallTime()
     {
         ScratchWalk walk = new([new(8, null), new(32, null)], [0, 1], 4);
 
-        Assert.Equal(TimeSpan.FromSeconds(48), walk.Ceiling);
-        Assert.Equal(32000, walk.AfterGameMs);
+        Assert.Equal(TimeSpan.FromSeconds(72), walk.Ceiling);
+        Assert.Equal(128000, walk.AfterGameMs);
         Assert.Equal(
-            "the scene passed its ceiling of 48 s of load-adjusted time (each of its 2 steps' pace at time scale 4 + 10 s, the last "
+            "the scene passed its ceiling of 72 s of load-adjusted time (each of its 2 steps' pace at time scale 4 + 10 s, the last "
+                + "step's pace once more in wall time, and 10 s for the markers), so its game was stopped",
+            walk.CeilingReason(string.Empty)
+        );
+    }
+
+    [Fact]
+    public void AtTimeScaleOneThePaceAfterIsTheLastStepsPace()
+    {
+        ScratchWalk walk = new([new(0.5, null), new(2, null)], [0, 1], 1);
+
+        Assert.Equal(2000, walk.AfterGameMs);
+        Assert.Equal(
+            "the scene passed its ceiling of 34.5 s of load-adjusted time (each of its 2 steps' pace + 10 s, the last step's pace "
+                + "once more, and 10 s for the markers), so its game was stopped",
+            walk.CeilingReason(string.Empty)
+        );
+    }
+
+    [Fact]
+    public void AtAHalfTimeScaleThePaceAfterKeepsItsPaceInGameTime()
+    {
+        ScratchWalk walk = new([new(2, null)], [0], 0.5);
+
+        Assert.Equal(2000, walk.AfterGameMs);
+        Assert.Equal(TimeSpan.FromSeconds(28), walk.Ceiling);
+        Assert.Equal(
+            "the scene passed its ceiling of 28 s of load-adjusted time (its 1 step's pace at time scale 0.5 + 10 s, the last "
                 + "step's pace once more, and 10 s for the markers), so its game was stopped",
             walk.CeilingReason(string.Empty)
         );

@@ -85,7 +85,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             "{pace, timeScale, userArgs, prepare, details, parallel, session, keepGoing, steps, background}: pace in seconds for every "
                 + "step (else scratch.pace's for the step, else for the scene, else 0.5); timeScale the games' time scale, from 0.01 to "
                 + "100 (default 1), each game launched with --time-scale, so a pace of p s takes p / timeScale s of wall time and "
-                + "the kill bound shrinks with it, a scene whose scratch.pace entry has \"timeScale\": 1 kept at normal speed; userArgs "
+                + "the kill bound scales with it, the wait after the last step lasting p s of wall time above 1, a scene whose "
+                + "scratch.pace entry has \"timeScale\": 1 kept at normal speed; userArgs "
                 + "appended after the profile's; "
                 + "prepare as run_project's; "
                 + "details true lists every scene's steps and gives every step its full detail; parallel the scenes at once, 1 to 4 "
@@ -559,7 +560,8 @@ internal sealed record ScratchOptions(
         double? Pace = null,
     [property: Description(
         "Time scale the scenes' games run at, from 0.01 to 100 (default 1): each game launches with --time-scale, so a pace "
-            + "of p s of game time takes p / timeScale s of wall time and the kill bound shrinks with it. A scene whose profile pace "
+            + "of p s of game time takes p / timeScale s of wall time and the kill bound scales with it; above 1 the wait after the "
+            + "last step still lasts p s of wall time. A scene whose profile pace "
             + "entry has \"timeScale\": 1 runs at normal speed."
     )]
         double? TimeScale = null,

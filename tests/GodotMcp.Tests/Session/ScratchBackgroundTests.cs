@@ -155,7 +155,7 @@ public sealed partial class ScratchBackgroundTests : IDisposable
     }
 
     [Fact]
-    public void RemainingTimeAtATimeScaleIsTheWallTimeThePacesTake()
+    public void RemainingTimeAtATimeScaleDividesTheStepPacesAndCountsThePaceAfterInWallTime()
     {
         ScratchWalk walk = new(
             [new ScratchPace(1, null), new ScratchPace(2, null), new ScratchPace(0.5, null), new ScratchPace(3, null)],
@@ -163,8 +163,21 @@ public sealed partial class ScratchBackgroundTests : IDisposable
             4
         );
 
-        Assert.Equal(2.25, walk.RemainingSecondsAtMost(0));
-        Assert.Equal(1.5, walk.RemainingSecondsAtMost(3));
+        Assert.Equal(4.5, walk.RemainingSecondsAtMost(0));
+        Assert.Equal(3.75, walk.RemainingSecondsAtMost(3));
+    }
+
+    [Fact]
+    public void RemainingTimeBelowTimeScaleOneCountsThePaceAfterInGameTime()
+    {
+        ScratchWalk walk = new(
+            [new ScratchPace(1, null), new ScratchPace(2, null), new ScratchPace(0.5, null), new ScratchPace(3, null)],
+            [0, 1, 3],
+            0.5
+        );
+
+        Assert.Equal(18, walk.RemainingSecondsAtMost(0));
+        Assert.Equal(12, walk.RemainingSecondsAtMost(3));
     }
 
     [Fact]

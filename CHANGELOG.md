@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- `run_scratches` waits the last step's pace in wall time before quitting a faster-scaled game, so its exit leak check matches a 1x run's.
+
 ## 0.21.1 - 2026-10-24
 
 ### Changed

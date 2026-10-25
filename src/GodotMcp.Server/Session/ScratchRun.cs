@@ -88,8 +88,9 @@ internal sealed record ScratchPlan(
 
 /// <summary>
 /// A scene's step paces by index, the steps a run plays of them, ascending, and the time scale its game runs at: what its
-/// ceiling, its pace after the last step played and its kill reason count. A pace is game time, so at time scale N it takes
-/// pace / N of wall time.
+/// ceiling, its pace after the last step played and its kill reason count. A step's pace is game time, so at time scale N it
+/// takes pace / N of wall time; the pace after the last step played counts in wall time above time scale 1 and in game time
+/// below it.
 /// </summary>
 internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyList<int> Played, double TimeScale)
 {
@@ -98,16 +99,20 @@ internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyLi
     /// <summary>The ceiling of the played steps, from each one's pace; see <see cref="ScratchRun.Ceiling"/>.</summary>
     public TimeSpan Ceiling => ScratchRun.Ceiling([.. Played.Select(step => Paces[step].Seconds)], TimeScale);
 
-    /// <summary>The game milliseconds waited after the last step played: that step's own pace.</summary>
-    public int AfterGameMs => ScratchRun.GameMs(Paces[Played[^1]].Seconds);
+    /// <summary>
+    /// The game milliseconds waited after the last step played: that step's own pace in game time or in wall time, whichever is
+    /// longer, so pace × the time scale above 1.
+    /// </summary>
+    public int AfterGameMs => ScratchRun.GameMs(Paces[Played[^1]].Seconds * Math.Max(1, TimeScale));
 
     /// <summary>
     /// The most wall seconds the scene's steps can still take once <paramref name="step"/> starts: the pace of each played step
-    /// not yet started, the step's own, and the pace after the last step played, each divided by the time scale; the launch
-    /// and the prep are left out.
+    /// not yet started and the step's own, each divided by the time scale, and the pace after the last step played, in wall time
+    /// above time scale 1 and in game time below it; the launch and the prep are left out.
     /// </summary>
     public double RemainingSecondsAtMost(int step) =>
-        (Played.Where(played => played >= step).Sum(played => Paces[played].Seconds) + Paces[Played[^1]].Seconds) / TimeScale;
+        (Played.Where(played => played >= step).Sum(played => Paces[played].Seconds) / TimeScale)
+        + (Paces[Played[^1]].Seconds / Math.Min(1, TimeScale));
 
     /// <summary>Why a scene was killed at its ceiling, with <paramref name="backstop"/> appended to the budget's terms.</summary>
     public string CeilingReason(string backstop)
@@ -115,8 +120,9 @@ internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyLi
         string seconds = Ceiling.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
         string each = Played.Count == 1 ? "its 1 step's" : $"each of its {Played.Count} steps'";
         string scaled = TimeScale == 1 ? string.Empty : $" at time scale {TimeScale.ToString(CultureInfo.InvariantCulture)}";
+        string after = TimeScale > 1 ? "once more in wall time" : "once more";
         return $"the scene passed its ceiling of {seconds} s of load-adjusted time "
-            + $"({each} pace{scaled} + 10 s, the last step's pace once more, and 10 s for the markers){backstop}, so its game was stopped";
+            + $"({each} pace{scaled} + 10 s, the last step's pace {after}, and 10 s for the markers){backstop}, so its game was stopped";
     }
 }
 
@@ -132,8 +138,8 @@ internal readonly record struct LineMark(long Stdout, long Stderr);
 /// the step's pace in game time (for a root that has GetStepUntil and a step it gives a condition, plays the step inside one
 /// wait_for on that condition instead, PlayStep the wait's call, until it holds or the pace has passed in game time), reads
 /// GetStatus and takes the feed's entries since the last window, stopping at the first failed step, or with the plan's
-/// keep-going only at one whose call failed; after the last step played it waits that step's pace once more, then stops the
-/// game gracefully and reads the lines it printed after the steps.
+/// keep-going only at one whose call failed; after the last step played it waits that step's pace once more, the longer of its
+/// game time and its wall time, then stops the game gracefully and reads the lines it printed after the steps.
 /// Each window of output (the launch, each step, the pace after the last) ends at a marker line the game prints to stdout
 /// and to stderr, since the two streams arrive apart. The session stays in the registry, stopped, so get_debug_output can
 /// read it.
@@ -301,13 +307,13 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// The ceiling of a scene's steps, load-adjusted, from each step's pace in game time at <paramref name="timeScale"/>: each
-    /// step's pace / timeScale and 10 s, the last step's pace / timeScale once more for the pace after it, and 10 s more for the
-    /// launch and pace markers.
+    /// step's pace / timeScale and 10 s, the last step's pace once more for the pace after it, in wall time above time scale 1
+    /// and in game time below it, and 10 s more for the launch and pace markers.
     /// </summary>
     internal static TimeSpan Ceiling(IReadOnlyList<double> paces, double timeScale) =>
         TimeSpan.FromSeconds(
             paces.Sum(pace => (pace / timeScale) + StepAllowance.TotalSeconds)
-                + (paces.Count > 0 ? paces[^1] / timeScale : 0)
+                + (paces.Count > 0 ? paces[^1] / Math.Min(1, timeScale) : 0)
                 + StepAllowance.TotalSeconds
         );
 
@@ -828,7 +834,7 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// Plays each step to play, in ascending order, each waiting its own pace, until one fails; after the last one played,
-    /// waits its pace once more.
+    /// waits its pace once more, the longer of its game time and its wall time.
     /// </summary>
     private async Task PlayStepsAsync(GodotSession session, CancellationToken limit)
     {
@@ -927,7 +933,10 @@ internal sealed class ScratchRun
     /// <summary>How a step's play went: why it failed, or the bridge's refusal of its until's wait, and the until's figures.</summary>
     private readonly record struct StepPlay(string? Error, string? BridgeError, ScratchUntil? Until);
 
-    /// <summary>The pace after the last step: an error in the feed during it, or a wait not met, fails the scene's exit.</summary>
+    /// <summary>
+    /// The pace after the last step, the longer of its game time and its wall time: an error in the feed during it, or a wait
+    /// not met, fails the scene's exit.
+    /// </summary>
     private async Task PaceAfterAsync(GodotSession session, int gameMs, CancellationToken limit)
     {
         string? waitError = await WaitAsync(session, gameMs, limit);
