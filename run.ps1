@@ -19,8 +19,9 @@ log, and the job's timeout-minutes bounds it in place of the ceiling and watchdo
            then its dotnet test -c Release --no-build; ceiling 180 s
   itest    the integration tests against the real Godot (GODOT_PATH, else a Godot*console*.exe on PATH), in the class
            groups of the table at the top of this script, which run in the three lanes of the table below it: timing
-           (lifecycle, input, time, recording, capture, reads, scratch, scratchfolder, scratchparallel, scratchuntil: the groups
-           that assert wall-clock times), build (prep, scene, csharp) and untimed (sessions, headless, nodes, scratchbackground). It
+           (lifecycle, stopping, watchdog, input, time, recording, capture, reads, scratch, scratchfolder, scratchparallel,
+           scratchuntil: the groups that assert wall-clock times), build (prep, scene, csharp) and untimed (sessions, attach,
+           headless, nodes, scratchbackground). It
            first checks that every `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly
            one group, every listed class exists, every group is in exactly one lane that names only groups, and the
            heavy groups and rules tables name only groups, and stops with status 1 before running anything when not.
@@ -178,8 +179,11 @@ $ErrorActionPreference = 'Stop'
 # The integration test classes, one gate per group, run in this order. A new test class goes into one group; itest
 # refuses to run while a class is in no group or a listed class no longer exists.
 $itestGroups = [ordered]@{
-    lifecycle = @('SessionLifecycleTests', 'MultiSessionTests', 'WatchdogTests')
-    sessions  = @('McpServerSmokeTests', 'AttachTests', 'ArmTests', 'QuietTests', 'ProfileTests', 'ProcessSessionTests')
+    lifecycle = @('SessionLifecycleTests', 'MultiSessionTests')
+    stopping  = @('SessionStopTests')
+    watchdog  = @('WatchdogTests')
+    sessions  = @('McpServerSmokeTests', 'ProfileTests', 'ProcessSessionTests')
+    attach    = @('AttachTests', 'ArmTests', 'QuietTests')
     input     = @('InputTests', 'GamepadTests', 'CaptureTests', 'StressTests', 'WorldTargetTests', 'TextTargetTests', 'ItemTargetTests', 'PopupTargetTests', 'FiredSignalsTests')
     reads     = @('RuntimeReadTests', 'InspectionTests', 'BaselineTests', 'PreviewTests', 'StateTests', 'HeadlessCaptureTests')
     time      = @('TimeTests', 'BatchTests', 'WatchTests', 'StepInputTests', 'WatchAudioTests')
@@ -201,9 +205,9 @@ $itestGroups = [ordered]@{
 # builds and headless runs split between them beside the session tests. Every group is in exactly one lane; itest
 # refuses to run while one is not.
 $itestLanes = [ordered]@{
-    timing  = @('lifecycle', 'input', 'time', 'recording', 'capture', 'reads', 'scratch', 'scratchfolder', 'scratchparallel', 'scratchuntil')
+    timing  = @('lifecycle', 'stopping', 'watchdog', 'input', 'time', 'recording', 'capture', 'reads', 'scratch', 'scratchfolder', 'scratchparallel', 'scratchuntil')
     build   = @('prep', 'scene', 'csharp')
-    untimed = @('sessions', 'headless', 'nodes', 'scratchbackground')
+    untimed = @('sessions', 'attach', 'headless', 'nodes', 'scratchbackground')
 }
 # The groups whose tests run dotnet builds of the CsProbe project on top of their Godot runs: each takes a heavy gate
 # slot, in whichever lane it runs, and every other group a light one.
@@ -236,7 +240,7 @@ $itestCaptureCeiling = $itestCeiling + 120
 # broader rules their paths also match. tests/fixtures/** stays 'all': a probe project's content seldom changes what
 # the capture tests see, and the full itest covers it. Anything else under bridge/ selects 'all', since godot_mcp_bridge.gd
 # preloads every module.
-$itestRuntimeGroups = @('lifecycle', 'sessions', 'input', 'reads', 'time', 'prep', 'recording', 'csharp')
+$itestRuntimeGroups = @('lifecycle', 'stopping', 'watchdog', 'sessions', 'attach', 'input', 'reads', 'time', 'prep', 'recording', 'csharp')
 $itestEveryGroup = @($itestGroups.Keys)
 $itestRules = @(
     @('bridge/godot_mcp_window.gd', $itestEveryGroup),
@@ -292,7 +296,7 @@ $itestRules = @(
     @('src/GodotMcp.Server/Tools/RuntimeTools.CSharp*.cs', 'csharp'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.RunCSharp*.cs', 'csharp'),
     @('src/GodotMcp.Server/Tools/RuntimeTools*.cs', $itestRuntimeGroups),
-    @('src/GodotMcp.Server/Tools/ProjectTools*.cs', @('lifecycle', 'sessions', 'prep')),
+    @('src/GodotMcp.Server/Tools/ProjectTools*.cs', @('lifecycle', 'stopping', 'watchdog', 'sessions', 'attach', 'prep')),
     @('src/GodotMcp.Server/Tools/ScratchTools*.cs', @('scratch', 'scratchfolder', 'scratchparallel', 'scratchuntil', 'scratchbackground', 'csharp')),
     @('src/GodotMcp.Server/Tools/**', 'all'),
     @('src/GodotMcp.Server/CSharp/**', 'csharp'),

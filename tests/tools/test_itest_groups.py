@@ -12,7 +12,10 @@ import pytest
 RUN_PS1 = Path(__file__).resolve().parents[2] / "run.ps1"
 ALL_GROUPS = [
     "lifecycle",
+    "stopping",
+    "watchdog",
     "sessions",
+    "attach",
     "input",
     "reads",
     "time",
@@ -177,6 +180,20 @@ def test_an_untracked_test_class_file_selects_the_group_listing_it(repo: Path) -
 def test_a_change_to_the_parallel_scratch_folder_tests_selects_its_own_group(repo: Path) -> None:
     _change(repo, "tests/GodotMcp.IntegrationTests/ScratchFolderParallelTests.cs")
     assert _selected(_itest_groups(repo)) == ["scratchparallel"]
+
+
+@pytest.mark.parametrize(
+    ("changed", "groups"),
+    [
+        ("tests/GodotMcp.IntegrationTests/SessionStopTests.cs", ["stopping"]),
+        ("tests/GodotMcp.IntegrationTests/WatchdogTests.cs", ["watchdog"]),
+        ("tests/GodotMcp.IntegrationTests/ArmTests.cs", ["attach"]),
+        ("src/GodotMcp.Server/Tools/ProjectTools.cs", ["lifecycle", "stopping", "watchdog", "sessions", "attach", "prep"]),
+    ],
+)
+def test_the_split_lifecycle_and_sessions_classes_select_their_own_groups(repo: Path, changed: str, groups: list[str]) -> None:
+    _change(repo, changed)
+    assert _selected(_itest_groups(repo)) == groups
 
 
 def test_an_unknown_ref_stops_with_status_2_and_gits_message(repo: Path) -> None:
