@@ -61,7 +61,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
         + "refused, a new name starts another session, and a name whose session has ended is reused. The other tools take "
         + "session to pick one: pass the returned session on every call, since another agent's game can start at any time "
         + "and a call without one is then refused; list_sessions lists them.";
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     [McpServerTool(Name = "run_project", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
@@ -241,9 +241,13 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "on its folder (the Godot the headless tools keep running on a GDScript project) if it is idle, and "
             + "headlessHostStopped says whether one was stopped; a warm host busy with a headless call is left running. With "
             + "projectPath it stops that folder's warm headless host, waiting for a headless call running on it, and the session "
-            + "running there, if one does (with session too, both must name the same folder); when only a host ran there the "
-            + "result is {projectPath, headlessHostStopped}. A warm host holds its folder, so stop it this way before renaming "
-            + "or deleting the folder, as when removing a worktree."
+            + "running there, if one does (with session too, both must name the same folder). With projectPath and no session "
+            + "running there, it also clears a dead server's leftover override.cfg and armed.json: each is removed only when "
+            + "every godot-mcp server it names has exited, and an override.cfg without godot-mcp's marker is never touched. "
+            + "The result is then {projectPath, headlessHostStopped, overrideRemoved?, armedRemoved?, warning?}, the warning "
+            + "naming each file left in place and why; with nothing stopped or removed the call is refused with the same "
+            + "reasons. A warm host holds its folder, so stop it this way before renaming or deleting the folder, as when "
+            + "removing a worktree."
     )]
     public async Task<string> StopProjectAsync(
         [Description(SessionDescription)] string? session = null,

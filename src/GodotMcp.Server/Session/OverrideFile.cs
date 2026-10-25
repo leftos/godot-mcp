@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace GodotMcp.Server.Session;
@@ -135,6 +136,29 @@ internal static class OverrideFile
         return [.. Read(path).Owners.Where(owner => owner == OverrideOwner.Current || owner.IsAlive()).Distinct()];
     }
 
+    /// <summary>
+    /// Deletes the folder's marked file when it is stale: every owner it names has exited, or it names none. The bytes
+    /// deleted are the bytes judged, and a game starting on the folder still reads a file the judge keeps
+    /// (<see cref="LeftoverFile.RemoveIfStale(string, Func{string, LeftoverRemoval?}, Action)"/>). An owner entry that does
+    /// not read as an owner counts as live; an unmarked file is never deleted.
+    /// </summary>
+    public static LeftoverRemoval RemoveIfStale(string projectDir) => LeftoverFile.RemoveIfStale(PathIn(projectDir), KeepReason);
+
+    /// <summary>Why a marked file's text keeps it: the project's own file, a live owner or an unreadable one; null when it is stale.</summary>
+    private static LeftoverRemoval? KeepReason(string text)
+    {
+        int afterMarker = LineEnd(text, 0);
+        if (text[..afterMarker].TrimEnd() != Marker)
+        {
+            return new LeftoverRemoval(LeftoverState.NotOurs);
+        }
+
+        string second = text[afterMarker..LineEnd(text, afterMarker)].TrimEnd();
+        return second.StartsWith(OwnersPrefix, StringComparison.Ordinal)
+            ? LeftoverFile.KeepReason(second[OwnersPrefix.Length..].Split(',', StringSplitOptions.RemoveEmptyEntries))
+            : null;
+    }
+
     public static bool IsOurs(string path)
     {
         using StreamReader reader = new(path);
@@ -264,4 +288,153 @@ internal static class OverrideFile
 
     /// <summary>What a marked file sets: the bridge script path as written, the quiet and pad settings, and the unfocused window.</summary>
     private sealed record OverrideValues(string Bridge, bool Quiet, bool ShutOutRealGamepads, bool Unfocused);
+}
+
+/// <summary>What a stale-file removal (<see cref="OverrideFile.RemoveIfStale"/>, <see cref="ArmFile.RemoveIfStale"/>) did.</summary>
+internal enum LeftoverState
+{
+    /// <summary>There is no file.</summary>
+    Absent,
+
+    /// <summary>The file was stale and is deleted.</summary>
+    Removed,
+
+    /// <summary>The override.cfg has no godot-mcp marker: it is the project's own.</summary>
+    NotOurs,
+
+    /// <summary>Another process holds the file open.</summary>
+    InUse,
+
+    /// <summary>The file names an owner that still runs, another server's.</summary>
+    LiveOwner,
+
+    /// <summary>The file names this server among its owners: its own session or arm uses it.</summary>
+    OwnedHere,
+
+    /// <summary>The file names an entry that does not read as an owner, as a newer server's format would.</summary>
+    UnreadableOwner,
+
+    /// <summary>The file judged stale held other bytes when it was opened to be deleted.</summary>
+    Changed,
+}
+
+/// <summary>A stale-file removal's outcome and the owner that kept the file: a live owner's pid, or the unreadable entry.</summary>
+internal sealed record LeftoverRemoval(LeftoverState State, string? Owner = null);
+
+/// <summary>The judge-then-delete that <see cref="OverrideFile"/> and <see cref="ArmFile"/> share.</summary>
+internal static class LeftoverFile
+{
+    private const int SharingViolation = unchecked((int)0x80070020);
+    private const int LockViolation = unchecked((int)0x80070021);
+
+    /// <inheritdoc cref="RemoveIfStale(string, Func{string, LeftoverRemoval?}, Action)"/>
+    public static LeftoverRemoval RemoveIfStale(string path, Func<string, LeftoverRemoval?> keepReason) => RemoveIfStale(path, keepReason, () => { });
+
+    /// <summary>
+    /// Reads the file through a fully shared open and judges its text with no handle held, so a game starting on the folder
+    /// still reads a file the judge keeps. A file judged stale is opened again sharing only deletion, and deleted while that
+    /// handle is open only when it still holds the bytes judged; every godot-mcp writer rewrites the file in place, so a
+    /// write racing the delete fails and a write before it leaves the file changed. Between the byte compare and the delete,
+    /// another program may delete and re-create the path, or rename a file over it, since the handle shares deletion; that is
+    /// not prevented. godot-mcp's own writers cannot, since they write in place under the list's hold. A file another process
+    /// holds open is reported, not thrown.
+    /// </summary>
+    /// <param name="path">The file.</param>
+    /// <param name="keepReason">Why the file's text keeps it; null when it is stale.</param>
+    /// <param name="whileHeld">Run while the deleting handle is open, just before the delete.</param>
+    public static LeftoverRemoval RemoveIfStale(string path, Func<string, LeftoverRemoval?> keepReason, Action whileHeld)
+    {
+        if (Open(path, FileShare.ReadWrite | FileShare.Delete) is not { } shared)
+        {
+            return Unopened(path);
+        }
+
+        byte[] judged;
+        using (shared)
+        {
+            judged = ReadAll(shared);
+        }
+
+        if (keepReason(Decode(judged)) is { } kept)
+        {
+            return kept;
+        }
+
+        if (Open(path, FileShare.Delete) is not { } held)
+        {
+            return Unopened(path);
+        }
+
+        using (held)
+        {
+            if (!ReadAll(held).AsSpan().SequenceEqual(judged))
+            {
+                return new LeftoverRemoval(LeftoverState.Changed);
+            }
+
+            whileHeld();
+            File.Delete(path);
+            return new LeftoverRemoval(LeftoverState.Removed);
+        }
+    }
+
+    /// <summary>The file opened for reading with <paramref name="share"/>; null when it is missing or another handle refuses the open.</summary>
+    private static FileStream? Open(string path, FileShare share)
+    {
+        try
+        {
+            return new FileStream(path, FileMode.Open, FileAccess.Read, share);
+        }
+        catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return null;
+        }
+        catch (IOException e) when (e.HResult is SharingViolation or LockViolation)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Why <see cref="Open"/> gave nothing: the file is gone, else another handle holds it.</summary>
+    private static LeftoverRemoval Unopened(string path) => new(File.Exists(path) ? LeftoverState.InUse : LeftoverState.Absent);
+
+    /// <summary>Every byte of <paramref name="file"/> from its start.</summary>
+    private static byte[] ReadAll(FileStream file)
+    {
+        using MemoryStream bytes = new();
+        file.CopyTo(bytes);
+        return bytes.ToArray();
+    }
+
+    private static string Decode(byte[] bytes)
+    {
+        using StreamReader reader = new(new MemoryStream(bytes), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return reader.ReadToEnd();
+    }
+
+    /// <summary>
+    /// Why a file naming <paramref name="entries"/> is kept: its first live owner (this server's own, or another's pid), else
+    /// its first entry that does not read as an owner; null when every entry is an owner that has exited, or there are none.
+    /// </summary>
+    public static LeftoverRemoval? KeepReason(IEnumerable<string> entries)
+    {
+        string? unreadable = null;
+        foreach (string entry in entries)
+        {
+            if (!OverrideOwner.TryParse(entry, out OverrideOwner owner))
+            {
+                unreadable ??= entry.Trim();
+            }
+            else if (owner == OverrideOwner.Current)
+            {
+                return new LeftoverRemoval(LeftoverState.OwnedHere);
+            }
+            else if (owner.IsAlive())
+            {
+                return new LeftoverRemoval(LeftoverState.LiveOwner, owner.ProcessId.ToString(CultureInfo.InvariantCulture));
+            }
+        }
+
+        return unreadable is null ? null : new LeftoverRemoval(LeftoverState.UnreadableOwner, unreadable);
+    }
 }

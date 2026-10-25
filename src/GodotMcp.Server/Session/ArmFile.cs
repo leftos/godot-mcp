@@ -103,6 +103,39 @@ internal static class ArmFile
         }
     }
 
+    /// <summary>
+    /// Deletes the folder's file when it is stale: every owner it names has exited, it names none, or it is not JSON. The
+    /// bytes deleted are the bytes judged, and a game's bridge still reads a file the judge keeps
+    /// (<see cref="LeftoverFile.RemoveIfStale(string, Func{string, LeftoverRemoval?}, Action)"/>). An owner entry that does
+    /// not read as an owner counts as live.
+    /// </summary>
+    public static LeftoverRemoval RemoveIfStale(string projectDir) => LeftoverFile.RemoveIfStale(PathIn(projectDir), KeepReason);
+
+    /// <summary>Why the file's text keeps it: a live owner or an unreadable one; null when it is stale.</summary>
+    private static LeftoverRemoval? KeepReason(string text)
+    {
+        JsonNode? owners;
+        try
+        {
+            owners = (JsonNode.Parse(text) as JsonObject)?["owners"];
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return owners switch
+        {
+            null => null,
+            JsonArray listed => LeftoverFile.KeepReason(listed.Select(EntryText)),
+            _ => new LeftoverRemoval(LeftoverState.UnreadableOwner, owners.ToJsonString()),
+        };
+    }
+
+    /// <summary>An owners entry as text: a string's value, anything else as its JSON.</summary>
+    private static string EntryText(JsonNode? entry) =>
+        entry is JsonValue value && value.TryGetValue(out string? text) ? text : entry?.ToJsonString() ?? "null";
+
     /// <summary>The file's owners that still run, this server included; empty when there is no file or it is stale.</summary>
     public static IReadOnlyList<OverrideOwner> LiveOwners(string projectDir) =>
         Read(projectDir) is { } armed ? [.. armed.Owners.Where(owner => owner == OverrideOwner.Current || owner.IsAlive()).Distinct()] : [];

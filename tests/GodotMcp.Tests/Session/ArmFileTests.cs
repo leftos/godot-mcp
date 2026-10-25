@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
 using GodotMcp.TestSupport;
@@ -115,6 +116,63 @@ public sealed class ArmFileTests : IDisposable
 
         Assert.Equal([OverrideOwner.Current], ArmFile.Read(_project.Path)!.Owners);
     }
+
+    [Fact]
+    public void RemoveIfStaleDeletesAFileWhoseOwnersHaveExited()
+    {
+        WriteRaw($"{{\"quiet\":true,\"shutOutRealGamepads\":false,\"mute\":false,\"owners\":[\"{Dead}\"]}}");
+
+        Assert.Equal(new LeftoverRemoval(LeftoverState.Removed), ArmFile.RemoveIfStale(_project.Path));
+        Assert.False(File.Exists(ArmFile.PathIn(_project.Path)));
+    }
+
+    [Fact]
+    public void RemoveIfStaleDeletesAFileWithoutOwners()
+    {
+        WriteRaw("{\"quiet\":true,\"shutOutRealGamepads\":false,\"mute\":false}");
+
+        Assert.Equal(new LeftoverRemoval(LeftoverState.Removed), ArmFile.RemoveIfStale(_project.Path));
+        Assert.False(File.Exists(ArmFile.PathIn(_project.Path)));
+    }
+
+    [Fact]
+    public void RemoveIfStaleKeepsAFileALiveOwnerNames()
+    {
+        OverrideOwner foreign = StartForeignOwner();
+        WriteRaw($"{{\"quiet\":true,\"shutOutRealGamepads\":false,\"mute\":false,\"owners\":[\"{Dead}\",\"{foreign}\"]}}");
+
+        LeftoverRemoval removal = ArmFile.RemoveIfStale(_project.Path);
+
+        Assert.Equal(new LeftoverRemoval(LeftoverState.LiveOwner, foreign.ProcessId.ToString(CultureInfo.InvariantCulture)), removal);
+        Assert.True(File.Exists(ArmFile.PathIn(_project.Path)));
+    }
+
+    [Fact]
+    public void RemoveIfStaleKeepsAFileWithAnOwnerItCannotRead()
+    {
+        WriteRaw($"{{\"quiet\":true,\"shutOutRealGamepads\":false,\"mute\":false,\"owners\":[\"{Dead}\",{{\"pid\":7}}]}}");
+
+        Assert.Equal(new LeftoverRemoval(LeftoverState.UnreadableOwner, "{\"pid\":7}"), ArmFile.RemoveIfStale(_project.Path));
+        Assert.True(File.Exists(ArmFile.PathIn(_project.Path)));
+    }
+
+    [Fact]
+    public void RemoveIfStaleKeepsAFileAnotherHandleHoldsOpen()
+    {
+        WriteRaw($"{{\"quiet\":true,\"shutOutRealGamepads\":false,\"mute\":false,\"owners\":[\"{Dead}\"]}}");
+        string path = ArmFile.PathIn(_project.Path);
+
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            Assert.Equal(new LeftoverRemoval(LeftoverState.InUse), ArmFile.RemoveIfStale(_project.Path));
+        }
+
+        Assert.True(File.Exists(path));
+    }
+
+    [Fact]
+    public void RemoveIfStaleWithoutAFileFindsNothing() =>
+        Assert.Equal(new LeftoverRemoval(LeftoverState.Absent), ArmFile.RemoveIfStale(_project.Path));
 
     private void WriteRaw(string content)
     {

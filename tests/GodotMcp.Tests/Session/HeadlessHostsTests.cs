@@ -772,6 +772,24 @@ public sealed class HeadlessHostsTests : IDisposable
     }
 
     [Fact]
+    public async Task StopWithProjectPathStopsAHostAndRemovesALeftoverOverrideInOneCall()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string game = Game("game");
+        await RunAsync(game, cancellation);
+        FakeHost host = Assert.Single(_launched);
+        string leftover = OverrideFile.PathIn(game);
+        OverrideOwner dead = new(Environment.ProcessId, OverrideOwner.Current.StartTicks - 1);
+        File.WriteAllText(leftover, $"{OverrideFile.Marker}\n{OverrideFile.OwnersPrefix}{dead}\n[autoload]\n");
+
+        object stopped = await _registry.StopFolderAsync(game, null, cancellation);
+
+        Assert.Equal(new HostStopResult(game, HeadlessHostStopped: true) { OverrideRemoved = true }, stopped);
+        Assert.True(host.ShutdownAsked && host.Disposed, "the host was stopped and let go of");
+        Assert.False(File.Exists(leftover));
+    }
+
+    [Fact]
     public async Task TwoStartsAtThreeLiveHostsStopOneSoNoMoreThanFourLive()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

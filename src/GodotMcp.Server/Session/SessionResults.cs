@@ -237,8 +237,24 @@ internal sealed record ProcessRestartResult(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ReadyResult? Ready = null
 );
 
-/// <summary>What stop_project returns when its projectPath had a warm headless host and no session running there.</summary>
-internal sealed record HostStopResult(string ProjectPath, bool HeadlessHostStopped);
+/// <summary>
+/// What stop_project returns when its projectPath had no session running there: whether it stopped a warm headless host, and
+/// whether it removed a dead server's leftover override.cfg and armed.json.
+/// </summary>
+internal sealed record HostStopResult(string ProjectPath, bool HeadlessHostStopped)
+{
+    /// <summary>Whether a stale marked override.cfg was removed; left out when false.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool OverrideRemoved { get; init; }
+
+    /// <summary>Whether a stale armed.json was removed; left out when false.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ArmedRemoved { get; init; }
+
+    /// <summary>Why a file was left in place, one clause a file joined with "; "; left out when none was.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public string? Warning { get; init; }
+}
 
 /// <summary>A game attach_project reached: its bridge said hello, and whether it was told to park its window.</summary>
 internal sealed record AttachResult(string Session, string ProjectPath, bool Quiet)

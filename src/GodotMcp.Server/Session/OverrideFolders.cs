@@ -79,6 +79,61 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
     public void RemoveStaleOverride(string projectDir) => Hold($"clearing {projectDir}", () => SweepOverride(projectDir));
 
     /// <summary>
+    /// Deletes the folder's stale marked override.cfg and its stale armed.json (<see cref="OverrideFile.RemoveIfStale"/>,
+    /// <see cref="ArmFile.RemoveIfStale"/>) under the list's hold, never changing the list. When the list will not open it
+    /// touches nothing. A file left in place is reported with the reason; a file whose removal fails is reported as the
+    /// clear's failure, after what was already removed, and the clear stops there.
+    /// </summary>
+    public LeftoverClear ClearStale(string projectDir)
+    {
+        using FileStream? list = TryOpen($"clearing the leftovers in {projectDir}");
+        if (list is null)
+        {
+            return new LeftoverClear(false, false, ["the owners list could not be opened (busy, or see the server's stderr), nothing removed"], null);
+        }
+
+        (LeftoverRemoval? overrideFile, LeftoverFailure? failure) = TryRemove(OverrideFile.FileName, OverrideFile.RemoveIfStale, projectDir);
+        if (overrideFile is null)
+        {
+            return new LeftoverClear(false, false, [], failure);
+        }
+
+        bool overrideRemoved = overrideFile.State == LeftoverState.Removed;
+        string? overrideLeft = LeftReason(OverrideFile.FileName, overrideFile);
+        (LeftoverRemoval? armFile, failure) = TryRemove("armed.json", ArmFile.RemoveIfStale, projectDir);
+        string?[] reasons = [overrideLeft, armFile is null ? null : LeftReason("armed.json", armFile)];
+        return new LeftoverClear(overrideRemoved, armFile?.State == LeftoverState.Removed, [.. reasons.OfType<string>()], failure);
+    }
+
+    /// <summary>Runs one file's removal; its outcome, or the failure it threw, reported with its folder.</summary>
+    private (LeftoverRemoval? Removal, LeftoverFailure? Failure) TryRemove(string file, Func<string, LeftoverRemoval> remove, string projectDir)
+    {
+        try
+        {
+            return (remove(projectDir), null);
+        }
+        catch (Exception e) when (IsFileSystemFailure(e))
+        {
+            errors.WriteLine($"godot-mcp: removing the leftover {file} in {projectDir} for stop_project failed: {Describe(e)}");
+            return (null, new LeftoverFailure(file, e));
+        }
+    }
+
+    /// <summary>Why <paramref name="file"/> was left in place; null when there was none or it was removed.</summary>
+    private static string? LeftReason(string file, LeftoverRemoval removal) =>
+        removal.State switch
+        {
+            LeftoverState.NotOurs => $"{file} is the project's own (no godot-mcp marker), left in place",
+            LeftoverState.InUse => $"{file} is open in another process (a running Godot?), left in place",
+            LeftoverState.LiveOwner => $"{file} names a live owner (pid {removal.Owner}), left in place",
+            LeftoverState.OwnedHere => $"{file} belongs to this server's own session or arm, left in place",
+            LeftoverState.Changed => $"{file} changed while it was judged, left in place",
+            LeftoverState.UnreadableOwner => $"{file} names an owner this server cannot read ({removal.Owner}), left in place",
+            LeftoverState.Absent or LeftoverState.Removed => null,
+            _ => throw new ArgumentOutOfRangeException(nameof(removal), removal.State, "not a leftover state"),
+        };
+
+    /// <summary>
     /// Deletes the marked override.cfg and the armed.json of every listed folder whose owners have all exited, and drops from
     /// the list every folder that no longer holds either (an unmarked override.cfg is never touched). Never throws: a failure
     /// is reported with its folder, and a folder whose file could not be removed stays listed for the next sweep.
@@ -244,3 +299,12 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
 
     private static string Describe(Exception e) => $"{e.GetType().Name}: {e.Message}";
 }
+
+/// <summary>
+/// What <see cref="OverrideFolders.ClearStale"/> removed, why each file it left stayed (one clause a file), and the removal
+/// that failed, when one did.
+/// </summary>
+internal sealed record LeftoverClear(bool OverrideRemoved, bool ArmedRemoved, IReadOnlyList<string> Left, LeftoverFailure? Failure);
+
+/// <summary>A leftover file whose removal threw, and what it threw.</summary>
+internal sealed record LeftoverFailure(string File, Exception Error);

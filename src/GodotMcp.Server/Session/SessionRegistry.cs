@@ -345,10 +345,13 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// live one on the folder) and the folder's warm headless host, waiting for a request running on it under the folder's
     /// prep lock, so the folder can be renamed or deleted.
     /// </summary>
-    /// <returns>The session's <see cref="StopResult"/>, or a <see cref="HostStopResult"/> when only a host ran there.</returns>
+    /// <returns>
+    /// The session's <see cref="StopResult"/>, or a <see cref="HostStopResult"/> when no session ran there: the host stopped and
+    /// the leftover files removed.
+    /// </returns>
     /// <exception cref="SessionException">
     /// The folder holds no project, the named session runs another folder, several live sessions run there, the session never
-    /// reached a game, or neither a session nor a host runs there.
+    /// reached a game, or no session runs there and neither a host was stopped nor a leftover file removed.
     /// </exception>
     public async Task<object> StopFolderAsync(string projectPath, string? session, CancellationToken cancellationToken)
     {
@@ -360,10 +363,77 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             return stopped with { HeadlessHostStopped = await StopHeadlessHostAsync(projectDir, cancellationToken) };
         }
 
-        return await StopHeadlessHostAsync(projectDir, cancellationToken)
-            ? new HostStopResult(projectDir, HeadlessHostStopped: true)
-            : throw new SessionException($"No Godot session or warm headless host runs in {projectDir}.");
+        return await StopIdleFolderAsync(projectDir, cancellationToken);
     }
+
+    /// <summary>
+    /// stop_project on a folder no session runs: under the folder's prep lock, stops its warm headless host if one runs, then
+    /// clears a dead server's leftover override.cfg and armed.json (<see cref="OverrideFolders.ClearStale"/>).
+    /// </summary>
+    /// <exception cref="SessionException">Nothing was stopped or removed; names why a file was left in place.</exception>
+    private async Task<HostStopResult> StopIdleFolderAsync(string projectDir, CancellationToken cancellationToken)
+    {
+        SemaphoreSlim folderLock = PrepLock(projectDir);
+        await folderLock.WaitAsync(cancellationToken);
+        bool hostStopped;
+        LeftoverClear cleared;
+        try
+        {
+            hostStopped = Volatile.Read(ref _headlessHosts) is { } hosts && hosts.StopFolder(projectDir, "stop_project");
+            cleared = OverrideFolders.ClearStale(projectDir);
+        }
+        finally
+        {
+            folderLock.Release();
+        }
+
+        if (cleared.Failure is { } failure)
+        {
+            throw new SessionException(DescribeFailedClear(projectDir, hostStopped, cleared), failure.Error);
+        }
+
+        string? left = cleared.Left.Count > 0 ? string.Join("; ", cleared.Left) : null;
+        if (!hostStopped && !cleared.OverrideRemoved && !cleared.ArmedRemoved)
+        {
+            string refusal = $"No Godot session or warm headless host runs in {projectDir}.";
+            throw new SessionException(left is null ? refusal : $"{refusal} {char.ToUpperInvariant(left[0])}{left[1..]}.");
+        }
+
+        return new HostStopResult(projectDir, hostStopped)
+        {
+            OverrideRemoved = cleared.OverrideRemoved,
+            ArmedRemoved = cleared.ArmedRemoved,
+            Warning = left,
+        };
+    }
+
+    /// <summary>
+    /// A failed clear's refusal: what the stop had already done in the folder, then which removal failed and why, then why
+    /// each file the clear left stayed.
+    /// </summary>
+    private static string DescribeFailedClear(string projectDir, bool hostStopped, LeftoverClear cleared)
+    {
+        LeftoverFailure failure = cleared.Failure!;
+        List<string> done = [];
+        if (hostStopped)
+        {
+            done.Add("stopped the warm headless host");
+        }
+
+        if (cleared.OverrideRemoved)
+        {
+            done.Add($"removed {OverrideFile.FileName}");
+        }
+
+        string failed = $"clearing {failure.File}";
+        string text =
+            done.Count == 0
+                ? $"{Capitalised(failed)} in {projectDir} failed: {failure.Error.Message}"
+                : $"{Capitalised(string.Join(" and ", done))} in {projectDir}, then {failed} failed: {failure.Error.Message}";
+        return cleared.Left.Count == 0 ? text : $"{text.TrimEnd('.')}. {Capitalised(string.Join("; ", cleared.Left))}.";
+    }
+
+    private static string Capitalised(string text) => char.ToUpperInvariant(text[0]) + text[1..];
 
     /// <summary>
     /// Restarts the named or only session with the request it was launched with: a run's last launch, or a process session's
