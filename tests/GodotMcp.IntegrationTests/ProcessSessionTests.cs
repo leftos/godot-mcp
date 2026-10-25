@@ -38,6 +38,33 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         }}
         """;
 
+    // A prep wrapper taking {log}, then "--", then the command: it records the command it received, runs it with its output in
+    // {log}, and exits with its code.
+    private const string PrepWrapperScript =
+        "$log = $args[0]\n"
+        + "$command = @($args | Select-Object -Skip 1)\n"
+        + "if ($command.Count -gt 0 -and $command[0] -eq '--') { $command = @($command | Select-Object -Skip 1) }\n"
+        + "Add-Content -LiteralPath (Join-Path $PSScriptRoot 'prep-wrapper-ran.txt') -Value ($command -join ' ')\n"
+        + "& $command[0] @($command | Select-Object -Skip 1) *> $log\n"
+        + "exit $LASTEXITCODE\n";
+
+    // A prep that leaves its process's marker where its own folder points, holding the variable the profile sets for the
+    // process; once the test writes the file it names, its next run fails instead, so a restart's prep can be made to fail.
+    private const string PrepStepScript =
+        "if (Test-Path -LiteralPath 'prep-fail-once.txt') {\n"
+        + "  [Console]::Error.WriteLine('the prep failed on its second run')\n"
+        + "  exit 5\n"
+        + "}\n"
+        + "Set-Content -LiteralPath 'prep-marker.txt' -Value $env:PREP_ENV\n";
+
+    // A process that prints whether the marker is in its own folder, ready either way, and then stays up as the ticker does.
+    private const string PrepCheckScript =
+        "if (Test-Path -LiteralPath 'prep-marker.txt') { 'prep-marker: yes' } else { 'prep-marker: no' }\n"
+        + "while ($true) { Start-Sleep -Milliseconds 200 }\n";
+
+    // A prep that fails, as a broken build would.
+    private const string PrepFailsScript = "[Console]::Error.WriteLine('prep failed')\nexit 3\n";
+
     private const string TickerLine = "ticker \\d+";
 
     // The probe's SmallButton counts its presses in press_count (tests/fixtures/InputProbe/main.gd).
@@ -374,6 +401,144 @@ public sealed class ProcessSessionTests : IAsyncDisposable
         await _project.StopProjectAsync("game", cancellationToken: cancellation);
     }
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task APrepRunsThroughThePrepWrapperBeforeTheStartAndAgainOnRestart()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        WritePreppingProfile();
+        string folder = Path.Combine(_probe.Directory, "server");
+        string marker = Path.Combine(folder, "prep-marker.txt");
+        string log = Path.Combine(ProjectPrep.LogFolder(_probe.Directory), $"process-{Session}.prep.log");
+        string wrapperLog = Path.Combine(ProjectPrep.LogFolder(_probe.Directory), $"process-{Session}.prep.wrapper.log");
+        string ran = Path.Combine(_probe.Directory, "prep-wrapper-ran.txt");
+
+        JsonObject started = JsonNode
+            .Parse(
+                await _process.RunProcessAsync(
+                    _probe.Directory,
+                    "prepped",
+                    options: new ProcessRunOptions(Session: Session),
+                    cancellationToken: cancellation
+                )
+            )!
+            .AsObject();
+
+        // The process's own first line reports the marker, so it was there before the process started.
+        Assert.Equal("prep-marker: yes", started["ready"]!["line"]!.GetValue<string>());
+        JsonObject prep = started["prep"]!.AsObject();
+        Assert.Equal(0, prep["exit"]!.GetValue<int>());
+        Assert.Equal(log, prep["log"]!.GetValue<string>());
+        Assert.Equal(["pwsh", "-NoProfile", "-File", "prep-step.ps1"], prep["command"]!.AsArray().Select(node => node!.GetValue<string>()));
+
+        // Wrapped, the prep still ran in the process's own folder, with the variables the profile sets for the process.
+        Assert.True(File.Exists(marker), $"the prep wrote no marker in {folder}");
+        Assert.False(File.Exists(Path.Combine(_probe.Directory, "prep-marker.txt")), "the prep ran in the project folder, not in the process's cwd");
+        Assert.Equal("from-profile", File.ReadAllText(marker).Trim());
+        Assert.True(File.Exists(log), $"the prep log {log} was not written");
+        Assert.True(File.Exists(wrapperLog), $"the wrapper's own log {wrapperLog} was not written");
+        string[] firstRan = File.ReadAllLines(ran);
+        Assert.Single(firstRan);
+        Assert.Contains("prep-step.ps1", firstRan[0], StringComparison.Ordinal);
+
+        File.Delete(marker);
+
+        JsonObject restarted = JsonNode.Parse(await _project.RestartProjectAsync(session: Session, cancellationToken: cancellation))!.AsObject();
+
+        // The marker was gone, so the restarted process's own line says its prep ran again before the relaunch.
+        Assert.Equal("prep-marker: yes", restarted["ready"]!["line"]!.GetValue<string>());
+        Assert.Equal(0, restarted["prep"]!["exit"]!.GetValue<int>());
+        Assert.Equal(log, restarted["prep"]!["log"]!.GetValue<string>());
+        Assert.Equal("from-profile", File.ReadAllText(marker).Trim());
+        string[] twiceRan = File.ReadAllLines(ran);
+        Assert.Equal(2, twiceRan.Length);
+        Assert.Contains("prep-step.ps1", twiceRan[1], StringComparison.Ordinal);
+
+        await _project.StopProjectAsync(Session, cancellationToken: cancellation);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task APrepWithoutAPrepWrapperRunsUnwrapped()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        WritePreppingProfile(withWrapper: false);
+        string marker = Path.Combine(_probe.Directory, "server", "prep-marker.txt");
+        string log = Path.Combine(ProjectPrep.LogFolder(_probe.Directory), $"process-{Session}.prep.log");
+
+        JsonObject started = JsonNode
+            .Parse(
+                await _process.RunProcessAsync(
+                    _probe.Directory,
+                    "prepped",
+                    options: new ProcessRunOptions(Session: Session),
+                    cancellationToken: cancellation
+                )
+            )!
+            .AsObject();
+
+        Assert.Equal("prep-marker: yes", started["ready"]!["line"]!.GetValue<string>());
+        Assert.Equal(0, started["prep"]!["exit"]!.GetValue<int>());
+        Assert.Equal(log, started["prep"]!["log"]!.GetValue<string>());
+        Assert.Equal("from-profile", File.ReadAllText(marker).Trim());
+        Assert.True(File.Exists(log), $"the prep log {log} was not written");
+        Assert.False(File.Exists(Path.Combine(_probe.Directory, "prep-wrapper-ran.txt")), "a prep wrapper ran although the profile names none");
+
+        await _project.StopProjectAsync(Session, cancellationToken: cancellation);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ARestartWhosePrepFailsLeavesTheSessionStopped()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        WritePreppingProfile();
+        string log = Path.Combine(ProjectPrep.LogFolder(_probe.Directory), $"process-{Session}.prep.log");
+
+        JsonObject started = JsonNode
+            .Parse(
+                await _process.RunProcessAsync(
+                    _probe.Directory,
+                    "prepped",
+                    options: new ProcessRunOptions(Session: Session),
+                    cancellationToken: cancellation
+                )
+            )!
+            .AsObject();
+        Assert.Equal("prep-marker: yes", started["ready"]!["line"]!.GetValue<string>());
+
+        File.WriteAllText(Path.Combine(_probe.Directory, "server", "prep-fail-once.txt"), string.Empty);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _project.RestartProjectAsync(session: Session, cancellationToken: cancellation)
+        );
+
+        Assert.Equal($"The prep of process {Session} exited 5, so it was not started. Its log: {log}", refused.Message);
+        Assert.False(ListSession(Session, includeStopped: true)["live"]!.GetValue<bool>());
+
+        JsonObject stopped = JsonNode.Parse(await _project.StopProjectAsync(Session, cancellationToken: cancellation))!.AsObject();
+        Assert.Equal("process", stopped["kind"]!.GetValue<string>());
+        Assert.True(stopped["alreadyExited"]!.GetValue<bool>());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AFailingPrepRefusesTheStartAndLeavesNoSession()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        WritePreppingProfile();
+        string log = Path.Combine(ProjectPrep.LogFolder(_probe.Directory), $"process-{Session}.prep.log");
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _process.RunProcessAsync(
+                _probe.Directory,
+                "failingprep",
+                options: new ProcessRunOptions(Session: Session),
+                cancellationToken: cancellation
+            )
+        );
+
+        Assert.Equal($"The prep of process {Session} exited 3, so it was not started. Its log: {log}", refused.Message);
+        Assert.True(File.Exists(log), $"the prep log {log} was not written");
+        Assert.Empty(JsonNode.Parse(_project.ListSessions(includeStopped: true))!["sessions"]!.AsArray());
+    }
+
     private static BatchStep ClickOn(string? session)
     {
         JsonObject args = new() { ["target"] = new JsonObject { ["element"] = "SmallButton" } };
@@ -389,6 +554,47 @@ public sealed class ProcessSessionTests : IAsyncDisposable
 
     private Task WriteProfileAsync(CancellationToken cancellation) =>
         File.WriteAllTextAsync(Path.Combine(_probe.Directory, ProjectProfile.FileName), Profile, cancellation);
+
+    // A profile whose processes run in a "server" subfolder and prep there: the prep's marker and the variable it holds show
+    // the folder and the environment the prep ran with. The first process prep is wrapped when withWrapper is set.
+    private void WritePreppingProfile(bool withWrapper = true)
+    {
+        string folder = Path.Combine(_probe.Directory, "server");
+        Directory.CreateDirectory(folder);
+        // Absolute, since a wrapped prep runs its wrapper in the process's cwd, not in the project folder.
+        string wrapperPath = Path.Combine(_probe.Directory, "prep-wrapper.ps1").Replace('\\', '/');
+        string wrapper = withWrapper
+            ? $"\"prepWrapper\": [\"pwsh\", \"-NoProfile\", \"-File\", \"{wrapperPath}\", \"{{log}}\", \"--\"],"
+            : string.Empty;
+        File.WriteAllText(
+            Path.Combine(_probe.Directory, ProjectProfile.FileName),
+            $$"""
+            {
+              {{wrapper}}
+              "processes": {
+                "prepped": {
+                  "command": ["pwsh", "-NoProfile", "-File", "prep-check.ps1"],
+                  "cwd": "server",
+                  "env": {"PREP_ENV": "from-profile"},
+                  "prep": ["pwsh", "-NoProfile", "-File", "prep-step.ps1"],
+                  "ready": {"output": "prep-marker: (yes|no)"},
+                  "description": "prints whether its prep ran before it started"
+                },
+                "failingprep": {
+                  "command": ["pwsh", "-NoProfile", "-File", "prep-check.ps1"],
+                  "cwd": "server",
+                  "prep": ["pwsh", "-NoProfile", "-File", "prep-fails.ps1"],
+                  "description": "a prep that exits 3"
+                }
+              }
+            }
+            """
+        );
+        File.WriteAllText(Path.Combine(_probe.Directory, "prep-wrapper.ps1"), PrepWrapperScript);
+        File.WriteAllText(Path.Combine(folder, "prep-step.ps1"), PrepStepScript);
+        File.WriteAllText(Path.Combine(folder, "prep-check.ps1"), PrepCheckScript);
+        File.WriteAllText(Path.Combine(folder, "prep-fails.ps1"), PrepFailsScript);
+    }
 
     private async Task WaitUntilNotLiveAsync(string session)
     {

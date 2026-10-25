@@ -12,6 +12,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `run_scratches` takes `ceilings` in its options and the profile's `scratch` section, giving a scene its own kill ceiling in place of the one its paces derive.
 - `run_project`, `restart_project` and `get_debug_output` return `log`, a file holding the run's whole output past the 500-line buffers.
 - The profile's `scratch.setup` declares a scene's setup steps, which a partial `run_scratches` run always plays and reports as `setup`.
+- A process profile takes `prep`, a build command `run_process` and `restart_project` run through the project's `prepWrapper` before starting the process.
 - `scratch_status` and `run_scratches` take `only: "red"` to list only each scene's red steps, keeping every scene's verdict line.
 
 ### Changed

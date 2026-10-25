@@ -501,6 +501,58 @@ internal static class ProjectPrep
             : throw new SessionException($"The Godot import of {projectDir} exited {imported.ExitCode}, so the game was not started. Its log: {log}");
     }
 
+    /// <summary>
+    /// A process's <c>prep</c>: the command run once, through the project's prepWrapper when it names one, before the process
+    /// starts, with the build's ceiling and a log of its own beside the process's. Wrapped or not, it runs in the process's own
+    /// folder and with the variables the profile sets for the process.
+    /// </summary>
+    /// <param name="projectDir">The folder holding the godot-mcp.json: the prep's log folder and its wrapper's working directory.</param>
+    /// <param name="session">The process session the prep runs before, as its log and its refusals name it.</param>
+    /// <param name="command">The profile's <c>prep</c>; its program is resolved as the process's own is.</param>
+    /// <param name="cwd">The folder the process runs in, which its prep runs in too.</param>
+    /// <param name="env">The variables the profile sets for the process, which its prep runs with too.</param>
+    /// <param name="logger">Where the prep's process is logged.</param>
+    /// <param name="cancellationToken">Ends the prep when the call was cancelled.</param>
+    /// <exception cref="SessionException">
+    /// The prep could not be started, was stopped, exited non-zero, or the prep wrapper stopped it.
+    /// </exception>
+    internal static async Task<ProcessPrepResult> RunProcessPrepAsync(
+        string projectDir,
+        string session,
+        IReadOnlyList<string> command,
+        string cwd,
+        IReadOnlyDictionary<string, string> env,
+        ILogger logger,
+        CancellationToken cancellationToken
+    )
+    {
+        string log = Path.Combine(LogFolder(projectDir), $"process-{session}.prep.log");
+        IReadOnlyList<string> argv = [PrepWrapper.ResolveProgram(command[0], projectDir), .. command.Skip(1)];
+        ToolProcessRequest request = new(argv[0], [.. argv.Skip(1)], cwd, log, Ceiling) { SetVariables = env };
+        var wrapper = PrepWrapper.Read(projectDir);
+        // The wrapper runs from the project folder, so the prep's own command gets that folder back: a build's relative paths
+        // and a bare script name need the process's cwd, wrapped or not.
+        ToolProcessRequest step = wrapper is null ? request : wrapper.Wrap(request) with { WorkingDirectory = cwd };
+        string tool = wrapper is null ? $"the prep of process {session}" : $"The prepWrapper of {ProjectProfile.FileName}";
+        ToolProcessResult ran = await RunToolAsync(step, tool, logger, cancellationToken);
+        if (ran.WasKilled)
+        {
+            throw new SessionException(
+                $"The prep of process {session} did not finish {ran.KillPhrase}, so it was stopped with its whole process tree "
+                    + $"and the process was not started. Its log: {log}"
+            );
+        }
+
+        if (wrapper is not null && PrepWrapper.Stopped(ran))
+        {
+            throw new SessionException(wrapper.StoppedNote($"the prep of process {session}", log));
+        }
+
+        return ran.ExitCode == 0
+            ? new ProcessPrepResult(argv, ran.ExitCode, (long)ran.Elapsed.TotalMilliseconds, log)
+            : throw new SessionException($"The prep of process {session} exited {ran.ExitCode}, so it was not started. Its log: {log}");
+    }
+
     /// <summary>Runs a prep process, through the prep wrapper when the project names one.</summary>
     /// <exception cref="SessionException">The process, or the wrapper, could not be started.</exception>
     private static Task<ToolProcessResult> RunStepAsync(

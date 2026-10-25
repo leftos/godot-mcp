@@ -233,8 +233,8 @@ internal sealed record ProcessStopResult(string Session, string ProjectPath, str
 
 /// <summary>
 /// How restart_project restarted a process session: the new process, the one it replaced and that one's exit code (null when
-/// the kill-on-close job had to end it, since that code is not the process's own), the command started again, its log, and
-/// the ready line it met when it waits on one.
+/// the kill-on-close job had to end it, since that code is not the process's own), the command started again, its log, the
+/// ready line it met when it waits on one, and the prep it ran again before the relaunch.
 /// </summary>
 internal sealed record ProcessRestartResult(
     string Session,
@@ -245,8 +245,12 @@ internal sealed record ProcessRestartResult(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PreviousExitCode,
     IReadOnlyList<string> Command,
     string Log,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ReadyResult? Ready = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ReadyResult? Ready = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProcessPrepResult? Prep = null
 );
+
+/// <summary>A process's prep: the command it ran, its exit code, how long it took in milliseconds, and the log its output went to.</summary>
+internal sealed record ProcessPrepResult(IReadOnlyList<string> Command, int Exit, long Ms, string Log);
 
 /// <summary>
 /// What stop_project returns when its projectPath had no session running there: whether it stopped a warm headless host, and

@@ -18,8 +18,17 @@ internal sealed partial class GodotSession
     private ToolProcess.Running? _process;
     private ProcessLaunch? _launch;
 
-    /// <summary>The launch a process session keeps, so a restart starts the same command and waits on the same ready line.</summary>
-    private sealed record ProcessLaunch(string Key, ProcessProfile Profile, IReadOnlyList<string> Command, ReadyProfile? Ready);
+    /// <summary>
+    /// The launch a process session keeps, so a restart runs the same prep again, starts the same command and waits on the
+    /// same ready line; the prep is null when the profile declares none.
+    /// </summary>
+    private sealed record ProcessLaunch(
+        string Key,
+        ProcessProfile Profile,
+        IReadOnlyList<string> Command,
+        ReadyProfile? Ready,
+        Func<CancellationToken, Task<ProcessPrepResult>>? Prep
+    );
 
     /// <summary>
     /// The program a process session runs, as the refusals name it: its file name without the extension, e.g. "dotnet"; null
@@ -68,6 +77,10 @@ internal sealed partial class GodotSession
     /// <param name="command">The program resolved and its arguments, as the process is started.</param>
     /// <param name="ready">The line to wait for before returning; null for a start that returns at once.</param>
     /// <param name="cancellationToken">Refuses the start when the call was cancelled.</param>
+    /// <param name="prep">
+    /// The prep the profile declares, which the caller runs before this start and which a restart runs again first; null when
+    /// it declares none.
+    /// </param>
     /// <exception cref="SessionException">
     /// The program could not be started, the process exited before ready, or its ready timeout passed.
     /// </exception>
@@ -76,7 +89,8 @@ internal sealed partial class GodotSession
         ProcessProfile profile,
         IReadOnlyList<string> command,
         ReadyProfile? ready,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        Func<CancellationToken, Task<ProcessPrepResult>>? prep = null
     )
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -106,7 +120,7 @@ internal sealed partial class GodotSession
 
         // The session owns the process before anything can watch it, so a failure from here leaves a session stop_project can end.
         _process = process;
-        ProcessLaunch launch = new(key, profile, [.. command], ready);
+        ProcessLaunch launch = new(key, profile, [.. command], ready, prep);
         _launch = launch;
         ProcessId = process.Process.Id;
         ProcessProgram = ProgramName(command[0]);
@@ -229,9 +243,9 @@ internal sealed partial class GodotSession
     }
 
     /// <summary>
-    /// Under the session's gate: stops the process it runs (or the one that already ended), starts its stored launch again,
-    /// waiting on the same ready line, and lets go of the old handle once the new one is in place. A start that fails leaves
-    /// the old handle, so the session stays stoppable; a ready refusal leaves it listed as stopped with its output.
+    /// Under the session's gate: stops the process it runs (or the one that already ended), runs the launch's prep again,
+    /// starts its stored command, waiting on the same ready line, and lets go of the old handle once the new one is in place. A
+    /// start that fails leaves the old handle, so the session stays stoppable; a prep or ready refusal leaves it stopped.
     /// </summary>
     /// <exception cref="SessionException">The session never started a process, or the new process failed its ready wait.</exception>
     internal async Task<ProcessRestartResult> RestartProcessAsync(CancellationToken cancellationToken)
@@ -248,12 +262,14 @@ internal sealed partial class GodotSession
                 previous.CloseLog();
                 try
                 {
+                    ProcessPrepResult? prepared = await RunPrepAsync(launch, cancellationToken);
                     (int processId, string log, ReadyResult? ready) = await StartProcess(
                         launch.Key,
                         launch.Profile,
                         launch.Command,
                         launch.Ready,
-                        cancellationToken
+                        cancellationToken,
+                        launch.Prep
                     );
                     return new ProcessRestartResult(
                         Name,
@@ -265,7 +281,10 @@ internal sealed partial class GodotSession
                         launch.Command,
                         log,
                         ready
-                    );
+                    )
+                    {
+                        Prep = prepared,
+                    };
                 }
                 finally
                 {
@@ -286,6 +305,10 @@ internal sealed partial class GodotSession
             _pending = false;
         }
     }
+
+    /// <summary>A launch's prep run again before its restart, under the folder's prep lock; null when the profile declares none.</summary>
+    private static async Task<ProcessPrepResult?> RunPrepAsync(ProcessLaunch launch, CancellationToken cancellationToken) =>
+        launch.Prep is null ? null : await launch.Prep(cancellationToken);
 
     /// <summary>Ends a process session at the server's exit: closes its job and waits for the process to go.</summary>
     private async Task ShutdownProcessAsync()

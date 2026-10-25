@@ -41,6 +41,7 @@ internal sealed partial class ProjectProfile
 
     private const string TopLevel = "top level";
     private const string PrepWrapperKey = "prepWrapper";
+    private const string PrepKey = "prep";
     private const string ScratchKey = "scratch";
     private const string ProcessesKey = "processes";
     private static readonly string[] TopLevelKeys =
@@ -57,7 +58,7 @@ internal sealed partial class ProjectProfile
     ];
     private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "session", "description"];
     private static readonly string[] ScratchKeys = ["folder", "userArgs", "engineArgs", "pace", "ceilings", "setup", "known", "patterns", "parallel"];
-    private static readonly string[] ProcessKeys = ["command", "cwd", "env", "ready", "description"];
+    private static readonly string[] ProcessKeys = ["command", "cwd", "env", "ready", "description", PrepKey];
     private static readonly string[] ReadyKeys = ["output", "timeoutMs"];
     private const string StepsKey = "steps";
     private const string TimeScaleKey = "timeScale";
@@ -407,8 +408,8 @@ internal sealed partial class ProjectProfile
     }
 
     /// <summary>
-    /// The <c>processes</c> section: each process's command, folder, environment, ready line and description, keyed by its name
-    /// in file order; empty when the key is absent.
+    /// The <c>processes</c> section: each process's command, folder, environment, ready line, description and prep command,
+    /// keyed by its name in file order; empty when the key is absent.
     /// </summary>
     private static Dictionary<string, ProcessProfile> ReadProcesses(Dictionary<string, JsonElement> keys, Place top, string projectDir)
     {
@@ -423,11 +424,12 @@ internal sealed partial class ProjectProfile
             Place place = new(top.Path, $"{ProcessesKey}.{entry.Name}");
             Dictionary<string, JsonElement> process = Keys(entry.Value, ProcessKeys, place);
             ProcessProfile read = new(
-                ReadCommand(process, place),
+                ReadCommand(process, place, "command"),
                 ReadCwd(process, place, projectDir),
                 ReadEnvironment(process, place, entry.Name),
                 ReadReady(process, place),
-                ReadProcessDescription(process, place)
+                ReadProcessDescription(process, place),
+                ReadPrep(process, place)
             );
             if (!processes.TryAdd(entry.Name, read))
             {
@@ -438,30 +440,37 @@ internal sealed partial class ProjectProfile
         return processes;
     }
 
-    /// <summary>A process's <c>command</c>: a non-empty array of non-empty strings, the program and then its arguments.</summary>
-    private static string[] ReadCommand(Dictionary<string, JsonElement> keys, Place place)
+    /// <summary>A process's <c>command</c> or <c>prep</c>: a non-empty array of non-empty strings, the program and then its arguments.</summary>
+    private static string[] ReadCommand(Dictionary<string, JsonElement> keys, Place place, string key)
     {
-        if (!keys.TryGetValue("command", out JsonElement value))
+        if (!keys.TryGetValue(key, out JsonElement value))
         {
-            throw Refused(place, "\"command\" is missing; a process needs the program and then its arguments. Add it");
+            throw Refused(place, $"\"{key}\" is missing; a process needs the program and then its arguments. Add it");
         }
 
-        const string Shape = "\"command\" must be a non-empty array of non-empty strings, the program and then its arguments";
+        string shape = $"\"{key}\" must be a non-empty array of non-empty strings, the program and then its arguments";
         if (value.ValueKind != JsonValueKind.Array)
         {
-            throw Refused(place, $"{Shape}; it is {Describe(value.ValueKind)}");
+            throw Refused(place, $"{shape}; it is {Describe(value.ValueKind)}");
         }
 
         List<string> command = [];
         foreach (JsonElement item in value.EnumerateArray())
         {
             string element =
-                item.ValueKind == JsonValueKind.String ? item.GetString()! : throw Refused(place, $"{Shape}; it holds {Describe(item.ValueKind)}");
-            command.Add(element.Length > 0 ? element : throw Refused(place, $"{Shape}; its item {command.Count + 1} is an empty string"));
+                item.ValueKind == JsonValueKind.String ? item.GetString()! : throw Refused(place, $"{shape}; it holds {Describe(item.ValueKind)}");
+            command.Add(element.Length > 0 ? element : throw Refused(place, $"{shape}; its item {command.Count + 1} is an empty string"));
         }
 
-        return command.Count > 0 ? [.. command] : throw Refused(place, $"{Shape}; it is empty");
+        return command.Count > 0 ? [.. command] : throw Refused(place, $"{shape}; it is empty");
     }
+
+    /// <summary>
+    /// A process's <c>prep</c>: the command run once before the process starts, in the shape <c>command</c> takes; null when
+    /// the key is absent, so a process that declares none behaves as it did before the key existed.
+    /// </summary>
+    private static string[]? ReadPrep(Dictionary<string, JsonElement> keys, Place place) =>
+        keys.ContainsKey(PrepKey) ? ReadCommand(keys, new Place(place.Path, $"{place.Where}.{PrepKey}"), PrepKey) : null;
 
     /// <summary>
     /// A process's <c>cwd</c>: the folder it runs in, resolved against the project folder; null when the key is absent, which
@@ -984,14 +993,15 @@ internal sealed record ScratchPattern(Regex Regex, string? Reason);
 /// <summary>
 /// A program the project's <c>processes</c> section declares: the command and its arguments, the folder it runs in (null for
 /// the project folder), the variables set over the server's environment, the line it may print before run_process returns
-/// (null when it declares none), and what it is.
+/// (null when it declares none), what it is, and the command run once before it starts (null when it declares none).
 /// </summary>
 internal sealed record ProcessProfile(
     string[] Command,
     string? Cwd,
     IReadOnlyDictionary<string, string> Env,
     ReadyProfile? Ready,
-    string? Description
+    string? Description,
+    string[]? Prep = null
 );
 
 /// <summary>What a process declares it prints before run_process returns: the pattern's text, its compiled form and its timeout.</summary>

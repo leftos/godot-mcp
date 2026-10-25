@@ -882,11 +882,63 @@ public sealed class ProjectProfileTests : IDisposable
         Assert.Null(ticker.Description);
     }
 
+    [Fact]
+    public void AProcessPrepIsReadAsACommand()
+    {
+        Write(
+            """
+            {
+              "processes": {
+                "server": {
+                  "command": ["dotnet", "run", "--no-build"],
+                  "prep": ["dotnet", "build", "--no-restore"]
+                },
+                "ticker": { "command": ["pwsh", "-File", "ticker.ps1"] }
+              }
+            }
+            """
+        );
+
+        IReadOnlyDictionary<string, ProcessProfile> processes = ProjectProfile.Load(_temp.Path).Processes;
+
+        Assert.NotNull(processes["server"].Prep);
+        Assert.Equal(["dotnet", "build", "--no-restore"], processes["server"].Prep!);
+        Assert.Equal(["dotnet", "run", "--no-build"], processes["server"].Command);
+        Assert.Null(processes["ticker"].Prep);
+    }
+
+    [Theory]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"], "prep": "dotnet build" } } }""",
+        "(processes.server.prep): \"prep\" must be a non-empty array of non-empty strings, the program and then its arguments; it is a string."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"], "prep": [] } } }""",
+        "(processes.server.prep): \"prep\" must be a non-empty array of non-empty strings, the program and then its arguments; it is empty."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"], "prep": ["dotnet", ""] } } }""",
+        "(processes.server.prep): \"prep\" must be a non-empty array of non-empty strings, the program and then its arguments; "
+            + "its item 2 is an empty string."
+    )]
+    [InlineData(
+        """{ "processes": { "server": { "command": ["a"], "prep": ["dotnet", 1] } } }""",
+        "(processes.server.prep): \"prep\" must be a non-empty array of non-empty strings, the program and then its arguments; it holds a number."
+    )]
+    public void AMalformedProcessPrepIsRefused(string json, string problem)
+    {
+        Write(json);
+
+        string message = Refused(() => ProjectProfile.Load(_temp.Path));
+
+        Assert.Equal($"{FilePath} {problem}", message);
+    }
+
     [Theory]
     [InlineData("""{ "processes": [] }""", "(top level): \"processes\" must be an object, not an array.")]
     [InlineData(
         """{ "processes": { "server": { "command": ["a"], "redo": 1 } } }""",
-        "(processes.server): unknown key \"redo\"; the allowed keys are command, cwd, env, ready, description. Remove or rename it."
+        "(processes.server): unknown key \"redo\"; the allowed keys are command, cwd, env, ready, description, prep. Remove or rename it."
     )]
     [InlineData(
         """{ "processes": { "server": { "command": ["a"] }, "server": { "command": ["b"] } } }""",

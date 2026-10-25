@@ -178,6 +178,27 @@ public sealed class PrepWrapperTests : IDisposable
         Assert.EndsWith("; it is empty.", refused.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AProcessPrepRequestIsWrappedWithItsOwnLog()
+    {
+        string log = Path.Combine(_temp.Path, ".godot", "godot-mcp", "process-x.prep.log");
+        string prep = Path.Combine(_temp.Path, "prep.ps1");
+        PrepWrapper wrapper = new(["pwsh", "-NoProfile", "-File", "prep-wrapper.ps1", "{log}", "--"], _temp.Path);
+        ToolProcessRequest request = new(prep, ["--fast"], _temp.Path, log, TimeSpan.FromSeconds(300));
+
+        ToolProcessRequest wrapped = wrapper.Wrap(request);
+
+        Assert.Equal("pwsh", wrapped.FileName);
+        Assert.Equal(["-NoProfile", "-File", "prep-wrapper.ps1", log, "--", prep, "--fast"], wrapped.Arguments);
+        Assert.Equal(
+            ["-NoProfile", "-File", "prep-wrapper.ps1", log, "--", "pwsh", "--fast"],
+            wrapper.Wrap(request with { FileName = "pwsh" }).Arguments
+        );
+        Assert.True(wrapper.OwnsLog);
+        Assert.Equal("process-x.prep.wrapper.log", Path.GetFileName(PrepWrapper.WrapperLog(log)));
+        Assert.Equal(PrepWrapper.WrapperLog(log), wrapped.LogPath);
+    }
+
     private ToolProcessRequest BuildRequest() =>
         new(Dotnet, ["build", "Game.csproj"], Path.Combine(_temp.Path, "src"), StepLog, TimeSpan.FromSeconds(300))
         {

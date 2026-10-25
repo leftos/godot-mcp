@@ -8,7 +8,8 @@ namespace GodotMcp.Server.Session;
 /// The command a project's godot-mcp.json names under <c>prepWrapper</c>, which the prep runs each of its processes through
 /// (the C# build, the Compile-items listing, the Godot import): the command's first element is the program, the rest its
 /// arguments, with <c>{log}</c> replaced by the step's log and <c>{ceiling}</c> by the prep's ceiling in whole seconds, and
-/// the wrapped program's absolute path and arguments appended. A wrapper that names <c>{log}</c> writes that file itself.
+/// the wrapped program and its arguments appended: a program with a folder in it is absolute against its own working
+/// directory, and a bare name is left for the wrapper's PATH. A wrapper that names <c>{log}</c> writes that file itself.
 /// </summary>
 /// <param name="Command">The wrapper's program, then its arguments, as the file lists them.</param>
 /// <param name="ProjectDir">The folder holding the godot-mcp.json: the wrapper's working directory.</param>
@@ -72,7 +73,7 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
         return request with
         {
             FileName = ResolveProgram(command[0], ProjectDir),
-            Arguments = [.. command.Skip(1), Path.GetFullPath(request.FileName), .. request.Arguments],
+            Arguments = [.. command.Skip(1), ResolveProgram(request.FileName, request.WorkingDirectory), .. request.Arguments],
             WorkingDirectory = ProjectDir,
             LogPath = CaptureLog(request.LogPath),
             StallLimit = TimeSpan.MaxValue,

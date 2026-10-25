@@ -206,8 +206,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 - **Does:** relaunches a run session with the scene, arguments and options it was started with, keeping its name, its error `seq` and its debug output (a marker line separates the two games). The run's `log` file goes on too: the old game's lines, then the marker `[godot-mcp] restarted: the previous game (pid N) was stopped; output below is from pid M.` once, then the new game's; the result's `log` names it.
 
-  On a process session (`run_process`) it stops the program and starts its stored command and arguments again, waiting on the same ready line and keeping the session and its output buffers; `options.prepare` does not apply.
-  Its result is `{session, projectPath, process, processId, previousProcessId, previousExitCode?, command, log, ready?}`, `previousExitCode` left out when the kill-on-close job ended the old process and `ready` when the launch waited on none.
+  On a process session (`run_process`) it stops the program and starts its stored command and arguments again, waiting on the same ready line and keeping the session and its output buffers; `options.prepare` does not apply, but the process's own `prep`, when the profile declares one, runs again before the start.
+  Its result is `{session, projectPath, process, processId, previousProcessId, previousExitCode?, command, log, ready?, prep?}`, `previousExitCode` left out when the kill-on-close job ended the old process, `ready` when the launch waited on none and `prep` (as `run_process`'s) when the process declares a prep.
   A session that never started is refused (`No process has been started in this session, so there is nothing to restart.`); a start that fails is refused as `run_process`'s is and leaves the session stoppable, and one after the server's shutdown has begun is refused as a run restart is.
 - **Use:** after editing code or scenes, to pick up the change without losing the session; `options {prepare}`.
 - **Edges:** the prep runs while the old game still runs, so a failed C# build is an error and leaves the old game running. To change the scene or arguments, `stop_project` then `run_project`. An attached session cannot be restarted.
@@ -218,12 +218,12 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `run_process`
 
-- **Does:** starts a program the project's `godot-mcp.json` declares, leaving it running: `{session, projectPath, process, processId, command, log, ready?}` (`process` its name in the file, `processId` the program's own pid, `command` the argv it started with, `log` the file its output is also written to, `ready` the line it waited on when the call or the profile declares one). It returns once the program starts, or once its ready line matches.
+- **Does:** starts a program the project's `godot-mcp.json` declares, leaving it running: `{session, projectPath, process, processId, command, log, ready?}` (`process` its name in the file, `processId` the program's own pid, `command` the argv it started with, `log` the file its output is also written to, `ready` the line it waited on when the call or the profile declares one, `prep` `{command, exit, ms, log}` when the profile declares a `prep`: the argv run, its exit code, its milliseconds and its log `.godot/godot-mcp/process-<session>.prep.log`). It returns once the program starts, or once its ready line matches.
 - **Use:** a game server or a mock backend a drive needs beside its games. `projectPath` is the folder holding `project.godot`, `process` a name under the file's `processes` section, and `args` are appended to its `command`. Without `options.session` the session is the process's name fitted to the name rule, as a folder name is; a live session of that name on the same folder refuses the start as a run's does, and one on another folder takes `<name>-2`, `-3`, ….
 
   `options {session, ready}`; `options.ready {output, timeoutMs}` gives the line to wait for, replacing the profile's `ready` whole.
 
-  The folder must have a `godot-mcp.json` declaring the process: a missing file or an unknown name is refused, the latter listing every process it declares. No prep runs before the start (`dotnet run` builds itself).
+  The folder must have a `godot-mcp.json` declaring the process: a missing file or an unknown name is refused, the latter listing every process it declares. `options.prepare` does not apply (`dotnet run` builds itself), but a process that declares a `prep` in the profile runs it once before the start, as a finite step through the project's `prepWrapper` (unwrapped when there is none); the process itself is never wrapped. A prep that exits non-zero refuses the start and leaves no session (`The prep of process <name> exited <code>, so it was not started. Its log: <path>`), and a wrapper's exit 124 is reported as the gate's stop, naming the prep's log and the wrapper's. A process with no `prep` starts as before.
 
   `ready` is a .NET regular expression a line is matched against before the call returns, stdout first and then stderr. `timeoutMs` is 1 to 600000 of load-adjusted time, 60000 when left out.
 
@@ -238,7 +238,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   Every other runtime tool refuses it: `Session '<name>' is a process (<program>), not a Godot game: only wait_for with an output condition, get_debug_output, restart_project, stop_project and list_sessions reach it.` `batch_drive` refuses a tool step on a process before any step of the batch runs (`{passed: false, steps: [], failedAt: {index, reason}}`), while a `wait` assertion with an `output` condition works.
 - **Stop:** `stop_project {session}` terminates the process and everything it started at once, and the server's exit ends process sessions with the runs. A process session is stopped by name only; `stop_project {projectPath}` never stops it.
-- **Edges:** parsing the section is strict: an unknown key, a wrong type, an empty `command`, a `ready.output` that is not a valid .NET regular expression, a duplicate name and a `cwd` that is absolute or leaves the project folder are each refused with the file's path and the fix. A process session needs Windows, since its process tree lives in a Windows job object; elsewhere the start is refused and nothing starts.
+- **Edges:** parsing the section is strict: an unknown key, a wrong type, an empty `command`, a `prep` that is not a non-empty array of non-empty strings, a `ready.output` that is not a valid .NET regular expression, a duplicate name and a `cwd` that is absolute or leaves the project folder are each refused with the file's path and the fix. A process session needs Windows, since its process tree lives in a Windows job object; elsewhere the start is refused and nothing starts.
 
   A call's `options.ready` with no `output`, an invalid pattern or a `timeoutMs` outside 1 to 600000 is refused before the start.
 
@@ -1342,7 +1342,7 @@ Each preset under `presets` takes the same keys but `presets`, plus `session` an
 
 Parsing is strict: an unknown key, a wrong type or a bad resolution refuses the launch with the file's path and the fix. `restart_project` reuses the merged launch and does not re-read the file. The profile is not a tool and applies to `run_project` only, except `prepWrapper`.
 
-`prepWrapper` (an array of strings: a program, then its arguments) runs the prep's processes, the C# build, its Compile-items listing and the import, through a project's own wrapper such as a gate script, for every tool that preps: launch, restart, preview and the headless tools.
+`prepWrapper` (an array of strings: a program, then its arguments) runs the prep's processes, the C# build, its Compile-items listing, the import and a process's `prep`, through a project's own wrapper such as a gate script, for every tool that preps: launch, restart, preview and the headless tools.
 
 Each runs as the wrapper followed by the process's absolute path and arguments, from the project folder; `{log}` in any element becomes the step's log (`.godot/godot-mcp/build.log`, `import.log`) and `{ceiling}` the prep's ceiling in seconds (300).
 
@@ -1355,6 +1355,8 @@ When MSBuild's file is missing (a routed build's diagnostics file stays on the b
 The import is read differently: its `ERROR:` check reads the wrapped import output, so an import error a prefixing wrapper rewrites is not detected.
 
 A wrapped process has no stall kill (a gate waiting for a slot is silent), the ceiling still holds, and a wrapper exit of 124 refuses the prep with `the prep wrapper stopped the build (exit 124); its log: …`. `prep.note` says `ran through prepWrapper (<program>)`. A malformed `godot-mcp.json` refuses any prep that runs a process.
+
+A process's `prep` (under `processes.<name>`, a non-empty array of non-empty strings: a program, then its arguments, shaped like `command`) is wrapped the same way, but its log is `.godot/godot-mcp/process-<session>.prep.log` (the wrapper's own output in `process-<session>.prep.wrapper.log` when it owns `{log}`), and a bare program is left to the wrapper's `PATH`. It runs in the process's `cwd`, wrapped or not (so the wrapper starts there too, and a relative path in the `prepWrapper` command must also resolve from that `cwd`; an absolute one always does), with the process's `env`, so a build reads the same variables (an MSBuild `Configuration`, a `CARGO_TARGET_DIR`) as the process it builds for. A prep that runs past its ceiling is stopped with its whole process tree and refuses the start, naming its log.
 
 ```json
 { "prepWrapper": ["gate", "run", "--log", "{log}", "--timeout", "{ceiling}", "--slot", "heavy", "--"] }

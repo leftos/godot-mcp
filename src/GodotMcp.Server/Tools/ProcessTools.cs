@@ -19,7 +19,9 @@ internal sealed class ProcessTools(SessionRegistry sessions)
         "Starts a process a godot-mcp.json \"processes\" section declares: a game server or a mock backend a drive needs beside "
             + "its games. It keeps running after the call, its stdout and stderr are captured for get_debug_output and wait_for "
             + "with an output condition, and stop_project with its session ends it. The result's processId is the process "
-            + "started, and its log is the file its output is also written to."
+            + "started, and its log is the file its output is also written to. A process profile's prep, when it declares one, "
+            + "runs through the project's prepWrapper before the process starts and again on restart_project; the result's prep "
+            + "holds that step's command, exit, ms and log. A prep that fails refuses the start."
     )]
     public async Task<string> RunProcessAsync(
         [Description("The folder that holds the project's project.godot.")] string projectPath,
@@ -27,7 +29,8 @@ internal sealed class ProcessTools(SessionRegistry sessions)
         [Description("Arguments appended to the process's command.")] string[]? args = null,
         [Description(
             "{session, ready}; session names the new session (left out, the process's name fitted to the name rule), and ready "
-                + "overrides the profile's ready line and its timeout."
+                + "overrides the profile's ready line and its timeout. A profile's prep is not an option: it runs before the "
+                + "start and again on a restart."
         )]
             ProcessRunOptions? options = null,
         CancellationToken cancellationToken = default
@@ -53,8 +56,10 @@ internal sealed class ProcessTools(SessionRegistry sessions)
         GodotSession reserved = await sessions.ReserveProcessAsync(session ?? process, profile.ProjectDir, defaultName: session is null);
         try
         {
-            (int processId, string log, ReadyResult? met) = await reserved.StartProcess(process, declared, command, ready, cancellationToken);
-            return new ProcessStartResult(reserved.Name, reserved.ProjectDir, process, processId, command, log) { Ready = met };
+            Func<CancellationToken, Task<ProcessPrepResult>>? prep = PrepRunner(profile.ProjectDir, reserved.Name, declared);
+            ProcessPrepResult? prepared = prep is null ? null : await prep(cancellationToken);
+            (int processId, string log, ReadyResult? met) = await reserved.StartProcess(process, declared, command, ready, cancellationToken, prep);
+            return new ProcessStartResult(reserved.Name, reserved.ProjectDir, process, processId, command, log) { Ready = met, Prep = prepared };
         }
         catch
         {
@@ -62,6 +67,40 @@ internal sealed class ProcessTools(SessionRegistry sessions)
             reserved.Dispose();
             throw;
         }
+    }
+
+    /// <summary>
+    /// The prep a run_process runs before its start, and a restart_project runs again: under the folder's prep lock, so one
+    /// prep at a time builds in it; null when the profile declares no prep.
+    /// </summary>
+    private Func<CancellationToken, Task<ProcessPrepResult>>? PrepRunner(string projectDir, string session, ProcessProfile declared)
+    {
+        if (declared.Prep is not { } prep)
+        {
+            return null;
+        }
+
+        return async cancellationToken =>
+        {
+            SemaphoreSlim folderLock = sessions.PrepLock(projectDir);
+            await folderLock.WaitAsync(cancellationToken);
+            try
+            {
+                return await ProjectPrep.RunProcessPrepAsync(
+                    projectDir,
+                    session,
+                    prep,
+                    declared.Cwd ?? projectDir,
+                    declared.Env,
+                    sessions.Logger,
+                    cancellationToken
+                );
+            }
+            finally
+            {
+                folderLock.Release();
+            }
+        };
     }
 
     /// <summary>The project's godot-mcp.json, refused when the folder has none: run_process starts only declared processes.</summary>
@@ -184,7 +223,8 @@ internal sealed record ReadyOptions(
 
 /// <summary>
 /// What run_process started: its session and project folder, the process's name as the file declares it, its process id,
-/// the argv it started with and the log its output is written to; ready is the line it met when it waited on one.
+/// the argv it started with and the log its output is written to; ready is the line it met when it waited on one, and prep
+/// the prep it ran before the start (left out when the profile declares none).
 /// </summary>
 internal sealed record ProcessStartResult(
     string Session,
@@ -193,7 +233,8 @@ internal sealed record ProcessStartResult(
     int ProcessId,
     IReadOnlyList<string> Command,
     string Log,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ReadyResult? Ready = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ReadyResult? Ready = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProcessPrepResult? Prep = null
 );
 
 /// <summary>The line a ready met: the line cut as get_debug_output cuts it, the stream it came from, and the real elapsed milliseconds.</summary>
