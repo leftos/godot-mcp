@@ -254,7 +254,8 @@ internal sealed partial class DesktopProcess : IRunProcess
         CloseHandles(_native);
     }
 
-    public void BeginRead(Action<string> stdout, Action<string> stderr) => _handlers.TrySetResult(new OutputHandlers(stdout, stderr));
+    public void BeginRead(Action<string> stdout, Action<string> stderr, Action ended) =>
+        _handlers.TrySetResult(new OutputHandlers(stdout, stderr, new StreamEnd(ended)));
 
     public void CancelRead()
     {
@@ -454,15 +455,16 @@ internal sealed partial class DesktopProcess : IRunProcess
 
     /// <summary>
     /// Passes the pipe's lines on once <see cref="BeginRead"/> names where, until the end of the stream; after
-    /// <see cref="CancelRead"/> the lines are still read, so the game never writes into a closed pipe, and dropped.
+    /// <see cref="CancelRead"/> the lines are still read, so the game never writes into a closed pipe, and dropped. Its end, or a
+    /// failure to read, counts towards <see cref="BeginRead"/>'s end of both streams.
     /// </summary>
     private async Task ReadLinesAsync(AnonymousPipeServerStream pipe, Func<OutputHandlers, Action<string>> select)
     {
         using StreamReader reader = new(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        Action<string> onLine;
+        OutputHandlers handlers;
         try
         {
-            onLine = select(await _handlers.Task);
+            handlers = await _handlers.Task;
         }
         catch (OperationCanceledException)
         {
@@ -474,12 +476,16 @@ internal sealed partial class DesktopProcess : IRunProcess
         {
             while (await reader.ReadLineAsync() is { } line)
             {
-                PassOn(onLine, line);
+                PassOn(select(handlers), line);
             }
         }
         catch (IOException e)
         {
-            PassOn(onLine, $"[godot-mcp] reading the game's output failed: {e.Message}");
+            PassOn(select(handlers), $"[godot-mcp] reading the game's output failed: {e.Message}");
+        }
+        finally
+        {
+            handlers.End.One();
         }
     }
 
@@ -541,7 +547,7 @@ internal sealed partial class DesktopProcess : IRunProcess
     private static partial bool CloseHandle(nint handle);
 
     /// <summary>Where <see cref="BeginRead"/> sends each stream's lines.</summary>
-    private sealed record OutputHandlers(Action<string> Stdout, Action<string> Stderr);
+    private sealed record OutputHandlers(Action<string> Stdout, Action<string> Stderr, StreamEnd End);
 
     /// <summary><c>STARTUPINFOEXW</c>: <c>STARTUPINFOW</c> followed by the attribute list.</summary>
     [StructLayout(LayoutKind.Sequential)]

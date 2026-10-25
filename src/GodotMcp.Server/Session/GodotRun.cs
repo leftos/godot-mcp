@@ -18,8 +18,13 @@ internal interface IRunProcess
     /// <exception cref="SessionException">The process could not be started.</exception>
     void Start();
 
-    /// <summary>Closes the process's stdin and passes each line of its stdout and stderr on until the end of the stream.</summary>
-    void BeginRead(Action<string> stdout, Action<string> stderr);
+    /// <summary>
+    /// Closes the process's stdin and passes each line of its stdout and stderr on until the end of the stream, then calls
+    /// <paramref name="ended"/> once both streams have reached their end. After <see cref="CancelRead"/>, <paramref name="ended"/>
+    /// may never be called (<see cref="StartInfoProcess"/> no longer sees the end), so a caller that cancels the read closes
+    /// what <paramref name="ended"/> would have closed itself.
+    /// </summary>
+    void BeginRead(Action<string> stdout, Action<string> stderr, Action ended);
 
     /// <summary>Stops passing lines on.</summary>
     /// <exception cref="InvalidOperationException">The output is not being read.</exception>
@@ -48,10 +53,11 @@ internal sealed class StartInfoProcess(Process process) : IRunProcess
         }
     }
 
-    public void BeginRead(Action<string> stdout, Action<string> stderr)
+    public void BeginRead(Action<string> stdout, Action<string> stderr, Action ended)
     {
-        Process.OutputDataReceived += (_, e) => PassOn(stdout, e.Data);
-        Process.ErrorDataReceived += (_, e) => PassOn(stderr, e.Data);
+        StreamEnd end = new(ended);
+        Process.OutputDataReceived += (_, e) => PassOn(stdout, e.Data, end);
+        Process.ErrorDataReceived += (_, e) => PassOn(stderr, e.Data, end);
         Process.StandardInput.Close();
         Process.BeginOutputReadLine();
         Process.BeginErrorReadLine();
@@ -63,11 +69,34 @@ internal sealed class StartInfoProcess(Process process) : IRunProcess
         Process.CancelErrorRead();
     }
 
-    private static void PassOn(Action<string> handler, string? line)
+    private static void PassOn(Action<string> handler, string? line, StreamEnd end)
     {
-        if (line is not null)
+        if (line is null)
+        {
+            end.One();
+        }
+        else
         {
             handler(line);
+        }
+    }
+}
+
+/// <summary>
+/// Counts a process's two output streams reaching their end, and calls <c>ended</c> once both have, from whichever stream ends
+/// last; a stream that never ends never ends the pair.
+/// </summary>
+internal sealed class StreamEnd(Action ended)
+{
+    private const int Streams = 2;
+
+    private int _ended;
+
+    public void One()
+    {
+        if (Interlocked.Increment(ref _ended) == Streams)
+        {
+            ended();
         }
     }
 }
@@ -101,6 +130,15 @@ internal sealed class GodotRun(string projectDir, IRunProcess launcher, GodotRun
     public OutputBuffer Stdout { get; } = previous?.Stdout ?? new(OutputCapacity);
 
     public OutputBuffer Stderr { get; } = previous?.Stderr ?? new(OutputCapacity);
+
+    /// <summary>
+    /// The file this run's whole output goes to, both streams interleaved; a restart carries its predecessor's path over and
+    /// writes on into its file. Null until the file is opened, and when no file could be opened.
+    /// </summary>
+    public string? OutputLogPath { get; set; } = previous?.OutputLogPath;
+
+    /// <summary>The open file the run writes its whole output to; null until the run starts, and when no file could be opened.</summary>
+    public RunOutputLog? OutputLog { get; set; }
 
     public BridgeConnection? Connection { get; set; }
 

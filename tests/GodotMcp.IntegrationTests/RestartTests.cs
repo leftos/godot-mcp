@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
@@ -18,6 +19,9 @@ public sealed class RestartTests : IAsyncDisposable
 {
     private const int BuildTestTimeoutMs = 240_000;
     private const int AttachWaitSeconds = 30;
+
+    // The line InputProbe prints once each time it starts, so a run's file holds one per launch.
+    private const string ReadyLine = "[probe] ready";
     private static readonly TimeSpan PingTimeout = TimeSpan.FromSeconds(5);
 
     // Quits a moment after returning, so the reply goes out before the game ends.
@@ -157,6 +161,54 @@ public sealed class RestartTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ARunWritesItsWholeOutputToItsLog()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+
+        JsonNode started = JsonNode.Parse(await _project.RunProjectAsync(probe.Directory, cancellationToken: cancellation))!;
+        string session = started["session"]!.GetValue<string>();
+        string log = started["log"]!.GetValue<string>();
+        await WaitForReadyAsync(0, cancellation);
+        JsonNode output = JsonNode.Parse(_project.GetDebugOutput(GodotRun.OutputCapacity))!;
+        // The stop returns once the file is closed, with every line the game printed in it.
+        await _project.StopProjectAsync(cancellationToken: cancellation);
+        string[] written = File.ReadAllLines(log);
+
+        Assert.Equal(Path.Combine(ProjectPrep.LogFolder(probe.Directory), $"run-{session}.log"), log);
+        Assert.Equal(log, output["log"]!.GetValue<string>());
+        Assert.Single(written, line => line.StartsWith(ReadyLine, StringComparison.Ordinal));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ARestartAppendsItsMarkerToTheRunLog()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        LaunchResult launched = await LaunchAsync(probe.Directory, cancellation);
+        string log = launched.Log ?? throw new InvalidOperationException("run_project reported no log file.");
+        await WaitForReadyAsync(0, cancellation);
+
+        JsonNode restarted = await RestartAsync(null, cancellation);
+        string marker =
+            $"[godot-mcp] restarted: the previous game (pid {launched.ProcessId}) was stopped; output below is from pid "
+            + $"{restarted["processId"]!.GetValue<int>()}.";
+        JsonNode output = JsonNode.Parse(_project.GetDebugOutput(GodotRun.OutputCapacity))!;
+        long markerLine = output["stdoutFirstLine"]!.GetValue<long>() + Array.IndexOf(Lines(output, "stdout"), marker);
+        await WaitForReadyAsync(markerLine, cancellation);
+        await _project.StopProjectAsync(cancellationToken: cancellation);
+        string[] written = File.ReadAllLines(log);
+        int markerAt = Array.IndexOf(written, marker);
+        int firstReady = Array.FindIndex(written, line => line.StartsWith(ReadyLine, StringComparison.Ordinal));
+        int lastReady = Array.FindLastIndex(written, line => line.StartsWith(ReadyLine, StringComparison.Ordinal));
+
+        Assert.Equal(log, restarted["log"]!.GetValue<string>());
+        Assert.Equal(1, written.Count(line => line == marker));
+        Assert.Equal(2, written.Count(line => line.StartsWith(ReadyLine, StringComparison.Ordinal)));
+        Assert.InRange(markerAt, firstReady + 1, lastReady - 1);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task TheOverrideSurvivesTheRestartAndGoesWithTheStop()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -272,6 +324,14 @@ public sealed class RestartTests : IAsyncDisposable
     }
 
     private static string[] Lines(JsonNode output, string stream) => [.. output[stream]!.AsArray().Select(line => line!.GetValue<string>())];
+
+    /// <summary>Waits on the session's captured stdout for InputProbe's ready line, numbered after <paramref name="after"/>.</summary>
+    private async Task WaitForReadyAsync(long after, CancellationToken cancellation)
+    {
+        WaitCondition condition = new(Output: "^" + Regex.Escape(ReadyLine), Stream: "stdout", After: after);
+        JsonNode met = JsonNode.Parse(await _runtime.WaitForAsync(condition, null, null, cancellation))!;
+        Assert.True(met["met"]!.GetValue<bool>(), met.ToJsonString());
+    }
 
     // Godot as a user's script would start it: no GODOT_MCP_* variables, so the bridge can only find the attach file.
     private static void StartGame(string projectDir)

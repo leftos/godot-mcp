@@ -126,6 +126,22 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Warning, Message = "Stopping the output capture of the replaced Godot run on {Project} failed.")]
     public static partial void OutputCaptureStopFailed(ILogger logger, Exception exception, string project);
 
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Writing the whole output of the run on {Project} to {Path} failed; get_debug_output keeps only the last 500 lines of each stream."
+    )]
+    public static partial void RunLogUnwritable(ILogger logger, Exception exception, string path, string project);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Writing a run's output to {Path} failed; the rest of its output is not written there, "
+            + "and get_debug_output keeps only the last 500 lines of each stream."
+    )]
+    public static partial void RunLogWriteFailed(ILogger logger, Exception exception, string path);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Closing the run output file {Path} failed; its last lines may be missing.")]
+    public static partial void RunLogCloseFailed(ILogger logger, Exception exception, string path);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Restarted {Project}: Godot {PreviousPid} was stopped and Godot {Pid} runs it now.")]
     public static partial void RunRestarted(ILogger logger, string project, int previousPid, int pid);
 

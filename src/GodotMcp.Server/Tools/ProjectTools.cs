@@ -69,7 +69,8 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "and returns once the bridge has connected; stop_project ends the session. A godot-mcp.json beside project.godot "
             + "supplies launch defaults and presets (see options.preset). The result's window {width, height} is the game window's "
             + "size in pixels; a --resolution is given exactly, even one larger than the screen, and a window that still differs "
-            + "from it adds a warning."
+            + "from it adds a warning. The result's log is the file holding the game's whole output, stdout and stderr interleaved "
+            + "as they arrive; get_debug_output pages the last 500 lines of each stream."
             + SessionsNote
             + " "
             + RealPadsNote
@@ -269,7 +270,8 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     [Description(
         "Relaunches a session run_project started, with the scene, arguments and options it was launched with, keeping the "
             + "session: its name, its errors (seq keeps counting) and its debug output, where a marker line separates the old "
-            + "game's lines from the new one's. First, while the old game still runs, a stale C# assembly is built and missing or "
+            + "game's lines from the new one's, and its output file goes on into the new game's; the result's log names it. First, "
+            + "while the old game still runs, a stale C# assembly is built and missing or "
             + "outdated "
             + "imports are run, as run_project does; a failed build or import is an error and leaves the old game running. Then "
             + "the old game is stopped as stop_project stops it (with its warning when a debugger was attached to it), and the "
@@ -310,7 +312,8 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "still running, and its exit code. Lines are numbered from 1 across everything a stream has printed; "
             + "stdoutFirstLine and stderrFirstLine give the number of the first line returned, to pass as before for the lines "
             + "ahead of it (the server keeps the last 500 of each stream). A line longer than 1000 characters is cut, ending "
-            + "\"… (+N chars)\". An attached session has no captured output."
+            + "\"… (+N chars)\". The result's log is the file holding the run's whole output, both streams interleaved as they "
+            + "arrive, which does not roll off. An attached session has no captured output."
     )]
     public string GetDebugOutput(
         [Description("How many lines of each stream to return, 1 to 500.")] int limit = 100,

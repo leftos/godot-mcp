@@ -113,7 +113,7 @@ public sealed class DesktopProcessTests
 
         var child = DesktopProcess.CreateSuspended(startInfo, HiddenDesktop.Path);
         using Process process = child.Process;
-        child.BeginRead(_ => { }, _ => { });
+        child.BeginRead(_ => { }, _ => { }, () => { });
         child.Start();
         await process.WaitForExitAsync(TestContext.Current.CancellationToken);
 

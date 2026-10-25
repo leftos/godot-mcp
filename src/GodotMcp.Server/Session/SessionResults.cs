@@ -22,6 +22,10 @@ internal sealed record LaunchResult(string Session, string ProjectPath, int Proc
     /// <summary>Set when the window's size differs from the one --resolution asked for.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Warning { get; init; }
+
+    /// <summary>The file holding the game's whole output, both streams interleaved; left out when it could not be opened.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Log { get; init; }
 }
 
 /// <summary>A game window's size in pixels: the client area, without the title bar and borders.</summary>
@@ -123,6 +127,13 @@ internal sealed record RestartResult(
     /// <summary>Why the replaced game had to be killed; left out when it quit.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? PreviousKillReason { get; init; }
+
+    /// <summary>
+    /// The file the new game's output goes on into, the old game's lines and then the marker line before its own; left out
+    /// when it could not be opened.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Log { get; init; }
 
     /// <summary>
     /// How long the replaced game took to exit after the quit request, in wall milliseconds; left out when it was killed or had
@@ -328,4 +339,12 @@ internal sealed record DebugOutput
     public long StdoutTotalLines { get; init; }
 
     public long StderrTotalLines { get; init; }
+
+    /// <summary>
+    /// The file holding the run's whole output, both streams interleaved as they arrived, of which the streams above are the
+    /// newest page; left out when there is no run yet, when its file could not be opened, and for a process session, whose own
+    /// <c>log</c> names its file.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Log { get; init; }
 }

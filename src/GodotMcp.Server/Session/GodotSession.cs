@@ -214,8 +214,17 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             GodotRun run =
                 _run ?? throw new SessionException("No Godot session has been started, so there is nothing to stop. Start one with run_project.");
             bool alreadyExited = !run.IsRunning;
-            await EndRealtimeCaptureAsync();
-            RunEnd ended = await EndRunAsync(run);
+            RunEnd ended;
+            try
+            {
+                await EndRealtimeCaptureAsync();
+                ended = await EndRunAsync(run);
+            }
+            finally
+            {
+                await CloseOutputLogAsync(run);
+            }
+
             int? gameExitCode = await run.ReleaseGameAsync();
             Snapshots.Clear();
             registry.Captures.End(Name, CaptureStore.EndedByStop);
@@ -337,6 +346,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             StderrFirstLine = stderr.FirstLine,
             StdoutTotalLines = run.Stdout.TotalLines,
             StderrTotalLines = run.Stderr.TotalLines,
+            Log = run.OutputLog?.Path,
         };
     }
 
@@ -507,6 +517,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     public void Dispose()
     {
         DisposeProcess();
+        _run?.OutputLog?.Dispose();
         _gate.Dispose();
         InputGate.Dispose();
     }
@@ -709,6 +720,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             Recording = _recording is { } recording ? new RecordingResult { Mode = Recording.MovieMode, Path = recording.Path } : null,
             Window = connection.Window,
             Warning = GodotCommandLine.DescribeWindowMismatch(GodotCommandLine.RequestedWindowSize(request.EngineArgs), connection.Window),
+            Log = run.OutputLog?.Path,
         };
         return (started, prepared.Previous, prepared.PreviousRecording);
     }
@@ -743,21 +755,86 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     }
 
     /// <summary>
-    /// Starts the run's process and its output capture. On a restart (<paramref name="previousProcessId"/> set) a marker line
-    /// goes into both carried-over streams once the new process has its id and before any of its output is read.
+    /// Starts the run's process and its output capture. A run with no log file yet opens one, fresh for a launch and in append
+    /// mode for a restart, whose predecessor's file it writes on into; a file that cannot be opened is logged and the run goes on
+    /// without one. On a restart (<paramref name="previousProcessId"/> set) a marker line goes into both carried-over streams and
+    /// the file once, once the new process has its id and before any of its output is read. The file closes when both streams
+    /// have ended, so a stopped session holds nothing in the project folder.
     /// </summary>
     private void StartProcess(GodotRun run, int? previousProcessId)
     {
         run.Process.Exited += (_, _) => _ = OnRunExitedAsync(run);
         run.Launcher.Start();
+        run.OutputLog ??= OpenOutputLog(run);
         if (previousProcessId is { } previous)
         {
             string marker = $"[godot-mcp] restarted: the previous game (pid {previous}) was stopped; output below is from pid {run.Process.Id}.";
             run.Stdout.Add(marker);
             run.Stderr.Add(marker);
+            run.OutputLog?.Write(marker);
         }
 
-        run.Launcher.BeginRead(run.Stdout.Add, run.Stderr.Add);
+        try
+        {
+            run.Launcher.BeginRead(WithOutputLog(run, run.Stdout.Add), WithOutputLog(run, run.Stderr.Add), () => run.OutputLog?.Dispose());
+        }
+        catch
+        {
+            run.OutputLog?.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Opens the run's output log, fresh or on into the file a restart carried over, and records its path on the run. The file
+    /// counts as opened only once it is: a failure is logged, and the run goes on without one.
+    /// </summary>
+    private RunOutputLog? OpenOutputLog(GodotRun run)
+    {
+        bool append = run.OutputLogPath is not null;
+        string path = run.OutputLogPath ?? Path.Combine(ProjectPrep.LogFolder(run.ProjectDir), $"run-{Name}.log");
+        try
+        {
+            var log = RunOutputLog.Open(path, append, _logger);
+            run.OutputLogPath = path;
+            return log;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.RunLogUnwritable(_logger, e, path, run.ProjectDir);
+            return null;
+        }
+    }
+
+    /// <summary>A stream's line handler: into the run's ring, then into its whole-output file when it has one.</summary>
+    private static Action<string> WithOutputLog(GodotRun run, Action<string> add) =>
+        line =>
+        {
+            add(line);
+            run.OutputLog?.Write(line);
+        };
+
+    /// <summary>
+    /// Waits for a stopped run's output file to close once its readers have ended, for the drain grace
+    /// <see cref="ToolProcess.OutputDrainGrace"/> gives a tool's own log, and then closes it anyway: the lines still in the pipes
+    /// are dropped, as <see cref="ToolProcess.LogSink"/> drops those still arriving after its grace. The session holds nothing in
+    /// the project folder once a stop returns.
+    /// </summary>
+    private static async Task CloseOutputLogAsync(GodotRun run)
+    {
+        if (run.OutputLog is not { } log)
+        {
+            return;
+        }
+
+        try
+        {
+            await log.Closed.WaitAsync(ToolProcess.OutputDrainGrace);
+        }
+        catch (TimeoutException)
+        {
+            log.Dispose();
+        }
     }
 
     private async Task<BridgeConnection> WaitForHandshakeAsync(GodotRun run, HandshakeExpectation expected, CancellationToken cancellationToken)
@@ -780,6 +857,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             await KillAsync(run);
         }
 
+        // The failed run stays the session's, so its file is closed here rather than left pinning the project folder.
+        await CloseOutputLogAsync(run);
         cancellationToken.ThrowIfCancellationRequested();
         throw DescribeFailedLaunch(run, exitedEarly, deadline);
     }
@@ -1141,7 +1220,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>
     /// Stops reading a replaced run's output, so a game the kill could not end, or output still in flight, never lands in the
-    /// buffers the new run continues. A stream that is not being read is logged and skipped.
+    /// buffers the new run continues, and closes its output file: no line reaches the file after the cancel that the rings would
+    /// have kept. A stream that is not being read is logged and skipped.
     /// </summary>
     private void StopOutputCapture(GodotRun run)
     {
@@ -1153,6 +1233,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         {
             Log.OutputCaptureStopFailed(_logger, e, run.ProjectDir);
         }
+
+        run.OutputLog?.Dispose();
     }
 
     /// <summary>
@@ -1224,5 +1306,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         {
             _gate.Release();
         }
+
+        // A grandchild still holding the game's pipes keeps its output from ending, so the file is closed after the drain grace
+        // without holding up the exit. The output's own end closes it first when it comes, and a second close does nothing.
+        _ = CloseOutputLogAsync(run);
     }
 }

@@ -77,6 +77,7 @@ internal sealed partial class GodotSession
                 PreviousLeftRunning = LeftRunning(previousEnd),
                 Recording = started.Recording,
                 Window = started.Window,
+                Log = started.Log,
                 PreviousRecording = previousRecording,
                 Warning = JoinWarnings(previousEnd?.Warning, started.Warning),
             };

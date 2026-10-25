@@ -115,9 +115,9 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `run_project`
 
-- **Does:** launches the project with the bridge injected and returns once the bridge connects: `{session, projectPath, processId, quiet, version, recording?, prep, godot, window, warning?}` (`window` `{width, height}` the game window's size in pixels; `version` is the server's, `0.1.0+<sha>`, to quote in an issue; `godot` is the Godot executable it launched: `GODOT_PATH`, else a `Godot*console*.exe` found on `PATH`, the newest-named in the first folder that has one; with neither, the launch is refused with the `claude mcp add` line that sets `GODOT_PATH`).
+- **Does:** launches the project with the bridge injected and returns once the bridge connects: `{session, projectPath, processId, quiet, version, recording?, prep, godot, window, log?, warning?}` (`log` the absolute path of `.godot/godot-mcp/run-<session>.log`, the game's whole output, left out when the file could not be opened; see `get_debug_output`; `window` `{width, height}` the game window's size in pixels; `version` is the server's, `0.1.0+<sha>`, to quote in an issue; `godot` is the Godot executable it launched: `GODOT_PATH`, else a `Godot*console*.exe` found on `PATH`, the newest-named in the first folder that has one; with neither, the launch is refused with the `claude mcp add` line that sets `GODOT_PATH`).
 
-  `restart_project`'s result carries `godot` too.
+  `restart_project`'s result carries `godot` and `log` too.
 - **Use:** `projectPath` (the folder holding `project.godot`); `scene` for a scene other than the main one; `userArgs` (after `--`, read with `OS.get_cmdline_user_args()`); `engineArgs` (before `--`, e.g. `["--resolution", "1280x720"]`; the last `--resolution`, after `godot-mcp.json`'s `resolution`, gives the window exactly that size, even one larger than the screen, 1 to 16384 pixels a side, and a window that still differs adds `warning`: "--resolution asked for a WxH window and the game's window is wxh: the system did not give it the size asked for, so screenshots and input work in the window it has." A `--resolution` without a value, not `WIDTHxHEIGHT` or out of range is refused before launch. For a 2x capture of a `canvas_items` project, launch at twice its size); `options {quiet, shutOutRealGamepads, mute, session, prepare, preset, record, dropIdle, repickHover}`; `mute: true` silences a watched run (`quiet: false`) by muting its Master bus for the whole session, again whenever the game unmutes it, and `restart_project` keeps it; `mute: false` on a quiet run is refused, since a quiet run is always silent.
 - **Edges:** a live session name is refused when you pass it, or when the default name's live holder runs on the same folder; a default name held live by another folder becomes `<name>-2`, `-3`, …; a new name starts a second session alongside.
 
@@ -204,7 +204,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `restart_project`
 
-- **Does:** relaunches a run session with the scene, arguments and options it was started with, keeping its name, its error `seq` and its debug output (a marker line separates the two games).
+- **Does:** relaunches a run session with the scene, arguments and options it was started with, keeping its name, its error `seq` and its debug output (a marker line separates the two games). The run's `log` file goes on too: the old game's lines, then the marker `[godot-mcp] restarted: the previous game (pid N) was stopped; output below is from pid M.` once, then the new game's; the result's `log` names it.
 
   On a process session (`run_process`) it stops the program and starts its stored command and arguments again, waiting on the same ready line and keeping the session and its output buffers; `options.prepare` does not apply.
   Its result is `{session, projectPath, process, processId, previousProcessId, previousExitCode?, command, log, ready?}`, `previousExitCode` left out when the kill-on-close job ended the old process and `ready` when the launch waited on none.
@@ -258,7 +258,9 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 - **Does:** the newest stdout and stderr lines of a session's run (the current or last one under its name), whether it still runs, and its exit code. A process session's program answers too, from the output `run_process` captured.
 - **Use:** when the game crashed or quit, or a tool reports the connection ended. `limit` (1 to 500, default 100); `before` (a line number) pages back, starting from the returned `stdoutFirstLine` or `stderrFirstLine`.
-- **Edges:** the server keeps the last 500 lines of each stream; lines over 1000 characters are cut. Structured errors are better read from `get_errors`. A process session's output is also in `.godot/godot-mcp/process-<session>.log`.
+- **Edges:** the server keeps the last 500 lines of each stream; lines over 1000 characters are cut. Structured errors are better read from `get_errors`. A run session's whole output is also in `.godot/godot-mcp/run-<session>.log`, both streams interleaved in arrival order, lines as-is, with no size cap; the result's `log` is its absolute path (left out for a process session, whose own `log` names its file, and when the file could not be opened) and is still reported after the run has ended.
+
+  The file is truncated at a fresh launch and appended to on a restart. It is closed when the run's output ends, on cancel, by the time `stop_project` returns, and when the session is disposed, so a stopped session never holds a file in the project folder. Every run session writes one, a `run_scratches` scene's included; an attached session has no output. A process session's output is also in `.godot/godot-mcp/process-<session>.log`.
 
 ## See the game
 

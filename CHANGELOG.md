@@ -10,6 +10,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `stop_project` with a `projectPath` and no session clears a dead server's leftover `override.cfg` and `armed.json`, reporting what it removed and why any file stayed.
 - `run_scratches` takes `engineArgs` in its options and the profile's `scratch` section, placed on each scene's command line before `--`.
 - `run_scratches` takes `ceilings` in its options and the profile's `scratch` section, giving a scene its own kill ceiling in place of the one its paces derive.
+- `run_project`, `restart_project` and `get_debug_output` return `log`, a file holding the run's whole output past the 500-line buffers.
 - `scratch_status` and `run_scratches` take `only: "red"` to list only each scene's red steps, keeping every scene's verdict line.
 
 ### Changed
