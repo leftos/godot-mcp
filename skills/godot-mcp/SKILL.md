@@ -64,6 +64,8 @@ A scene whose root also has a public `GetStepUntil(int)` returns, per step, a `w
 
 A step whose work runs on after `PlayStep` returns (an awaited task, a tween) needs a `GetStepUntil` condition: a paced step's next `PlayStep` comes one pace later whether or not that work is done, `keepGoing` or not. Only errors (`push_error`, `GD.PushError`, a throw from `PlayStep`) and lines the scene's patterns match turn a step red; `GetStatus()` text and `printerr` never do.
 
+For a windowed look at one moment, run the scene with `run_project` and play its step by the name `run_scratches` reports: `call_method` on the scene root with method `PlayStep` and the name as its one argument (or the same as an `options.call`), with no index to count.
+
 `options.timeScale` (0.01 to 100, default 1) runs every scene's game that many times faster: a pace stays game time and takes pace / timeScale s of wall time (the wait after the last step lasts the longer of its pace in game time and in wall time), and the kill bound scales with it. An until that counts frames or physics ticks (`frames`, `settled`) sees that many times fewer frames per pace, and at a high scale one frame's delta can exceed a short pace, so such a scene may need a longer pace. A game that sets `Engine.time_scale` itself overrides the launch's scale and has its long steps cut short with a "clock stood still" error: that scene opts out with `"timeScale": 1` in its profile pace object (`{seconds, reason, timeScale: 1}`).
 
 Its folder, paces, known-red scenes and patterns live in `godot-mcp.json`'s `scratch` section; `get_debug_output {session}` with the scene's `session` reads its whole output afterwards.
@@ -165,7 +167,7 @@ Prefer it for any change of more than one edit, then `validate`, then `preview_s
 
   Frames at set moments (0.5 s and 1.2 s into a step, or every 0.1 s for 2 s): `capture_frames {at}` or `{options: {every, for}}` grabs them in one call on game time, following `time_scale`.
 
-  When the moments count from a method that starts the effect (a scratch's `PlayStep`), give it as `options.call {node, method, args}`, or a C# game's own tool by name as `{tool, args: {...}}`: the bridge calls it in the frame the clock starts, so no round trip between a `call_method` and the capture shifts the points.
+  When the moments count from a method that starts the effect (a scratch's `PlayStep`), give it as `options.call {node, method, args}` (`PlayStep` takes the step's name there and in `call_method`, as `run_scratches` reports it), or a C# game's own tool by name as `{tool, args: {...}}`: the bridge calls it in the frame the clock starts, so no round trip between a `call_method` and the capture shifts the points.
 
   When the moments count from a condition (a tray showing, then slow motion), give it as `options.start {node, property, equals | exists | expression, edge?, timeoutMs?, then?, call?}`, laid out as `wait_for`'s: the points count from the frame it is met, `start.then {call?, timeScale?}` runs in that frame before `options.call`, and a start that times out answers `stopped: true` with `start: {met: false, last}`.
 

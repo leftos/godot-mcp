@@ -154,7 +154,11 @@ internal sealed partial class RuntimeTools
     public async Task<string> CallMethodAsync(
         [Description(NodeDescription)] string node,
         [Description("The method's name; a script's methods and the engine class's alike.")] string method,
-        [Description("The arguments, as JSON, in order; none when left out.")] JsonElement[]? args = null,
+        [Description(
+            "The arguments, as JSON, in order; none when left out. A scratch root's PlayStep called with one string plays the step "
+                + "whose GetStepName equals it exactly, refused when no step or several have that name."
+        )]
+            JsonElement[]? args = null,
         [Description("{timeoutMs}: how long to wait for the method, 1 to 120000 ms, load-adjusted; 10000 by default.")] CallOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default

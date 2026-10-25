@@ -388,7 +388,8 @@ static func _tool_refusal(tool_name: String, reply: String) -> String:
 
 
 ## [node, method, args] for params {node, method, args}: the node found, the method it has, and
-## the arguments converted by its declared parameter types; or a String saying why not.
+## the arguments converted by its declared parameter types; or a String saying why not. A scratch
+## root's PlayStep called with a step's name plays that step's index (_step_args).
 func _prepare_call(params: Dictionary) -> Variant:
 	var found: Variant = _resolve(str(params.get("node", "")))
 	if found is String:
@@ -398,10 +399,81 @@ func _prepare_call(params: Dictionary) -> Variant:
 	if not node.has_method(method):
 		return "Node '%s' has no method '%s'." % [str(node.get_path()), method]
 	var given: Array = params.get("args") if params.get("args") is Array else []
+	if _names_step(node, method, given):
+		var step: Variant = _step_args(node, str(given[0]))
+		if step is String:
+			return step
+		given = step
 	var args: Variant = _method_args(node, method, given)
 	if args is String:
 		return args
 	return [node, method, args]
+
+
+## Whether a call plays a scratch step by its name: PlayStep with one String argument, on a node
+## that has GetStepCount and GetStepName. A String is always a name, never read as an index.
+static func _names_step(node: Node, method: String, given: Array) -> bool:
+	return (
+		method == "PlayStep"
+		and given.size() == 1
+		and given[0] is String
+		and node.has_method("GetStepCount")
+		and node.has_method("GetStepName")
+	)
+
+
+## [index] for PlayStep's arguments when step_name names one of node's steps (_step_index); or a
+## String refusing it, the first error the feed logged while the names were read included: a
+## GDScript runtime error or a C# exception in the game's own methods cannot be caught.
+func _step_args(node: Node, step_name: String) -> Variant:
+	var mark: int = _bridge._logger.sequence()
+	var index: Variant = _step_index(node, step_name)
+	var raised: String = _bridge._logger.first_error_since(mark)
+	if not raised.is_empty():
+		return 'PlayStep "%s": reading its step names raised: %s' % [step_name, raised]
+	return index if index is String else [index]
+
+
+## The index of the one step whose GetStepName is step_name, the names read from node now; or a
+## String refusing a name that matches no step or several, or a count or name of the wrong type.
+static func _step_index(node: Node, step_name: String) -> Variant:
+	var count: Variant = node.call("GetStepCount")
+	if not count is int:
+		return (
+			'PlayStep "%s": GetStepCount returned %s, not a step count'
+			% [step_name, var_to_str(count)]
+		)
+	var names: PackedStringArray = []
+	var matched: Array[int] = []
+	for index in count:
+		var name_at: Variant = node.call("GetStepName", index)
+		if not name_at is String:
+			return (
+				'PlayStep "%s": GetStepName(%d) returned %s, not a name'
+				% [step_name, index, var_to_str(name_at)]
+			)
+		names.append(name_at)
+		if name_at == step_name:
+			matched.append(index)
+	if matched.size() == 1:
+		return matched[0]
+	if matched.is_empty():
+		return 'PlayStep "%s" matches no step; %s' % [step_name, _step_list(names)]
+	var indices := PackedStringArray(matched.map(func(index: int) -> String: return str(index)))
+	return (
+		'PlayStep "%s" names %d steps (%s); call it by index'
+		% [step_name, matched.size(), ", ".join(indices)]
+	)
+
+
+## The steps names lists by index, "0: open, 1: move", or that there are none.
+static func _step_list(names: PackedStringArray) -> String:
+	if names.is_empty():
+		return "it has no steps"
+	var listed: PackedStringArray = []
+	for index in names.size():
+		listed.append("%d: %s" % [index, names[index]])
+	return "its steps are " + ", ".join(listed)
 
 
 ## Whether value is the GDScriptFunctionState a GDScript coroutine returns at its first await.

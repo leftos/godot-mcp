@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `PlayStep` called through `call_method` or an `options.call` takes a scratch step's name, as `run_scratches` reports it, in place of its index.
+
 ### Fixed
 
 - `cs_set` reads an enum name sent wrapped in JSON quotes as the name, and `cs_set` and `set_property` say a string value is given as itself.

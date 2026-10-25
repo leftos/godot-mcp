@@ -17,7 +17,7 @@ internal sealed record MethodCall(
     [property: Description(
         "For a method, an array of the arguments, as JSON, in order, converted by the parameters' declared types as call_method "
             + "converts them; for a game tool, an object of its arguments by parameter name, as call_game_tool takes them; none "
-            + "when left out."
+            + "when left out. A scratch root's PlayStep called with one string plays the step of that name, as call_method reads it."
     )]
         JsonElement? Args = null,
     [property: Description(

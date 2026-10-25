@@ -22,6 +22,25 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
     private const int TestTimeoutMs = 45_000;
     private const int ScriptTimeoutMs = 10_000;
     private const string Probe = "/root/InspectProbe";
+    private const string ScratchRoot = "/root/ScratchScene";
+    private const string UnknownStepRefusal = "PlayStep \"jump\" matches no step; its steps are 0: open, 1: move, 2: close";
+
+    // A scratch root built in the game, since the probe's copy holds only its top-level files: its steps are open, move and
+    // close, and PlayStep keeps the name of the step it played in played.
+    private const string ScratchRootScript =
+        "var script := GDScript.new()\n\t"
+        + "script.source_code = \"\\n\".join([\n\t\t"
+        + "\"extends Node\", \"var names := ['open', 'move', 'close']\", \"var played := ''\",\n\t\t"
+        + "\"func GetStepCount() -> int:\", \"\\treturn names.size()\",\n\t\t"
+        + "\"func GetStepName(index: int) -> String:\", \"\\treturn names[index]\",\n\t\t"
+        + "\"func PlayStep(index: int) -> void:\", \"\\tplayed = names[index]\"\n\t"
+        + "])\n\t"
+        + "script.reload()\n\t"
+        + "var scene := Node.new()\n\t"
+        + "scene.set_script(script)\n\t"
+        + "scene.name = \"ScratchScene\"\n\t"
+        + "scene_tree.root.add_child(scene)\n\t"
+        + "return true";
 
     // Two scene-like owners under the root, UniqueA and UniqueB, each holding a Label Shared saved with a unique name; UniqueA
     // also holds a Button Solo saved with one.
@@ -568,6 +587,56 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
         Assert.Equal(string.Empty, Git.Status(_csProbe.Directory));
         Assert.Equal("/root/CsProbe", called["path"]!.GetValue<string>());
         Assert.Equal(5, called["value"]!.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task CallMethodPlaysAScratchStepByItsName()
+    {
+        await RunAsync(_tools, ScratchRootScript, TestContext.Current.CancellationToken);
+
+        await CallAsync(ScratchRoot, "PlayStep", "\"move\"");
+        JsonNode played = await CallAsync(ScratchRoot, "get", "\"played\"");
+
+        Assert.Equal("move", played["value"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task CallMethodRefusesAScratchStepNameThatMatchesNoStep()
+    {
+        await RunAsync(_tools, ScratchRootScript, TestContext.Current.CancellationToken);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => CallAsync(ScratchRoot, "PlayStep", "\"jump\""));
+
+        Assert.Contains(UnknownStepRefusal, refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitsCallRefusesAScratchStepNameThatMatchesNoStep()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(_tools, ScratchRootScript, cancellation);
+        WaitCondition condition = new(Node: ScratchRoot, Property: "played", EqualsValue: JsonSerializer.SerializeToElement("jump"));
+        WaitOptions options = new(Call: new MethodCall(ScratchRoot, "PlayStep", JsonDocument.Parse("""["jump"]""").RootElement.Clone()));
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(condition, 10_000, options, cancellationToken: cancellation)
+        );
+
+        Assert.Contains(UnknownStepRefusal, refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitsCallPlaysAScratchStepByItsName()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(_tools, ScratchRootScript, cancellation);
+        WaitCondition condition = new(Node: ScratchRoot, Property: "played", EqualsValue: JsonSerializer.SerializeToElement("close"));
+        WaitOptions options = new(Call: new MethodCall(ScratchRoot, "PlayStep", JsonDocument.Parse("""["close"]""").RootElement.Clone()));
+
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(condition, 10_000, options, cancellationToken: cancellation);
+        JsonObject waited = JsonNode.Parse(string.Concat(blocks.OfType<TextContentBlock>().Select(block => block.Text)))!.AsObject();
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
