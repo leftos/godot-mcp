@@ -4,9 +4,15 @@
 
 ## Triage
 
+- [?] GMCP-285 wait_for: a load-adjusted timeout can run minutes of wall time on a stalled game
+- [?] GMCP-283 run_csharp: LINQ enumerables in a result serialise as their type name
+- [?] GMCP-282 run_scratches: the wait after a reported last step cannot be set apart from its time limit
 - [?] GMCP-281 stop_project: nothing waits for a killed game that outlives the kill wait
-- [?] GMCP-280 run_scratches: no windowed play of a scene's steps at their paces and untils
 - [?] GMCP-279 run_scratches: no watch can be armed before a scene's first step
+
+## Do first
+
+- [ ] GMCP-291 run.ps1 pytest runs past its 120 s ceiling · release vNext — Urgent · Singles
 
 ## Ideas from the survey and the projects
 
@@ -32,20 +38,18 @@
 
 ## Singles
 
-- [ ] GMCP-270 PlayStep: a windowed drive can play a scratch step only by its index
-- [ ] GMCP-269 scratch_status: no way to read only the failed scenes and red steps
+- [ ] GMCP-280 run_scratches: no windowed play of a scene's steps at their paces and untils
 - [ ] GMCP-37 Add Integration Footguns, Test locations and Deep docs to ARCHITECTURE.md
-- [ ] GMCP-1 stop_project refuses to clear a dead server's leftover override.cfg
+- [ ] GMCP-1 stop_project refuses to clear a dead server's leftover override.cfg · release vNext
 - [ ] GMCP-145 Fail a launch fast on Godot's no-GL ANGLE error, and keep windowed heavy itest groups local
-- [ ] GMCP-174 move_node re-bases relative NodePaths and rewrites an untouched node's anchors
-- [ ] GMCP-175 cs_set refuses an enum by name: the value arrives JSON-quoted twice
-- [ ] GMCP-218 run_scratches: let the caller set a per-scene ceiling
-- [ ] GMCP-220 get_debug_output: a run session keeps 500 lines and writes no full log
-- [ ] GMCP-219 run_process: a process's build runs outside the project's prepWrapper gate
+- [/] GMCP-174 move_node re-bases relative NodePaths and rewrites an untouched node's anchors · release vNext
+- [ ] GMCP-218 run_scratches: let the caller set a per-scene ceiling · release vNext
+- [ ] GMCP-220 get_debug_output: a run session keeps 500 lines and writes no full log · release vNext
+- [ ] GMCP-219 run_process: a process's build runs outside the project's prepWrapper gate · release vNext
 - [ ] GMCP-223 Call the gate through tools/gate.ps1, never gate.exe directly
 - [ ] GMCP-210 Drop the itest build's --local once GATE-557 lands
-- [ ] GMCP-230 run_scratches: a partial run cannot keep a scene's setup step
-- [ ] GMCP-232 run_scratches: a background run's headless sessions refuse a windowed or pads-shut drive on the checkout
+- [ ] GMCP-230 run_scratches: a partial run cannot keep a scene's setup step · release vNext
+- [ ] GMCP-232 run_scratches: a background run's headless sessions refuse a windowed or pads-shut drive on the checkout · release vNext
 - [ ] GMCP-233 record_mark: a recording whose window is minimized freezes on its last frame without a warning
 - [ ] GMCP-189 install: stops every running server and the games it drives
 - [ ] GMCP-188 click: a {text} target is refused when a code-made Control covers its label
@@ -101,7 +105,6 @@
 - [ ] GMCP-243 Count the server-exit ShutdownCap on the load-adjusted clock
 - [ ] GMCP-244 Turn the remaining must-beat wall-clock bounds in lifecycle, time, TempDirectory and GodotRun into hang guards
 - [ ] GMCP-245 pytest: pass --reason with --local in the drive and itest-csharp tests the gate now refuses
-- [ ] GMCP-247 CaptureHelperTests: skip, not fail, when a topmost window has the foreground
 - [ ] GMCP-248 Keep the tooltip span probe's 250 ms wall-clock budget from changing answers on a starved game
 - [ ] GMCP-249 Let run.ps1 run one test method, for a load-burn of one case
 - [ ] GMCP-250 Serialise C# helper copy misses so a concurrent prune cannot delete another call's in-flight copy
@@ -118,11 +121,15 @@
 - [ ] GMCP-265 Lead a backstop's failure text with the wall time that passed
 - [ ] GMCP-266 Log a launch's handshake times
 - [ ] GMCP-267 stop_project: warn when a run's game had no handle to wait on
-- [ ] GMCP-273 run_scratches details: return a step's whole status line
-- [ ] GMCP-274 run_scratches: take engineArgs before --
+- [ ] GMCP-273 run_scratches details: return a step's whole status line · release vNext
+- [ ] GMCP-274 run_scratches: take engineArgs before -- · release vNext
 - [ ] GMCP-275 prek: run independent hooks in parallel priority groups
 - [ ] GMCP-277 Prep: detect import errors through a prepWrapper that prefixes output lines
 - [ ] GMCP-278 Find which engine or .NET phase makes a headless game's teardown take up to 3 s
+- [ ] GMCP-287 Scene edits: one record's layout mismatch reverts every node to Godot's full pack
+- [ ] GMCP-288 GitExclude: cache a folder's git rev-parse answers across launches
+- [ ] GMCP-292 LoadClock credits a starved server's gap at its last free share
+- [ ] GMCP-293 move_node: walk the scene's NodePath holders once per batch, not twice per move
 
 ## Docs
 
