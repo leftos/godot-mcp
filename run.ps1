@@ -120,7 +120,8 @@ log, and the job's timeout-minutes bounds it in place of the ceiling and watchdo
            res://run_tests.gd. Each failure prints as "FAIL <file>::<test>: <message>", then
            "gdtest: <passed> passed, <failed> failed"; on a failure it then prints every FAIL line of the log after the
            tail, under a "gdtest: FAIL lines from .tmp/gdtest.log:" header, or says the log has none; ceiling 60 s
-  pytest   the Python tools' tests (tests/tools) under pytest, which uv supplies together with gdtoolkit; ceiling 120 s
+  pytest   the Python tools' tests (tests/tools) under pytest in parallel (-n auto, pytest-xdist), which uv supplies
+           together with gdtoolkit; ceiling 120 s
   drive    drives this tree's own server with the tool calls of -Calls <file.json>, a JSON array of
            {"tool": "<name>", "arguments": {...}} objects (arguments optional). It first builds the server project
            (.tmp/drive-build.log, ceiling 300 s), then runs tools/drive.py (.tmp/drive.log, ceiling 300 s), which checks
@@ -1557,8 +1558,11 @@ try {
             exit $status
         }
         'pytest' {
-            $arguments = @('run', '--quiet', '--with', 'pytest', '--with', 'gdtoolkit>=4,<5', 'pytest', '-q', 'tests/tools')
-            exit (Invoke-Gated -Name 'pytest' -TimeoutSeconds 120 -Program 'uv' -Arguments $arguments -Slot light)
+            $arguments = @(
+                'run', '--quiet', '--with', 'pytest', '--with', 'pytest-xdist', '--with', 'gdtoolkit>=4,<5',
+                'pytest', '-q', '-n', 'auto', 'tests/tools'
+            )
+            exit (Invoke-Gated -Name 'pytest' -TimeoutSeconds 120 -Program 'uv' -Arguments $arguments -Slot heavy)
         }
         'drive' {
             exit (Invoke-Drive -CallsFile $Calls)
