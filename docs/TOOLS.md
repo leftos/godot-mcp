@@ -163,7 +163,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `stop_project`
 
-- **Does:** (a game `run_project` started also quits by itself, running its exit work, when its server exits or is stopped; an attached game keeps running) asks the game to quit, kills it after 3 s (30 s for a recording run) of load-adjusted time, so a busy machine waits longer in wall time (at most 5 x), removes the override when no other live session uses the folder and it is not armed: `{session, projectPath, exitCode, killed, killReason?, overrideRemoved, alreadyExited, gameExitCode, leftRunning?, quitMs?, recording?, headlessHostStopped}`.
+- **Does:** (a game `run_project` started also quits by itself, running its exit work, when its server exits or is stopped; an attached game keeps running) asks the game to quit, kills it after 3 s (30 s for a recording run) of load-adjusted time, or 10 s when it acknowledged the quit and closed its bridge within the 3 s (the teardown grace: it is in the engine's own teardown), so a busy machine waits longer in wall time (at most 5 x), removes the override when no other live session uses the folder and it is not armed: `{session, projectPath, exitCode, killed, killReason?, overrideRemoved, alreadyExited, gameExitCode, leftRunning?, quitMs?, recording?, headlessHostStopped}`.
 
   `projectPath` in place of `session` frees a folder: it stops the warm headless host there (waiting for a headless call running on it) and the session running there, if one does; with `session` too both must name the same folder, and several live sessions there are refused, naming them.
 
@@ -176,6 +176,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
   `exitCode` is the process the server started (on Windows the `Godot_console` wrapper); `gameExitCode` is the game's own, null when it could not be read and whenever the game was killed (the code read after a kill is not the game's).
 
   The grace watches the game itself: a game that quits in time is not killed even when it left processes running, which `leftRunning` lists (`["PING.EXE (pid 1234)"]`) and which end with the wrapper, so `exitCode` is then -1. A kill says why in `killReason`: no answer to a ping, no answer to the quit request, still shutting down after the grace, or no bridge connection to ask.
+
+  A game whose bridge connection is still open at 3 s is killed then, as before; one that closed it exits within the next 7 s unkilled (`killed: false`, `quitMs` set), and a recording run keeps its 30 s with no teardown phase. A game still running after the 10 s is killed with a `killReason` reading "the game acknowledged the quit but was still shutting down after 10 s of load-adjusted time (…); the bridge's connection had closed … ms after the quit was acknowledged, so the time went into the engine's or .NET's teardown." `restart_project` and a scratch scene's quit wait the same way.
 
   A kill after the grace also gives the grace in wall time and the machine's free share (`after 3 s of load-adjusted time (wall 8.4 s, machine free 36% on average)`), whether the bridge's connection was still open (the scene tree not yet freed, so a node's `_exit_tree` or the last frame held it) or had closed (the time went into the engine's or .NET's teardown), and the game process's CPU, threads and main-thread state over its last second, with its last stderr lines for a run.
 

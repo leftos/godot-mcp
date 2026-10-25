@@ -8,6 +8,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - `run_scratches` waits the last step's pace in wall time before quitting a faster-scaled game, so its exit leak check matches a 1x run's.
 - `validate` reads `.cs` diagnostics through a `prepWrapper` that rewrites or prefixes the command's output, or is a PowerShell script.
+- `stop_project` and scratch runs give a game that closed its bridge after the quit 10 s to finish its teardown before killing it.
 
 ## 0.21.1 - 2026-10-24
 

@@ -44,6 +44,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     private static readonly TimeSpan ShutdownReplyTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan ExitGrace = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// How much longer a stop waits, past the exit grace, for a game that acknowledged the quit and closed its bridge: it has
+    /// freed its scene tree and is in the engine's own teardown, which was measured to take up to about 3 s on an idle machine.
+    /// </summary>
+    private static readonly TimeSpan TeardownGrace = TimeSpan.FromSeconds(7);
     private static readonly TimeSpan KillWait = TimeSpan.FromSeconds(5);
 
     /// <summary>How long a stop waits for the console wrapper to follow a game that quit before ending it.</summary>
@@ -978,9 +984,10 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <summary>
     /// Stops a game through its bridge <paramref name="connection"/>: a silent one is ended with <paramref name="kill"/> at once;
     /// one that answers is asked to quit, and killed if <paramref name="watched"/> has not exited within the grace, counted in
-    /// load-adjusted time on the registry's clock with its backstop, and the kill says what the game was doing. The kill's own
-    /// warning, when what it killed was still running after its wait, is the end's. After a quit, <paramref name="afterQuit"/>
-    /// ends what the game left behind and returns it, as leftRunning lists it.
+    /// load-adjusted time on the registry's clock with its backstop, and the kill says what the game was doing. A game that
+    /// acknowledged the quit and closed its bridge by the end of the exit grace gets the teardown grace past it
+    /// (<see cref="WaitOutTeardownAsync"/>). The kill's own warning, when what it killed was still running after its wait, is
+    /// the end's. After a quit, <paramref name="afterQuit"/> ends what the game left behind and returns it, as leftRunning lists it.
     /// </summary>
     private async Task<RunEnd> StopGameAsync(
         BridgeConnection? connection,
@@ -1000,9 +1007,11 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         QuitRequest request = await AskToQuitAsync(connection);
         long answeredAt = request == QuitRequest.Acknowledged ? Stopwatch.GetTimestamp() : askedAt;
         using LoadDeadline grace = registry.Clock.Start(CurrentExitGrace);
-        if (!await ProcessExit.WaitUntilGoneAsync(watched, grace))
+        if (
+            !await ProcessExit.WaitUntilGoneAsync(watched, grace)
+            && await WaitOutTeardownAsync(request, connection, watched, GraceSpent.Of(grace)) is { } spent
+        )
         {
-            var spent = GraceSpent.Of(grace);
             string reason = await DescribeGraceKillAsync(request, spent, watched, () => ClosedSince(closedAt, answeredAt));
             // The state is sampled for a second, and a game that exits meanwhile quit on its own: it is not killed.
             if (!watched.WaitForExit(0))
@@ -1016,6 +1025,30 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         int quitMs = (int)Math.Round(Stopwatch.GetElapsedTime(askedAt).TotalMilliseconds);
         return new RunEnd(Killed: false, Warning: null, KillReason: null, await afterQuit(), quitMs);
     }
+
+    /// <summary>
+    /// After an exit grace that ended with the game still running: a game that acknowledged the quit and whose bridge connection
+    /// has closed is in the engine's own teardown, so it gets <see cref="TeardownGrace"/> more, unless a recording's longer grace
+    /// was the one spent.
+    /// </summary>
+    /// <param name="request">What became of the quit request.</param>
+    /// <param name="connection">The game's bridge connection, whose own close is tested; null without one.</param>
+    /// <param name="watched">The game's process.</param>
+    /// <param name="spent">The exit grace as it ended.</param>
+    /// <returns>Null when the game was gone within the teardown grace; else the grace spent in all, both phases summed.</returns>
+    private async Task<GraceSpent?> WaitOutTeardownAsync(QuitRequest request, BridgeConnection? connection, Process watched, GraceSpent spent)
+    {
+        if (request != QuitRequest.Acknowledged || connection is not { Closed.IsCompleted: true } || CurrentExitGrace != ExitGrace)
+        {
+            return spent;
+        }
+
+        using LoadDeadline teardown = registry.Clock.Start(TeardownGrace);
+        return await ProcessExit.WaitUntilGoneAsync(watched, teardown) ? null : spent.Plus(GraceSpent.Of(teardown));
+    }
+
+    /// <summary>The attached game's bridge connection's read loop, which completes when the connection closes; null without one.</summary>
+    internal Task? AttachedBridgeClosed => _attached?.Closed;
 
     /// <summary>When the bridge's connection closed, as a <see cref="Stopwatch"/> timestamp.</summary>
     private static async Task<long> ClosedAtAsync(Task closed)

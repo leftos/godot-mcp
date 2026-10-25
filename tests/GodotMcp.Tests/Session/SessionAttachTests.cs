@@ -271,6 +271,7 @@ public sealed class SessionAttachTests : IAsyncDisposable
         Assert.True(stopped.Killed);
         Assert.NotNull(stopped.KillReason);
         Assert.StartsWith("the game acknowledged the quit but was still shutting down after ", stopped.KillReason, StringComparison.Ordinal);
+        Assert.Contains("after 3 s of load-adjusted time", stopped.KillReason, StringComparison.Ordinal);
         Assert.Contains(
             $"the bridge's connection was still open, so the scene tree had not been freed.\nProcess {child.Id}: ",
             stopped.KillReason,
@@ -381,6 +382,79 @@ public sealed class SessionAttachTests : IAsyncDisposable
             stopped.Warning,
             StringComparison.Ordinal
         );
+    }
+
+    // A game that acknowledged the quit and then closed its bridge has freed its scene tree and is in the engine's own teardown,
+    // measured to take up to about 3 s on an idle machine: the stop gives it the teardown grace past the quit grace before a kill.
+    [Fact]
+    public async Task AGameThatClosedItsBridgeAfterTheQuitIsKilledOnlyAfterTheTeardownGrace()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        string alpha = harness.Project("alpha");
+        Process child = harness.StartOwnedGame();
+        harness.Sessions.DescribeGameProcess = _ => Task.FromResult("sampled");
+        FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello { ProcessId = child.Id });
+        Task<StopResult> stop = await CloseBridgeAfterTheQuitAsync(harness, game, cancellation);
+
+        await RegistryHarness.AdvanceUntilDoneAsync(time, stop, cancellation);
+        StopResult stopped = await stop.WaitAsync(RegistryHarness.HangGuard, cancellation);
+
+        Assert.True(stopped.Killed);
+        Assert.StartsWith(
+            "the game acknowledged the quit but was still shutting down after 10 s of load-adjusted time",
+            stopped.KillReason,
+            StringComparison.Ordinal
+        );
+        Assert.True(child.HasExited);
+    }
+
+    // The fake clock stands still at 5 s while the game ends, between the 3 s quit grace and the 10 s the teardown grace runs to,
+    // so only the game's own exit can end the stop's wait.
+    [Fact]
+    public async Task AGameThatClosedItsBridgeAndExitsInTheTeardownGraceIsNotKilled()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        FakeTimeProvider time = new();
+        using LoadClock clock = new(time, new NoLoadSource());
+        await using RegistryHarness harness = new(clock);
+        string alpha = harness.Project("alpha");
+        Process child = harness.StartOwnedGame();
+        harness.Sessions.DescribeGameProcess = _ => Task.FromResult("sampled");
+        FakeBridge game = await harness.AttachFakeGameAsync(alpha, "server", new FakeHello { ProcessId = child.Id });
+        Task<StopResult> stop = await CloseBridgeAfterTheQuitAsync(harness, game, cancellation);
+
+        for (int step = 0; step < 50 && !stop.IsCompleted; step++)
+        {
+            time.Advance(TimeSpan.FromMilliseconds(100));
+            await Task.Delay(TimeSpan.FromMilliseconds(5), cancellation);
+        }
+
+        child.Kill(entireProcessTree: true);
+        Assert.True(child.WaitForExit(RegistryHarness.HangGuard));
+        StopResult stopped = await stop.WaitAsync(RegistryHarness.HangGuard, cancellation);
+
+        Assert.False(stopped.Killed);
+        Assert.Null(stopped.KillReason);
+        Assert.NotNull(stopped.QuitMs);
+    }
+
+    /// <summary>
+    /// Starts a stop of the attached session "server", answers its ping and its quit, then closes the game's end of the bridge
+    /// and waits, with no fake time passing, until the session's connection has seen the close.
+    /// </summary>
+    private static async Task<Task<StopResult>> CloseBridgeAfterTheQuitAsync(RegistryHarness harness, FakeBridge game, CancellationToken cancellation)
+    {
+        Task closed = harness.Sessions.Resolve("server").AttachedBridgeClosed ?? throw new InvalidOperationException("no attached bridge");
+        Task<StopResult> stop = harness.Sessions.StopAsync("server", cancellation);
+        await game.AnswerOneAsync("pong", cancellation);
+        await game.AnswerOneAsync("quit", cancellation);
+        game.Dispose();
+        await closed.WaitAsync(RegistryHarness.HangGuard, cancellation).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        Assert.True(closed.IsCompleted, $"the session's bridge connection did not close within its {RegistryHarness.HangGuard} hang guard");
+        return stop;
     }
 
     [Fact]

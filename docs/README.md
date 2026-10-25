@@ -56,7 +56,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Gates (CI) | The checks CI runs before it publishes anything: the warnings-as-errors build, the unit tests and `gdtest`, in `.github/actions/gates` |
 | gdtest | The headless GDScript unit-test run (`pwsh run.ps1 gdtest`, `tests/bridge`): many bridge-logic tests in one Godot process, as against an integration test's launch per test |
 | Gesture | A high-level input tool (click, drag, type_text, hold/release) that sends the right sequence of events over frames, as against the raw event list of `simulate_input` |
-| Grace | How long a game, once sent `shutdown`, may take to quit before it is killed: 3 s of load-adjusted time (30 s for a recording run). `stop_project` waits one per game; the server's exit makes all its games share one, with the games' part of the exit under a 10 s wall-time cap. |
+| Grace | How long a game, once sent `shutdown`, may take to quit before it is killed: 3 s of load-adjusted time (30 s for a recording run), plus a teardown grace for a game that closed its bridge. `stop_project` waits one per game; the server's exit makes all its games share one, with the games' part of the exit under a 10 s wall-time cap. |
 | Handle | In the C#-runtime-tools design: an id for a C# object the helper keeps from an earlier result, so a later call can target it |
 | Handoff file | The attach or join file an `attach_project` writes for a game to find the server by (`GodotSession.Attach.cs`): its token is the one the game dials with, and the attach removes it when the attach ends or fails |
 | Handshake | The bridge's first frame: the session token and the project path, which the server checks so a stale bridge from another run is refused |
@@ -134,6 +134,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | State wait | `wait_for {node, state, equals}` (also a `frame_control` `until` and a `batch_drive` `state` assertion): met once the value at the key path `state` of the node's `get_game_state` state equals `equals`, read at every check; a key the state lacks is not met |
 | Status file | A background scratch run's `<project>/.godot/godot-mcp/scratch-<runId>.json`: the run's state, server pid and every scene's state, rewritten whole at each scene and step event; a server killed outright leaves `running` in it |
 | Step-until | A `frame_control` step with `options.until`, a `wait_for` condition checked after each stepped frame: the step stops, paused, on the met frame, and `count` is then the most frames it runs |
+| Teardown grace | The 7 s of load-adjusted time (`TeardownGrace`) a stop gives past the 3 s grace to a game that acknowledged the quit and closed its bridge, so it is in the engine's own teardown: 10 s in all before a kill. A recording run's grace has no teardown phase. |
 | Text target | An input tool's `{text}` target: the visible Control whose shown text equals the given text, optionally searched `under` a node; the result's `aimedAt.matched` says what it matched |
 | Then action | `wait_for`'s `options.then {call?, timeScale?, pause?}`: a method call, a time scale and a pause run once in the met frame |
 | Tool annotations | The MCP hints each tool declares (`readOnlyHint`, `destructiveHint`, `openWorldHint`) so a client's permission rules can allow the reads |

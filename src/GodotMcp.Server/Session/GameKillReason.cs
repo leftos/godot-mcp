@@ -34,6 +34,18 @@ internal readonly record struct GraceSpent(TimeSpan Grace, TimeSpan Wall, TimeSp
         );
 
     /// <summary>
+    /// This deadline and the <paramref name="later"/> one that followed it, as one: the budgets and the wall and load-adjusted
+    /// times summed, the free share averaged over the wall time, and ended by the backstop when either was.
+    /// </summary>
+    public GraceSpent Plus(GraceSpent later)
+    {
+        TimeSpan wall = Wall + later.Wall;
+        double meanFree =
+            wall > TimeSpan.Zero ? ((MeanFree * Wall.TotalSeconds) + (later.MeanFree * later.Wall.TotalSeconds)) / wall.TotalSeconds : later.MeanFree;
+        return new GraceSpent(Grace + later.Grace, wall, Adjusted + later.Adjusted, meanFree, Backstop || later.Backstop);
+    }
+
+    /// <summary>
     /// "3 s of load-adjusted time (wall 8.4 s, machine free 37% on average)", or at the backstop
     /// "15 s of wall time, 5 x its 3 s grace (load-adjusted 1.2 s, machine free 8% on average)".
     /// </summary>

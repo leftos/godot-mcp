@@ -553,6 +553,10 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
     - **Fallback to the captured log**: when MSBuild's file is missing (a routed build's diagnostics file stays on the builder) or a failed build's file logger holds no error (early errors such as MSB1009 reach only the console log), the server reads the captured `build.log` (for the listing, its log), keeping a prefixing wrapper's prefix. `build.log` and `build.diagnostics.log` are deleted before each build.
     - **The import is not covered**: its `ERROR:` check reads the wrapped import output, so an import error a prefixing wrapper rewrites is not detected.
 
+41. **A game that acknowledged the quit and closed its bridge gets 7 s more before a kill** (GMCP-268; an orchestrator decision, not an owner ruling). Such a game is in the engine's own teardown, whose measured tail reached about 3 s, so a stop, a restart or a scratch scene's quit waits 7 s past the 3 s exit grace (10 s in all, load-adjusted) before killing it; a game whose connection is still open at 3 s is still killed at 3 s.
+    - A recording run keeps its 30 s grace with no teardown phase, and the silent path and an attached stop without a process handle are unchanged.
+    - The server's exit shares the same wait inside its 10 s cap, so its bound does not move.
+
 ## Wire
 
 - **The server listens and the bridge dials in.** The server binds `127.0.0.1:0` and keeps the listener open, then passes the port and a session token to Godot through environment variables (`GODOT_MCP_PORT`, `GODOT_MCP_TOKEN`). This removes the reference server's free-port race and its regex-editing of the port into GDScript.
