@@ -29,6 +29,13 @@
         }
       },
       "ScratchUntilNever": 1,
+      "ScratchUntilReleased": {
+        "seconds": 0.5,
+        "reason": "its last step only leaves a note",
+        "steps": {
+          "hold": { "seconds": 120, "reason": "its until holds once the test writes the release file; the pace is only its cap" }
+        }
+      },
       "ScratchUntilSignal": 2
     },
     "known": {

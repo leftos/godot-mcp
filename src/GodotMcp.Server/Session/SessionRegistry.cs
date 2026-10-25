@@ -769,24 +769,19 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// Registers a pending session for a scratch scene under <see cref="ScratchName"/> of the run's prefix, or, when a live
     /// session or another scene's session holds that, under the first of its <see cref="NumberedName"/>s from 2 that the scene
     /// may take (<see cref="MayTakeScratchName"/>): two runs of one scene, two worktrees with one folder name, and scene names
-    /// that clean to the same text or share their first 55 characters each get a session of their own. It takes the folder's
-    /// live settings as a preview does (<see cref="FolderSettingsForPreview"/>), so it is never refused for differing from the
-    /// sessions it shares the override.cfg with.
+    /// that clean to the same text or share their first 55 characters each get a session of their own. It is a scratch session
+    /// (<see cref="SessionSpec.Scratch"/>): quiet, the real pads live and unmuted whatever the folder's other sessions and arm
+    /// run with, and never refused for differing from them.
     /// </summary>
     internal async Task<GodotSession> ReserveScratchAsync(string projectDir, string scene, string resPath, string prefix, bool held)
     {
         string owner = ProjectPaths.Normalise(projectDir) + "|" + resPath;
         string baseName = ScratchName(prefix, scene);
-        SessionSpec spec = new(baseName, projectDir, SessionKind.Run, ShutOutRealGamepads: false, Quiet: true);
+        SessionSpec spec = new(baseName, projectDir, SessionKind.Run, ShutOutRealGamepads: false, Quiet: true) { Scratch = true, Mute = false };
         GodotSession created = await ReserveAsync(
             spec,
             defaultName: false,
-            completeUnderLock: ready =>
-            {
-                string name = FreeScratchName(baseName, owner);
-                ArmSettings settings = FolderSettingsForPreview(projectDir);
-                return ready with { Name = name, Quiet = settings.Quiet, ShutOutRealGamepads = settings.ShutOutRealGamepads, Mute = settings.Mute };
-            },
+            completeUnderLock: ready => ready with { Name = FreeScratchName(baseName, owner) },
             heldByScratchRun: held
         );
         lock (_lock)
@@ -906,7 +901,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
     /// <summary>
     /// Writes the marked override.cfg for a starting session, with this server among its owners, unless the folder is held
-    /// (another live session uses it, or it is armed) and already has it; the folder is recorded in <see cref="OverrideFolders"/> first.
+    /// and already has it, or the file already lists this server with the session's settings; the folder is recorded in
+    /// <see cref="OverrideFolders"/> first. A scratch session's folder is held by any other live session or the arm, so it
+    /// never rewrites their file; any other session's is held by the arm or another live session that is not a scratch one,
+    /// so beside scratch sessions alone it writes its own settings.
     /// </summary>
     /// <exception cref="SessionException">
     /// The project has its own override.cfg, or another live server's marked one injects another bridge or holds other settings.
@@ -916,7 +914,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             session.ProjectDir,
             bridgeScript,
             new ArmSettings(session.Quiet, session.ShutOutRealGamepads, session.Mute),
-            () => IsHeldByOther(session)
+            () => IsWriteHeldByOther(session)
         );
 
     /// <summary>
@@ -930,7 +928,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             {
                 lock (_lock)
                 {
-                    return !IsHeldByOther(session) && OverrideFile.Release(session.ProjectDir);
+                    return !IsReleaseHeldByOther(session) && OverrideFile.Release(session.ProjectDir);
                 }
             }
         );
@@ -1280,20 +1278,28 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             throw new SessionException(GodotSession.NoneRunning);
         }
 
-        CheckFolder(new SessionSpec(target.Name, target.ProjectDir, target.Kind, target.ShutOutRealGamepads, target.Quiet), except: target);
+        SessionSpec spec = new(target.Name, target.ProjectDir, target.Kind, target.ShutOutRealGamepads, target.Quiet)
+        {
+            Scratch = target.Scratch,
+            Mute = target.Mute,
+        };
+        CheckFolder(spec, except: target);
     }
 
-    /// <summary>The live sessions on the spec's folder but <paramref name="except"/>, once they are checked to share its settings.</summary>
+    /// <summary>
+    /// The live sessions on the spec's folder but <paramref name="except"/> and the scratch ones, once they are checked to
+    /// share its settings; none for a scratch spec, which neither binds nor is bound by them or the arm.
+    /// </summary>
     private GodotSession[] CheckFolder(SessionSpec spec, GodotSession? except)
     {
+        if (spec.Scratch)
+        {
+            return [];
+        }
+
         GodotSession[] onFolder =
         [
-            .. _sessions.Values.Where(other =>
-                !ReferenceEquals(other, except)
-                && other.Kind != SessionKind.Process
-                && other.IsLive
-                && ProjectPaths.AreSame(other.ProjectDir, spec.ProjectDir)
-            ),
+            .. _sessions.Values.Where(other => !ReferenceEquals(other, except) && BindsFolderSettings(other, spec.ProjectDir)),
         ];
         CheckSameSetting(spec, onFolder, "shutOutRealGamepads", session => session.ShutOutRealGamepads, spec.ShutOutRealGamepads);
         CheckSameSetting(spec, onFolder, "quiet", session => session.Quiet, spec.Quiet);
@@ -1337,12 +1343,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                     );
             }
 
-            GodotSession[] onFolder =
-            [
-                .. _sessions.Values.Where(other =>
-                    other.IsLive && other.Kind != SessionKind.Process && ProjectPaths.AreSame(other.ProjectDir, projectDir)
-                ),
-            ];
+            GodotSession[] onFolder = [.. _sessions.Values.Where(other => BindsFolderSettings(other, projectDir))];
             CheckSessionsForArm(projectDir, onFolder, "shutOutRealGamepads", session => session.ShutOutRealGamepads, wanted.ShutOutRealGamepads);
             CheckSessionsForArm(projectDir, onFolder, "quiet", session => session.Quiet, wanted.Quiet);
 
@@ -1392,7 +1393,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     {
         try
         {
-            WriteOverrideUnlessHeld(projectDir, bridgeScript, settings, () => HasLiveSessionOn(projectDir, except: null));
+            WriteOverrideUnlessHeld(projectDir, bridgeScript, settings, () => HasLiveNonScratchSessionOn(projectDir, except: null));
             GitExclude.Ensure(projectDir, OverrideFile.FileName, logger);
             OverrideFolders.Hold($"arming {projectDir}", () => ArmFile.Write(projectDir, settings));
         }
@@ -1477,14 +1478,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         );
 
     /// <summary>
-    /// The pad and quiet settings a preview takes: those of a live session on the folder, else the folder's arm, else quiet with
-    /// the real pads live.
+    /// The pad and quiet settings a preview takes: those of a live session on the folder that is not a scratch one, else the
+    /// folder's arm, else quiet with the real pads live.
     /// </summary>
     private ArmSettings FolderSettingsForPreview(string projectDir)
     {
-        GodotSession? onFolder = _sessions.Values.FirstOrDefault(other =>
-            other.IsLive && other.Kind != SessionKind.Process && ProjectPaths.AreSame(other.ProjectDir, projectDir)
-        );
+        GodotSession? onFolder = _sessions.Values.FirstOrDefault(other => BindsFolderSettings(other, projectDir));
         if (onFolder is not null)
         {
             return new ArmSettings(onFolder.Quiet, onFolder.ShutOutRealGamepads, onFolder.Mute);
@@ -1495,7 +1494,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
     /// <summary>
     /// Writes the marked override.cfg with this server among its owners, unless <paramref name="held"/> says this server
-    /// already holds the folder and the file is there; the folder is recorded in <see cref="OverrideFolders"/> first.
+    /// already holds the folder and the file is there, or the file already lists this server with these settings; the folder
+    /// is recorded in <see cref="OverrideFolders"/> first.
     /// </summary>
     /// <exception cref="SessionException">
     /// The project has its own override.cfg, or another live server's marked one injects another bridge or holds other settings.
@@ -1507,8 +1507,15 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             {
                 lock (_lock)
                 {
-                    string path = OverrideFile.PathIn(projectDir);
-                    if (held() && File.Exists(path) && OverrideFile.IsOurs(path))
+                    string? text = OverrideFile.ReadText(projectDir);
+                    if (
+                        text is not null
+                        && OverrideFile.IsMarked(text)
+                        && (
+                            held()
+                            || OverrideFile.SetsForThisServer(text, bridgeScript, settings.ShutOutRealGamepads, settings.Quiet, LaunchesUnfocused)
+                        )
+                    )
                     {
                         return;
                     }
@@ -1596,19 +1603,41 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
-    /// Whether the session's folder is held by something else of this server: another live session, or its arm. The caller
-    /// holds the lock.
+    /// The release test: whether the session's folder is held by something else of this server, so its override.cfg must stay:
+    /// another live session, scratch ones included, or its arm. The caller holds the lock.
     /// </summary>
-    private bool IsHeldByOther(GodotSession session) => HasLiveSessionOn(session.ProjectDir, session) || _armed.ContainsKey(session.ProjectDir);
+    private bool IsReleaseHeldByOther(GodotSession session) =>
+        HasLiveSessionOn(session.ProjectDir, session) || _armed.ContainsKey(session.ProjectDir);
 
-    /// <summary>Whether a live session but <paramref name="except"/> uses the folder. The caller holds the lock.</summary>
-    private bool HasLiveSessionOn(string projectDir, GodotSession? except) =>
-        _sessions.Values.Any(session =>
-            !ReferenceEquals(session, except)
-            && session.Kind != SessionKind.Process
-            && session.IsLive
-            && ProjectPaths.AreSame(session.ProjectDir, projectDir)
-        );
+    /// <summary>
+    /// The write test: whether the session's folder is held by something else of this server whose override.cfg it must not
+    /// rewrite. A scratch session's is held as for a release; any other's by its arm or another live session that is not a
+    /// scratch one. The caller holds the lock.
+    /// </summary>
+    private bool IsWriteHeldByOther(GodotSession session) =>
+        session.Scratch
+            ? IsReleaseHeldByOther(session)
+            : HasLiveNonScratchSessionOn(session.ProjectDir, session) || _armed.ContainsKey(session.ProjectDir);
+
+    /// <summary>Whether a live session but <paramref name="except"/>, scratch ones included, uses the folder. The caller holds the lock.</summary>
+    private bool HasLiveSessionOn(string projectDir, GodotSession? except) => _sessions.Values.Any(session => IsLiveOn(session, projectDir, except));
+
+    /// <summary>Whether a live session but <paramref name="except"/> that is not a scratch one uses the folder. The caller holds the lock.</summary>
+    private bool HasLiveNonScratchSessionOn(string projectDir, GodotSession? except) =>
+        _sessions.Values.Any(session => !ReferenceEquals(session, except) && BindsFolderSettings(session, projectDir));
+
+    /// <summary>
+    /// Whether the session binds, and is bound by, the folder's quiet and pad settings, which its one override.cfg carries: a live
+    /// session on the folder that is neither a process session nor a scratch one.
+    /// </summary>
+    private static bool BindsFolderSettings(GodotSession session, string projectDir) =>
+        !session.Scratch && IsLiveOn(session, projectDir, except: null);
+
+    private static bool IsLiveOn(GodotSession session, string projectDir, GodotSession? except) =>
+        !ReferenceEquals(session, except)
+        && session.Kind != SessionKind.Process
+        && session.IsLive
+        && ProjectPaths.AreSame(session.ProjectDir, projectDir);
 
     /// <summary>
     /// The process session <paramref name="session"/> names, else the only live one; null for any other session, an unknown

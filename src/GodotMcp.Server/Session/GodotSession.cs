@@ -26,6 +26,12 @@ internal sealed record SessionSpec(string Name, string ProjectDir, SessionKind K
 
     /// <summary>The dormant game an attach joins, by its process id; null for an attach that waits for a launch, and for a run.</summary>
     public int? JoinPid { get; init; }
+
+    /// <summary>
+    /// Whether the session runs one run_scratches scene: it always runs quiet with the real pads live and unmuted, and neither
+    /// binds nor is bound by the folder's other sessions' and arm's quiet and pad settings.
+    /// </summary>
+    public bool Scratch { get; init; }
 }
 
 /// <summary>
@@ -84,6 +90,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>Whether the session asked the bridge to mute the game's Master bus, apart from quiet.</summary>
     public bool Mute { get; } = spec.Mute;
+
+    /// <inheritdoc cref="SessionSpec.Scratch"/>
+    public bool Scratch { get; } = spec.Scratch;
 
     /// <summary>
     /// The process the server started, once it has; null for an attached game. On Windows that is the Godot_console.exe

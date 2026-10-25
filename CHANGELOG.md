@@ -18,6 +18,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- A windowed, pads-shut or armed drive is no longer refused beside a background `run_scratches` run, whose scenes always run quiet with live pads.
 - `move_node` keeps the moved nodes' own scene-file lines instead of rewriting them in Godot's own form.
 - A released `call_method`, `run_script`, `wait_for` or watch whose server stalled now returns the game's answer to its cancel, not a hang report.
 - `cs_set` reads an enum name sent wrapped in JSON quotes as the name, and `cs_set` and `set_property` say a string value is given as itself.

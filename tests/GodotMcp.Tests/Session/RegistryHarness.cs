@@ -151,12 +151,16 @@ internal sealed class RegistryHarness : IAsyncDisposable
     }
 
     /// <summary>Starts an attach that stays waiting for its game, cancelled with the harness.</summary>
-    public async Task StartWaitingAttachAsync(string projectDir, string name)
+    public Task StartWaitingAttachAsync(string projectDir, string name) =>
+        StartWaitingAttachAsync(new AttachRequest(projectDir, name, LongWait, false, false, null));
+
+    /// <summary>Starts the attach <paramref name="request"/> asks for, which stays waiting for its game, cancelled with the harness.</summary>
+    public async Task StartWaitingAttachAsync(AttachRequest request)
     {
         CancellationTokenSource cancel = new();
-        Task attach = Sessions.AttachAsync(new AttachRequest(projectDir, name, LongWait, false, false, null), cancel.Token);
+        Task attach = Sessions.AttachAsync(request, cancel.Token);
         _waiting.Add((attach, cancel));
-        await WaitUntilAsync(() => Sessions.List(includeStopped: true).Any(session => session.Name == name), attach);
+        await WaitUntilAsync(() => Sessions.List(includeStopped: true).Any(session => session.Name == request.Session), attach);
     }
 
     /// <summary>

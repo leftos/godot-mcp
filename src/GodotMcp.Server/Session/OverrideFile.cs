@@ -92,6 +92,34 @@ internal static class OverrideFile
         File.WriteAllText(path, Header(owners) + body, Utf8NoBom);
     }
 
+    /// <summary>The folder's override.cfg text, the project's own or the server's; null when there is none.</summary>
+    public static string? ReadText(string projectDir)
+    {
+        string path = PathIn(projectDir);
+        return File.Exists(path) ? File.ReadAllText(path) : null;
+    }
+
+    /// <summary>Whether an override.cfg's text is the server's: its first line is <see cref="Marker"/>.</summary>
+    public static bool IsMarked(string text) => text[..LineEnd(text, 0)].TrimEnd() == Marker;
+
+    /// <summary>
+    /// Whether a marked file's <paramref name="text"/> lists this server among its owners and sets what <see cref="Write"/> with
+    /// these arguments would: the same bridge, quiet, pad and unfocused values, so writing it again would change nothing a game
+    /// reads. False for a text that is not marked.
+    /// </summary>
+    public static bool SetsForThisServer(string text, string bridgeScriptPath, bool shutOutRealGamepads, bool quiet, bool unfocused)
+    {
+        if (!IsMarked(text))
+        {
+            return false;
+        }
+
+        ParsedFile parsed = Parse(text);
+        string script = Path.GetFullPath(bridgeScriptPath).Replace('\\', '/');
+        OverrideValues wanted = new(script, quiet, shutOutRealGamepads, Unfocused: quiet || unfocused);
+        return parsed.Owners.Contains(OverrideOwner.Current) && ValuesIn(parsed.Body) == wanted;
+    }
+
     /// <summary>
     /// Takes this server off the owners of the folder's marked file: deletes the file when no live owner is left, else
     /// rewrites it with the live owners left, its content otherwise unchanged. An unmarked file is left alone.
@@ -254,9 +282,11 @@ internal static class OverrideFile
     /// A marked file's owners and what follows them. A file without the owners line (one godot-mcp 0.8.0 wrote) has none, and
     /// its body is everything after the marker; an entry that is not an owner is skipped.
     /// </summary>
-    private static ParsedFile Read(string path)
+    private static ParsedFile Read(string path) => Parse(File.ReadAllText(path));
+
+    /// <inheritdoc cref="Read"/>
+    private static ParsedFile Parse(string text)
     {
-        string text = File.ReadAllText(path);
         int afterMarker = LineEnd(text, 0);
         int afterOwners = LineEnd(text, afterMarker);
         string second = text[afterMarker..afterOwners].TrimEnd();

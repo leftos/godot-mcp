@@ -273,6 +273,56 @@ public sealed class OverrideFileTests : IDisposable
     public void RemoveIfStaleWithoutAFileFindsNothing() =>
         Assert.Equal(new LeftoverRemoval(LeftoverState.Absent), OverrideFile.RemoveIfStale(_project.Path));
 
+    [Fact]
+    public void AFileThisServerWroteSetsTheSameValuesAndNoOtherOnes()
+    {
+        string bridge = _project.Combine("bridge.gd");
+        OverrideFile.Write(_project.Path, bridge, shutOutRealGamepads: false, quiet: true, unfocused: false);
+
+        Assert.True(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: false, quiet: true, unfocused: false));
+        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: true, quiet: true, unfocused: false));
+        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: false, quiet: false, unfocused: false));
+        Assert.False(OverrideFile.SetsForThisServer(Text(), _project.Combine("other.gd"), false, quiet: true, unfocused: false));
+    }
+
+    [Fact]
+    public void AnUnfocusedFileSetsNoValuesOfAFocusedWrite()
+    {
+        string bridge = _project.Combine("bridge.gd");
+        OverrideFile.Write(_project.Path, bridge, shutOutRealGamepads: false, quiet: false, unfocused: true);
+
+        Assert.True(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: false, quiet: false, unfocused: true));
+        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: false, quiet: false, unfocused: false));
+    }
+
+    [Fact]
+    public void AFileThatDoesNotListThisServerIsNotItsWhateverItSets()
+    {
+        string bridge = _project.Combine("bridge.gd");
+        OverrideFile.Write(_project.Path, bridge, shutOutRealGamepads: false, quiet: false, unfocused: false);
+        string path = OverrideFile.PathIn(_project.Path);
+        string[] lines = File.ReadAllLines(path);
+        lines[1] = $"{OverrideFile.OwnersPrefix}{Dead}";
+        File.WriteAllText(path, string.Join('\n', lines) + "\n");
+
+        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: false, quiet: false, unfocused: false));
+    }
+
+    [Fact]
+    public void AnUnmarkedFileSetsNothingAndAMissingOneHasNoText()
+    {
+        string bridge = _project.Combine("bridge.gd");
+        string? missing = OverrideFile.ReadText(_project.Path);
+        File.WriteAllText(OverrideFile.PathIn(_project.Path), UserOverride);
+
+        Assert.Null(missing);
+        Assert.False(OverrideFile.IsMarked(Text()));
+        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, false, false, unfocused: false));
+    }
+
+    /// <summary>The project's override.cfg, which the test has written.</summary>
+    private string Text() => OverrideFile.ReadText(_project.Path)!;
+
     /// <summary>Writes a marked file whose owners line is <paramref name="ownersLine"/> (empty for none) and a bridge autoload.</summary>
     private void WriteMarked(string ownersLine) =>
         File.WriteAllText(

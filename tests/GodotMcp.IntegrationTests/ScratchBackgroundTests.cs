@@ -9,7 +9,8 @@ using ModelContextProtocol;
 namespace GodotMcp.IntegrationTests;
 
 /// <summary>
-/// run_scratches with options.background and scratch_status, in the real Godot, on the InputProbe fixture's ScratchGreen scene:
+/// run_scratches with options.background and scratch_status, in the real Godot, on the InputProbe fixture's ScratchGreen scene
+/// (and its scratch_until ScratchUntilReleased, for a windowed drive beside a run the test holds live):
 /// a run that returns at once and finishes done, a stop mid-run, a second run refused while one is live, and the server's exit
 /// mid-run. Each fact is judged by the order of the run's states and lines, never by its times. It shares
 /// <see cref="ScratchRunnerTests"/>' helpers.
@@ -17,6 +18,9 @@ namespace GodotMcp.IntegrationTests;
 public sealed partial class ScratchBackgroundTests : IAsyncDisposable
 {
     private const string Scene = "ScratchGreen";
+
+    /// <summary>The InputProbe fixture's scratch_until scene that holds its first step until the test writes its release file.</summary>
+    private const string Released = "ScratchUntilReleased";
 
     // A hang guard for each wait on the run's files, never reached by a passing run: on a loaded machine the run's launch and
     // its scene's ceiling may each run to their backstops, 5 times their load-adjusted budgets in wall time, about 6 minutes.
@@ -129,6 +133,48 @@ public sealed partial class ScratchBackgroundTests : IAsyncDisposable
         Assert.Equal("interrupted", (await StatusAsync(runId, stop: null, cancellation))["state"]!.GetValue<string>());
     }
 
+    // ScratchUntilReleased holds its first step until the test writes its release file, so its quiet scratch session is live
+    // through the drive's start and restart, which a scratch session no longer binds to its quiet and pad settings. Its step's
+    // 120 s pace is a cap that turns the run red, never green, should the release not come.
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AWindowedDriveRunsBesideABackgroundScratchRun()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string scratch = Path.Combine(_probe.Directory, "scratch");
+        foreach (string file in new[] { "scratch_until_released.gd", "ScratchUntilReleased.tscn" })
+        {
+            File.Copy(Path.Combine(RepoPaths.InputProbe, "scratch_until", file), Path.Combine(scratch, file));
+        }
+
+        JsonObject started = JsonNode
+            .Parse(await _scratch.RunScratchesAsync(_probe.Directory, [Released], new ScratchOptions(Background: true), cancellation))!
+            .AsObject();
+        string runId = started["runId"]!.GetValue<string>();
+        await WaitForStatusAsync(started, status => SceneState(status) == "playing", cancellation);
+        ProjectTools project = new(_harness.Sessions);
+
+        JsonObject launched = JsonNode
+            .Parse(
+                await project.RunProjectAsync(
+                    _probe.Directory,
+                    options: new RunOptions(Quiet: false, Session: "drive"),
+                    cancellationToken: cancellation
+                )
+            )!
+            .AsObject();
+        JsonObject afterLaunch = await StatusAsync(runId, stop: null, cancellation);
+        JsonObject restarted = JsonNode.Parse(await project.RestartProjectAsync(session: "drive", cancellationToken: cancellation))!.AsObject();
+        JsonObject afterRestart = await StatusAsync(runId, stop: null, cancellation);
+        await File.WriteAllTextAsync(Path.Combine(_probe.Directory, ".godot", "scratch_released.marker"), "released", cancellation);
+        await project.StopProjectAsync("drive", cancellationToken: cancellation);
+        string completion = await WaitForCompletionAsync(started, cancellation);
+
+        Assert.Equal(("drive", false), (launched["session"]!.GetValue<string>(), launched["quiet"]!.GetValue<bool>()));
+        Assert.Equal("drive", restarted["session"]!.GetValue<string>());
+        Assert.All([afterLaunch, afterRestart], status => Assert.Equal((Released, "playing"), PlayingScene(status)));
+        Assert.Equal($"godot-mcp scratch run {runId} finished: done, passed true, green 1, red 0, killed 0, known 0", completion);
+    }
+
     [GeneratedRegex(@"^godot-mcp scratch run \S+ finished:")]
     private static partial Regex Completion();
 
@@ -194,6 +240,9 @@ public sealed partial class ScratchBackgroundTests : IAsyncDisposable
     }
 
     private static string SceneState(JsonObject status) => status["scenes"]![0]!["state"]!.GetValue<string>();
+
+    private static (string Scene, string State) PlayingScene(JsonObject status) =>
+        (status["scenes"]![0]!["scene"]!.GetValue<string>(), SceneState(status));
 
     private static string[] Keys(JsonObject value) => [.. value.Select(entry => entry.Key).Order(StringComparer.Ordinal)];
 }
