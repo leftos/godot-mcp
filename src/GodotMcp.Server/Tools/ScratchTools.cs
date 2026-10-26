@@ -29,6 +29,12 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     /// <summary>The smallest options.timeScale: a wait's wall time is its pace divided by the scale.</summary>
     internal const double MinTimeScale = 0.01;
 
+    /// <summary>The fewest characters options.detailChars may keep of a step's status and of each of its lines.</summary>
+    internal const int MinDetailChars = 1;
+
+    /// <summary>The most characters options.detailChars may keep of a step's status and of each of its lines.</summary>
+    internal const int MaxDetailChars = 20000;
+
     /// <summary>What only does, for scratch_status' parameter and run_scratches' options.only alike.</summary>
     internal const string OnlyDescription =
         "\"all\" (default) returns the whole result; \"red\" keeps every field of every scene and prunes only its details to its "
@@ -301,6 +307,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         ScratchProfile scratch = profile.Scratch ?? ScratchProfile.None;
         CheckPace(options.Pace);
         CheckTimeScale(options.TimeScale);
+        CheckDetailChars(options.DetailChars);
         CheckParallel(options.Parallel);
         CheckOnly(options);
         bool prepare = RunOptions.ParsePrepare(options.Prepare);
@@ -317,6 +324,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
 
         return new ScratchPlan(projectDir, plans, scratch.Patterns, prepare, options.Details ?? false)
         {
+            DetailChars = options.DetailChars ?? ScratchVerdict.DefaultDetailChars,
             Parallel = options.Parallel ?? scratch.Parallel,
             Listed = scenes is not null,
             SessionPrefix = prefix,
@@ -597,6 +605,20 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         }
     }
 
+    /// <exception cref="McpException">
+    /// options.detailChars is below <see cref="MinDetailChars"/> or above <see cref="MaxDetailChars"/>.
+    /// </exception>
+    private static void CheckDetailChars(int? detailChars)
+    {
+        if (detailChars is { } chars && chars is not (>= MinDetailChars and <= MaxDetailChars))
+        {
+            throw new McpException(
+                $"options.detailChars must be at least {MinDetailChars} and at most {MaxDetailChars}; "
+                    + $"got {chars.ToString(CultureInfo.InvariantCulture)}."
+            );
+        }
+    }
+
     /// <summary>The profile's scratch.userArgs, else its top-level userArgs, then options.userArgs.</summary>
     /// <exception cref="McpException">The user arguments hold --scratch-auto.</exception>
     private static List<string> UserArgs(ProjectProfile profile, ScratchProfile scratch, ScratchOptions options)
@@ -768,6 +790,11 @@ internal sealed record ScratchOptions(
             + "characters, each error message cut at 500. Errors are folded with a count, messages cut at 2000 characters with details."
     )]
         bool? Details = null,
+    [property: Description(
+        "How many characters of a step's status line and of each of its lines the result keeps, 1 to 20000; else 500. Above 500 "
+            + "the step's detail budget grows by the extra characters."
+    )]
+        int? DetailChars = null,
     [property: Description(
         "How many scenes play at once, 1 to 4; else the profile's scratch.parallel, else 1. Above 1, a red or killed scene is "
             + "played once more alone after the others."

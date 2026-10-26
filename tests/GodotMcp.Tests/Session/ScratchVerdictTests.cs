@@ -9,7 +9,13 @@ namespace GodotMcp.Tests.Session;
 public sealed class ScratchVerdictTests
 {
     private static readonly IReadOnlyList<ScratchPattern> Default = ScratchProfile.DefaultPatterns;
-    private static readonly ScratchRules Plain = new(Default, Known: null, PaceReason: null, Details: false);
+    private static readonly ScratchRules Plain = new(
+        Default,
+        Known: null,
+        PaceReason: null,
+        Details: false,
+        DetailChars: ScratchVerdict.DefaultDetailChars
+    );
 
     [Fact]
     public void EveryStepCleanAndACleanExitIsGreenWithoutSteps()
@@ -1452,6 +1458,81 @@ public sealed class ScratchVerdictTests
         Assert.InRange(lines.Count, 1, 19);
         Assert.Equal(OutputBuffer.Cut($"ERROR: 0 {new string('x', 1000)}", 500), lines[0]!.GetValue<string>());
         Assert.Equal($"detail over {budget} characters; get_debug_output probe.scratch-Scene holds the full log", step["cut"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void AStatusAndALineOverFiveHundredCharactersAreKeptWholeUnderDetailChars()
+    {
+        (ScratchStep step, string status, string note) = LongStep();
+
+        JsonObject listed = Json(ScratchVerdict.Judge(Seen(step), Plain with { Details = true, DetailChars = 2000 }))["details"]![0]!.AsObject();
+
+        Assert.Equal(status, listed["status"]!.GetValue<string>());
+        Assert.Equal([note], listed["lines"]!.AsArray().Select(line => line!.GetValue<string>()));
+        Assert.False(listed.ContainsKey("cut"), listed.ToJsonString());
+    }
+
+    [Fact]
+    public void AStatusAndItsLinesAreCutAtTheCallsDetailChars()
+    {
+        (ScratchStep step, string status, string note) = LongStep();
+
+        JsonObject listed = Json(ScratchVerdict.Judge(Seen(step), Plain with { Details = true, DetailChars = 100 }))["details"]![0]!.AsObject();
+
+        Assert.Equal(OutputBuffer.Cut(status, 100), listed["status"]!.GetValue<string>());
+        Assert.Equal([OutputBuffer.Cut(note, 100)], listed["lines"]!.AsArray().Select(line => line!.GetValue<string>()));
+    }
+
+    [Fact]
+    public void AFailedStepsStatusIsCutAtDetailChars()
+    {
+        string status = new('s', 1500);
+        ScratchStep failing = Step(0) with { Status = status, Lines = ["ERROR: boom"] };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(failing), Plain with { DetailChars = 2000 });
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Equal(status, result.FailedAt!.Status);
+    }
+
+    [Fact]
+    public void TheBudgetGrowsByTheCharactersDetailCharsAddsAndTheCutNoteNamesIt()
+    {
+        ScratchStep verbose = Step(0) with { Lines = [.. Enumerable.Range(0, 20).Select(n => $"ERROR: {n} {new string('x', 1000)}")] };
+
+        JsonObject step = Json(ScratchVerdict.Judge(Seen(verbose), Plain with { Details = true, DetailChars = 2000 }))["details"]![0]!.AsObject();
+
+        JsonArray lines = step["lines"]!.AsArray();
+        Assert.InRange(lines.ToJsonString(ToolJson.Options).Length, ScratchVerdict.MaxStepDetailChars + 1, 5500);
+        Assert.Equal($"ERROR: 0 {new string('x', 1000)}", lines[0]!.GetValue<string>());
+        Assert.Equal("detail over 5500 characters; get_debug_output probe.scratch-Scene holds the full log", step["cut"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData(ScratchVerdict.DefaultDetailChars, OutputBuffer.MaxLineLength)]
+    [InlineData(2000, 2000)]
+    public void ARawLineIsCutAtTheBufferPageCutOrTheCallsLongerDetailCharsAndTheMarksComeFromTheSnapshot(int detailChars, int kept)
+    {
+        string line = "[scratch] " + new string('n', 1500);
+
+        (OutputPage stdout, OutputPage stderr, LineMark total) = ScratchRun.Bounded(
+            new OutputPage(7, ["short", line]),
+            new OutputPage(null, []),
+            detailChars
+        );
+
+        Assert.Equal(["short", OutputBuffer.Cut(line, kept)], stdout.Lines);
+        Assert.Equal(7, stdout.FirstLine);
+        Assert.Empty(stderr.Lines);
+        Assert.Equal(new LineMark(8, 0), total);
+    }
+
+    /// <summary>A step whose status and [scratch] note are each 1500 characters past their prefix.</summary>
+    private static (ScratchStep Step, string Status, string Note) LongStep()
+    {
+        string status = new('s', 1500);
+        string note = "[scratch] " + new string('n', 1500);
+        return (Step(0) with { Status = status, Lines = [note] }, status, note);
     }
 
     [Fact]

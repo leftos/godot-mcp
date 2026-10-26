@@ -11,6 +11,7 @@ public sealed class ScratchLaunchRequestTests
         ScratchScenePlan scene = new("A", "res://scratch/A.tscn", 1, ["u"]) { TimeScale = 4, EngineArgs = ["--a", "--b"] };
         ScratchPlan plan = new("/game", [scene], [], false, false)
         {
+            DetailChars = ScratchVerdict.DefaultDetailChars,
             Parallel = 1,
             Listed = true,
             SessionPrefix = "game",

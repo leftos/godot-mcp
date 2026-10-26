@@ -92,9 +92,10 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
 
 /// <summary>
 /// How a scene is judged: the patterns that fail a step's line, its known reason, the profile's reason for its pace, and whether
-/// its steps are listed when green and every listed step carries its detail.
+/// its steps are listed when green and every listed step carries its detail, and how many characters a step's status and each
+/// of its lines keep.
 /// </summary>
-internal sealed record ScratchRules(IReadOnlyList<ScratchPattern> Patterns, string? Known, string? PaceReason, bool Details);
+internal sealed record ScratchRules(IReadOnlyList<ScratchPattern> Patterns, string? Known, string? PaceReason, bool Details, int DetailChars);
 
 /// <summary>
 /// run_scratches' result: whether every scene passed, the count of each verdict, what the prep did, one entry a scene, and the
@@ -287,6 +288,9 @@ internal static partial class ScratchVerdict
     /// </summary>
     public const int MaxCopyChars = 500;
 
+    /// <summary>The characters a step's status and each of its lines keep when options.detailChars is left out.</summary>
+    public const int DefaultDetailChars = 500;
+
     /// <summary>
     /// The most characters failures[].error keeps without options.details: failures index the steps, whose own error carries
     /// the message at <see cref="MaxCopyChars"/>.
@@ -355,7 +359,7 @@ internal static partial class ScratchVerdict
     /// <summary>The scene's verdict and result.</summary>
     public static ScratchSceneResult Judge(ScratchObservation seen, ScratchRules rules)
     {
-        (string verdict, ScratchFailure? failedAt) = Underlying(seen, rules.Patterns);
+        (string verdict, ScratchFailure? failedAt) = Underlying(seen, rules.Patterns, rules.DetailChars);
         string shown = Known(verdict, failedAt, rules.Known, PlayedInPart(seen));
         return new ScratchSceneResult(
             seen.Scene,
@@ -476,8 +480,12 @@ internal static partial class ScratchVerdict
         return null;
     }
 
-    /// <summary>The verdict before the known rule, and the step it names.</summary>
-    private static (string Verdict, ScratchFailure? FailedAt) Underlying(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns)
+    /// <summary>The verdict before the known rule, and the step it names, its status cut to <paramref name="detailChars"/>.</summary>
+    private static (string Verdict, ScratchFailure? FailedAt) Underlying(
+        ScratchObservation seen,
+        IReadOnlyList<ScratchPattern> patterns,
+        int detailChars
+    )
     {
         if (BeforeAnyStep(seen) is { } early)
         {
@@ -495,7 +503,7 @@ internal static partial class ScratchVerdict
             {
                 return (
                     Red,
-                    new ScratchFailure(step.Index, step.Name, error, OutputBuffer.Cut(step.Status, MaxCopyChars))
+                    new ScratchFailure(step.Index, step.Name, error, OutputBuffer.Cut(step.Status, detailChars))
                     {
                         Pattern = MatchedPattern(step, patterns),
                     }
@@ -574,7 +582,8 @@ internal static partial class ScratchVerdict
     /// <summary>
     /// A step as it is listed: its status line, and its detail when it failed or options.details asks for every step's; the errors
     /// folded and the lines its matching ones and [scratch] notes, within the limits of <see cref="Full"/> detail with
-    /// options.details, of <see cref="Compact"/> detail without.
+    /// options.details, of <see cref="Compact"/> detail without; the status and each line keep the rules' detail characters, and
+    /// those above <see cref="DefaultDetailChars"/> grow the step's character budget.
     /// </summary>
     private static ScratchStepResult StepResult(ScratchStep step, ScratchRules rules, string session)
     {
@@ -585,14 +594,15 @@ internal static partial class ScratchVerdict
             error is null,
             step.Until is null ? step.GameMs : null,
             step.Until,
-            OutputBuffer.Cut(step.Status, MaxCopyChars)
+            OutputBuffer.Cut(step.Status, rules.DetailChars)
         );
         if (error is null && !rules.Details)
         {
             return listed;
         }
 
-        DetailLimits limits = rules.Details ? Full : Compact;
+        DetailLimits chosen = rules.Details ? Full : Compact;
+        DetailLimits limits = chosen with { Chars = chosen.Chars + Math.Max(0, rules.DetailChars - DefaultDetailChars) };
         List<ErrorReport.Collapsed> folded = ErrorReport.Collapse([.. step.Errors.Where(entry => entry.IsError)]);
         return WithinBudget(
             listed with
@@ -601,7 +611,7 @@ internal static partial class ScratchVerdict
                 ErrorsOmitted = folded.Count > limits.Errors ? folded.Count - limits.Errors : null,
                 Error = error,
             },
-            StepLines(step, rules.Patterns),
+            StepLines(step, rules.Patterns, rules.DetailChars),
             limits,
             session
         );
@@ -610,14 +620,14 @@ internal static partial class ScratchVerdict
     private static ScratchError Folded(ErrorReport.Collapsed error, int messageChars) =>
         new(OutputBuffer.Cut(error.First.Message, messageChars), error.First.File, error.First.Line) { Count = error.Count > 1 ? error.Count : null };
 
-    /// <summary>A step's matching lines and [scratch] notes, each cut to <see cref="MaxCopyChars"/>, after a note of the lines it lost.</summary>
-    private static List<string> StepLines(ScratchStep step, IReadOnlyList<ScratchPattern> patterns)
+    /// <summary>A step's matching lines and [scratch] notes, each cut to <paramref name="detailChars"/>, after a note of the lines it lost.</summary>
+    private static List<string> StepLines(ScratchStep step, IReadOnlyList<ScratchPattern> patterns, int detailChars)
     {
         List<string> lines =
         [
             .. step
                 .Lines.Where(line => Matches(line, patterns) || line.StartsWith(ScratchNotePrefix, StringComparison.Ordinal))
-                .Select(line => OutputBuffer.Cut(line, MaxCopyChars)),
+                .Select(line => OutputBuffer.Cut(line, detailChars)),
         ];
         if (step.Dropped > 0)
         {

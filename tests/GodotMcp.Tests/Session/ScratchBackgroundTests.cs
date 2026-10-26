@@ -682,6 +682,7 @@ public sealed partial class ScratchBackgroundTests : IDisposable
             Details: false
         )
         {
+            DetailChars = ScratchVerdict.DefaultDetailChars,
             Parallel = 1,
             Listed = true,
             SessionPrefix = "p",

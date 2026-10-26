@@ -88,8 +88,8 @@ internal readonly partial record struct ScratchStepToken(string Text, bool IsNum
 /// <summary>
 /// A checked run_scratches call: the project, its scenes in order, the patterns, whether to prepare and list every step, how
 /// many scenes play at once, whether the call listed its scenes rather than leaving them to the folder, the prefix each
-/// scene's session is named with, whether a scene plays on past a failed step, the steps options.steps selects, and the
-/// call's time scale.
+/// scene's session is named with, whether a scene plays on past a failed step, the steps options.steps selects, the call's
+/// time scale, and how many characters a step's status and each of its lines keep.
 /// </summary>
 internal sealed record ScratchPlan(
     string ProjectDir,
@@ -99,6 +99,8 @@ internal sealed record ScratchPlan(
     bool Details
 )
 {
+    public required int DetailChars { get; init; }
+
     public required int Parallel { get; init; }
 
     public required bool Listed { get; init; }
@@ -359,7 +361,7 @@ internal sealed class ScratchRun
         ScratchPlan plan = context.Plan;
         ScratchScenePlan scene = plan.Scenes[index];
         ScratchObservation seen = await new ScratchRun(context, index).PlayAsync(cancellationToken);
-        return ScratchVerdict.Judge(seen, new ScratchRules(plan.Patterns, scene.Known, scene.PaceReason, plan.Details));
+        return ScratchVerdict.Judge(seen, new ScratchRules(plan.Patterns, scene.Known, scene.PaceReason, plan.Details, plan.DetailChars));
     }
 
     /// <summary>
@@ -1204,14 +1206,25 @@ internal sealed class ScratchRun
             ? (int)number
             : -1;
 
-    /// <summary>The newest lines of each stream, and the number of each stream's last line.</summary>
-    private static (OutputPage Stdout, OutputPage Stderr, LineMark Total) Output(GodotSession session)
+    /// <summary>The held lines of each stream, as <see cref="Bounded"/> cuts them for the call's options.detailChars.</summary>
+    private (OutputPage Stdout, OutputPage Stderr, LineMark Total) Output(GodotSession session)
     {
-        DebugOutput output = session.GetDebugOutput(GodotRun.OutputCapacity, before: null);
-        return (
-            new OutputPage(output.StdoutFirstLine, output.Stdout),
-            new OutputPage(output.StderrFirstLine, output.Stderr),
-            new LineMark(output.StdoutTotalLines, output.StderrTotalLines)
-        );
+        (OutputPage stdout, OutputPage stderr, _, _) = session.GetRawOutput();
+        return Bounded(stdout, stderr, _plan.DetailChars);
     }
+
+    /// <summary>
+    /// Each raw line cut to the output buffer's page cut, or to <paramref name="detailChars"/> when that is longer, so only a
+    /// call asking for more sees longer lines; and the number of each stream's last held line, taken from the snapshot itself
+    /// so the window and the mark always agree (0 for a stream with no lines).
+    /// </summary>
+    internal static (OutputPage Stdout, OutputPage Stderr, LineMark Total) Bounded(OutputPage stdout, OutputPage stderr, int detailChars)
+    {
+        int longest = Math.Max(OutputBuffer.MaxLineLength, detailChars);
+        OutputPage cutOut = stdout with { Lines = [.. stdout.Lines.Select(line => OutputBuffer.Cut(line, longest))] };
+        OutputPage cutErr = stderr with { Lines = [.. stderr.Lines.Select(line => OutputBuffer.Cut(line, longest))] };
+        return (cutOut, cutErr, new LineMark(LastLine(cutOut), LastLine(cutErr)));
+    }
+
+    private static long LastLine(OutputPage page) => page.FirstLine is long first ? first + page.Lines.Count - 1 : 0;
 }

@@ -269,6 +269,27 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ALongNoteIsReturnedWholeUnderDetailChars()
+    {
+        string note = new('n', 1500);
+
+        JsonObject scene = Single(
+            await RunAsync(
+                _probe.Directory,
+                ["ScratchLongNote"],
+                new ScratchOptions(Details: true, DetailChars: 2000),
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
+        JsonNode step = scene["details"]![0]!;
+        Assert.EndsWith(note, Status(step), StringComparison.Ordinal);
+        List<string> lines = [.. step["lines"]!.AsArray().Select(line => line!.GetValue<string>())];
+        Assert.Contains(lines, line => line.Contains(note, StringComparison.Ordinal) && !line.Contains("… (+", StringComparison.Ordinal));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ALineATimerPrintsFailsTheStepItPrintedIn()
     {
         JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchLateLine"], options: null, TestContext.Current.CancellationToken));

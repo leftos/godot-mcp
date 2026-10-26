@@ -101,7 +101,13 @@ public sealed class ScratchUntilTests
         const string Suffix = " (res://scene.gd:3)";
         ErrorEntry entry = Entry("error", new string('x', 600));
         (string error, ErrorEntry? raised) = ScratchRun.UntilFailure(0, "throws", "The bridge refused 'wait_for': " + entry.Message, [entry]);
-        ScratchRules rules = new(ScratchProfile.DefaultPatterns, Known: null, PaceReason: null, Details: false);
+        ScratchRules rules = new(
+            ScratchProfile.DefaultPatterns,
+            Known: null,
+            PaceReason: null,
+            Details: false,
+            DetailChars: ScratchVerdict.DefaultDetailChars
+        );
         ScratchObservation seen = new("Scene", "probe.scratch-Scene", 5, 1)
         {
             Steps =
@@ -178,7 +184,13 @@ public sealed class ScratchUntilTests
     [Fact]
     public void AStepPlayedInsideItsUntilListsTheUntilInPlaceOfGameMsAndAPacedOneIsUnchanged()
     {
-        ScratchRules rules = new(ScratchProfile.DefaultPatterns, Known: null, PaceReason: null, Details: true);
+        ScratchRules rules = new(
+            ScratchProfile.DefaultPatterns,
+            Known: null,
+            PaceReason: null,
+            Details: true,
+            DetailChars: ScratchVerdict.DefaultDetailChars
+        );
         ScratchObservation seen = new("Scene", "probe.scratch-Scene", 5, 2)
         {
             Steps = [new(0, "paced", 5000), new(1, "until", 5000) { Until = new ScratchUntil(true, 300, 312, 19) }],

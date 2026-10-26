@@ -162,6 +162,16 @@ public sealed class ScratchValidationTests : IDisposable
         );
 
     [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(20001)]
+    public void ADetailCharsOutsideOneToTwentyThousandIsRefused(int chars) =>
+        Assert.Equal(
+            $"options.detailChars must be at least 1 and at most 20000; got {chars.ToString(System.Globalization.CultureInfo.InvariantCulture)}.",
+            Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(DetailChars: chars)))
+        );
+
+    [Theory]
     [InlineData(0.0, "0")]
     [InlineData(-1.0, "-1")]
     [InlineData(3600.5, "3600.5")]

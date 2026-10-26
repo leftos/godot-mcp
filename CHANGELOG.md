@@ -14,6 +14,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - The profile's `scratch.setup` declares a scene's setup steps, which a partial `run_scratches` run always plays and reports as `setup`.
 - A process profile takes `prep`, a build command `run_process` and `restart_project` run through the project's `prepWrapper` before starting the process.
 - `scratch_status` and `run_scratches` take `only: "red"` to list only each scene's red steps, keeping every scene's verdict line.
+- `run_scratches` takes `detailChars` in its options, keeping up to 20000 characters of a step's status and each of its lines.
 
 ### Changed
 
