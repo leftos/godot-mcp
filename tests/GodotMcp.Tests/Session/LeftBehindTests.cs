@@ -13,6 +13,7 @@ namespace GodotMcp.Tests.Session;
 public sealed partial class LeftBehindTests
 {
     private const string WindowsOnly = "The Toolhelp listing is Windows only; elsewhere nothing is listed.";
+    private const int Rounds = 20;
 
     // Hang guards: a passing run never waits them out, so they are sized past the longest stall a busy machine gives a child.
     private static readonly TimeSpan ChildAppearWait = TimeSpan.FromMinutes(2);
@@ -41,27 +42,13 @@ public sealed partial class LeftBehindTests
     }
 
     [Fact]
-    public async Task TheListingFindsAChildRunningAndStillFindsItOnceItsParentHasExited()
+    public async Task AChildOrphanedAsSoonAsItIsListedIsStillListedAfterItsParentsExit()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), WindowsOnly);
-        using Process parent = StartParentWithPing();
-        int? pingId = null;
-        try
-        {
-            string? whileRunning = await WaitUntilListedAsync(parent, IsPing);
-            Assert.NotNull(whileRunning);
-            pingId = PingId(whileRunning);
-            parent.Kill(entireProcessTree: false);
-            Assert.True(await ProcessExit.WaitUntilGoneAsync(parent, ExitWait));
 
-            IReadOnlyList<string> afterExit = LeftBehind.Find(parent, NullLogger.Instance);
-
-            // cmd.exe's console host is its child too, and may still be ending; only the ping matters here.
-            Assert.Contains(afterExit, described => string.Equals(described, $"PING.EXE (pid {pingId})", StringComparison.OrdinalIgnoreCase));
-        }
-        finally
+        for (int round = 0; round < Rounds; round++)
         {
-            await EndAsync(parent, pingId);
+            await OneOrphanedPingAsync();
         }
     }
 
@@ -78,10 +65,93 @@ public sealed partial class LeftBehindTests
         Assert.Empty(listed);
     }
 
+    // One round: a child listed the instant it appears, orphaned, and still listed after its parent is gone.
+    private static async Task OneOrphanedPingAsync()
+    {
+        using Process parent = await StartParentWithRunningPingAsync();
+        Process? ping = null;
+        try
+        {
+            string? whileRunning = await WaitUntilListedAsync(parent, IsPing);
+            Assert.NotNull(whileRunning);
+            int pingId = PingId(whileRunning);
+            ping = Process.GetProcessById(pingId);
+            parent.Kill(entireProcessTree: false);
+            Assert.True(await ProcessExit.WaitUntilGoneAsync(parent, ExitWait));
+
+            IReadOnlyList<string> afterExit = LeftBehind.Find(parent, NullLogger.Instance);
+
+            // cmd.exe's console host is its child too, and may still be ending; only the ping matters here.
+            string expected = $"PING.EXE (pid {pingId})";
+            bool listed = afterExit.Any(described => string.Equals(described, expected, StringComparison.OrdinalIgnoreCase));
+            if (!listed)
+            {
+                Assert.Fail(ping.HasExited ? "the ping exited before the listing" : "the live ping was not listed");
+            }
+        }
+        finally
+        {
+            await EndAsync(parent, ping);
+            ping?.Dispose();
+        }
+    }
+
     // The ping outlives any test run, about ten minutes, so only EndAsync ends it: one that ended on its own could leave the
-    // listing after its parent's exit with nothing to find.
-    private static Process StartParentWithPing() =>
-        Process.Start(new ProcessStartInfo("cmd.exe", "/c ping -n 600 127.0.0.1 >nul") { UseShellExecute = false, CreateNoWindow = true })!;
+    // listing after its parent's exit with nothing to find. Its first line is waited for, since a process is listed from its
+    // creation and a ping whose parent dies in its first few milliseconds dies with it.
+    private static async Task<Process> StartParentWithRunningPingAsync()
+    {
+        var start = new ProcessStartInfo("cmd.exe", "/c ping -n 600 127.0.0.1")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            CreateNoWindow = true,
+        };
+
+        Process parent = Process.Start(start)!;
+        using var guard = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        guard.CancelAfter(ChildAppearWait);
+        string? line = null;
+        bool printedNothing = false;
+        try
+        {
+            do
+            {
+                line = await parent.StandardOutput.ReadLineAsync(guard.Token);
+            } while (line is not null && line.Length == 0);
+        }
+        catch (OperationCanceledException) when (guard.IsCancellationRequested)
+        {
+            printedNothing = true;
+        }
+
+        if (printedNothing)
+        {
+            await EndFailedStartAsync(parent);
+            Assert.Fail($"the ping printed nothing within {ChildAppearWait}");
+        }
+        else if (line is null)
+        {
+            await EndFailedStartAsync(parent);
+            Assert.Fail("the ping ended before printing its first line");
+        }
+
+        // The ping writes into the pipe this process holds; the rest of its output is read so it never blocks on a full one.
+        _ = parent.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
+        return parent;
+    }
+
+    // A start that failed never returns its parent to the caller, so its tree is ended here rather than left running.
+    private static async Task EndFailedStartAsync(Process parent)
+    {
+        if (!parent.HasExited)
+        {
+            parent.Kill(entireProcessTree: true);
+            await ProcessExit.WaitUntilGoneAsync(parent, ExitWait);
+        }
+
+        parent.Dispose();
+    }
 
     private static bool IsPing(string described) => described.StartsWith("PING.EXE (pid ", StringComparison.OrdinalIgnoreCase);
 
@@ -95,7 +165,6 @@ public sealed partial class LeftBehindTests
         string? found = LeftBehind.Find(parent, NullLogger.Instance).FirstOrDefault(match);
         while (found is null && !parent.HasExited && waited.Elapsed < ChildAppearWait)
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(100), TestContext.Current.CancellationToken);
             found = LeftBehind.Find(parent, NullLogger.Instance).FirstOrDefault(match);
         }
 
@@ -123,7 +192,7 @@ public sealed partial class LeftBehindTests
         return int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
     }
 
-    private static async Task EndAsync(Process parent, int? pingId)
+    private static async Task EndAsync(Process parent, Process? ping)
     {
         if (!parent.HasExited)
         {
@@ -131,21 +200,14 @@ public sealed partial class LeftBehindTests
             await ProcessExit.WaitUntilGoneAsync(parent, ExitWait);
         }
 
-        if (pingId is not int id)
+        // The held handle, never the pid again: a process id can be reused.
+        if (ping is null || ping.HasExited)
         {
             return;
         }
 
-        try
-        {
-            using var ping = Process.GetProcessById(id);
-            ping.Kill();
-            await ProcessExit.WaitUntilGoneAsync(ping, ExitWait);
-        }
-        catch (ArgumentException)
-        {
-            // The ping has already exited.
-        }
+        ping.Kill();
+        await ProcessExit.WaitUntilGoneAsync(ping, ExitWait);
     }
 
     [GeneratedRegex(@"\(pid (\d+)\)")]
