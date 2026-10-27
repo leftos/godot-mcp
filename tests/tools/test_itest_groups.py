@@ -27,6 +27,8 @@ ALL_GROUPS = [
     "nodes",
     "csharp",
     "scratch",
+    "scratchsteps",
+    "scratchpace",
     "scratchfolder",
     "scratchparallel",
     "scratchuntil",
@@ -35,7 +37,7 @@ ALL_GROUPS = [
 # Every group a rule's 'all' selects: all of them but the visible-desktop ones.
 ALL_BUT_VISIBLE = [group for group in ALL_GROUPS if group != "capture"]
 # The groups that play scratch scenes, which a change to the scratch runner or the runtime tools it drives selects.
-SCRATCH_GROUPS = ["scratch", "scratchfolder", "scratchparallel", "scratchuntil", "scratchbackground"]
+SCRATCH_GROUPS = ["scratch", "scratchsteps", "scratchpace", "scratchfolder", "scratchparallel", "scratchuntil", "scratchbackground"]
 GROUP_LINE = re.compile(r"^itest-groups: (\w+) \(from (.+)\)$", re.MULTILINE)
 # The files the repo holds at its first commit; each test changes some of them, or adds a file, after it.
 STUBS = [
@@ -180,6 +182,20 @@ def test_an_untracked_test_class_file_selects_the_group_listing_it(repo: Path) -
 def test_a_change_to_the_parallel_scratch_folder_tests_selects_its_own_group(repo: Path) -> None:
     _change(repo, "tests/GodotMcp.IntegrationTests/ScratchFolderParallelTests.cs")
     assert _selected(_itest_groups(repo)) == ["scratchparallel"]
+
+
+@pytest.mark.parametrize(
+    ("changed", "groups"),
+    [
+        ("tests/GodotMcp.IntegrationTests/ScratchRunBase.cs", ["scratch", "scratchsteps", "scratchpace"]),
+        ("tests/GodotMcp.IntegrationTests/ScratchRunnerTests.cs", SCRATCH_GROUPS),
+        ("tests/GodotMcp.IntegrationTests/ScratchStepsRunTests.cs", ["scratchsteps"]),
+        ("tests/GodotMcp.IntegrationTests/ScratchPaceRunTests.cs", ["scratchpace"]),
+    ],
+)
+def test_the_split_scratch_run_classes_select_their_own_groups(repo: Path, changed: str, groups: list[str]) -> None:
+    _change(repo, changed)
+    assert _selected(_itest_groups(repo)) == groups
 
 
 @pytest.mark.parametrize(

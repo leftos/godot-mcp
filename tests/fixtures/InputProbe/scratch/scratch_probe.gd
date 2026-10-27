@@ -1,7 +1,7 @@
 extends Node
-## The scratch protocol run_scratches plays, for the scratch scenes beside it (ScratchRunnerTests):
-## each scene's script adds its steps in _init, PlayStep plays one, and GetStatus answers the
-## step's name and the note the step left with set_note.
+## The scratch protocol run_scratches plays, for the scratch scenes beside it (the scratch itest
+## classes): each scene's script adds its steps in _init, PlayStep plays one, and GetStatus
+## answers the step's name and the note the step left with set_note.
 
 var _names: PackedStringArray = []
 var _steps: Array[Callable] = []

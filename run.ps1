@@ -21,9 +21,9 @@ the same log, and the job's timeout-minutes bounds it in place of the ceiling an
            then its dotnet test -c Release --no-build; ceiling 180 s
   itest    the integration tests against the real Godot (GODOT_PATH, else a Godot*console*.exe on PATH), in the class
            groups of the table at the top of this script, which run in the three lanes of the table below it: timing
-           (lifecycle, stopping, watchdog, input, time, recording, capture, reads, scratch, scratchfolder, scratchparallel,
-           scratchuntil: the groups that assert wall-clock times), build (prep, scene, csharp) and untimed (sessions, attach,
-           headless, nodes, scratchbackground). It
+           (lifecycle, stopping, watchdog, input, time, recording, capture, reads, scratch, scratchpace, scratchfolder,
+           scratchparallel, scratchuntil: the groups that assert wall-clock times), build (prep, scene, csharp) and untimed
+           (sessions, attach, headless, nodes, scratchsteps, scratchbackground). It
            first checks that every `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly
            one group, every listed class exists, every group is in exactly one lane that names only groups, and the
            heavy groups and rules tables name only groups, and stops with status 1 before running anything when not.
@@ -37,7 +37,7 @@ the same log, and the job's timeout-minutes bounds it in place of the ceiling an
            Every group runs even when an earlier one fails; a summary line per group follows in the groups table's order,
            then "itest: <n> groups in <m> lanes, wall <time>", and the exit status is the first non-zero group's in
            that order. Each gate takes one of the machine's gate slots, so the three lanes take three: a heavy slot for
-           the groups of the heavy groups table (prep, headless, scene, nodes, csharp, whose tests build C#), a light
+           the groups of the heavy groups table (prep, headless, scene, nodes, csharp, scratchpace, whose tests build C#), a light
            one for the rest, whichever lane a group is in. On Windows every test run (a group's or a -Filter one) goes
            through tools/hidden-desktop.ps1, on a desktop of its own, so no Godot window shows, except a run of the
            visible groups table's groups (capture): Windows.Graphics.Capture cannot see a window on a hidden desktop,
@@ -197,6 +197,8 @@ $itestGroups = [ordered]@{
     nodes     = @('HeadlessPropertyTests', 'HeadlessSignalTests')
     csharp    = @('CSharpToolTests', 'GameToolTests', 'CSharpStateTests', 'CSharpWatchTests', 'CSharpFiredSignalsTests', 'ScratchCSharpStateTests')
     scratch   = @('ScratchRunnerTests')
+    scratchsteps = @('ScratchStepsRunTests')
+    scratchpace = @('ScratchPaceRunTests')
     scratchfolder = @('ScratchFolderTests', 'ScratchExpectRunTests')
     scratchparallel = @('ScratchFolderParallelTests')
     scratchuntil = @('ScratchUntilRunTests')
@@ -207,13 +209,13 @@ $itestGroups = [ordered]@{
 # builds and headless runs split between them beside the session tests. Every group is in exactly one lane; itest
 # refuses to run while one is not.
 $itestLanes = [ordered]@{
-    timing  = @('lifecycle', 'stopping', 'watchdog', 'input', 'time', 'recording', 'capture', 'reads', 'scratch', 'scratchfolder', 'scratchparallel', 'scratchuntil')
+    timing  = @('lifecycle', 'stopping', 'watchdog', 'input', 'time', 'recording', 'capture', 'reads', 'scratch', 'scratchpace', 'scratchfolder', 'scratchparallel', 'scratchuntil')
     build   = @('prep', 'scene', 'csharp')
-    untimed = @('sessions', 'attach', 'headless', 'nodes', 'scratchbackground')
+    untimed = @('sessions', 'attach', 'headless', 'nodes', 'scratchsteps', 'scratchbackground')
 }
 # The groups whose tests run dotnet builds of the CsProbe project on top of their Godot runs: each takes a heavy gate
 # slot, in whichever lane it runs, and every other group a light one.
-$itestHeavyGroups = @('prep', 'headless', 'scene', 'nodes', 'csharp', 'scratch')
+$itestHeavyGroups = @('prep', 'headless', 'scene', 'nodes', 'csharp', 'scratchpace')
 # The groups whose tests capture a Godot window through Windows.Graphics.Capture, which sees no window on a hidden
 # desktop: their runs skip tools/hidden-desktop.ps1, so their windows show on the user's desktop. Their gate takes a light
 # slot, never a heavy one: a light gate always runs on this machine, and the visible desktop the group needs exists only
@@ -244,6 +246,8 @@ $itestCaptureCeiling = $itestCeiling + 120
 # preloads every module.
 $itestRuntimeGroups = @('lifecycle', 'stopping', 'watchdog', 'sessions', 'attach', 'input', 'reads', 'time', 'prep', 'recording', 'csharp')
 $itestEveryGroup = @($itestGroups.Keys)
+# The groups that play scratch scenes, which a change to the scratch runner, the tools it drives or its shared tests selects.
+$itestScratchGroups = @('scratch', 'scratchsteps', 'scratchpace', 'scratchfolder', 'scratchparallel', 'scratchuntil', 'scratchbackground')
 $itestRules = @(
     @('bridge/godot_mcp_window.gd', $itestEveryGroup),
     @('bridge/godot_mcp_bridge.gd', $itestEveryGroup),
@@ -254,7 +258,7 @@ $itestRules = @(
     @('src/GodotMcp.Server/Session/Realtime*.cs', @('capture')),
     @('src/GodotMcp.Server/Session/GodotSession.Realtime.cs', @('capture')),
     @('src/GodotMcp.Server/Session/Installation.cs', $itestEveryGroup),
-    @('src/GodotMcp.Server/Session/Scratch*.cs', @('scratch', 'scratchfolder', 'scratchparallel', 'scratchuntil', 'scratchbackground', 'csharp')),
+    @('src/GodotMcp.Server/Session/Scratch*.cs', @($itestScratchGroups + 'csharp')),
     @('src/GodotMcp.Server/Session/**', 'all'),
     @('src/GodotMcp.Server/Wire/**', 'all'),
     @('src/GodotMcp.Server/*.cs', 'all'),
@@ -275,7 +279,7 @@ $itestRules = @(
     @('src/GodotMcp.Server/Tools/HeadlessTools.Batch*.cs', 'scene'),
     @('src/GodotMcp.Server/Tools/HeadlessTools.Properties*.cs', 'nodes'),
     @('src/GodotMcp.Server/Tools/HeadlessTools.Signals*.cs', 'nodes'),
-    @('src/GodotMcp.Server/Tools/HeadlessTools.cs', @('headless', 'scratch', 'scratchfolder', 'scratchparallel', 'scratchuntil', 'scratchbackground')),
+    @('src/GodotMcp.Server/Tools/HeadlessTools.cs', @(@('headless') + $itestScratchGroups)),
     @('src/GodotMcp.Server/Tools/HeadlessTools*.cs', 'headless'),
     @('src/GodotMcp.Server/Tools/InputTarget.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Input*.cs', 'input'),
@@ -285,27 +289,28 @@ $itestRules = @(
     @('src/GodotMcp.Server/Tools/RuntimeTools.Capture*.cs', 'input'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Watch*.cs', @('time', 'csharp')),
     @('src/GodotMcp.Server/Tools/Watch*.cs', @('time', 'csharp')),
-    @('src/GodotMcp.Server/Tools/RuntimeTools.Time*.cs', @('time', 'scratch', 'scratchfolder', 'scratchparallel', 'scratchuntil', 'scratchbackground', 'csharp')),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Time*.cs', @(@('time') + $itestScratchGroups + 'csharp')),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Frames*.cs', 'time'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Batch*.cs', 'time'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Record*.cs', @('recording', 'capture')),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Inspect*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Snapshot*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.Baseline*.cs', 'reads'),
-    @('src/GodotMcp.Server/Tools/RuntimeTools.Preview*.cs', @('reads', 'scratch', 'scratchfolder', 'scratchparallel', 'scratchuntil', 'scratchbackground')),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Preview*.cs', @(@('reads') + $itestScratchGroups)),
     @('src/GodotMcp.Server/Tools/RuntimeTools.State*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/State*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.CSharp*.cs', 'csharp'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.RunCSharp*.cs', 'csharp'),
     @('src/GodotMcp.Server/Tools/RuntimeTools*.cs', $itestRuntimeGroups),
     @('src/GodotMcp.Server/Tools/ProjectTools*.cs', @('lifecycle', 'stopping', 'watchdog', 'sessions', 'attach', 'prep')),
-    @('src/GodotMcp.Server/Tools/ScratchTools*.cs', @('scratch', 'scratchfolder', 'scratchparallel', 'scratchuntil', 'scratchbackground', 'csharp')),
+    @('src/GodotMcp.Server/Tools/ScratchTools*.cs', @($itestScratchGroups + 'csharp')),
     @('src/GodotMcp.Server/Tools/**', 'all'),
     @('src/GodotMcp.Server/CSharp/**', 'csharp'),
     @('src/GodotMcp.Dotnet*/**', 'csharp'),
     @('dotnet/**', 'csharp'),
     @('src/GodotMcp.Server/Agents/**', 'none'),
-    @('tests/GodotMcp.IntegrationTests/ScratchRunnerTests.cs', @('scratch', 'scratchfolder', 'scratchparallel', 'scratchuntil', 'scratchbackground')),
+    @('tests/GodotMcp.IntegrationTests/ScratchRunnerTests.cs', $itestScratchGroups),
+    @('tests/GodotMcp.IntegrationTests/ScratchRunBase.cs', @('scratch', 'scratchsteps', 'scratchpace')),
     @('tests/GodotMcp.IntegrationTests/ScratchFolderTests.cs', @('scratchfolder', 'scratchparallel')),
     @('tests/GodotMcp.IntegrationTests/*.cs', 'class'),
     @('docs/**', 'none'),
