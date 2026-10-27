@@ -81,6 +81,59 @@ To change X, read these files, in order.
 | A new C# fixture node or itest class in the `csharp` group | `tests/fixtures/CsProbe/*.cs` (top level only: `CsProbeProject` copies only top-level files), `tests/GodotMcp.TestSupport/CsProbeProject.cs`, `tests/GodotMcp.IntegrationTests/Fixtures/SharedCsProbeSession.cs`, `CSharpWatchTests.cs` as the model; then `run.ps1` `$itestGroups` and `$itestRules` |
 | The itests' fixture copies | `tests/GodotMcp.TestSupport/CommittedFixture.cs`, `CsProbeProject.cs`, `tests/GodotMcp.IntegrationTests/Fixtures/ProbeProject.cs`, `SharedProbeSession.cs`; then DEVELOPMENT.md's fixture bullets |
 
+## Layers
+
+What each project owns and what it must never depend on. The [Components](#components) table below has the detail.
+
+- **The server** (`src/GodotMcp.Server/`, net10.0): owns the MCP surface, sessions, the wire to the bridge, prep, the headless runs and the C# helper's cache. References none of the helper projects; it reaches the helper only through the bridge's `dotnet` command and the copy `HelperCache` makes. Its stdout is the MCP protocol, so nothing in it writes there but the SDK.
+- **The bridge** (`bridge/`, GDScript): the autoload that runs inside a game, dials the server and carries out its commands. Injected through a marked `override.cfg`; never enters a project's tracked files and never depends on a tool-specific server type, only on the wire's JSON.
+- **The headless scripts** (`headless/`, GDScript): the scene-edit ops a headless Godot runs on a project's files. Share `bridge/godot_mcp_json.gd` and `godot_mcp_class_info.gd` with the bridge; never depend on a running game or on the bridge autoload (`GODOT_MCP_OFF=1` switches it off in a headless run).
+- **The C# helper** (`src/GodotMcp.Dotnet/` with `GodotMcp.Dotnet.Core/`, `GodotMcp.Dotnet.Loader/` and `GodotMcp.Dotnet.Shim/`, `dotnet/`): runs inside the game's .NET runtime and reaches C# members Godot's call cannot. `GodotMcp.Dotnet.Core` (net8.0) has no Godot reference and nothing of the server; `GodotMcp.Dotnet` references Core and the game's `GodotSharp`, and the server never loads it into its own process.
+- **The capture helper** (`src/GodotMcp.Capture/`, net10.0-windows): its own process, so a D3D or WinRT fault never takes the server down. Talks to the server only through its arguments, stdout, exit code and the deadline file; references nothing else in the repo.
+- **The tests** (`tests/`): `GodotMcp.TestSupport` references the server and is referenced by both test projects; `GodotMcp.Tests` also references `GodotMcp.Dotnet.Core`. No `src/` project references a test project.
+
+## Integration Footguns
+
+A change to A that needs a change to B, where nothing but a test or a reviewer catches the miss. The longer footguns are in [DEVELOPMENT.md](./DEVELOPMENT.md#footguns).
+
+- **Change a tool's arguments, defaults or edges** → also change [TOOLS.md](./TOOLS.md) and [SKILL.md](../skills/godot-mcp/SKILL.md) in the same commit (the skill is published with the server and linked into `~/.claude/skills` by `run.ps1 install`, so game repos see it after a release); a new tool also moves the counts in `McpServerSmokeTests` and `BatchValidationTests` and gets a class in `Agents/ToolClasses.cs` (`ToolClassesTests`).
+- **Add a tool or change the tool classes** → also update the [godot-agent-sweep skill](../skills/godot-agent-sweep/SKILL.md); an install sweeps every agent file's `tools:` line by those classes.
+- **Add a tool or capability, or change install or requirements** → also update the repo [README.md](../README.md).
+- **Change the Non-negotiables or the everyday commands in `CLAUDE.md`** → also change [agents/implementer.md](./agents/implementer.md), the overlay the `implementer` agent reads in place of it.
+- **Add a source folder or file kind** → also add a row to `run.ps1` `$itestRules`, else `itest-groups` names it `unmapped` and every group runs; a new itest group goes in `$itestGroups` and a lane, and in `$itestHeavyGroups` when its tests build C#.
+- **Change the text of a command in `.gate/desktop.toml`** → also change the file's patterns to equal the PC's `%LOCALAPPDATA%\gate\remote.json` letter for letter.
+- **Launch a process** → pipe, keep or kill it through `ToolProcess` and `DesktopProcess`, as the child-process footgun says; a bare `Process.Start` skips the ceiling, the stall kill and the kill-on-close job.
+- **Log anywhere in the server** → to stderr, never stdout, which is the MCP protocol.
+- **Add a wire request** → it carries an id, and the reply of a timed-out id is dropped; a long one also handles `cancel` and `backstopMs` in the bridge.
+- **Add or change an input tool** → it takes viewport coordinates and maps them to the window; a drag's motion events carry `button_mask` and `relative`. See the bridge-input footguns in DEVELOPMENT.md (the physics-picking and re-pick rows) before touching `godot_mcp_input.gd`.
+- **Add a bridge child module** → also add its `*_SCRIPT` const, `_build_once` and `_command_handlers` entries in `godot_mcp_bridge.gd`; the Task Index row for a new bridge child module lists the rest.
+- **Change a file under `src/GodotMcp.Dotnet*` or `dotnet/`** → the server loads the helper from a content-hashed copy (`HelperCache`), so `run.ps1 dotnet` must have laid out `bin/dotnet/` and a game must restart; never point a game at `bin/dotnet` itself.
+- **Bump the Godot minor** → also bump `GodotSharp` in `Directory.Packages.props` and rebuild the helper, whose loader refuses any other minor.
+- **Cite Godot's behaviour** → from the 4.7.2 source or docs, never from memory or the stale 4.5.1 checkout.
+- **Add a GDScript function** → keep it at complexity 8 and 100 lines or add it to `tools/gdcomplexity-baseline.txt`, a list that can only shrink; gdformat writes CRLF on Windows, so convert the file back to LF.
+- **Add a `.md` file under `docs/`** → also link it from [README.md](./README.md), and a term it uses in a project sense goes in the glossary there.
+
+## Test locations
+
+Which test project or folder pins which layer, and where a new test goes. What each class covers is in [DEVELOPMENT.md](./DEVELOPMENT.md#tests).
+
+- `tests/GodotMcp.Tests/` (`pwsh run.ps1 test`): unit tests of the server without launching Godot, by folder: `Session/`, `Tools/`, `Wire/`, `CSharp/`, `Agents/`, `Capture/`, and `Dotnet/` for the helper's Godot-free core (`GodotMcp.Dotnet.Core`). A new server rule gets its unit test here first; a fake bridge (`Wire/FakeBridge.cs`) stands in for the game.
+- `tests/GodotMcp.IntegrationTests/` (`pwsh run.ps1 itest`): the real Godot. Each test copies `tests/fixtures/InputProbe` (or `CsProbe` for C#) to a `git init`ed temp folder, launches the game and checks the tree is clean after stop. A change to a tool's bridge half is proved here; a new group goes into `run.ps1` `$itestGroups`.
+- `tests/GodotMcp.TestSupport/`: the helpers both .NET test projects share (`TempDirectory`, `Git`, `ExitHold`, `CsProbeProject`, `FakeLoadSource`).
+- `tests/fixtures/`: `InputProbe` (the GDScript fixture game) and `CsProbe` (the C# fixture game); not a test project.
+- `tests/bridge/` (`pwsh run.ps1 gdtest`): the GDScript unit tests of the bridge and the headless scripts, many in one headless Godot process (`run_tests.gd`, `test_*.gd`).
+- `tests/tools/` (`pwsh run.ps1 pytest`): pytest for the Python and PowerShell tooling under `tools/` (`drive.py`, `gdcomplexity.py`, `linelength.py`, `copy-skills.ps1`, `install.ps1`, `install-release.ps1`, the itest group mapping).
+
+## Deep docs
+
+- [DECISIONS.md](./DECISIONS.md): the user's decisions and the Godot 4.7.2 facts behind them.
+- [DEVELOPMENT.md](./DEVELOPMENT.md): toolchain, commands, gates, what each test class covers, CI and releases, and the footguns.
+- [TOOLS.md](./TOOLS.md): the agent-facing guide to every tool: which fits a job, its edges, worked drives.
+- [DRIVING_CONVENTIONS.md](./DRIVING_CONVENTIONS.md): the rules godot-mcp follows so an agent can drive a running game.
+- [csharp-runtime-tools.md](./csharp-runtime-tools.md): the design record of the C# runtime tools and their helper.
+- [README.md](./README.md): the map and the glossary.
+- [agents/implementer.md](./agents/implementer.md): the overlay the `implementer` agent reads in place of `CLAUDE.md`.
+
 ## Components
 
 | Part | Where | Job |
