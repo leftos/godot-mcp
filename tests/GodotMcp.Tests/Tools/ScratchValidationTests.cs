@@ -508,6 +508,86 @@ public sealed class ScratchValidationTests : IDisposable
         Assert.Equal("engineArgs holds a null entry; it came from options.engineArgs.", message);
     }
 
+    [Theory]
+    [InlineData("--display-driver", false)]
+    [InlineData("--display-driver", true)]
+    [InlineData("--audio-driver", false)]
+    [InlineData("--audio-driver", true)]
+    [InlineData(" --display-driver", false)]
+    [InlineData(" --display-driver", true)]
+    public void EngineArgsNamingADisplayOrAudioDriverAreRefused(string argument, bool fromProfile)
+    {
+        string source = "options.engineArgs";
+        ScratchOptions options = new(EngineArgs: [argument]);
+        if (fromProfile)
+        {
+            WriteProfile(JsonSerializer.Serialize(new { scratch = new { engineArgs = new[] { argument } } }));
+            source = ProfilePath;
+            options = new ScratchOptions();
+        }
+
+        string message = Refused(() => Plan(["res://Other.tscn"], options));
+
+        Assert.Equal(
+            "run_scratches runs every scene headless, and Godot keeps the last driver argument it reads, so engineArgs cannot "
+                + $"hold {argument}: the scene would open a window or play sound; it came from {source}.",
+            message
+        );
+    }
+
+    [Fact]
+    public void ADriverArgumentWithAnEqualsSignIsAccepted()
+    {
+        ScratchPlan plan = Plan(["res://Other.tscn"], new ScratchOptions(EngineArgs: ["--display-driver=x"]));
+
+        Assert.Equal(["--display-driver=x"], plan.Scenes[0].EngineArgs);
+    }
+
+    [Theory]
+    [MemberData(nameof(BadResolutions))]
+    public void ABadResolutionIsRefusedUpFrontNamingItsSource(string[] engineArgs, string parserText, bool fromProfile)
+    {
+        string source = "options.engineArgs";
+        ScratchOptions options = new(EngineArgs: engineArgs);
+        if (fromProfile)
+        {
+            WriteProfile(JsonSerializer.Serialize(new { scratch = new { engineArgs } }));
+            source = ProfilePath;
+            options = new ScratchOptions();
+        }
+
+        string message = Refused(() => Plan(["res://Other.tscn"], options));
+
+        Assert.StartsWith(parserText, message, StringComparison.Ordinal);
+        Assert.EndsWith($" It came from {source}.", message, StringComparison.Ordinal);
+    }
+
+    /// <summary>Each unreadable --resolution with the parser's own refusal text, and whether it comes from the profile.</summary>
+    public static TheoryData<string[], string, bool> BadResolutions()
+    {
+        TheoryData<string[], string, bool> cases = [];
+        cases.Add(["--resolution"], "--resolution is the last engine argument and has no WIDTHxHEIGHT after it, e.g. 1280x720.", true);
+        cases.Add(
+            ["--resolution", "1280"],
+            "--resolution is \"1280\"; it must be WIDTHxHEIGHT in pixels, with a lowercase x and no spaces, e.g. 1280x720.",
+            false
+        );
+        cases.Add(
+            ["--resolution", "0x720"],
+            "--resolution 0x720 has a side outside 1 to 16384 pixels, the largest window Godot can draw and screenshot; pick a size within it.",
+            false
+        );
+        return cases;
+    }
+
+    [Fact]
+    public void AResolutionGodotCanReadIsAccepted()
+    {
+        ScratchPlan plan = Plan(["res://Other.tscn"], new ScratchOptions(EngineArgs: ["--resolution", "1280x720"]));
+
+        Assert.Equal(["--resolution", "1280x720"], plan.Scenes[0].EngineArgs);
+    }
+
     [Fact]
     public void ScratchEngineArgsNeverFallBackToTheTopLevelOnes()
     {

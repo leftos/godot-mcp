@@ -371,6 +371,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   `parallel` 1 to 4 (overrides the profile's), `userArgs` appended after the profile's, `engineArgs` (an array of strings) placed on each scene's Godot command line after the runner's own `--headless` and `--time-scale` and the profile's `scratch.engineArgs`, before `--` and the user arguments, `prepare` `auto` (default) or `never`.
 
+  `engineArgs` is checked before any scene runs, each source on its own: it refuses `--display-driver` and `--audio-driver` (Godot keeps the last driver argument it reads, so the scene would open a window or play sound), and a `--resolution` Godot cannot read, with the parser's own refusal plus `It came from <source>.`; a `--resolution` at the end of one source whose value sits in the other is refused as having no value.
+
   An `engineArgs` entry that, with its surrounding spaces trimmed as Godot trims every argument, equals `--` or `++` (Godot reads both as the separator), or equals or starts with `--headless`, `--time-scale` or `--scratch-auto`, is refused before any scene runs (an `options.engineArgs` null entry is refused too, naming its source): "run_scratches sets --headless and --time-scale itself and puts the scene's own arguments after --, so engineArgs cannot hold <arg>; it came from <source>.", the source being `options.engineArgs` or the profile file's path.
 
   Any other engine argument passes through as given, one that undoes `--headless` included: a later `--display-driver` or `--audio-driver` wins in Godot, so the scene opens a window or plays sound, which is the caller's choice.

@@ -49,6 +49,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     private const string AlternateUserArgsSeparator = "++";
     private static readonly string[] RunnerEngineArgs = ["--headless", "--time-scale", ScratchAuto];
 
+    private const string DisplayDriverArg = "--display-driver";
+    private const string AudioDriverArg = "--audio-driver";
+
     [McpServerTool(Name = ToolName, ReadOnly = false, Destructive = false, OpenWorld = false, Idempotent = false)]
     [Description(
         "Plays scratch scenes and reports a verdict for each: every scene runs in a fresh headless game session "
@@ -633,12 +636,13 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     }
 
     /// <summary>
-    /// The profile's scratch.engineArgs, then options.engineArgs, each refused when it holds a null entry or an argument the
-    /// runner sets itself.
+    /// The profile's scratch.engineArgs, then options.engineArgs, each refused when it holds a null entry, an argument naming a
+    /// display or audio driver, an argument the runner sets itself, or a --resolution Godot cannot read.
     /// </summary>
     /// <exception cref="McpException">
-    /// An argument is null, or is or, trimmed, is -- or ++, or is or, trimmed, starts with --headless, --time-scale or
-    /// --scratch-auto.
+    /// An argument is null, is or, trimmed, is --display-driver or --audio-driver, is or, trimmed, is -- or ++, or is or,
+    /// trimmed, starts with --headless, --time-scale or --scratch-auto; or a --resolution has no value, its value is not
+    /// WIDTHxHEIGHT, or a side is outside 1 to 16384.
     /// </exception>
     private static List<string> EngineArgs(ProjectProfile profile, ScratchProfile scratch, ScratchOptions options)
     {
@@ -647,8 +651,15 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         return [.. scratch.EngineArgs ?? [], .. options.EngineArgs ?? []];
     }
 
-    /// <summary>Refuses one source's engine arguments: a null entry, or one the runner sets itself.</summary>
-    /// <exception cref="McpException">An argument is null, is a separator, or starts with an argument the runner sets.</exception>
+    /// <summary>
+    /// Refuses one source's engine arguments: a null entry, one naming a display or audio driver, one the runner sets itself,
+    /// or a --resolution Godot cannot read. Each source is checked on its own, so a --resolution whose value sits in the other
+    /// source has no value.
+    /// </summary>
+    /// <exception cref="McpException">
+    /// An argument is null, names a driver, is a separator, or starts with an argument the runner sets; or a --resolution cannot
+    /// be read.
+    /// </exception>
     private static void CheckEngineArgs(IReadOnlyList<string>? engineArgs, string source)
     {
         if (engineArgs is null)
@@ -661,9 +672,23 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             throw new McpException($"engineArgs holds a null entry; it came from {source}.");
         }
 
+        if (DriverEngineArg(engineArgs) is { } driverArg)
+        {
+            throw DriverArgRefusal(driverArg, source);
+        }
+
         if (RefusedEngineArg(engineArgs) is { } arg)
         {
             throw EngineArgRefusal(arg, source);
+        }
+
+        try
+        {
+            _ = GodotCommandLine.RequestedWindowSize(engineArgs);
+        }
+        catch (SessionException error)
+        {
+            throw new McpException($"{error.Message} It came from {source}.");
         }
     }
 
@@ -690,11 +715,35 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         return null;
     }
 
+    /// <summary>
+    /// The first engine argument naming a display or audio driver, as it was given: Godot compares each whole, with no = form,
+    /// and keeps the last one it reads (main/main.cpp:1234, :1287).
+    /// </summary>
+    private static string? DriverEngineArg(IReadOnlyList<string> engineArgs)
+    {
+        foreach (string arg in engineArgs)
+        {
+            if (arg.Trim() is DisplayDriverArg or AudioDriverArg)
+            {
+                return arg;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>The refusal of an engine argument, naming where it came from.</summary>
     private static McpException EngineArgRefusal(string arg, string source) =>
         new(
             $"run_scratches sets --headless and --time-scale itself and puts the scene's own arguments after --, so engineArgs "
                 + $"cannot hold {arg}; it came from {source}."
+        );
+
+    /// <summary>The refusal of a display or audio driver argument, naming where it came from.</summary>
+    private static McpException DriverArgRefusal(string arg, string source) =>
+        new(
+            $"run_scratches runs every scene headless, and Godot keeps the last driver argument it reads, so engineArgs cannot "
+                + $"hold {arg}: the scene would open a window or play sound; it came from {source}."
         );
 
     /// <exception cref="McpException">options.only is neither "all" nor "red", or is given with background, which never reads it.</exception>
