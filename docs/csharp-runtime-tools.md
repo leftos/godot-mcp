@@ -37,7 +37,7 @@ It leaves the game's build untouched, works for attached sessions and any Debug 
 
 The loader, which references nothing of Godot's, finds the load context holding `GodotSharp` (GodotPlugins' own, `Main.cs` L81-83, which the game's `PluginLoadContext` shares it from, `PluginLoadContext.cs` L51-52) and loads `GodotMcp.Dotnet.dll` into it, so the helper binds the game's own `GodotSharp`.
 
-The helper adds a `GodotMcpDotnet` node under the bridge. Three steps are unproven and are the spike: a `.gdextension` outside `res://` loading at run time; the secondary host context inside Godot's process; `GodotObject.InstanceFromId` in the helper returning the game's own instance.
+The helper is reached through a `Callable` it stores as the `godot_mcp_dotnet` meta (`Helper.MetaName`, read by `bridge/godot_mcp_dotnet.gd`'s `META_NAME`). Three steps are unproven and are the spike: a `.gdextension` outside `res://` loading at run time; the secondary host context inside Godot's process; `GodotObject.InstanceFromId` in the helper returning the game's own instance.
 
 **Tools** (each ≤ 5 parameters, destructive like `call_method`):
 
