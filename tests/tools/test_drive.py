@@ -195,7 +195,13 @@ def test_a_server_that_dies_points_at_its_log(tmp_path: Path, capfd: pytest.Capt
 
 
 @pytest.mark.skipif(shutil.which("gate") is None, reason="needs gate on PATH (install it from the gate repo)")
-@pytest.mark.parametrize(("gate_options", "expected_status"), [(["--no-markers", "--local"], 0), (["--local"], 1)])
+@pytest.mark.parametrize(
+    ("gate_options", "expected_status"),
+    [
+        (["--no-markers", "--local", "--reason", "the test runs a fake drive locally"], 0),
+        (["--local", "--reason", "the test runs a fake drive locally"], 1),
+    ],
+)
 def test_the_gate_takes_a_drive_by_its_exit_status_alone(tmp_path: Path, gate_options: list[str], expected_status: int) -> None:
     quoted_failure = "E 0:00:01:250 main.gd:12 @ _ready(): error while loading\n  failed: 1"
     fake = _fake(tmp_path, [_text(quoted_failure)])

@@ -53,7 +53,7 @@ STAGED_FILES = {
 TEST_ASSEMBLY = "tests/GodotMcp.IntegrationTests/bin/Release/net10.0/GodotMcp.IntegrationTests.dll"
 GROUP_CLASSES = " ".join(
     f"GodotMcp.IntegrationTests.{name}"
-    for name in ["CSharpToolTests", "GameToolTests", "CSharpStateTests", "CSharpWatchTests", "CSharpFiredSignalsTests"]
+    for name in ["CSharpToolTests", "GameToolTests", "CSharpStateTests", "CSharpWatchTests", "CSharpFiredSignalsTests", "ScratchCSharpStateTests"]
 )
 
 
