@@ -42,22 +42,26 @@ Refused anywhere inside them: a `.git` folder, and a `.godot` folder outside a `
 
 | # | Invariant | Sites |
 |---|---|---|
-| I1 | After following every link on the way, the destination entry included, the final path lies under an allowed place; a relative symbolic link is resolved against its own folder and walked. A link whose target does not exist is refused (G3). A link target that is not a fully qualified local path is refused, a network target before it is opened, from the immediate `LinkTarget` (G4). | `ScreenshotTarget.cs:32-55`, `:140-218`; the clip-path check at `record_mark start` (`RuntimeTools.Record.cs:51-57`, `:62-63`); the check again at delivery (I7) |
-| I2 | Never inside `.git`, any case, trailing `.` or space. | `CheckParts` `:116-134`, the link-target checks `:152-161`, `:198-201` |
-| I3 | Never under a `.godot` folder outside a `.tmp`, anywhere in W. | `IsUnderDotGodot` `:224-225` and its three callers |
-| I4 | A path is project-relative or fully qualified on a local drive: no drive-relative, root-relative, UNC, `\\.\` or `\\?\` path (G2). | `ScreenshotTarget.cs:42` |
-| I5 | Stills end in `.png`, clips in `.mp4`; device names are refused (G6). | `:34-37`; the clip check; the pattern of `ScreenshotBaseline.cs:32-62` |
-| I6 | Without `overwrite`, an existing file is never replaced. With it, the folder entry is replaced and nothing is written through a link or hard link: write a temporary file (`FileMode.CreateNew`, random name, same folder), then `File.Move(temp, dest, overwrite)`; a temporary left by a failure is deleted. | replaces `File.Copy` at `:103`; the same helper delivers clips |
-| I7 | The path is checked again in the call that writes. A clip's check at `start` only fails fast; the one that counts runs at delivery. | `ScreenshotTarget.Save` `:98-109`; `RealtimeRecording.RemuxAsync` after a successful remux (`:942-948`); `RecordingCut.CutClipsAsync` / `DeleteFullMovie` (`:136-165`, `:291-314`) |
-| I8 | Only the server writes a path the caller named. ffmpeg (`-y`), Godot's `--write-movie` and the bridge's `save_png` keep writing under `.godot/godot-mcp/`. | `Recording.cs:48-55`, `RealtimeRecording.cs:77-92` unchanged |
-| I9 | The copy's source is ours: the reply's path lies under the session's `.godot/godot-mcp/screenshots/` (G7). | `RuntimeTools.cs:120-126` |
-| I10 | Every path a result reports holds the file it names. | `RealtimeStarted` (`RealtimeRecording.cs:474-482`), `RealtimeClip.Path` (`:973`), `RecordingResult.Clips` (`GodotSession.Realtime.cs:326`, `RecordingCut.cs:297-302`), `list_sessions` (`GodotSession.Realtime.cs:179-184`) |
-| I11 | The allowed places come from git and are cross-checked (W in M's worktree list; W tracks the project). A clip's places are computed at `start` and kept with it, so no git runs at shutdown. | replaces `FindCheckout` `:83-94`, through `GitRunner` |
-| I12 | A failed delivery never loses the clip: it stays in `recordings/` with a warning naming both paths. Delivery runs inside the recording's finish, so every ending gets it: stop (`GodotSession.cs:231`), restart (`:654`), game exit (`:1339-1340`), detach (`GodotSession.Attach.cs:184`), shutdown (`SessionRegistry.cs:590-611`, within its 10 s cap). | `RealtimeRecording.FinishAsync` (`:876-893`), `RecordingCut.FinishAsync` (`:105-129`) |
+| I1 | After following every link on the way, the destination entry included, the final path lies under an allowed place; a relative symbolic link is resolved against its own folder and walked. A link whose target does not exist is refused (G3). A link target that is not a fully qualified local path is refused, a network target before it is opened, from the immediate `LinkTarget` (G4). | `OutputDestination.Check` / `Resolve` and the link walk, `OutputPlaces.Find`; the clip-path check at `record_mark start` (`RuntimeTools.Record.cs` `ResolveClipTarget` `:134`, called at `:73` for a real-time start and in `MarkMovieAsync` `:157`); the check again at delivery (I7) |
+| I2 | Never inside `.git`, any case, trailing `.` or space. | `OutputDestination.cs`, its part and link-target checks |
+| I3 | Never under a `.godot` folder outside a `.tmp`, anywhere in W. | `OutputDestination.cs`, `IsUnderDotGodot` and its callers |
+| I4 | A path is project-relative or fully qualified on a local drive: no drive-relative, root-relative, UNC, `\\.\` or `\\?\` path (G2). | `ScreenshotTarget.Resolve`, `OutputDestination.Check` |
+| I5 | Stills end in `.png`, clips in `.mp4`; device names are refused (G6). | `ScreenshotTarget.Extension`, `ClipDelivery.Extension`; the pattern of `ScreenshotBaseline.cs:32-62` |
+| I6 | Without `overwrite`, an existing file is never replaced. With it, the folder entry is replaced and nothing is written through a link or hard link. A still writes a temporary file (`FileMode.CreateNew`, random name, same folder), then `File.Move(temp, dest, overwrite)`; a temporary left by a failure is deleted. A clip is renamed by `MoveFileExW` without copy-allowed, and only across volumes copied the same way. | `OutputDestination.CopyReplacing`; `OutputDestination.MoveReplacing` and `FinalPath.Rename` for clips |
+| I7 | The path is checked again in the call that writes. A clip's check at `start` only fails fast; the one that counts runs at delivery. | `ScreenshotTarget.Save`; `ClipDelivery.Deliver` (`ClipDelivery.cs`), called from `RealtimeRecording.RemuxAsync` (`:946`, at `:967`) and `RecordingCut.CutClipsAsync` (`:136`, through `Place` `:173`) |
+| I8 | Only the server writes a path the caller named. ffmpeg (`-y`), Godot's `--write-movie` and the bridge's `save_png` keep writing under `.godot/godot-mcp/`. | `GodotCommandLine.BuildArguments`, `RealtimePaths.For` (`RealtimeRecording.cs:88`) unchanged |
+| I9 | The copy's source is ours: the reply's path lies under the session's `.godot/godot-mcp/screenshots/` (G7). | `ScreenshotTarget.Save` |
+| I10 | Every path a result reports holds the file it names. | `RealtimeStarted` (`RealtimeRecording.cs:15`), `RealtimeClip.Path` (built at `:994` from `Clip` `:989`), `RecordingResult.Clips` (`GodotSession.Realtime.cs` `DescribeRealtime` `:333`, `RecordingCut.DeleteFullMovie` `:321`), `list_sessions` (`GodotSession.Realtime.cs:191-195`) |
+| I11 | The allowed places come from git and are cross-checked (W in M's worktree list; W tracks the project). A clip's places are computed at `start` and kept with it (`RealtimeStart.Destination`, `ClipSpan.Destination`), so no git runs at shutdown. | `OutputPlaces.Find`, through `GitRunner` |
+| I12 | A failed delivery never loses the clip: it stays in `recordings/` with a warning naming both paths. Delivery runs inside the recording's finish, so every ending gets it: stop (`GodotSession.cs:224`), restart (`:659`), game exit (`:1344-1345`), detach (`GodotSession.Attach.cs:184`), shutdown (`SessionRegistry.cs:617-674`, within its 10 s cap; a Movie Maker recording is not cut there, GMCP-345). | `RealtimeRecording.FinishAsync` (`:890`), `RecordingCut.FinishAsync` (`:105`) |
 
 ## Clips (D1, D2, D7)
 
-`record_mark start` takes `options.path` and `options.overwrite`, on a real-time start and on a Movie Maker start mark (which today refuses all options; `fps`, `maxSeconds` and `audio` stay refused there). The path is checked at `start` and again at delivery. The server moves the finished `.mp4` into place (a same-volume rename fits the shutdown cap; stills keep copying, since `capturePath` and the preview stay). A Movie Maker clip that fell back to `.avi` (`RecordingCut.cs:213-222`) stays in `recordings/` with a warning. A delivery that fails is a warning, and the result's clip path names where the file is.
+`record_mark start` takes `options.path` and `options.overwrite`, on a real-time start and on a Movie Maker start mark (which today refuses all options; `fps`, `maxSeconds` and `audio` stay refused there).
+
+The path is checked at `start` and again at delivery. The server moves the finished `.mp4` into place (a same-volume rename fits the shutdown cap; stills keep copying, since `capturePath` and the preview stay). A Movie Maker clip that fell back to `.avi` (`RecordingCut.CutClipAsync`) stays in `recordings/` with a warning. A delivery that fails is a warning, and the result's clip path names where the file is.
+
+The move is `OutputDestination.MoveReplacing`: `MoveFileExW` without copy-allowed (`File.Move` always passes it, so Windows could copy into an existing entry through a link), and only across volumes a copy to a temporary file renamed into place, then the source deleted. The start result and a running `list_sessions` entry gain `destination`; `path` there stays the `recordings/` `.mp4`. One Movie Maker recording refuses a path an earlier clip of it goes to.
 
 ## Refusal and warning texts
 
@@ -73,12 +77,17 @@ Refused anywhere inside them: a `.git` folder, and a `.godot` folder outside a `
 - `path <path> leads through a link at <link> to the network path <target>; links to network paths are not followed`
 - `path <path> leads through a link to <target>, whose name <part> ends in a space or a dot; Windows reads such a name two ways, so it is not written` (Windows only), and for a name in the path as written `path <path> has a folder or file name ending in a space or a dot (<part>); Windows reads such a name two ways, so it is not written` (Windows only)
 - `path <path> leads through a link at <link> that cannot be followed: the link's reparse data is malformed` (and `…: <message>` for another read failure)
+- `options.overwrite needs options.path`
+- `a Movie Maker recording's start mark takes only options.path and options.overwrite; fps, maxSeconds and audio set a real-time recording`
+- `path <path> is already where clip <n> of this recording goes; name another file`
 - delivery warning: `the clip could not be moved to <dest>: <reason>; it is kept at <recordings path>`
+- `the clip fell back to .avi, so it is kept at <recordings path> instead of <dest>`
+- `the clip was moved to <dest>, but its copy at <recordings path> could not be deleted: <reason>`
 
 ## Steps
 
-1. Stills: the rule, I1-I6, I9, I11, the refusal texts, the tool description, `ScreenshotPathValidationTests` extended with a real main checkout plus `git worktree add` (as `GitExcludeTests.cs:35-36`) and junctions by `mklink /J` (as `:473-494`).
-2. Clips: `options.path`/`overwrite` on `record_mark start`, I7, I10, I12, delivery inside both finishes, unit tests in `RealtimeRecordingTests` and through `RecordingCut.CutClipsAsync`'s `run` parameter, and the itests.
+1. Done: stills: the rule, I1-I6, I9, I11, the refusal texts, the tool description, `ScreenshotPathValidationTests` extended with a real main checkout plus `git worktree add` (as `GitExcludeTests.cs:35-36`) and junctions by `mklink /J` (as `:473-494`).
+2. Done: clips: `options.path`/`overwrite` on `record_mark start`, I7, I10, I12, delivery inside both finishes, unit tests in `RealtimeRecordingTests` and through `RecordingCut.CutClipsAsync`'s `run` parameter, and the itests.
 
 The test list for each step is the invariant pass's (kept in the step briefs). The swap tests make their change between the two calls inside the test, so nothing depends on timing.
 
