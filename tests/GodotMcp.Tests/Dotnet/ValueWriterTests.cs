@@ -55,7 +55,99 @@ public sealed class ValueWriterTests
     }
 
     [Fact]
-    public void ALazySequenceWritesItsTypeNameUnenumerated() => Assert.StartsWith("\"<", Write(Enumerable.Range(0, 3).Select(i => i * 2)));
+    public void ALazySequenceWritesItsItems() => Assert.Equal("[0,2,4]", Write(Enumerable.Range(0, 3).Select(i => i * 2)));
+
+    [Fact]
+    public void AnAnonymousObjectHoldingALinqSequenceWritesItsItems()
+    {
+        string[] names = ["a", "b"];
+
+        Assert.Equal("{\"names\":[\"A\",\"B\"]}", Write(new { names = names.Select(s => s.ToUpperInvariant()) }));
+    }
+
+    [Fact]
+    public void AnEndlessSequenceEndsAtTheSizeLimit()
+    {
+        string written = ValueWriter.WriteBounded(Endless(), new NoFormatter(), 8, 5)!.ToJsonString(Relaxed);
+        JsonArray array = JsonNode.Parse(written)!.AsArray();
+
+        Assert.Equal("\"<size limit>\"", array[^1]!.ToJsonString(Relaxed));
+        Assert.Equal(5, array.Count);
+    }
+
+    [Fact]
+    public void ASequenceThatThrowsWritesItsItemsThenTheThrow() =>
+        Assert.Equal("[1,\"<threw InvalidOperationException: boom>\"]", Write(ThrowsAfterOne()));
+
+    [Fact]
+    public void AnEndlessSequenceEndsAtTheLazyItemLimitWithoutABudget()
+    {
+        JsonArray array = ValueWriter.Write(Endless().Take(ValueWriter.LazyItemLimit * 3).Select(x => x), new NoFormatter())!.AsArray();
+
+        Assert.Equal(ValueWriter.LazyItemLimit + 1, array.Count);
+        Assert.Equal("\"<size limit>\"", array[^1]!.ToJsonString(Relaxed));
+    }
+
+    [Fact]
+    public void AListLongerThanTheLazyItemLimitIsWrittenWhole()
+    {
+        JsonArray array = ValueWriter.Write(Enumerable.Repeat(1, ValueWriter.LazyItemLimit + 5).ToList(), new NoFormatter())!.AsArray();
+
+        Assert.Equal(ValueWriter.LazyItemLimit + 5, array.Count);
+        Assert.DoesNotContain(array, item => item!.ToJsonString(Relaxed) == "\"<size limit>\"");
+    }
+
+    [Fact]
+    public void ARangeIsCappedAtTheLazyItemLimit()
+    {
+        JsonArray array = ValueWriter.Write(Enumerable.Range(0, ValueWriter.LazyItemLimit * 3), new NoFormatter())!.AsArray();
+
+        Assert.Equal(ValueWriter.LazyItemLimit + 1, array.Count);
+        Assert.Equal("\"<size limit>\"", array[^1]!.ToJsonString(Relaxed));
+    }
+
+    [Fact]
+    public void AHashSetLongerThanTheLazyItemLimitIsWrittenWhole()
+    {
+        HashSet<int> numbers = [.. Enumerable.Range(0, ValueWriter.LazyItemLimit + 5)];
+        JsonArray array = ValueWriter.Write(numbers, new NoFormatter())!.AsArray();
+
+        Assert.Equal(ValueWriter.LazyItemLimit + 5, array.Count);
+        Assert.DoesNotContain(array, item => item!.ToJsonString(Relaxed) == "\"<size limit>\"");
+    }
+
+    [Fact]
+    public void ALazySequenceOfExactlyTheLimitCarriesNoMarker()
+    {
+        JsonArray array = ValueWriter.Write(Enumerable.Range(0, ValueWriter.LazyItemLimit).Select(x => x), new NoFormatter())!.AsArray();
+
+        Assert.Equal(ValueWriter.LazyItemLimit, array.Count);
+        Assert.DoesNotContain(array, item => item!.ToJsonString(Relaxed) == "\"<size limit>\"");
+    }
+
+    [Fact]
+    public void ASequenceWhoseCurrentThrowsWritesTheThrow() =>
+        Assert.Equal("[1,\"<threw InvalidOperationException: now>\"]", Write(new ThrowingCurrent()));
+
+    [Fact]
+    public void ASequenceWhoseDisposeThrowsAfterTheCapEndsAtTheThrow()
+    {
+        JsonArray array = ValueWriter.Write(new ThrowingOnDispose(), new NoFormatter())!.AsArray();
+
+        Assert.Equal(ValueWriter.LazyItemLimit + 1, array.Count);
+        Assert.Equal("\"<threw InvalidOperationException: x>\"", array[^1]!.ToJsonString(Relaxed));
+        Assert.DoesNotContain(array, item => item!.ToJsonString(Relaxed) == "\"<size limit>\"");
+    }
+
+    [Fact]
+    public void ALazySequenceCutByTheCapIsDisposed()
+    {
+        bool disposed = false;
+
+        Write(EndlessFinally(() => disposed = true));
+
+        Assert.True(disposed);
+    }
 
     [Fact]
     public void DictionariesWithStringLikeKeysWriteAsObjects()
@@ -138,4 +230,77 @@ public sealed class ValueWriterTests
     }
 
     private static string Write(object? value) => ValueWriter.Write(value, new NoFormatter())?.ToJsonString(Relaxed) ?? "null";
+
+    private static IEnumerable<int> Endless()
+    {
+        while (true)
+        {
+            yield return 1;
+        }
+    }
+
+    private static IEnumerable<int> ThrowsAfterOne()
+    {
+        yield return 1;
+        throw new InvalidOperationException("boom");
+    }
+
+    private static IEnumerable<int> EndlessFinally(Action onDispose)
+    {
+        try
+        {
+            while (true)
+            {
+                yield return 1;
+            }
+        }
+        finally
+        {
+            onDispose();
+        }
+    }
+
+    /// <summary>A sequence of one item whose enumerator's <c>Current</c> throws instead of answering a second one.</summary>
+    private sealed class ThrowingCurrent : IEnumerable<int>
+    {
+        public IEnumerator<int> GetEnumerator() => new Enumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+
+        private struct Enumerator : IEnumerator<int>
+        {
+            private int _moved;
+
+            public readonly int Current => _moved == 1 ? 1 : throw new InvalidOperationException("now");
+
+            object System.Collections.IEnumerator.Current => Current;
+
+            public bool MoveNext() => ++_moved <= 2;
+
+            public void Reset() => _moved = 0;
+
+            public readonly void Dispose() { }
+        }
+    }
+
+    /// <summary>An endless sequence whose enumerator's <c>Dispose</c> throws instead of ending.</summary>
+    private sealed class ThrowingOnDispose : IEnumerable<int>
+    {
+        public IEnumerator<int> GetEnumerator() => new Enumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+
+        private struct Enumerator : IEnumerator<int>
+        {
+            public readonly int Current => 1;
+
+            object System.Collections.IEnumerator.Current => Current;
+
+            public readonly bool MoveNext() => true;
+
+            public readonly void Reset() { }
+
+            public void Dispose() => throw new InvalidOperationException("x");
+        }
+    }
 }

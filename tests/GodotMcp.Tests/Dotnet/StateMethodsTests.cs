@@ -93,11 +93,12 @@ public sealed class StateMethodsTests
     public void AReadWritesTheValueAsTheEntrysState() => Assert.Equal("""{"state":3}""", Read(new PrivateState()).ToJsonString());
 
     [Fact]
-    public void AValueWhoseEnumerationThrowsIsWrittenAsItsTypeMarker() =>
-        Assert.Equal(
-            """{"state":"<BrokenCollection>"}""",
-            Read(new BrokenEnumerationState())["state"] is { } state ? $"{{\"state\":\"{state.GetValue<string>()}\"}}" : "no state"
-        );
+    public void AValueWhoseEnumerationThrowsWritesTheThrow()
+    {
+        JsonArray state = Read(new BrokenEnumerationState())["state"]!.AsArray();
+
+        Assert.Equal(["<threw InvalidOperationException: enumeration broke>"], state.Select(item => item!.GetValue<string>()));
+    }
 
     [Fact]
     public void WhatTheCallThrowsIsTheEntrysError()

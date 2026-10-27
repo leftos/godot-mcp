@@ -12,6 +12,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Changed
 
+- `run_csharp`, `cs_get`, `cs_call` and C# `inspect_state` write a lazy sequence's items, up to 1000, instead of its type name.
 - `run_project` and `restart_project` fail at once when Godot says it cannot create an ANGLE OpenGL window, instead of waiting out the bridge timeout.
 
 ### Fixed

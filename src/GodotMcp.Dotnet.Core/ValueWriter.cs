@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Reflection;
 using System.Text.Json.Nodes;
@@ -6,9 +7,10 @@ using System.Text.Json.Nodes;
 namespace GodotMcp.Dotnet.Core;
 
 /// <summary>
-/// Converts a CLR value to JSON: primitives as JSON, enums by name, dates in ISO 8601, collections as arrays, dictionaries
-/// as objects, and other objects as their public instance properties then fields. Cycles and depth are cut with a
-/// marker string; no length is cut here, and a count of values only by <see cref="WriteBounded"/>.
+/// Converts a CLR value to JSON: primitives as JSON, enums by name, dates in ISO 8601, collections and lazy sequences as arrays,
+/// dictionaries as objects, and other objects as their public instance properties then fields. Cycles, depth, a lazy sequence past
+/// <see cref="LazyItemLimit"/> items and an enumeration that throws, or whose dispose throws, are cut with a marker string; no other
+/// length is cut here, and a count of values only by <see cref="WriteBounded"/>.
 /// </summary>
 public static class ValueWriter
 {
@@ -17,6 +19,12 @@ public static class ValueWriter
     /// bridge's state reader does.
     /// </summary>
     public const string SizeLimit = "<size limit>";
+
+    /// <summary>
+    /// The most items of a lazy sequence one write gives, whether or not a value budget is set: past it the array ends at one
+    /// <see cref="SizeLimit"/> and no further item is read, since enumerating a lazy sequence runs game code and may not end.
+    /// </summary>
+    public const int LazyItemLimit = 1000;
 
     /// <summary>
     /// The budget of the <see cref="WriteBounded"/> in progress on this thread, which every write it makes shares, including
@@ -215,33 +223,147 @@ internal sealed class ValueWalk(IValueFormatter formatter, int maxDepth, ValueBu
         {
             return WriteDictionary(dictionary, childDepth);
         }
-        if (IsCollection(value))
-        {
-            return WriteCollection((IEnumerable)value, childDepth);
-        }
-        return value is IEnumerable ? Marker(TypeNames.Format(value.GetType())) : WriteObject(value, childDepth);
+        return value is IEnumerable items ? WriteCollection(items, childDepth) : WriteObject(value, childDepth);
     }
 
-    /// <summary>The collection's items in an array, ending at one marker once the budget is spent.</summary>
+    /// <summary>
+    /// The items in an array, a lazy sequence's enumerated like a list's: the array ends at one <see cref="ValueWriter.SizeLimit"/>
+    /// once the budget is spent or <see cref="ValueWriter.LazyItemLimit"/> items of a lazy sequence are written, the items after it
+    /// not visited, and an enumeration that throws, or whose dispose throws after the items are read, ends it with one
+    /// <c>&lt;threw ...&gt;</c> item.
+    /// </summary>
+    [SuppressMessage(
+        "Design",
+        "CA1031:Do not catch general exception types",
+        Justification = "Whatever a game's sequence throws while it is enumerated is that value's one marker, not the whole write's failure."
+    )]
     private JsonArray WriteCollection(IEnumerable items, int childDepth)
     {
         JsonArray array = [];
-        foreach (object? item in items)
+        IEnumerator enumerator;
+        try
         {
-            if (budget.Spent)
-            {
-                array.Add(JsonValue.Create(ValueWriter.SizeLimit));
-                break;
-            }
-            array.Add(Write(item, childDepth));
+            enumerator = items.GetEnumerator();
+        }
+        catch (Exception e)
+        {
+            array.Add(ThrewItem(e));
+            return array;
+        }
+        bool collected = false;
+        try
+        {
+            Collect(enumerator, array, ItemLimit(items), childDepth);
+            collected = true;
+        }
+        finally
+        {
+            DisposeInto(enumerator, collected ? array : null);
         }
         return array;
     }
 
-    /// <summary>A materialised collection; a lazy sequence is not enumerated, since enumerating it runs game code and may not end.</summary>
-    private static bool IsCollection(object value) =>
-        value is ICollection
-        || value
+    /// <summary>
+    /// The items into <paramref name="array"/> until the sequence ends, a <see cref="ValueWriter.SizeLimit"/> takes the place of the
+    /// item past the budget or the cap, or the enumeration's own <c>&lt;threw ...&gt;</c> item follows the items read so far.
+    /// </summary>
+    [SuppressMessage(
+        "Design",
+        "CA1031:Do not catch general exception types",
+        Justification = "Whatever a game's sequence throws while it is enumerated is that value's one marker, not the whole write's failure."
+    )]
+    private void Collect(IEnumerator enumerator, JsonArray array, int most, int childDepth)
+    {
+        while (true)
+        {
+            object? item;
+            try
+            {
+                if (!enumerator.MoveNext())
+                {
+                    return;
+                }
+                item = enumerator.Current;
+            }
+            catch (Exception e)
+            {
+                array.Add(ThrewItem(e));
+                return;
+            }
+            if (budget.Spent || array.Count >= most)
+            {
+                array.Add(JsonValue.Create(ValueWriter.SizeLimit));
+                return;
+            }
+            array.Add(Write(item, childDepth));
+        }
+    }
+
+    /// <summary>
+    /// Disposes <paramref name="enumerator"/>, a throw from it becoming the sequence's marker in <paramref name="array"/>; with no
+    /// array there, the item's own write is already failing and stands, a dispose throw having nothing to be written into.
+    /// </summary>
+    [SuppressMessage(
+        "Design",
+        "CA1031:Do not catch general exception types",
+        Justification = "A sequence's dispose throw is that value's one marker, or is dropped when the item's own write is already failing."
+    )]
+    private static void DisposeInto(IEnumerator enumerator, JsonArray? array)
+    {
+        try
+        {
+            (enumerator as IDisposable)?.Dispose();
+        }
+        catch (Exception e) when (array is not null)
+        {
+            RecordThrow(array, e);
+        }
+        catch (Exception)
+        {
+            // The item's own write threw and is the write's failure; a dispose throw here has no array left to be written into.
+        }
+    }
+
+    /// <summary>
+    /// Puts a sequence's <c>&lt;threw ...&gt;</c> item in its place: over a <see cref="ValueWriter.SizeLimit"/> that ends the array,
+    /// after the items written otherwise, and never beside a throw the enumeration itself already recorded.
+    /// </summary>
+    private static void RecordThrow(JsonArray array, Exception failure)
+    {
+        if (array.Count > 0 && Text(array[^1]) == ValueWriter.SizeLimit)
+        {
+            array[^1] = ThrewItem(failure);
+        }
+        else if (array.Count == 0 || !IsThrow(Text(array[^1])))
+        {
+            array.Add(ThrewItem(failure));
+        }
+    }
+
+    /// <summary>The text <paramref name="item"/> holds, or null for an item that is no string.</summary>
+    private static string? Text(JsonNode? item) => item is JsonValue value && value.TryGetValue<string>(out string? text) ? text : null;
+
+    /// <summary>Whether <paramref name="text"/> is the start of a <c>&lt;threw ...&gt;</c> item.</summary>
+    private static bool IsThrow(string? text) => text?.StartsWith("<threw ", StringComparison.Ordinal) == true;
+
+    /// <summary>
+    /// The most items <paramref name="items"/> is written with: <see cref="ValueWriter.LazyItemLimit"/> for a lazy sequence, whose
+    /// enumeration runs game code and may not end, and none for a materialised collection, which only the budget cuts.
+    /// </summary>
+    private static int ItemLimit(IEnumerable items) => IsMaterialised(items) ? int.MaxValue : ValueWriter.LazyItemLimit;
+
+    /// <summary>
+    /// Whether <paramref name="value"/> holds its items already, rather than producing them as they are read: LINQ's own iterators
+    /// answer a count while still enumerating lazily, so none of that assembly's types is materialised.
+    /// </summary>
+    private static bool IsMaterialised(object value) => !IsLinqIterator(value) && (value is ICollection || CountsItself(value));
+
+    /// <summary>Whether the value's type is one System.Linq declares, its own iterators included.</summary>
+    private static bool IsLinqIterator(object value) => value.GetType().Assembly == typeof(Enumerable).Assembly;
+
+    /// <summary>Whether the value's type declares itself a collection by its generic interfaces.</summary>
+    private static bool CountsItself(object value) =>
+        value
             .GetType()
             .GetInterfaces()
             .Any(face =>
@@ -362,7 +484,10 @@ internal sealed class ValueWalk(IValueFormatter formatter, int maxDepth, ValueBu
         }
         catch (TargetInvocationException e) when (e.InnerException is Exception inner)
         {
-            return JsonValue.Create($"<threw {inner.GetType().Name}: {inner.Message}>");
+            return ThrewItem(inner);
         }
     }
+
+    /// <summary>The marker for a value whose read threw: the exception's name and message.</summary>
+    private static JsonValue ThrewItem(Exception failure) => JsonValue.Create($"<threw {failure.GetType().Name}: {failure.Message}>");
 }
