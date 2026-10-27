@@ -85,7 +85,7 @@ public sealed class ScratchStepsRunTests : ScratchRunBase
         string raw = await _scratch.RunScratchesAsync(
             _probe.Directory,
             ["ScratchFlood"],
-            new ScratchOptions(Details: true),
+            new ScratchOptions(Details: FullDetails),
             TestContext.Current.CancellationToken
         );
 
@@ -107,7 +107,7 @@ public sealed class ScratchStepsRunTests : ScratchRunBase
             await RunAsync(
                 _probe.Directory,
                 ["ScratchLongNote"],
-                new ScratchOptions(Details: true, DetailChars: 2000),
+                new ScratchOptions(Details: FullDetails, DetailChars: 2000),
                 TestContext.Current.CancellationToken
             )
         );
@@ -128,7 +128,7 @@ public sealed class ScratchStepsRunTests : ScratchRunBase
         JsonObject result = await RunAsync(
             _probe.Directory,
             ["ScratchGreen"],
-            new ScratchOptions(Details: true, Pace: 0.25),
+            new ScratchOptions(Details: FullDetails, Pace: 0.25),
             TestContext.Current.CancellationToken
         );
 
@@ -144,6 +144,29 @@ public sealed class ScratchStepsRunTests : ScratchRunBase
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task CompactDetailsListAGreenScenesStepsAsOneLineEach()
+    {
+        string profile = """{ "scratch": { "folder": "scratch" } }""";
+        await File.WriteAllTextAsync(Path.Combine(_probe.Directory, ProjectProfile.FileName), profile, TestContext.Current.CancellationToken);
+
+        JsonObject scene = Single(
+            await RunAsync(
+                _probe.Directory,
+                ["ScratchGreen"],
+                new ScratchOptions(Details: Tokens("\"compact\""), Pace: 0.25),
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
+        List<string> lines = [.. scene["details"]!.AsArray().Select(step => step!.GetValue<string>())];
+        Assert.Equal(3, lines.Count);
+        Assert.StartsWith("0 ok open", lines[0], StringComparison.Ordinal);
+        Assert.StartsWith("1 ok move", lines[1], StringComparison.Ordinal);
+        Assert.StartsWith("2 ok close", lines[2], StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task APartialRunPlaysTheScenesSetupStepFirst()
     {
         CopyFolder(Path.Combine(RepoPaths.InputProbe, "scratch_setup"), Path.Combine(_probe.Directory, "scratch"));
@@ -152,7 +175,7 @@ public sealed class ScratchStepsRunTests : ScratchRunBase
             """{ "scratch": { "folder": "scratch", "setup": { "ScratchSetupNeeded": ["build"] } } }""",
             TestContext.Current.CancellationToken
         );
-        ScratchOptions options = new(Details: true, Steps: Tokens("""["use"]"""));
+        ScratchOptions options = new(Details: FullDetails, Steps: Tokens("""["use"]"""));
 
         JsonObject green = await RunAsync(_probe.Directory, ["ScratchSetupNeeded"], options, TestContext.Current.CancellationToken);
         JsonObject scene = Single(green);
@@ -216,7 +239,7 @@ public sealed class ScratchStepsRunTests : ScratchRunBase
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStepsMapPlaysEachScenesOwnSteps()
     {
-        ScratchOptions options = new(Details: true, Steps: Tokens("""{ "ScratchTwoRed": ["last"], "ScratchGreen": [0, "close"] }"""));
+        ScratchOptions options = new(Details: FullDetails, Steps: Tokens("""{ "ScratchTwoRed": ["last"], "ScratchGreen": [0, "close"] }"""));
 
         JsonObject result = await RunAsync(_probe.Directory, ["ScratchTwoRed", "ScratchGreen"], options, TestContext.Current.CancellationToken);
         JsonArray scenes = result["scenes"]!.AsArray();

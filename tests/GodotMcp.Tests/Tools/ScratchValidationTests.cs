@@ -39,8 +39,27 @@ public sealed class ScratchValidationTests : IDisposable
         Assert.Equal(["Alpha", "Beta"], plan.Scenes.Select(scene => scene.Name));
         Assert.Equal(["res://Scratch/Alpha.tscn", "res://Scratch/Beta.tscn"], plan.Scenes.Select(scene => scene.ResPath));
         Assert.True(plan.Prepare);
-        Assert.False(plan.Details);
+        Assert.Equal(ScratchDetails.Default, plan.Details);
     }
+
+    [Theory]
+    [InlineData("true", nameof(ScratchDetails.Full))]
+    [InlineData("\"full\"", nameof(ScratchDetails.Full))]
+    [InlineData("\"compact\"", nameof(ScratchDetails.Compact))]
+    [InlineData("false", nameof(ScratchDetails.Default))]
+    [InlineData("null", nameof(ScratchDetails.Default))]
+    public void DetailsTakesTrueFullCompactOrFalse(string details, string expected) =>
+        Assert.Equal(expected, Plan(["res://Other.tscn"], new ScratchOptions(Details: Tokens(details))).Details.ToString());
+
+    [Theory]
+    [InlineData("\"short\"")]
+    [InlineData("3")]
+    [InlineData("{}")]
+    public void DetailsOtherThanTrueFullCompactOrFalseIsRefused(string details) =>
+        Assert.Equal(
+            $"details is {details}; it must be true, \"full\" or \"compact\".",
+            Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Details: Tokens(details))))
+        );
 
     [Fact]
     public void AFolderThatDiffersInCaseFromTheDiskIsRefused()
@@ -318,14 +337,14 @@ public sealed class ScratchValidationTests : IDisposable
         );
 
         ScratchPlan profiled = Plan(null);
-        ScratchPlan given = Plan(null, new ScratchOptions(Pace: 1.5, Details: true));
+        ScratchPlan given = Plan(null, new ScratchOptions(Pace: 1.5, Details: Tokens("true")));
 
         Assert.Equal([ScratchTools.DefaultPace, 3.0], profiled.Scenes.Select(scene => scene.Pace));
         Assert.Equal([null, "the tray lies at rest"], profiled.Scenes.Select(scene => scene.PaceReason));
         Assert.Equal([null, "slow tray"], profiled.Scenes.Select(scene => scene.Known));
         Assert.Equal([1.5, 1.5], given.Scenes.Select(scene => scene.Pace));
         Assert.All(given.Scenes, scene => Assert.Null(scene.PaceReason));
-        Assert.True(given.Details);
+        Assert.Equal(ScratchDetails.Full, given.Details);
     }
 
     [Fact]

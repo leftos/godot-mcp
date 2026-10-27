@@ -111,7 +111,7 @@ internal sealed record ScratchPlan(
     IReadOnlyList<ScratchScenePlan> Scenes,
     IReadOnlyList<ScratchPattern> Patterns,
     bool Prepare,
-    bool Details
+    ScratchDetails Details
 )
 {
     public required int DetailChars { get; init; }

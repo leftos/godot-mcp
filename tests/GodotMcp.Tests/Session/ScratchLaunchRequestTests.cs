@@ -9,7 +9,7 @@ public sealed class ScratchLaunchRequestTests
     public void AScenesEngineArgsGoBeforeTheSeparatorAndTheUserArgsAfter()
     {
         ScratchScenePlan scene = new("A", "res://scratch/A.tscn", 1, ["u"]) { TimeScale = 4, EngineArgs = ["--a", "--b"] };
-        ScratchPlan plan = new("/game", [scene], [], false, false)
+        ScratchPlan plan = new("/game", [scene], [], false, ScratchDetails.Default)
         {
             DetailChars = ScratchVerdict.DefaultDetailChars,
             Parallel = 1,

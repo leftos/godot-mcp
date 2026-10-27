@@ -11,8 +11,11 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `run_scratches` takes `expect` and `expectFor` in the profile's `scratch` section: lines a scene must print, else it is red with `exit.missing`.
 - `wait_for` takes `options.maxWallMs`, a wall-time cap: the wait ends unmet with `wallCapped: true` however slowly the load-adjusted timeout runs.
 - A scene's `scratch.pace` takes `exitHold`, the wait after its last step, so an `until` step keeps a long limit while the scene quits soon after.
+- `run_scratches` takes `options.details: "compact"`, listing each green step as one line with its pace or until figures and its `[scratch]` notes.
 
 ### Changed
+
+- A `run_scratches` result or `scratch_status` past 20000 characters leaves scenes' steps out, green scenes first, and names a file holding the whole result.
 
 - `run_csharp`, `cs_get`, `cs_call` and C# `inspect_state` write a lazy sequence's items, up to 1000, instead of its type name.
 - `run_project` and `restart_project` fail at once when Godot says it cannot create an ANGLE OpenGL window, instead of waiting out the bridge timeout.

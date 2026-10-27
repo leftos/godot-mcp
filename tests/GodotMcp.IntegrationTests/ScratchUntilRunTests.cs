@@ -43,7 +43,7 @@ public sealed class ScratchUntilRunTests : IAsyncDisposable
             await RunAsync(
                 _probe.Directory,
                 ["ScratchUntilSignal", "ScratchUntilExpression"],
-                new ScratchOptions(Details: true),
+                new ScratchOptions(Details: ScratchRunnerTests.FullDetails),
                 TestContext.Current.CancellationToken
             )
         )["scenes"]!.AsArray();

@@ -13,7 +13,7 @@ public sealed class ScratchVerdictTests
         Default,
         Known: null,
         PaceReason: null,
-        Details: false,
+        Details: ScratchDetails.Default,
         DetailChars: ScratchVerdict.DefaultDetailChars
     );
 
@@ -33,7 +33,13 @@ public sealed class ScratchVerdictTests
     [Fact]
     public void DetailsListAGreenScenesStepsWithTheirNotes()
     {
-        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0) with { Lines = ["[scratch] opened"] }), Plain with { Details = true });
+        ScratchSceneResult result = ScratchVerdict.Judge(
+            Seen(Step(0) with { Lines = ["[scratch] opened"] }),
+            Plain with
+            {
+                Details = ScratchDetails.Full,
+            }
+        );
 
         ScratchStepResult step = Assert.Single(result.Details!);
         Assert.True(step.Ok);
@@ -109,7 +115,7 @@ public sealed class ScratchVerdictTests
             LaunchLines = ["ERROR: launch noise"],
         };
 
-        ScratchSceneResult result = ScratchVerdict.Judge(seen, Plain with { Details = true });
+        ScratchSceneResult result = ScratchVerdict.Judge(seen, Plain with { Details = ScratchDetails.Full });
 
         Assert.Equal(ScratchVerdict.Red, result.Verdict);
         Assert.Equal(new ScratchFailure(-1, "boot", "boot failure (res://s.gd:4)", ""), result.FailedAt);
@@ -682,7 +688,7 @@ public sealed class ScratchVerdictTests
     {
         ScratchStep noisy = Step(0) with { Lines = [.. Enumerable.Range(0, 25).Select(n => $"ERROR: {n}")] };
 
-        IReadOnlyList<string> full = ScratchVerdict.Judge(Seen(noisy), Plain with { Details = true }).Details![0].Lines!;
+        IReadOnlyList<string> full = ScratchVerdict.Judge(Seen(noisy), Plain with { Details = ScratchDetails.Full }).Details![0].Lines!;
         IReadOnlyList<string> compact = ScratchVerdict.Judge(Seen(noisy), Plain).Details![0].Lines!;
 
         Assert.Equal(21, full.Count);
@@ -1425,7 +1431,7 @@ public sealed class ScratchVerdictTests
     public void ARedStepIsTheOnlyFailureAndAGreenSceneHasNoneAndNeitherWritesNulls()
     {
         ScratchSceneResult red = ScratchVerdict.Judge(Seen(Step(0), Step(1) with { CallError = "PlayStep failed: gone" }), Plain);
-        ScratchSceneResult green = ScratchVerdict.Judge(Seen(Step(0)), Plain with { Details = true });
+        ScratchSceneResult green = ScratchVerdict.Judge(Seen(Step(0)), Plain with { Details = ScratchDetails.Full });
 
         Assert.Equal([new ScratchStepFailure(1, "step1", "PlayStep failed: gone")], red.Failures);
         Assert.Null(green.Failures);
@@ -1524,7 +1530,9 @@ public sealed class ScratchVerdictTests
     {
         string message = new('m', 100_000);
 
-        JsonObject json = Json(ScratchVerdict.Judge(Seen(Step(0) with { Errors = [Error(message, "", 0)] }), Plain with { Details = true }));
+        JsonObject json = Json(
+            ScratchVerdict.Judge(Seen(Step(0) with { Errors = [Error(message, "", 0)] }), Plain with { Details = ScratchDetails.Full })
+        );
 
         JsonNode step = json["details"]![0]!;
         string copy = OutputBuffer.Cut(message, 500);
@@ -1542,7 +1550,7 @@ public sealed class ScratchVerdictTests
         ScratchStep failing = Step(0) with { Errors = [Error(message, "res://s.gd", 3)] };
 
         JsonObject compact = Json(ScratchVerdict.Judge(Seen(failing), Plain));
-        JsonObject full = Json(ScratchVerdict.Judge(Seen(failing), Plain with { Details = true }));
+        JsonObject full = Json(ScratchVerdict.Judge(Seen(failing), Plain with { Details = ScratchDetails.Full }));
 
         Assert.Equal($"{OutputBuffer.Cut(message, 200)} (res://s.gd:3)", compact["failures"]![0]!["error"]!.GetValue<string>());
         Assert.Equal($"{OutputBuffer.Cut(message, 500)} (res://s.gd:3)", full["failures"]![0]!["error"]!.GetValue<string>());
@@ -1555,7 +1563,9 @@ public sealed class ScratchVerdictTests
     {
         ScratchStep noisy = Step(0) with { Errors = [.. Enumerable.Range(0, 50).Select(n => Error($"error {n}", "res://s.gd", n + 1))] };
 
-        JsonObject step = Json(ScratchVerdict.Judge(Seen(noisy), Plain with { Details = details }))["details"]![0]!.AsObject();
+        JsonObject step = Json(ScratchVerdict.Judge(Seen(noisy), Plain with { Details = details ? ScratchDetails.Full : ScratchDetails.Default }))[
+            "details"
+        ]![0]!.AsObject();
 
         JsonArray errors = step["errors"]!.AsArray();
         Assert.Equal(listed, errors.Count);
@@ -1639,7 +1649,7 @@ public sealed class ScratchVerdictTests
         );
 
         ScratchSceneResult plain = ScratchVerdict.Judge(seen, Plain);
-        ScratchSceneResult detailed = ScratchVerdict.Judge(seen, Plain with { Details = true });
+        ScratchSceneResult detailed = ScratchVerdict.Judge(seen, Plain with { Details = ScratchDetails.Full });
 
         Assert.Equal([null, ["[scratch] fails", "ERROR: boom"], null], plain.Details!.Select(step => step.Lines));
         Assert.Equal(
@@ -1689,7 +1699,9 @@ public sealed class ScratchVerdictTests
     {
         ScratchStep verbose = Step(0) with { Lines = [.. Enumerable.Range(0, 20).Select(n => $"ERROR: {n} {new string('x', 1000)}")] };
 
-        JsonObject step = Json(ScratchVerdict.Judge(Seen(verbose), Plain with { Details = details }))["details"]![0]!.AsObject();
+        JsonObject step = Json(ScratchVerdict.Judge(Seen(verbose), Plain with { Details = details ? ScratchDetails.Full : ScratchDetails.Default }))[
+            "details"
+        ]![0]!.AsObject();
 
         JsonArray lines = step["lines"]!.AsArray();
         int detail =
@@ -1707,7 +1719,9 @@ public sealed class ScratchVerdictTests
     {
         (ScratchStep step, string status, string note) = LongStep();
 
-        JsonObject listed = Json(ScratchVerdict.Judge(Seen(step), Plain with { Details = true, DetailChars = 2000 }))["details"]![0]!.AsObject();
+        JsonObject listed = Json(ScratchVerdict.Judge(Seen(step), Plain with { Details = ScratchDetails.Full, DetailChars = 2000 }))["details"]![
+            0
+        ]!.AsObject();
 
         Assert.Equal(status, listed["status"]!.GetValue<string>());
         Assert.Equal([note], listed["lines"]!.AsArray().Select(line => line!.GetValue<string>()));
@@ -1719,7 +1733,9 @@ public sealed class ScratchVerdictTests
     {
         (ScratchStep step, string status, string note) = LongStep();
 
-        JsonObject listed = Json(ScratchVerdict.Judge(Seen(step), Plain with { Details = true, DetailChars = 100 }))["details"]![0]!.AsObject();
+        JsonObject listed = Json(ScratchVerdict.Judge(Seen(step), Plain with { Details = ScratchDetails.Full, DetailChars = 100 }))["details"]![
+            0
+        ]!.AsObject();
 
         Assert.Equal(OutputBuffer.Cut(status, 100), listed["status"]!.GetValue<string>());
         Assert.Equal([OutputBuffer.Cut(note, 100)], listed["lines"]!.AsArray().Select(line => line!.GetValue<string>()));
@@ -1742,7 +1758,9 @@ public sealed class ScratchVerdictTests
     {
         ScratchStep verbose = Step(0) with { Lines = [.. Enumerable.Range(0, 20).Select(n => $"ERROR: {n} {new string('x', 1000)}")] };
 
-        JsonObject step = Json(ScratchVerdict.Judge(Seen(verbose), Plain with { Details = true, DetailChars = 2000 }))["details"]![0]!.AsObject();
+        JsonObject step = Json(ScratchVerdict.Judge(Seen(verbose), Plain with { Details = ScratchDetails.Full, DetailChars = 2000 }))["details"]![
+            0
+        ]!.AsObject();
 
         JsonArray lines = step["lines"]!.AsArray();
         Assert.InRange(lines.ToJsonString(ToolJson.Options).Length, ScratchVerdict.MaxStepDetailChars + 1, 5500);
@@ -1822,7 +1840,9 @@ public sealed class ScratchVerdictTests
     public void RedOnlyKeepsARedScenesRedStepsWithTheirReadbackAndItsFailures()
     {
         ScratchStep failing = Step(1) with { Status = "note", Errors = [Error("boom", "res://a.gd", 7)], Lines = ["[scratch] before"] };
-        JsonObject run = RunJson(ScratchVerdict.Judge(Seen(Step(0), failing, Step(2) with { CallError = "gone" }), Plain with { Details = true }));
+        JsonObject run = RunJson(
+            ScratchVerdict.Judge(Seen(Step(0), failing, Step(2) with { CallError = "gone" }), Plain with { Details = ScratchDetails.Full })
+        );
         JsonObject whole = run["scenes"]![0]!.AsObject();
 
         JsonObject scene = ScratchView.Result(run, redOnly: true)["scenes"]![0]!.AsObject();
@@ -1842,7 +1862,7 @@ public sealed class ScratchVerdictTests
     [Fact]
     public void RedOnlyListsNoStepsOfAGreenSceneAndKeepsItsVerdictSecondsAndTimeScale()
     {
-        ScratchSceneResult green = ScratchVerdict.Judge(Seen(Step(0), Step(1)), Plain with { Details = true }) with { TimeScale = 1 };
+        ScratchSceneResult green = ScratchVerdict.Judge(Seen(Step(0), Step(1)), Plain with { Details = ScratchDetails.Full }) with { TimeScale = 1 };
         JsonObject run = RunJson(green);
 
         JsonObject scene = ScratchView.Result(run, redOnly: true)["scenes"]![0]!.AsObject();
@@ -1913,6 +1933,65 @@ public sealed class ScratchVerdictTests
         Assert.Same(run, ScratchView.Result(run, redOnly: false));
         Assert.Same(status, ScratchView.Status(status, redOnly: false));
         Assert.Equal(before, (run.ToJsonString(), status.ToJsonString()).ToString());
+    }
+
+    [Fact]
+    public void CompactListsAGreenStepAsOneLineWithItsNotes()
+    {
+        ScratchRules compact = Plain with { Details = ScratchDetails.Compact };
+        ScratchObservation seen = Seen(
+            Step(0) with
+            {
+                Lines = ["[scratch] opened", "plain line", "[scratch] ready"],
+            },
+            Step(1) with
+            {
+                Until = new ScratchUntil(Met: true, GameMs: 300, ElapsedMs: 312, Frames: 19),
+            },
+            Step(2) with
+            {
+                Until = new ScratchUntil(Met: false, GameMs: 900, ElapsedMs: 905, Frames: 54),
+            }
+        );
+        ScratchObservation chatty = Seen(Step(0) with { Lines = ["[scratch] " + new string('n', 100)] });
+
+        JsonArray details = Json(ScratchVerdict.Judge(seen, compact))["details"]!.AsArray();
+        JsonNode cut = Json(ScratchVerdict.Judge(chatty, compact with { DetailChars = 20 }))["details"]![0]!;
+
+        Assert.Equal(
+            ["0 ok step0 500ms | [scratch] opened / [scratch] ready", "1 ok step1 until met 300ms", "2 ok step2 until unmet 900ms"],
+            details.Select(step => step!.GetValue<string>())
+        );
+        Assert.Equal("0 ok step0 500ms | [… (+109 chars)", cut.GetValue<string>());
+    }
+
+    [Fact]
+    public void CompactKeepsAFailingStepsObject()
+    {
+        ScratchStep failing = Step(1) with { Status = "note", Errors = [Error("boom", "res://a.gd", 7)], Lines = ["[scratch] before"] };
+        ScratchObservation seen = Seen(Step(0), failing);
+
+        JsonArray compact = Json(ScratchVerdict.Judge(seen, Plain with { Details = ScratchDetails.Compact }))["details"]!.AsArray();
+        JsonArray plain = Json(ScratchVerdict.Judge(seen, Plain))["details"]!.AsArray();
+
+        Assert.Equal("0 ok step0 500ms", compact[0]!.GetValue<string>());
+        Assert.True(JsonNode.DeepEquals(plain[1], compact[1]), compact[1]!.ToJsonString());
+    }
+
+    [Fact]
+    public void OnlyRedDropsCompactGreenLines()
+    {
+        ScratchRules compact = Plain with { Details = ScratchDetails.Compact };
+        ScratchSceneResult red = ScratchVerdict.Judge(Seen(Step(0), Step(1) with { CallError = "gone" }, Step(2)), compact);
+        ScratchSceneResult green = ScratchVerdict.Judge(Seen(Step(0), Step(1)), compact);
+        JsonObject run = RunJson(red, green);
+
+        JsonArray scenes = ScratchView.Result(run, redOnly: true)["scenes"]!.AsArray();
+
+        JsonObject kept = Assert.Single(scenes[0]!["details"]!.AsArray())!.AsObject();
+        Assert.Equal(1, kept["index"]!.GetValue<int>());
+        Assert.False(scenes[1]!.AsObject().ContainsKey("details"), scenes[1]!.ToJsonString());
+        Assert.Equal(2, run["scenes"]![1]!["details"]!.AsArray().Count);
     }
 
     private static JsonObject RunJson(params ScratchSceneResult[] scenes) =>

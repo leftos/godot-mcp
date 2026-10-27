@@ -118,7 +118,7 @@ public sealed class ScratchUntilTests
             ScratchProfile.DefaultPatterns,
             Known: null,
             PaceReason: null,
-            Details: false,
+            Details: ScratchDetails.Default,
             DetailChars: ScratchVerdict.DefaultDetailChars
         );
         ScratchObservation seen = new("Scene", "probe.scratch-Scene", 5, 1)
@@ -201,7 +201,7 @@ public sealed class ScratchUntilTests
             ScratchProfile.DefaultPatterns,
             Known: null,
             PaceReason: null,
-            Details: true,
+            Details: ScratchDetails.Full,
             DetailChars: ScratchVerdict.DefaultDetailChars
         );
         ScratchObservation seen = new("Scene", "probe.scratch-Scene", 5, 2)

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -97,11 +98,28 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
 }
 
 /// <summary>
+/// How much of a scene's steps options.details lists: by default only a red or killed scene's, a green step by its status line;
+/// compact every scene's, a green step as one line with its [scratch] notes; full every scene's, every step with its full detail.
+/// </summary>
+internal enum ScratchDetails
+{
+    Default,
+    Compact,
+    Full,
+}
+
+/// <summary>
 /// How a scene is judged: the patterns that fail a step's line, its known reason, the profile's reason for its pace, and whether
 /// its steps are listed when green and every listed step carries its detail, and how many characters a step's status and each
 /// of its lines keep; and the patterns the scene's output must match a line of.
 /// </summary>
-internal sealed record ScratchRules(IReadOnlyList<ScratchPattern> Patterns, string? Known, string? PaceReason, bool Details, int DetailChars)
+internal sealed record ScratchRules(
+    IReadOnlyList<ScratchPattern> Patterns,
+    string? Known,
+    string? PaceReason,
+    ScratchDetails Details,
+    int DetailChars
+)
 {
     /// <summary>
     /// The patterns the scene's output (launch, steps and exit lines) must each match a line of, the profile's scratch.expect then
@@ -182,6 +200,40 @@ internal sealed record ScratchStepResult(
     /// <summary>Why the detail lost lines or errors from its end, and where the full log is; null when it fit.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Cut { get; init; }
+
+    /// <summary>
+    /// The one line a green step is listed as with options.details compact, written in place of the object; null otherwise.
+    /// </summary>
+    [JsonIgnore]
+    public string? CompactLine { get; init; }
+}
+
+/// <summary>
+/// Writes a scene's listed steps, each as its object, or as its one line when it has a <see cref="ScratchStepResult.CompactLine"/>;
+/// reads the object form back.
+/// </summary>
+internal sealed class ScratchStepListConverter : JsonConverter<IReadOnlyList<ScratchStepResult>>
+{
+    public override IReadOnlyList<ScratchStepResult>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+        throw new NotSupportedException("a scratch step list is written, never read");
+
+    public override void Write(Utf8JsonWriter writer, IReadOnlyList<ScratchStepResult> value, JsonSerializerOptions options)
+    {
+        writer.WriteStartArray();
+        foreach (ScratchStepResult step in value)
+        {
+            if (step.CompactLine is { } line)
+            {
+                writer.WriteStringValue(line);
+            }
+            else
+            {
+                JsonSerializer.Serialize(writer, step, options);
+            }
+        }
+
+        writer.WriteEndArray();
+    }
 }
 
 /// <summary>
@@ -278,6 +330,7 @@ internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchS
     public IReadOnlyList<ScratchStepFailure>? Failures { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonConverter(typeof(ScratchStepListConverter))]
     public IReadOnlyList<ScratchStepResult>? Details { get; init; }
 
     public required ScratchExit Exit { get; init; }
@@ -415,7 +468,7 @@ internal static partial class ScratchVerdict
             ExitHold = seen.ExitHold,
             PaceReason = shown is Red or Killed ? PaceReasonAt(seen, failedAt, rules.PaceReason) : null,
             FailedAt = failedAt,
-            Failures = Failures(seen, rules.Patterns, rules.Details ? MaxCopyChars : MaxFailureIndexChars),
+            Failures = Failures(seen, rules.Patterns, rules.Details == ScratchDetails.Full ? MaxCopyChars : MaxFailureIndexChars),
             Details = ListsSteps(rules.Details, verdict, failedAt) ? [.. seen.Steps.Select(step => StepResult(step, rules, seen.Session))] : null,
             Exit = ExitOf(seen, rules.Patterns, missing),
             Known = shown is KnownRed or KnownNowGreen ? rules.Known : null,
@@ -578,11 +631,11 @@ internal static partial class ScratchVerdict
     }
 
     /// <summary>
-    /// Whether a scene lists its steps: with options.details, or when red or killed; never when it went red before any step played
-    /// (a refusal, or an error at the boot).
+    /// Whether a scene lists its steps: with options.details full or compact, or when red or killed; never when it went red before
+    /// any step played (a refusal, or an error at the boot).
     /// </summary>
-    private static bool ListsSteps(bool details, string verdict, ScratchFailure? failedAt) =>
-        (details || verdict is Red or Killed) && !(verdict == Red && failedAt is { Index: -1 });
+    private static bool ListsSteps(ScratchDetails details, string verdict, ScratchFailure? failedAt) =>
+        (details != ScratchDetails.Default || verdict is Red or Killed) && !(verdict == Red && failedAt is { Index: -1 });
 
     /// <summary>
     /// The verdict shown for a scene the profile knows to fail; one that failed before any step is red, never known. A green one
@@ -683,10 +736,11 @@ internal static partial class ScratchVerdict
     private static string Seconds(ScratchPattern pattern) => pattern.Regex.MatchTimeout.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// A step as it is listed: its status line, and its detail when it failed or options.details asks for every step's; the errors
-    /// folded and the lines its matching ones and [scratch] notes, within the limits of <see cref="Full"/> detail with
-    /// options.details, of <see cref="Compact"/> detail without; the status and each line keep the rules' detail characters, and
-    /// those above <see cref="DefaultDetailChars"/> grow the step's character budget.
+    /// A step as it is listed: its status line, and its detail when it failed or options.details full asks for every step's; the
+    /// errors folded and the lines its matching ones and [scratch] notes, within the limits of <see cref="Full"/> detail with
+    /// options.details full, of <see cref="Compact"/> detail without; the status and each line keep the rules' detail characters,
+    /// and those above <see cref="DefaultDetailChars"/> grow the step's character budget. With options.details compact a green
+    /// step carries its <see cref="CompactLine"/>.
     /// </summary>
     private static ScratchStepResult StepResult(ScratchStep step, ScratchRules rules, string session)
     {
@@ -699,12 +753,12 @@ internal static partial class ScratchVerdict
             step.Until,
             OutputBuffer.Cut(step.Status, rules.DetailChars)
         );
-        if (error is null && !rules.Details)
+        if (error is null && rules.Details != ScratchDetails.Full)
         {
-            return listed;
+            return rules.Details == ScratchDetails.Compact ? listed with { CompactLine = CompactLine(step, listed, rules.DetailChars) } : listed;
         }
 
-        DetailLimits chosen = rules.Details ? Full : Compact;
+        DetailLimits chosen = rules.Details == ScratchDetails.Full ? Full : Compact;
         DetailLimits limits = chosen with { Chars = chosen.Chars + Math.Max(0, rules.DetailChars - DefaultDetailChars) };
         List<ErrorReport.Collapsed> folded = ErrorReport.Collapse([.. step.Errors.Where(entry => entry.IsError)]);
         return WithinBudget(
@@ -718,6 +772,32 @@ internal static partial class ScratchVerdict
             limits,
             session
         );
+    }
+
+    /// <summary>
+    /// A green step as options.details compact lists it: "&lt;index&gt; ok &lt;name&gt;", its pace in game milliseconds or its until's
+    /// figure, then " | " and its [scratch] notes joined with " / ", the whole cut to <paramref name="detailChars"/>.
+    /// </summary>
+    private static string CompactLine(ScratchStep step, ScratchStepResult listed, int detailChars)
+    {
+        StringBuilder line = new(string.Create(CultureInfo.InvariantCulture, $"{step.Index} ok {step.Name}"));
+        if (listed.GameMs is { } gameMs)
+        {
+            line.Append(CultureInfo.InvariantCulture, $" {gameMs}ms");
+        }
+
+        if (listed.Until is { } until)
+        {
+            line.Append(CultureInfo.InvariantCulture, $" until {(until.Met ? "met" : "unmet")} {until.GameMs}ms");
+        }
+
+        List<string> notes = [.. step.Lines.Where(note => note.StartsWith(ScratchNotePrefix, StringComparison.Ordinal))];
+        if (notes.Count > 0)
+        {
+            line.Append(" | ").AppendJoin(" / ", notes);
+        }
+
+        return OutputBuffer.Cut(line.ToString(), detailChars);
     }
 
     private static ScratchError Folded(ErrorReport.Collapsed error, int messageChars) =>

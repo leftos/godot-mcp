@@ -444,6 +444,52 @@ public sealed partial class ScratchBackgroundTests : IDisposable
         Assert.Equal(text, await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
     }
 
+    [Fact]
+    public async Task AStatusFileOfAFinishedRunPastTheCapIsReadWithItsStepsLeftOutAndNamesTheFile()
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("file-large");
+        ScratchTools tools = new(harness.Sessions, TestCSharp.Unused());
+        const string RunId = "20261019T222144-3f2a";
+        string path = ScratchBackgroundRun.StatusPath(project, RunId);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        JsonArray lines =
+        [
+            .. Enumerable.Range(0, 30).Select(index => (JsonNode)JsonValue.Create($"{index} ok step{index} | {new string('n', 1000)}")),
+        ];
+        JsonObject written = new()
+        {
+            ["runId"] = RunId,
+            ["state"] = "done",
+            ["serverPid"] = 1,
+            ["result"] = new JsonObject
+            {
+                ["passed"] = true,
+                ["scenes"] = new JsonArray(
+                    new JsonObject
+                    {
+                        ["scene"] = "A",
+                        ["verdict"] = "green",
+                        ["details"] = lines,
+                    }
+                ),
+            },
+        };
+        string text = written.ToJsonString(ToolJson.Options);
+        await File.WriteAllTextAsync(path, text, TestContext.Current.CancellationToken);
+
+        JsonObject read = await StatusAsync(tools, project, RunId, only: null);
+
+        int length = text.Length - 1 + ",\"live\":false}".Length;
+        Assert.Equal(path, read["full"]!.GetValue<string>());
+        Assert.Equal(30, read["result"]!["scenes"]![0]!["detailsOmitted"]!.GetValue<int>());
+        Assert.Equal(
+            $"the result ran to {length} characters, past 20000; 1 scenes' steps are left out here; the whole result is in {path}",
+            read["cut"]!.GetValue<string>()
+        );
+        Assert.Equal(text, await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken));
+    }
+
     [Theory]
     [InlineData("Red")]
     [InlineData("none")]
@@ -707,7 +753,7 @@ public sealed partial class ScratchBackgroundTests : IDisposable
             [.. scenes.Select(scene => new ScratchScenePlan(scene, $"res://scratch/{scene}.tscn", 1, []) { TimeScale = 1, EngineArgs = [] })],
             [],
             Prepare: false,
-            Details: false
+            Details: ScratchDetails.Default
         )
         {
             DetailChars = ScratchVerdict.DefaultDetailChars,

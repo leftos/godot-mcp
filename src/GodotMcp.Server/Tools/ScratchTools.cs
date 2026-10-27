@@ -97,14 +97,19 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "failedAt is the first failed step and failures [{index, name, error}] "
             + "every one; failedAt.pattern {pattern, reason?} names the scratch.patterns entry a failing line matched; details "
             + "lists every played step of a red or killed scene, or of any scene with options.details, by its status line "
-            + "{index, name, ok, gameMs?, until?, status}; without details, a failing step carries its error, its first 3 errors and 5 "
+            + "{index, name, ok, gameMs?, until?, status}, or with options.details \"compact\" a green step as one line, \"<index> ok "
+            + "<name> <gameMs>ms\" or \"... until met|unmet <ms>ms\", then \" | \" and its [scratch] notes joined by \" / \", cut at "
+            + "options.detailChars; without details, a failing step carries its error, its first 3 errors and 5 "
             + "lines in at most 1500 characters; details: true gives every step's full detail, 20 errors, 20 lines, 4000 "
             + "characters ({error, errors, errorsOmitted?, lines, cut?}); errors [{message, file, line, count?}] are folded with "
             + "a count (errorsOmitted counts the rest), messages cut at 500 characters without details and 2000 with; "
             + "failures[].error is cut at 200 characters without details, 500 with; a step's "
             + "first error entry is always kept; cut names the budget a step's detail ran over and the session whose "
             + "get_debug_output holds the full log; exit.error is an error in the pace "
-            + "after the last step, killed a game the stop had to kill; seconds covers both plays of a scene played again. The "
+            + "after the last step, killed a game the stop had to kill; seconds covers both plays of a scene played again. A result "
+            + "past 20000 characters is written whole to <project>/.godot/godot-mcp/scratch-result-<UTC yyyyMMdd-HHmmss>-<4 hex>.json "
+            + "(the newest 20 kept) and returned with scenes' details left out until it fits, green scenes first, each from the last "
+            + "scene, each replaced by detailsOmitted (the steps left out), with full, the file, and cut, why. The "
             + "project is prepared once for the whole run. options.background true returns {runId, statusFile, logFile, scenes} "
             + "at once and plays the run on in the server; read or stop it with scratch_status. While a background run is live on "
             + "the project, every run_scratches on it is refused."
@@ -130,7 +135,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
                 + "ceilings {<scene>: seconds} the scene's own ceiling of load-adjusted time from its first step, replacing the one "
                 + "derived from the paces and beating the profile's scratch.ceilings, and not scaled by timeScale; "
                 + "prepare as run_project's; "
-                + "details true lists every scene's steps and gives every step its full detail; parallel the scenes at once, 1 to 4 "
+                + "details true or \"full\" lists every scene's steps and gives every step its full detail, \"compact\" lists them "
+                + "with a green step as one line; parallel the scenes at once, 1 to 4 "
                 + "(else scratch.parallel, else 1); "
                 + "session a prefix for the scenes' session names, in place of the project folder's; keepGoing true (default false) "
                 + "plays a scene's next step after one red on a pushed error or a matching line, but a step whose own call failed "
@@ -157,13 +163,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
 
             sessions.ScratchRuns.RefuseLive(plan.ProjectDir);
             ScratchRunResult result = await ScratchRun.RunAsync(sessions, csharp, plan, observer: null, cancellationToken);
-            if (!RedOnly(given.Only))
-            {
-                return JsonSerializer.Serialize(result, ToolJson.Options);
-            }
-
             JsonObject built = JsonSerializer.SerializeToNode(result, ToolJson.Options)!.AsObject();
-            return ScratchView.Result(built, redOnly: true).ToJsonString(ToolJson.Options);
+            JsonObject shown = ScratchView.Result(built, RedOnly(given.Only));
+            return ScratchView.CappedResult(shown, built, SpillPlace(plan.ProjectDir)).ToJsonString(ToolJson.Options);
         }
         catch (SessionException e)
         {
@@ -186,7 +188,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "timeScale is options.timeScale when it is not 1, and a scene's own timeScale (1) shows its game runs at another "
             + "speed than the run's, its scratch.pace entry having \"timeScale\": 1; "
             + "result, once done, is the object run_scratches returns without background; only: \"red\" keeps every scene's line in "
-            + "it and lists in its details only the red steps, with their full readback, the status file left whole; "
+            + "it and lists in its details only the red steps, with their full readback, the status file left whole; a status "
+            + "past 20000 characters leaves scenes' details out of its result as run_scratches does, its full naming the status "
+            + "file, which holds the whole result; "
             + "startedAt and updatedAt are UTC ISO 8601. live is true while this server still plays the run. A run of this server is "
             + "read from memory; any other run's status file, <project>/.godot/godot-mcp/scratch-<runId>.json, is returned as it "
             + "is, with live false: one a server killed outright left says running, and its serverPid tells whose it was. "
@@ -216,7 +220,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         {
             string projectDir = ProjectDir(projectPath);
             JsonObject status = await StatusAsync(projectDir, runId, stop ?? false, cancellationToken);
-            return ScratchView.Status(status, redOnly).ToJsonString(ToolJson.Options);
+            JsonObject shown = ScratchView.Status(status, redOnly);
+            return ScratchView.CappedStatus(shown, status, runId, SpillPlace(projectDir)).ToJsonString(ToolJson.Options);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -300,6 +305,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + $"{serverPid?.ToString(CultureInfo.InvariantCulture) ?? "(none)"}, and only a live run can be stopped.";
     }
 
+    /// <summary>A capped result's spill file goes to the project's log folder, stamped now, its failures logged by the sessions' logger.</summary>
+    private ScratchSpillPlace SpillPlace(string projectDir) => new(projectDir, DateTimeOffset.UtcNow, sessions.Logger);
+
     private static JsonObject WithLive(JsonObject status, bool live)
     {
         status["live"] = live;
@@ -324,6 +332,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         CheckDetailChars(options.DetailChars);
         CheckParallel(options.Parallel);
         CheckOnly(options);
+        ScratchDetails details = ParseDetails(options.Details);
         bool prepare = RunOptions.ParsePrepare(options.Prepare);
         string prefix = SessionPrefix(options.Session, projectDir);
         List<string> userArgs = UserArgs(profile, scratch, options);
@@ -340,7 +349,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             plans.Add(ScenePlan(Path.GetFileNameWithoutExtension(resPath), resPath, scratch, options, userArgs, engineArgs));
         }
 
-        return new ScratchPlan(projectDir, plans, scratch.Patterns, prepare, options.Details ?? false)
+        return new ScratchPlan(projectDir, plans, scratch.Patterns, prepare, details)
         {
             DetailChars = options.DetailChars ?? ScratchVerdict.DefaultDetailChars,
             Parallel = options.Parallel ?? scratch.Parallel,
@@ -380,6 +389,25 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
                 $"steps is a {Kind(given)}; it must be an array of step indices, names or ranges, or an object mapping a scene "
                     + "name to such an array."
             ),
+        };
+    }
+
+    /// <summary>options.details as the plan holds it: full for true or "full", compact for "compact", default when left out or false.</summary>
+    /// <exception cref="McpException">options.details is any other value.</exception>
+    private static ScratchDetails ParseDetails(JsonElement? details)
+    {
+        if (details is not { } given)
+        {
+            return ScratchDetails.Default;
+        }
+
+        return given.ValueKind switch
+        {
+            JsonValueKind.Null or JsonValueKind.Undefined or JsonValueKind.False => ScratchDetails.Default,
+            JsonValueKind.True => ScratchDetails.Full,
+            JsonValueKind.String when given.ValueEquals("full") => ScratchDetails.Full,
+            JsonValueKind.String when given.ValueEquals("compact") => ScratchDetails.Compact,
+            _ => throw new McpException($"details is {given.GetRawText()}; it must be true, \"full\" or \"compact\"."),
         };
     }
 
@@ -937,12 +965,14 @@ internal sealed record ScratchOptions(
         Dictionary<string, double>? Ceilings = null,
     [property: Description(RunOptions.PrepareDescription)] string? Prepare = null,
     [property: Description(
-        "true lists every scene's steps and gives every step, green or red, its full detail (error, errors, lines with its "
-            + "[scratch] notes): 20 folded errors, 20 lines, 4000 characters. Without details, a red or killed scene still lists "
-            + "every step by its status line, and a failing step carries its error, its first 3 errors and 5 lines in 1500 "
-            + "characters, each error message cut at 500. Errors are folded with a count, messages cut at 2000 characters with details."
+        "true or \"full\" lists every scene's steps and gives every step, green or red, its full detail (error, errors, lines "
+            + "with its [scratch] notes): 20 folded errors, 20 lines, 4000 characters. \"compact\" lists every scene's steps too, "
+            + "a green step as one line: its index, ok, name, pace or until figures and its [scratch] notes. Without details, a "
+            + "red or killed scene still lists every step by its status line, and a failing step carries its error, its first 3 "
+            + "errors and 5 lines in 1500 characters, each error message cut at 500. Errors are folded with a count, messages cut "
+            + "at 2000 characters with full details."
     )]
-        bool? Details = null,
+        JsonElement? Details = null,
     [property: Description(
         "How many characters of a step's status line and of each of its lines the result keeps, 1 to 20000; else 500. Above 500 "
             + "the step's detail budget grows by the extra characters."

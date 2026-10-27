@@ -33,7 +33,7 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
     public async Task AStepWithItsOwnPaceWaitsItAndTheOtherStepsWaitTheScenes()
     {
         JsonObject scene = Single(
-            await RunAsync(_probe.Directory, ["ScratchStepPace"], new ScratchOptions(Details: true), TestContext.Current.CancellationToken)
+            await RunAsync(_probe.Directory, ["ScratchStepPace"], new ScratchOptions(Details: FullDetails), TestContext.Current.CancellationToken)
         );
 
         Assert.Equal("green", scene["verdict"]!.GetValue<string>());
@@ -50,7 +50,7 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
         JsonObject result = await RunAsync(
             _probe.Directory,
             ["ScratchStepPace"],
-            new ScratchOptions(Details: true, TimeScale: 4),
+            new ScratchOptions(Details: FullDetails, TimeScale: 4),
             TestContext.Current.CancellationToken
         );
 
@@ -79,7 +79,7 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
         JsonObject result = await RunAsync(
             _probe.Directory,
             ["ScratchStepPace"],
-            new ScratchOptions(Details: true, TimeScale: 4),
+            new ScratchOptions(Details: FullDetails, TimeScale: 4),
             TestContext.Current.CancellationToken
         );
 
@@ -94,7 +94,12 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
     public async Task TheWaitAfterTheLastStepIsThatStepsOwnPace()
     {
         JsonObject scene = Single(
-            await RunAsync(_probe.Directory, ["ScratchStepPaceAfter"], new ScratchOptions(Details: true), TestContext.Current.CancellationToken)
+            await RunAsync(
+                _probe.Directory,
+                ["ScratchStepPaceAfter"],
+                new ScratchOptions(Details: FullDetails),
+                TestContext.Current.CancellationToken
+            )
         );
 
         Assert.Equal("red", scene["verdict"]!.GetValue<string>());
@@ -110,7 +115,7 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
     public async Task AnExitHoldIsTheWaitAfterTheLastStepInPlaceOfItsPace()
     {
         JsonObject scene = Single(
-            await RunAsync(_probe.Directory, ["ScratchExitHold"], new ScratchOptions(Details: true), TestContext.Current.CancellationToken)
+            await RunAsync(_probe.Directory, ["ScratchExitHold"], new ScratchOptions(Details: FullDetails), TestContext.Current.CancellationToken)
         );
 
         Assert.True(scene["verdict"]!.GetValue<string>() == "green", scene.ToJsonString());
@@ -161,7 +166,7 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
                 "res://Scratch/ScratchUntil.tscn",
                 "res://Scratch/ScratchUntilThrow.tscn",
             ],
-            new ScratchOptions(Pace: 2, Details: true),
+            new ScratchOptions(Pace: 2, Details: FullDetails),
             TestContext.Current.CancellationToken
         );
 

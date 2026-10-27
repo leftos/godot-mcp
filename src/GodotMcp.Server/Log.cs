@@ -259,4 +259,13 @@ internal static partial class Log
         Message = "Finishing the real-time recording on {Project} failed; the session reports it as the recording's error and goes on."
     )]
     public static partial void RealtimeFinishFailed(ILogger logger, Exception exception, string project);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Writing the whole scratch result to {Path} failed; the capped result is returned without full and its cut says so."
+    )]
+    public static partial void ScratchSpillFailed(ILogger logger, Exception exception, string path);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Deleting the old scratch result {Path} failed; it is left and the rest are pruned.")]
+    public static partial void ScratchSpillPruneFailed(ILogger logger, Exception exception, string path);
 }

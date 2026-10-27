@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
@@ -46,7 +47,7 @@ public sealed class ScratchRunnerTests : ScratchRunBase
         JsonObject result = await RunAsync(
             _probe.Directory,
             ["ScratchHolder", "ScratchBesideHeld"],
-            new ScratchOptions(Parallel: 2, Details: true),
+            new ScratchOptions(Parallel: 2, Details: FullDetails),
             TestContext.Current.CancellationToken
         );
 
@@ -244,6 +245,9 @@ public sealed class ScratchRunnerTests : ScratchRunBase
             await bystander.WaitForExitAsync(cancellation);
         }
     }
+
+    /// <summary>options.details true, every step's full detail.</summary>
+    internal static JsonElement FullDetails { get; } = JsonSerializer.SerializeToElement(true);
 
     internal static JsonObject Single(JsonObject result) => Assert.Single(result["scenes"]!.AsArray())!.AsObject();
 

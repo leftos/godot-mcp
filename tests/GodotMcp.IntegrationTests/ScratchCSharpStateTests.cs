@@ -51,7 +51,7 @@ public sealed class ScratchCSharpStateTests : IAsyncDisposable
         string json = await _scratch.RunScratchesAsync(
             _csProbe.Directory,
             ["res://Scratch/ScratchUntilState.tscn"],
-            new ScratchOptions(Pace: 2, Details: true),
+            new ScratchOptions(Pace: 2, Details: ScratchRunnerTests.FullDetails),
             TestContext.Current.CancellationToken
         );
 
