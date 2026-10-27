@@ -143,6 +143,7 @@ internal static class RecordingCut
         CutContext context = new(recording, ffmpeg, run);
         List<string> clips = [];
         List<string> notes = [];
+        List<string> warnings = [];
         foreach (ClipSpan span in recording.Clips())
         {
             ClipOutcome outcome = await CutClipAsync(context, span, clips.Count + 1, cancellationToken);
@@ -154,15 +155,44 @@ internal static class RecordingCut
                     Mode = Recording.MovieMode,
                     Path = recording.Path,
                     Clips = clips.Count > 0 ? clips : null,
+                    Warning = JoinWarnings(warnings),
                     Error = string.Join(" ", notes),
                 };
             }
 
-            clips.Add(clip);
+            clips.Add(Place(clip, span, warnings));
         }
 
-        return DeleteFullMovie(recording.Path, clips, notes);
+        return DeleteFullMovie(recording.Path, clips, notes, warnings);
     }
+
+    /// <summary>
+    /// Where a cut clip ends up: moved to its start mark's destination, if any, or kept beside the movie when it has none, when
+    /// it fell back to the movie's own container, or when the move fails, each failure adding to <paramref name="warnings"/>.
+    /// </summary>
+    private static string Place(string clip, ClipSpan span, List<string> warnings)
+    {
+        if (span.Destination is not { } destination)
+        {
+            return clip;
+        }
+
+        if (!clip.EndsWith(ClipDelivery.Extension, StringComparison.OrdinalIgnoreCase))
+        {
+            warnings.Add($"the clip fell back to .avi, so it is kept at {clip} instead of {destination.FullPath}");
+            return clip;
+        }
+
+        (string placed, string? warning) = ClipDelivery.Deliver(clip, destination, span.Overwrite);
+        if (warning is not null)
+        {
+            warnings.Add(warning);
+        }
+
+        return placed;
+    }
+
+    private static string? JoinWarnings(List<string> warnings) => warnings.Count > 0 ? string.Join("; ", warnings) : null;
 
     /// <summary>
     /// The result of a movie that cannot be used as it is: one never written has no path, one whose game was killed is kept
@@ -288,7 +318,7 @@ internal static class RecordingCut
     /// <summary>The ffmpeg log, beside the recordings.</summary>
     private static string LogPath(string moviePath) => Path.Combine(Path.GetDirectoryName(moviePath)!, LogFileName);
 
-    private static RecordingResult DeleteFullMovie(string moviePath, List<string> clips, List<string> notes)
+    private static RecordingResult DeleteFullMovie(string moviePath, List<string> clips, List<string> notes, List<string> warnings)
     {
         string? error = notes.Count > 0 ? string.Join(" ", notes) : null;
         try
@@ -298,6 +328,7 @@ internal static class RecordingCut
             {
                 Mode = Recording.MovieMode,
                 Clips = clips,
+                Warning = JoinWarnings(warnings),
                 Error = error,
             };
         }
@@ -308,6 +339,7 @@ internal static class RecordingCut
                 Mode = Recording.MovieMode,
                 Path = moviePath,
                 Clips = clips,
+                Warning = JoinWarnings(warnings),
                 Error = string.Join(" ", [.. notes, $"Every clip was cut, but the full file could not be deleted: {e.Message}"]),
             };
         }

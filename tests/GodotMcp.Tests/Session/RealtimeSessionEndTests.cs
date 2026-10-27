@@ -199,7 +199,7 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
         Task<RealtimeStopped> stopMark = await RunUntilItWaitsAsync(() => session.StopRealtimeAsync(Token));
         Task<RealtimeStarted> second = stopMark
             .ContinueWith(
-                _ => session.StartRealtimeAsync(30, 600, audio: true, Token),
+                _ => session.StartRealtimeAsync(30, 600, audio: true, destination: null, overwrite: false, Token),
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default

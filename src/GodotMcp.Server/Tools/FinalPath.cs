@@ -43,6 +43,12 @@ internal static partial class FinalPath
 
     private const uint DriveRemote = 4;
 
+    /// <summary><c>MOVEFILE_REPLACE_EXISTING</c>.</summary>
+    private const uint MoveReplaceExisting = 0x1;
+
+    /// <summary><c>ERROR_NOT_SAME_DEVICE</c>: a rename cannot cross volumes.</summary>
+    private const int NotSameDevice = 17;
+
     private const uint ReparsePointAttribute = 0x400;
 
     /// <summary><c>IO_REPARSE_TAG_MOUNT_POINT</c>: a junction, or a volume mount point when its target is a volume.</summary>
@@ -199,6 +205,24 @@ internal static partial class FinalPath
     internal static bool IsRemoteDrive(string path) =>
         path.Length >= 2 && char.IsAsciiLetter(path[0]) && path[1] == ':' && GetDriveTypeW($"{path[0]}:\\") == DriveRemote;
 
+    /// <summary>
+    /// Renames <paramref name="source"/> to <paramref name="destination"/>, replacing its folder entry only with
+    /// <paramref name="overwrite"/>, and never as a copy: without MOVEFILE_COPY_ALLOWED, which File.Move always passes, Windows
+    /// cannot turn the rename into a copy written through a link or hard link at the destination.
+    /// </summary>
+    /// <returns>Whether it was renamed; false when the two lie on different volumes, and nothing was done.</returns>
+    /// <exception cref="IOException">The rename failed for another reason, such as an existing destination without overwrite.</exception>
+    internal static bool Rename(string source, string destination, bool overwrite)
+    {
+        if (MoveFileExW(source, destination, overwrite ? MoveReplaceExisting : 0))
+        {
+            return true;
+        }
+
+        int error = Marshal.GetLastPInvokeError();
+        return error == NotSameDevice ? false : throw Failure(error);
+    }
+
     private static IOException Failure() => Failure(Marshal.GetLastPInvokeError());
 
     private static IOException Failure(int error) => new(new Win32Exception(error).Message);
@@ -236,6 +260,10 @@ internal static partial class FinalPath
 
     [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16)]
     private static partial uint GetDriveTypeW(string root);
+
+    [LibraryImport("kernel32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool MoveFileExW(string existing, string replacement, uint flags);
 
     /// <summary><c>BY_HANDLE_FILE_INFORMATION</c>, whose FILETIMEs are two 4-byte halves, so 4-byte packed.</summary>
     [StructLayout(LayoutKind.Sequential, Pack = 4)]

@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using GodotMcp.Server.Tools;
 
 namespace GodotMcp.Server.Session;
 
@@ -40,10 +41,18 @@ internal sealed partial class GodotSession
     /// <paramref name="audio"/> the clip records the game's own sound, unless the session is muted or the game's hello sent no
     /// process id, which the start and the clip warn of. Every refusal comes before a process starts: no game, the session's
     /// end begun, one running, no window, a quiet session, then what <see cref="RealtimeRecording.Locate"/> refuses. When the
-    /// session's end begins while the start runs, the capture is ended as soon as it has started.
+    /// session's end begins while the start runs, the capture is ended as soon as it has started. The finished clip is moved to
+    /// <paramref name="destination"/>, checked already, replacing a file there only with <paramref name="overwrite"/>.
     /// </summary>
     /// <exception cref="SessionException">The start is refused or failed; nothing is left running.</exception>
-    public async Task<RealtimeStarted> StartRealtimeAsync(int fps, int maxSeconds, bool audio, CancellationToken cancellationToken)
+    public async Task<RealtimeStarted> StartRealtimeAsync(
+        int fps,
+        int maxSeconds,
+        bool audio,
+        OutputTarget? destination,
+        bool overwrite,
+        CancellationToken cancellationToken
+    )
     {
         RealtimeEnvironment environment = registry.Realtime;
         DateTimeOffset requested = environment.Time.GetUtcNow();
@@ -57,6 +66,8 @@ internal sealed partial class GodotSession
                 StartedSeconds = startedSeconds,
                 AudioPid = audioPid,
                 AudioWarning = audioWarning,
+                Destination = destination,
+                Overwrite = overwrite,
             };
             RealtimeRecording recording = await RealtimeRecording.StartAsync(environment, start, cancellationToken);
             bool ended;
@@ -180,6 +191,7 @@ internal sealed partial class GodotSession
                 {
                     Mode = RealtimeRecording.Mode,
                     Path = recording.Started.Path,
+                    Destination = recording.Started.Destination,
                     StartedSeconds = recording.StartedSeconds,
                 };
             }

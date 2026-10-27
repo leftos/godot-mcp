@@ -3,13 +3,14 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using GodotMcp.Server.Tools;
 using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Session;
 
 /// <summary>
 /// What record_mark start returns for a real-time recording: the .mp4 it will finish as, the frame size, rate, whether the clip
-/// has the game's sound as an audio track, and the encoder.
+/// has the game's sound as an audio track, the encoder, and where the clip is moved once it is finished.
 /// </summary>
 internal sealed record RealtimeStarted(string Path, int Width, int Height, int Fps, bool Audio, string Encoder, string? Warning)
 {
@@ -18,6 +19,10 @@ internal sealed record RealtimeStarted(string Path, int Width, int Height, int F
 
     [JsonPropertyOrder(-1)]
     public string Mode { get; } = RealtimeRecording.Mode;
+
+    /// <summary>The full path the finished clip is moved to; null without one, when it stays at <see cref="Path"/>.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Destination { get; init; }
 }
 
 /// <summary>
@@ -56,6 +61,12 @@ internal sealed record RealtimeStart(string Session, string ProjectDir, Realtime
 
     /// <summary>Why a track that was asked for is not recorded, which the start and the clip warn of; null otherwise.</summary>
     public required string? AudioWarning { get; init; }
+
+    /// <summary>Where the finished clip is moved, checked at the start against places found then; null, it stays in recordings/.</summary>
+    public required OutputTarget? Destination { get; init; }
+
+    /// <summary>Whether the move may replace a file at <see cref="Destination"/>.</summary>
+    public required bool Overwrite { get; init; }
 }
 
 /// <summary>
@@ -479,7 +490,10 @@ internal sealed partial class RealtimeRecording
             context.AudioPid is not null,
             encoder,
             Join("; ", [context.AudioNote, target.Warning])
-        );
+        )
+        {
+            Destination = start.Destination?.FullPath,
+        };
         return new RealtimeRecording(context, pipeline, started);
     }
 
@@ -925,7 +939,10 @@ internal sealed partial class RealtimeRecording
         return null;
     }
 
-    /// <summary>Remuxes the finished .mkv to the .mp4 and deletes the .mkv; a failed remux keeps the .mkv.</summary>
+    /// <summary>
+    /// Remuxes the finished .mkv to the .mp4 and deletes the .mkv, then moves the .mp4 to the start's destination, if any; a
+    /// failed remux keeps the .mkv, and a failed move keeps the .mp4 with a warning.
+    /// </summary>
     private async Task<RealtimeOutcome> RemuxAsync(ToolProcessResult helper, TimeSpan length, string? deadlineLeft)
     {
         ToolProcessRequest request = new(
@@ -945,8 +962,12 @@ internal sealed partial class RealtimeRecording
             return new RealtimeOutcome(null, Join(" ", [failed, DeleteFiles([Paths.Mp4]), _endNote, deadlineLeft]));
         }
 
-        RealtimeClip clip = Clip(length);
-        return new RealtimeOutcome(new RealtimeStopped(clip, Warnings(helper, clip, [_endNote, deadlineLeft, DeleteFiles([Paths.Mkv])])), null);
+        string? mkvLeft = DeleteFiles([Paths.Mkv]);
+        (string clipPath, string? undelivered) = _start.Destination is { } destination
+            ? ClipDelivery.Deliver(Paths.Mp4, destination, _start.Overwrite)
+            : (Paths.Mp4, null);
+        RealtimeClip clip = Clip(length, clipPath);
+        return new RealtimeOutcome(new RealtimeStopped(clip, Warnings(helper, clip, [_endNote, deadlineLeft, mkvLeft, undelivered])), null);
     }
 
     /// <returns>Why the remux did not make the .mp4; null when it did.</returns>
@@ -965,12 +986,12 @@ internal sealed partial class RealtimeRecording
         }
     }
 
-    private RealtimeClip Clip(TimeSpan length)
+    private RealtimeClip Clip(TimeSpan length, string path)
     {
         long frames = _pipeline.Pump.Bytes / _frameBytes;
         double seconds = length.TotalSeconds;
         double averageFps = seconds > 0 ? frames / seconds : 0;
-        return new RealtimeClip(Paths.Mp4, Math.Round(seconds, 3), frames, Math.Round(averageFps, 1), Started.Width, Started.Height, Started.Audio);
+        return new RealtimeClip(path, Math.Round(seconds, 3), frames, Math.Round(averageFps, 1), Started.Width, Started.Height, Started.Audio);
     }
 
     private string? Warnings(ToolProcessResult helper, RealtimeClip clip, IEnumerable<string?> notes)

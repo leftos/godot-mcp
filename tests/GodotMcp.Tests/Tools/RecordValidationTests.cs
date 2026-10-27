@@ -78,13 +78,13 @@ public sealed class RecordValidationTests : IAsyncDisposable
     }
 
     [Fact]
-    public void TheAudioOptionDeserialisesAndDefaultsToTrue()
+    public void TheAudioOptionDeserialisesAndIsUnsetWhenOmitted()
     {
         RecordMarkOptions? bound = JsonSerializer.Deserialize<RecordMarkOptions>("""{"fps":24,"maxSeconds":5}""", ToolJson.Options);
         RecordMarkOptions? on = JsonSerializer.Deserialize<RecordMarkOptions>("""{"fps":24,"audio":true}""", ToolJson.Options);
         RecordMarkOptions? off = JsonSerializer.Deserialize<RecordMarkOptions>("""{"fps":24,"audio":false}""", ToolJson.Options);
 
-        Assert.Equal(new RecordMarkOptions(24, 5, Audio: true), bound);
+        Assert.Equal(new RecordMarkOptions(24, 5, Audio: null), bound);
         Assert.Equal(new RecordMarkOptions(24, Audio: true), on);
         Assert.Equal(new RecordMarkOptions(24, Audio: false), off);
     }
@@ -97,6 +97,72 @@ public sealed class RecordValidationTests : IAsyncDisposable
         );
 
         Assert.Equal("options belong to record_mark start; stop takes none.", refused.Message);
+    }
+
+    [Fact]
+    public void AMovieStartTakesAPathAndOverwrite()
+    {
+        RecordMarkOptions? options = RuntimeTools.CheckMarkOptions("start", new RecordMarkOptions(Path: "clips/x.mp4", Overwrite: true));
+
+        RuntimeTools.CheckMovieOptions(options);
+        RuntimeTools.CheckMovieOptions(RuntimeTools.CheckMarkOptions("start", null));
+        Assert.Equal(new RecordMarkOptions(Path: "clips/x.mp4", Overwrite: true), options);
+    }
+
+    [Fact]
+    public void AMovieStartRefusesFpsEvenAtItsDefault()
+    {
+        RecordMarkOptions? options = RuntimeTools.CheckMarkOptions("start", new RecordMarkOptions(Fps: 30, Path: "x.mp4"));
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.CheckMovieOptions(options));
+
+        Assert.Equal(
+            "a Movie Maker recording's start mark takes only options.path and options.overwrite; fps, maxSeconds and audio set a real-time recording",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public async Task AnOverwriteWithoutAPathIsRefusedOnARealtimeStart()
+    {
+        await AttachAsync(new FakeHello { WindowHandle = FakeRealtime.Hwnd });
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.RecordMarkAsync("start", new RecordMarkOptions(Overwrite: true), cancellationToken: Token)
+        );
+
+        Assert.Equal("options.overwrite needs options.path", refused.Message);
+        Assert.Empty(_fake.Starts);
+    }
+
+    [Fact]
+    public void AnOverwriteWithoutAPathIsRefusedOnAMovieStart()
+    {
+        // A Movie Maker start's options pass through the same check before its own.
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.CheckMarkOptions("start", new RecordMarkOptions(Overwrite: true)));
+
+        Assert.Equal("options.overwrite needs options.path", refused.Message);
+    }
+
+    [Fact]
+    public async Task ARealtimeStartStillDefaultsTo30FpsAnd600SecondsWithSound()
+    {
+        await AttachAsync(new FakeHello { WindowHandle = FakeRealtime.Hwnd, ProcessId = 77 });
+        DateTimeOffset before = DateTimeOffset.UtcNow;
+
+        JsonNode started = JsonNode.Parse(await _tools.RecordMarkAsync("start", new RecordMarkOptions(), cancellationToken: Token))!;
+        DateTimeOffset after = DateTimeOffset.UtcNow;
+        await _tools.RecordMarkAsync("stop", cancellationToken: Token);
+
+        Assert.Equal(30, started["fps"]!.GetValue<int>());
+        Assert.True(started["audio"]!.GetValue<bool>());
+        ToolProcessRequest capture = Assert.Single(_fake.Starts, request => request.Arguments.Contains("--until-file"));
+        List<string> arguments = [.. capture.Arguments];
+        Assert.Equal("30", arguments[arguments.IndexOf("--fps") + 1]);
+        Assert.Equal("77", arguments[arguments.IndexOf("--audio-pid") + 1]);
+        DateTimeOffset deadline = _fake.DeadlineAtHelperStart ?? throw new InvalidOperationException("the helper read no deadline");
+        TimeSpan ahead = RealtimeRecording.FirstFrameAllowance * LoadClock.BackstopFactor + TimeSpan.FromSeconds(600);
+        Assert.InRange(deadline, before + ahead - TimeSpan.FromSeconds(2), after + ahead + TimeSpan.FromSeconds(2));
     }
 
     [Fact]

@@ -136,7 +136,9 @@ A `wait` assertion takes any `wait_for` condition, `{output}` included: the serv
 
 Add `dropIdle: true` beside `record` to cut the idle frames drawn between your tool calls out of each clip (the clip then plays just the action, silent); leave it out when a still moment or the sound matters.
 
-A game that keeps its own clock is recorded another way: on a not-quiet windowed session launched without `record` (`run_project {options: {quiet: false}}`, or an attach), `record_mark {mark: "start", options: {fps?, maxSeconds?, audio?}}` records the window in real time, as a player sees it, and `record_mark {mark: "stop"}` returns `clip: {path, seconds, frames, averageFps, width, height, audio}`.
+A game that keeps its own clock is recorded another way: on a not-quiet windowed session launched without `record` (`run_project {options: {quiet: false}}`, or an attach), `record_mark {mark: "start", options: {fps?, maxSeconds?, audio?, path?, overwrite?}}` records the window in real time, as a player sees it, and `record_mark {mark: "stop"}` returns `clip: {path, seconds, frames, averageFps, width, height, audio}`.
+
+A clip can be given a file as a still can: `options.path` on either kind of `start` (a movie's too, with no `fps`, `maxSeconds` or `audio`) names the `.mp4` it is moved to, in the project, its git checkout or, from a linked worktree, the main checkout's `.tmp` folder, and `options.overwrite` replaces one there. Read `clip.path` or `recording.clips` for where the file is, since a refused move keeps it under `.godot/godot-mcp/recordings/` and warns.
 
 A real-time recording ends with its session too: `stop_project` and `detach_project` return its clip as `recording: {mode: "realtime", clips: [path], startedSeconds, warning?}` and `restart_project` as `previousRecording`, so a recording left running is not lost (the new game after a restart does not record until you `start` again); one that ended on its own (`maxSeconds`, the game quitting) is returned once, by whichever of `record_mark stop`, `stop_project`, `detach_project` and `restart_project` comes first.
 

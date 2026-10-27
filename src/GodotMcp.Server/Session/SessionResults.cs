@@ -38,9 +38,10 @@ internal sealed record WindowSize(int Width, int Height)
 /// A session's recording, by its <see cref="Mode"/>. A Movie Maker run's (movie): <see cref="Path"/> is the full movie while it
 /// is kept (during the run, and after it when there were no marks or the cut failed), <see cref="Clips"/> the files cut from the
 /// marks, <see cref="Error"/> why the cut did not finish. A real-time recording's (realtime): <see cref="Path"/> while it runs,
-/// then <see cref="Clips"/>, the one .mp4 it finished as, or <see cref="Error"/> when it could not be finished, and the
-/// <see cref="Warning"/> its clip carries; <see cref="StartedSeconds"/> is when it started, in whole seconds from the game's
-/// launch or attach.
+/// with the <see cref="Destination"/> its clip is moved to, then <see cref="Clips"/>, the one .mp4 it finished as (at its
+/// destination once moved there), or <see cref="Error"/> when it could not be finished, and the <see cref="Warning"/> its clip
+/// carries; <see cref="StartedSeconds"/> is when it started, in whole seconds from the game's launch or attach. A clip that
+/// could not be moved to its destination stays in recordings/, which the warning names.
 /// </summary>
 internal sealed record RecordingResult
 {
@@ -48,6 +49,9 @@ internal sealed record RecordingResult
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Path { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Destination { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<string>? Clips { get; init; }

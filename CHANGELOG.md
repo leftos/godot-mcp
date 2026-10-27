@@ -14,6 +14,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - A scene's `scratch.pace` takes `exitHold`, the wait after its last step, so an `until` step keeps a long limit while the scene quits soon after.
 - `run_scratches` takes `options.details: "compact"`, listing each green step as one line with its pace or until figures and its `[scratch]` notes.
 - `save_screenshot` writes into the checkout holding the project, or from a linked worktree into the main checkout's `.tmp`, refusing links that lead outside.
+- `record_mark start` takes `options.path` and `options.overwrite`, delivering the finished clip there under `save_screenshot`'s rules, or warning and keeping it in `recordings/`.
 
 ### Changed
 

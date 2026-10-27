@@ -5,9 +5,14 @@ using System.IO.Pipes;
 using System.Text;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
+using GodotMcp.Server.Tools;
+using GodotMcp.Tests.Tools;
+using GodotMcp.Tests.Wire;
 using GodotMcp.TestSupport;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
+using ModelContextProtocol;
 
 namespace GodotMcp.Tests.Session;
 
@@ -676,6 +681,105 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         Assert.True(recording.Started.Audio);
     }
 
+    [Fact]
+    public async Task ARealtimeClipIsDeliveredToItsNamedPath()
+    {
+        RealtimeRecording recording = await _fake.StartAsync(path: "clips/x.mp4");
+        RealtimeStopped stopped = await recording.StopAsync(Token);
+
+        string destination = Path.Combine(_fake.ProjectDir, "clips", "x.mp4");
+        Assert.Equal(destination, stopped.Clip.Path);
+        Assert.True(File.Exists(destination), $"the clip was not delivered to {destination}");
+        Assert.False(File.Exists(recording.Paths.Mp4), "the clip was left in recordings/ too");
+    }
+
+    [Fact]
+    public async Task ARealtimeStartReportsWhereItsClipWillGo()
+    {
+        RealtimeRecording recording = await _fake.StartAsync(path: "clips/x.mp4");
+        await recording.StopAsync(Token);
+
+        Assert.Equal(Path.Combine(_fake.ProjectDir, "clips", "x.mp4"), recording.Started.Destination);
+        Assert.Equal(recording.Paths.Mp4, recording.Started.Path);
+    }
+
+    [Fact]
+    public async Task ARealtimeClipWhoseDestinationAppearedIsKeptWithAWarning()
+    {
+        string destination = Path.Combine(Directory.CreateDirectory(Path.Combine(_fake.ProjectDir, "clips")).FullName, "x.mp4");
+        RealtimeRecording recording = await _fake.StartAsync(path: "clips/x.mp4");
+        _fake.BeforeRemux = () =>
+        {
+            File.WriteAllBytes(destination, [9]);
+            return Task.CompletedTask;
+        };
+
+        RealtimeStopped stopped = await recording.StopAsync(Token);
+
+        // The reason is the system's own message for a file already there, in the system's language.
+        Assert.Matches(
+            $"(?:^|; )the clip could not be moved to {Regex.Escape(destination)}: [^;]+; it is kept at {Regex.Escape(recording.Paths.Mp4)}(?:; |$)",
+            stopped.Warning ?? ""
+        );
+        Assert.Equal(recording.Paths.Mp4, stopped.Clip.Path);
+        Assert.True(File.Exists(recording.Paths.Mp4), "the kept clip is not in recordings/");
+        Assert.Equal([9], File.ReadAllBytes(destination));
+    }
+
+    [Fact]
+    public async Task ARealtimeClipWhoseDestinationFolderBecameALinkOutsideIsKeptWithAWarning()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
+        using TempDirectory outside = new();
+        string clips = Directory.CreateDirectory(Path.Combine(_fake.ProjectDir, "clips")).FullName;
+        RealtimeRecording recording = await _fake.StartAsync(path: "clips/x.mp4");
+        _fake.BeforeRemux = () =>
+        {
+            Directory.Delete(clips);
+            ScreenshotPathValidationTests.MakeJunction(clips, outside.Path);
+            return Task.CompletedTask;
+        };
+
+        try
+        {
+            RealtimeStopped stopped = await recording.StopAsync(Token);
+
+            Assert.Contains(
+                $"the clip could not be moved to {Path.Combine(clips, "x.mp4")}: path clips/x.mp4 leads through a link to {outside.Path}, "
+                    + $"outside the project; save inside the project; it is kept at {recording.Paths.Mp4}",
+                stopped.Warning ?? "",
+                StringComparison.Ordinal
+            );
+            Assert.Equal(recording.Paths.Mp4, stopped.Clip.Path);
+            Assert.Empty(Directory.GetFileSystemEntries(outside.Path));
+        }
+        finally
+        {
+            // The junction goes before the outside folder it leads to is cleaned up.
+            Directory.Delete(clips);
+        }
+    }
+
+    [Fact]
+    public async Task ARealtimeStartToAPathOutsideTheProjectIsRefusedBeforeAnyProcessStarts()
+    {
+        await using RegistryHarness harness = new();
+        harness.Sessions.Realtime = _fake.Environment;
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
+        string project = harness.Project("game");
+        using FakeBridge game = await harness.AttachFakeGameAsync(project, "game", new FakeHello { WindowHandle = FakeRealtime.Hwnd });
+        using TempDirectory outside = new();
+        string path = Path.Combine(outside.Path, "x.mp4");
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            tools.RecordMarkAsync("start", new RecordMarkOptions(Path: path), cancellationToken: Token)
+        );
+
+        Assert.Equal($"path {path} resolves outside the project {project}; save inside the project", refused.Message);
+        Assert.Empty(_fake.Starts);
+        Assert.Empty(_fake.Runs);
+    }
+
     private static string LastInput(ToolProcessRequest encode) => encode.Arguments[encode.Arguments.ToList().LastIndexOf("-i") + 1];
 
     private static bool IsProbe(ToolProcessRequest request) => request.Arguments.Contains("--probe");
@@ -906,7 +1010,9 @@ internal sealed class FakeRealtime : IDisposable
         string? ffmpeg = null,
         CancellationToken? cancellationToken = null,
         int? audioPid = null,
-        string? audioWarning = null
+        string? audioWarning = null,
+        string? path = null,
+        bool overwrite = false
     ) =>
         RealtimeRecording.StartAsync(
             Environment,
@@ -915,9 +1021,18 @@ internal sealed class FakeRealtime : IDisposable
                 StartedSeconds = 0,
                 AudioPid = audioPid,
                 AudioWarning = audioWarning,
+                Destination = path is null ? null : Destination(path, overwrite),
+                Overwrite = overwrite,
             },
             cancellationToken ?? TestContext.Current.CancellationToken
         );
+
+    /// <summary>The clip destination <paramref name="path"/> names in the project, checked as a start with that path checks it.</summary>
+    private OutputTarget Destination(string path, bool overwrite)
+    {
+        var places = OutputPlaces.Find(ProjectDir, NullLogger.Instance);
+        return new OutputTarget(places, path, OutputDestination.Resolve(places, path, ".mp4", overwrite));
+    }
 
     public static RealtimeTarget Target(string ffmpeg) =>
         new(ffmpeg, @"C:\server\capture\godot-mcp-capture.exe", Hwnd, new PixelRect(1, 31, Width, Height), null);

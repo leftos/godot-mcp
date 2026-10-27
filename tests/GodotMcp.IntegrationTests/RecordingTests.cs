@@ -240,16 +240,16 @@ public sealed class RecordingTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
-    public async Task OptionsOnAMovieSessionAreRefused()
+    public async Task RealtimeOptionsOnAMovieStartAreRefused()
     {
         await LaunchAsync(record: true);
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
-            _tools.RecordMarkAsync("start", new RecordMarkOptions(), cancellationToken: TestContext.Current.CancellationToken)
+            _tools.RecordMarkAsync("start", new RecordMarkOptions(Fps: 30), cancellationToken: TestContext.Current.CancellationToken)
         );
 
         Assert.Equal(
-            "options belong to a real-time recording; session 'InputProbe' records with Movie Maker, whose marks take none.",
+            "a Movie Maker recording's start mark takes only options.path and options.overwrite; fps, maxSeconds and audio set a real-time recording",
             refused.Message
         );
     }

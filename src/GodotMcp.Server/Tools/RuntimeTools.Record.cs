@@ -14,7 +14,9 @@ namespace GodotMcp.Server.Tools;
 internal sealed partial class RuntimeTools
 {
     private const int MaxRecordFps = 60;
+    private const int DefaultRecordFps = 30;
     private const int MaxRecordSeconds = 600;
+    private const string ClipExtension = ".mp4";
 
     private static readonly TimeSpan MovieFrameTimeout = TimeSpan.FromSeconds(10);
 
@@ -27,7 +29,8 @@ internal sealed partial class RuntimeTools
             + "mode: movie, frame, seconds}, frame counted from the movie's first and seconds = frame / 60; a mark made while the run "
             + "is ending is not kept. In any other session with a window, start records the window in real time, as a player sees "
             + "it, until stop or options.maxSeconds, and answers once the first frame is in: {mark, mode: realtime, path, width, "
-            + "height, fps, audio, encoder, warning?}, path being the .mp4 the clip becomes and audio whether it has the game's "
+            + "height, fps, audio, encoder, warning?}, path being the .mp4 it records to under .godot/godot-mcp/recordings/ "
+            + "(clip.path names where the file is once finished: the destination once delivered there) and audio whether it has the game's "
             + "own sound as its audio track (options.audio; none, with a warning, when the session is muted or the sound cannot be "
             + "captured). stop ends it and returns {mark, mode, clip: {path, seconds, frames, averageFps, width, height, audio}, "
             + "warning?}. The session's end ends a running one at that call "
@@ -36,31 +39,41 @@ internal sealed partial class RuntimeTools
             + "quitting) is returned once, by whichever comes first of record_mark stop, stop_project, detach_project and "
             + "restart_project (as previousRecording). One real-time recording "
             + "runs per session. The window must stay unminimized (a minimized window holds its "
-            + "last frame); quiet and headless sessions are refused, and it needs ffmpeg."
+            + "last frame); quiet and headless sessions are refused, and it needs ffmpeg. On either kind, start's options.path names "
+            + "where the finished clip is moved (options.overwrite replaces a file there), and the start's result gains destination, "
+            + "the full path; a clip whose move is refused when it is delivered stays under .godot/godot-mcp/recordings/ with a "
+            + "warning, and every clip path reported names where the file is. A Movie Maker start mark takes only path and overwrite."
     )]
     public async Task<string> RecordMarkAsync(
         [Description("start or stop.")] string mark,
-        [Description("A real-time recording's frame rate, length cap and audio track, on start only; a Movie Maker recording's marks take none.")]
+        [Description(
+            "On start only: a real-time recording's frame rate, length cap and audio track, and for either kind the path the clip is "
+                + "moved to and whether it may replace a file there; a Movie Maker start mark takes only path and overwrite."
+        )]
             RecordMarkOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
-        RecordMarkOptions? realtime = CheckMarkOptions(mark, options);
+        RecordMarkOptions? started = CheckMarkOptions(mark, options);
         GodotSession target = Find(session);
         if (target.ActiveRecording is { } recording)
         {
-            return options is null
-                ? await MarkMovieAsync(target, recording, mark, cancellationToken)
-                : throw new McpException(
-                    $"options belong to a real-time recording; session '{target.Name}' records with Movie Maker, whose marks take none."
-                );
+            CheckMovieOptions(started);
+            return await MarkMovieAsync(target, recording, mark, started, cancellationToken);
         }
 
         try
         {
-            object marked = realtime is not null
-                ? await target.StartRealtimeAsync(realtime.Fps, realtime.MaxSeconds, realtime.Audio, cancellationToken)
+            object marked = started is not null
+                ? await target.StartRealtimeAsync(
+                    started.Fps ?? DefaultRecordFps,
+                    started.MaxSeconds ?? MaxRecordSeconds,
+                    started.Audio ?? true,
+                    ResolveClipTarget(target, started),
+                    started.Overwrite,
+                    cancellationToken
+                )
                 : await target.StopRealtimeAsync(cancellationToken);
             return JsonSerializer.Serialize(marked, Json);
         }
@@ -71,7 +84,7 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>The mark and its options checked before any session is looked at.</summary>
-    /// <returns>A start's options, the defaults when none were given; null for a stop.</returns>
+    /// <returns>A start's options, none set when none were given; null for a stop.</returns>
     /// <exception cref="McpException">The mark is neither start nor stop, a stop has options, or an option is out of range.</exception>
     internal static RecordMarkOptions? CheckMarkOptions(string mark, RecordMarkOptions? options)
     {
@@ -86,6 +99,11 @@ internal sealed partial class RuntimeTools
         }
 
         RecordMarkOptions checkedOptions = options ?? new RecordMarkOptions();
+        if (checkedOptions is { Overwrite: true, Path: null })
+        {
+            throw new McpException("options.overwrite needs options.path");
+        }
+
         if (checkedOptions.Fps is < 1 or > MaxRecordFps)
         {
             throw new McpException($"fps must be 1 to {MaxRecordFps}; got {checkedOptions.Fps}.");
@@ -99,9 +117,54 @@ internal sealed partial class RuntimeTools
         return checkedOptions;
     }
 
-    /// <summary>Marks the Movie Maker recording at the movie frame the game has reached.</summary>
-    private static async Task<string> MarkMovieAsync(GodotSession target, Recording recording, string mark, CancellationToken cancellationToken)
+    /// <summary>A Movie Maker start mark's options checked: only a path and overwrite; a stop's are null here.</summary>
+    /// <exception cref="McpException">The start sets fps, maxSeconds or audio, which belong to a real-time recording.</exception>
+    internal static void CheckMovieOptions(RecordMarkOptions? started)
     {
+        if (started is { Fps: not null } or { MaxSeconds: not null } or { Audio: not null })
+        {
+            throw new McpException(
+                "a Movie Maker recording's start mark takes only options.path and options.overwrite; "
+                    + "fps, maxSeconds and audio set a real-time recording"
+            );
+        }
+    }
+
+    /// <summary>The destination a start's options name, checked before anything starts; null without a path.</summary>
+    /// <exception cref="McpException">The path breaks the output rule, or names an existing file without overwrite.</exception>
+    private static OutputTarget? ResolveClipTarget(GodotSession target, RecordMarkOptions? started)
+    {
+        if (started?.Path is not { } path)
+        {
+            return null;
+        }
+
+        var places = OutputPlaces.Find(target.ProjectDir, target.Logger);
+        return new OutputTarget(places, path, OutputDestination.Resolve(places, path, ClipExtension, started.Overwrite));
+    }
+
+    /// <summary>
+    /// Marks the Movie Maker recording at the movie frame the game has reached; a start with a path has it checked before the
+    /// game is asked for the frame, and keeps it for its clip.
+    /// </summary>
+    private static async Task<string> MarkMovieAsync(
+        GodotSession target,
+        Recording recording,
+        string mark,
+        RecordMarkOptions? started,
+        CancellationToken cancellationToken
+    )
+    {
+        OutputTarget? destination = ResolveClipTarget(target, started);
+        try
+        {
+            recording.CheckDestination(destination);
+        }
+        catch (SessionException e)
+        {
+            throw new McpException(e.Message, e);
+        }
+
         BridgeResult result = await CallWithErrorsAsync(
             target,
             new BridgeCall("record_mark", "movie_frame", [], MovieFrameTimeout),
@@ -110,7 +173,7 @@ internal sealed partial class RuntimeTools
         long frame = ReadMovieFrame(result.Reply);
         try
         {
-            MarkResult marked = recording.Mark(mark, frame);
+            MarkResult marked = recording.Mark(mark, frame, destination, started?.Overwrite ?? false);
             JsonObject reply = JsonSerializer.SerializeToNode(marked, Json)!.AsObject();
             return ErrorReport.AddTo(reply, result.Errors).ToJsonString();
         }

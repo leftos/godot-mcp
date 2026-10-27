@@ -111,6 +111,57 @@ internal static partial class OutputDestination
         }
     }
 
+    /// <summary>
+    /// Moves <paramref name="source"/> to <paramref name="destination"/>, creating its folders when missing: on one volume a
+    /// rename that replaces the destination's folder entry, never writing through a link there; across volumes a
+    /// <see cref="CopyReplacing"/> of the source, which is deleted once the copy is in place. A failed move deletes nothing.
+    /// </summary>
+    /// <returns>Null once the source is gone; why the source could not be deleted after its copy reached the destination.</returns>
+    /// <exception cref="IOException">A step failed, or the destination exists and <paramref name="overwrite"/> is false.</exception>
+    /// <exception cref="UnauthorizedAccessException">A step was denied.</exception>
+    internal static string? MoveReplacing(string source, string destination, bool overwrite)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        if (Rename(source, destination, overwrite))
+        {
+            return null;
+        }
+
+        using (FileStream from = new(source, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            CopyReplacing(from, destination, overwrite);
+        }
+
+        return DeleteSource(source);
+    }
+
+    /// <summary>Deletes a moved file's source once its copy is in place.</summary>
+    /// <returns>Null once it is gone; why it could not be deleted otherwise.</returns>
+    internal static string? DeleteSource(string source)
+    {
+        try
+        {
+            File.Delete(source);
+            return null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return e.Message;
+        }
+    }
+
+    /// <summary>A rename that never becomes a copy on Windows; false when the two paths lie on different volumes.</summary>
+    private static bool Rename(string source, string destination, bool overwrite)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return FinalPath.Rename(source, destination, overwrite);
+        }
+
+        File.Move(source, destination, overwrite);
+        return true;
+    }
+
     private static void DeleteTemporary(string temporary, Exception failure)
     {
         try

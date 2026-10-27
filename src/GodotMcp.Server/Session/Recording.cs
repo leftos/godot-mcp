@@ -1,17 +1,30 @@
 using System.Globalization;
+using System.Text.Json.Serialization;
+using GodotMcp.Server.Tools;
 
 namespace GodotMcp.Server.Session;
 
 /// <summary>One clip of a recording: from its start frame up to, not including, its stop frame; to the end when there is no stop.</summary>
-internal sealed record ClipSpan(long StartFrame, long? StopFrame);
+internal sealed record ClipSpan(long StartFrame, long? StopFrame)
+{
+    /// <summary>Where the cut clip is moved, checked at its start mark; null, it stays beside the movie.</summary>
+    public OutputTarget? Destination { get; init; }
+
+    /// <summary>Whether the move may replace a file at <see cref="Destination"/>.</summary>
+    public bool Overwrite { get; init; }
+}
 
 /// <summary>
 /// What record_mark returns for a Movie Maker recording: the mark, the movie frame it fell on, that frame's time in the movie,
-/// and the mode, always <see cref="Recording.MovieMode"/>.
+/// the mode, always <see cref="Recording.MovieMode"/>, and for a start with a path, where its clip will be moved.
 /// </summary>
 internal sealed record MarkResult(string Mark, long Frame, double Seconds)
 {
     public string Mode { get; } = Recording.MovieMode;
+
+    /// <summary>The full path the clip this start opens is moved to once it is cut; null without one.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Destination { get; init; }
 }
 
 /// <summary>
@@ -28,7 +41,7 @@ internal sealed class Recording(string path)
 
     private readonly Lock _lock = new();
     private readonly List<ClipSpan> _clips = [];
-    private long? _openStart;
+    private ClipSpan? _open;
 
     /// <summary>The full movie's absolute path.</summary>
     public string Path { get; } = path;
@@ -60,14 +73,22 @@ internal sealed class Recording(string path)
     /// <summary>Notes a start or stop mark at <paramref name="frame"/>, the number of frames written so far.</summary>
     /// <exception cref="SessionException">A start while a clip is open, a stop with none open, or a stop on its start's frame.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="mark"/> is neither start nor stop.</exception>
-    public MarkResult Mark(string mark, long frame)
+    public MarkResult Mark(string mark, long frame) => Mark(mark, frame, null, overwrite: false);
+
+    /// <summary>
+    /// Notes a start or stop mark at <paramref name="frame"/>; a start keeps <paramref name="destination"/> and
+    /// <paramref name="overwrite"/> for its clip, once it is accepted.
+    /// </summary>
+    /// <exception cref="SessionException">A start while a clip is open, a stop with none open, or a stop on its start's frame.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="mark"/> is neither start nor stop.</exception>
+    public MarkResult Mark(string mark, long frame, OutputTarget? destination, bool overwrite)
     {
         lock (_lock)
         {
             switch (mark)
             {
                 case StartMark:
-                    Start(frame);
+                    Start(new ClipSpan(frame, null) { Destination = destination, Overwrite = overwrite });
                     break;
                 case StopMark:
                     Stop(frame);
@@ -77,7 +98,31 @@ internal sealed class Recording(string path)
             }
         }
 
-        return new MarkResult(mark, frame, SecondsAt(frame));
+        return new MarkResult(mark, frame, SecondsAt(frame)) { Destination = destination?.FullPath };
+    }
+
+    /// <summary>Refuses a destination an earlier clip of this recording already goes to, so its delivery cannot be refused late.</summary>
+    /// <exception cref="SessionException">An earlier clip's start named the same full path, in any case.</exception>
+    public void CheckDestination(OutputTarget? destination)
+    {
+        if (destination is null)
+        {
+            return;
+        }
+
+        lock (_lock)
+        {
+            List<ClipSpan> clips = _open is { } open ? [.. _clips, open] : _clips;
+            for (int index = 0; index < clips.Count; index++)
+            {
+                if (string.Equals(clips[index].Destination?.FullPath, destination.FullPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new SessionException(
+                        $"path {destination.Requested} is already where clip {index + 1} of this recording goes; name another file"
+                    );
+                }
+            }
+        }
     }
 
     /// <summary>Every clip in mark order, a start still open running to the end of the movie.</summary>
@@ -85,33 +130,34 @@ internal sealed class Recording(string path)
     {
         lock (_lock)
         {
-            return _openStart is { } open ? [.. _clips, new ClipSpan(open, null)] : [.. _clips];
+            return _open is { } open ? [.. _clips, open] : [.. _clips];
         }
     }
 
-    private void Start(long frame)
+    private void Start(ClipSpan opened)
     {
-        if (_openStart is { } open)
+        if (_open is { } open)
         {
-            throw new SessionException($"A clip is already open, started at frame {open}; mark stop before the next start.");
+            throw new SessionException($"A clip is already open, started at frame {open.StartFrame}; mark stop before the next start.");
         }
 
-        _openStart = frame;
+        CheckDestination(opened.Destination);
+        _open = opened;
     }
 
     private void Stop(long frame)
     {
-        if (_openStart is not { } start)
+        if (_open is not { } open)
         {
             throw new SessionException("No clip is open; mark start first.");
         }
 
-        if (frame <= start)
+        if (frame <= open.StartFrame)
         {
-            throw new SessionException($"A clip needs at least one frame: stop is at frame {frame} and its start at frame {start}.");
+            throw new SessionException($"A clip needs at least one frame: stop is at frame {frame} and its start at frame {open.StartFrame}.");
         }
 
-        _clips.Add(new ClipSpan(start, frame));
-        _openStart = null;
+        _clips.Add(open with { StopFrame = frame });
+        _open = null;
     }
 }

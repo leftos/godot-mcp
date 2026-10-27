@@ -490,6 +490,54 @@ public sealed class OutputDestinationTests : IDisposable
     }
 
     [Fact]
+    public void AMoveWithoutOverwriteRefusesAnExistingFileAndKeepsTheSource()
+    {
+        string source = _temp.Combine("clip.mp4");
+        File.WriteAllBytes(source, [1, 2, 3]);
+        string destination = _temp.Combine("taken.mp4");
+        File.WriteAllBytes(destination, [9]);
+
+        Assert.Throws<IOException>(() => OutputDestination.MoveReplacing(source, destination, overwrite: false));
+
+        Assert.Equal([1, 2, 3], File.ReadAllBytes(source));
+        Assert.Equal([9], File.ReadAllBytes(destination));
+    }
+
+    [Fact]
+    public void AMoveWithOverwriteReplacesAHardLinkedEntryWithoutWritingThroughIt()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "mklink /H is a Windows command");
+        string other = _temp.Combine("other.mp4");
+        File.WriteAllBytes(other, [1, 2]);
+        string destination = _temp.Combine("clip.mp4");
+        ScreenshotPathValidationTests.MakeHardLink(destination, other);
+        string source = Path.Combine(Directory.CreateDirectory(_temp.Combine("recordings")).FullName, "clip.mp4");
+        File.WriteAllBytes(source, [7, 7, 7]);
+
+        OutputDestination.MoveReplacing(source, destination, overwrite: true);
+
+        Assert.Equal([7, 7, 7], File.ReadAllBytes(destination));
+        Assert.Equal([1, 2], File.ReadAllBytes(other));
+        Assert.False(File.Exists(source));
+    }
+
+    [Fact]
+    public void AMoveDeletesNothingWhenItFails()
+    {
+        string source = _temp.Combine("clip.mp4");
+        File.WriteAllBytes(source, [1, 2, 3]);
+        // A folder stands where the clip would go, which no move replaces, overwrite or not.
+        string destination = Directory.CreateDirectory(_temp.Combine("taken.mp4")).FullName;
+        File.WriteAllBytes(Path.Combine(destination, "kept.txt"), [5]);
+
+        Exception? failure = Record.Exception(() => OutputDestination.MoveReplacing(source, destination, overwrite: true));
+
+        Assert.True(failure is IOException or UnauthorizedAccessException, $"expected an IO or access failure, got {failure}");
+        Assert.Equal([1, 2, 3], File.ReadAllBytes(source));
+        Assert.Equal([5], File.ReadAllBytes(Path.Combine(destination, "kept.txt")));
+    }
+
+    [Fact]
     public void AForgedWorktreeTheMainCheckoutDoesNotListGetsNoMainTmpFolder()
     {
         GameInWorktree();
