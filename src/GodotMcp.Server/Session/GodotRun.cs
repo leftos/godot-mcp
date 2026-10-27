@@ -112,6 +112,10 @@ internal sealed class GodotRun(string projectDir, IRunProcess launcher, GodotRun
     /// <summary>How long a released game handle waits for a game still ending with its wrapper, as a killed process tree may be.</summary>
     private static readonly TimeSpan GameExitWait = TimeSpan.FromSeconds(1);
 
+    // Settled by the first line of this run's own output that says Godot could not create a window. A restart's buffers carry
+    // its predecessor's lines over, so only a line arriving through this run's handlers can settle it.
+    private readonly TaskCompletionSource<string> _noGlWindowLine = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     private Process? _game;
     private int? _gameExitCode;
     private bool _killed;
@@ -139,6 +143,22 @@ internal sealed class GodotRun(string projectDir, IRunProcess launcher, GodotRun
 
     /// <summary>The open file the run writes its whole output to; null until the run starts, and when no file could be opened.</summary>
     public RunOutputLog? OutputLog { get; set; }
+
+    /// <summary>
+    /// The first line of this run's own output that says Godot could not create an ANGLE OpenGL window, trimmed; it never
+    /// completes for a run whose output never says it. The line arrives on a reader thread, and its continuations run
+    /// asynchronously so the reader is never held up by the wait that joins this task.
+    /// </summary>
+    public Task<string> NoGlWindowLine => _noGlWindowLine.Task;
+
+    /// <summary>Records one line the run's process printed: the first one that says Godot could not create a window settles it.</summary>
+    public void WatchOutput(string line)
+    {
+        if (NoGlLine.Matches(line))
+        {
+            _noGlWindowLine.TrySetResult(line.Trim());
+        }
+    }
 
     public BridgeConnection? Connection { get; set; }
 

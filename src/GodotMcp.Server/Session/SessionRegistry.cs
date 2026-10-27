@@ -87,6 +87,13 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// </summary>
     internal TimeSpan HandshakeTimeout { get; init; } = GodotSession.HandshakeTimeout;
 
+    /// <summary>
+    /// How a run's process is created, from the start info the launch built and whether the run is quiet:
+    /// <see cref="GodotSession"/>'s own creation, suspended on the hidden desktop for a quiet run on Windows, unless set, as a
+    /// test sets a fake process whose output it feeds, so a launch is tested without Godot.
+    /// </summary>
+    internal Func<ProcessStartInfo, bool, IRunProcess>? RunProcessFactory { get; init; }
+
     internal ILogger Logger => logger;
 
     /// <summary>

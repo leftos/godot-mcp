@@ -741,11 +741,18 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>
     /// The run's process, not yet running. A quiet run on Windows is created suspended on the server's hidden desktop, so
-    /// none of its windows ever shows on the user's; every other run starts through <see cref="Process.Start()"/>.
+    /// none of its windows ever shows on the user's; every other run starts through <see cref="Process.Start()"/>. A registry
+    /// given a <see cref="SessionRegistry.RunProcessFactory"/> has it create the process instead, so a test can feed a launch's
+    /// output without Godot.
     /// </summary>
     /// <exception cref="SessionException">The hidden desktop or the suspended process could not be created.</exception>
-    private static IRunProcess CreateRunProcess(ProcessStartInfo startInfo, bool quiet)
+    private IRunProcess CreateRunProcess(ProcessStartInfo startInfo, bool quiet)
     {
+        if (registry.RunProcessFactory is { } factory)
+        {
+            return factory(startInfo, quiet);
+        }
+
         if (GodotCommandLine.UsesHiddenDesktop(quiet))
         {
             return DesktopProcess.CreateSuspended(startInfo, HiddenDesktop.Path);
@@ -806,11 +813,15 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
-    /// <summary>A stream's line handler: into the run's ring, then into its whole-output file when it has one.</summary>
+    /// <summary>
+    /// A stream's line handler: into the run's ring, through the watch for a line that says Godot could not create a window,
+    /// then into its whole-output file when it has one.
+    /// </summary>
     private static Action<string> WithOutputLog(GodotRun run, Action<string> add) =>
         line =>
         {
             add(line);
+            run.WatchOutput(line);
             run.OutputLog?.Write(line);
         };
 
@@ -843,7 +854,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         Task<BridgeConnection> accept = registry.Listener.AcceptBridgeAsync(expected, timeout.Token);
         Task exited = run.Process.WaitForExitAsync(timeout.Token);
-        await Task.WhenAny(accept, exited);
+        Task<string> noGl = run.NoGlWindowLine;
+        // A bridge that connected wins over a line that arrived beside it: a game that dialled in has its window.
+        await Task.WhenAny(accept, exited, noGl);
         if (accept.IsCompletedSuccessfully)
         {
             return await accept;
@@ -852,6 +865,11 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         await timeout.CancelAsync();
         await ObserveAbandonedAsync(accept, exited);
         bool exitedEarly = !run.IsRunning;
+        if (noGl.IsCompletedSuccessfully)
+        {
+            throw await RefuseNoGlAsync(run, noGl.Result, cancellationToken);
+        }
+
         if (!exitedEarly)
         {
             await KillAsync(run);
@@ -861,6 +879,33 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         await CloseOutputLogAsync(run);
         cancellationToken.ThrowIfCancellationRequested();
         throw DescribeFailedLaunch(run, exitedEarly, deadline);
+    }
+
+    /// <summary>
+    /// Stops a run whose output said Godot could not create a window and returns that refusal: what the wait does to a run
+    /// that timed out, without the timeout it would have spent first. Godot is alive behind a modal alert, so waiting for the
+    /// bridge cannot help it.
+    /// </summary>
+    private async Task<SessionException> RefuseNoGlAsync(GodotRun run, string line, CancellationToken cancellationToken)
+    {
+        await KillAsync(run);
+        await CloseOutputLogAsync(run);
+        cancellationToken.ThrowIfCancellationRequested();
+        return DescribeNoGl(run, line);
+    }
+
+    /// <summary>
+    /// The refusal of a launch whose own output said Godot could not create a window: the line that said it, and the run's
+    /// last stderr lines. It leaves out the timeout's advice about 127.0.0.1, which no connection had anything to do with.
+    /// </summary>
+    private static SessionException DescribeNoGl(GodotRun run, string line)
+    {
+        string stderr = string.Join('\n', run.Stderr.Tail(FailureStderrLines));
+        return new SessionException(
+            $"Launching {run.ProjectDir} failed: Godot cannot create a window on this machine; its output says \"{line}\" "
+                + "(no usable OpenGL: no GPU driver, or a session with no desktop), so Godot was stopped without waiting for "
+                + $"the bridge. Run it in a logged-on console session or on a machine with a GPU. Last stderr lines:\n{stderr}"
+        );
     }
 
     /// <summary>
