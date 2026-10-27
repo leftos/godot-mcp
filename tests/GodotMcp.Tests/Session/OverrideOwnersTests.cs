@@ -232,6 +232,60 @@ public sealed class OverrideOwnersTests : IDisposable
         Assert.Empty(_errors.ToString());
     }
 
+    // A record prunes the list as a sweep would: a listed folder that no longer exists is dropped, and the new one goes last.
+    [Fact]
+    public void RecordWhileDropsListedFoldersThatNoLongerExist()
+    {
+        string gone = _temp.Combine("gone", "InputProbe");
+        string kept = Project("kept");
+        string alpha = Project("alpha");
+        string list = WriteList(gone, kept);
+
+        new OverrideFolders(list, _errors).RecordWhile(alpha, () => { });
+
+        Assert.Equal([kept, alpha], File.ReadAllLines(list));
+        Assert.Empty(_errors.ToString());
+    }
+
+    // Recording a folder already listed, spelled with a trailing separator and another case on Windows, rewrites nothing.
+    [Fact]
+    public void RecordWhileKeepsTheListWhenTheFolderIsListedAndAllExist()
+    {
+        string kept = Project("kept");
+        string alpha = Project("alpha");
+        string list = WriteList(kept, alpha);
+        byte[] before = File.ReadAllBytes(list);
+        string spelling = OperatingSystem.IsWindows() ? alpha.ToUpperInvariant() + Path.DirectorySeparatorChar : alpha + Path.DirectorySeparatorChar;
+
+        new OverrideFolders(list, _errors).RecordWhile(spelling, () => { });
+
+        Assert.Equal(before, File.ReadAllBytes(list));
+        Assert.Empty(_errors.ToString());
+    }
+
+    // The list of a machine where no server ever starts is never pruned by a sweep: a record into it must stay linear in its
+    // length, measured in this thread's CPU time so a busy machine slows the test without failing it.
+    [Fact]
+    public void RecordingIntoALongListTakesLittleCpu()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "thread CPU time is read through kernel32");
+        string[] listed = [.. Enumerable.Range(0, 4000).Select(index => Project($"listed-{index}"))];
+        string list = WriteList(listed);
+        OverrideFolders folders = new(list, _errors);
+        string alpha = Project("alpha");
+
+        TimeSpan before = ThreadCpu.Current();
+        folders.RecordWhile(alpha, () => { });
+        TimeSpan spent = ThreadCpu.Current() - before;
+
+        Assert.True(
+            spent < TimeSpan.FromSeconds(1),
+            $"recording into a list of {listed.Length} folders took {spent.TotalMilliseconds:0.##} ms of this thread's CPU"
+        );
+        Assert.Equal([.. listed, alpha], File.ReadAllLines(list));
+        Assert.Empty(_errors.ToString());
+    }
+
     [Fact]
     public void SweepRemovesAnArmFileWhoseOwnersAreDeadAndKeepsALiveOne()
     {

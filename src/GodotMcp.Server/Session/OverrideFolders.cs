@@ -153,7 +153,7 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
 
         try
         {
-            List<string> kept = [.. ReadFolders(list).Where(KeepAfterSweep)];
+            List<string> kept = [.. ReadFolders(list).Folders.Where(KeepAfterSweep)];
             Rewrite(list, kept);
         }
         catch (Exception e) when (IsFileSystemFailure(e))
@@ -223,15 +223,28 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
         return false;
     }
 
+    /// <summary>
+    /// Adds the folder to the list unless it is already listed, dropping every listed folder that no longer exists (a folder
+    /// with no leftover file is what <see cref="Sweep"/> drops too, so a list no sweep ever pruned is pruned by this record).
+    /// Writes the list only when it changes.
+    /// </summary>
     private void TryAdd(FileStream list, string projectDir)
     {
         try
         {
-            List<string> folders = ReadFolders(list);
-            if (!folders.Any(folder => ProjectPaths.AreSame(folder, projectDir)))
+            (List<string> folders, HashSet<string> listed) = ReadFolders(list);
+            List<string> kept = [.. folders.Where(Directory.Exists)];
+            bool changed = kept.Count != folders.Count;
+            string folder = ProjectPaths.Normalise(projectDir);
+            if (listed.Add(folder))
             {
-                folders.Add(ProjectPaths.Normalise(projectDir));
-                Rewrite(list, folders);
+                kept.Add(folder);
+                changed = true;
+            }
+
+            if (changed)
+            {
+                Rewrite(list, kept);
             }
         }
         catch (Exception e) when (IsFileSystemFailure(e))
@@ -266,22 +279,26 @@ internal sealed class OverrideFolders(string listPath, TextWriter errors)
         }
     }
 
-    /// <summary>The listed folders, blank lines and repeats left out.</summary>
-    private static List<string> ReadFolders(FileStream list)
+    /// <summary>
+    /// The listed folders in file order, the first spelling of a repeat kept, and their normalised forms for deciding
+    /// whether a folder is already listed: each line is normalised once, never once per pair of lines.
+    /// </summary>
+    private static (List<string> Folders, HashSet<string> Listed) ReadFolders(FileStream list)
     {
         list.Position = 0;
         using StreamReader reader = new(list, Utf8NoBom, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
         List<string> folders = [];
+        HashSet<string> listed = new(ProjectPaths.FolderComparer);
         while (reader.ReadLine() is { } line)
         {
             string folder = line.Trim();
-            if (folder.Length > 0 && !folders.Any(listed => ProjectPaths.AreSame(listed, folder)))
+            if (folder.Length > 0 && listed.Add(ProjectPaths.Normalise(folder)))
             {
                 folders.Add(folder);
             }
         }
 
-        return folders;
+        return (folders, listed);
     }
 
     private static void Rewrite(FileStream list, List<string> folders)

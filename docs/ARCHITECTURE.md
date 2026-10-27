@@ -246,7 +246,7 @@ The unit tests cover the load with `FakeTimeProvider` and `FakeLoadSource`.
 
   A write whose bridge path, `quiet` or `shutOutRealGamepads` differs from a live other owner's (parsed from its body, so a file another version wrote with the same values is shared) is refused naming that server's pid, and so is an `armed.json` write whose `quiet`, `shutOutRealGamepads` or `mute` differ.
 
-  A server killed before its shutdown leaves its file; `Program.cs` runs `OverrideFolders.Sweep` before the host starts, deleting each listed folder's marked file whose owners have all exited (or that lists none) and dropping folders that hold none.
+  A server killed before its shutdown leaves its file; `Program.cs` runs `OverrideFolders.Sweep` before the host starts, deleting each listed folder's marked file whose owners have all exited (or that lists none) and dropping folders that hold none. Each record (a launch, restart, attach or arm) also drops the listed folders that no longer exist, so the list stays short on a machine where no server starts (the build box), and it reads the list in one pass, repeats found through a set of normalised paths.
 
   `stop_project {projectPath}` with no session on the folder clears the same two files on demand (`OverrideFolders.ClearStale`, returning `LeftoverClear`), under the folder's prep lock and the owners list's hold, the list opened strictly: when it will not open nothing is touched, and it is never pruned.
 
