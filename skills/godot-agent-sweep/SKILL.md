@@ -22,7 +22,7 @@ Put one line in the agent file's body, after the front matter:
 | `edit-live` | change the running game's state: `set_property`, `call_method`, `run_script`, `run_csharp`, `cs_set`, `cs_call`, `call_game_tool`, `batch_drive` |
 | `edit-scene` | edit `.tscn` files headless: `add_node`, `set_node_properties`, `save_scene`, and the rest of the scene tools |
 
-`godot-mcp --list-tools` prints every tool with its class. Pick the classes by the agent's role: a reviewer or explorer `read`; a playtester `read, drive`; a debugger that edits no file `read, drive, edit-live`; an implementer all four.
+`godot-mcp --list-tools` prints every tool with its class. Pick the classes by the agent's role: a reviewer or explorer `read`; a playtester `read, drive`, plus `edit-live` when it may set up a drive's state through the game's cheats (never to get past what is being played); a debugger that edits no file `read, drive, edit-live`; an implementer all four.
 
 The sweep then owns the agent's godot entries: it adds the tools of its classes, removes any other `mcp__godot__*` entry (a tool of another class, or one the server no longer serves), sorts them, and leaves every other entry and every other byte of the file alone. The `tools:` value must be one comma-separated line.
 
