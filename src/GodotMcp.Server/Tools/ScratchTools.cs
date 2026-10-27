@@ -72,9 +72,14 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "on an error the game logs (push_error, an engine error, a C# exception) or a stdout or stderr line matching the "
             + "profile's scratch.patterns; after the steps the game is stopped and a non-zero exit or an ObjectDB leak turns the "
             + "scene red. Settings live in godot-mcp.json's scratch section "
-            + "{folder, userArgs, engineArgs, pace, ceilings, setup, known, patterns, parallel}, where setup {<scene>: [step, ...]} "
+            + "{folder, userArgs, engineArgs, pace, ceilings, setup, known, patterns, expect, expectFor, parallel}, where setup "
+            + "{<scene>: [step, ...]} "
             + "names a scene's declared setup steps, which a run given options.steps adds to the selection; a key is resolved only "
-            + "then, so one naming no step of its scene turns that scene red only on a partial run. Scenes "
+            + "then, so one naming no step of its scene turns that scene red only on a partial run. expect [pattern, ...] and "
+            + "expectFor {<scene>: [pattern, ...]}, each item a regex string or {pattern, reason} as in patterns, name lines a "
+            + "scene's output (launch, steps and exit) must print: a scene with steps that lacks one is red, its exit.missing "
+            + "naming each pattern never matched and its reason, a red step keeping its failedAt; a killed, refused or no-steps "
+            + "scene and a run given options.steps that plays only part of a scene are not checked. Scenes "
             + "start parallel at a time: those listed in scenes in that order, a folder run's largest pace (a scene's or "
             + "one of its steps') divided by the scene's time scale first; with more than one, a red or killed scene (not known, "
             + "not refused before its first "
@@ -82,7 +87,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
             + "{passed, green, red, known, noSteps, killed, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, "
             + "scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, stepList?, timeScale?, pace, paceReason?, seconds, "
-            + "session, failedAt?, failures?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?, alone?, "
+            + "session, failedAt?, failures?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?, missing?}, known?, "
+            + "alone?, "
             + "aloneFailedAt?}], timeScale?}, scenes in the order given; selected lists the indices options.steps selected, setup the "
             + "setup steps the run added to them, both fixed when the steps resolve, so a scene stopped at a step, at the boot or by "
             + "a kill still lists them; "
@@ -129,7 +135,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
                 + "plays a scene's next step after one red on a pushed error or a matching line, but a step whose own call failed "
                 + "(the game gone or stuck) still stops the scene; steps [3, \"name\", \"2-5\"] plays only those steps, by index, name or "
                 + "inclusive range, in ascending order, and never runs the others, so a later step that depends on a skipped one is "
-                + "the caller's choice; background true returns {runId, statusFile, logFile, scenes} at once and plays the run on "
+                + "the caller's choice, and a scene it plays only part of is not checked for scratch.expect and scratch.expectFor "
+                + "lines; background true returns {runId, statusFile, logFile, scenes} at once and plays the run on "
                 + "in the server, read and ended with scratch_status; only \"red\" (default \"all\") lists in each scene's details "
                 + "only its red steps, with their full readback, and no step of a green scene, every other scene field kept; it is "
                 + "refused with background, whose result scratch_status's only filters."
@@ -501,7 +508,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     /// pace and its step paces, kept only when the pace came from the profile rather than from options.pace, which paces every
     /// step; and options.timeScale, else 1, unless the profile's pace has "timeScale": 1, which keeps the scene at normal speed
     /// even beside options.pace; the ceiling options.ceilings or the profile's scratch.ceilings gives the scene, if either does;
-    /// the setup steps the profile's scratch.setup declares for the scene; and the engine arguments its game launches with.
+    /// the setup steps the profile's scratch.setup declares for the scene; the patterns its scratch.expect and scratch.expectFor
+    /// make the scene's output match a line of; and the engine arguments its game launches with.
     /// </summary>
     private static ScratchScenePlan ScenePlan(
         string name,
@@ -522,12 +530,20 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             EngineArgs = engineArgs,
             Ceiling = CeilingFor(name, scratch, options),
             Setup = SetupFor(name, scratch),
+            Expect = ExpectFor(name, scratch),
         };
     }
 
     /// <summary>The setup steps the profile's scratch.setup declares for the scene; empty when it declares none.</summary>
     private static IReadOnlyList<string> SetupFor(string name, ScratchProfile scratch) =>
         scratch.Setup.TryGetValue(name, out IReadOnlyList<string>? setup) ? setup : [];
+
+    /// <summary>
+    /// The patterns the scene's output must match a line of: the profile's scratch.expect, then its scratch.expectFor entry for
+    /// the scene; empty when it sets neither.
+    /// </summary>
+    private static IReadOnlyList<ScratchPattern> ExpectFor(string name, ScratchProfile scratch) =>
+        scratch.ExpectFor.TryGetValue(name, out IReadOnlyList<ScratchPattern>? own) ? [.. scratch.Expect, .. own] : scratch.Expect;
 
     /// <summary>
     /// The scene's own ceiling: options.ceilings for it, else the profile's scratch.ceilings, else none, which derives it from the

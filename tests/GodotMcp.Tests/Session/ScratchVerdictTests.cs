@@ -343,6 +343,114 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
+    public void AnExpectedLineAnywhereInTheScenesOutputKeepsItGreen()
+    {
+        ScratchRules rules = Plain with { Expect = [Expected("^launched$"), Expected("^\\[scratch\\] ready$"), Expected("^removed: ")] };
+        ScratchObservation seen = Seen(Step(0) with { Lines = ["[scratch] ready"] }) with
+        {
+            LaunchLines = ["launched"],
+            ExitLines = ["removed: user://store"],
+        };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(seen, rules);
+
+        Assert.Equal(ScratchVerdict.Green, result.Verdict);
+        Assert.Null(result.Exit.Missing);
+        Assert.False(Json(result)["exit"]!.AsObject().ContainsKey("missing"));
+    }
+
+    [Fact]
+    public void AnExpectedLineNeverPrintedTurnsAGreenSceneRedNamingItInTheExit()
+    {
+        ScratchRules rules = Plain with
+        {
+            Expect = [Expected("^removed: ", "the store folder is left behind"), Expected("^bye$"), Expected("^ready$")],
+        };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0) with { Lines = ["ready"] }) with { ExitLines = ["later"] }, rules);
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Null(result.FailedAt);
+        Assert.Equal(
+            ["`^removed: ` never appeared in the scene's output (the store folder is left behind)", "`^bye$` never appeared in the scene's output"],
+            result.Exit.Missing
+        );
+        Assert.Equal(2, Json(result)["exit"]!["missing"]!.AsArray().Count);
+    }
+
+    [Fact]
+    public void ARedStepKeepsItsVerdictAndTheExitStillListsTheMissingLines()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0) with { CallError = "gone" }), Plain with { Expect = [Expected("^bye$")] });
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Equal((0, "gone"), (result.FailedAt!.Index, result.FailedAt.Error));
+        Assert.Equal(["`^bye$` never appeared in the scene's output"], result.Exit.Missing);
+    }
+
+    [Fact]
+    public void AKilledSceneStaysKilledAndListsNoMissingLines()
+    {
+        ScratchObservation seen = Seen(Step(0)) with { Kill = new ScratchFailure(0, "step0", "ceiling", "") };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(seen, Plain with { Expect = [Expected("^bye$")] });
+
+        Assert.Equal(ScratchVerdict.Killed, result.Verdict);
+        Assert.Null(result.Exit.Missing);
+    }
+
+    [Fact]
+    public void APartialStepsRunSkipsTheExpectedLines()
+    {
+        ScratchObservation seen = Seen(Step(0)) with { Total = 2, Selected = [0] };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(seen, Plain with { Expect = [Expected("^bye$")] });
+
+        Assert.Equal(ScratchVerdict.Green, result.Verdict);
+        Assert.Null(result.Exit.Missing);
+    }
+
+    [Fact]
+    public void ARefusedOrStepLessSceneIsNotJudgedForExpectedLines()
+    {
+        ScratchRules rules = Plain with { Expect = [Expected("^bye$")] };
+
+        ScratchSceneResult refused = ScratchVerdict.Judge(Seen() with { Total = 2, Refusal = "the scene root lacks PlayStep" }, rules);
+        ScratchSceneResult booted = ScratchVerdict.Judge(Seen() with { Total = 2, BootErrors = [Error("boot failure", "", 0)] }, rules);
+        ScratchSceneResult empty = ScratchVerdict.Judge(Seen(), rules);
+
+        Assert.Equal((ScratchVerdict.Red, -1), (refused.Verdict, refused.FailedAt!.Index));
+        Assert.Equal((ScratchVerdict.Red, "boot"), (booted.Verdict, booted.FailedAt!.Name));
+        Assert.Equal(ScratchVerdict.NoSteps, empty.Verdict);
+        Assert.All([refused, booted, empty], result => Assert.Null(result.Exit.Missing));
+    }
+
+    [Fact]
+    public void AnExpectedPatternPastItsTimeoutIsNotSatisfiedAndSaysSo()
+    {
+        ScratchStep step = Step(0) with { Lines = [new string('a', 40) + "b"] };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(step), Plain with { Expect = [Expected("(a+)+$")] });
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Null(result.FailedAt);
+        Assert.Equal(["`(a+)+$` never appeared in the scene's output; it took over 1 s on a line, so simplify it"], result.Exit.Missing);
+    }
+
+    [Fact]
+    public void AMissingLineNotesTheOutputLinesTheBufferDropped()
+    {
+        ScratchObservation seen = Seen(Step(0) with { Dropped = 2 }, Step(1) with { Dropped = 1 });
+
+        ScratchSceneResult result = ScratchVerdict.Judge(seen, Plain with { Expect = [Expected("^bye$", "the game says goodbye")] });
+
+        Assert.Equal(
+            ["`^bye$` never appeared in the scene's output (the game says goodbye); 3 output lines were dropped, so it may have been printed"],
+            result.Exit.Missing
+        );
+    }
+
+    [Fact]
     public void AnUnknownExitCodeDoesNotTurnASceneRed() =>
         Assert.Equal(ScratchVerdict.Green, ScratchVerdict.Judge(Seen(Step(0)) with { ExitCode = null }, Plain).Verdict);
 
@@ -1730,6 +1838,8 @@ public sealed class ScratchVerdictTests
         new("Scene", "probe.scratch-Scene", 0.5, steps.Length) { Steps = steps, ExitCode = 0 };
 
     private static ScratchStep Step(int index) => new(index, $"step{index}", 500);
+
+    private static ScratchPattern Expected(string pattern, string? reason = null) => new(ScratchProfile.Compile(pattern), reason);
 
     private static ErrorEntry Error(string message, string file, int line) => new(1, ErrorFeed.ErrorType, message, file, line, "", [], "");
 }

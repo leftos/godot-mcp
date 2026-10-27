@@ -207,6 +207,8 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   Itests `ScratchFolderTests` (the `scratchfolder` group) and `ScratchFolderParallelTests` (the `scratchparallel` group) play the whole `tests/fixtures/InputProbe/scratch/` folder to its verdicts, one scene at a time and three at a time. They are split from `scratch` and from each other because each makes some 20 to 26 Godot launches in sequence, and launches slow under other work on the machine, so one group of both ran out its 300 s ceiling.
 
+  Itest `ScratchExpectRunTests` (also in the `scratchfolder` group, on the same folder, which holds 20 scenes) plays `ScratchExitLine`, whose `_exit_tree` prints `[scratch] store folder removed: exit-line`, under `scratch.expect` and `scratch.expectFor`: the expected line keeps it green, and one it never prints turns it red with the pattern in `exit.missing`.
+
   Itest `ScratchUntilRunTests` (its own `scratchuntil` group, with its scenes in `tests/fixtures/InputProbe/scratch_until/` so the folder facts never play them) plays scenes whose steps end on a signal or an expression until, an until not met within its pace, and an until the bridge refuses or that is no condition; `ScratchCSharpStateTests` (the `csharp` group) plays a C# scene whose step ends on a `state` until read through the helper.
 
   Itest `ScratchRunnerTests` plays the scene in `tests/fixtures/InputProbe/scratch_setup/` (copied in as the probe's `scratch` folder, so the folder facts never play it) under `scratch.setup`, to show a partial run playing the declared setup step.

@@ -57,7 +57,22 @@ internal sealed partial class ProjectProfile
         ProcessesKey,
     ];
     private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "session", "description"];
-    private static readonly string[] ScratchKeys = ["folder", "userArgs", "engineArgs", "pace", "ceilings", "setup", "known", "patterns", "parallel"];
+    private static readonly string[] ScratchKeys =
+    [
+        "folder",
+        "userArgs",
+        "engineArgs",
+        "pace",
+        "ceilings",
+        "setup",
+        "known",
+        "patterns",
+        ExpectKey,
+        ExpectForKey,
+        "parallel",
+    ];
+    private const string ExpectKey = "expect";
+    private const string ExpectForKey = "expectFor";
     private static readonly string[] ProcessKeys = ["command", "cwd", "env", "ready", "description", PrepKey];
     private static readonly string[] ReadyKeys = ["output", "timeoutMs"];
     private const string StepsKey = "steps";
@@ -382,11 +397,20 @@ internal sealed partial class ProjectProfile
             ReadMap(scratch, "pace", place, (scene, pace) => ReadPace(scene, pace, place)),
             ReadMap(scratch, "ceilings", place, (scene, ceiling) => ReadCeiling(scene, ceiling, place)),
             ReadMap(scratch, "known", place, (scene, reason) => ReadReason(scene, reason, place)),
-            scratch.ContainsKey("patterns") ? ReadPatterns(scratch, place) : ScratchProfile.DefaultPatterns
+            scratch.TryGetValue("patterns", out JsonElement patterns)
+                ? ReadPatterns(patterns, PatternList.Patterns, place)
+                : ScratchProfile.DefaultPatterns
         )
         {
             Parallel = ReadParallel(scratch, place),
             Setup = ReadMap<IReadOnlyList<string>>(scratch, "setup", place, (scene, steps) => ReadSetup(scene, steps, place)),
+            Expect = scratch.TryGetValue(ExpectKey, out JsonElement expect) ? ReadPatterns(expect, PatternList.Expect, place) : [],
+            ExpectFor = ReadMap<IReadOnlyList<ScratchPattern>>(
+                scratch,
+                ExpectForKey,
+                place,
+                (scene, list) => ReadPatterns(list, PatternList.ExpectFor(scene), place)
+            ),
         };
     }
 
@@ -777,37 +801,45 @@ internal sealed partial class ProjectProfile
             _ => throw Refused(place, $"{label} item {item} is {Shown(value)}; {SetupStepShape}"),
         };
 
-    /// <summary>The section's <c>patterns</c>, each compiled as written: case-sensitive, anchored only where it anchors itself.</summary>
-    private static List<ScratchPattern> ReadPatterns(Dictionary<string, JsonElement> keys, Place place)
+    /// <summary>
+    /// A list of patterns (the section's <c>patterns</c>, <c>expect</c>, or one scene's <c>expectFor</c> entry), each compiled as
+    /// written: case-sensitive, anchored only where it anchors itself.
+    /// </summary>
+    private static List<ScratchPattern> ReadPatterns(JsonElement value, PatternList list, Place place)
     {
+        if (value.ValueKind != JsonValueKind.Array)
+        {
+            throw Refused(place, $"{list.Label} must be an array, not {Describe(value.ValueKind)}");
+        }
+
         List<ScratchPattern> patterns = [];
         int item = 0;
-        foreach (JsonElement value in Expect(keys["patterns"], JsonValueKind.Array, "patterns", place).EnumerateArray())
+        foreach (JsonElement entry in value.EnumerateArray())
         {
-            patterns.Add(ReadPattern(value, ++item, place));
+            patterns.Add(ReadPattern(entry, ++item, list, place));
         }
 
         return patterns;
     }
 
-    /// <summary>One <c>patterns</c> item: a bare string, or an object of the pattern and why a line matching it fails a step.</summary>
-    private static ScratchPattern ReadPattern(JsonElement value, int item, Place place)
+    /// <summary>One item of a pattern list: a bare string, or an object of the pattern and the reason for it.</summary>
+    private static ScratchPattern ReadPattern(JsonElement value, int item, PatternList list, Place place)
     {
         if (value.ValueKind == JsonValueKind.String)
         {
-            return Pattern(place, value.GetString()!, reason: null);
+            return Pattern(place, value.GetString()!, reason: null, list);
         }
 
         if (value.ValueKind != JsonValueKind.Object)
         {
             throw Refused(
                 place,
-                $"\"patterns\" must be an array of regular expressions, each a string or an object {{\"pattern\", \"reason\"}}; "
+                $"{list.Label} must be an array of regular expressions, each a string or an object {{\"pattern\", \"reason\"}}; "
                     + $"item {item} is {Describe(value.ValueKind)}"
             );
         }
 
-        Place slot = new(place.Path, $"scratch, pattern {item}");
+        Place slot = new(place.Path, $"scratch, {list.Item} {item}");
         Dictionary<string, JsonElement> keys = Keys(value, PatternKeys, slot);
         foreach (string required in PatternKeys)
         {
@@ -817,23 +849,23 @@ internal sealed partial class ProjectProfile
             }
         }
 
-        return Pattern(place, ReadString(keys, "pattern", slot)!, ReadPatternReason(keys, slot));
+        return Pattern(place, ReadString(keys, "pattern", slot)!, ReadPatternReason(keys, slot, list), list);
     }
 
     private static string MissingPatternKey(string key) =>
         $"\"{key}\" is missing; an object pattern needs both \"pattern\" and \"reason\". Add it, or write the pattern as a bare string";
 
-    /// <summary>An object pattern's reason, a non-empty string saying why a line matching the pattern fails a step.</summary>
-    private static string ReadPatternReason(Dictionary<string, JsonElement> keys, Place slot)
+    /// <summary>An object pattern's reason, a non-empty string saying what the list's reasons say.</summary>
+    private static string ReadPatternReason(Dictionary<string, JsonElement> keys, Place slot, PatternList list)
     {
         JsonElement reason = keys["reason"];
         return reason.ValueKind == JsonValueKind.String && reason.GetString() is { Length: > 0 } text
             ? text
-            : throw Refused(slot, "\"reason\" must be a non-empty string, why a line matching it fails a step");
+            : throw Refused(slot, $"\"reason\" must be a non-empty string, {list.Reason}");
     }
 
     /// <summary>A pattern compiled as written, with the reason from an object item; null for a bare string.</summary>
-    private static ScratchPattern Pattern(Place place, string text, string? reason)
+    private static ScratchPattern Pattern(Place place, string text, string? reason, PatternList list)
     {
         try
         {
@@ -841,9 +873,25 @@ internal sealed partial class ProjectProfile
         }
         catch (ArgumentException e)
         {
-            string message = $"the pattern \"{text}\" in \"patterns\" is not a valid .NET regular expression: {e.Message} Fix or remove it";
+            string message = $"the pattern \"{text}\" in {list.Label} is not a valid .NET regular expression: {e.Message} Fix or remove it";
             throw Refused(place, message);
         }
+    }
+
+    /// <summary>
+    /// Which pattern list is read, for its refusals: its name as they quote it, the name an object item's place carries, and
+    /// what an object item's reason says.
+    /// </summary>
+    private sealed record PatternList(string Label, string Item, string Reason)
+    {
+        private const string ExpectReason = "why the scene must print a line matching it";
+
+        public static readonly PatternList Patterns = new("\"patterns\"", "pattern", "why a line matching it fails a step");
+
+        public static readonly PatternList Expect = new($"\"{ExpectKey}\"", $"{ExpectKey} pattern", ExpectReason);
+
+        public static PatternList ExpectFor(string scene) =>
+            new($"\"{ExpectForKey}\" of \"{scene}\"", $"{ExpectForKey} \"{scene}\" pattern", ExpectReason);
     }
 
     private static string? ReadResolution(Dictionary<string, JsonElement> keys, Place place)
@@ -909,7 +957,8 @@ internal sealed partial class ProjectProfile
 /// scratch run starts with in place of the top-level ones (null when the section sets none), the engine arguments each scene's
 /// game launches with before --, after the runner's own --headless and --time-scale (null when the section sets none), each
 /// scene's pace in seconds and why, each scene's own ceiling of load-adjusted time in seconds, each scene's declared setup steps,
-/// the scenes known to fail with the reason, the patterns a step's output lines fail it by, and how many scenes play at once.
+/// the scenes known to fail with the reason, the patterns a step's output lines fail it by, the patterns every scene's output
+/// and each scene's own must match a line of, and how many scenes play at once.
 /// </summary>
 internal sealed record ScratchProfile(
     string? Folder,
@@ -942,6 +991,16 @@ internal sealed record ScratchProfile(
     /// naming no step of its scene turns that scene red only then; empty when the section declares none.
     /// </summary>
     public IReadOnlyDictionary<string, IReadOnlyList<string>> Setup { get; init; } = ReadOnlyDictionary<string, IReadOnlyList<string>>.Empty;
+
+    /// <summary>The patterns every scene's output must match a line of before it counts green; empty when the section sets none.</summary>
+    public IReadOnlyList<ScratchPattern> Expect { get; init; } = [];
+
+    /// <summary>
+    /// Each scene's own patterns its output must match a line of, by scene name, judged after <see cref="Expect"/>'s; empty when
+    /// the section sets none.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<ScratchPattern>> ExpectFor { get; init; } =
+        ReadOnlyDictionary<string, IReadOnlyList<ScratchPattern>>.Empty;
 
     /// <summary>The patterns of a project that sets none: Godot's own error lines and its leak warning at exit.</summary>
     public static readonly IReadOnlyList<ScratchPattern> DefaultPatterns =
@@ -987,7 +1046,10 @@ internal sealed record ScratchPace(double Seconds, string? Reason)
     public bool NormalSpeed { get; init; }
 }
 
-/// <summary>A pattern a step's output line fails it by, and why; the reason is null for a bare string.</summary>
+/// <summary>
+/// A pattern a step's output line fails it by, or one a scene's output must match a line of, and why; the reason is null for a
+/// bare string.
+/// </summary>
 internal sealed record ScratchPattern(Regex Regex, string? Reason);
 
 /// <summary>

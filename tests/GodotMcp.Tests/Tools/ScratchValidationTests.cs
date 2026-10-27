@@ -208,6 +208,25 @@ public sealed class ScratchValidationTests : IDisposable
     }
 
     [Fact]
+    public void ASceneExpectsTheProfilesExpectThenItsOwnExpectFor()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch", "expect": ["^A", "^B"], "expectFor": { "Beta": ["^C"], "Gamma": ["^D"] } } }""");
+
+        ScratchPlan plan = Plan(["Beta", "Alpha"]);
+
+        Assert.Equal(["^A", "^B", "^C"], plan.Scenes[0].Expect.Select(pattern => pattern.Regex.ToString()));
+        Assert.Equal(["^A", "^B"], plan.Scenes[1].Expect.Select(pattern => pattern.Regex.ToString()));
+    }
+
+    [Fact]
+    public void ASceneOfAProfileWithoutExpectExpectsNothing()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch", "expectFor": { "Alpha": ["^C"] } } }""");
+
+        Assert.Empty(Assert.Single(Plan(["Beta"]).Scenes).Expect);
+    }
+
+    [Fact]
     public void AProfileCeilingForASceneOutsideTheRunIsIgnored()
     {
         WriteProfile("""{ "scratch": { "folder": "Scratch", "ceilings": { "Alpha": 30 } } }""");

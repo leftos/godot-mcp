@@ -647,7 +647,7 @@ public sealed class ProjectProfileTests : IDisposable
     [InlineData(
         """{ "scratch": { "threads": 2 } }""",
         "(scratch): unknown key \"threads\"; the allowed keys are folder, userArgs, engineArgs, pace, ceilings, setup, known, "
-            + "patterns, parallel. Remove or rename it."
+            + "patterns, expect, expectFor, parallel. Remove or rename it."
     )]
     [InlineData("""{ "scratch": { "parallel": 0 } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not 0.")]
     [InlineData("""{ "scratch": { "parallel": 5 } }""", "(scratch): \"parallel\" must be a whole number from 1 to 4, not 5.")]
@@ -798,6 +798,31 @@ public sealed class ProjectProfileTests : IDisposable
         """{ "scratch": { "patterns": [{"pattern": "^A", "reason": "x", "why": "y"}] } }""",
         "(scratch, pattern 1): unknown key \"why\"; the allowed keys are pattern, reason. Remove or rename it."
     )]
+    [InlineData("""{ "scratch": { "expect": "^A" } }""", "(scratch): \"expect\" must be an array, not a string.")]
+    [InlineData(
+        """{ "scratch": { "expect": ["^A", 3] } }""",
+        "(scratch): \"expect\" must be an array of regular expressions, each a string or an object {\"pattern\", \"reason\"}; "
+            + "item 2 is a number."
+    )]
+    [InlineData(
+        """{ "scratch": { "expect": [{"pattern": "^A"}] } }""",
+        "(scratch, expect pattern 1): \"reason\" is missing; an object pattern needs both \"pattern\" and \"reason\". Add it, or "
+            + "write the pattern as a bare string."
+    )]
+    [InlineData(
+        """{ "scratch": { "expect": [{"pattern": "^A", "reason": ""}] } }""",
+        "(scratch, expect pattern 1): \"reason\" must be a non-empty string, why the scene must print a line matching it."
+    )]
+    [InlineData("""{ "scratch": { "expectFor": ["^A"] } }""", "(scratch): \"expectFor\" must be an object, not an array.")]
+    [InlineData("""{ "scratch": { "expectFor": { "A": "^A" } } }""", "(scratch): \"expectFor\" of \"A\" must be an array, not a string.")]
+    [InlineData(
+        """{ "scratch": { "expectFor": { "A": [{"pattern": "^A", "reason": "x", "why": "y"}] } } }""",
+        "(scratch, expectFor \"A\" pattern 1): unknown key \"why\"; the allowed keys are pattern, reason. Remove or rename it."
+    )]
+    [InlineData(
+        """{ "scratch": { "expectFor": { "A": [], "A": ["^B"] } } }""",
+        "(scratch): the scene \"A\" appears twice in \"expectFor\"; keep one."
+    )]
     public void AMalformedScratchSectionIsRefusedNamingTheFile(string json, string problem)
     {
         Write(json);
@@ -837,6 +862,57 @@ public sealed class ProjectProfileTests : IDisposable
         string message = Refused(() => ProjectProfile.Load(_temp.Path));
 
         Assert.StartsWith($"{FilePath} (scratch): the pattern \"(unclosed\" in \"patterns\" is not a valid .NET regular expression: ", message);
+        Assert.EndsWith(" Fix or remove it.", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExpectTakesStringsAndObjectsAndExpectForTakesThemPerScene()
+    {
+        Write(
+            """
+            {
+              "scratch": {
+                "expect": ["^A", {"reason": "the store is removed", "pattern": "^B"}],
+                "expectFor": { "Duel": [{"pattern": "^C", "reason": "the duel ends"}, "^D"], "Tray": [] }
+              }
+            }
+            """
+        );
+
+        ScratchProfile scratch = ProjectProfile.Load(_temp.Path).Scratch!;
+
+        Assert.Equal(["^A", "^B"], scratch.Expect.Select(pattern => pattern.Regex.ToString()));
+        Assert.Equal([null, "the store is removed"], scratch.Expect.Select(pattern => pattern.Reason));
+        Assert.Equal(["Duel", "Tray"], scratch.ExpectFor.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(["^C", "^D"], scratch.ExpectFor["Duel"].Select(pattern => pattern.Regex.ToString()));
+        Assert.Equal(["the duel ends", null], scratch.ExpectFor["Duel"].Select(pattern => pattern.Reason));
+        Assert.Empty(scratch.ExpectFor["Tray"]);
+    }
+
+    [Fact]
+    public void ASectionWithoutExpectExpectsNothing()
+    {
+        Write("""{ "scratch": { "folder": "scratch" } }""");
+
+        ScratchProfile scratch = ProjectProfile.Load(_temp.Path).Scratch!;
+
+        Assert.Empty(scratch.Expect);
+        Assert.Empty(scratch.ExpectFor);
+        Assert.Empty(ScratchProfile.None.Expect);
+        Assert.Empty(ScratchProfile.None.ExpectFor);
+    }
+
+    [Theory]
+    [InlineData("""{ "scratch": { "expect": ["^ok", "(unclosed"] } }""", "\"expect\"")]
+    [InlineData("""{ "scratch": { "expect": [{"pattern": "(unclosed", "reason": "x"}] } }""", "\"expect\"")]
+    [InlineData("""{ "scratch": { "expectFor": { "Duel": ["(unclosed"] } } }""", "\"expectFor\" of \"Duel\"")]
+    public void AnInvalidExpectPatternIsRefusedAtLoadNamingItsKey(string json, string key)
+    {
+        Write(json);
+
+        string message = Refused(() => ProjectProfile.Load(_temp.Path));
+
+        Assert.StartsWith($"{FilePath} (scratch): the pattern \"(unclosed\" in {key} is not a valid .NET regular expression: ", message);
         Assert.EndsWith(" Fix or remove it.", message, StringComparison.Ordinal);
     }
 

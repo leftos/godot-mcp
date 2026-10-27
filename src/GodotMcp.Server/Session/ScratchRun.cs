@@ -29,7 +29,8 @@ internal sealed record ScratchCeiling(double Seconds, string Source)
 /// A scratch scene to play: its name (the file's, without .tscn), its res:// path, its pace in seconds, the user arguments it
 /// starts with, the engine arguments its game launches with, the ceiling the call or the profile gives it, if any, the reason the
 /// profile knows it to fail, if any, the profile's reason for its pace, if any, the paces of single steps, keyed by a step's index
-/// or its name, the setup steps the profile declares for it, keyed the same way, and the time scale its game runs at.
+/// or its name, the setup steps the profile declares for it, keyed the same way, the patterns its output must match a line of,
+/// and the time scale its game runs at.
 /// </summary>
 internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace, IReadOnlyList<string> UserArgs)
 {
@@ -47,6 +48,12 @@ internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace
     /// partial run adds to the ones options.steps selects, resolved only then; empty when the profile declares none.
     /// </summary>
     public IReadOnlyList<string> Setup { get; init; } = [];
+
+    /// <summary>
+    /// The patterns the scene's output must each match a line of: the profile's scratch.expect, then its scratch.expectFor entry
+    /// for the scene; empty when the profile expects none.
+    /// </summary>
+    public IReadOnlyList<ScratchPattern> Expect { get; init; } = [];
 
     /// <summary>The time scale the scene's game runs at: the call's options.timeScale, or 1 when its profile pace opts out.</summary>
     public required double TimeScale { get; init; }
@@ -410,7 +417,8 @@ internal sealed class ScratchRun
         ScratchPlan plan = context.Plan;
         ScratchScenePlan scene = plan.Scenes[index];
         ScratchObservation seen = await new ScratchRun(context, index).PlayAsync(cancellationToken);
-        return ScratchVerdict.Judge(seen, new ScratchRules(plan.Patterns, scene.Known, scene.PaceReason, plan.Details, plan.DetailChars));
+        ScratchRules rules = new(plan.Patterns, scene.Known, scene.PaceReason, plan.Details, plan.DetailChars) { Expect = scene.Expect };
+        return ScratchVerdict.Judge(seen, rules);
     }
 
     /// <summary>

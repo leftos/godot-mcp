@@ -356,7 +356,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
 ### `run_scratches`
 
-- **Does:** plays each scratch scene in its own fresh headless game session, `parallel` at a time (default one after another), walking its steps itself, and gives each a verdict: `{passed, green, red, known, noSteps, killed, timeScale?, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, stepList?, pace, paceReason?, timeScale?, seconds, session, failedAt?: {index, name, error, status, pattern?: {pattern, reason?}}, failures?: [{index, name, error}], alone?, aloneFailedAt?, details?: [{index, name, ok, gameMs?, until?: {met, gameMs, elapsedMs, frames}, status, error?, errors?: [{message, file, line, count?}], errorsOmitted?, lines?, cut?}], exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?}]}`.
+- **Does:** plays each scratch scene in its own fresh headless game session, `parallel` at a time (default one after another), walking its steps itself, and gives each a verdict: `{passed, green, red, known, noSteps, killed, timeScale?, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, stepList?, pace, paceReason?, timeScale?, seconds, session, failedAt?: {index, name, error, status, pattern?: {pattern, reason?}}, failures?: [{index, name, error}], alone?, aloneFailedAt?, details?: [{index, name, ok, gameMs?, until?: {met, gameMs, elapsedMs, frames}, status, error?, errors?: [{message, file, line, count?}], errorsOmitted?, lines?, cut?}], exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?, missing?}, known?}]}`.
 
   A scratch scene's root implements the **scratch protocol**: `PlayStep(int)`, `GetStepCount()`, `GetStepName(int)` and `GetStatus()`. Per step the server calls `PlayStep`, waits the scene's **pace** in game time (`wait_for {gameMs}`), then reads `GetStatus()` (its second line is `status`).
 
@@ -396,7 +396,11 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   A killed scene's `failedAt` names the step the kill cut off, also the last entry of `failures`. After the last step and that step's pace once more (the longer of its game time and wall time) the game is stopped gracefully and its stderr read for the leak line (`N ObjectDB instances were leaked at exit`).
 
-  Verdicts: `green` (every step clean, exit 0, no leak), `red`, `no-steps` (`GetStepCount()` is 0; red at index -1 under `options.steps`), `known` (a `known` scene that went red, or that played only some steps, all green), `known-now-green` (every step played and green; counts as red until its `known` entry goes), `killed` (past its ceiling or stuck).
+  A scene must also print each line the profile expects of it (`scratch.expect` and `scratch.expectFor`, below). Every line of its output, from the launch through the steps to the exit, is searched, and `exit.missing` lists one entry per pattern no line matched, as "`<pattern>` never appeared in the scene's output (<reason>)", followed by `; <n> output lines were dropped, so it may have been printed` when the output buffer dropped lines and `; it took over 1 s on a line, so simplify it` when the pattern timed out on one (a timeout counts as no match on that line).
+
+  `exit.missing` is absent when every expected line appeared, when the scene expects none and when it was not checked. A scene whose steps are all green but whose `exit.missing` is listed is `red` with no `failedAt`; a red step keeps its `failedAt` and `exit.missing` is still listed. A killed, refused, boot-red or `no-steps` scene, and one `options.steps` plays only part of, is not checked.
+
+  Verdicts: `green` (every step clean, exit 0, no leak, every expected line printed), `red`, `no-steps` (`GetStepCount()` is 0; red at index -1 under `options.steps`), `known` (a `known` scene that went red, or that played only some steps, all green), `known-now-green` (every step played and green; counts as red until its `known` entry goes), `killed` (past its ceiling or stuck).
 
   `passed` is true when nothing is red or killed. `details` comes for a red or killed scene, or for every scene with `options.details`, and lists every played step as `{index, name, ok, gameMs?, until?, status}` (`gameMs` the pace, or for a step played on an until `until` in its place); only a failing step carries `error`, `errors` and `lines`, and `options.details` adds those for the green steps too, and keeps their `[scratch]` notes (a failing step keeps its own always).
 
@@ -463,7 +467,11 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   `setup {<Scene>: [step, ...]}` (the steps a scene's partial run needs for the state the selected steps build on; each step is an index written plainly or a step's exact name, resolved as a `pace.steps` key is; with `options.steps` they play with the selected steps, ascending, and a setup step is judged like any other, `keepGoing` included; without `options.steps` every step plays and `setup` changes nothing; a duplicate entry is deduped),
 
-  `known {<Scene>: reason}`, `patterns` (case-sensitive regexes, each a string or `{pattern, reason}` with both keys; a step failed by a matching line names the first matching entry as `failedAt.pattern`, with its reason; default `^SCRIPT ERROR|^ERROR:|ObjectDB instances? (was|were) leaked`; `[]` turns line matching off), `parallel` (1 to 4, default 1).
+  `known {<Scene>: reason}`, `patterns` (case-sensitive regexes, each a string or `{pattern, reason}` with both keys; a step failed by a matching line names the first matching entry as `failedAt.pattern`, with its reason; default `^SCRIPT ERROR|^ERROR:|ObjectDB instances? (was|were) leaked`; `[]` turns line matching off),
+
+  `expect` (an array of lines every scene's output must print, each item a regex string or `{pattern, reason}` compiled as `patterns` are; an object item's reason must be a non-empty string saying why the scene must print the line, and `exit.missing` repeats it) and `expectFor {<Scene>: [same items]}` (a scene's own; a scene's list is `expect` then its `expectFor` entry, not deduplicated; a scene named twice is refused with `the scene "A" appears twice in "expectFor"; keep one`),
+
+  `parallel` (1 to 4, default 1).
 
   For a step played on an until, the pace is the most game time the step may take before its condition holds, and the ceiling below still counts it in full (divided by the time scale).
 

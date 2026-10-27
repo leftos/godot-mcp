@@ -96,9 +96,16 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
 /// <summary>
 /// How a scene is judged: the patterns that fail a step's line, its known reason, the profile's reason for its pace, and whether
 /// its steps are listed when green and every listed step carries its detail, and how many characters a step's status and each
-/// of its lines keep.
+/// of its lines keep; and the patterns the scene's output must match a line of.
 /// </summary>
-internal sealed record ScratchRules(IReadOnlyList<ScratchPattern> Patterns, string? Known, string? PaceReason, bool Details, int DetailChars);
+internal sealed record ScratchRules(IReadOnlyList<ScratchPattern> Patterns, string? Known, string? PaceReason, bool Details, int DetailChars)
+{
+    /// <summary>
+    /// The patterns the scene's output (launch, steps and exit lines) must each match a line of, the profile's scratch.expect then
+    /// its scratch.expectFor entry; empty when it expects none.
+    /// </summary>
+    public IReadOnlyList<ScratchPattern> Expect { get; init; } = [];
+}
 
 /// <summary>
 /// run_scratches' result: whether every scene passed, the count of each verdict, what the prep did, one entry a scene, and the
@@ -185,7 +192,8 @@ internal sealed record ScratchStepFailure(int Index, string Name, string Error);
 
 /// <summary>
 /// How the game ended: its exit code, the objects it leaked, the lines after the last step that matched a pattern, why the
-/// pace after the last step failed, and whether the stop had to kill the game, why, and the stop's warning.
+/// pace after the last step failed, whether the stop had to kill the game, why, and the stop's warning, and the expected lines
+/// the scene's output never held.
 /// </summary>
 internal sealed record ScratchExit(int? Code)
 {
@@ -206,6 +214,13 @@ internal sealed record ScratchExit(int? Code)
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Warning { get; init; }
+
+    /// <summary>
+    /// One entry per scratch.expect or scratch.expectFor pattern no line of the scene's output matched, naming the pattern and its
+    /// reason; null when every one matched or the scene was not judged for them.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Missing { get; init; }
 }
 
 /// <summary>One scene's verdict and what it rests on.</summary>
@@ -273,8 +288,9 @@ internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchS
 
 /// <summary>
 /// Turns what the runner saw of a scene into its verdict, with no Godot: green when every step played with no call error, no
-/// error in the feed and no line matching a pattern, and the game exited 0 with no leak and no matching line after; red
-/// otherwise; no-steps, killed, and known or known-now-green for a scene the profile knows to fail.
+/// error in the feed and no line matching a pattern, and the game exited 0 with no leak and no matching line after, and the
+/// scene's output held a line for every pattern it expects (unless options.steps played only part of it); red otherwise;
+/// no-steps, killed, and known or known-now-green for a scene the profile knows to fail.
 /// </summary>
 internal static partial class ScratchVerdict
 {
@@ -370,7 +386,8 @@ internal static partial class ScratchVerdict
     /// <summary>The scene's verdict and result.</summary>
     public static ScratchSceneResult Judge(ScratchObservation seen, ScratchRules rules)
     {
-        (string verdict, ScratchFailure? failedAt) = Underlying(seen, rules.Patterns, rules.DetailChars);
+        List<string>? missing = Missing(seen, rules.Expect);
+        (string verdict, ScratchFailure? failedAt) = Underlying(seen, rules.Patterns, rules.DetailChars, missing);
         string shown = Known(verdict, failedAt, rules.Known, PlayedInPart(seen));
         return new ScratchSceneResult(
             seen.Scene,
@@ -389,7 +406,7 @@ internal static partial class ScratchVerdict
             FailedAt = failedAt,
             Failures = Failures(seen, rules.Patterns, rules.Details ? MaxCopyChars : MaxFailureIndexChars),
             Details = ListsSteps(rules.Details, verdict, failedAt) ? [.. seen.Steps.Select(step => StepResult(step, rules, seen.Session))] : null,
-            Exit = ExitOf(seen, rules.Patterns),
+            Exit = ExitOf(seen, rules.Patterns, missing),
             Known = shown is KnownRed or KnownNowGreen ? rules.Known : null,
         };
     }
@@ -492,11 +509,15 @@ internal static partial class ScratchVerdict
         return null;
     }
 
-    /// <summary>The verdict before the known rule, and the step it names, its status cut to <paramref name="detailChars"/>.</summary>
+    /// <summary>
+    /// The verdict before the known rule, and the step it names, its status cut to <paramref name="detailChars"/>; a scene with
+    /// every step green and <paramref name="missing"/> expected lines is red.
+    /// </summary>
     private static (string Verdict, ScratchFailure? FailedAt) Underlying(
         ScratchObservation seen,
         IReadOnlyList<ScratchPattern> patterns,
-        int detailChars
+        int detailChars,
+        List<string>? missing
     )
     {
         if (BeforeAnyStep(seen) is { } early)
@@ -523,7 +544,7 @@ internal static partial class ScratchVerdict
             }
         }
 
-        return ExitFails(seen, patterns) ? (Red, null) : (Green, null);
+        return ExitFails(seen, patterns, missing) ? (Red, null) : (Green, null);
     }
 
     /// <summary>
@@ -563,25 +584,26 @@ internal static partial class ScratchVerdict
         : verdict == Green ? (partial ? KnownRed : KnownNowGreen)
         : verdict;
 
-    /// <summary>Whether options.steps selected fewer than all of the scene's steps.</summary>
     /// <summary>The scene's step list, when it has a hidden step or the call selected its steps; else null.</summary>
     private static IReadOnlyList<string>? StepList(ScratchObservation seen) =>
         seen.Selected is not null || seen.StepNames.Hidden.Count > 0 ? seen.StepNames.Lines() : null;
 
+    /// <summary>Whether options.steps selected fewer than all of the scene's steps.</summary>
     private static bool PlayedInPart(ScratchObservation seen) => seen.Selected is { } selected && selected.Count < seen.Total;
 
     /// <summary>
     /// Whether the exit turns a scene with every step green red: an error in the pace after the last step, a kill by the stop, a
-    /// non-zero code, a leak, or a matching line after the steps.
+    /// non-zero code, a leak, a matching line after the steps, or an expected line its output never held.
     /// </summary>
-    private static bool ExitFails(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns) =>
+    private static bool ExitFails(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns, List<string>? missing) =>
         seen.AfterError is not null
         || seen.StopKillReason is not null
         || seen.ExitCode is not (null or 0)
         || Leaked(seen.ExitLines) is not null
-        || seen.ExitLines.Any(line => Matches(line, patterns));
+        || seen.ExitLines.Any(line => Matches(line, patterns))
+        || missing is not null;
 
-    private static ScratchExit ExitOf(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns)
+    private static ScratchExit ExitOf(ScratchObservation seen, IReadOnlyList<ScratchPattern> patterns, List<string>? missing)
     {
         List<string> matched = [.. seen.ExitLines.Where(line => Matches(line, patterns))];
         return new ScratchExit(seen.ExitCode)
@@ -592,8 +614,62 @@ internal static partial class ScratchVerdict
             Killed = seen.StopKillReason is null ? null : true,
             KillReason = seen.StopKillReason,
             Warning = seen.StopWarning,
+            Missing = missing,
         };
     }
+
+    /// <summary>
+    /// One entry per expected pattern no line of the scene's output (launch, steps and exit) matched, in the order expected; null
+    /// when every one matched, or the scene is not judged for them: it expects none, was killed, refused or red at the boot, has
+    /// no steps, or options.steps played only part of it.
+    /// </summary>
+    private static List<string>? Missing(ScratchObservation seen, IReadOnlyList<ScratchPattern> expect)
+    {
+        if (expect.Count == 0 || !JudgedForExpected(seen))
+        {
+            return null;
+        }
+
+        List<string> output = [.. seen.LaunchLines, .. seen.Steps.SelectMany(step => step.Lines), .. seen.ExitLines];
+        long dropped = seen.Steps.Sum(step => step.Dropped);
+        List<string> missing = [.. expect.Select(pattern => MissingEntry(output, pattern, dropped)).OfType<string>()];
+        return missing.Count > 0 ? missing : null;
+    }
+
+    private static bool JudgedForExpected(ScratchObservation seen) => BeforeAnyStep(seen) is null && seen.Total > 0 && !PlayedInPart(seen);
+
+    /// <summary>
+    /// The entry of an expected pattern no line matched, with the reason, the lines the output buffer dropped and a timeout on a
+    /// line noted; null when a line matched it. A line the pattern ran past its timeout on does not match it.
+    /// </summary>
+    private static string? MissingEntry(List<string> output, ScratchPattern pattern, long dropped)
+    {
+        bool timedOut = false;
+        foreach (string line in output)
+        {
+            try
+            {
+                if (pattern.Regex.IsMatch(line))
+                {
+                    return null;
+                }
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                timedOut = true;
+            }
+        }
+
+        string reason = pattern.Reason is null ? string.Empty : $" ({pattern.Reason})";
+        string drops =
+            dropped > 0
+                ? string.Create(CultureInfo.InvariantCulture, $"; {dropped} output lines were dropped, so it may have been printed")
+                : string.Empty;
+        string slow = timedOut ? $"; it took over {Seconds(pattern)} s on a line, so simplify it" : string.Empty;
+        return $"`{pattern.Regex}` never appeared in the scene's output{reason}{drops}{slow}";
+    }
+
+    private static string Seconds(ScratchPattern pattern) => pattern.Regex.MatchTimeout.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture);
 
     /// <summary>
     /// A step as it is listed: its status line, and its detail when it failed or options.details asks for every step's; the errors
@@ -781,8 +857,7 @@ internal static partial class ScratchVerdict
         }
         catch (RegexMatchTimeoutException)
         {
-            string seconds = pattern.Regex.MatchTimeout.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture);
-            return $"pattern '{pattern.Regex}' took over {seconds} s on a line; simplify it in scratch.patterns";
+            return $"pattern '{pattern.Regex}' took over {Seconds(pattern)} s on a line; simplify it in scratch.patterns";
         }
     }
 

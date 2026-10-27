@@ -7,7 +7,7 @@ namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// run_scratches over the whole scratch folder of the InputProbe fixture, in the real Godot, one scene at a time: every scene to
-/// its verdict in the folder's order, with what the prep did and each scene's pace. The fact plays all 19 scenes, so the class
+/// its verdict in the folder's order, with what the prep did and each scene's pace. The fact plays all 20 scenes, so the class
 /// is a group of its own, apart from <see cref="ScratchRunnerTests"/>, whose helpers it shares. It holds the folder's scenes and
 /// verdicts, their assertion and the probe's setup and teardown, which <see cref="ScratchFolderParallelTests"/> shares.
 /// </summary>
@@ -18,6 +18,7 @@ public sealed class ScratchFolderTests : IAsyncDisposable
         "ScratchBeside",
         "ScratchBootError",
         "ScratchBusy",
+        "ScratchExitLine",
         "ScratchFlood",
         "ScratchGreen",
         "ScratchHidden",
@@ -41,6 +42,7 @@ public sealed class ScratchFolderTests : IAsyncDisposable
         "green",
         "red",
         "killed",
+        "green",
         "red",
         "green",
         "green",
@@ -83,7 +85,7 @@ public sealed class ScratchFolderTests : IAsyncDisposable
         JsonArray scenes = result["scenes"]!.AsArray();
         Assert.All(scenes, scene => Assert.Null(scene!["alone"]));
         Assert.Equal(
-            [1, 0.5, 0.1, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5, 0.5, 0.25, 0.1, 0.5],
+            [1, 0.5, 0.1, 0.5, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5, 0.5, 2, 0.5, 0.5, 0.5, 0.5, 0.25, 0.1, 0.5],
             scenes.Select(scene => scene!["pace"]!.GetValue<double>())
         );
         Assert.Equal("boot", scenes[1]!["failedAt"]!["name"]!.GetValue<string>());
@@ -120,7 +122,7 @@ public sealed class ScratchFolderTests : IAsyncDisposable
         Assert.Equal(FolderVerdicts, scenes.Select(scene => scene!["verdict"]!.GetValue<string>()));
         Assert.Equal(FolderScenes.Select(name => "InputProbe.scratch-" + name), scenes.Select(scene => scene!["session"]!.GetValue<string>()));
         Assert.False(result["passed"]!.GetValue<bool>());
-        Assert.Equal((7, 9, 1, 1, 1), Counts(result));
+        Assert.Equal((8, 9, 1, 1, 1), Counts(result));
     }
 
     internal static (int Green, int Red, int Known, int NoSteps, int Killed) Counts(JsonObject result) =>
