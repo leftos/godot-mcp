@@ -443,7 +443,14 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
             target,
             tool,
             timeout,
-            () => target.SendAsync(command, parameters, timeout, cancellationToken, release),
+            () =>
+                target.SendCappedAsync(
+                    command,
+                    parameters,
+                    timeout,
+                    release is { } after ? new Release(after, call.WallCap) : null,
+                    cancellationToken
+                ),
             cancellationToken
         );
     }
@@ -590,9 +597,14 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     /// <summary>
     /// One request to the bridge: the tool it serves (for messages), the bridge command, its parameters, its reply timeout and,
     /// for a request the bridge can end early, its release (both load-adjusted, as <see cref="BridgeConnection.SendAsync"/>
-    /// takes them).
+    /// takes them), and with a release, its <see cref="WallCap"/>, the wall time that cancels it first, as
+    /// <see cref="BridgeConnection.SendCappedAsync"/> takes it.
     /// </summary>
-    internal sealed record BridgeCall(string Tool, string Command, JsonObject Parameters, TimeSpan Timeout, TimeSpan? Release = null);
+    internal sealed record BridgeCall(string Tool, string Command, JsonObject Parameters, TimeSpan Timeout, TimeSpan? Release = null)
+    {
+        /// <summary>The wall time after which the request is cancelled whatever its release; null for none.</summary>
+        public TimeSpan? WallCap { get; init; }
+    }
 
     /// <summary>A bridge reply's result and the errors the game raised while it was on its way.</summary>
     internal sealed record BridgeResult(JsonNode? Reply, IReadOnlyList<ErrorEntry> Errors);

@@ -5,6 +5,7 @@ using GodotMcp.Server.Tools;
 using GodotMcp.Server.Wire;
 using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 
 namespace GodotMcp.Tests.Tools;
 
@@ -1141,6 +1142,60 @@ public sealed class TimeValidationTests : IDisposable
         );
 
         Assert.Equal("timeoutMs 0 checks once, which an edge wait cannot meet; give it a timeout.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(-1.0)]
+    [InlineData(120_001.0)]
+    [InlineData(1.5)]
+    public void AMaxWallMsOutOfRangeOrNotAnIntegerIsRefused(double maxWallMs)
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, new WaitOptions(MaxWallMs: maxWallMs))
+        );
+
+        Assert.Equal("options.maxWallMs must be an integer from 1 to 120000: it caps the wait's wall time.", refused.Message);
+    }
+
+    [Fact]
+    public void ACheckOnceWaitWithMaxWallMsIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 0, new WaitOptions(MaxWallMs: 1000))
+        );
+
+        Assert.Equal("timeoutMs 0 checks once, which leaves options.maxWallMs nothing to cap; drop it or give a timeout.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(1.0)]
+    [InlineData(120_000.0)]
+    public void AMaxWallMsInRangeIsAcceptedAndNotSentToTheBridge(double maxWallMs)
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, new WaitOptions(MaxWallMs: maxWallMs));
+
+        Assert.Equal(1000, parameters["timeoutMs"]!.GetValue<int>());
+        Assert.False(parameters.ContainsKey("maxWallMs"), parameters.ToJsonString());
+    }
+
+    [Fact(Timeout = 120_000)]
+    public async Task AnOutputWaitPastItsWallCapEndsUnmetAndWallCapped()
+    {
+        await _sessions.ReserveProcessAsync("server", AppContext.BaseDirectory, defaultName: false);
+
+        // The cap counts wall time and the timeout load-adjusted time, which never runs faster, so the cap ends this wait.
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(
+            new WaitCondition(Output: "never printed"),
+            120_000,
+            new WaitOptions(MaxWallMs: 200),
+            "server",
+            TestContext.Current.CancellationToken
+        );
+        JsonObject waited = JsonNode.Parse(Assert.IsType<TextContentBlock>(Assert.Single(blocks)).Text)!.AsObject();
+
+        Assert.False(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.True(waited["wallCapped"]!.GetValue<bool>(), waited.ToJsonString());
     }
 
     [Fact]

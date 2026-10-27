@@ -258,12 +258,24 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <exception cref="SessionException">
     /// The run is not live, the attached game's connection has ended, or the game is paused under a debugger.
     /// </exception>
-    public async Task<JsonNode?> SendAsync(
+    public Task<JsonNode?> SendAsync(
         string command,
         JsonObject? parameters,
         TimeSpan timeout,
         CancellationToken cancellationToken,
         TimeSpan? release = null
+    ) => SendCappedAsync(command, parameters, timeout, release is { } after ? new Release(after, null) : null, cancellationToken);
+
+    /// <summary>
+    /// <see cref="SendAsync"/> with a wall cap on the release, as <see cref="BridgeConnection.SendCappedAsync"/> takes it.
+    /// </summary>
+    /// <exception cref="SessionException">As <see cref="SendAsync"/> throws it.</exception>
+    public async Task<JsonNode?> SendCappedAsync(
+        string command,
+        JsonObject? parameters,
+        TimeSpan timeout,
+        Release? release,
+        CancellationToken cancellationToken
     )
     {
         BridgeConnection connection = FindLiveConnection();
@@ -272,7 +284,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             await RefuseIfPausedAsync(connection, debugged, cancellationToken);
         }
 
-        return await connection.SendAsync(command, parameters, timeout, cancellationToken, release);
+        return await connection.SendCappedAsync(command, parameters, timeout, release, cancellationToken);
     }
 
     /// <summary>

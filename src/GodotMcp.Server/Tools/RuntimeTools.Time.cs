@@ -213,13 +213,15 @@ internal sealed partial class RuntimeTools
                 + "without after."
         )]
             int? timeoutMs = null,
-        [Description("{screenshot, call, then, edge}: screenshot and edge false and no call or then when left out.")] WaitOptions? options = null,
+        [Description("{screenshot, call, then, edge, maxWallMs}: screenshot and edge false, no call or then, and no wall cap when left out.")]
+            WaitOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
         JsonObject parameters = BuildWaitParameters(condition, timeoutMs, options);
-        BridgeResult result = await CallWaitAsync(parameters, session, cancellationToken);
+        TimeSpan? wallCap = options?.MaxWallMs is { } maxWallMs ? TimeSpan.FromMilliseconds(maxWallMs) : null;
+        BridgeResult result = await CallWaitAsync(parameters, wallCap, session, cancellationToken);
         JsonObject reply = WaitReply(result);
         CutMethodValue(reply["call"] as JsonObject);
         CutMethodValue((reply["then"] as JsonObject)?["call"] as JsonObject);
@@ -233,7 +235,7 @@ internal sealed partial class RuntimeTools
     internal async Task<string> WaitForAsync(WaitCondition condition, int? timeoutMs, string? session, CancellationToken cancellationToken)
     {
         JsonObject parameters = BuildWaitParameters(condition, timeoutMs);
-        BridgeResult result = await CallWaitAsync(parameters, session, cancellationToken);
+        BridgeResult result = await CallWaitAsync(parameters, null, session, cancellationToken);
         return ErrorReport.AddTo(WaitReply(result), result.Errors).ToJsonString();
     }
 
@@ -356,6 +358,7 @@ internal sealed partial class RuntimeTools
             RefuseOutputOptions(options);
         }
 
+        CheckMaxWall(parameters, options.MaxWallMs);
         AddScreenshot(parameters, options.Screenshot);
         if (options.Call is { } call)
         {
@@ -370,6 +373,26 @@ internal sealed partial class RuntimeTools
         if (options.Edge is true)
         {
             AddEdge(parameters);
+        }
+    }
+
+    /// <summary>Checks options.maxWallMs, which the server keeps: the bridge is not sent it.</summary>
+    /// <exception cref="McpException">It is not an integer from 1 to <see cref="MaxWaitMs"/>, or the wait checks once (timeoutMs 0).</exception>
+    private static void CheckMaxWall(JsonObject parameters, double? maxWallMs)
+    {
+        if (maxWallMs is not { } cap)
+        {
+            return;
+        }
+
+        if (cap is < 1 or > MaxWaitMs || cap != Math.Floor(cap))
+        {
+            throw new McpException($"options.maxWallMs must be an integer from 1 to {MaxWaitMs}: it caps the wait's wall time.");
+        }
+
+        if (parameters["timeoutMs"]!.GetValue<int>() == 0)
+        {
+            throw new McpException("timeoutMs 0 checks once, which leaves options.maxWallMs nothing to cap; drop it or give a timeout.");
         }
     }
 
@@ -501,7 +524,8 @@ internal sealed partial class RuntimeTools
         }
     }
 
-    private async Task<BridgeResult> CallWaitAsync(JsonObject parameters, string? session, CancellationToken cancellationToken)
+    /// <summary>Runs a built wait; <paramref name="wallCap"/>, the wait's options.maxWallMs, ends it unmet with wallCapped: true.</summary>
+    private async Task<BridgeResult> CallWaitAsync(JsonObject parameters, TimeSpan? wallCap, string? session, CancellationToken cancellationToken)
     {
         if (parameters["kind"]!.GetValue<string>() == "output")
         {
@@ -509,6 +533,7 @@ internal sealed partial class RuntimeTools
                 Find(session, allowProcess: true),
                 parameters,
                 parameters["timeoutMs"]!.GetValue<int>(),
+                wallCap,
                 cancellationToken
             );
         }
@@ -518,7 +543,7 @@ internal sealed partial class RuntimeTools
         AddConditionStateHelper(parameters, csharp, target.ProjectDir);
         int timeoutMs = parameters["timeoutMs"]!.GetValue<int>();
         TimeSpan release = WaitRelease(parameters, timeoutMs, target.ActiveRecording is not null);
-        BridgeCall call = new("wait_for", "wait_for", parameters, release + WaitReplyAllowance, timeoutMs > 0 ? release : null);
+        BridgeCall call = new("wait_for", "wait_for", parameters, release + WaitReplyAllowance, timeoutMs > 0 ? release : null) { WallCap = wallCap };
         BridgeResult result = await CallWithErrorsAsync(target, call, cancellationToken);
         if (result.Reply is JsonObject reply && TakeMetTick(reply) is { } ticksUsec)
         {
@@ -565,14 +590,15 @@ internal sealed partial class RuntimeTools
 
     /// <summary>
     /// An output wait: the attached refusal, the line marks, and the poll of the session's captured output until a line
-    /// matches or <paramref name="timeoutMs"/> passes in load-adjusted time. It sends nothing to the bridge, so it works
-    /// while the game is paused.
+    /// matches or <paramref name="timeoutMs"/> passes in load-adjusted time, or <paramref name="wallCap"/> in wall time,
+    /// when the timeout result adds wallCapped: true. It sends nothing to the bridge, so it works while the game is paused.
     /// </summary>
     /// <exception cref="McpException">The session is attached, or the pattern took over its match timeout.</exception>
     private static async Task<BridgeResult> WaitForOutputAsync(
         GodotSession target,
         JsonObject parameters,
         int timeoutMs,
+        TimeSpan? wallCap,
         CancellationToken cancellationToken
     )
     {
@@ -582,7 +608,7 @@ internal sealed partial class RuntimeTools
         Regex regex = ScratchProfile.Compile(parameters["output"]!.GetValue<string>());
         long? after = parameters["after"]?.GetValue<long>();
         long started = Stopwatch.GetTimestamp();
-        using LoadDeadline deadline = LoadClock.Shared.Start(TimeSpan.FromMilliseconds(timeoutMs), cancellationToken);
+        using LoadDeadline deadline = LoadClock.Shared.Start(TimeSpan.FromMilliseconds(timeoutMs), wallCap, cancellationToken);
         (OutputPage stdout, OutputPage stderr, long stdoutAfter, long stderrAfter) = OutputStart(target, after);
         WriteWatch.Ready();
         while (true)
@@ -600,7 +626,7 @@ internal sealed partial class RuntimeTools
 
             if (OutputExpired(timeoutMs, deadline) || !await PollOutputAsync(deadline, cancellationToken))
             {
-                return new BridgeResult(OutputTimeout(stdout, stderr, ElapsedMs(started)), []);
+                return new BridgeResult(OutputTimeout(stdout, stderr, ElapsedMs(started), deadline.Reason == Session.DeadlineReason.WallCap), []);
             }
 
             (stdout, stderr) = OutputPages(target);
@@ -681,13 +707,21 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>The timeout answer: {met: false, elapsedMs, last: {stdout, stderr}}, each stream's newest line or null.</summary>
-    private static JsonObject OutputTimeout(OutputPage stdout, OutputPage stderr, int elapsedMs) =>
-        new()
+    private static JsonObject OutputTimeout(OutputPage stdout, OutputPage stderr, int elapsedMs, bool wallCapped)
+    {
+        JsonObject timedOut = new()
         {
             ["met"] = false,
             ["elapsedMs"] = elapsedMs,
             ["last"] = new JsonObject { ["stdout"] = LastOutputLine(stdout), ["stderr"] = LastOutputLine(stderr) },
         };
+        if (wallCapped)
+        {
+            timedOut["wallCapped"] = true;
+        }
+
+        return timedOut;
+    }
 
     private static string? LastOutputLine(OutputPage page) =>
         page.Lines.Count == 0 ? null : OutputBuffer.Cut(page.Lines[^1], OutputBuffer.MaxLineLength);

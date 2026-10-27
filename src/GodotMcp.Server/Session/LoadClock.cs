@@ -59,6 +59,9 @@ internal enum DeadlineReason
 
     /// <summary><see cref="LoadClock.BackstopFactor"/> times its budget passed in wall time first.</summary>
     Backstop,
+
+    /// <summary>Its wall cap passed in wall time before its budget ran out and before its backstop.</summary>
+    WallCap,
 }
 
 /// <summary>
@@ -105,11 +108,25 @@ internal sealed class LoadClock(TimeProvider time, ILoadSource source) : IDispos
     /// <summary>Starts a deadline of <paramref name="budget"/> in load-adjusted time, and the sampler if it is not running.</summary>
     /// <param name="budget">The load-adjusted time the deadline allows; its backstop is <see cref="BackstopFactor"/> times it in wall time.</param>
     /// <param name="linked">Cancels the deadline's token without a reason.</param>
-    public LoadDeadline Start(TimeSpan budget, CancellationToken linked = default)
+    public LoadDeadline Start(TimeSpan budget, CancellationToken linked = default) => Start(budget, null, linked);
+
+    /// <summary>
+    /// Starts a deadline of <paramref name="budget"/> in load-adjusted time that also ends, as <see cref="DeadlineReason.WallCap"/>,
+    /// once <paramref name="wallCap"/> of wall time has passed, and the sampler if it is not running.
+    /// </summary>
+    /// <param name="budget">The load-adjusted time the deadline allows; its backstop is <see cref="BackstopFactor"/> times it in wall time.</param>
+    /// <param name="wallCap">The wall time after which the deadline ends however much of its budget is left; null for none.</param>
+    /// <param name="linked">Cancels the deadline's token without a reason.</param>
+    public LoadDeadline Start(TimeSpan budget, TimeSpan? wallCap, CancellationToken linked)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(budget, TimeSpan.Zero);
+        if (wallCap is { } cap)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(cap, TimeSpan.Zero, nameof(wallCap));
+        }
+
         EnsureSampling();
-        return new LoadDeadline(this, budget, linked);
+        return new LoadDeadline(this, budget, wallCap, linked);
     }
 
     /// <summary>The adjusted total and the free share, read together.</summary>
@@ -171,9 +188,9 @@ internal sealed class LoadClock(TimeProvider time, ILoadSource source) : IDispos
 }
 
 /// <summary>
-/// A budget of load-adjusted time, bounded by <see cref="LoadClock.BackstopFactor"/> times it in wall time. Its own
-/// one-shot timer checks it at most every <see cref="LoadClock.SamplePeriod"/>, sooner when the budget is due sooner at the
-/// published share; on expiry its token is cancelled without blocking the timer.
+/// A budget of load-adjusted time, bounded by <see cref="LoadClock.BackstopFactor"/> times it in wall time and by its wall
+/// cap when it has one. Its own one-shot timer checks it at most every <see cref="LoadClock.SamplePeriod"/>, sooner when the
+/// budget or a wall limit is due sooner at the published share; on expiry its token is cancelled without blocking the timer.
 /// </summary>
 internal sealed class LoadDeadline : IDisposable
 {
@@ -185,20 +202,27 @@ internal sealed class LoadDeadline : IDisposable
     private readonly long _startWall;
     private readonly TimeSpan _startAdjusted;
     private readonly TimeSpan _ceiling;
+    private readonly TimeSpan? _wallCap;
     private readonly ITimer _timer;
     private bool _ended;
     private TimeSpan _endWall;
     private TimeSpan _endAdjusted;
 
-    internal LoadDeadline(LoadClock clock, TimeSpan budget, CancellationToken linked)
-        : this(clock, budget, budget, (clock.Reading().Adjusted, clock.Time.GetTimestamp()), linked) { }
+    internal LoadDeadline(LoadClock clock, TimeSpan budget, TimeSpan? wallCap, CancellationToken linked)
+        : this(clock, (budget, budget, wallCap), (clock.Reading().Adjusted, clock.Time.GetTimestamp()), linked) { }
 
-    private LoadDeadline(LoadClock clock, TimeSpan budget, TimeSpan ceiling, (TimeSpan Adjusted, long Wall) start, CancellationToken linked)
+    private LoadDeadline(
+        LoadClock clock,
+        (TimeSpan Budget, TimeSpan Ceiling, TimeSpan? WallCap) limits,
+        (TimeSpan Adjusted, long Wall) start,
+        CancellationToken linked
+    )
     {
         _clock = clock;
-        Budget = budget;
-        Backstop = budget * LoadClock.BackstopFactor;
-        _ceiling = ceiling;
+        Budget = limits.Budget;
+        Backstop = limits.Budget * LoadClock.BackstopFactor;
+        _ceiling = limits.Ceiling;
+        _wallCap = limits.WallCap;
         _cancellation = CancellationTokenSource.CreateLinkedTokenSource(linked);
         (_startAdjusted, _startWall) = start;
         lock (_lock)
@@ -211,6 +235,9 @@ internal sealed class LoadDeadline : IDisposable
     public TimeSpan Budget { get; }
 
     public TimeSpan Backstop { get; }
+
+    /// <summary>The wall time after which the deadline ends whatever its budget; null for none.</summary>
+    public TimeSpan? WallCap => _wallCap;
 
     /// <summary>Cancelled when the deadline expires or the linked token is cancelled.</summary>
     public CancellationToken Token => _cancellation.Token;
@@ -269,14 +296,14 @@ internal sealed class LoadDeadline : IDisposable
     }
 
     /// <summary>
-    /// A deadline that goes on from this one's start with the same budget and backstop, its ceiling reached instead when the
+    /// A deadline that goes on from this one's start with the same budget, backstop and wall cap, its ceiling reached instead when the
     /// clock's load-adjusted total reaches <paramref name="adjustedEnd"/>: a wait past the budget that still ends at the backstop,
     /// its times and free share measured over both waits.
     /// </summary>
     /// <param name="adjustedEnd">The clock's load-adjusted reading at which the ceiling is reached.</param>
     /// <param name="linked">Cancels the deadline's token without a reason.</param>
     internal LoadDeadline ContinueUntil(TimeSpan adjustedEnd, CancellationToken linked) =>
-        new(_clock, Budget, adjustedEnd - _startAdjusted, (_startAdjusted, _startWall), linked);
+        new(_clock, (Budget, adjustedEnd - _startAdjusted, _wallCap), (_startAdjusted, _startWall), linked);
 
     internal static string Seconds(TimeSpan span) => span.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
 
@@ -302,10 +329,7 @@ internal sealed class LoadDeadline : IDisposable
             }
 
             (TimeSpan wall, TimeSpan adjusted) = Elapsed();
-            DeadlineReason? reason =
-                adjusted >= _ceiling ? DeadlineReason.Ceiling
-                : wall >= Backstop ? DeadlineReason.Backstop
-                : null;
+            DeadlineReason? reason = adjusted >= _ceiling ? DeadlineReason.Ceiling : WallReason(wall);
             if (reason is not null || _cancellation.IsCancellationRequested)
             {
                 End(reason);
@@ -328,11 +352,26 @@ internal sealed class LoadDeadline : IDisposable
         }
     }
 
+    /// <summary>The wall limit <paramref name="wall"/> has reached, the earlier of the wall cap and the backstop; null for neither.</summary>
+    private DeadlineReason? WallReason(TimeSpan wall)
+    {
+        TimeSpan limit = WallLimit();
+        if (wall < limit)
+        {
+            return null;
+        }
+
+        return limit < Backstop ? DeadlineReason.WallCap : DeadlineReason.Backstop;
+    }
+
+    /// <summary>The wall time at which the deadline ends whatever its load-adjusted time: the earlier of its wall cap and its backstop.</summary>
+    private TimeSpan WallLimit() => _wallCap is { } cap && cap < Backstop ? cap : Backstop;
+
     private TimeSpan NextWait(TimeSpan wall, TimeSpan adjusted, double free)
     {
         TimeSpan toCeiling = (_ceiling - adjusted) / free;
-        TimeSpan toBackstop = Backstop - wall;
-        var wait = TimeSpan.FromTicks(Math.Min(Math.Min(toCeiling.Ticks, toBackstop.Ticks), LoadClock.SamplePeriod.Ticks));
+        TimeSpan toWallLimit = WallLimit() - wall;
+        var wait = TimeSpan.FromTicks(Math.Min(Math.Min(toCeiling.Ticks, toWallLimit.Ticks), LoadClock.SamplePeriod.Ticks));
         return wait < MinimumWait ? MinimumWait : wait;
     }
 }

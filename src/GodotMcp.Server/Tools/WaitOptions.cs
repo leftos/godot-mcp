@@ -3,7 +3,7 @@ using System.ComponentModel;
 namespace GodotMcp.Server.Tools;
 
 /// <summary>Whether wait_for captures the frame its condition was met on, the method it calls as its checks start, what it
-/// runs in the frame its condition is met, and whether only a rise meets it.</summary>
+/// runs in the frame its condition is met, whether only a rise meets it, and the wall time that ends it unmet.</summary>
 internal sealed record WaitOptions(
     [property: Description(
         "Capture the frame the condition was met on as take_screenshot does (a preview at most 480 px wide); a timed-out wait "
@@ -37,7 +37,12 @@ internal sealed record WaitOptions(
             + "true throughout times out with met: false. A check whose expression fails to run does not count as false. "
             + "Refused with timeoutMs 0."
     )]
-        bool? Edge = null
+        bool? Edge = null,
+    [property: Description(
+        "Wall-time cap in ms: the wait ends unmet with wallCapped: true once this much real time has passed, however slowly the "
+            + "load-adjusted timeout runs. Pass it with every long timeoutMs on a game that may stall."
+    )]
+        double? MaxWallMs = null
 );
 
 /// <summary>What wait_for runs in the frame its condition is met: a method call, an Engine.time_scale, a pause, or any mix.</summary>

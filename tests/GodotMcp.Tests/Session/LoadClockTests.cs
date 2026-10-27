@@ -97,6 +97,70 @@ public sealed class LoadClockTests : IDisposable
     }
 
     [Fact]
+    public void AWallCapFiresAtItsWallTimeOnASaturatedMachine()
+    {
+        _machine.SetLoad(busyShare: 1, ownCores: 0);
+        using LoadDeadline deadline = _clock.Start(TenSeconds, TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken);
+
+        Run(TimeSpan.FromSeconds(2.9));
+        Assert.False(deadline.Expired);
+        Run(TimeSpan.FromSeconds(0.2));
+
+        Assert.Equal(DeadlineReason.WallCap, deadline.Reason);
+        Assert.True(deadline.Token.IsCancellationRequested);
+        Assert.True(deadline.Adjusted < TimeSpan.FromSeconds(3), $"adjusted {deadline.Adjusted}");
+    }
+
+    [Fact]
+    public void ACeilingBeforeTheWallCapEndsTheDeadlineOnItsCeiling()
+    {
+        using LoadDeadline deadline = _clock.Start(TenSeconds, TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        Run(TimeSpan.FromSeconds(10.2));
+
+        Assert.Equal(DeadlineReason.Ceiling, deadline.Reason);
+    }
+
+    [Fact]
+    public void ACeilingAndAWallCapExpiringTogetherNameTheCeiling()
+    {
+        using LoadDeadline deadline = _clock.Start(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken);
+
+        Run(TimeSpan.FromSeconds(3.2));
+
+        Assert.Equal(DeadlineReason.Ceiling, deadline.Reason);
+    }
+
+    [Fact]
+    public void AWallCapAtOrAboveTheBackstopNamesTheBackstop()
+    {
+        // Sampled first, so the 1 s budget runs at the 5% floor from its start rather than at wall time until the first sample.
+        _machine.SetLoad(busyShare: 1, ownCores: 0);
+        using (Start(TimeSpan.FromSeconds(1)))
+        {
+            Run(TimeSpan.FromSeconds(1.1));
+        }
+
+        using LoadDeadline deadline = _clock.Start(TimeSpan.FromSeconds(1), TenSeconds, TestContext.Current.CancellationToken);
+
+        Run(TimeSpan.FromSeconds(5.2));
+
+        Assert.Equal(DeadlineReason.Backstop, deadline.Reason);
+    }
+
+    [Fact]
+    public void AWallCapOffTheSampleGridEndsOnTime()
+    {
+        using LoadDeadline deadline = _clock.Start(TenSeconds, TimeSpan.FromSeconds(2.5), TestContext.Current.CancellationToken);
+
+        Run(TimeSpan.FromSeconds(2.4));
+        Assert.False(deadline.Expired);
+        Run(TimeSpan.FromSeconds(0.2));
+
+        Assert.Equal(DeadlineReason.WallCap, deadline.Reason);
+    }
+
+    [Fact]
     public void AnUnavailableSourceRunsAtWallTime()
     {
         _machine.SetLoad(busyShare: 1, ownCores: 0);

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net.Sockets;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
 using Microsoft.Extensions.Logging;
@@ -97,19 +98,48 @@ internal sealed class BridgeConnection : IAsyncDisposable
     /// </exception>
     /// <exception cref="InvalidOperationException">The bridge answered <c>ok: false</c>.</exception>
     /// <exception cref="IOException">The connection ended before the reply.</exception>
-    public async Task<JsonNode?> SendAsync(
+    public Task<JsonNode?> SendAsync(
         string command,
         JsonObject? parameters,
         TimeSpan timeout,
         CancellationToken cancellationToken,
         TimeSpan? release = null
+    ) => SendCappedAsync(command, parameters, timeout, release is { } after ? new Release(after, null) : null, cancellationToken);
+
+    /// <summary>
+    /// <see cref="SendAsync"/> with a wall cap on the release: the cancel goes when the release passes in load-adjusted time
+    /// or its wall cap passes in wall time, whichever comes first, and once only. A reply object whose <c>met</c> is not
+    /// true, taken after the cap rather than the release sent the cancel, gains <c>wallCapped: true</c>; a met answer the
+    /// bridge sent after the cap's cancel is returned as it came. A capped request's reply deadline also ends at the cap
+    /// plus the reply allowance (its timeout less its release) in wall time, so a game that cannot answer the cap's cancel
+    /// fails the request then, as a reply timeout does.
+    /// </summary>
+    /// <param name="command">The bridge command.</param>
+    /// <param name="parameters">Its parameters, as <see cref="SendAsync"/> takes them.</param>
+    /// <param name="timeout">How long to wait for the reply, in load-adjusted time.</param>
+    /// <param name="release">When the bridge's run of the request is cancelled; null sends no cancel.</param>
+    /// <param name="cancellationToken">Withdraws the wait.</param>
+    /// <exception cref="LoadTimeoutException">
+    /// As <see cref="SendAsync"/> throws it, and for a capped request no reply by the cap plus the reply allowance in wall time.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">The bridge answered <c>ok: false</c>.</exception>
+    /// <exception cref="IOException">The connection ended before the reply.</exception>
+    public async Task<JsonNode?> SendCappedAsync(
+        string command,
+        JsonObject? parameters,
+        TimeSpan timeout,
+        Release? release,
+        CancellationToken cancellationToken
     )
     {
-        using LoadDeadline deadline = _clock.Start(timeout, cancellationToken);
-        JsonObject sent = WithBackstop(parameters, release);
+        TimeSpan? releaseAfter = release?.After;
+        TimeSpan? wallCap = release?.WallCap;
+        // A capped request's reply waits in wall time at most for the cap and the reply allowance after it.
+        using LoadDeadline deadline = _clock.Start(timeout, wallCap + (timeout - releaseAfter), cancellationToken);
+        JsonObject sent = WithBackstop(parameters, releaseAfter);
 
         (long id, PendingRequest pending) = Register(command);
-        using LoadDeadline? released = release is { } releaseAfter ? _clock.Start(releaseAfter) : null;
+        using LoadDeadline? released = releaseAfter is { } after ? _clock.Start(after, wallCap, CancellationToken.None) : null;
         using CancellationTokenRegistration cancelling = released?.Token.Register(() => CancelOnce(id, pending)) ?? default;
         try
         {
@@ -122,7 +152,9 @@ internal sealed class BridgeConnection : IAsyncDisposable
                 CancelOnce(id, pending);
             }
 
-            return await WaitReplyAsync(id, pending, deadline, release, cancellationToken);
+            JsonNode? reply = await WaitReplyAsync(id, pending, deadline, releaseAfter, cancellationToken);
+            MarkWallCapped(reply, pending, released);
+            return reply;
         }
         catch (OperationCanceledException e) when (cancellationToken.IsCancellationRequested)
         {
@@ -137,6 +169,23 @@ internal sealed class BridgeConnection : IAsyncDisposable
             }
 
             _pending.TryRemove(id, out _);
+        }
+    }
+
+    /// <summary>
+    /// Adds <c>wallCapped: true</c> to an unmet reply object whose release deadline ended on its wall cap and sent the cancel:
+    /// a request that ended on its own as the cap passed, its reply in before any cancel went, is left as it came.
+    /// </summary>
+    private static void MarkWallCapped(JsonNode? reply, PendingRequest pending, LoadDeadline? released)
+    {
+        if (
+            released?.Reason == DeadlineReason.WallCap
+            && pending.CancelSentAt is not null
+            && reply is JsonObject answer
+            && answer["met"]?.GetValueKind() != JsonValueKind.True
+        )
+        {
+            answer["wallCapped"] = true;
         }
     }
 
@@ -189,7 +238,7 @@ internal sealed class BridgeConnection : IAsyncDisposable
             }
         }
 
-        return pending.Reply.Task.IsCompleted ? await pending.Reply.Task : throw ReplyTimedOut(id, pending, ended);
+        return pending.Reply.Task.IsCompleted ? await pending.Reply.Task : throw ReplyTimedOut(id, pending, ended, release);
     }
 
     /// <summary>
@@ -207,10 +256,30 @@ internal sealed class BridgeConnection : IAsyncDisposable
         return pending.CancelSentAt is { } sentAt ? deadline.ContinueUntil(sentAt + (deadline.Budget - releaseAfter), cancellationToken) : null;
     }
 
-    private static LoadTimeoutException ReplyTimedOut(long id, PendingRequest pending, LoadDeadline deadline)
+    private static LoadTimeoutException ReplyTimedOut(long id, PendingRequest pending, LoadDeadline deadline, TimeSpan? release) =>
+        new(TimedOut(pending.Command, id, deadline.Budget, LimitClause(deadline, release)), deadline);
+
+    /// <summary>
+    /// What ended the reply deadline when not its ceiling: <see cref="LoadDeadline.BackstopClause"/>, or for a capped request
+    /// "; that is its 2 s wall cap and 5 s to answer the cancel, 7 s of wall time (load-adjusted 0.4 s, machine free 5% on
+    /// average)"; empty for the ceiling.
+    /// </summary>
+    private static string LimitClause(LoadDeadline deadline, TimeSpan? release)
     {
-        string backstop = deadline.Reason == DeadlineReason.Backstop ? deadline.BackstopClause() : string.Empty;
-        return new LoadTimeoutException(TimedOut(pending.Command, id, deadline.Budget, backstop), deadline);
+        if (deadline.Reason == DeadlineReason.Backstop)
+        {
+            return deadline.BackstopClause();
+        }
+
+        if (deadline.Reason != DeadlineReason.WallCap || deadline.WallCap is not { } limit || release is not { } after)
+        {
+            return string.Empty;
+        }
+
+        TimeSpan allowance = deadline.Budget - after;
+        return $"; that is its {LoadDeadline.Seconds(limit - allowance)} s wall cap and {LoadDeadline.Seconds(allowance)} s to answer "
+            + $"the cancel, {LoadDeadline.Seconds(limit)} s of wall time (load-adjusted {LoadDeadline.Seconds(deadline.Adjusted)} s, "
+            + $"machine free {LoadDeadline.Percent(deadline.MeanFree)}% on average)";
     }
 
     /// <summary>The parameters as sent: with <c>backstopMs</c> added to a copy when the request has a release, else as given.</summary>
@@ -557,3 +626,9 @@ internal sealed class BridgeConnection : IAsyncDisposable
         public bool TryClaimCancel(TimeSpan now) => Interlocked.CompareExchange(ref _cancelSentAtTicks, now.Ticks, NotClaimed) == NotClaimed;
     }
 }
+
+/// <summary>When a request's run in the bridge is cancelled: once <paramref name="After"/> passes in load-adjusted time, or
+/// <paramref name="WallCap"/> in wall time when it is set, whichever comes first.</summary>
+/// <param name="After">The load-adjusted time the bridge may run the request.</param>
+/// <param name="WallCap">The wall time after which the request is cancelled whatever its load-adjusted release; null for none.</param>
+internal readonly record struct Release(TimeSpan After, TimeSpan? WallCap);

@@ -595,6 +595,11 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
 41. **A game that acknowledged the quit and closed its bridge gets 7 s more before a kill** (GMCP-268; an orchestrator decision, not an owner ruling). Such a game is in the engine's own teardown, whose measured tail reached about 3 s, so a stop, a restart or a scratch scene's quit waits 7 s past the 3 s exit grace (10 s in all, load-adjusted) before killing it; a game whose connection is still open at 3 s is still killed at 3 s.
     - A recording run keeps its 30 s grace with no teardown phase, and the silent path and an attached stop without a process handle are unchanged.
     - The server's exit shares the same wait inside its 10 s cap, so its bound does not move.
+42. **A `wait_for` can carry a wall-time cap** (GMCP-285; an orchestrator decision, not an owner ruling). A wait's `timeoutMs` is load-adjusted and its backstop is 5 x it in wall time, so a long wait on a game that stalls can hold a caller for minutes of real time; `options.maxWallMs` ends it unmet with `wallCapped: true` after that much wall time.
+    - The cap is wall time only (the same in a recording), has no default, is `wait_for`'s alone (not `batch_drive`'s wait step or `frame_control`'s `until`), and applies to output waits as well as bridge waits.
+    - It is refused with `timeoutMs: 0`, which has nothing to cap, and outside 1 to 120000 or when not whole.
+    - It ends the wait through the existing `cancel`, so the bridge and its `backstopMs` do not change; a met answer that arrives after the cancel stays met with no `wallCapped`, and when the load-adjusted ceiling and the cap expire together the ceiling wins.
+    - A game too stuck to answer the cancel fails the call within the cap and the 5 s reply allowance in wall time, with the usual no-answer error naming the cap, rather than running on to the load-adjusted reply deadline or its backstop.
 
 ## Wire
 

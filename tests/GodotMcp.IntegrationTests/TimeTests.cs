@@ -522,6 +522,24 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.Equal("done", waited["last"]!.GetValue<string>());
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitPastItsWallCapEndsUnmetAndWallCapped()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        // The cap counts wall time and the timeout load-adjusted time, which never runs faster, so the cap ends this wait.
+        IEnumerable<ContentBlock> blocks = await _tools.WaitForAsync(
+            new WaitCondition(Expression: "false"),
+            120_000,
+            new WaitOptions(MaxWallMs: 1500),
+            cancellationToken: cancellation
+        );
+        JsonObject waited = JsonNode.Parse(Text(blocks))!.AsObject();
+
+        Assert.False(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.True(waited["wallCapped"]!.GetValue<bool>(), waited.ToJsonString());
+    }
+
     // The wait arms the probe itself: arm's timer runs in real time from its call, so an arm sent ahead of the wait could fire
     // before the wait connects on a busy machine, and the wait would then run out its timeout.
     [Fact(Timeout = TestTimeoutMs)]
