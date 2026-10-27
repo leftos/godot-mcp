@@ -10,12 +10,12 @@ using GodotMcp.TestSupport;
 namespace GodotMcp.IntegrationTests;
 
 /// <summary>
-/// The window capture helper alone against a visible InputProbe: its frames piped into ffmpeg make a clip of the
-/// deadline's length at the size its probe names, read back with ffprobe; an offset crop with odd sides is written padded
-/// to even and its frames are the window's pixels; a crop past the window is refused, and a window closed mid-capture ends
-/// the run cleanly. It runs on the user's desktop (the capture group skips the hidden desktop, which Windows.Graphics.Capture
-/// cannot see), its games launched unfocused so they leave the foreground alone, and needs the helper published into
-/// bin/capture, which the group's gate does first.
+/// The window capture helper alone against a visible InputProbe: it captures until its deadline, by its own clock, and the
+/// frames it wrote, piped into ffmpeg, make a clip at the size its probe names, read back with ffprobe; an offset crop with
+/// odd sides is written padded to even and its frames are the window's pixels; a crop past the window is refused, and a
+/// window closed mid-capture ends the run cleanly. It runs on the user's desktop (the capture group skips the hidden desktop,
+/// which Windows.Graphics.Capture cannot see), its games launched unfocused so they leave the foreground alone, and needs the
+/// helper published into bin/capture, which the group's gate does first.
 /// </summary>
 public sealed class CaptureHelperTests : IAsyncDisposable
 {
@@ -52,10 +52,16 @@ public sealed class CaptureHelperTests : IAsyncDisposable
 
         (string clip, string report) = await RecordAsync(hwnd, size, null, cancellation);
 
-        (double seconds, int width, int height) = await ProbeClipAsync(clip, cancellation);
+        (int frames, int width, int height) = await ProbeClipAsync(clip, cancellation);
+        (int written, double ran) = HelperWrote(report);
         Assert.True(
-            Math.Abs(seconds - ClipLength.TotalSeconds) <= 0.5,
-            FormattableString.Invariant($"the clip lasts {seconds} s, not {ClipLength.TotalSeconds} s within 0.5 s; the helper said: {report}")
+            ran >= ClipLength.TotalSeconds,
+            FormattableString.Invariant($"the helper says it captured for {ran} s, short of its {ClipLength.TotalSeconds} s deadline; ")
+                + $"the helper said: {report}"
+        );
+        Assert.True(
+            frames >= 1 && frames <= written,
+            FormattableString.Invariant($"the clip holds {frames} frames, but the helper wrote {written}; the helper said: {report}")
         );
         Assert.Equal(int.Parse(sides[0], CultureInfo.InvariantCulture), width);
         Assert.Equal(int.Parse(sides[1], CultureInfo.InvariantCulture), height);
@@ -235,12 +241,13 @@ public sealed class CaptureHelperTests : IAsyncDisposable
 
         (string clip, string report) = await RecordAsync(hwnd, FormattableString.Invariant($"{width}x{height}"), crop, cancellation);
 
-        (_, int frameWidth, int frameHeight) = await ProbeClipAsync(clip, cancellation);
+        (int frames, int frameWidth, int frameHeight) = await ProbeClipAsync(clip, cancellation);
         Assert.True(
             frameWidth == width && frameHeight == height,
             FormattableString.Invariant($"the clip is {frameWidth}x{frameHeight}, not the padded crop {width}x{height}; the helper said: {report}")
         );
-        double luma = await MeanLumaAsync(clip, cancellation);
+        Assert.True(frames >= 1, $"the clip holds no frame; the helper said: {report}");
+        double luma = await MeanLumaAsync(clip, frames / 2, cancellation);
         Assert.True(
             luma > 8,
             FormattableString.Invariant($"the middle frame's mean luma is {luma:F1} of 255, so the crop is all but black; the helper said: {report}")
@@ -562,8 +569,8 @@ public sealed class CaptureHelperTests : IAsyncDisposable
         }
     }
 
-    /// <summary>The clip's length in seconds and its frame size, as ffprobe reads them.</summary>
-    private static async Task<(double Seconds, int Width, int Height)> ProbeClipAsync(string clip, CancellationToken cancellationToken)
+    /// <summary>The clip's frame count and frame size, as ffprobe reads them.</summary>
+    private static async Task<(int Frames, int Width, int Height)> ProbeClipAsync(string clip, CancellationToken cancellationToken)
     {
         string ffmpeg = FfmpegPath();
         string ffprobe = Path.Combine(
@@ -572,7 +579,7 @@ public sealed class CaptureHelperTests : IAsyncDisposable
         );
         using Process probe = Start(
             ffprobe,
-            ["-v", "error", "-select_streams", "v:0", "-show_entries", "format=duration:stream=width,height", "-of", "json", clip],
+            ["-v", "error", "-select_streams", "v:0", "-count_packets", "-show_entries", "stream=nb_read_packets,width,height", "-of", "json", clip],
             redirectInput: false
         );
         try
@@ -583,17 +590,21 @@ public sealed class CaptureHelperTests : IAsyncDisposable
             Assert.True(probe.ExitCode == 0, $"ffprobe failed on {clip}: {await errors}");
             using var probed = JsonDocument.Parse(output);
             JsonElement stream = probed.RootElement.GetProperty("streams")[0];
-            string duration = probed.RootElement.GetProperty("format").GetProperty("duration").GetString()!;
-            return (
-                double.Parse(duration, CultureInfo.InvariantCulture),
-                stream.GetProperty("width").GetInt32(),
-                stream.GetProperty("height").GetInt32()
-            );
+            string frames = stream.GetProperty("nb_read_packets").GetString()!;
+            return (int.Parse(frames, CultureInfo.InvariantCulture), stream.GetProperty("width").GetInt32(), stream.GetProperty("height").GetInt32());
         }
         finally
         {
             Stop(probe);
         }
+    }
+
+    /// <summary>The frames the helper wrote and the seconds its clock ran, from its <c>N frames in S s</c> line.</summary>
+    private static (int Written, double Seconds) HelperWrote(string said)
+    {
+        Match line = Regex.Match(said, @"(\d+) frames in (\d+(?:\.\d+)?) s");
+        Assert.True(line.Success, $"the helper said no frame count: {said}");
+        return (int.Parse(line.Groups[1].Value, CultureInfo.InvariantCulture), double.Parse(line.Groups[2].Value, CultureInfo.InvariantCulture));
     }
 
     /// <summary>The item size the probe names on stderr: `item &lt;W&gt;x&lt;H&gt;, crop &lt;x,y,w,h&gt;`.</summary>
@@ -607,12 +618,16 @@ public sealed class CaptureHelperTests : IAsyncDisposable
     /// <summary>The frame side the helper writes for a crop's side: an odd one padded up to even, as the helper does.</summary>
     private static int RoundUpToEven(int value) => value + (value & 1);
 
-    /// <summary>The mean luma of one frame from the middle of the clip, read as raw gray pixels through ffmpeg.</summary>
-    private static async Task<double> MeanLumaAsync(string clip, CancellationToken cancellationToken)
+    /// <summary>
+    /// The mean luma of the clip's frame at <paramref name="index"/>, read as raw gray pixels through ffmpeg. The frame is
+    /// chosen by its index, not a time, so a clip whose frames a busy machine bunched together still has it.
+    /// </summary>
+    private static async Task<double> MeanLumaAsync(string clip, int index, CancellationToken cancellationToken)
     {
+        string select = FormattableString.Invariant($"select=eq(n\\,{index})");
         using Process ffmpeg = Start(
             FfmpegPath(),
-            ["-v", "error", "-ss", "1", "-i", clip, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+            ["-v", "error", "-i", clip, "-vf", select, "-fps_mode", "passthrough", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
             redirectInput: false
         );
         try

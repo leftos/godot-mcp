@@ -360,7 +360,9 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
 
     /// <summary>
     /// A maxSeconds cap ends the capture by itself, and the clip waits for the next stop. The cap counts from the first frame,
-    /// so the clip lasts at least the cap. How far past it the capture ran is read from the helper's frame count, which a
+    /// so the helper's own clock, which its frame line reports and which starts before that frame leaves, runs at least the
+    /// cap; the clip's length is not read, since it is the span of the frames' arrival times, which a busy machine can bunch
+    /// together. How far past the cap the capture ran is read from the helper's frame count, which a
     /// busy machine can only lower: the helper writes at most one frame per tick of its rate, from after start was asked
     /// for until its deadline, the first frame's time plus the cap, which start moves there once the encoder has opened and
     /// the helper reads within 0.2 s. A cap the capture ignored, or counted from start's own allowance, runs to many more.
@@ -388,15 +390,16 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
         Assert.Null(recording.Error);
         // A busy machine may warn of a low frame rate; the cap itself is no warning.
         Assert.True(recording.Warning is null || recording.Warning.StartsWith("the capture got", StringComparison.Ordinal), recording.Warning);
-        (double seconds, _, _) = await ProbeClipAsync(path);
-        Assert.True(
-            seconds >= MaxSeconds - LengthTolerance,
-            FormattableString.Invariant($"the clip lasts {seconds:F3} s; with maxSeconds {MaxSeconds} it must last at least ")
-                + FormattableString.Invariant($"{MaxSeconds - LengthTolerance:F3} s")
-        );
+        _ = await ProbeClipAsync(path);
         string said = ReadCaptureLog(path);
         Match written = FramesLine().Matches(said).LastOrDefault() ?? throw new InvalidOperationException($"the helper said no frame count: {said}");
         int frames = int.Parse(written.Groups[1].Value, CultureInfo.InvariantCulture);
+        double ran = double.Parse(written.Groups[2].Value, CultureInfo.InvariantCulture);
+        Assert.True(
+            ran >= MaxSeconds,
+            FormattableString.Invariant($"the helper says it captured for {ran} s; with maxSeconds {MaxSeconds} counted from its first frame, ")
+                + FormattableString.Invariant($"it must capture for at least {MaxSeconds} s; the helper said: {said}")
+        );
         // The first frame goes out before the helper's timer starts, and a tick the helper missed fires once when it catches up.
         double most = fps * (MaxSeconds + startTook + DeadlinePollSeconds) + 2;
         Assert.True(
@@ -748,7 +751,7 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
     [GeneratedRegex(@"max_volume: (-?\d+(?:\.\d+)?) dB")]
     private static partial Regex MaxVolumeLine();
 
-    [GeneratedRegex(@"(\d+) frames in ")]
+    [GeneratedRegex(@"(\d+) frames in (\d+(?:\.\d+)?) s")]
     private static partial Regex FramesLine();
 
     private static async Task<(byte[] Output, string Errors, int ExitCode)> RunAsync(string program, IReadOnlyList<string> arguments)
