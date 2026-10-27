@@ -183,7 +183,7 @@ public sealed class ScratchRunnerTests : ScratchRunBase
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
-    public async Task ALineATimerPrintsFailsTheStepItPrintedIn()
+    public async Task ALateLineFailsTheStepItPrintedIn()
     {
         JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchLateLine"], options: null, TestContext.Current.CancellationToken));
 

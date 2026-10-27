@@ -195,6 +195,7 @@ public sealed class ScratchStepsRunTests : ScratchRunBase
         JsonObject red = Single(await RunAsync(_probe.Directory, ["ScratchSetupNeeded"], options, TestContext.Current.CancellationToken));
 
         Assert.True(red["verdict"]!.GetValue<string>() == "red", red.ToJsonString());
+        Assert.True(red["failedAt"]?["index"]?.GetValue<int>() == 1, red.ToJsonString());
         Assert.Equal((1, "use"), (red["failedAt"]!["index"]!.GetValue<int>(), red["failedAt"]!["name"]!.GetValue<string>()));
         Assert.Contains("use ran before build", red["failedAt"]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
         Assert.Equal([1], red["selected"]!.AsArray().Select(index => index!.GetValue<int>()));
