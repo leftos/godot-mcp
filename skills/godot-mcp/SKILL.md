@@ -62,7 +62,9 @@ Pass the `session` `run_project` returned to every call from the first one: anot
 
 **Seeing.** `take_screenshot` (read-only, saves under `.godot/`; with `crop` in viewport coordinates, so a rect from `get_ui_elements` or `hover` crops as it is; for a 2x crop, launch at twice the project's size with `--resolution`, which is given exactly), `get_ui_elements` (filter by class, e.g. `BaseButton`), and `preview_scene`, which shows one scene without playing it: it starts the scene quiet, screenshots its first frames and stops, beside any live session.
 
-`save_screenshot` takes `take_screenshot`'s arguments plus a `path` and writes the PNG to that project file, e.g. a tracked picture, or into the git checkout's `.tmp` folder above the project (`../../.tmp/shot.png`); it refuses an existing file without `options.overwrite`, and is not batchable.
+`save_screenshot` takes `take_screenshot`'s arguments plus a `path` and writes the PNG to that project file, e.g. a tracked picture, into the git checkout holding the project (the whole checkout when it tracks the project's `project.godot`, else its `.tmp` folder only), or, from a linked worktree, into the main checkout's `.tmp` folder (an absolute path such as `<main checkout>/.tmp/shot.png`).
+
+It refuses a `.git` folder and a `.godot` folder outside a `.tmp`, refuses an existing file without `options.overwrite`, and is not batchable.
 
 **Scratch scenes.**
 

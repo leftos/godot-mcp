@@ -42,7 +42,7 @@ Refused anywhere inside them: a `.git` folder, and a `.godot` folder outside a `
 
 | # | Invariant | Sites |
 |---|---|---|
-| I1 | After following every link on the way, the destination entry included, the final path lies under an allowed place. A link whose target does not exist is refused (G3). A link target that is not a fully qualified local path is refused, a network target before it is opened, from the immediate `LinkTarget` (G4). | `ScreenshotTarget.cs:32-55`, `:140-218`; the clip-path check at `record_mark start` (`RuntimeTools.Record.cs:51-57`, `:62-63`); the check again at delivery (I7) |
+| I1 | After following every link on the way, the destination entry included, the final path lies under an allowed place; a relative symbolic link is resolved against its own folder and walked. A link whose target does not exist is refused (G3). A link target that is not a fully qualified local path is refused, a network target before it is opened, from the immediate `LinkTarget` (G4). | `ScreenshotTarget.cs:32-55`, `:140-218`; the clip-path check at `record_mark start` (`RuntimeTools.Record.cs:51-57`, `:62-63`); the check again at delivery (I7) |
 | I2 | Never inside `.git`, any case, trailing `.` or space. | `CheckParts` `:116-134`, the link-target checks `:152-161`, `:198-201` |
 | I3 | Never under a `.godot` folder outside a `.tmp`, anywhere in W. | `IsUnderDotGodot` `:224-225` and its three callers |
 | I4 | A path is project-relative or fully qualified on a local drive: no drive-relative, root-relative, UNC, `\\.\` or `\\?\` path (G2). | `ScreenshotTarget.cs:42` |
@@ -71,6 +71,8 @@ Refused anywhere inside them: a `.git` folder, and a `.godot` folder outside a `
 - `path <path> leads through a link to <resolved>, outside <places>; save inside one of them`
 - `path <path> leads through a link at <link> whose target <target> does not exist`
 - `path <path> leads through a link at <link> to the network path <target>; links to network paths are not followed`
+- `path <path> leads through a link to <target>, whose name <part> ends in a space or a dot; Windows reads such a name two ways, so it is not written` (Windows only), and for a name in the path as written `path <path> has a folder or file name ending in a space or a dot (<part>); Windows reads such a name two ways, so it is not written` (Windows only)
+- `path <path> leads through a link at <link> that cannot be followed: the link's reparse data is malformed` (and `…: <message>` for another read failure)
 - delivery warning: `the clip could not be moved to <dest>: <reason>; it is kept at <recordings path>`
 
 ## Steps

@@ -13,6 +13,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `wait_for` takes `options.maxWallMs`, a wall-time cap: the wait ends unmet with `wallCapped: true` however slowly the load-adjusted timeout runs.
 - A scene's `scratch.pace` takes `exitHold`, the wait after its last step, so an `until` step keeps a long limit while the scene quits soon after.
 - `run_scratches` takes `options.details: "compact"`, listing each green step as one line with its pace or until figures and its `[scratch]` notes.
+- `save_screenshot` writes into the checkout holding the project, or from a linked worktree into the main checkout's `.tmp`, refusing links that lead outside.
 
 ### Changed
 

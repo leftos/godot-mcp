@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
+using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol;
 
 namespace GodotMcp.Tests.Tools;
@@ -13,10 +14,15 @@ public sealed class ScreenshotPathValidationTests : IDisposable
 {
     private static readonly byte[] PngBytes = [0x89, (byte)'P', (byte)'N', (byte)'G', 1, 2, 3];
     private readonly TempDirectory _temp = new();
+    private readonly TempDirectory _main = new();
 
     private string Project => _temp.Path;
 
-    public void Dispose() => _temp.Dispose();
+    public void Dispose()
+    {
+        _temp.Dispose();
+        _main.Dispose();
+    }
 
     [Theory]
     [InlineData("shot.png", "shot.png")]
@@ -26,14 +32,14 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     [InlineData("res://docs/class.png", "docs/class.png")]
     [InlineData("Shot.PNG", "Shot.PNG")]
     public void AProjectRelativePathResolvesUnderTheProject(string path, string expected) =>
-        Assert.Equal(Path.Combine([Project, .. expected.Split('/')]), ScreenshotTarget.Resolve(Project, path, overwrite: false));
+        Assert.Equal(Path.Combine([Project, .. expected.Split('/')]), Resolve(Project, path, overwrite: false));
 
     [Fact]
     public void AnAbsolutePathInsideTheProjectIsAccepted()
     {
         string absolute = Path.Combine(Project, "docs", "shot.png");
 
-        Assert.Equal(absolute, ScreenshotTarget.Resolve(Project, absolute, overwrite: false));
+        Assert.Equal(absolute, Resolve(Project, absolute, overwrite: false));
     }
 
     [Fact]
@@ -42,7 +48,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), "only Windows paths are case-insensitive");
         string absolute = Path.Combine(Project.ToUpperInvariant(), "docs", "shot.png");
 
-        Assert.Equal(absolute, ScreenshotTarget.Resolve(Project, absolute, overwrite: false));
+        Assert.Equal(absolute, Resolve(Project, absolute, overwrite: false));
     }
 
     [Theory]
@@ -52,7 +58,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     [InlineData(@"\\server\share\shot.png")]
     public void ARelativePathLeavingTheProjectIsRefused(string path)
     {
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(Project, path, overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(Project, path, overwrite: false));
 
         Assert.Equal($"path {path} resolves outside the project {Project}; save inside the project", refused.Message);
     }
@@ -62,7 +68,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     {
         string outside = Path.Combine(Path.GetDirectoryName(Project)!, "elsewhere", "shot.png");
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(Project, outside, overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(Project, outside, overwrite: false));
 
         Assert.Equal($"path {outside} resolves outside the project {Project}; save inside the project", refused.Message);
     }
@@ -72,7 +78,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     {
         string extended = @"\\?\" + Path.Combine(Project, "shot.png");
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(Project, extended, overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(Project, extended, overwrite: false));
 
         Assert.Equal($"path {extended} resolves outside the project {Project}; save inside the project", refused.Message);
     }
@@ -85,7 +91,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string project = ProjectUnderACheckout(dotGitIsFile);
         string tmp = Path.Combine(CheckoutTmp, "dim", "dimmed.png");
 
-        Assert.Equal(tmp, ScreenshotTarget.Resolve(project, tmp, overwrite: false));
+        Assert.Equal(tmp, Resolve(project, tmp, overwrite: false));
     }
 
     [Theory]
@@ -96,7 +102,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string project = ProjectUnderACheckout(dotGitIsFile);
         string tmp = Path.Combine(CheckoutTmp, "dim", "dimmed.png");
 
-        Assert.Equal(tmp, ScreenshotTarget.Resolve(project, "../../.tmp/dim/dimmed.png", overwrite: false));
+        Assert.Equal(tmp, Resolve(project, "../../.tmp/dim/dimmed.png", overwrite: false));
     }
 
     [Fact]
@@ -105,12 +111,9 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string project = ProjectUnderACheckout(dotGitIsFile: true);
         string elsewhere = Path.Combine(_temp.Path, "elsewhere", "shot.png");
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, elsewhere, overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(project, elsewhere, overwrite: false));
 
-        Assert.Equal(
-            $"path {elsewhere} resolves outside the project {project} and the checkout's .tmp folder {CheckoutTmp}; save inside either",
-            refused.Message
-        );
+        Assert.Equal($"path {elsewhere} resolves outside {WorktreePlaces(project)}", refused.Message);
     }
 
     [Fact]
@@ -118,7 +121,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     {
         string project = ProjectUnderACheckout(dotGitIsFile: true);
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, "res://../../.tmp/x.png", overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(project, "res://../../.tmp/x.png", overwrite: false));
 
         Assert.Equal($"path res://../../.tmp/x.png resolves outside the project {project}; save inside the project", refused.Message);
     }
@@ -128,7 +131,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     {
         string project = ProjectUnderACheckout(dotGitIsFile: true);
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, "../../.tmp/a.txt:x.png", overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(project, "../../.tmp/a.txt:x.png", overwrite: false));
 
         Assert.Equal("path must not contain ':' after the drive: ../../.tmp/a.txt:x.png", refused.Message);
     }
@@ -141,10 +144,10 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(existing)!);
         File.WriteAllBytes(existing, PngBytes);
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, existing, overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(project, existing, overwrite: false));
 
         Assert.Equal($"{existing} exists; pass options.overwrite true to replace it", refused.Message);
-        Assert.Equal(existing, ScreenshotTarget.Resolve(project, existing, overwrite: true));
+        Assert.Equal(existing, Resolve(project, existing, overwrite: true));
     }
 
     [Fact]
@@ -156,13 +159,9 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         Directory.CreateDirectory(CheckoutTmp);
         MakeJunction(Path.Combine(CheckoutTmp, "out"), elsewhere);
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, "../../.tmp/out/shot.png", overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(project, "../../.tmp/out/shot.png", overwrite: false));
 
-        Assert.Equal(
-            $"path ../../.tmp/out/shot.png leads through a link to {elsewhere}, outside the project {project} "
-                + $"and the checkout's .tmp folder {CheckoutTmp}; save inside either",
-            refused.Message
-        );
+        Assert.Equal($"path ../../.tmp/out/shot.png leads through a link to {elsewhere}, outside {WorktreePlaces(project)}", refused.Message);
     }
 
     [Fact]
@@ -174,7 +173,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         Directory.CreateDirectory(CheckoutTmp);
         MakeJunction(Path.Combine(CheckoutTmp, "docs"), docs);
 
-        Assert.Equal(Path.Combine(CheckoutTmp, "docs", "shot.png"), ScreenshotTarget.Resolve(project, "../../.tmp/docs/shot.png", overwrite: false));
+        Assert.Equal(Path.Combine(CheckoutTmp, "docs", "shot.png"), Resolve(project, "../../.tmp/docs/shot.png", overwrite: false));
     }
 
     [Fact]
@@ -185,13 +184,9 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string elsewhere = Directory.CreateDirectory(Path.Combine(_temp.Path, "elsewhere")).FullName;
         MakeJunction(CheckoutTmp, elsewhere);
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, "../../.tmp/x.png", overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(project, "../../.tmp/x.png", overwrite: false));
 
-        Assert.Equal(
-            $"path ../../.tmp/x.png leads through a link to {elsewhere}, outside the project {project} "
-                + $"and the checkout's .tmp folder {CheckoutTmp}; save inside either",
-            refused.Message
-        );
+        Assert.Equal($"path ../../.tmp/x.png leads through a link to {elsewhere}, outside {WorktreePlaces(project)}", refused.Message);
     }
 
     [Fact]
@@ -203,7 +198,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         Directory.CreateDirectory(CheckoutTmp);
         MakeJunction(Path.Combine(CheckoutTmp, "g"), dotGodot);
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, "../../.tmp/g/x.png", overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(project, "../../.tmp/g/x.png", overwrite: false));
 
         Assert.Equal(
             $"path ../../.tmp/g/x.png leads through a link to {dotGodot}, under .godot/, which the editor owns; pick a tracked folder",
@@ -219,7 +214,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         Directory.CreateDirectory(CheckoutTmp);
         MakeJunction(Path.Combine(CheckoutTmp, "p"), project);
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, "../../.tmp/p/.godot/x.png", overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(project, "../../.tmp/p/.godot/x.png", overwrite: false));
 
         Assert.Equal(
             $"path ../../.tmp/p/.godot/x.png leads through a link to {Path.Combine(project, ".godot")}, under .godot/, "
@@ -237,7 +232,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         Directory.CreateDirectory(CheckoutTmp);
         MakeJunction(Path.Combine(CheckoutTmp, "p"), project);
 
-        Assert.Equal(Path.Combine(CheckoutTmp, "p", "docs", "x.png"), ScreenshotTarget.Resolve(project, "../../.tmp/p/docs/x.png", overwrite: false));
+        Assert.Equal(Path.Combine(CheckoutTmp, "p", "docs", "x.png"), Resolve(project, "../../.tmp/p/docs/x.png", overwrite: false));
     }
 
     [Fact]
@@ -248,25 +243,23 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string real = Directory.CreateDirectory(Path.Combine(CheckoutTmp, "real")).FullName;
         MakeJunction(Path.Combine(CheckoutTmp, "inner"), real);
 
-        Assert.Equal(Path.Combine(CheckoutTmp, "inner", "x.png"), ScreenshotTarget.Resolve(project, "../../.tmp/inner/x.png", overwrite: false));
+        Assert.Equal(Path.Combine(CheckoutTmp, "inner", "x.png"), Resolve(project, "../../.tmp/inner/x.png", overwrite: false));
     }
 
     [Fact]
     public void TheNearestGitEntryAboveTheProjectFixesTheTmpFolder()
     {
         string project = ProjectUnderACheckout(dotGitIsFile: false);
-        Directory.CreateDirectory(Path.Combine(_temp.Path, "src", ".git"));
-        string innerTmp = Path.Combine(_temp.Path, "src", ".tmp");
+        string inner = Path.Combine(_temp.Path, "src");
+        Git.Run(inner, "init", "--quiet", "--initial-branch=main");
+        string innerTmp = Path.Combine(inner, ".tmp");
 
-        Assert.Equal(Path.Combine(innerTmp, "x.png"), ScreenshotTarget.Resolve(project, "../.tmp/x.png", overwrite: false));
+        Assert.Equal(Path.Combine(innerTmp, "x.png"), Resolve(project, "../.tmp/x.png", overwrite: false));
 
         string outer = Path.Combine(CheckoutTmp, "x.png");
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, outer, overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(project, outer, overwrite: false));
 
-        Assert.Equal(
-            $"path {outer} resolves outside the project {project} and the checkout's .tmp folder {innerTmp}; save inside either",
-            refused.Message
-        );
+        Assert.Equal($"path {outer} resolves outside {UntrackedPlaces(project, inner, main: null)}", refused.Message);
     }
 
     [Fact]
@@ -275,7 +268,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string project = ProjectUnderACheckout(dotGitIsFile: true);
         const string path = "../../.tmp/SCREEN~2/shot.png";
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(project, path, overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(project, path, overwrite: false));
 
         Assert.Equal($"path {path} uses a short (8.3) name; use the folder's full name", refused.Message);
     }
@@ -285,7 +278,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     {
         string project = ProjectUnderACheckout(dotGitIsFile: true);
 
-        Assert.Equal(Path.Combine(CheckoutTmp, ".godot", "x.png"), ScreenshotTarget.Resolve(project, "../../.tmp/.godot/x.png", overwrite: false));
+        Assert.Equal(Path.Combine(CheckoutTmp, ".godot", "x.png"), Resolve(project, "../../.tmp/.godot/x.png", overwrite: false));
     }
 
     [Theory]
@@ -296,7 +289,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     [InlineData(".godot./shot.png")]
     public void APathUnderDotGodotIsRefused(string path)
     {
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(Project, path, overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(Project, path, overwrite: false));
 
         Assert.Equal($"path {path} is under .godot/, which the editor owns; pick a tracked folder", refused.Message);
     }
@@ -307,7 +300,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     [InlineData("docs/shot.png:x.png")]
     public void APathNamingAStreamIsRefused(string path)
     {
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(Project, path, overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(Project, path, overwrite: false));
 
         Assert.Equal($"path must not contain ':' after the drive: {path}", refused.Message);
     }
@@ -317,7 +310,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     [InlineData("docs/SCREEN~2/shot.png")]
     public void APathWithAShortNameIsRefused(string path)
     {
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(Project, path, overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(Project, path, overwrite: false));
 
         Assert.Equal($"path {path} uses a short (8.3) name; use the folder's full name", refused.Message);
     }
@@ -329,7 +322,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         using TempDirectory outside = new();
         MakeJunction(Path.Combine(Project, "addons"), outside.Path);
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(Project, "addons/shot.png", overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(Project, "addons/shot.png", overwrite: false));
 
         Assert.Equal($"path addons/shot.png leads through a link to {outside.Path}, outside the project; save inside the project", refused.Message);
     }
@@ -341,7 +334,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string screenshots = Directory.CreateDirectory(Path.Combine(Project, ".godot", "godot-mcp")).FullName;
         MakeJunction(Path.Combine(Project, "shots"), screenshots);
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(Project, "shots/shot.png", overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(Project, "shots/shot.png", overwrite: false));
 
         Assert.Equal(
             $"path shots/shot.png leads through a link to {screenshots}, under .godot/, which the editor owns; pick a tracked folder",
@@ -356,7 +349,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string docs = Directory.CreateDirectory(Path.Combine(Project, "docs")).FullName;
         MakeJunction(Path.Combine(Project, "shots"), docs);
 
-        Assert.Equal(Path.Combine(Project, "shots", "shot.png"), ScreenshotTarget.Resolve(Project, "shots/shot.png", overwrite: false));
+        Assert.Equal(Path.Combine(Project, "shots", "shot.png"), Resolve(Project, "shots/shot.png", overwrite: false));
     }
 
     [Fact]
@@ -374,7 +367,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
             Assert.Skip($"creating a file symbolic link needs a privilege this run lacks: {e.Message}");
         }
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(Project, "shot.png", overwrite: true));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(Project, "shot.png", overwrite: true));
 
         Assert.Equal($"path shot.png leads through a link to {target}, outside the project; save inside the project", refused.Message);
     }
@@ -384,7 +377,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     {
         string expected = Path.Combine(Project, ".godot-shots", "shot.png");
 
-        Assert.Equal(expected, ScreenshotTarget.Resolve(Project, ".godot-shots/shot.png", overwrite: false));
+        Assert.Equal(expected, Resolve(Project, ".godot-shots/shot.png", overwrite: false));
     }
 
     [Theory]
@@ -395,7 +388,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     [InlineData("docs/")]
     public void APathNotEndingInPngIsRefused(string path)
     {
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(Project, path, overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(Project, path, overwrite: false));
 
         Assert.Equal($"path must end in .png: {path}", refused.Message);
     }
@@ -406,10 +399,10 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string existing = Path.Combine(Project, "shot.png");
         File.WriteAllBytes(existing, PngBytes);
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Resolve(Project, "shot.png", overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => Resolve(Project, "shot.png", overwrite: false));
 
         Assert.Equal("shot.png exists; pass options.overwrite true to replace it", refused.Message);
-        Assert.Equal(existing, ScreenshotTarget.Resolve(Project, "shot.png", overwrite: true));
+        Assert.Equal(existing, Resolve(Project, "shot.png", overwrite: true));
     }
 
     [Fact]
@@ -418,7 +411,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string capture = WriteCapture();
         string destination = Path.Combine(Project, "docs", "screenshots", "showcase", "class.png");
 
-        ScreenshotTarget.Save(capture, destination, overwrite: false);
+        ScreenshotTarget.Save(capture, Destination(Project, destination, overwrite: false), overwrite: false);
 
         Assert.Equal(PngBytes, File.ReadAllBytes(destination));
         Assert.Equal(PngBytes, File.ReadAllBytes(capture));
@@ -431,7 +424,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         string destination = Path.Combine(Project, "shot.png");
         File.WriteAllBytes(destination, [1, 2]);
 
-        ScreenshotTarget.Save(capture, destination, overwrite: true);
+        ScreenshotTarget.Save(capture, Destination(Project, destination, overwrite: true), overwrite: true);
 
         Assert.Equal(PngBytes, File.ReadAllBytes(destination));
     }
@@ -441,28 +434,29 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     {
         string capture = WriteCapture();
         string destination = Path.Combine(Project, "shot.png");
+        OutputTarget target = Destination(Project, destination, overwrite: false);
         File.WriteAllBytes(destination, [1, 2]);
 
-        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Save(capture, destination, overwrite: false));
+        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.Save(capture, target, overwrite: false));
 
         Assert.StartsWith($"saving the screenshot to {destination} failed: ", refused.Message, StringComparison.Ordinal);
         Assert.Equal([1, 2], File.ReadAllBytes(destination));
     }
 
     /// <summary>
-    /// A project at &lt;temp&gt;/src/Game under a checkout at &lt;temp&gt;, whose .git is a folder, or the file a
-    /// linked worktree has.
+    /// A project at &lt;temp&gt;/src/Game, which git does not track, under a checkout at &lt;temp&gt;: a repository whose
+    /// .git is a folder, or a linked worktree, whose .git is a file, of a main checkout at &lt;main&gt;.
     /// </summary>
     private string ProjectUnderACheckout(bool dotGitIsFile)
     {
-        string dotGit = Path.Combine(_temp.Path, ".git");
         if (dotGitIsFile)
         {
-            File.WriteAllText(dotGit, "gitdir: ../elsewhere/.git/worktrees/game\n");
+            Git.InitAndCommitAll(_main.Path);
+            Git.Run(_main.Path, "worktree", "add", "--quiet", _temp.Path);
         }
         else
         {
-            Directory.CreateDirectory(dotGit);
+            Git.Run(_temp.Path, "init", "--quiet", "--initial-branch=main");
         }
 
         return Directory.CreateDirectory(Path.Combine(_temp.Path, "src", "Game")).FullName;
@@ -470,8 +464,36 @@ public sealed class ScreenshotPathValidationTests : IDisposable
 
     private string CheckoutTmp => Path.Combine(_temp.Path, ".tmp");
 
+    /// <summary>The places a refusal names for <see cref="ProjectUnderACheckout"/> with a .git file.</summary>
+    private string WorktreePlaces(string project) => UntrackedPlaces(project, _temp.Path, _main.Path);
+
+    /// <summary>
+    /// The places a refusal names for a project its checkout does not track, with the main checkout's .tmp folder when there
+    /// is one.
+    /// </summary>
+    internal static string UntrackedPlaces(string project, string checkout, string? main)
+    {
+        string checkoutTmp =
+            $"the checkout's .tmp folder {Path.Combine(checkout, ".tmp")} (the checkout {checkout} does not track "
+            + $"{Path.Combine(project, "project.godot")}, so only its .tmp folder is open)";
+        return main is null
+            ? $"the project {project} and {checkoutTmp}; save inside either"
+            : $"the project {project}, {checkoutTmp} and the main checkout's .tmp folder {Path.Combine(main, ".tmp")}; save inside one of them";
+    }
+
+    /// <summary>ScreenshotTarget.Resolve's full path.</summary>
+    private static string Resolve(string project, string path, bool overwrite) => Destination(project, path, overwrite).FullPath;
+
+    private static OutputTarget Destination(string project, string path, bool overwrite) =>
+        ScreenshotTarget.Resolve(project, path, overwrite, NullLogger.Instance);
+
     // A junction needs no privilege, unlike a directory symbolic link, and .NET has no API that makes one.
-    private static void MakeJunction(string link, string target)
+    internal static void MakeJunction(string link, string target) => Mklink("/J", link, target);
+
+    /// <summary>Makes <paramref name="link"/> a second name of the file <paramref name="target"/>.</summary>
+    internal static void MakeHardLink(string link, string target) => Mklink("/H", link, target);
+
+    private static void Mklink(string kind, string link, string target)
     {
         ProcessStartInfo start = new("cmd.exe")
         {
@@ -481,7 +503,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        foreach (string argument in new[] { "/c", "mklink", "/J", link, target })
+        foreach (string argument in new[] { "/c", "mklink", kind, link, target })
         {
             start.ArgumentList.Add(argument);
         }
@@ -490,7 +512,7 @@ public sealed class ScreenshotPathValidationTests : IDisposable
         mklink.StandardInput.Close();
         string output = mklink.StandardOutput.ReadToEnd() + mklink.StandardError.ReadToEnd();
         mklink.WaitForExit();
-        Assert.True(mklink.ExitCode == 0, $"mklink /J {link} {target} failed: {output}");
+        Assert.True(mklink.ExitCode == 0, $"mklink {kind} {link} {target} failed: {output}");
     }
 
     private string WriteCapture()

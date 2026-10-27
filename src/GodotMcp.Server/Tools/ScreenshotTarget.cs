@@ -1,5 +1,6 @@
 using System.ComponentModel;
-using System.Text.RegularExpressions;
+using System.Runtime.Versioning;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
 
 namespace GodotMcp.Server.Tools;
@@ -12,95 +13,56 @@ internal sealed record SaveScreenshotOptions(
 );
 
 /// <summary>
-/// The file save_screenshot writes a capture to: a .png inside the project, or inside the git checkout's .tmp folder above it,
-/// outside the editor's .godot/ folder. The capture itself and its preview stay in .godot/godot-mcp/screenshots/; only the
+/// The file save_screenshot writes a capture to: a .png in one of the <see cref="OutputPlaces"/>, held to the rule of
+/// <see cref="OutputDestination"/>. The capture itself and its preview stay in .godot/godot-mcp/screenshots/; only the
 /// full-size PNG is copied here.
 /// </summary>
-internal static partial class ScreenshotTarget
+internal static class ScreenshotTarget
 {
-    private const string ResPrefix = "res://";
+    private const string Extension = ".png";
 
-    /// <summary>The full path <paramref name="path"/> names, checked before any capture is taken.</summary>
+    /// <summary>The folder the bridge saves a session's captures to.</summary>
+    internal static string CaptureFolder(string projectDir) => Path.Combine(projectDir, ".godot", "godot-mcp", "screenshots");
+
+    /// <summary>The file <paramref name="path"/> names, checked before any capture is taken.</summary>
     /// <param name="projectDir">The session's project folder.</param>
-    /// <param name="path">Project-relative, res:// or absolute.</param>
+    /// <param name="path">Project-relative, res:// or fully qualified.</param>
     /// <param name="overwrite">Whether an existing file there may be replaced.</param>
+    /// <param name="logger">Where a missing or stopped git is reported.</param>
+    /// <exception cref="McpException">The path breaks the rule, or names an existing file without <paramref name="overwrite"/>.</exception>
+    internal static OutputTarget Resolve(string projectDir, string path, bool overwrite, ILogger logger)
+    {
+        var places = OutputPlaces.Find(projectDir, logger);
+        return new OutputTarget(places, path, OutputDestination.Resolve(places, path, Extension, overwrite));
+    }
+
+    /// <summary>
+    /// Checks the target again and copies the capture to it, creating its folders when missing and replacing the folder
+    /// entry there, never writing through a link.
+    /// </summary>
     /// <exception cref="McpException">
-    /// The path does not end in .png; resolves outside the project and the git checkout's .tmp folder above it, or under
-    /// .godot/, itself or through a link; holds a ':' after the drive or a short (8.3) name; or names an existing file
-    /// without <paramref name="overwrite"/>.
+    /// The capture is not under the session's screenshots folder, by its name or by the file its open handle reaches, or it
+    /// has more than one name; the target breaks the rule now; the copy failed; or the target appeared since it was checked
+    /// and overwrite is false.
     /// </exception>
-    internal static string Resolve(string projectDir, string path, bool overwrite)
+    internal static void Save(string capturePath, OutputTarget target, bool overwrite)
     {
-        if (!path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+        string folder = CaptureFolder(target.Places.Project);
+        if (HeadlessTools.IsOutside(Path.GetRelativePath(folder, Path.GetFullPath(capturePath))))
         {
-            throw new McpException($"path must end in .png: {path}");
+            throw new McpException($"the capture {capturePath} is not under the session's screenshots folder {folder}; it is not copied");
         }
 
-        // res:// names the project's own tree, so it never reaches the checkout's .tmp folder.
-        bool isRes = path.StartsWith(ResPrefix, StringComparison.Ordinal);
-        string relative = isRes ? path[ResPrefix.Length..] : path;
-        string full = Path.GetFullPath(Path.IsPathRooted(relative) ? relative : Path.Combine(projectDir, relative));
-        string inProject = Path.GetRelativePath(projectDir, full);
-        if (HeadlessTools.IsOutside(inProject))
-        {
-            CheckOutside(projectDir, path, full, allowTmp: !isRes);
-        }
-        else
-        {
-            CheckParts(path, inProject, underDotGodot: true);
-            CheckLinks(projectDir, path, inProject);
-        }
-
-        return overwrite || !File.Exists(full) ? full : throw new McpException($"{path} exists; pass options.overwrite true to replace it");
-    }
-
-    /// <summary>
-    /// Checks a path outside the project: it may lie only inside the git checkout's .tmp folder above the project, and
-    /// every other outside path is refused with both places a save may go.
-    /// </summary>
-    private static void CheckOutside(string projectDir, string path, string full, bool allowTmp)
-    {
-        string? checkout =
-            (allowTmp ? FindCheckout(projectDir) : null)
-            ?? throw new McpException($"path {path} resolves outside the project {projectDir}; save inside the project");
-        string tmpDir = Path.Combine(checkout, ".tmp");
-        string inTmp = Path.GetRelativePath(tmpDir, full);
-        if (HeadlessTools.IsOutside(inTmp))
-        {
-            throw new McpException(
-                $"path {path} resolves outside the project {projectDir} and the checkout's .tmp folder {tmpDir}; save inside either"
-            );
-        }
-
-        CheckParts(path, inTmp, underDotGodot: false);
-        CheckTmpLinks(checkout, tmpDir, projectDir, path, inTmp);
-    }
-
-    /// <summary>
-    /// The nearest folder at or above <paramref name="projectDir"/> holding a .git entry — a folder, or a linked
-    /// worktree's file — or null when no ancestor has one.
-    /// </summary>
-    private static string? FindCheckout(string projectDir)
-    {
-        for (DirectoryInfo? dir = new(Path.GetFullPath(projectDir)); dir is not null; dir = dir.Parent)
-        {
-            if (Directory.Exists(Path.Combine(dir.FullName, ".git")) || File.Exists(Path.Combine(dir.FullName, ".git")))
-            {
-                return dir.FullName;
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>Copies the capture to the target, creating its folders when missing.</summary>
-    /// <exception cref="McpException">The copy failed, or the target appeared since it was checked and overwrite is false.</exception>
-    internal static void Save(string capturePath, string destination, bool overwrite)
-    {
+        string destination = OutputDestination.Check(target.Places, target.Requested, Extension);
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            File.Copy(capturePath, destination, overwrite);
+            using FileStream capture = new(capturePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (OperatingSystem.IsWindows())
+            {
+                CheckCaptureIsOurs(capture, capturePath, target.Places);
+            }
+
+            OutputDestination.CopyReplacing(capture, destination, overwrite);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -109,121 +71,26 @@ internal static partial class ScreenshotTarget
     }
 
     /// <summary>
-    /// Refuses a path that names an NTFS stream or a short (8.3) name, and, when <paramref name="underDotGodot"/>, one
-    /// under .godot/. <paramref name="relative"/> is the path relative to the folder it is saved under, the project or
-    /// the checkout's .tmp folder.
+    /// Refuses an open capture that is not the session's own: the file its handle reaches must lie under the screenshots
+    /// folder of the project's final path, taken literally (a linked .godot or screenshots folder leads elsewhere), and have
+    /// one name, so a hard link to a file elsewhere is not copied.
     /// </summary>
-    private static void CheckParts(string path, string relative, bool underDotGodot)
+    [SupportedOSPlatform("windows")]
+    private static void CheckCaptureIsOurs(FileStream capture, string capturePath, OutputPlaces places)
     {
-        // A ':' after the drive names an NTFS alternate stream: README.md:x.png writes into README.md.
-        if (relative.Contains(':', StringComparison.Ordinal))
+        string final = FinalPath.Of(capture.SafeFileHandle);
+        if (HeadlessTools.IsOutside(Path.GetRelativePath(CaptureFolder(places.FinalProject), final)))
         {
-            throw new McpException($"path must not contain ':' after the drive: {path}");
+            throw new McpException(
+                $"the capture {capturePath} resolves to {final}, not under the session's screenshots folder "
+                    + $"{CaptureFolder(places.Project)}; it is not copied"
+            );
         }
 
-        // GODOT~1 can name .godot, and a short name hides which folder it is.
-        if (relative.Split(Path.DirectorySeparatorChar).Any(part => ShortNamePattern().IsMatch(part)))
+        uint names = FinalPath.LinkCount(capture.SafeFileHandle);
+        if (names != 1)
         {
-            throw new McpException($"path {path} uses a short (8.3) name; use the folder's full name");
-        }
-
-        if (underDotGodot && IsUnderDotGodot(relative))
-        {
-            throw new McpException($"path {path} is under .godot/, which the editor owns; pick a tracked folder");
+            throw new McpException($"the capture {capturePath} has {names} names (hard links); it is not copied");
         }
     }
-
-    /// <summary>
-    /// Follows every link on the way from the project folder to the target, the target included when it exists, and refuses
-    /// a link whose final target lies outside the project or under .godot/.
-    /// </summary>
-    private static void CheckLinks(string projectDir, string path, string inProject)
-    {
-        string current = projectDir;
-        foreach (string part in inProject.Split(Path.DirectorySeparatorChar))
-        {
-            current = Path.Combine(current, part);
-            string? target = FinalLinkTarget(path, current);
-            if (target is null)
-            {
-                continue;
-            }
-
-            string targetInProject = Path.GetRelativePath(projectDir, target);
-            if (HeadlessTools.IsOutside(targetInProject))
-            {
-                throw new McpException($"path {path} leads through a link to {target}, outside the project; save inside the project");
-            }
-
-            if (IsUnderDotGodot(targetInProject))
-            {
-                throw new McpException($"path {path} leads through a link to {target}, under .godot/, which the editor owns; pick a tracked folder");
-            }
-
-            current = target;
-        }
-    }
-
-    /// <summary>
-    /// Follows every link on the way from the checkout down to the target, the target included when it exists: the .tmp
-    /// entry itself and every entry below it must finally lead inside that .tmp folder or the project, and a position
-    /// that lies inside the project is held to the project's .godot rule.
-    /// </summary>
-    private static void CheckTmpLinks(string checkout, string tmpDir, string projectDir, string path, string inTmp)
-    {
-        string current = checkout;
-        string[] parts = [Path.GetFileName(tmpDir), .. inTmp.Split(Path.DirectorySeparatorChar)];
-        foreach (string part in parts)
-        {
-            current = CheckTmpStep(tmpDir, projectDir, path, current, part);
-        }
-    }
-
-    /// <summary>
-    /// Follows the link, if any, at the entry <paramref name="part"/> names under <paramref name="current"/> and returns
-    /// the position that names: a link's final target, held to the .tmp and .godot rules, or the entry itself.
-    /// </summary>
-    private static string CheckTmpStep(string tmpDir, string projectDir, string path, string current, string part)
-    {
-        string entry = Path.Combine(current, part);
-        string reached = FinalLinkTarget(path, entry) ?? entry;
-        string inTmp = Path.GetRelativePath(tmpDir, reached);
-        string inProject = Path.GetRelativePath(projectDir, reached);
-        if (HeadlessTools.IsOutside(inTmp) && HeadlessTools.IsOutside(inProject))
-        {
-            string places = $"the project {projectDir} and the checkout's .tmp folder {tmpDir}";
-            throw new McpException($"path {path} leads through a link to {reached}, outside {places}; save inside either");
-        }
-
-        if (!HeadlessTools.IsOutside(inProject) && IsUnderDotGodot(inProject))
-        {
-            throw new McpException($"path {path} leads through a link to {reached}, under .godot/, which the editor owns; pick a tracked folder");
-        }
-
-        return reached;
-    }
-
-    /// <summary>The full path a link at <paramref name="current"/> finally leads to; null when nothing or no link is there.</summary>
-    private static string? FinalLinkTarget(string path, string current)
-    {
-        try
-        {
-            FileInfo entry = new(current);
-            return entry.LinkTarget is null ? null : entry.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            throw new McpException($"path {path} leads through a link at {current} that cannot be followed: {e.Message}", e);
-        }
-    }
-
-    /// <summary>
-    /// Whether a project-relative path starts in .godot: Windows finds .GODOT and .godot. as .godot, and Godot's own folder is
-    /// never a tracked one on any system.
-    /// </summary>
-    private static bool IsUnderDotGodot(string inProject) =>
-        string.Equals(inProject.Split(Path.DirectorySeparatorChar)[0].TrimEnd('.', ' '), ".godot", StringComparison.OrdinalIgnoreCase);
-
-    [GeneratedRegex(@"~\d")]
-    private static partial Regex ShortNamePattern();
 }

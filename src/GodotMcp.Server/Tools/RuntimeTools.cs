@@ -68,18 +68,22 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
 
     [McpServerTool(Name = SaveScreenshotToolName, ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
-        "Captures the running game's next drawn frame as take_screenshot does and writes the PNG straight to path, a file "
-            + "in the project such as a tracked picture, in one call; take_screenshot is the read-only way, saving only under "
-            + ".godot/. path is project-relative, res:// or absolute; it must end in .png, resolve inside the project or the "
-            + "git checkout's .tmp folder above it, and not lie under .godot/. Missing folders are created, and an existing file is "
-            + "true; the path is checked before the shot is taken. Returns take_screenshot's result with path the named file "
-            + "and capturePath the copy under .godot/godot-mcp/screenshots/, beside which any preview stays, plus an image "
-            + "unless options.responseMode is path_only."
+        "Captures the running game's next drawn frame as take_screenshot does and writes the PNG straight to path in one call; "
+            + "take_screenshot is the read-only way, saving only under .godot/. path is project-relative, res:// or absolute and "
+            + "must end in .png. It may lie in the project; in the git checkout holding it, as a whole tree when the checkout "
+            + "tracks the project's project.godot, else only in its .tmp folder; or in the main checkout's .tmp folder when that "
+            + "checkout is a git worktree. Never inside a .git folder or under a .godot folder outside a .tmp; a res:// path stays "
+            + "in the project; links on the way are followed and their targets held to the same places. Missing folders are "
+            + "created, and an existing file is refused unless options.overwrite is true; the path is checked before the shot is "
+            + "taken and again before the write. Returns take_screenshot's result with path the named file and capturePath the "
+            + "copy under .godot/godot-mcp/screenshots/, beside which any preview stays, plus an image unless "
+            + "options.responseMode is path_only."
     )]
     public async Task<IEnumerable<ContentBlock>> SaveScreenshotAsync(
         [Description(
-            "The PNG to write: project-relative, res:// or absolute, inside the project or the git checkout's .tmp folder "
-                + "above it, outside .godot/, ending in .png."
+            "The PNG to write: project-relative, res:// or absolute, ending in .png; in the project, its git checkout (the whole "
+                + "tree when the checkout tracks the project, else its .tmp folder) or the main checkout's .tmp folder; never in "
+                + ".git or under a .godot outside a .tmp."
         )]
             string path,
         [Description("A rectangle to keep, in viewport coordinates, as take_screenshot takes it.")] ScreenshotCrop? crop = null,
@@ -93,7 +97,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
         ScreenshotMode mode = ParseMode(settings.ResponseMode);
         JsonObject parameters = BuildScreenshotParameters(mode, crop, settings.PreviewMaxWidth);
         GodotSession target = Find(session);
-        string destination = ScreenshotTarget.Resolve(target.ProjectDir, path, settings.Overwrite);
+        OutputTarget destination = ScreenshotTarget.Resolve(target.ProjectDir, path, settings.Overwrite, target.Logger);
         return await ScreenshotAsync(
             target,
             SaveScreenshotToolName,
@@ -117,11 +121,11 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     }
 
     /// <summary>Copies the capture to the destination, which becomes the result's path; capturePath keeps the capture's.</summary>
-    private static void CopyCapture(JsonObject text, string destination, bool overwrite)
+    private static void CopyCapture(JsonObject text, OutputTarget destination, bool overwrite)
     {
         string capture = text["path"]!.GetValue<string>();
         ScreenshotTarget.Save(capture, destination, overwrite);
-        text["path"] = destination;
+        text["path"] = destination.FullPath;
         text["capturePath"] = capture;
     }
 
