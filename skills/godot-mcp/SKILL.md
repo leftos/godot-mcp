@@ -138,7 +138,7 @@ A real-time recording ends with its session too: `stop_project` and `detach_proj
 
 A clip that could not be finished comes back as `recording.error` and does not fail the stop, restart or detach; a `start` while the session is ending is refused until the game has restarted.
 
-A real-time recording needs ffmpeg and the capture helper, records the game's own sound as an audio track unless `options.audio: false` (a muted session records no track and warns; a game that mutes itself after the start gives a silent one; the system volume and mute do not change what it records; the sound needs Windows build 20348 or later), and is refused on a quiet or headless session; keep the window unminimized, since a minimized window holds its last frame.
+A real-time recording needs ffmpeg and the capture helper, records the game's own sound as an audio track unless `options.audio: false` (a muted session records no track and warns; a game that mutes itself after the start gives a silent one; the system volume and mute do not change what it records; the sound needs Windows build 20348 or later), and is refused on a quiet or headless session; keep the window unminimized, since a minimized window holds its last frame (the stop result warns, naming each span).
 
 **Headless scene editing** (no game runs; a live session on the folder keeps running, and sees an edit only after `restart_project`).
 

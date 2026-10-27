@@ -462,6 +462,28 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AWindowMinimizedMidRecordingIsWarnedOf()
+    {
+        await LaunchAsync(quiet: false, TestContext.Current.CancellationToken);
+        long window = _harness.Sessions.Resolve(null).WindowHandle ?? throw new InvalidOperationException("the hello carried no window handle.");
+        await MarkAsync("start");
+
+        CaptureWindows.MinimizeWindow((nint)window);
+        bool minimized = await Poll.UntilAsync(() => CaptureWindows.IsMinimized((nint)window), CaptureWindows.HangGuard, Token);
+        Assert.True(
+            minimized,
+            FormattableString.Invariant($"the game's window {window} was not minimized in {CaptureWindows.HangGuard.TotalSeconds} s")
+        );
+        await Task.Delay(500, Token);
+        CaptureWindows.RestoreBehind((nint)window);
+        await AssertWindowRestoredAsync(Token);
+        JsonNode stopped = await MarkAsync("stop");
+
+        string warning = stopped["warning"]?.GetValue<string>() ?? "";
+        Assert.Contains("the game's window was minimized from", warning, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AToneTheGamePlaysIsInTheClipsAudioTrack()
     {
         await LaunchAsync(quiet: false, TestContext.Current.CancellationToken);

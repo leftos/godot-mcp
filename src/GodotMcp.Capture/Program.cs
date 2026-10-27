@@ -213,11 +213,14 @@ internal static class Program
     /// the caller waits for the audio: the EOF is what makes ffmpeg flush the frames its encoder still holds (h264_nvenc
     /// keeps a few) and end the video stream, so ffmpeg is never left waiting on a video input that has stopped sending
     /// while the audio drains. A resize, a lost device or a reader gone ends the video with its own end and line.
+    /// Each span the window spent minimized, over which the clip holds the last frame drawn before it, gets a line when it ends,
+    /// a span still open when the video ends included.
     /// </summary>
     private static async Task<VideoRun> WriteFramesAsync(WindowCapture capture, byte[] frame, Deadline deadline, int fps)
     {
         int written = 0;
         Stopwatch clock = new();
+        MinimizedSpans minimized = new();
         try
         {
             // Unbuffered: a frame is one write, so a reader gone fails that write and nothing is left to flush at dispose.
@@ -231,6 +234,7 @@ internal static class Program
                 capture.TryCopyLatestFrame(frame);
                 await stdout.WriteAsync(frame).ConfigureAwait(false);
                 written++;
+                await SaySpanAsync(minimized.Tick(capture.IsMinimized, clock.Elapsed)).ConfigureAwait(false);
             }
             return capture.IsClosed
                 ? new VideoRun(
@@ -256,8 +260,11 @@ internal static class Program
         finally
         {
             StandardOutput.Close();
+            await SaySpanAsync(minimized.Finish(clock.Elapsed)).ConfigureAwait(false);
         }
     }
+
+    private static Task SaySpanAsync(MinimizedSpan? span) => span is { } ended ? SayAsync(ended.Line) : Task.CompletedTask;
 
     /// <summary>
     /// A write blocks while the reader is busy, and the timer skips the ticks it missed, so a slow reader means fewer frames

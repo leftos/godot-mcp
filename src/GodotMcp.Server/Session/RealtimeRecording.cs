@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Session;
@@ -338,15 +339,22 @@ internal sealed partial class RealtimeRecording
     {
         try
         {
-            using FileStream stream = new(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using StreamReader reader = new(stream, Encoding.UTF8);
-            string[] lines = reader.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            string[] lines = ReadLog(logPath).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             return lines.Length == 0 ? "(it wrote nothing)" : string.Join(" | ", lines[^Math.Min(LastLineCount, lines.Length)..]);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return $"(its log could not be read: {e.Message})";
         }
+    }
+
+    /// <summary>A log's whole text, read while its writer may still hold it open.</summary>
+    /// <exception cref="IOException">The log is missing or cannot be read.</exception>
+    private static string ReadLog(string logPath)
+    {
+        using FileStream stream = new(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using StreamReader reader = new(stream, Encoding.UTF8);
+        return reader.ReadToEnd();
     }
 
     /// <summary>
@@ -964,6 +972,8 @@ internal sealed partial class RealtimeRecording
             warnings.Add(FormattableString.Invariant($"the window changed size at {clip.Seconds:0.0} s; the clip ends there"));
         }
 
+        warnings.Add(MinimizedNote());
+
         if (clip.AverageFps < LowRateShare * _start.Fps)
         {
             warnings.Add(
@@ -975,6 +985,41 @@ internal sealed partial class RealtimeRecording
 
         return Join("; ", [.. warnings, .. notes]);
     }
+
+    /// <summary>The minimized warning from the helper's log, which is complete once it has exited; what went wrong when it cannot be read.</summary>
+    private string? MinimizedNote()
+    {
+        try
+        {
+            return MinimizedWarning(ReadLog(Paths.CaptureLog));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return $"the capture log {Paths.CaptureLog} could not be read, so a span the game's window spent minimized would not be warned of: "
+                + e.Message;
+        }
+    }
+
+    /// <summary>
+    /// The warning for the spans the capture helper says the game's window spent minimized, its numbers copied from the helper's
+    /// lines as printed; null when the log holds none.
+    /// </summary>
+    internal static string? MinimizedWarning(string captureLog)
+    {
+        string[] spans = [.. MinimizedLine().Matches(captureLog).Select(match => $"from {match.Groups[1].Value} s to {match.Groups[2].Value} s")];
+        if (spans.Length == 0)
+        {
+            return null;
+        }
+
+        string over = spans.Length == 1 ? "the minimize over that span" : "each minimize over those spans";
+        string from = spans.Length == 1 ? spans[0] : $"{string.Join(", ", spans[..^1])} and {spans[^1]}";
+        return $"the game's window was minimized {from} of the clip, so the clip holds the last frame drawn before {over}; keep the window "
+            + "restored while it records";
+    }
+
+    [GeneratedRegex(@"^godot-mcp-capture: minimized from (\d+\.\d) s to (\d+\.\d) s of the clip\r?$", RegexOptions.Multiline)]
+    private static partial Regex MinimizedLine();
 
     private static string? Join(string separator, IEnumerable<string?> parts)
     {

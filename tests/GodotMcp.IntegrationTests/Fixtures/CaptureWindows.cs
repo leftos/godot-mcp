@@ -42,6 +42,7 @@ internal static class CaptureWindows
     private const string ConsoleWrapperSuffix = "_console.exe";
     private const uint NextWindowBelow = 2;
     private const int ShowNoActivate = 4;
+    private const int Minimize = 6;
     private const uint SnapshotProcesses = 2;
     private const nint Bottom = 1;
 
@@ -209,6 +210,16 @@ internal static class CaptureWindows
         if (!NativeMethods.SetWindowPos(window, Bottom, 0, 0, 0, 0, PushFlags))
         {
             throw new Win32Exception(Marshal.GetLastPInvokeError(), $"SetWindowPos(HWND_BOTTOM) failed for window {window}");
+        }
+    }
+
+    /// <summary>Minimizes a window (SW_MINIMIZE); the request is posted to the window's thread, so wait on <see cref="IsMinimized"/>.</summary>
+    /// <exception cref="Win32Exception">The request could not be posted.</exception>
+    public static void MinimizeWindow(nint window)
+    {
+        if (!NativeMethods.ShowWindowAsync(window, Minimize))
+        {
+            throw new Win32Exception(Marshal.GetLastPInvokeError(), $"ShowWindowAsync(SW_MINIMIZE) failed for window {window}");
         }
     }
 

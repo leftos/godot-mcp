@@ -33,6 +33,7 @@
     <Compile Include="..\..\src\GodotMcp.Capture\CaptureExit.cs" Link="Capture\CaptureExit.cs" />
     <Compile Include="..\..\src\GodotMcp.Capture\Crop.cs" Link="Capture\Crop.cs" />
     <Compile Include="..\..\src\GodotMcp.Capture\Deadline.cs" Link="Capture\Deadline.cs" />
+    <Compile Include="..\..\src\GodotMcp.Capture\MinimizedSpans.cs" Link="Capture\MinimizedSpans.cs" />
     <Compile Include="..\..\src\GodotMcp.Capture\PixelRect.cs" Link="Capture\PixelRect.cs" />
   </ItemGroup>
 </Project>

@@ -25,6 +25,16 @@ public sealed partial class RealtimeRecordingTests : IDisposable
     private const string ActivationWarning =
         "no audio: process-loopback audio for process 77 could not start: the device is gone, so the clip has no audio track";
 
+    /// <summary>The warning for the helper's line "minimized from 3.2 s to 7.9 s of the clip".</summary>
+    private const string OneSpanWarning =
+        "the game's window was minimized from 3.2 s to 7.9 s of the clip, so the clip holds the last frame drawn before the minimize "
+        + "over that span; keep the window restored while it records";
+
+    /// <summary>The warning for that line and a second, "minimized from 12.0 s to 13.5 s of the clip".</summary>
+    private const string TwoSpansWarning =
+        "the game's window was minimized from 3.2 s to 7.9 s and from 12.0 s to 13.5 s of the clip, so the clip holds the last frame "
+        + "drawn before each minimize over those spans; keep the window restored while it records";
+
     private static readonly TimeSpan Slack = TimeSpan.FromSeconds(2);
 
     /// <summary>
@@ -207,6 +217,45 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         Assert.True(File.Exists(stopped.Clip.Path), "the clip was not kept");
         Assert.Equal(5, stopped.Clip.Frames);
         Assert.Matches(ResizeWarning(), stopped.Warning ?? "");
+    }
+
+    [Fact]
+    public async Task OneMinimizedSpanIsWarnedAfterTheResize()
+    {
+        string warning = await ResizedWarningWithLinesAsync("godot-mcp-capture: minimized from 3.2 s to 7.9 s of the clip");
+
+        AssertMinimizedAfterResize(warning, OneSpanWarning);
+    }
+
+    [Fact]
+    public async Task TwoMinimizedSpansAreOneWarningAfterTheResize()
+    {
+        string warning = await ResizedWarningWithLinesAsync(
+            "godot-mcp-capture: minimized from 3.2 s to 7.9 s of the clip",
+            "godot-mcp-capture: minimized from 12.0 s to 13.5 s of the clip"
+        );
+
+        AssertMinimizedAfterResize(warning, TwoSpansWarning);
+    }
+
+    [Fact]
+    public void ACaptureLogWithoutAMinimizedLineHasNoMinimizedWarning()
+    {
+        string log = "godot-mcp-capture: recording until 12:00\r\ngodot-mcp-capture: 40 frames in 2.0 s (20.0 fps of 20)\r\n";
+
+        Assert.Null(RealtimeRecording.MinimizedWarning(log));
+    }
+
+    [Fact]
+    public void TheMinimizedLinesOfACaptureLogAreOneWarning()
+    {
+        string log =
+            "godot-mcp-capture: recording until 12:00\r\n"
+            + "godot-mcp-capture: minimized from 3.2 s to 7.9 s of the clip\r\n"
+            + "godot-mcp-capture: minimized from 12.0 s to 13.5 s of the clip\r\n"
+            + "godot-mcp-capture: 300 frames in 15.0 s (20.0 fps of 20)\r\n";
+
+        Assert.Equal(TwoSpansWarning, RealtimeRecording.MinimizedWarning(log));
     }
 
     [Fact]
@@ -595,6 +644,33 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         List<string> arguments = [.. request.Arguments];
         int at = arguments.IndexOf(name);
         return at >= 0 ? arguments[at + 1] : throw new InvalidOperationException($"{name} not in: {string.Join(' ', arguments)}");
+    }
+
+    /// <summary>The stop's warning of a recording whose helper said <paramref name="lines"/> and then exited for a resize.</summary>
+    private async Task<string> ResizedWarningWithLinesAsync(params string[] lines)
+    {
+        _fake.FrameInterval = TimeSpan.FromMilliseconds(5);
+        _fake.HelperFrameLimit = 5;
+        _fake.HelperExit = 3;
+        _fake.HelperLines = lines;
+        _fake.HelperEndRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        RealtimeRecording recording = await _fake.StartAsync();
+        _fake.HelperEndRelease.TrySetResult();
+        await recording.Finished.WaitAsync(RegistryHarness.HangGuard, Token);
+
+        RealtimeStopped stopped = await recording.StopAsync(Token);
+        return stopped.Warning ?? "";
+    }
+
+    /// <summary>The minimized warning follows the resize warning and comes before the low-rate one, when a busy machine adds it.</summary>
+    private static void AssertMinimizedAfterResize(string warning, string minimized)
+    {
+        int at = warning.IndexOf(minimized, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"no minimized warning in: {warning}");
+        Match resize = ResizeWarning().Match(warning);
+        Assert.True(resize.Success && resize.Index < at, $"the minimized warning does not follow the resize warning: {warning}");
+        Match lowRate = LowRateWarning().Match(warning);
+        Assert.True(!lowRate.Success || lowRate.Index > at, $"the minimized warning does not precede the low-rate warning: {warning}");
     }
 
     private static string LogNamedIn(string message) =>

@@ -50,6 +50,9 @@ internal sealed class WindowCapture : IDisposable
     /// <summary>True once the window has closed: no frame arrives after it. Read on every tick of a run.</summary>
     public bool IsClosed => _closed || !WindowFinder.IsWindow(_hwnd);
 
+    /// <summary>True while the window is minimized: no frame arrives, so each tick re-writes the last one. Read on every tick of a run.</summary>
+    public bool IsMinimized => WindowFinder.IsMinimized(_hwnd);
+
     public int FrameBytes => Crop.OutputWidth(CropRect) * Crop.OutputHeight(CropRect) * BytesPerPixel;
 
     /// <summary>

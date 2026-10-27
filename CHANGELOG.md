@@ -12,6 +12,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - `run_scratches` refuses `--display-driver` and `--audio-driver` in `engineArgs`, which would give a headless scene a window or sound.
 - `run_scratches` refuses a `--resolution` Godot cannot read before any scene runs, instead of failing every scene at launch.
+- A real-time recording whose game window was minimized partway warns at stop, naming each span the clip holds a frozen frame.
 - The skill's wait on a background `run_scratches` log wraps its `tail -F` in `timeout`, so a finished wait leaves no `tail` running.
 
 ## 0.22.0 - 2026-10-25
