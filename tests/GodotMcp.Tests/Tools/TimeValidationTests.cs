@@ -318,6 +318,59 @@ public sealed class TimeValidationTests : IDisposable
         Assert.Equal("Lobby", parameters["under"]!.GetValue<string>());
     }
 
+    [Theory]
+    [InlineData("prefix")]
+    [InlineData("contains")]
+    public void ATextConditionCarriesItsMatchMode(string match)
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Text: "Deep Mine", Match: match), 1000);
+
+        Assert.Equal("text", parameters["kind"]!.GetValue<string>());
+        Assert.Equal(match, parameters["match"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("exact")]
+    public void AnExactTextConditionCarriesNoMatch(string? match)
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Text: "Deep Mine", Match: match), 1000);
+
+        Assert.False(parameters.ContainsKey("match"));
+    }
+
+    [Theory]
+    [InlineData("Contains")]
+    [InlineData("suffix")]
+    public void AnUnknownMatchModeIsRefused(string match)
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildWaitParameters(new WaitCondition(Text: "Deep Mine", Match: match), 1000)
+        );
+
+        Assert.Equal($"match is \"{match}\"; it must be \"exact\", \"prefix\" or \"contains\".", refused.Message);
+    }
+
+    [Fact]
+    public void AMatchWithoutTextIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildWaitParameters(new WaitCondition(Node: "Lobby", Match: "prefix"), 1000)
+        );
+
+        Assert.Equal("match applies only to a text condition or target; this one has no text.", refused.Message);
+    }
+
+    [Fact]
+    public void AStepUntilTakesATextConditionWithAMatchMode()
+    {
+        StepOptions options = new(Until: new WaitCondition(Text: "Deep Mine", Match: "prefix"));
+
+        JsonObject parameters = RuntimeTools.BuildFrameParameters("step", null, null, options);
+
+        Assert.Equal("prefix", parameters["until"]!["match"]!.GetValue<string>());
+    }
+
     [Fact]
     public void ACheckOnceTextWaitIsAccepted()
     {

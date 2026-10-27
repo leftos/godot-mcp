@@ -33,13 +33,18 @@ internal sealed record InputTarget(
             + "an element Control is: a Button's (CheckBox, OptionButton, MenuButton…), Label's or LinkButton's text as "
             + "drawn, translated, a LineEdit's text or its placeholder while empty, a RichTextLabel's text without BBCode; "
             + "get_ui_elements reports the same text. A miss lists near misses and nodes of that name; several matches are "
-            + "refused, listed, narrow them with under. Leave element, x and y out when this is set."
+            + "refused, listed, narrow them with under. Leave element, x and y out when this is set. "
+            + MatchMode.DescriptionSentence
     )]
         string? Text = null,
     [property: Description(
         "Only with text: look for it only at or under this node, named as element names a node (a path, a unique bare name, or %Name)."
     )]
         string? Under = null,
+    [property: Description(
+        "Only with text: \"exact\" (the default), \"prefix\" or \"contains\", how text is compared with the shown text, both trimmed, case kept."
+    )]
+        string? Match = null,
     [property: Description(
         "Beside an element naming an ItemList, TabBar, TabContainer or Tree (beside text only for a Control that shows text "
             + "and draws items): an item drawn inside it, aimed at the item's centre (on a Tree's column 0, past the fold "
@@ -58,17 +63,20 @@ internal sealed record InputTarget(
 )
 {
     /// <summary>
-    /// The target as the bridge reads it: <c>{element, offset?, item?}</c>, <c>{text, under?, item?}</c> or <c>{x, y}</c>.
+    /// The target as the bridge reads it: <c>{element, offset?, item?}</c>, <c>{text, under?, match?, item?}</c> (match only
+    /// when not exact) or <c>{x, y}</c>.
     /// </summary>
     /// <exception cref="McpException">
     /// The target is missing, names none or more than one of an element, a text and a point, has an offset without an
-    /// element or without its x or y, has under without a text, or has an item without an element or a text, with other
+    /// element or without its x or y, has under or match without a text, has a match other than exact, prefix or
+    /// contains, or has an item without an element or a text, with other
     /// than one of text, index and path, with an empty path or a blank text in it, or with a negative index or column.
     /// </exception>
     public static JsonObject ToBridge(InputTarget? target, string parameter)
     {
         CheckOffset(target, parameter);
         CheckUnder(target, parameter);
+        MatchMode.Check(target?.Match, !string.IsNullOrWhiteSpace(target?.Text));
         CheckItem(target, parameter);
         return target?.ToBridgeOrNull()
             ?? throw new McpException($"{parameter} needs exactly one of element, text, or both x and y; got {Show(target)}.");
@@ -148,6 +156,7 @@ internal sealed record InputTarget(
             bridge["under"] = Under;
         }
 
+        MatchMode.ToBridge(Match, bridge);
         return WithItem(bridge);
     }
 
@@ -176,9 +185,12 @@ internal sealed record InputTarget(
     {
         string offset = ShowOffset(target?.Offset);
         string point = $"x: {Show(target?.X)}, y: {Show(target?.Y)}";
-        string anchors = $"element: {target?.Element ?? "null"}, {point}{ShowText("text", target?.Text)}{ShowText("under", target?.Under)}";
+        string anchors = $"element: {target?.Element ?? "null"}, {point}{ShowTextKeys(target)}";
         return $"{{{anchors}{offset}{ShowItem(target)}}}";
     }
+
+    private static string ShowTextKeys(InputTarget? target) =>
+        $"{ShowText("text", target?.Text)}{ShowText("under", target?.Under)}{ShowText("match", target?.Match)}";
 
     private static string ShowItem(InputTarget? target) => target?.Item is InputItem item ? $", item: {item.Show()}" : "";
 

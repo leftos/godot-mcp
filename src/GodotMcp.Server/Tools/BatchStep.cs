@@ -56,8 +56,13 @@ internal sealed record BatchStep(
     [property: Description("screenshot: the largest share of changed pixels, 0 to 1, that still matches; 0 by default.")]
         double? MaxChangedRatio = null,
     [property: Description("The session this step addresses; the batch's session when left out.")] string? Session = null,
-    [property: Description("wait: without node, the text exactly one visible Control must show, as wait_for's condition.text.")] string? Text = null,
+    [property: Description(
+        "wait: without node, the text exactly one visible Control must show, as wait_for's condition.text. " + MatchMode.DescriptionSentence
+    )]
+        string? Text = null,
     [property: Description("wait: with text, the node whose visible Controls are scanned, as wait_for's condition.under.")] string? Under = null,
+    [property: Description("wait: with text, \"exact\" (the default), \"prefix\" or \"contains\", as wait_for's condition.match.")]
+        string? Match = null,
     [property: Description("wait: with node, the frames the node's rect, transform or property must hold unchanged, as wait_for's condition.stable.")]
         int? Stable = null,
     [property: Description(

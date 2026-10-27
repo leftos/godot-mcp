@@ -34,6 +34,20 @@ static func _label_text(label: Label) -> String:
 	return TextServerManager.get_primary_interface().string_to_upper(shown, label.language)
 
 
+## Whether shown matches wanted as a {text} condition or target's match mode says, both trimmed and
+## case kept: "prefix" when shown starts with wanted, "contains" when it holds it anywhere, and
+## "exact" (any other mode too; the server refuses one) when the two are equal.
+static func text_matches(shown: String, wanted: String, mode: String) -> bool:
+	var trimmed: String = shown.strip_edges()
+	var looked_for: String = wanted.strip_edges()
+	match mode:
+		"prefix":
+			return trimmed.begins_with(looked_for)
+		"contains":
+			return trimmed.contains(looked_for)
+	return trimmed == looked_for
+
+
 ## A LineEdit draws its translated placeholder while its text is empty, and a secret one its
 ## secret character's first (DEFAULT_SECRET when empty) once per character of its text
 ## (scene/gui/line_edit.cpp L3106-3110 in 4.7.2).

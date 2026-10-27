@@ -143,21 +143,22 @@ func resolve_target(target: Variant) -> Variant:
 	if spec.has("element"):
 		return _resolve_element(str(spec["element"]), spec.get("offset"), spec.get("item"))
 	if not str(spec.get("text", "")).strip_edges().is_empty():
-		return _resolve_text(str(spec["text"]), spec.get("under"), spec.get("item"))
+		var mode: String = str(spec.get("match", "exact"))
+		return _resolve_text(str(spec["text"]), spec.get("under"), spec.get("item"), mode)
 	if spec.has("x") and spec.has("y"):
 		return Vector2(float(spec["x"]), float(spec["y"]))
 	return "a target needs element, text, or both x and y; got %s" % JSON.stringify(spec)
 
 
 ## The aim at the one visible Control at or under the node under names (the root when null) that
-## shows text, with matched, or at the item it draws that item names (null for none); or a String
-## saying why there is none. An under no node or several nodes have is refused as an element
-## naming it would be.
-func _resolve_text(text: String, under: Variant, item: Variant) -> Variant:
+## shows text, matched as mode says, with matched, or at the item it draws that item names (null
+## for none); or a String saying why there is none. An under no node or several nodes have is
+## refused as an element naming it would be.
+func _resolve_text(text: String, under: Variant, item: Variant, mode: String) -> Variant:
 	var start: Variant = _text_start(under)
 	if start is String:
 		return start
-	var entry: Variant = TextTargets.find(self, start, text)
+	var entry: Variant = TextTargets.find(self, start, text, mode)
 	if entry is String:
 		return entry
 	var control: Control = entry["control"]

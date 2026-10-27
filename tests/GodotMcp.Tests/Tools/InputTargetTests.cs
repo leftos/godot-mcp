@@ -107,6 +107,47 @@ public sealed class InputTargetTests
         Assert.StartsWith("from.under narrows a text target, so it needs text", refused.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("prefix")]
+    [InlineData("contains")]
+    public void ATextWithAMatchModePassesItThrough(string match)
+    {
+        JsonObject bridge = InputTarget.ToBridge(new InputTarget(Text: "Deep Mine", Match: match), "target");
+
+        Assert.Equal($"{{\"text\":\"Deep Mine\",\"match\":\"{match}\"}}", bridge.ToJsonString());
+    }
+
+    [Fact]
+    public void AnExactMatchIsLeftOffTheWire()
+    {
+        JsonObject bridge = InputTarget.ToBridge(new InputTarget(Text: "Deep Mine", Match: "exact"), "target");
+
+        Assert.Equal("{\"text\":\"Deep Mine\"}", bridge.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData("Prefix")]
+    [InlineData("starts")]
+    [InlineData("")]
+    public void AnUnknownMatchModeIsRefused(string match)
+    {
+        McpException refused = Assert.Throws<McpException>(() => InputTarget.ToBridge(new InputTarget(Text: "Deep Mine", Match: match), "target"));
+
+        Assert.Equal($"match is \"{match}\"; it must be \"exact\", \"prefix\" or \"contains\".", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("Card", null)]
+    [InlineData(null, " ")]
+    public void AMatchWithoutTextIsRefused(string? element, string? text)
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            InputTarget.ToBridge(new InputTarget(element, Text: text, Match: "prefix"), "target")
+        );
+
+        Assert.Equal("match applies only to a text condition or target; this one has no text.", refused.Message);
+    }
+
     [Fact]
     public void ATextWithAnElementIsRefusedNamingTheKeysGiven()
     {

@@ -217,6 +217,22 @@ public sealed class TextTargetTests(SharedProbeSession shared) : IAsyncLifetime,
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task APrefixMatchPressesATwoLineLabelByItsFirstWords()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(CardBlock + "title.text = \"Strike\\nDeal 6 damage\"\n\treturn true", cancellation);
+
+        McpException exact = await RefusedAsync(new InputTarget(Text: "Strike"), cancellation);
+        JsonNode clicked = await ClickAsync(new InputTarget(Text: "Strike", Match: "prefix"), cancellation);
+
+        Assert.Contains("no visible Control shows 'Strike'", exact.Message, StringComparison.Ordinal);
+        Assert.Equal("/root/Card/Title", clicked["aimedAt"]!["path"]!.GetValue<string>());
+        AssertMatched(clicked["aimedAt"]!, "Strike\nDeal 6 damage");
+        Assert.Equal("/root/Card/Hit", clicked["pressedOn"]!["path"]!.GetValue<string>());
+        Assert.Equal(1, await PressesAsync("Card/Hit", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AStopLabelMatchIsPressedThroughAButtonOfItsOwnSceneInstance()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

@@ -142,7 +142,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Status file | A background scratch run's `<project>/.godot/godot-mcp/scratch-<runId>.json`: the run's state, server pid and every scene's state, rewritten whole at each scene and step event; a server killed outright leaves `running` in it |
 | Step-until | A `frame_control` step with `options.until`, a `wait_for` condition checked after each stepped frame: the step stops, paused, on the met frame, and `count` is then the most frames it runs |
 | Teardown grace | The 7 s of load-adjusted time (`TeardownGrace`) a stop gives past the 3 s grace to a game that acknowledged the quit and closed its bridge, so it is in the engine's own teardown: 10 s in all before a kill. A recording run's grace has no teardown phase. |
-| Text target | An input tool's `{text}` target: the visible Control whose shown text equals the given text, optionally searched `under` a node; the result's `aimedAt.matched` says what it matched |
+| Text target | An input tool's `{text}` target: the visible Control whose shown text equals the given text (or starts with or contains it, by `match`), optionally searched `under` a node; the result's `aimedAt.matched` says what it matched |
 | Then action | `wait_for`'s `options.then {call?, timeScale?, pause?}`: a method call, a time scale and a pause run once in the met frame |
 | Tool annotations | The MCP hints each tool declares (`readOnlyHint`, `destructiveHint`, `openWorldHint`) so a client's permission rules can allow the reads |
 | Tool mark | `[GodotMcpTool("what it does")]`, an attribute class the game declares itself and the helper matches by its name `GodotMcpToolAttribute` in any namespace |

@@ -379,7 +379,7 @@ func test_a_text_appear_is_met_by_the_one_control_showing_it_with_its_value() ->
 	var entries: Array[Dictionary] = [
 		_shown("/root/Menu/Go", "Start"), _shown("/root/Menu/X", "Quit")
 	]
-	var matches: Array[Dictionary] = _text_targets.matching(entries, "Start")
+	var matches: Array[Dictionary] = _text_targets.matching(entries, "Start", "exact")
 	var none: Array[Dictionary] = []
 	assert_eq(
 		_conditions_script.text_answer("Start", matches, true, targets),
@@ -414,8 +414,8 @@ func test_a_text_match_keeps_case_and_trims() -> void:
 	var entries: Array[Dictionary] = [
 		_shown("/root/Menu/Lower", "start"), _shown("/root/Menu/Spaced", " Resume ")
 	]
-	var lower: Array[Dictionary] = _text_targets.matching(entries, "Start")
-	var spaced: Array[Dictionary] = _text_targets.matching(entries, "Resume")
+	var lower: Array[Dictionary] = _text_targets.matching(entries, "Start", "exact")
+	var spaced: Array[Dictionary] = _text_targets.matching(entries, "Resume", "exact")
 	assert_eq(
 		_conditions_script.text_answer("Start", lower, true, targets),
 		[false, null],
@@ -425,6 +425,38 @@ func test_a_text_match_keeps_case_and_trims() -> void:
 		_conditions_script.text_answer("Resume", spaced, true, targets),
 		[true, {"path": "/root/Menu/Spaced", "shown": " Resume ", "rect": SHOWN_RECT}],
 		"a padded text meets, its text as shown"
+	)
+	_free_placing_targets(targets)
+
+
+func test_a_text_appear_matches_by_the_mode_given() -> void:
+	var targets: Node = _placing_targets()
+	var mine: Dictionary = _shown("/root/Map/Mine", "Deep Mine\nThree floors")
+	var entries: Array[Dictionary] = [mine, _shown("/root/Map/Pit", "Deep Pit")]
+	var met: Array = [true, {"path": mine["path"], "shown": mine["shown"], "rect": SHOWN_RECT}]
+	var cases: Array = [
+		[
+			"exact",
+			"Deep Mine",
+			[false, null],
+			"exact: a two-line text's first line does not meet it"
+		],
+		["prefix", "Deep Mine", met, "prefix: the first line's opening words meet it"],
+		["contains", "floors", met, "contains: words inside it meet it"],
+		["prefix", "Mine", [false, null], "prefix: words that do not open it do not meet it"],
+	]
+	for case: Array in cases:
+		var matches: Array[Dictionary] = _text_targets.matching(entries, case[1], case[0])
+		assert_eq(_conditions_script.text_answer(case[1], matches, true, targets), case[2], case[3])
+	var both: Array[Dictionary] = _text_targets.matching(entries, "Deep", "prefix")
+	var listing: String = (
+		"'Deep' is shown by 2 Controls: /root/Map/Mine at 10,20,120,40, "
+		+ "/root/Map/Pit at 10,20,120,40; narrow it with under."
+	)
+	assert_eq(
+		_conditions_script.text_answer("Deep", both, true, targets),
+		[false, null, listing],
+		"two Controls matching a prefix: refused, both listed"
 	)
 	_free_placing_targets(targets)
 

@@ -6,8 +6,11 @@ extends RefCounted
 
 const ShownText := preload("godot_mcp_shown_text.gd")
 
-## No visible Control shows the text: the text as given, trimmed.
+## No visible Control shows the text: the text as given, trimmed. NO_PREFIX and NO_CONTAINS say
+## the same for the prefix and contains match modes.
 const NO_MATCH := "no visible Control shows '%s'"
+const NO_PREFIX := "no visible Control's text starts with '%s'"
+const NO_CONTAINS := "no visible Control's text contains '%s'"
 ## Appended to NO_MATCH: the near misses, each NEAR_MISS (a path and its text as quoted gives it),
 ## joined with ", ".
 const NEAR_MISSES := "; near misses: %s"
@@ -25,17 +28,18 @@ const MAX_LISTED_MATCHES := 10
 const MAX_QUOTED := 60
 
 
-## The entry of the one visible Control at or under under whose shown text, trimmed, is text
-## trimmed, case kept; or a String saying why there is none. targets is the resolver: its bridge
-## gathers the Controls get_ui_elements lists (the bridge's own and tooltips left out), and its
-## viewport_rect places each of several matches as the element refusals do. wait_for's text
-## condition (godot_mcp_conditions.gd) matches through entries_under and matching as this does.
-static func find(targets: Node, under: Node, text: String) -> Variant:
+## The entry of the one visible Control at or under under whose shown text matches text as mode
+## says (ShownText.text_matches: trimmed, case kept); or a String saying why there is none.
+## targets is the resolver: its bridge gathers the Controls get_ui_elements lists (the bridge's
+## own and tooltips left out), and its viewport_rect places each of several matches as the element
+## refusals do. wait_for's text condition (godot_mcp_conditions.gd) matches through entries_under
+## and matching as this does.
+static func find(targets: Node, under: Node, text: String, mode: String) -> Variant:
 	var wanted: String = text.strip_edges()
 	var entries: Array[Dictionary] = entries_under(targets.bridge, under)
-	var matches: Array[Dictionary] = matching(entries, wanted)
+	var matches: Array[Dictionary] = matching(entries, wanted, mode)
 	if matches.is_empty():
-		return miss_refusal(wanted, entries)
+		return miss_refusal(wanted, entries, mode)
 	if matches.size() == 1:
 		return matches[0]
 	return ambiguity_refusal(wanted, placed(targets, matches))
@@ -90,18 +94,20 @@ static func quoted(shown: String) -> String:
 	return trimmed.left(MAX_QUOTED) + "…"
 
 
-## The entries whose shown text, trimmed, is wanted.
-static func matching(entries: Array[Dictionary], wanted: String) -> Array[Dictionary]:
+## The entries whose shown text matches wanted as mode says (ShownText.text_matches).
+static func matching(entries: Array[Dictionary], wanted: String, mode: String) -> Array[Dictionary]:
 	var matches: Array[Dictionary] = []
 	for entry: Dictionary in entries:
-		if str(entry["shown"]).strip_edges() == wanted:
+		if ShownText.text_matches(str(entry["shown"]), wanted, mode):
 			matches.append(entry)
 	return matches
 
 
-## NO_MATCH for wanted, with the near misses and the name hints among entries.
-static func miss_refusal(wanted: String, entries: Array[Dictionary]) -> String:
-	var refusal: String = NO_MATCH % wanted
+## NO_MATCH (NO_PREFIX, NO_CONTAINS for those modes) for wanted, with the near misses and the name
+## hints among entries.
+static func miss_refusal(wanted: String, entries: Array[Dictionary], mode: String) -> String:
+	var no_match: String = {"prefix": NO_PREFIX, "contains": NO_CONTAINS}.get(mode, NO_MATCH)
+	var refusal: String = no_match % wanted
 	var near := PackedStringArray()
 	for entry: Dictionary in near_misses(entries, wanted):
 		near.append(NEAR_MISS % [entry["path"], quoted(entry["shown"])])

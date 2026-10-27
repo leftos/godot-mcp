@@ -303,10 +303,11 @@ internal sealed partial class RuntimeTools
         }
     }
 
-    /// <summary>A condition as the bridge reads it: its fields as given, and its kind.</summary>
+    /// <summary>A condition as the bridge reads it: its fields as given (match only when not exact), and its kind.</summary>
     private static JsonObject ConditionParameters(WaitCondition condition, string kind)
     {
         JsonObject parameters = JsonSerializer.SerializeToNode(condition, Json)!.AsObject();
+        MatchMode.ToBridge(condition.Match, parameters);
         parameters["kind"] = kind;
         return parameters;
     }
@@ -840,7 +841,8 @@ internal sealed partial class RuntimeTools
     private static bool IsUiChangedValue(JsonElement value) =>
         value.ValueKind == JsonValueKind.True || (value.ValueKind == JsonValueKind.String && value.GetString() == "now");
 
-    /// <exception cref="McpException">under is given without text, text or under is blank, or text comes with a node.</exception>
+    /// <exception cref="McpException">under is given without text, text or under is blank, text comes with a node, or match is
+    /// given without text or is not exact, prefix or contains.</exception>
     private static void CheckTextFields(WaitCondition? condition)
     {
         string? refusal = condition switch
@@ -856,6 +858,8 @@ internal sealed partial class RuntimeTools
         {
             throw new McpException(refusal);
         }
+
+        MatchMode.Check(condition?.Match, condition?.Text is not null);
     }
 
     /// <exception cref="McpException">stable is outside 1 to <see cref="MaxStableFrames"/>, or comes with equals.</exception>

@@ -696,6 +696,28 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task APrefixTextWaitIsMetByATwoLineLabelsFirstWords()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string path = (
+            await RunBodyAsync(
+                "var label := Label.new()\n\tlabel.name = \"Destination\"\n\tlabel.text = \"Deep Mine\\nThree floors down\"\n\t"
+                    + "label.position = Vector2(400, 250)\n\tlabel.visible = false\n\tscene_tree.root.add_child(label)\n\t"
+                    + "scene_tree.create_timer(0.2).timeout.connect(label.show)\n\treturn str(label.get_path())",
+                cancellation
+            )
+        ).GetValue<string>();
+
+        JsonObject waited = await WaitAsync(new WaitCondition(Text: "Deep Mine", Match: "prefix"));
+        JsonObject exact = await WaitAsync(new WaitCondition(Text: "Deep Mine"), 0);
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        Assert.Equal(path, waited["value"]!["path"]!.GetValue<string>());
+        Assert.Equal("Deep Mine\nThree floors down", waited["value"]!["shown"]!.GetValue<string>());
+        Assert.False(exact["met"]!.GetValue<bool>(), exact.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task ATextLeaveIsMetOnceTheControlShowingItIsHidden()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

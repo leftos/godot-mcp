@@ -417,6 +417,65 @@ public sealed class BatchValidationTests : IDisposable
     }
 
     [Fact]
+    public void ATextWaitAssertionWithAMatchModeIsAcceptedAndCarriesIt()
+    {
+        BatchStep step = new(Assert: "wait", Text: "Deep Mine", Match: "prefix");
+
+        RuntimeTools.CheckBatch([step]);
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(RuntimeTools.ConditionOf(step), 1000);
+
+        Assert.Equal("prefix", parameters["match"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public void AnExactTextWaitAssertionCarriesNoMatch()
+    {
+        BatchStep step = new(Assert: "wait", Text: "Deep Mine", Match: "exact");
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(RuntimeTools.ConditionOf(step), 1000);
+
+        Assert.False(parameters.ContainsKey("match"));
+    }
+
+    [Fact]
+    public async Task AWaitAssertionWithAnUnknownMatchModeIsRefused()
+    {
+        McpException refused = await RefusedAsync([new BatchStep(Assert: "wait", Text: "Deep Mine", Match: "start")]);
+
+        Assert.Equal("step 0: match is \"start\"; it must be \"exact\", \"prefix\" or \"contains\".", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("wait")]
+    [InlineData("property")]
+    [InlineData("state")]
+    [InlineData("expression")]
+    public async Task AnAssertionWithAMatchButNoTextIsRefused(string assert)
+    {
+        JsonElement equals = JsonSerializer.Deserialize<JsonElement>("true");
+        BatchStep step = assert switch
+        {
+            "state" => new(Assert: assert, Node: "Lobby", EqualsValue: equals, State: "phase", Match: "prefix"),
+            "expression" => new(Assert: assert, Expression: "true", Match: "prefix"),
+            _ => new(Assert: assert, Node: "Lobby", Property: "visible", EqualsValue: equals, Match: "prefix"),
+        };
+
+        McpException refused = await RefusedAsync([step]);
+
+        Assert.Equal("step 0: match applies only to a text condition or target; this one has no text.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AFiredAssertionWithMatchIsRefused()
+    {
+        BatchStep fired = new(Assert: "fired", Node: "Ready", Signal: "pressed", Match: "prefix");
+
+        McpException refused = await RefusedAsync([new BatchStep(Tool: "click"), fired]);
+
+        Assert.Equal("step 1: the fired assertion takes node, signal and equals; got match.", refused.Message);
+    }
+
+    [Fact]
     public async Task AWaitAssertionWithUnderAloneIsRefused()
     {
         McpException refused = await RefusedAsync([new BatchStep(Assert: "wait", Under: "Lobby")]);

@@ -113,7 +113,8 @@ func _ui_changed_probe(params: Dictionary, _failures: Dictionary) -> Variant:
 
 func _text_probe(params: Dictionary, _failures: Dictionary) -> Variant:
 	var text: String = _text(params, "text").strip_edges()
-	return _check_text.bind(text, _text(params, "under"), bool(params.get("exists", true)))
+	var mode: String = str(params.get("match", "exact"))
+	return _check_text.bind(text, _text(params, "under"), mode, bool(params.get("exists", true)))
 
 
 func _settled_probe(params: Dictionary, _failures: Dictionary) -> Variant:
@@ -282,10 +283,11 @@ func _settled_reading(node: Node, node_name: String, property: String) -> Array:
 
 
 ## Whether text (trimmed) shows on the visible Controls at or under under, the root when empty,
-## matched as a {text} target is (TextTargets.matching), answered by text_answer. Nothing shows
+## matched as mode says, as a {text} target is (TextTargets.matching), answered by
+## text_answer. Nothing shows
 ## under an under no node has, or one hidden or being freed; one that several nodes have fails the
 ## check. Each check walks the Controls afresh.
-func _check_text(text: String, under: String, wanted: bool) -> Array:
+func _check_text(text: String, under: String, mode: String, wanted: bool) -> Array:
 	var targets: Node = bridge._gestures._targets
 	var scope: Variant = _text_scope(targets, under)
 	if scope is String:
@@ -293,7 +295,7 @@ func _check_text(text: String, under: String, wanted: bool) -> Array:
 	var entries: Array[Dictionary] = []
 	if scope != null:
 		entries = TextTargets.entries_under(bridge, scope)
-	return text_answer(text, TextTargets.matching(entries, text), wanted, targets)
+	return text_answer(text, TextTargets.matching(entries, text, mode), wanted, targets)
 
 
 ## A text check's answer from the entries showing text, placing through targets, the resolver,

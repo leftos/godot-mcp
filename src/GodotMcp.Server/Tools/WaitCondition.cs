@@ -6,7 +6,7 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// What wait_for waits for, exactly one kind: {node, exists}, {node, property, equals}, {node, signal}, {expression}
-/// (node optional), {uiChanged: true | "now"}, {gameMs}, {frames}, {text} (under and exists optional), {node, stable} (property
+/// (node optional), {uiChanged: true | "now"}, {gameMs}, {frames}, {text} (under, match and exists optional), {node, stable} (property
 /// optional), {node, state, equals} or {output} (stream and after optional).
 /// </summary>
 internal sealed record WaitCondition(
@@ -60,7 +60,8 @@ internal sealed record WaitCondition(
         "Without node: wait until exactly one visible Control shows this text, matched as a click's {text} target matches it: "
             + "the shown text trimmed equals this text trimmed, case kept. Met, value is {path, shown, rect}, rect in viewport "
             + "coordinates, as get_ui_elements gives it. Several Controls showing it fail the wait with their list; narrow it with "
-            + "under. With exists: false, wait until no visible Control shows it."
+            + "under. With exists: false, wait until no visible Control shows it. "
+            + MatchMode.DescriptionSentence
     )]
         string? Text = null,
     [property: Description(
@@ -68,6 +69,10 @@ internal sealed record WaitCondition(
             + "missing, hidden or being freed, no Control under it shows the text."
     )]
         string? Under = null,
+    [property: Description(
+        "With text: \"exact\" (the default), \"prefix\" or \"contains\", how text is compared with the shown text, both trimmed, case kept."
+    )]
+        string? Match = null,
     [property: Description(
         "With node: wait until the node's global rect (a Control), global_transform (a Node2D or Node3D) or property holds "
             + "unchanged for this many process frames, 1 to 600, so a press can wait for a layout to settle. Met, value is "

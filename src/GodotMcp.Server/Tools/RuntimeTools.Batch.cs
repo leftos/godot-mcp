@@ -88,6 +88,7 @@ internal sealed partial class RuntimeTools
         ("session", step => step.Session is not null),
         ("text", step => step.Text is not null),
         ("under", step => step.Under is not null),
+        ("match", step => step.Match is not null),
         ("stable", step => step.Stable is not null),
         ("state", step => step.State is not null),
         ("output", step => step.Output is not null),
@@ -669,13 +670,14 @@ internal sealed partial class RuntimeTools
         _ = CheckCompareArguments(null, step.Tolerance ?? DefaultTolerance, CompareOptionsOf(step));
     }
 
-    /// <summary>The wait_for condition an assertion checks: only its own kind's fields for property, expression and state.</summary>
+    /// <summary>The wait_for condition an assertion checks: only its own kind's fields, and match so it is refused, for
+    /// property, expression and state.</summary>
     internal static WaitCondition ConditionOf(BatchStep step) =>
         step.Assert switch
         {
-            "property" => new WaitCondition(Node: step.Node, Property: step.Property, EqualsValue: step.EqualsValue),
-            "expression" => new WaitCondition(Node: step.Node, Expression: step.Expression),
-            "state" => new WaitCondition(Node: step.Node, EqualsValue: step.EqualsValue, State: step.State),
+            "property" => new WaitCondition(Node: step.Node, Property: step.Property, EqualsValue: step.EqualsValue, Match: step.Match),
+            "expression" => new WaitCondition(Node: step.Node, Expression: step.Expression, Match: step.Match),
+            "state" => new WaitCondition(Node: step.Node, EqualsValue: step.EqualsValue, State: step.State, Match: step.Match),
             _ => new WaitCondition(
                 step.Node,
                 step.Exists,
@@ -688,6 +690,7 @@ internal sealed partial class RuntimeTools
                 step.Frames,
                 step.Text,
                 step.Under,
+                step.Match,
                 step.Stable,
                 step.State,
                 step.Output,

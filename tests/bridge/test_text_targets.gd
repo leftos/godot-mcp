@@ -141,7 +141,7 @@ func test_a_miss_quotes_a_long_text_trimmed_and_cut() -> void:
 	assert_eq(quoted.length(), 61, "60 characters and …")
 	assert_true(quoted.begins_with("line of the log\nline") and quoted.ends_with("…"), quoted)
 	assert_eq(
-		_text_targets.miss_refusal("line of the log", entries),
+		_text_targets.miss_refusal("line of the log", entries, "exact"),
 		"no visible Control shows 'line of the log'; near misses: /root/Log shows '%s'." % quoted,
 		"the near miss quoted"
 	)
@@ -154,9 +154,52 @@ func test_text_matching_trims_and_keeps_case() -> void:
 		_entry("/root/B", "B", "play"),
 		_entry("/root/C", "C", "Play again"),
 	]
-	var matched: Array[Dictionary] = _text_targets.matching(entries, "Play")
+	var matched: Array[Dictionary] = _text_targets.matching(entries, "Play", "exact")
 	assert_eq(matched.size(), 1, "one exact match")
 	assert_eq(matched[0]["path"], "/root/A", "the trimmed one, not another case")
+
+
+func test_text_matching_by_mode() -> void:
+	var entries: Array[Dictionary] = [
+		_entry("/root/Mine", "Mine", "  Deep Mine\nThree floors down "),
+		_entry("/root/Title", "Title", "The Deep Mine"),
+		_entry("/root/Lower", "Lower", "deep mine"),
+	]
+	var paths := func(mode: String, wanted: String) -> Array:
+		var found: Array = []
+		for entry: Dictionary in _text_targets.matching(entries, wanted, mode):
+			found.append(entry["path"])
+		return found
+	assert_eq(paths.call("exact", "Deep Mine"), [], "exact: no whole text is the first line")
+	assert_eq(paths.call("prefix", "Deep Mine"), ["/root/Mine"], "prefix: the first line opens it")
+	assert_eq(
+		paths.call("contains", " Deep Mine "),
+		["/root/Mine", "/root/Title"],
+		"contains: trimmed, case kept"
+	)
+	assert_eq(paths.call("prefix", "Mine"), [], "prefix: words inside do not open it")
+	assert_eq(
+		paths.call("exact", "The Deep Mine"), ["/root/Title"], "exact: the whole text, unchanged"
+	)
+
+
+func test_a_prefix_or_contains_miss_names_its_mode() -> void:
+	var entries: Array[Dictionary] = [_entry("/root/Map/Mine", "Mine", "Deep Mine")]
+	assert_eq(
+		_text_targets.miss_refusal("deep", entries, "prefix"),
+		"no visible Control's text starts with 'deep'; near misses: /root/Map/Mine shows 'Deep Mine'.",
+		"prefix"
+	)
+	assert_eq(
+		_text_targets.miss_refusal("Quit", entries, "contains"),
+		"no visible Control's text contains 'Quit'.",
+		"contains"
+	)
+	assert_eq(
+		_text_targets.miss_refusal("Quit", entries, "exact"),
+		"no visible Control shows 'Quit'.",
+		"exact unchanged"
+	)
 
 
 func test_near_misses_rank_case_then_containing_then_contained() -> void:
@@ -186,7 +229,7 @@ func test_a_miss_lists_near_misses_and_name_hints() -> void:
 		_entry("/root/Menu/Hosting", "Hosting", "Host game"),
 	]
 	assert_eq(
-		_text_targets.miss_refusal("Host", entries),
+		_text_targets.miss_refusal("Host", entries, "exact"),
 		(
 			"no visible Control shows 'Host'; near misses: /root/Menu/Hosting shows 'Host game'"
 			+ "; /root/Menu/Host is named 'Host' and shows 'New Game'."
@@ -194,7 +237,7 @@ func test_a_miss_lists_near_misses_and_name_hints() -> void:
 		"near misses, then the node of that name"
 	)
 	assert_eq(
-		_text_targets.miss_refusal("Quit", entries),
+		_text_targets.miss_refusal("Quit", entries, "exact"),
 		"no visible Control shows 'Quit'.",
 		"nothing near"
 	)
