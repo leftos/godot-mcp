@@ -211,6 +211,7 @@ Prefer it for any change of more than one edit, then `validate`, then `preview_s
   A `warning` says why a press did nothing (a disabled button, a paused game); a `watch` with signal tracks catches what is off the chain (`listenedOn`).
 - A click that seems to do nothing: read its `pressedOn` (the Control it actually hit; a drag's `guiDragStarted` and `dropAccepted` say whether a GUI drag and drop happened), check `errors` in its result, then `get_ui_elements` for `disabled`/`visible`, then `wait_for` its effect rather than screenshotting at once.
 - A bug a person can reproduce by hand but you cannot script: run with `options.quiet: false` (or attach), `capture_input {mode: "start"}`, let them play, `capture_input {mode: "stop"}`, then replay its `events` with `simulate_input`; the capture survives a crash, so stop it after the game dies too.
+- Something not drawn, or drawn wrong (a collision shape, a path, a mesh the camera should show): launch flags such as `--debug-collisions` through `engineArgs` or a preset, and `set_property` on `/root`'s `debug_draw` for 3D draw modes, as "See why something is not drawn" in [TOOLS.md](TOOLS.md) says.
 - A tool that is missing, confusing, slow or wrong for the job: that is friction with a tool we own. File it as "Filing friction" below says, then carry on with the task.
 
 Game-specific drive lessons (a project's scenes, launch arguments, a known flaky screen) belong in that project's own docs (its DEVELOPMENT.md), not here.

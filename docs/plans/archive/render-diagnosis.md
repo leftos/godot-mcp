@@ -1,10 +1,10 @@
 # Render diagnosis
 
-The render half of GMCP-20, "Design step-until-a-condition and render diagnosis (ideas 5 and 6)", from idea 6 of the [survey](../research/2026-09-29-godot-mcp-survey.md) (L124-128). The whole ruled design, the step-until half included, is archived in [step-until-render.md](./archive/step-until-render.md); this file carries the render half's open step, R1, under GMCP-45 (Document render diagnosis).
+The render half of GMCP-20, "Design step-until-a-condition and render diagnosis (ideas 5 and 6)", from idea 6 of the [survey](../../research/2026-09-29-godot-mcp-survey.md) (L124-128). The whole ruled design, the step-until half included, is archived in [step-until-render.md](./step-until-render.md); this file carries the render half's open step, R1, under GMCP-45 (Document render diagnosis).
 
-The owner ruled render diagnosis documentation only ([DECISIONS.md](../DECISIONS.md) decision 31): no read tool until a game repo needs one.
+The owner ruled render diagnosis documentation only ([DECISIONS.md](../../DECISIONS.md) decision 31): no read tool until a game repo needs one.
 
-Status: R1 is open. Once it lands, its findings go into decision 31 where they settle a ruling, and this file moves to `docs/plans/archive/`.
+Status: R1 landed. Its drive findings are in decision 31 of [DECISIONS.md](../../DECISIONS.md) (engine facts) and in the "See why something is not drawn" section of [TOOLS.md](../../TOOLS.md), and section 2's unverified note is settled there: `set_property` reaches the root's `debug_draw`, and a node added after start draws its shape under a launch-time `--debug-collisions`.
 
 ## 1. Need
 
@@ -14,7 +14,7 @@ What they do write: delve compares renderers by passing `engineArgs: ["--renderi
 
 It solves a die numeral's drawn "up" from the live mesh in a `run_script` (L195), an orientation question, not a visibility one; and it notes the headless renderer "never triangulates", so a failed polygon logs nothing headless (L101). opening-hand (2D) reads detail at 2x through `--resolution` (`X:/dev/opening-hand/docs/DEVELOPMENT.md` L61).
 
-The survey's own fit line (L128) names the cheapest step: the `--debug-collisions` family already passes through `engineArgs`, undocumented. The world-node aim of [input-targets.md](./archive/input-targets.md) (decision 25) already explains why a node's origin is not on screen when an input tool aims at it: off-screen with the point and the rect, behind the camera, no current camera, hidden, not drawn by any viewport.
+The survey's own fit line (L128) names the cheapest step: the `--debug-collisions` family already passes through `engineArgs`, undocumented. The world-node aim of [input-targets.md](./input-targets.md) (decision 25) already explains why a node's origin is not on screen when an input tool aims at it: off-screen with the point and the rect, behind the camera, no current camera, hidden, not drawn by any viewport.
 
 ## 2. Engine facts
 

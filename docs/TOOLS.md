@@ -332,6 +332,26 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   A 3D scene with no current camera gets a temporary one framing its visible geometry (`cameraAdded: true`). The scene's ending is checked case-sensitively. Prep, launch and capture share 60 s of load-adjusted time. It cannot run inside `batch_drive`.
 
+### See why something is not drawn
+
+There is no tool for it: Godot's own debug drawing answers, through tools that exist.
+
+- **Launch flags:** `--debug-collisions` draws collision shapes, `--debug-paths` paths, `--debug-navigation` navigation and `--debug-avoidance` avoidance, and `--debug-canvas-item-redraw` flashes what redraws in low-processor mode.
+
+  Pass them as `run_project {engineArgs: ["--debug-collisions"]}`, or keep them in a `godot-mcp.json` preset (see "Project profiles") and launch with `options.preset`: `"presets": {"collisions": {"engineArgs": ["--debug-collisions"], "description": "collision shapes drawn"}}` draws what the flag does.
+
+  With the flag at launch, a shape added after the game started draws too. The class reference says the SceneTree's hints are "not designed to be changed at run-time", and `set_property` cannot reach them (`Node '/root' has no property 'debug_collisions_hint'.`), so to show shapes already in the scene, `stop_project` then `run_project` with the flag. A `run_script` that sets `get_tree().debug_collisions_hint = true` draws only the shapes added after it, not those already in the tree.
+- **Draw modes:** `set_property {node: "/root", property: "debug_draw", value: 3}` sets the root viewport's `Viewport.debug_draw`: 1 unshaded, 2 lighting, 3 overdraw, 4 wireframe, 5 normal buffer, and 0 puts it back (`inspect_node` reads it). They act on 3D only: a 2D scene does not change under any value or renderer.
+
+  Overdraw draws the meshes dark and translucent on a black clear colour, with the 2D controls unchanged, and replaces every material, custom shaders included.
+
+  Normal buffer needs Forward+: under Compatibility it falls back to the normal draw, and `engineArgs: ["--rendering-method", "forward_plus"]` tries it on a Compatibility project. Wireframe under Compatibility draws meshes normally, not nothing, unless the game calls `RenderingServer.set_debug_generate_wireframes(true)` before its meshes load.
+
+  Unshaded under Compatibility sticks: after `debug_draw` is set back to 0 the meshes stay unshaded, and only a restart draws them normally. Forward+ restores fully, and so does overdraw under Compatibility.
+- **A node with no point on screen:** an input tool's world aim says why, with its refusals for a node off-screen, behind the camera, with no current camera or hidden (see "Drive input"); `hover` reports the point and moves the pointer.
+- **Baselines:** a full-screen baseline taken in one draw mode fails in another, since overdraw and normal buffer change the clear colour (about 84% of a 3D frame); crop the baseline to a 2D region and it is unaffected.
+- **Cost:** `--debug-collisions` draws every shape every frame, which can move a watch's `frame_ms`; a quiet run's 60 fps cap hides it (one shape read 16.66 ms with and without), so measure it on an uncapped run.
+
 ## Scratch scenes
 
 ### `run_scratches`
