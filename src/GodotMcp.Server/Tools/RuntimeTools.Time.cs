@@ -893,7 +893,7 @@ internal sealed partial class RuntimeTools
             throw new McpException(refusal);
         }
 
-        MatchMode.Check(condition?.Match, condition?.Text is not null);
+        MatchMode.Check(condition?.Match, condition?.Text is not null, condition?.EqualsValue);
     }
 
     /// <exception cref="McpException">stable is outside 1 to <see cref="MaxStableFrames"/>, or comes with equals.</exception>
@@ -920,8 +920,7 @@ internal sealed partial class RuntimeTools
                 "condition.state is blank; give a key path into the node's state, such as seats[0].hp, or $ for the whole state.",
             { State: not null, Property: not null } or { State: not null, Stable: not null } =>
                 "a state condition takes no property or stable; state names the key path to read.",
-            { State: not null } when !HasEquals(condition) =>
-                "a state condition needs equals, the JSON value the key must equal; null is not supported.",
+            { State: not null } when !HasEquals(condition) => "a state condition needs equals, the JSON value the key must equal.",
             _ => null,
         };
         if (refusal is not null)
@@ -1014,9 +1013,8 @@ internal sealed partial class RuntimeTools
     // already make a second kind.
     private static bool IsUiChangedAlone(WaitCondition condition) => condition.UiChanged is not null && condition.Node is null;
 
-    // A JSON null arrives as a null JsonElement?, the same as a missing equals, so a null to compare with is not supported
-    // either way; an explicit Null element is treated alike.
-    private static bool HasEquals(WaitCondition condition) => condition.EqualsValue is { ValueKind: not JsonValueKind.Null };
+    // A JSON null binds as a Null element (ExplicitNullConverter), so equals: null is given; only a missing equals is not.
+    private static bool HasEquals(WaitCondition condition) => condition.EqualsValue is not null;
 
     /// <summary>The frame reply as {paused, timeScale, processFrames, physicsFrames[, frame, met, value | args | last,
     /// failedChecks, mutedErrors, screenshot]}, and the preview image when captured.</summary>

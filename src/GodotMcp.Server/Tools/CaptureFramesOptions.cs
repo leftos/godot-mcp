@@ -53,6 +53,7 @@ internal sealed record CaptureStart(
     [property: Description("With node: start once the node is present (true) or absent (false).")] bool? Exists = null,
     [property: Description("With node and equals: the property to read each frame, as wait_for's condition.property.")] string? Property = null,
     [property: JsonPropertyName("equals")]
+    [property: JsonConverter(typeof(ExplicitNullConverter))]
     [property: Description("The JSON value the property must equal, as wait_for's condition.equals compares it.")]
         JsonElement? EqualsValue = null,
     [property: Description("Refused: options.start takes an exists, property or expression condition.")] string? Signal = null,

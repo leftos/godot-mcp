@@ -93,7 +93,8 @@ func _exists_probe(params: Dictionary, _failures: Dictionary) -> Variant:
 
 func _property_probe(params: Dictionary, _failures: Dictionary) -> Variant:
 	var property: String = _text(params, "property")
-	return check_property.bind(_text(params, "node"), property, params.get("equals"))
+	var mode: String = str(params.get("match", "exact"))
+	return check_property.bind(_text(params, "node"), property, params.get("equals"), mode)
 
 
 func _expression_probe(params: Dictionary, failures: Dictionary) -> Variant:
@@ -129,14 +130,17 @@ func _state_probe(params: Dictionary, _failures: Dictionary) -> Variant:
 		"extension": _text(params, "extension"), "csharpError": _text(params, "csharpError")
 	}
 	var key: String = _text(params, "state")
-	return _check_state.bind(_text(params, "node"), key, params.get("equals"), helper)
+	var mode: String = str(params.get("match", "exact"))
+	return _check_state.bind(_text(params, "node"), key, params.get("equals"), mode, helper)
 
 
 ## The value at key in the node's state as get_game_state reads it (State.read_one at its default
-## depth, then state_at), compared in JSON space as check_property compares; not met while the node
+## depth, then state_at), compared as check_property compares (equals_met); not met while the node
 ## is missing or its state lacks key, and failed for a node outside the mcp_state group or one
 ## whose state cannot be read. helper carries the C# helper's extension, or csharpError.
-func _check_state(node_name: String, key: String, wanted: Variant, helper: Dictionary) -> Array:
+func _check_state(
+	node_name: String, key: String, wanted: Variant, mode: String, helper: Dictionary
+) -> Array:
 	var looked: Array = _lookup(node_name)
 	var node: Node = looked[0]
 	if node == null:
@@ -152,7 +156,20 @@ func _check_state(node_name: String, key: String, wanted: Variant, helper: Dicti
 	var found: Array = state_at(entry.get("state"), key)
 	if not found[0]:
 		return found
-	return [Clock.json_equal(found[1], wanted), found[1]]
+	return [equals_met(found[1], wanted, mode), found[1]]
+
+
+## Whether a value read meets a condition's equals: with mode prefix or contains and a String
+## wanted, the value must be a String that starts with or holds it, case-sensitive and untrimmed (a
+## value of another type never meets it); otherwise json_equal, so null meets only null.
+static func equals_met(actual: Variant, wanted: Variant, mode: String) -> bool:
+	if mode == "exact" or not wanted is String:
+		return Clock.json_equal(actual, wanted)
+	if not actual is String:
+		return false
+	if mode == "prefix":
+		return (actual as String).begins_with(wanted)
+	return (actual as String).contains(wanted)
 
 
 ## The value at path in state as get_game_state's keys find it (the server's StateMerge.TryFind):
@@ -380,8 +397,9 @@ func _lookup(node_name: String) -> Array:
 
 
 ## The property (a path such as position:x) as run_script returns values, compared in JSON
-## space; not met while the node is missing, and failed once it is found without the property.
-func check_property(node_name: String, property: String, wanted: Variant) -> Array:
+## space, or with mode prefix or contains as equals_met compares a string; not met while the node
+## is missing, and failed once it is found without the property.
+func check_property(node_name: String, property: String, wanted: Variant, mode: String) -> Array:
 	var found: Array = _lookup(node_name)
 	var node: Node = found[0]
 	if node == null:
@@ -389,7 +407,7 @@ func check_property(node_name: String, property: String, wanted: Variant) -> Arr
 	var read: Array = _read_property(node, property)
 	if read.size() > 2:
 		return read
-	return [bridge._time.json_equal(read[1], wanted), read[1]]
+	return [equals_met(read[1], wanted, mode), read[1]]
 
 
 ## node's property (a path such as position:x) as run_script returns values: [true, value], or

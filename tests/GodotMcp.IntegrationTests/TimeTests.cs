@@ -63,12 +63,14 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     private const string Settler = "scene_tree.root.get_node(\"SettleBox\")";
     private const string Mover = "SettleBox/Mover";
 
-    // A state of a turn and a seat whose hp falls as the turn rises; once armed, the next turn comes three process frames later.
+    // A state of a turn and a seat whose hp falls as the turn rises, an owner that is null and a two-line log; once armed, the
+    // next turn comes three process frames later.
     private const string KeeperScript =
         "extends Node\\n\\nvar turn := 0\\nvar hp := 7\\nvar frames_left := 0\\n\\n\\nfunc arm() -> void:\\n\\tframes_left = 3\\n\\n\\n"
         + "func _process(_delta: float) -> void:\\n\\tif frames_left <= 0:\\n\\t\\treturn\\n\\tframes_left -= 1\\n\\t"
         + "if frames_left == 0:\\n\\t\\tturn += 1\\n\\t\\thp -= 1\\n\\n\\n"
-        + "func _mcp_state() -> Dictionary:\\n\\treturn {'turn': turn, 'seats': [{'name': 'alex', 'hp': hp}]}\\n";
+        + "func _mcp_state() -> Dictionary:\\n\\treturn {'turn': turn, 'seats': [{'name': 'alex', 'hp': hp}], 'owner': null, "
+        + "'log': 'Deep Mine' + char(10) + 'cleared'}\\n";
     private const string Keeper = "scene_tree.root.get_node(\"Keeper\")";
 
     // Two scene-like owners under the root, UniqueA and UniqueB, each holding a Label Shared saved with a unique name and marked
@@ -969,6 +971,22 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
 
         Assert.False(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
         Assert.True(waited.ContainsKey("last") && waited["last"] is null, waited.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AStateWaitMeetsANullKeyAndATwoLineStringByItsFirstLine()
+    {
+        await AddKeeperAsync(marked: true, TestContext.Current.CancellationToken);
+
+        JsonObject onNull = await WaitAsync(new WaitCondition(Node: "Keeper", EqualsValue: Json("null"), State: "owner"), 0);
+        JsonObject byPrefix = await WaitAsync(
+            new WaitCondition(Node: "Keeper", EqualsValue: Json("\"Deep Mine\""), Match: "prefix", State: "log"),
+            0
+        );
+
+        Assert.True(onNull["met"]!.GetValue<bool>(), onNull.ToJsonString());
+        Assert.True(byPrefix["met"]!.GetValue<bool>(), byPrefix.ToJsonString());
+        Assert.Equal("Deep Mine\ncleared", byPrefix["value"]!.GetValue<string>());
     }
 
     [Fact(Timeout = TestTimeoutMs)]

@@ -26,10 +26,13 @@ internal sealed record BatchStep(
         bool? Exists = null,
     [property: Description("property, wait: the property to compare; a subproperty path such as position:x works too.")] string? Property = null,
     [property: JsonPropertyName("equals")]
+    [property: JsonConverter(typeof(ExplicitNullConverter))]
     [property: Description(
-        "property, state, wait: the JSON value the property or state key must equal, as wait_for compares it; null is not "
-            + "supported; fired: the "
-            + "array of arguments the emission must have carried, any arguments matching when left out."
+        "property, state, wait: the JSON value the property, or with state the state's key, must equal, compared as run_script "
+            + "returns values (Vector2 as {x, y}, and so on); numbers match within 1e-6. null waits for a property or key that is "
+            + "present and null; a missing state key never meets it. With a string, match \"prefix\" or \"contains\" compares its "
+            + "start or any part, case-sensitive and untrimmed. fired: the array of arguments the emission must have carried, any "
+            + "arguments matching when left out."
     )]
         JsonElement? EqualsValue = null,
     [property: Description(
@@ -61,7 +64,11 @@ internal sealed record BatchStep(
     )]
         string? Text = null,
     [property: Description("wait: with text, the node whose visible Controls are scanned, as wait_for's condition.under.")] string? Under = null,
-    [property: Description("wait: with text, \"exact\" (the default), \"prefix\" or \"contains\", as wait_for's condition.match.")]
+    [property: Description(
+        "property, state, wait: \"exact\" (the default), \"prefix\" or \"contains\", as wait_for's condition.match: on a wait with "
+            + "text it compares the shown text; on a property or state with a string equals it compares the value as stored, "
+            + "case-sensitive and untrimmed."
+    )]
         string? Match = null,
     [property: Description("wait: with node, the frames the node's rect, transform or property must hold unchanged, as wait_for's condition.stable.")]
         int? Stable = null,

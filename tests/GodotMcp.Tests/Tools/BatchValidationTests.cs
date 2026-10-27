@@ -447,22 +447,66 @@ public sealed class BatchValidationTests : IDisposable
 
     [Theory]
     [InlineData("wait")]
-    [InlineData("property")]
-    [InlineData("state")]
     [InlineData("expression")]
     public async Task AnAssertionWithAMatchButNoTextIsRefused(string assert)
     {
-        JsonElement equals = JsonSerializer.Deserialize<JsonElement>("true");
         BatchStep step = assert switch
         {
-            "state" => new(Assert: assert, Node: "Lobby", EqualsValue: equals, State: "phase", Match: "prefix"),
             "expression" => new(Assert: assert, Expression: "true", Match: "prefix"),
-            _ => new(Assert: assert, Node: "Lobby", Property: "visible", EqualsValue: equals, Match: "prefix"),
+            _ => new(Assert: assert, Node: "Lobby", Exists: true, Match: "prefix"),
         };
 
         McpException refused = await RefusedAsync([step]);
 
-        Assert.Equal("step 0: match applies only to a text condition or target; this one has no text.", refused.Message);
+        Assert.Equal("step 0: match applies only to a text condition or target, or a string equals; this one has neither.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("wait")]
+    [InlineData("property")]
+    [InlineData("state")]
+    public async Task AnAssertionWithAMatchOnANonStringEqualsIsRefused(string assert)
+    {
+        McpException refused = await RefusedAsync([EqualsAssertion(assert, "true", "prefix")]);
+
+        Assert.Equal("step 0: match \"prefix\" compares strings; equals here is a boolean.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("property", "prefix")]
+    [InlineData("state", "contains")]
+    public void AnAssertionWithAStringEqualsTakesAMatch(string assert, string match)
+    {
+        BatchStep step = EqualsAssertion(assert, "\"Deep Mine\"", match);
+
+        RuntimeTools.CheckBatch([step]);
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(RuntimeTools.ConditionOf(step), RuntimeTools.TimeoutOf(step));
+
+        Assert.Equal(assert, parameters["kind"]?.GetValue<string>());
+        Assert.Equal(match, parameters["match"]?.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("property")]
+    [InlineData("state")]
+    public void AnAssertionForNullIsAccepted(string assert)
+    {
+        BatchStep step = EqualsAssertion(assert, "null", null);
+
+        RuntimeTools.CheckBatch([step]);
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(RuntimeTools.ConditionOf(step), RuntimeTools.TimeoutOf(step));
+
+        Assert.Equal(assert, parameters["kind"]?.GetValue<string>());
+        Assert.True(parameters.ContainsKey("equals") && parameters["equals"] is null, parameters.ToJsonString());
+    }
+
+    /// <summary>A property assertion (or a wait on a property) on Lobby's title, or a state one on its phase.</summary>
+    private static BatchStep EqualsAssertion(string assert, string equalsJson, string? match)
+    {
+        JsonElement equals = JsonSerializer.Deserialize<JsonElement>(equalsJson);
+        return assert == "state"
+            ? new(Assert: assert, Node: "Lobby", EqualsValue: equals, State: "phase", Match: match)
+            : new(Assert: assert, Node: "Lobby", Property: "title", EqualsValue: equals, Match: match);
     }
 
     [Fact]

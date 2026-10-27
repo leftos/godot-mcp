@@ -231,7 +231,6 @@ public sealed class TimeValidationTests : IDisposable
     [InlineData("Main", null, "state", "\"done\"", null, "true", null)]
     [InlineData(null, null, null, null, "fired", "true", null)]
     [InlineData("", true, null, null, null, null, null)]
-    [InlineData("Main", null, "state", "null", null, null, null)]
     [InlineData("Main", null, null, null, null, null, "true")]
     [InlineData("Main", null, null, null, null, null, "\"now\"")]
     [InlineData("", null, null, null, null, null, "true")]
@@ -359,7 +358,42 @@ public sealed class TimeValidationTests : IDisposable
             RuntimeTools.BuildWaitParameters(new WaitCondition(Node: "Lobby", Match: "prefix"), 1000)
         );
 
-        Assert.Equal("match applies only to a text condition or target; this one has no text.", refused.Message);
+        Assert.Equal("match applies only to a text condition or target, or a string equals; this one has neither.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("property", "prefix")]
+    [InlineData("property", "contains")]
+    [InlineData("state", "prefix")]
+    [InlineData("state", "contains")]
+    public void AStringEqualsTakesAPrefixMatch(string kind, string match)
+    {
+        WaitCondition condition =
+            kind == "property"
+                ? new(Node: "Log", Property: "text", EqualsValue: Json("\"Deep Mine\""), Match: match)
+                : new(Node: "Log", EqualsValue: Json("\"Deep Mine\""), Match: match, State: "log");
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(condition, 1000);
+
+        Assert.Equal(kind, parameters["kind"]!.GetValue<string>());
+        Assert.Equal(match, parameters["match"]!.GetValue<string>());
+        Assert.Equal("Deep Mine", parameters["equals"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("7", "a number")]
+    [InlineData("true", "a boolean")]
+    [InlineData("false", "a boolean")]
+    [InlineData("{\"a\": 1}", "an object")]
+    [InlineData("[1]", "an array")]
+    [InlineData("null", "null")]
+    public void ANonStringEqualsWithAMatchIsRefused(string equals, string kind)
+    {
+        WaitCondition condition = new(Node: "Board", EqualsValue: Json(equals), Match: "contains", State: "turn");
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildWaitParameters(condition, 1000));
+
+        Assert.Equal($"match \"contains\" compares strings; equals here is {kind}.", refused.Message);
     }
 
     [Fact]
@@ -524,16 +558,35 @@ public sealed class TimeValidationTests : IDisposable
         );
     }
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData("null")]
-    public void AStateWithoutEqualsIsRefused(string? equals)
+    [Fact]
+    public void AStateWithoutEqualsIsRefused()
     {
-        WaitCondition condition = new(Node: "Board", EqualsValue: equals is null ? null : Json(equals), State: "turn");
+        WaitCondition condition = new(Node: "Board", State: "turn");
 
         McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildWaitParameters(condition, 1000));
 
-        Assert.Equal("a state condition needs equals, the JSON value the key must equal; null is not supported.", refused.Message);
+        Assert.Equal("a state condition needs equals, the JSON value the key must equal.", refused.Message);
+    }
+
+    [Fact]
+    public void AStateWaitForNullIsAccepted()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Node: "Board", EqualsValue: Json("null"), State: "owner"), 1000);
+
+        Assert.Equal("state", parameters["kind"]!.GetValue<string>());
+        Assert.True(parameters.ContainsKey("equals") && parameters["equals"] is null, parameters.ToJsonString());
+    }
+
+    [Fact]
+    public void APropertyWaitForNullIsAccepted()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(
+            new WaitCondition(Node: "Main", Property: "target", EqualsValue: Json("null")),
+            1000
+        );
+
+        Assert.Equal("property", parameters["kind"]!.GetValue<string>());
+        Assert.True(parameters.ContainsKey("equals") && parameters["equals"] is null, parameters.ToJsonString());
     }
 
     [Fact]

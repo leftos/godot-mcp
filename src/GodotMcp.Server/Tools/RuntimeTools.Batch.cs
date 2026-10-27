@@ -111,8 +111,8 @@ internal sealed partial class RuntimeTools
         "Plays a list of steps against a running game in one call, in order, and stops at the first failed assertion or "
             + "failed tool step. A step is either {tool, args}: a runtime tool by its name with the arguments it takes on its "
             + "own (take_screenshot and compare_screenshot are forced to path_only; image blocks are dropped), or an assertion "
-            + "{assert, ...}: property {node, property, equals, timeoutMs?}, expression {expression, timeoutMs?} and state {node, "
-            + "state, equals, timeoutMs?}, the value at a key path of the node's state as wait_for's state condition reads it (for "
+            + "{assert, ...}: property {node, property, equals, match?, timeoutMs?}, expression {expression, timeoutMs?} and state "
+            + "{node, state, equals, match?, timeoutMs?}, the value at a key path of the node's state as wait_for's state condition reads it (for "
             + "all three, timeoutMs defaults to 0: checked once, now, even while paused), wait {any wait_for condition, gameMs "
             + "and frames included, "
             + "timeoutMs?} (default 10000; gameMs + 10000 for gameMs, 10 s + 100 ms a frame for frames, 10 s + 100 ms for each "
@@ -631,11 +631,11 @@ internal sealed partial class RuntimeTools
     private static string?[]? ListedSessions(BatchStep step) =>
         step.Sessions is { ValueKind: JsonValueKind.Array } given ? [.. given.EnumerateArray().Select(name => name.GetString()!)] : null;
 
+    // equals: null binds as a Null element, the value to wait for; only a missing equals is not given.
     private static bool HasPropertyFields(BatchStep step) =>
-        !string.IsNullOrEmpty(step.Node) && !string.IsNullOrEmpty(step.Property) && step.EqualsValue is { ValueKind: not JsonValueKind.Null };
+        !string.IsNullOrEmpty(step.Node) && !string.IsNullOrEmpty(step.Property) && step.EqualsValue is not null;
 
-    private static bool HasStateFields(BatchStep step) =>
-        !string.IsNullOrEmpty(step.Node) && step.State is not null && step.EqualsValue is { ValueKind: not JsonValueKind.Null };
+    private static bool HasStateFields(BatchStep step) => !string.IsNullOrEmpty(step.Node) && step.State is not null && step.EqualsValue is not null;
 
     private static bool HasFiredFields(BatchStep step) => !string.IsNullOrEmpty(step.Node) && !string.IsNullOrEmpty(step.Signal);
 
@@ -670,8 +670,8 @@ internal sealed partial class RuntimeTools
         _ = CheckCompareArguments(null, step.Tolerance ?? DefaultTolerance, CompareOptionsOf(step));
     }
 
-    /// <summary>The wait_for condition an assertion checks: only its own kind's fields, and match so it is refused, for
-    /// property, expression and state.</summary>
+    /// <summary>The wait_for condition an assertion checks: only its own kind's fields, and match, which a property or state
+    /// assertion takes with a string equals and an expression refuses, for property, expression and state.</summary>
     internal static WaitCondition ConditionOf(BatchStep step) =>
         step.Assert switch
         {

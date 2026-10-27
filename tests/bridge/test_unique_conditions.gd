@@ -56,7 +56,7 @@ func test_a_settled_check_of_a_found_unique_name_walks_once() -> void:
 func test_a_found_unique_name_answers_its_property_in_one_walk() -> void:
 	var rig: Dictionary = _unique_rig()
 
-	var answer: Array = rig["conditions"].check_property("%Only", "health", 3)
+	var answer: Array = rig["conditions"].check_property("%Only", "health", 3, "exact")
 
 	assert_eq(answer, [true, 3], "the property's value")
 	assert_eq(rig["inspect"].walks, 1, "one walk for a found unique name")
@@ -66,7 +66,7 @@ func test_a_found_unique_name_answers_its_property_in_one_walk() -> void:
 func test_a_path_under_a_unique_name_finds_its_child_in_one_walk() -> void:
 	var rig: Dictionary = _unique_rig()
 
-	var answer: Array = rig["conditions"].check_property("%Only/Child", "health", 3)
+	var answer: Array = rig["conditions"].check_property("%Only/Child", "health", 3, "exact")
 
 	assert_eq(answer, [true, 3], "the child's property value")
 	assert_eq(rig["inspect"].walks, 1, "one walk for a unique name with a path under it")

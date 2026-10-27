@@ -26,11 +26,12 @@ internal sealed record WaitCondition(
     )]
         string? Property = null,
     [property: JsonPropertyName("equals")]
+    [property: JsonConverter(typeof(ExplicitNullConverter))]
     [property: Description(
         "The JSON value the property, or with state the state's key, must equal, compared as run_script returns values "
-            + "(Vector2 as {x, y}, and so on); "
-            + "numbers match within 1e-6. null is not supported: to wait for a reference to clear, use {expression}, e.g. "
-            + "node.target == null."
+            + "(Vector2 as {x, y}, and so on); numbers match within 1e-6. null waits for a property or key that is present and "
+            + "null; a missing state key never meets it. With a string, match \"prefix\" or \"contains\" compares its start or "
+            + "any part, case-sensitive and untrimmed."
     )]
         JsonElement? EqualsValue = null,
     [property: Description("With node: wait for the node's next emission of this signal; the result carries its args.")] string? Signal = null,
@@ -71,6 +72,8 @@ internal sealed record WaitCondition(
         string? Under = null,
     [property: Description(
         "With text: \"exact\" (the default), \"prefix\" or \"contains\", how text is compared with the shown text, both trimmed, case kept."
+            + " With a string equals on a property or state, prefix and contains compare the value as stored, case-sensitive and "
+            + "untrimmed."
     )]
         string? Match = null,
     [property: Description(
