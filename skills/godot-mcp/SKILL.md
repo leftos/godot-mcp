@@ -78,6 +78,8 @@ For a windowed look at one moment, run the scene with `run_project` and play its
 
 `options.timeScale` (0.01 to 100, default 1) runs every scene's game that many times faster: a pace stays game time and takes pace / timeScale s of wall time (the wait after the last step lasts the longer of its pace in game time and in wall time), and the kill bound scales with it.
 
+A scene whose exit wait needs a length of its own (an until step's pace is also its limit, so it cannot be lowered for the wait) sets `"exitHold": <seconds>` (above 0, at most 120) in its profile pace object: it replaces the last played step's pace for that wait only, counts the same way, and a bare-number pace cannot carry it.
+
 An until that counts frames or physics ticks (`frames`, `settled`) sees that many times fewer frames per pace, and at a high scale one frame's delta can exceed a short pace, so such a scene may need a longer pace. A game that sets `Engine.time_scale` itself overrides the launch's scale and has its long steps cut short with a "clock stood still" error: that scene opts out with `"timeScale": 1` in its profile pace object (`{seconds, reason, timeScale: 1}`).
 
 Its folder, paces, ceilings, setup steps (`setup {"<scene>": [step, ...]}`, an index or an exact step name, for a partial run whose selected steps need earlier ones), known-red scenes, patterns and the lines a scene must print (`expect`, `expectFor {"<scene>": [...]}`; a scene whose steps are green but whose output lacks one is red, `exit.missing` naming it) live in `godot-mcp.json`'s `scratch` section (a scene is killed at a ceiling derived from its paces; `options.ceilings` or `scratch.ceilings` `{"<scene>": seconds}` gives a scene its own, in load-adjusted seconds from its first step, not scaled by `timeScale`, the call's winning); `get_debug_output {session}` with the scene's `session` reads its whole output afterwards.
@@ -86,7 +88,7 @@ A run of many minutes goes in the background: `run_scratches` with `options.back
 
 Wait on its log with a `Monitor` running `timeout <limit> tail -n +1 -F <logFile>` and matching `^godot-mcp scratch run \S+ finished:` (the completion line: `done, passed …`, `stopped`, `interrupted` or `failed: …`) rather than holding a call open.
 
-The limit is the scenes' paces (each divided by the time scale, the last step's pace once more, in wall time above scale 1) plus a minute or two: a server killed outright (an install, a crash) never writes the line, and `scratch_status` then answers `live: false` with `state: running`.
+The limit is the scenes' paces (each divided by the time scale, the last step's pace, or its scene's `exitHold`, once more, in wall time above scale 1) plus a minute or two: a server killed outright (an install, a crash) never writes the line, and `scratch_status` then answers `live: false` with `state: running`.
 
 Never drop the `timeout`: on Windows a bare `tail -F` outlives the Monitor's shell when the Monitor ends, and runs on for good.
 

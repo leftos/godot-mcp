@@ -10,6 +10,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `wait_for`, `frame_control`, `batch_drive` and the text targets of `click`, `hover`, `drag` and `type_text` take `match: "prefix"` or `"contains"` beside `text`.
 - `run_scratches` takes `expect` and `expectFor` in the profile's `scratch` section: lines a scene must print, else it is red with `exit.missing`.
 - `wait_for` takes `options.maxWallMs`, a wall-time cap: the wait ends unmet with `wallCapped: true` however slowly the load-adjusted timeout runs.
+- A scene's `scratch.pace` takes `exitHold`, the wait after its last step, so an `until` step keeps a long limit while the scene quits soon after.
 
 ### Changed
 

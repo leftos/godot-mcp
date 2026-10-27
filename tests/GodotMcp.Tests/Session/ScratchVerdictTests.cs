@@ -832,18 +832,73 @@ public sealed class ScratchVerdictTests
 
     [Fact]
     public void TheCeilingBudgetsEachStepThePaceAfterAndTheMarkers() =>
-        Assert.Equal(TimeSpan.FromSeconds((3 * 10.5) + 0.5 + 10), ScratchRun.Ceiling([0.5, 0.5, 0.5], 1));
+        Assert.Equal(TimeSpan.FromSeconds((3 * 10.5) + 0.5 + 10), ScratchRun.Ceiling([0.5, 0.5, 0.5], 1, null));
 
     [Fact]
     public void TheCeilingSumsEachStepsOwnPaceAndWaitsTheLastStepsPaceAfter()
     {
-        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 30 + 10), ScratchRun.Ceiling([0.5, 30], 1));
-        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 10.5 + 0.5 + 10), ScratchRun.Ceiling([0.5, 30, 0.5], 1));
+        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 30 + 10), ScratchRun.Ceiling([0.5, 30], 1, null));
+        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 10.5 + 0.5 + 10), ScratchRun.Ceiling([0.5, 30, 0.5], 1, null));
     }
 
     [Fact]
     public void AtATimeScaleTheCeilingDividesTheStepPacesButNotThePaceAfter() =>
-        Assert.Equal(TimeSpan.FromSeconds(72), ScratchRun.Ceiling([8, 32], 4));
+        Assert.Equal(TimeSpan.FromSeconds(72), ScratchRun.Ceiling([8, 32], 4, null));
+
+    [Fact]
+    public void TheCeilingCountsAnExitHoldInPlaceOfTheLastStepsPaceAfterAtEachTimeScale()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(10.5 + 40 + 2 + 10), ScratchRun.Ceiling([0.5, 30], 1, 2));
+        Assert.Equal(TimeSpan.FromSeconds(12 + 18 + 2 + 10), ScratchRun.Ceiling([8, 32], 4, 2));
+        Assert.Equal(TimeSpan.FromSeconds(14 + 2 + 10), ScratchRun.Ceiling([2], 0.5, 1));
+        Assert.Equal(TimeSpan.FromSeconds(10.5 + 5 + 10), ScratchRun.Ceiling([0.5], 1, 5));
+    }
+
+    [Fact]
+    public void AtTimeScaleOneTheWaitAfterTheLastStepIsTheExitHoldAndTheKillReasonNamesIt()
+    {
+        ScratchWalk walk = new([new(0.5, null), new(10, null)], [0, 1], 1) { ExitHold = 2 };
+
+        Assert.Equal(2000, walk.AfterGameMs);
+        Assert.Equal(TimeSpan.FromSeconds(10.5 + 20 + 2 + 10), walk.Ceiling);
+        Assert.Equal(
+            "the scene passed its ceiling of 42.5 s of load-adjusted time (each of its 2 steps' pace + 10 s, the exit hold of 2 s, "
+                + "and 10 s for the markers), so its game was stopped",
+            walk.CeilingReason(string.Empty)
+        );
+    }
+
+    [Fact]
+    public void AScaledWalksExitHoldIsHeldInWallTime()
+    {
+        ScratchWalk walk = new([new(8, null), new(32, null)], [0, 1], 4) { ExitHold = 2 };
+
+        Assert.Equal(8000, walk.AfterGameMs);
+        Assert.Equal(TimeSpan.FromSeconds(42), walk.Ceiling);
+        Assert.Equal(
+            "the scene passed its ceiling of 42 s of load-adjusted time (each of its 2 steps' pace at time scale 4 + 10 s, the exit "
+                + "hold of 2 s in wall time, and 10 s for the markers), so its game was stopped",
+            walk.CeilingReason(string.Empty)
+        );
+    }
+
+    [Fact]
+    public void AtAHalfTimeScaleTheExitHoldIsHeldInGameTime()
+    {
+        ScratchWalk walk = new([new(2, null)], [0], 0.5) { ExitHold = 1 };
+
+        Assert.Equal(1000, walk.AfterGameMs);
+        Assert.Equal(TimeSpan.FromSeconds(26), walk.Ceiling);
+    }
+
+    [Fact]
+    public void AnExitHoldLongerThanTheLastStepsPaceIsWaitedWhole()
+    {
+        ScratchWalk walk = new([new(0.5, null), new(2, null)], [0, 1], 1) { ExitHold = 5 };
+
+        Assert.Equal(5000, walk.AfterGameMs);
+        Assert.Equal(TimeSpan.FromSeconds(10.5 + 12 + 5 + 10), walk.Ceiling);
+    }
 
     [Fact]
     public void AScaledWalksKillReasonGivesItsWallFiguresAtItsTimeScaleAndHoldsItsPaceAfterInWallTime()
@@ -924,6 +979,16 @@ public sealed class ScratchVerdictTests
         Assert.Equal(4, scaled["timeScale"]!.GetValue<double>());
         Assert.False(normal.ContainsKey("timeScale"));
         Assert.False(scaled["scenes"]![0]!.AsObject().ContainsKey("timeScale"));
+    }
+
+    [Fact]
+    public void ASceneCarriesItsExitHoldOnlyWhenTheProfileSetsOne()
+    {
+        JsonObject held = Json(ScratchVerdict.Judge(Seen(Step(0)) with { ExitHold = 2 }, Plain));
+        JsonObject plain = Json(ScratchVerdict.Judge(Seen(Step(0)), Plain));
+
+        Assert.Equal(2, held["exitHold"]!.GetValue<double>());
+        Assert.False(plain.ContainsKey("exitHold"), plain.ToJsonString());
     }
 
     [Fact]
@@ -1120,6 +1185,30 @@ public sealed class ScratchVerdictTests
                 + "10 s for the markers), so its game was stopped",
             new ScratchWalk([new(30, null), new(0.5, null)], [1], 1).CeilingReason(string.Empty)
         );
+
+    [Fact]
+    public void ASelectionsExitHoldFollowsItsLastPlayedStep()
+    {
+        ScratchPace[] paces = [new(0.5, null), new(30, null), new(2, null), new(0.5, null)];
+
+        ScratchWalk walk = new(paces, [0, 2], 1) { ExitHold = 1 };
+
+        Assert.Equal(1000, walk.AfterGameMs);
+        Assert.Equal(TimeSpan.FromSeconds(10.5 + 12 + 1 + 10), walk.Ceiling);
+    }
+
+    [Fact]
+    public void AGivenCeilingIsKeptBesideAnExitHold()
+    {
+        ScratchWalk walk = new([new(0.5, null), new(30, null)], [0, 1], 1)
+        {
+            ExitHold = 2,
+            Given = new ScratchCeiling(90.5, ScratchCeiling.OptionsSource),
+        };
+
+        Assert.Equal(TimeSpan.FromSeconds(90.5), walk.Ceiling);
+        Assert.Equal(2000, walk.AfterGameMs);
+    }
 
     [Fact]
     public void ASceneCeilingGivenByTheCallReplacesTheDerivedOne()

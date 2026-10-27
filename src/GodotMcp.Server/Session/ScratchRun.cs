@@ -44,6 +44,12 @@ internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace
     public IReadOnlyDictionary<string, ScratchPace> StepPaces { get; init; } = ReadOnlyDictionary<string, ScratchPace>.Empty;
 
     /// <summary>
+    /// The profile pace's "exitHold", the seconds waited after the last played step in place of that step's pace, kept beside
+    /// options.pace; null when the profile sets none.
+    /// </summary>
+    public double? ExitHold { get; init; }
+
+    /// <summary>
     /// The setup steps the profile declares for the scene, keyed by a step's index written plainly or its exact name: the steps a
     /// partial run adds to the ones options.steps selects, resolved only then; empty when the profile declares none.
     /// </summary>
@@ -61,8 +67,8 @@ internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace
     /// <summary>The scene's own engine arguments, after the runner's own --headless and --time-scale.</summary>
     public required IReadOnlyList<string> EngineArgs { get; init; }
 
-    /// <summary>The largest pace the scene holds: its own, or one of its steps'.</summary>
-    public double LargestPace => StepPaces.Values.Select(step => step.Seconds).Append(Pace).Max();
+    /// <summary>The largest pace the scene holds: its own, one of its steps', or its exit hold.</summary>
+    public double LargestPace => StepPaces.Values.Select(step => step.Seconds).Append(Pace).Append(ExitHold ?? 0).Max();
 
     /// <summary>
     /// The scene's own ceiling of load-adjusted time from its first step, given by options.ceilings or the profile's
@@ -140,10 +146,10 @@ internal sealed record ScratchPlan(
 }
 
 /// <summary>
-/// A scene's step paces by index, the steps a run plays of them, ascending, and the time scale its game runs at: what its
-/// ceiling, its pace after the last step played and its kill reason count. A step's pace is game time, so at time scale N it
-/// takes pace / N of wall time; the pace after the last step played counts in wall time above time scale 1 and in game time
-/// below it.
+/// A scene's step paces by index, the steps a run plays of them, ascending, the time scale its game runs at and its exit hold:
+/// what its ceiling, its wait after the last step played and its kill reason count. A step's pace is game time, so at time
+/// scale N it takes pace / N of wall time; the wait after the last step played, the exit hold else that step's pace, counts in
+/// wall time above time scale 1 and in game time below it.
 /// </summary>
 internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyList<int> Played, double TimeScale)
 {
@@ -153,33 +159,43 @@ internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyLi
     public ScratchCeiling? Given { get; init; }
 
     /// <summary>
-    /// The scene's ceiling: <see cref="Given"/> when the call or the profile sets one, else that of the played steps, from each
-    /// one's pace; see <see cref="ScratchRun.Ceiling"/>.
+    /// The profile's exit hold for the scene: the seconds waited after the last step played in place of that step's pace; null
+    /// waits that step's pace.
     /// </summary>
-    public TimeSpan Ceiling =>
-        Given is { } given ? TimeSpan.FromSeconds(given.Seconds) : ScratchRun.Ceiling([.. Played.Select(step => Paces[step].Seconds)], TimeScale);
+    public double? ExitHold { get; init; }
 
     /// <summary>
-    /// The game milliseconds waited after the last step played: that step's own pace in game time or in wall time, whichever is
-    /// longer, so pace × the time scale above 1.
+    /// The scene's ceiling: <see cref="Given"/> when the call or the profile sets one, else that of the played steps, from each
+    /// one's pace and the exit hold; see <see cref="ScratchRun.Ceiling"/>.
     /// </summary>
-    public int AfterGameMs => ScratchRun.GameMs(Paces[Played[^1]].Seconds * Math.Max(1, TimeScale));
+    public TimeSpan Ceiling =>
+        Given is { } given
+            ? TimeSpan.FromSeconds(given.Seconds)
+            : ScratchRun.Ceiling([.. Played.Select(step => Paces[step].Seconds)], TimeScale, ExitHold);
+
+    /// <summary>
+    /// The game milliseconds waited after the last step played: the exit hold, else that step's own pace, in game time or in wall
+    /// time, whichever is longer, so the seconds × the time scale above 1.
+    /// </summary>
+    public int AfterGameMs => ScratchRun.GameMs(AfterSeconds * Math.Max(1, TimeScale));
 
     /// <summary>
     /// The most wall seconds the scene's steps can still take once <paramref name="step"/> starts: the pace of each played step
-    /// not yet started and the step's own, each divided by the time scale, and the pace after the last step played, in wall time
+    /// not yet started and the step's own, each divided by the time scale, and the wait after the last step played, in wall time
     /// above time scale 1 and in game time below it; the launch and the prep are left out.
     /// </summary>
     public double RemainingSecondsAtMost(int step) =>
-        (Played.Where(played => played >= step).Sum(played => Paces[played].Seconds) / TimeScale)
-        + (Paces[Played[^1]].Seconds / Math.Min(1, TimeScale));
+        (Played.Where(played => played >= step).Sum(played => Paces[played].Seconds) / TimeScale) + (AfterSeconds / Math.Min(1, TimeScale));
+
+    /// <summary>The seconds of the wait after the last step played: the exit hold, else that step's own pace.</summary>
+    private double AfterSeconds => ExitHold ?? Paces[Played[^1]].Seconds;
 
     /// <summary>Why a scene was killed at its ceiling, with <paramref name="backstop"/> appended to the budget's terms.</summary>
     public string CeilingReason(string backstop) => Given is { } given ? GivenCeilingReason(given, backstop) : PacedCeilingReason(backstop);
 
     /// <summary>Why a scene was killed at a ceiling the call or the profile gave it, naming the seconds and what set them.</summary>
     private static string GivenCeilingReason(ScratchCeiling given, string backstop) =>
-        $"the scene passed its ceiling of {GivenSeconds(given)} s of load-adjusted time, set by {given.Source}{backstop}, "
+        $"the scene passed its ceiling of {GivenSeconds(given.Seconds)} s of load-adjusted time, set by {given.Source}{backstop}, "
         + "so its game was stopped";
 
     /// <summary>Why a scene was killed at the ceiling its paces give, with the terms that ceiling sums.</summary>
@@ -187,14 +203,16 @@ internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyLi
     {
         string each = Played.Count == 1 ? "its 1 step's" : $"each of its {Played.Count} steps'";
         string scaled = TimeScale == 1 ? string.Empty : $" at time scale {TimeScale.ToString(CultureInfo.InvariantCulture)}";
-        string after = TimeScale > 1 ? "once more in wall time" : "once more";
+        string wall = TimeScale > 1 ? " in wall time" : string.Empty;
+        string after = ExitHold is { } hold ? $"the exit hold of {GivenSeconds(hold)} s{wall}" : $"the last step's pace once more{wall}";
         return $"the scene passed its ceiling of {Seconds(Ceiling)} s of load-adjusted time "
-            + $"({each} pace{scaled} + 10 s, the last step's pace {after}, and 10 s for the markers){backstop}, so its game was stopped";
+            + $"({each} pace{scaled} + 10 s, {after}, and 10 s for the markers){backstop}, so its game was stopped";
     }
 
     private static string Seconds(TimeSpan ceiling) => ceiling.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
 
-    private static string GivenSeconds(ScratchCeiling given) => given.Seconds.ToString("0.###", CultureInfo.InvariantCulture);
+    /// <summary>Seconds a profile or a call wrote, to the thousandth.</summary>
+    private static string GivenSeconds(double seconds) => seconds.ToString("0.###", CultureInfo.InvariantCulture);
 }
 
 /// <summary>A line number in each of a session's stdout and stderr: the edge of a step's window.</summary>
@@ -423,13 +441,13 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// The ceiling of a scene's steps, load-adjusted, from each step's pace in game time at <paramref name="timeScale"/>: each
-    /// step's pace / timeScale and 10 s, the last step's pace once more for the pace after it, in wall time above time scale 1
-    /// and in game time below it, and 10 s more for the launch and pace markers.
+    /// step's pace / timeScale and 10 s, the wait after the last step (<paramref name="exitHold"/> when set, else that step's pace
+    /// once more), in wall time above time scale 1 and in game time below it, and 10 s more for the launch and pace markers.
     /// </summary>
-    internal static TimeSpan Ceiling(IReadOnlyList<double> paces, double timeScale) =>
+    internal static TimeSpan Ceiling(IReadOnlyList<double> paces, double timeScale, double? exitHold) =>
         TimeSpan.FromSeconds(
             paces.Sum(pace => (pace / timeScale) + StepAllowance.TotalSeconds)
-                + (paces.Count > 0 ? paces[^1] / Math.Min(1, timeScale) : 0)
+                + (paces.Count > 0 ? (exitHold ?? paces[^1]) / Math.Min(1, timeScale) : 0)
                 + StepAllowance.TotalSeconds
         );
 
@@ -947,14 +965,18 @@ internal sealed class ScratchRun
         IReadOnlyList<ScratchStepToken>? tokens = _plan.StepsFor(_scene.Name);
         if (tokens is null)
         {
-            _walk = new ScratchWalk(paces, [.. Enumerable.Range(0, _names.Count)], _scene.TimeScale) { Given = _scene.Ceiling };
+            _walk = new ScratchWalk(paces, [.. Enumerable.Range(0, _names.Count)], _scene.TimeScale)
+            {
+                Given = _scene.Ceiling,
+                ExitHold = _scene.ExitHold,
+            };
             return null;
         }
 
         (ScratchSelection selection, string? selectError) = SelectSteps(_scene, tokens, NamedSteps);
         _selected = selection.Selected;
         _setupOnly = selection.Setup;
-        _walk = new ScratchWalk(paces, selection.Played, _scene.TimeScale) { Given = _scene.Ceiling };
+        _walk = new ScratchWalk(paces, selection.Played, _scene.TimeScale) { Given = _scene.Ceiling, ExitHold = _scene.ExitHold };
         return selectError;
     }
 
@@ -1052,7 +1074,7 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// Plays each step to play, in ascending order, each waiting its own pace, until one fails; after the last one played,
-    /// waits its pace once more, the longer of its game time and its wall time.
+    /// waits the scene's exit hold, else that step's pace once more, the longer of its game time and its wall time.
     /// </summary>
     private async Task PlayStepsAsync(GodotSession session, CancellationToken limit)
     {
@@ -1152,8 +1174,8 @@ internal sealed class ScratchRun
     private readonly record struct StepPlay(string? Error, string? BridgeError, ScratchUntil? Until);
 
     /// <summary>
-    /// The pace after the last step, the longer of its game time and its wall time: an error in the feed during it, or a wait
-    /// not met, fails the scene's exit.
+    /// The wait after the last step, the exit hold else that step's pace, the longer of its game time and its wall time: an
+    /// error in the feed during it, or a wait not met, fails the scene's exit.
     /// </summary>
     private async Task PaceAfterAsync(GodotSession session, int gameMs, CancellationToken limit)
     {
@@ -1310,6 +1332,7 @@ internal sealed class ScratchRun
             Setup = _setupOnly.Length == 0 ? null : _setupOnly,
             StepNames = NamedSteps,
             TimeScale = _scene.TimeScale == _plan.TimeScale ? null : _scene.TimeScale,
+            ExitHold = _scene.ExitHold,
         };
 
     private static int WholeNumber(JsonNode? node) =>

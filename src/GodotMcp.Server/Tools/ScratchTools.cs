@@ -86,7 +86,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "step) is played once more alone after the others: green alone, its entry is the replay's with alone: true and counts "
             + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
             + "{passed, green, red, known, noSteps, killed, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, "
-            + "scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, stepList?, timeScale?, pace, paceReason?, seconds, "
+            + "scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, stepList?, timeScale?, pace, paceReason?, exitHold?, seconds, "
             + "session, failedAt?, failures?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?, missing?}, known?, "
             + "alone?, "
             + "aloneFailedAt?}], timeScale?}, scenes in the order given; selected lists the indices options.steps selected, setup the "
@@ -122,7 +122,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
                 + "step (else scratch.pace's for the step, else for the scene, else 0.5); timeScale the games' time scale, from 0.01 to "
                 + "100 (default 1), each game launched with --time-scale, so a pace of p s takes p / timeScale s of wall time and "
                 + "the ceiling derived from the paces scales with it, while a ceiling given by ceilings or scratch.ceilings is fixed "
-                + "seconds and does not; the wait after the last step lasting p s of wall time above 1, a scene whose "
+                + "seconds and does not; the wait after the last step lasting p s of wall time above 1, p being the scene's "
+                + "exitHold when its scratch.pace entry sets one, else the last step's pace; a scene whose "
                 + "scratch.pace entry has \"timeScale\": 1 kept at normal speed; userArgs "
                 + "appended after the profile's; "
                 + "engineArgs placed before -- after the profile's scratch.engineArgs; "
@@ -506,10 +507,11 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     /// <summary>
     /// One scene's plan: options.pace else the profile's pace for the scene else the default, and the profile's reason for the
     /// pace and its step paces, kept only when the pace came from the profile rather than from options.pace, which paces every
-    /// step; and options.timeScale, else 1, unless the profile's pace has "timeScale": 1, which keeps the scene at normal speed
-    /// even beside options.pace; the ceiling options.ceilings or the profile's scratch.ceilings gives the scene, if either does;
-    /// the setup steps the profile's scratch.setup declares for the scene; the patterns its scratch.expect and scratch.expectFor
-    /// make the scene's output match a line of; and the engine arguments its game launches with.
+    /// step; the profile pace's exit hold, which options.pace keeps; and options.timeScale, else 1, unless the profile's pace has
+    /// "timeScale": 1, which keeps the scene at normal speed even beside options.pace; the ceiling options.ceilings or the
+    /// profile's scratch.ceilings gives the scene, if either does; the setup steps the profile's scratch.setup declares for the
+    /// scene; the patterns its scratch.expect and scratch.expectFor make the scene's output match a line of; and the engine
+    /// arguments its game launches with.
     /// </summary>
     private static ScratchScenePlan ScenePlan(
         string name,
@@ -526,13 +528,17 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             Known = scratch.Known.GetValueOrDefault(name),
             PaceReason = options.Pace is null ? entry?.Reason : null,
             StepPaces = StepPaces(entry, options),
-            TimeScale = entry is { NormalSpeed: true } ? 1 : options.TimeScale ?? 1,
+            ExitHold = entry?.ExitHold,
+            TimeScale = TimeScaleFor(entry, options),
             EngineArgs = engineArgs,
             Ceiling = CeilingFor(name, scratch, options),
             Setup = SetupFor(name, scratch),
             Expect = ExpectFor(name, scratch),
         };
     }
+
+    /// <summary>The scene's time scale: 1 when its profile pace has "timeScale": 1, else options.timeScale, else 1.</summary>
+    private static double TimeScaleFor(ScratchPace? entry, ScratchOptions options) => entry is { NormalSpeed: true } ? 1 : options.TimeScale ?? 1;
 
     /// <summary>The setup steps the profile's scratch.setup declares for the scene; empty when it declares none.</summary>
     private static IReadOnlyList<string> SetupFor(string name, ScratchProfile scratch) =>

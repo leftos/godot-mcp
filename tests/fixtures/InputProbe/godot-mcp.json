@@ -4,6 +4,14 @@
     "pace": {
       "ScratchBeside": 1,
       "ScratchBusy": 0.1,
+      "ScratchExitHold": {
+        "seconds": 0.1,
+        "reason": "its first step only leaves a note",
+        "exitHold": 3,
+        "steps": {
+          "arm": { "seconds": 30, "reason": "its until holds at once; the pace is only its limit" }
+        }
+      },
       "ScratchLateError": 2,
       "ScratchMarker": 2,
       "ScratchStepPace": {
@@ -37,6 +45,9 @@
         }
       },
       "ScratchUntilSignal": 2
+    },
+    "expectFor": {
+      "ScratchExitHold": [{ "pattern": "^inside the exit hold$", "reason": "its timer prints it inside the exit hold" }]
     },
     "known": {
       "ScratchLeak": "leaks a node at exit on purpose, so the runner's leak check has a scene to find"

@@ -181,6 +181,34 @@ public sealed partial class ScratchBackgroundTests : IDisposable
         Assert.Equal(12, walk.RemainingSecondsAtMost(3));
     }
 
+    [Theory]
+    [InlineData(1, 7, 4)]
+    [InlineData(4, 2.5, 1.75)]
+    [InlineData(0.5, 14, 8)]
+    public void RemainingTimeCountsAnExitHoldInPlaceOfTheLastPaceOnceMore(double timeScale, double fromFirst, double fromLast)
+    {
+        ScratchWalk walk = new(
+            [new ScratchPace(1, null), new ScratchPace(2, null), new ScratchPace(0.5, null), new ScratchPace(3, null)],
+            [0, 1, 3],
+            timeScale
+        )
+        {
+            ExitHold = 1,
+        };
+
+        Assert.Equal(fromFirst, walk.RemainingSecondsAtMost(0));
+        Assert.Equal(fromLast, walk.RemainingSecondsAtMost(3));
+    }
+
+    [Fact]
+    public void RemainingTimeCountsAnExitHoldLongerThanTheLastPace()
+    {
+        ScratchWalk walk = new([new ScratchPace(1, null), new ScratchPace(3, null)], [0, 1], 1) { ExitHold = 5 };
+
+        Assert.Equal(9, walk.RemainingSecondsAtMost(0));
+        Assert.Equal(8, walk.RemainingSecondsAtMost(1));
+    }
+
     [Fact]
     public void LogLinesStripLineBreaksSoAStepNameCannotFormACompletionLine()
     {

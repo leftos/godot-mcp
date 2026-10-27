@@ -44,6 +44,14 @@ public sealed class ScratchRunOrderTests
     }
 
     [Fact]
+    public void AFolderRunCountsAScenesExitHoldAmongItsPaces()
+    {
+        ScratchScenePlan[] scenes = [Scene("A", 2), Scene("B", 0.5) with { ExitHold = 5 }, Scene("C", 3)];
+
+        Assert.Equal([1, 2, 0], ScratchRun.StartOrder(scenes, listed: false));
+    }
+
+    [Fact]
     public void AFolderRunOrdersByTheWallTimeAPaceTakesAtItsScenesTimeScale()
     {
         ScratchScenePlan[] scenes = [Scene("A", 8) with { TimeScale = 4 }, Scene("B", 3), Scene("C", 1) with { TimeScale = 4 }];

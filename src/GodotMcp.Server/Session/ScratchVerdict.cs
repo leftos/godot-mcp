@@ -76,6 +76,9 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
     /// <summary>The time scale the scene's game ran at when it differs from the call's (its profile pace opted out); else null.</summary>
     public double? TimeScale { get; init; }
 
+    /// <summary>The profile's exit hold for the scene, the seconds waited after its last played step; null when it sets none.</summary>
+    public double? ExitHold { get; init; }
+
     public string? Refusal { get; init; }
 
     public ScratchFailure? Kill { get; init; }
@@ -256,6 +259,13 @@ internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchS
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? TimeScale { get; init; }
 
+    /// <summary>
+    /// The profile pace's exit hold, the seconds waited after the scene's last played step in place of that step's pace; null when
+    /// the profile sets none.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? ExitHold { get; init; }
+
     /// <summary>The profile's reason for the scene's pace, when the scene came out red or killed; null otherwise.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? PaceReason { get; init; }
@@ -402,6 +412,7 @@ internal static partial class ScratchVerdict
             Setup = seen.Setup,
             StepList = StepList(seen),
             TimeScale = seen.TimeScale,
+            ExitHold = seen.ExitHold,
             PaceReason = shown is Red or Killed ? PaceReasonAt(seen, failedAt, rules.PaceReason) : null,
             FailedAt = failedAt,
             Failures = Failures(seen, rules.Patterns, rules.Details ? MaxCopyChars : MaxFailureIndexChars),

@@ -356,6 +356,28 @@ public sealed class ScratchValidationTests : IDisposable
     }
 
     [Fact]
+    public void TheProfilesExitHoldRidesOnThePlanAndOptionsPaceKeepsIt()
+    {
+        WriteProfile(
+            """
+            {
+              "scratch": {
+                "folder": "Scratch",
+                "pace": { "Beta": { "seconds": 10, "reason": "its until waits for the card", "exitHold": 2 } }
+              }
+            }
+            """
+        );
+
+        ScratchPlan profiled = Plan(null);
+        ScratchPlan paced = Plan(null, new ScratchOptions(Pace: 1.5));
+
+        Assert.Equal([null, 2.0], profiled.Scenes.Select(scene => scene.ExitHold));
+        Assert.Equal([null, 2.0], paced.Scenes.Select(scene => scene.ExitHold));
+        Assert.Equal([1.5, 1.5], paced.Scenes.Select(scene => scene.Pace));
+    }
+
+    [Fact]
     public void KeepGoingIsTheOptionsElseOff()
     {
         Assert.False(Plan(["res://Other.tscn"]).KeepGoing);

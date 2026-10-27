@@ -78,7 +78,8 @@ internal sealed partial class ProjectProfile
     private const string StepsKey = "steps";
     private const string TimeScaleKey = "timeScale";
     private static readonly string[] StepPaceKeys = ["seconds", "reason"];
-    private static readonly string[] PaceKeys = [.. StepPaceKeys, StepsKey, TimeScaleKey];
+    private const string ExitHoldKey = "exitHold";
+    private static readonly string[] PaceKeys = [.. StepPaceKeys, StepsKey, TimeScaleKey, ExitHoldKey];
     private static readonly string[] PatternKeys = ["pattern", "reason"];
 
     /// <summary>What a <c>scratch.setup</c> entry may be, for the refusals that say what one is.</summary>
@@ -636,7 +637,7 @@ internal sealed partial class ProjectProfile
 
     /// <summary>
     /// One scene's pace: a bare number of seconds, or an object of the seconds, the reason for them and, optionally, the paces of
-    /// some of its steps.
+    /// some of its steps, a "timeScale" of 1 and an "exitHold".
     /// </summary>
     private static ScratchPace ReadPace(string scene, JsonElement value, Place place) =>
         ReadNumberOrObject(value, place, $"\"pace\" of \"{scene}\"", pace => ReadObjectPace(scene, pace, place));
@@ -666,7 +667,8 @@ internal sealed partial class ProjectProfile
 
     /// <summary>
     /// A scene's object pace: "seconds" and "reason", in either order, the reason why the scene needs it, the optional
-    /// "steps", the paces of single steps, and the optional "timeScale", which can only be 1 and keeps the scene at normal speed.
+    /// "steps", the paces of single steps, the optional "timeScale", which can only be 1 and keeps the scene at normal speed, and
+    /// the optional "exitHold", the seconds waited after the last played step in place of that step's pace.
     /// </summary>
     private static ScratchPace ReadObjectPace(string scene, JsonElement value, Place place)
     {
@@ -678,7 +680,8 @@ internal sealed partial class ProjectProfile
             CheckNormalSpeed(scale, pace);
         }
 
-        ScratchPace read = ReadSecondsAndReason(keys, pace) with { NormalSpeed = normalSpeed };
+        double? exitHold = keys.TryGetValue(ExitHoldKey, out JsonElement hold) ? Seconds(hold, pace, $"\"{ExitHoldKey}\"") : null;
+        ScratchPace read = ReadSecondsAndReason(keys, pace) with { NormalSpeed = normalSpeed, ExitHold = exitHold };
         return keys.TryGetValue(StepsKey, out JsonElement steps) ? read with { Steps = ReadStepPaces(scene, steps, pace) } : read;
     }
 
@@ -738,7 +741,7 @@ internal sealed partial class ProjectProfile
 
     private static string MissingPaceKey(string key) =>
         $"\"{key}\" is missing; an object pace needs both \"seconds\" and \"reason\". Add it, or write the pace as a bare number of "
-        + "seconds, which cannot carry a timeScale";
+        + "seconds, which cannot carry a timeScale or exitHold";
 
     private static string ReadPaceReason(JsonElement value, Place place) =>
         value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } reason
@@ -1044,6 +1047,12 @@ internal sealed record ScratchPace(double Seconds, string? Reason)
 
     /// <summary>Whether a scene's pace has "timeScale": 1, which keeps the scene's game at normal speed whatever options.timeScale says.</summary>
     public bool NormalSpeed { get; init; }
+
+    /// <summary>
+    /// A scene's "exitHold": the seconds waited after its last played step in place of that step's pace, counted as a pace after
+    /// the last step is; null when the profile sets none, which waits that step's pace.
+    /// </summary>
+    public double? ExitHold { get; init; }
 }
 
 /// <summary>

@@ -366,7 +366,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   A lookup that cannot read the names refuses too, ahead of those: `PlayStep "<name>": reading its step names raised: <first error>` when `GetStepCount` or `GetStepName` raised an error, `PlayStep "<name>": GetStepCount returned <value>, not a step count`, and `PlayStep "<name>": GetStepName(<index>) returned <value>, not a name`, the value written as a GDScript value (`null`, `"text"`).
 
-  With `options.timeScale` N the game runs N times faster, so a pace of p s of game time takes p / N s of wall time; the pace itself stays game time, except the wait after the last played step, which lasts the longer of that step's pace in game time and in wall time (above scale 1 the pace in wall time, so the exit leak check gets the wall time a 1x run gives it; at 1 and below the pace in game time; a scene that needs longer sets its last step's pace).
+  With `options.timeScale` N the game runs N times faster, so a pace of p s of game time takes p / N s of wall time; the pace itself stays game time, except the wait after the last played step, which lasts the longer of that step's pace in game time and in wall time (above scale 1 the pace in wall time, so the exit leak check gets the wall time a 1x run gives it; at 1 and below the pace in game time; a scene that needs a different wait sets its last step's pace, or `exitHold` in its pace object, which replaces that step's pace for this wait and counts the same way).
 
   The top-level `timeScale` is in the result when the call's scale is not 1, and a scene whose profile pace opted out carries its own `timeScale: 1`, a refused or killed scene too.
 
@@ -394,7 +394,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   `failedAt` is the first failed step and `failures` lists every failed step in order (`index`, `name`, `error`; one entry without `keepGoing`), both absent for a scene with no failed step, and each failed step in `details` carries its `error`.
 
-  A killed scene's `failedAt` names the step the kill cut off, also the last entry of `failures`. After the last step and that step's pace once more (the longer of its game time and wall time) the game is stopped gracefully and its stderr read for the leak line (`N ObjectDB instances were leaked at exit`).
+  A killed scene's `failedAt` names the step the kill cut off, also the last entry of `failures`. After the last step and that step's pace once more (or the scene's `exitHold`; the longer of its game time and wall time) the game is stopped gracefully and its stderr read for the leak line (`N ObjectDB instances were leaked at exit`).
 
   A scene must also print each line the profile expects of it (`scratch.expect` and `scratch.expectFor`, below). Every line of its output, from the launch through the steps to the exit, is searched, and `exit.missing` lists one entry per pattern no line matched, as "`<pattern>` never appeared in the scene's output (<reason>)", followed by `; <n> output lines were dropped, so it may have been printed` when the output buffer dropped lines and `; it took over 1 s on a line, so simplify it` when the pattern timed out on one (a timeout counts as no match on that line).
 
@@ -459,7 +459,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   The project's `godot-mcp.json` holds the rest in a `scratch` section, parsed strictly: `folder` (project-relative or `res://`, exact case; required when `scenes` is left out), `userArgs` (used in place of the top-level `userArgs` for scratch runs), `engineArgs` (an array of strings, read for `run_scratches` only, with no fallback to the top-level `engineArgs`; the same refusals as `options.engineArgs`),
 
-  `pace {<Scene>: seconds | {seconds, reason, timeScale?}}` (default 0.5; the object form takes both keys and an optional `"timeScale": 1`, the opt-out from `options.timeScale` (any other value is refused: "a pace entry's "timeScale" can only be 1, which keeps the scene at normal speed"; a bare number cannot carry it), and an optional `steps {<step>: seconds | {seconds, reason}}` of paces for single steps, each key a step's index written plainly (tried first; `03` or `+3` is a name) or its name, so one slow step does not make every step wait;
+  `pace {<Scene>: seconds | {seconds, reason, timeScale?, exitHold?}}` (default 0.5; the object form takes both keys and an optional `"timeScale": 1`, the opt-out from `options.timeScale` (any other value is refused: "a pace entry's "timeScale" can only be 1, which keeps the scene at normal speed"; a bare number cannot carry it), an optional `"exitHold": <seconds>` (above 0, at most 120; a bare number cannot carry it, nor can a step entry) that replaces the last played step's pace as the wait after it, so an until step's limit and the exit wait are set apart, and stays when `options.pace` is set, and an optional `steps {<step>: seconds | {seconds, reason}}` of paces for single steps, each key a step's index written plainly (tried first; `03` or `+3` is a name) or its name, so one slow step does not make every step wait;
 
   it says why the scene needs that pace, and the reason comes back as `paceReason` on a `red` or `killed` scene whose pace came from the profile, the failed step's own reason when that step has a pace of its own (none when its pace is a bare number), since a step that ran into the next is usually a pace set too short),
 
@@ -473,11 +473,15 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   `parallel` (1 to 4, default 1).
 
-  For a step played on an until, the pace is the most game time the step may take before its condition holds, and the ceiling below still counts it in full (divided by the time scale).
+  For a step played on an until, the pace is the most game time the step may take before its condition holds, and the ceiling below still counts it in full (divided by the time scale); when that step is the last, `exitHold` sets the wait after it apart from this limit.
 
   A `steps` key matching no step, a name matching more than one step, or two keys naming one step makes the scene red before it plays (names are known only after launch). A `setup` entry matching no step, or a name two steps share, does the same, with `setup "<key>" of <Scene> matches no step; its steps are …` or `… names 2 steps (1, 2); key it by index`; a malformed `setup` value is refused when the profile loads.
 
-  The wait after the last step uses the longer of that step's pace in game time and in wall time, and the ceiling sums each step's pace (divided by the time scale) plus 10 s, plus the last step's pace in wall time for that wait (pace / min(1, time scale)) and 10 s for the markers.
+  The wait after the last step uses the longer of that step's pace (or the scene's `exitHold`, when the profile sets one) in game time and in wall time, and the ceiling sums each step's pace (divided by the time scale) plus 10 s, plus the last step's pace (or the `exitHold`) in wall time for that wait (pace / min(1, time scale)) and 10 s for the markers; a given ceiling is not changed by an `exitHold`.
+
+  With an `exitHold` the kill reason reads "each of its N steps' pace[ at time scale T] + 10 s, the exit hold of H s[ in wall time], and 10 s for the markers", and each scene's entry carries `exitHold: <seconds>` (only then).
+
+  A refusal names the key: `(scratch, pace of "<Scene>"): "exitHold" must be a number of seconds above 0 and at most 120, not <value>.`; a step entry with `exitHold` is refused as an unknown key (the allowed keys are `seconds`, `reason`).
 
   With `options.steps` the last step is the last one played (setup steps included) and the ceiling sums only the played steps; the kill reason says "its 1 step's pace" or "each of its N steps' pace", N the number played.
 
@@ -498,7 +502,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   The run's scene sessions are listed like a foreground run's, but an unnamed tool call never resolves to a session a live background run holds; name it (`session`) to drive or read one. The server's exit interrupts the run within the shutdown cap: the files say `interrupted`. A server killed outright writes no completion line and leaves `running` in the status file, with its `serverPid`; `pwsh run.ps1 install` kills running servers this way.
 
-  So give the wait a time limit: the scenes' paces (each divided by the time scale, the last step's pace of each scene once more, pace / min(1, time scale); a scene with a given ceiling counts that ceiling) plus a minute or two for launch and prep. When it passes with no completion line, call `scratch_status`; `live: false` with `state: running` means the server that played the run is gone, and the run must be started again.
+  So give the wait a time limit: the scenes' paces (each divided by the time scale, the last step's pace of each scene (its `exitHold` when set) once more, pace / min(1, time scale); a scene with a given ceiling counts that ceiling) plus a minute or two for launch and prep. When it passes with no completion line, call `scratch_status`; `live: false` with `state: running` means the server that played the run is gone, and the run must be started again.
 - **A headless session draws no frames:** a frame tool (`take_screenshot`, `save_screenshot`, `capture_frames`, a screenshot baseline or comparison, a stepped screenshot) sent to a scratch session gets the headless refusal and does not turn the step red; `get_game_state`, `get_ui_elements` and `run_script` work.
 - **Edges:** the prep runs once for the whole run, so a stale C# assembly is built, and a red build refuses the whole run; `prep` is the block `run_project` reports (`build` and `import` `skipped` with `prepare: never`).
 
@@ -518,7 +522,7 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   A scene given a ceiling by `options.ceilings` or `scratch.ceilings` is killed at that many seconds of load-adjusted time from its first step instead, and the kill reason reads `the scene passed its ceiling of <N> s of load-adjusted time, set by options.ceilings, so its game was stopped` (`set by the profile's scratch.ceilings` for the profile's; the backstop clause comes before `, so its game was stopped` when the backstop fired). The derived ceiling's reason is unchanged.
 
-  An error or a failed wait in the pace after the last step, or a stop that had to kill the game, turns an otherwise green scene red, with the reason in `exit`.
+  An error or a failed wait in the pace (or `exitHold`) after the last step, or a stop that had to kill the game, turns an otherwise green scene red, with the reason in `exit`.
 
   A pattern that takes over 1 s on a line fails that step naming the pattern. A project with `application/run/flush_stdout_on_print.debug` off buffers stdout, so the markers never arrive: the error says so. `--scratch-auto` is refused in any user arguments: the server walks the steps. It cannot run inside `batch_drive`.
 

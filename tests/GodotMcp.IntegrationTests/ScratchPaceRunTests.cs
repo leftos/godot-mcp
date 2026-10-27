@@ -9,9 +9,9 @@ namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// run_scratches against the InputProbe fixture's scratch scenes and CsProbe's C# ones in the real Godot, for paces and time
-/// scales: a step's own pace, a scaled run's game time, a pace that opts out of the time scale, the wait after the last step, a
-/// step pace key that matches no step; and a C# exception reported as the failing step's error, a C# _Ready's at the boot, and a
-/// C# until ending its step. It shares <see cref="ScratchRunnerTests"/>' helpers.
+/// scales: a step's own pace, a scaled run's game time, a pace that opts out of the time scale, the wait after the last step and
+/// an exit hold in its place, a step pace key that matches no step; and a C# exception reported as the failing step's error, a
+/// C# _Ready's at the boot, and a C# until ending its step. It shares <see cref="ScratchRunnerTests"/>' helpers.
 /// </summary>
 public sealed class ScratchPaceRunTests : ScratchRunBase
 {
@@ -101,6 +101,25 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
         Assert.Null(scene["failedAt"]);
         Assert.Equal([100, 2000], scene["details"]!.AsArray().Select(step => step!["gameMs"]!.GetValue<int>()));
         Assert.Contains("error in the last step's pace after it", scene["exit"]!["error"]!.GetValue<string>(), StringComparison.Ordinal);
+    }
+
+    // ScratchExitHold's last step is an until step met at once, its 30 s pace only its limit, then the 3 s exit hold: its timer's
+    // line at 2 s of game time falls inside the hold, which the profile expects, and its error at 10 s falls past it, inside the
+    // 30 s the step's pace would have waited.
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AnExitHoldIsTheWaitAfterTheLastStepInPlaceOfItsPace()
+    {
+        JsonObject scene = Single(
+            await RunAsync(_probe.Directory, ["ScratchExitHold"], new ScratchOptions(Details: true), TestContext.Current.CancellationToken)
+        );
+
+        Assert.True(scene["verdict"]!.GetValue<string>() == "green", scene.ToJsonString());
+        Assert.Equal(3, scene["exitHold"]!.GetValue<double>());
+        JsonArray details = scene["details"]!.AsArray();
+        Assert.Equal(100, details[0]!["gameMs"]!.GetValue<int>());
+        AssertUntilMetInGameTime(details[1]!, 30000);
+        Assert.Null(scene["exit"]!["error"]);
+        Assert.Null(scene["exit"]!["missing"]);
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
