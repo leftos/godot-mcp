@@ -120,7 +120,9 @@ internal sealed class HeadlessHosts(SessionRegistry registry)
         bool stale = false;
         try
         {
-            JsonObject result = await host.RequestAsync(request, cancellationToken);
+            TimeSpan floor = registry.HeadlessCeilingFloor;
+            TimeSpan ceiling = request.Ceiling > floor ? request.Ceiling : floor;
+            JsonObject result = await host.RequestAsync(request with { Ceiling = ceiling }, cancellationToken);
             stale = TakeStale(result);
             return result;
         }

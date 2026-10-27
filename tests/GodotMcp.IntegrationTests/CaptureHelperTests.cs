@@ -24,7 +24,7 @@ public sealed class CaptureHelperTests : IAsyncDisposable
     private static readonly TimeSpan HelperCeiling = TimeSpan.FromSeconds(60);
 
     private readonly ProbeProject _probe = new();
-    private readonly SessionHarness _harness = new(launchesUnfocused: true);
+    private readonly SessionHarness _harness = new(launchesUnfocused: true, productionGraces: false);
     private readonly TempDirectory _temp = new();
 
     public async ValueTask DisposeAsync()

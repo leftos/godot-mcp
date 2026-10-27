@@ -34,8 +34,12 @@ internal sealed partial class GodotSession
     public RecordingResult? RecordingState =>
         _recording is { } recording ? recording.Outcome ?? new RecordingResult { Mode = Recording.MovieMode, Path = recording.Path } : RealtimeState;
 
-    /// <summary>The grace a stop gives the current run to quit before it is killed: longer while a recording is being written.</summary>
-    private TimeSpan CurrentExitGrace => _recording is { Outcome: null } ? RecordingExitGrace : ExitGrace;
+    /// <summary>
+    /// The grace a stop gives the current run to quit before it is killed: <see cref="SessionRegistry.ExitGrace"/>, or the
+    /// longer of it and <see cref="RecordingExitGrace"/> while a recording is being written.
+    /// </summary>
+    private TimeSpan CurrentExitGrace =>
+        _recording is { Outcome: null } ? TimeSpan.FromTicks(Math.Max(RecordingExitGrace.Ticks, registry.ExitGrace.Ticks)) : registry.ExitGrace;
 
     /// <summary>A new movie's path, its folder created, for a start of a recording run; null for a run that does not record.</summary>
     private string? PrepareMoviePath(LaunchRequest request)

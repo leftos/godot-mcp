@@ -88,6 +88,33 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     internal TimeSpan HandshakeTimeout { get; init; } = GodotSession.HandshakeTimeout;
 
     /// <summary>
+    /// The least a warm headless host's request is given before its ceiling kills it: the request's own ceiling unless set, as
+    /// the itest harness sets it to a hang guard in minutes, since the gate starts Godot at BelowNormal and the harness's
+    /// listener clock is wall time.
+    /// </summary>
+    internal TimeSpan HeadlessCeilingFloor { get; init; } = TimeSpan.Zero;
+
+    /// <summary>The server's own <see cref="ExitGrace"/>: 3 s of load-adjusted time.</summary>
+    internal static readonly TimeSpan DefaultExitGrace = TimeSpan.FromSeconds(3);
+
+    /// <summary>The server's own <see cref="TeardownGrace"/>: 7 s of load-adjusted time.</summary>
+    internal static readonly TimeSpan DefaultTeardownGrace = TimeSpan.FromSeconds(7);
+
+    /// <summary>
+    /// The load-adjusted time a stop gives a game to quit before it is killed: <see cref="DefaultExitGrace"/> unless set, as the
+    /// itest harness sets it to a hang guard in minutes, since the gate starts the games at BelowNormal and the harness's
+    /// listener clock is wall time. A recording run gets the longer of it and the recording's own grace.
+    /// </summary>
+    internal TimeSpan ExitGrace { get; init; } = DefaultExitGrace;
+
+    /// <summary>
+    /// How much longer a stop waits, past <see cref="ExitGrace"/>, for a game that acknowledged the quit and closed its bridge:
+    /// it has freed its scene tree and is in the engine's own teardown, which was measured to take up to about 3 s on an idle
+    /// machine. <see cref="DefaultTeardownGrace"/> unless set, as the itest harness sets it to a hang guard in minutes.
+    /// </summary>
+    internal TimeSpan TeardownGrace { get; init; } = DefaultTeardownGrace;
+
+    /// <summary>
     /// How a run's process is created, from the start info the launch built and whether the run is quiet:
     /// <see cref="GodotSession"/>'s own creation, suspended on the hidden desktop for a quiet run on Windows, unless set, as a
     /// test sets a fake process whose output it feeds, so a launch is tested without Godot.

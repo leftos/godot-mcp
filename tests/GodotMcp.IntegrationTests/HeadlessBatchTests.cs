@@ -10,7 +10,6 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class HeadlessBatchTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 120_000;
     private const string StageUid = "uid://bqstage00000a";
 
     private const string StageScene =
@@ -45,7 +44,7 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
         }
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task EachStepSeesTheOnesBeforeItAndTheSceneIsSavedOnce()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -84,7 +83,7 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
         Assert.Contains("[connection signal=\"pressed\" from=\"Go\" to=\".\" method=\"hide\"]", saved, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ABatchAddsThenMovesANode()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -110,7 +109,7 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
         Assert.StartsWith($"[gd_scene format=3 uid=\"{StageUid}\"]", saved, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ABatchMoveRewritesNodePathsAndKeepsAnUntouchedControl()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -135,7 +134,7 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
         Assert.Contains(HeadlessSceneTests.RigPanel + "\n[node name=\"To\"", saved, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AFailedStepStopsTheBatchAndSavesNothing()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -166,7 +165,7 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
         Assert.Equal(StageScene, Read(probe.Directory, "stage.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AMeshLibraryBeforeAFailedStepIsNotWritten()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -182,7 +181,7 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
         Assert.Equal(TilesScene, Read(probe.Directory, "tiles.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AMeshLibraryExportsTheNodesAddedBeforeIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -216,7 +215,7 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
         Assert.Contains("[node name=\"Crate\" type=\"MeshInstance3D\" parent=\".\"", Read(probe.Directory, "yard.tscn"), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ABatchThatAttachesALibraryThenExportsOverItIsRefused()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -260,7 +259,7 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
         Assert.Equal(TilesScene, Read(probe.Directory, "tiles.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ABatchOfOnlyMeshLibrariesLeavesTheSceneAlone()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -281,7 +280,7 @@ public sealed class HeadlessBatchTests : IAsyncDisposable
         Assert.Equal(TilesScene, Read(probe.Directory, "tiles.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task LoadSpriteImportsANewPngFirst()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

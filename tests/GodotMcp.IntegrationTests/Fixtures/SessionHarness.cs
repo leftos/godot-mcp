@@ -16,22 +16,27 @@ internal sealed class SessionHarness : IAsyncDisposable
     /// <summary>How long a killed game gets to let go of its project folder before the test fails.</summary>
     private static readonly TimeSpan GameExitWait = TimeSpan.FromSeconds(10);
 
-    // Wall time for every request's and tool's ceiling: another build loading the machine would stretch a short ceiling into
-    // its backstop and change its text, which the tests assert; the unit tests cover the load on fakes. A launch's handshake
-    // and an attach's wait run load-adjusted, as the server's do, so a game slow to start on a busy machine is waited for.
+    // The listener's clock is wall time, so the ceiling texts the timing-lane tests assert do not change under another build's
+    // load; the unit tests cover the load on fakes. The bounds a starved game must not be held to are named where they are
+    // set below: a launch's handshake and an attach's wait run load-adjusted, and the warm host's request floor and the
+    // stop's graces are hang guards.
     private readonly LoadClock _wallClock = new(TimeProvider.System, new NoLoadSource());
     private readonly BridgeListener _listener;
     private readonly CancellationTokenSource _stopRestoring = new();
     private readonly Task _restoring = Task.CompletedTask;
 
     public SessionHarness()
-        : this(launchesUnfocused: false) { }
+        : this(launchesUnfocused: false, productionGraces: false) { }
 
     /// <param name="launchesUnfocused">
     /// Whether its sessions that are not quiet have their windows created unfocused and shown minimized
     /// (<see cref="SessionRegistry.LaunchesUnfocused"/>); the harness then restores each behind the user's windows.
     /// </param>
-    public SessionHarness(bool launchesUnfocused)
+    /// <param name="productionGraces">
+    /// Whether a stop keeps the server's own exit and teardown graces, for the tests of the grace kill itself; else each is a
+    /// hang guard in minutes.
+    /// </param>
+    public SessionHarness(bool launchesUnfocused, bool productionGraces)
     {
         _listener = new(NullLogger<BridgeListener>.Instance) { Clock = _wallClock };
         Sessions = new SessionRegistry(_listener, NullLogger<GodotSession>.Instance)
@@ -41,6 +46,15 @@ internal sealed class SessionHarness : IAsyncDisposable
             // early boot at BelowNormal, and a Normal-priority load on every core stops them before they dial. Its backstop is
             // 600 s of wall time, under the xUnit hang guard a test that launches a game carries (TestTimeouts.OwnLaunchMs).
             HandshakeTimeout = TimeSpan.FromMinutes(2),
+            // A hang guard in minutes, not a bound a starved warm headless host must beat: the gate starts Godot at BelowNormal
+            // and the listener's clock is wall time. It is under the xUnit hang guard of a test that starts a host
+            // (TestTimeouts.OwnLaunchMs).
+            HeadlessCeilingFloor = TimeSpan.FromMinutes(10),
+            // Hang guards in minutes, not bounds a starved game must beat to quit cleanly: the gate starts Godot at BelowNormal
+            // and the listener's clock is wall time, and a stop's kill turns a run red. They are under the xUnit hang guard a
+            // test that launches a game carries (TestTimeouts.OwnLaunchMs).
+            ExitGrace = productionGraces ? SessionRegistry.DefaultExitGrace : TimeSpan.FromMinutes(1),
+            TeardownGrace = productionGraces ? SessionRegistry.DefaultTeardownGrace : TimeSpan.FromMinutes(1),
             LaunchesUnfocused = launchesUnfocused,
         };
         if (launchesUnfocused)

@@ -18,8 +18,6 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class HeadlessSceneTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 120_000;
-    private const int BuildTestTimeoutMs = 240_000;
     private const string LevelUid = "uid://bqlevel00000a";
     private const string EnemyUid = "uid://bqenemy0000a";
     private const string OtherUid = "uid://bqother00000a";
@@ -160,7 +158,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         }
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task CreateSceneWritesARootNamedAfterTheFileWithAUid()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -179,7 +177,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal("""[{"path":".","name":"PlayerShip","type":"Node2D","childCount":0}]""", tree["nodes"]!.ToJsonString());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task CreateSceneRefusesAnExistingFileWithoutOverwrite()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -194,7 +192,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(before, File.ReadAllText(Path.Combine(probe.Directory, "main.tscn")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task CreateSceneWithOverwriteReplacesIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -219,7 +217,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal("""[{"path":".","name":"Menu","type":"Control","childCount":0}]""", tree["nodes"]!.ToJsonString());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task CreateSceneRefusesANonNodeType()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -237,7 +235,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.False(File.Exists(Path.Combine(probe.Directory, "odd.tscn")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneKeepsTheHeaderUidAndExtResourceUids()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -254,7 +252,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal([".", "Boss", "Boss/Sprite", "Btn", "Box"], Paths(await TreeAsync(probe.Directory, "level.tscn", cancellation)));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneKeepsGodotsFullForm()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -271,7 +269,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.All(nodes, node => Assert.Contains(" unique_id=", node, StringComparison.Ordinal));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneKeepsAnExtResourceUidTheSourceCarried()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -291,7 +289,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         AssertExtUid(probe.Directory, "scripted.tscn", ScriptUid, "res://s.gd");
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneKeepsAnInheritedSceneInherited()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -310,7 +308,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal([".", "Sprite", "Shield"], Paths(await TreeAsync(probe.Directory, "elite.tscn", cancellation)));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneAsNewPathGetsAFreshUid()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -328,7 +326,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal([".", "Boss", "Boss/Sprite", "Btn", "Box"], Paths(await TreeAsync(probe.Directory, "copies/level_copy.tscn", cancellation)));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneAsOverAnExistingFileTakesItsUid()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -348,7 +346,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal([".", "Boss", "Boss/Sprite", "Btn", "Box"], Paths(await TreeAsync(probe.Directory, "other.tscn", cancellation)));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneAsWritesANodeAsTheSourceStoresIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -365,7 +363,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(ScreenScene[ScreenScene.IndexOf("[node", StringComparison.Ordinal)..], copy[copy.IndexOf("[node", StringComparison.Ordinal)..]);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneInPlaceAddsNoLayoutModeTheSourceLacks()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -378,7 +376,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(["anchor_bottom = 1.0", "anchor_right = 1.0", "mouse_filter = 2"], BackdropProperties(probe.Directory, "screen.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneKeepsALayoutModeTheSourceStores()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -394,7 +392,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Contains("layout_mode = 0", BackdropProperties(probe.Directory, "screen.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneInPlaceDropsAStoredDefault()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -410,7 +408,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneAsKeepsTheSourceExtResourceIds()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -431,7 +429,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Contains("script = ExtResource(\"2_lye0u\")", copy, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DeleteNodesRemovesThemAndSaves()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -445,7 +443,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal($"[gd_scene load_steps=2 format=3 uid=\"{LevelUid}\"]", FirstLine(probe.Directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DeleteNodesDeletesAnAncestorAndItsDescendantInOneList()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -465,7 +463,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal([".", "Keep"], Paths(await TreeAsync(probe.Directory, "nest.tscn", cancellation)));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DeleteNodesRefusesTheRoot()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -480,7 +478,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(LevelScene, File.ReadAllText(Path.Combine(probe.Directory, "level.tscn")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DeleteNodesRefusesANodeInsideAnInstanceAndSavesNothing()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -499,7 +497,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(LevelScene, File.ReadAllText(Path.Combine(probe.Directory, "level.tscn")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DeleteNodesRefusesANodeInheritedFromTheBaseScene()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -517,7 +515,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(EliteScene, File.ReadAllText(Path.Combine(probe.Directory, "elite.tscn")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DeleteNodesCanDeleteAnInstanceRoot()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -530,7 +528,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.DoesNotContain("name=\"Boss\"", File.ReadAllText(Path.Combine(probe.Directory, "level.tscn")), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveRefusesACSharpSceneWhenTheBuildFailed()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -557,7 +555,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(before, File.ReadAllText(scene));
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task BatchAttachScriptRefusalQuotesTheCompilerErrors()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -584,7 +582,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(plainScene, File.ReadAllText(scene));
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task CreateSceneUnderARedBuildReportsTheBuildNotTheAutoload()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -599,7 +597,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Null(created["errors"]);
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SceneFileTreeUnderARedBuildReportsTheBuildNotItsSymptoms()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -613,7 +611,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Contains(".", Paths(tree));
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AGDScriptAutoloadThatIsNotANodeStillReportsUnderARedBuild()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -629,7 +627,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Contains("res://not_node.gd", error["message"]!.GetValue<string>(), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneRefusesWhenAnInstancedSceneUsesCSharpAndTheBuildFailed()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -660,7 +658,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(before, File.ReadAllText(scene));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachScriptSetsAndReturnsThePrevious()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -687,7 +685,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal("res://b.gd", root["script"]!.GetValue<string>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachScriptGivesAScriptWithNoUidFileTheUidTheEditorWould()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -706,7 +704,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal("""["res://c.gd.uid"]""", attached["uidFilesWritten"]!.ToJsonString());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachScriptLeavesAUidAPlainRunKnows()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -723,7 +721,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.DoesNotContain("invalid UID", log, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ASceneCreatedHereIsKnownByUidToAPlainRun()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -737,7 +735,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.DoesNotContain("invalid UID", log, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnAppendKeepsTheUidsTheImportRecorded()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -770,7 +768,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.DoesNotContain("invalid UID", log, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachScriptInAProjectNeverImportedWritesNoUidCache()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -784,7 +782,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.False(File.Exists(Path.Combine(probe.Directory, ".godot", "uid_cache.bin")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachScriptKeepsTheExportsTheNewScriptDeclares()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -799,7 +797,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         AssertCardKept(probe.Directory, attached, "res://b.gd");
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachScriptKeepsTheCSharpExportsTheNewScriptDeclares()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -823,7 +821,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachScriptDropsAValueWhoseTypeTheNewScriptChanges()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -842,7 +840,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal("""["card"]""", attached["dropped"]!.ToJsonString());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachScriptRefusesAScriptForAnotherBaseType()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -858,7 +856,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(LevelScene, File.ReadAllText(Path.Combine(probe.Directory, "level.tscn")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachScriptRefusesANodeInsideAnInstance()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -878,7 +876,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(LevelScene, File.ReadAllText(Path.Combine(probe.Directory, "level.tscn")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachScriptToAnInheritedNodeSavesAsAnOverride()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -900,7 +898,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal("res://a.gd", tree["nodes"]![1]!["script"]!.GetValue<string>());
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachScriptRefusesACSharpScriptWhenTheBuildFailed()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -924,7 +922,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(plainScene, File.ReadAllText(scene));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DuplicateNodeCopiesAnInstanceAsAnInstance()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -969,7 +967,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DuplicateNodeGivesTheCopyFreshUniqueIds()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -982,7 +980,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         AssertCopiesHaveFreshIds(probe.Directory, ["Layer/Lines", "Layer/Lines/Tie"]);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DuplicateNodeTwiceInOneBatchGivesEachCopyFreshUniqueIds()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1007,7 +1005,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
     }
 
     // Guards the kept id against regression: Godot's save writes 150 back too, so the splice unit test with 150 against 999 is the proof.
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesKeepsTheEditedNodesOwnUniqueId()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1028,7 +1026,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(expected, text[text.IndexOf('\n', StringComparison.Ordinal)..]);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DuplicateNodeDefaultNameCountsUp()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1044,7 +1042,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal($"[gd_scene load_steps=2 format=3 uid=\"{LevelUid}\"]", FirstLine(probe.Directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DuplicateNodeRefusesACollidingName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1059,7 +1057,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(LevelScene, File.ReadAllText(Path.Combine(probe.Directory, "level.tscn")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DuplicateNodeUnderAnotherParent()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1095,7 +1093,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal([".", "Boss", "Boss/Sprite", "Boss/Btn", "Btn", "Box"], Paths(await TreeAsync(probe.Directory, "level.tscn", cancellation)));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DuplicateNodeOfAnInheritedNode()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1132,7 +1130,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DuplicateNodeKeepsConnectionsToNodesOutsideIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1150,7 +1148,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(5, lines.Count(line => line.StartsWith("[connection ", StringComparison.Ordinal)));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DuplicateNodeKeepsGroups()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1170,7 +1168,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Contains("groups=[\"enemies\"]", copy, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DuplicateNodeCopiesAnInstanceRoot()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1190,7 +1188,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DuplicateNodeKeepsAnEditableInstanceAndItsOverride()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1214,7 +1212,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(2, lines.Count(line => line == "offset = Vector2(2, 2)"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DuplicateNodeUnderItsOwnChild()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1242,7 +1240,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DuplicateNodeTakesAnExplicitName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1257,7 +1255,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal([".", "Boss", "Boss/Sprite", "Btn", "Start", "Box"], Paths(await TreeAsync(probe.Directory, "level.tscn", cancellation)));
     }
 
-    [Theory(Timeout = TestTimeoutMs)]
+    [Theory(Timeout = TestTimeouts.OwnLaunchMs)]
     [InlineData("%Boss")]
     [InlineData("a/b")]
     public async Task DuplicateNodeRefusesAnInvalidName(string name)
@@ -1274,7 +1272,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(LevelScene, File.ReadAllText(Path.Combine(probe.Directory, "level.tscn")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachScriptWithAScriptClassBase()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1289,7 +1287,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Contains("path=\"res://hero.gd\"", File.ReadAllText(Path.Combine(probe.Directory, "level.tscn")), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachScriptExtendingAScript()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1304,7 +1302,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Contains("path=\"res://b.gd\"", File.ReadAllText(Path.Combine(probe.Directory, "level.tscn")), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachScriptQuotesTheErrorsOfAScriptThatDoesNotCompile()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1325,7 +1323,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(LevelScene, File.ReadAllText(Path.Combine(probe.Directory, "level.tscn")));
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AttachScriptSetsACSharpScriptWhenTheBuildIsGreen()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1339,7 +1337,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeTakesACSharpScriptPath()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1359,7 +1357,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeSetsACSharpNodeExportByItsPath()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1372,7 +1370,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         AssertHolderCardSaved(csProbe.Directory);
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task BatchAddNodeSetsACSharpGlobalClassExportByItsPath()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1386,7 +1384,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         AssertHolderCardSaved(csProbe.Directory);
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ABatchAddNodeRefusesACSharpNodeExportOfAnotherClassOrNoNode()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1406,7 +1404,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(TableScene, File.ReadAllText(Path.Combine(csProbe.Directory, "table.tscn")));
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeSavesTheNativeValueUnderAScriptFieldOfTheSameName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1426,7 +1424,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DuplicateNodeKeepsTheNativeValueUnderAScriptFieldOfTheSameName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1446,7 +1444,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneKeepsAnInstanceOverrideOfAPropertyAScriptFieldHides()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1460,7 +1458,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneAddsNoOverrideToAnInstanceWhoseScriptFieldHidesAProperty()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1474,7 +1472,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneAddsNoOverrideWhereTheBaseSceneSetsAHiddenProperty()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1489,7 +1487,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SaveSceneKeepsAnInheritedRootOverrideOfAPropertyAScriptFieldHides()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1508,7 +1506,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DuplicateNodeKeepsAnInstanceOverrideOfAPropertyAScriptFieldHides()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1522,7 +1520,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task LoadSpriteRefusesAResourceThatIsNotATexture()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1538,7 +1536,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(SpriteScene, File.ReadAllText(Path.Combine(probe.Directory, "sprite.tscn")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task LoadSpriteRefusesAMissingTextureWithoutImporting()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1553,7 +1551,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.False(Directory.Exists(Path.Combine(probe.Directory, ".godot", "imported")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task LoadSpriteSetsATextureFromATres()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1573,7 +1571,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.False(File.Exists(Path.Combine(probe.Directory, "gradient.tres.import")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task LoadSpriteImportsANewPngFirst()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1591,7 +1589,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         AssertExtUid(probe.Directory, "sprite.tscn", uid, "res://art/dot.png");
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task LoadSpriteRefusesANodeWithoutATexture()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1610,7 +1608,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(LevelScene, File.ReadAllText(Path.Combine(probe.Directory, "level.tscn")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task MoveNodeReordersSiblingsAndKeepsTheRestOfTheFile()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1625,7 +1623,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(expected, File.ReadAllText(Path.Combine(probe.Directory, "stage.tscn")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task MoveNodeBeforeAndAfterASibling()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1642,7 +1640,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(["Stage", "C", "B", "A"], NodeNames(probe.Directory, "stage.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task MoveNodeWithANegativeIndex()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1655,7 +1653,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(["Stage", "B", "C", "A"], NodeNames(probe.Directory, "stage.tscn"));
     }
 
-    [Theory(Timeout = TestTimeoutMs)]
+    [Theory(Timeout = TestTimeouts.OwnLaunchMs)]
     [InlineData(true, "Vector2(110, 0)")]
     [InlineData(false, "Vector2(10, 0)")]
     public async Task MoveNodeReparentsKeepingTheGlobalPosition(bool keep, string position)
@@ -1676,7 +1674,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(["Nest", "From", "To", "Leaf", "Mover", "Leaf", "Btn"], NodeNames(probe.Directory, "nest.tscn"));
     }
 
-    [Theory(Timeout = TestTimeoutMs)]
+    [Theory(Timeout = TestTimeouts.OwnLaunchMs)]
     [InlineData(true, "Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 0, -5)")]
     [InlineData(false, "Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0)")]
     public async Task MoveNodeReparentsA3DNodeKeepingItsGlobalPosition(bool keep, string transform)
@@ -1702,7 +1700,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal($"transform = {transform}", lines[mover + 1]);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task MoveNodeKeepsASignalConnection()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1720,7 +1718,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal("""[{"target":"Mover","method":"hide"}]""", pressed["connections"]!.ToJsonString());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task MoveNodeRewritesNodePathsAndKeepsAnUntouchedControl()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1738,7 +1736,7 @@ public sealed class HeadlessSceneTests : IAsyncDisposable
         Assert.Equal(NodeSection(RigScene, "Panel"), NodeSection(saved, "Panel"));
     }
 
-    [Theory(Timeout = TestTimeoutMs)]
+    [Theory(Timeout = TestTimeouts.OwnLaunchMs)]
     [InlineData("stage.tscn", ".", null, 0, "the scene's root cannot be moved.")]
     [InlineData(
         "level.tscn",

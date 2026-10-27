@@ -49,13 +49,6 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     public const string NoneRunning = "No Godot session is running; start one with run_project or attach_project.";
 
     private static readonly TimeSpan ShutdownReplyTimeout = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan ExitGrace = TimeSpan.FromSeconds(3);
-
-    /// <summary>
-    /// How much longer a stop waits, past the exit grace, for a game that acknowledged the quit and closed its bridge: it has
-    /// freed its scene tree and is in the engine's own teardown, which was measured to take up to about 3 s on an idle machine.
-    /// </summary>
-    private static readonly TimeSpan TeardownGrace = TimeSpan.FromSeconds(7);
     private static readonly TimeSpan KillWait = TimeSpan.FromSeconds(5);
 
     /// <summary>How long a stop waits for the console wrapper to follow a game that quit before ending it.</summary>
@@ -1173,8 +1166,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>
     /// After an exit grace that ended with the game still running: a game that acknowledged the quit and whose bridge connection
-    /// has closed is in the engine's own teardown, so it gets <see cref="TeardownGrace"/> more, unless a recording's longer grace
-    /// was the one spent.
+    /// has closed is in the engine's own teardown, so it gets <see cref="SessionRegistry.TeardownGrace"/> more, unless the run is
+    /// recording, whose grace was the one spent.
     /// </summary>
     /// <param name="request">What became of the quit request.</param>
     /// <param name="connection">The game's bridge connection, whose own close is tested; null without one.</param>
@@ -1183,12 +1176,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// <returns>Null when the game was gone within the teardown grace; else the grace spent in all, both phases summed.</returns>
     private async Task<GraceSpent?> WaitOutTeardownAsync(QuitRequest request, BridgeConnection? connection, Process watched, GraceSpent spent)
     {
-        if (request != QuitRequest.Acknowledged || connection is not { Closed.IsCompleted: true } || CurrentExitGrace != ExitGrace)
+        if (request != QuitRequest.Acknowledged || connection is not { Closed.IsCompleted: true } || _recording is { Outcome: null })
         {
             return spent;
         }
 
-        using LoadDeadline teardown = registry.Clock.Start(TeardownGrace);
+        using LoadDeadline teardown = registry.Clock.Start(registry.TeardownGrace);
         return await ProcessExit.WaitUntilGoneAsync(watched, teardown) ? null : spent.Plus(GraceSpent.Of(teardown));
     }
 

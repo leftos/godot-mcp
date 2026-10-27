@@ -29,7 +29,7 @@ public sealed class SessionStopTests : IAsyncDisposable
     // How long a restart takes to pass its refusal checks and reach the old game's stop, well inside that stop's 3 s grace.
     private static readonly TimeSpan RestartPastItsChecks = TimeSpan.FromSeconds(1);
     private readonly ProbeProject _probe = new();
-    private readonly SessionHarness _harness = new();
+    private readonly SessionHarness _harness = new(launchesUnfocused: false, productionGraces: true);
 
     public async ValueTask DisposeAsync()
     {

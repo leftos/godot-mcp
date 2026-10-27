@@ -17,7 +17,6 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class WarmHeadlessTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 120_000;
     private static readonly TimeSpan KillWait = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan Ceiling = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan MoveRetryBudget = TimeSpan.FromSeconds(2);
@@ -46,7 +45,7 @@ public sealed class WarmHeadlessTests : IAsyncDisposable
         }
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task TwoCallsOnOneFolderAreAnsweredByOneHost()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -64,7 +63,7 @@ public sealed class WarmHeadlessTests : IAsyncDisposable
         Assert.Equal(["Level", "First"], NodeNames(second));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AFileWrittenOutsideBetweenCallsStartsANewHostThatReadsIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -83,7 +82,7 @@ public sealed class WarmHeadlessTests : IAsyncDisposable
         Assert.Equal(["Level", "Second"], NodeNames(edited));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AHostKilledBetweenCallsIsReplacedByTheNextCall()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -106,7 +105,7 @@ public sealed class WarmHeadlessTests : IAsyncDisposable
         Assert.Equal(["Level", "First"], NodeNames(next));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task TheFolderCanBeMovedOnceTheRegistryIsDisposed()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -123,7 +122,7 @@ public sealed class WarmHeadlessTests : IAsyncDisposable
         Assert.True(Directory.Exists(moved));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ListSessionsListsAWarmHost()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -141,7 +140,7 @@ public sealed class WarmHeadlessTests : IAsyncDisposable
         Assert.Equal(TimeSpan.Zero, DateTimeOffset.Parse(host["startedAt"]!.GetValue<string>(), CultureInfo.InvariantCulture).Offset);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task StopProjectOnAFolderReleasesIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -161,7 +160,7 @@ public sealed class WarmHeadlessTests : IAsyncDisposable
         Assert.True(Directory.Exists(moved));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnImportStartsANewHost()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -186,7 +185,7 @@ public sealed class WarmHeadlessTests : IAsyncDisposable
         Assert.Equal("Level", result.Result?["nodes"]?[0]?["name"]?.GetValue<string>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AHostKilledDuringARequestFailsItWithTheLogFromItsMarkerAndTheNextCallGetsANewHost()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -220,7 +219,7 @@ public sealed class WarmHeadlessTests : IAsyncDisposable
         Assert.Equal(["Level", "First"], NodeNames(next));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ACSharpProjectRunsColdWithoutAHost()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

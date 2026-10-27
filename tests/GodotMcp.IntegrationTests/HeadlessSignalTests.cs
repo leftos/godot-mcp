@@ -13,9 +13,6 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class HeadlessSignalTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 120_000;
-    private const int BuildTestTimeoutMs = 240_000;
-
     private const string LevelScript =
         "extends Node2D\n\n\nfunc on_pressed() -> void:\n\tpass\n\n\nfunc on_bound(_count: int, _what: String) -> void:\n\tpass\n\n\n"
         + "func on_untyped(_count, _what) -> void:\n\tpass\n\n\nfunc on_squad(_units: Array[Node2D]) -> void:\n\tpass\n";
@@ -73,7 +70,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         }
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetNodeSignalsListsSignalsAndPersistentConnections()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -91,7 +88,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Equal("""["toggled_on"]""", Signal(read, "toggled")["args"]!.ToJsonString());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetNodeSignalsMarksAnInheritedConnection()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -105,7 +102,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ConnectSignalSavesAConnectionLine()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -133,7 +130,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ConnectSignalWithBindsSavesThem()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -148,7 +145,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ConnectSignalSavesAnIntegralBindForAnUntypedParameterAsAnInt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -163,7 +160,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ConnectSignalRefusesAnArityMismatch()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -178,7 +175,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ConnectSignalRefusesABindThatDoesNotConvert()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -193,7 +190,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ConnectSignalRefusesAnObjectArrayBindSayingWhy()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -211,7 +208,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(directory, "level.tscn"));
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ConnectSignalRefusesACSharpMethodWhileTheBuildFailed()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -230,7 +227,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Equal(before, Read(csProbe.Directory, "main.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ConnectSignalRefusesAMissingSignal()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -244,7 +241,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ConnectSignalRefusesAMissingMethod()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -258,7 +255,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ConnectSignalRefusesAnExistingConnection()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -273,7 +270,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ConnectSignalRefusesASourceInsideAnInstance()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -300,7 +297,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
 
     // The packer drops a connection whose source is inside a non-editable instance; a target there is saved by its path and
     // found again on load (4.7.2 packed_scene.cpp L1142-1143, measured).
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ConnectSignalToANodeInsideAnInstanceIsSaved()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -326,7 +323,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Equal("""[{"target":"Boss/Sprite","method":"hide"}]""", Signal(read, "pressed")["connections"]!.ToJsonString());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ConnectSignalFromAnEditableInstanceChildIsSaved()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -351,7 +348,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DisconnectSignalRemovesTheLine()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -375,7 +372,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Contains("[node name=\"Btn\" ", Read(directory, "level.tscn"), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DisconnectSignalRefusesAnInheritedConnection()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -389,7 +386,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Equal(EliteScene, Read(directory, "elite.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DisconnectSignalRefusesAMissingConnection()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -403,7 +400,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DisconnectSignalRemovesABoundConnectionGivenNoBinds()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -414,7 +411,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Empty(Connections(directory, "bound.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DisconnectSignalNamesTheInstancedSceneAnInheritedConnectionComesFrom()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -438,7 +435,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetNodeSignalsListsABoundConnectionWithItsBinds()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -449,7 +446,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Equal("""[{"target":".","method":"on_bound","binds":[7,"gold"]}]""", Signal(read, "pressed")["connections"]!.ToJsonString());
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetNodeSignalsWarnsThatAFailedBuildLeavesOutCSharpSignals()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -460,7 +457,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         Assert.Equal(".'s C# script is not built (the build failed), so its script signals are missing.", read["warning"]!.GetValue<string>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetNodeSignalsWarnsThatASkippedBuildMayLeaveOutCSharpSignals()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -476,7 +473,7 @@ public sealed class HeadlessSignalTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetNodeSignalsListsACSharpScriptSignalWhenBuilt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

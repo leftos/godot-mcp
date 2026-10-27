@@ -13,9 +13,6 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class HeadlessPropertyTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 120_000;
-    private const int BuildTestTimeoutMs = 240_000;
-
     private const string ShadowTrailSource =
         "using Godot;\n\npublic partial class ShadowTrail : Node2D\n{\n    private float scale = 1.0f;\n\n    public float Drawn() => scale;\n}\n";
 
@@ -129,7 +126,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         }
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeAddsAClassNodeWithProperties()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -148,7 +145,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(["modulate = Color(1, 0, 0, 0.5)", "position = Vector2(3, 4)"], body);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeSetsAThemeTypeVariation()
     {
         // Godot 4.7.2 declares Control.theme_type_variation as a String and reads it back as a StringName (control.cpp L5033, L3670).
@@ -164,7 +161,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Contains("theme_type_variation = &\"PopoverIconRow\"", body);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeKeepsPositionLayoutUnderAControl()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -178,7 +175,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(["layout_mode = 0"], Section(probe.Directory, "ui.tscn", "Backdrop").Body);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeSetsAnchorsLayoutUnderAControl()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -195,7 +192,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeRefusesUncontrolledLayoutUnderAControl()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -211,7 +208,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(UiScene, Read(probe.Directory, "ui.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeSaysLayoutModeIsFixedWithNoControlParent()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -227,7 +224,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesSaysLayoutModeIsFixedUnderAContainer()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -242,7 +239,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Contains("Under a Container, layout_mode is 2 (Container) and cannot be set.", refused.Message, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesSaysAnchorsPresetNeedsAnchorsLayout()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -268,7 +265,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeRefusesAnchorsLeftInPositionLayout()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -291,7 +288,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(UiScene, Read(probe.Directory, "ui.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeRefusesAnchorsUnderAContainer()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -309,7 +306,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(UiScene, Read(probe.Directory, "ui.tscn"));
     }
 
-    [Theory(Timeout = TestTimeoutMs)]
+    [Theory(Timeout = TestTimeouts.OwnLaunchMs)]
     [InlineData("offset_left", "5.5")]
     [InlineData("grow_horizontal", "2")]
     [InlineData("anchors_preset", "15")]
@@ -333,7 +330,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(before, Read(probe.Directory, "ui.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesTakesAnAnchorTheNodeAlreadyHolds()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -348,7 +345,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesRefusesAnAnchorInPositionLayout()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -365,7 +362,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(before, Read(probe.Directory, "ui.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeTakesAnchorsAfterLayoutModeAnchors()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -390,7 +387,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Contains("anchor_bottom = 1.0", body, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeTakesAZeroAnchorInPositionLayout()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -403,7 +400,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal("""{"path":"Backdrop","type":"ColorRect","index":1}""", added);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesLeavesAnUntouchedControlAsTheFileHadIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -422,7 +419,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.EndsWith("\n\n" + ScreenBackdrop, text, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesKeepsADefaultLineAnUntouchedNodeStored()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -442,7 +439,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal([.. original[..(marker + 1)], "position = Vector2(5, 6)", .. original[(marker + 1)..]], lines);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesOnANodeKeepsItsOtherStoredDefaults()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -464,7 +461,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal([.. original[..(title + 1)], lines[title + 1], lines[title + 2], .. original[(title + 2)..]], lines);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesKeepsAnInstanceOverrideEqualToTheInstancedScene()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -484,7 +481,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(["anchors_preset = 15", "anchor_right = 1.0", "anchor_bottom = 1.0"], body);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesDropsALineSetBackToTheDefault()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -496,7 +493,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Empty(Section(probe.Directory, "defaults.tscn", "Title").Body);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeInstancesAScene()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -515,7 +512,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Contains("Minion/Sprite", await PathsAsync(probe.Directory, "level.tscn", SkipPrep, cancellation));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeTakesAGDScriptPath()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -541,7 +538,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeRefusesACollidingName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -556,7 +553,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeAtAPosition()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -577,7 +574,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(["Level", "Boss", "Hat", "Box", "Pic", "Holder"], names);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeWithABadPositionAddsNothing()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -599,7 +596,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeWithABadPropertyAddsNothing()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -618,7 +615,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeUnderAnInstanceRootIsSaved()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -632,7 +629,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Contains("Boss/Hat", await PathsAsync(probe.Directory, "level.tscn", SkipPrep, cancellation));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesSetsAndReadsBack()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -658,7 +655,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(["visible = false", "position = Vector2(5, 6)"], Section(probe.Directory, "level.tscn", "Box").Body);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeKeepsTheRestOfTheFile()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -676,7 +673,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal([.. original[..^1], "", lines[marker], ""], lines);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesChangesOnlyThatNode()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -696,7 +693,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal([.. original[..(box + 1)], "position = Vector2(5, 6)", .. original[(box + 1)..]], lines);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesOnANestedNodeKeepsItsHeaderWithoutAUniqueId()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -726,7 +723,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(original[(tabs + 2)..], lines[(tabs + 5)..]);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesSetsATextureFromAPath()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -752,7 +749,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.StartsWith("texture = ExtResource(", Assert.Single(Section(probe.Directory, "level.tscn", "Pic").Body), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesSetsANodeExportByPath()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -774,7 +771,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal("target = NodePath(\"../Box\")", body[^1]);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesRefusesAnArrayOfNodesSayingWhy()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -796,7 +793,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(scene, Read(probe.Directory, "squad.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesSetsAnExportedTypedArray()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -825,7 +822,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal("[1,2]", read["results"]![0]!["properties"]!["counts"]!.ToJsonString());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesSetsAPackedArrayThatReadsBackAsAnArray()
     {
         // CodeEdit declares line_length_guidelines a PackedInt32Array and reads it back as an Array.
@@ -847,7 +844,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal("[80,100]", read["results"]![0]!["properties"]!["line_length_guidelines"]!.ToJsonString());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesIsAllOrNothing()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -873,7 +870,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesOverridesAnInheritedNode()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -895,7 +892,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         AssertVector(read["results"]![0]!["properties"]!["position"]!, 7, 8);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesRefusesANodeInsideANonEditableInstance()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -914,7 +911,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetNodePropertiesReadsNodesAndResourcesAsPaths()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -943,7 +940,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.True(shown.ContainsKey("visible"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetNodePropertiesChangedOnlyReadsTheStoredValues()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -969,7 +966,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal("""{"visible":false}""", results[2]!["properties"]!.ToJsonString());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetNodePropertiesReportsAMissingNodeInItsEntry()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1008,7 +1005,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"Script\" path=\"res://greeter.gd\" id=\"1\"]\n\n"
         + "[node name=\"Greeter\" type=\"Node2D\"]\nscript = ExtResource(\"1\")\n";
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesNullClearsATexture()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1023,7 +1020,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Empty(Section(probe.Directory, "wired.tscn", "Pic").Body);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeRefusesASceneThatInstancesTheTargetThroughAnother()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1038,7 +1035,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(EnemyScene, Read(probe.Directory, "enemy.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeUnderAnEditableInstanceChildIsSaved()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1053,7 +1050,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Contains("Boss/Sprite/Hat", await PathsAsync(probe.Directory, "editable.tscn", null, cancellation));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeRefusesNameAndOwnerInProperties()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1086,7 +1083,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesSetsANodeInsideAnEditableInstance()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1106,7 +1103,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Contains("[editable path=\"Boss\"]", Read(probe.Directory, "editable.tscn"), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeRefusesANameWithReservedCharacters()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1121,7 +1118,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesSetPhaseFailureSavesNothing()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1141,7 +1138,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeInstancesASceneWithoutBakingIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1154,7 +1151,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.DoesNotContain("parent=\"Crate\"", Read(probe.Directory, "level.tscn"), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeAddsAScriptClassNode()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1170,7 +1167,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.StartsWith("script = ExtResource(", Assert.Single(body), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeRefusesUnknownTypesAndAMissingParent()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1193,7 +1190,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(LevelScene, Read(probe.Directory, "level.tscn"));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeSetsANodeExportAndAResourcePath()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1210,7 +1207,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Contains("target = NodePath(\"../Box\")", body);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetNodePropertiesChangedOnlyReadsANodeInsideAnInstance()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1224,7 +1221,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         AssertVector(sprite["position"]!, 1, 2);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetNodePropertiesShowsAValueTheScriptInitSet()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1236,7 +1233,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal("""{"greeting":"hello"}""", read["results"]![0]!["properties"]!.ToJsonString());
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetNodePropertiesReadsTheNativeValueUnderAScriptFieldOfTheSameName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1249,7 +1246,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetNodePropertiesReadsAnInstanceOverrideUnderAScriptFieldOfTheSameName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1272,7 +1269,7 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task SetNodePropertiesSetsTheNativeValueUnderAScriptFieldOfTheSameName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

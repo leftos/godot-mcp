@@ -71,7 +71,7 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
     ];
 
     private readonly ProbeProject _probe = new();
-    private readonly SessionHarness _harness = new(launchesUnfocused: true);
+    private readonly SessionHarness _harness = new(launchesUnfocused: true, productionGraces: false);
     private readonly RuntimeTools _tools;
 
     // Whether a start answered with no stop after it, so a test that failed between them still ends its recording.

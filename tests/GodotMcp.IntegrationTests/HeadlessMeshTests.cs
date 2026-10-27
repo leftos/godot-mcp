@@ -17,7 +17,6 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class HeadlessMeshTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 120_000;
     private const string LibraryUid = "uid://bqmeshlib00a";
     private const string CrateMeshUid = "uid://bqcratemesh0a";
     private const string BoxShapeUid = "uid://bqboxshape0a";
@@ -183,7 +182,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         }
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryTakesEveryMeshInstanceAtAnyDepth()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -215,7 +214,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.Equal(TilesScene, File.ReadAllText(Path.Combine(probe.Directory, "tiles.tscn")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryTakesShapesFromStaticBodyChildren()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -235,7 +234,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.Contains("item/1/shapes = []", library);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryFiltersByName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -253,7 +252,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.DoesNotContain("item/1/", library, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryRefusesAnUnknownName()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -271,7 +270,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.False(File.Exists(Path.Combine(probe.Directory, "tiles.tres")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryRefusesASceneWithoutMeshes()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -286,7 +285,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.False(File.Exists(Path.Combine(probe.Directory, "tiles.tres")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryOverwriteKeepsTheUid()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -319,7 +318,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.DoesNotContain(library, line => line.StartsWith("[sub_resource type=\"BoxMesh\"", StringComparison.Ordinal));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryPlacesAnItemByTheNodesLocalTransform()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -340,7 +339,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.Contains("item/0/navigation_mesh_transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 3)", library);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryWalksThroughANodeThatIsNotANode3D()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -356,7 +355,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.Contains("item/1/mesh_transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, 0)", library);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryKeepsTheShadowCasting()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -369,7 +368,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.Contains("item/1/mesh_cast_shadow = 0", library);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryLetsALaterNodeOfTheSameNameTakeTheItemOverKeepingTheNavigationMesh()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -392,7 +391,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.DoesNotContain(library, line => line.StartsWith("item/1/", StringComparison.Ordinal));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryCopiesAnExternalMeshWhoseSurfaceIsOverridden()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -408,7 +407,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.DoesNotContain("path=\"res://crate_mesh.tres\"", library, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryKeepsAnExternalShapeAReference()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -427,7 +426,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.DoesNotContain(library, line => line.StartsWith("[sub_resource type=\"BoxShape3D\"", StringComparison.Ordinal));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryWritesALoadableResAndAnOverwriteGetsANewUid()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -459,7 +458,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.NotEqual(uid, BinaryUid(File.ReadAllBytes(output)));
     }
 
-    [Theory(Timeout = TestTimeoutMs)]
+    [Theory(Timeout = TestTimeouts.OwnLaunchMs)]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ExportMeshLibraryOverwriteOfAResKeepsTheUidTheProjectsUidCacheHolds(bool cold)
@@ -487,7 +486,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.Equal(first, BinaryUid(File.ReadAllBytes(output)));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryRefusesAFileTheSceneUses()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -512,7 +511,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.Equal(CrateMesh, File.ReadAllText(Path.Combine(probe.Directory, "crate_mesh.tres")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryRefusesALibraryAnInstancedSceneUses()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -540,7 +539,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.Equal(before, File.ReadAllBytes(Path.Combine(probe.Directory, "tiles.tres")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryRefusesALibraryReachedThroughAResource()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -568,7 +567,7 @@ public sealed class HeadlessMeshTests : IAsyncDisposable
         Assert.Equal(before, File.ReadAllBytes(Path.Combine(probe.Directory, "tiles.tres")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ExportMeshLibraryAllowsAnUnrelatedLibraryInACyclicProject()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

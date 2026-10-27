@@ -276,6 +276,31 @@ public sealed class HeadlessHostsTests : IDisposable
     }
 
     [Fact]
+    public async Task AHeadlessCeilingFloorKeepsAHungRequestPastItsOwnCeiling()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using SessionRegistry registry = new(_listener, _log)
+        {
+            OverrideFolders = new OverrideFolders(_temp.Combine("override-folders-floor.txt"), TextWriter.Null),
+            Dormant = new DormantGames(_ => new ProcessStart(Exists: true, StartTime: null), TextWriter.Null),
+            HostLauncher = Launch,
+            ServerProcessId = ServerPid,
+            HeadlessCeilingFloor = TimeSpan.FromMinutes(10),
+        };
+        string game = Game("game");
+        await RunAsync(registry.HeadlessHosts, game, Ceiling, cancellation);
+        FakeHost host = Assert.Single(_launched);
+        host.Mode = FakeHostMode.Hang;
+
+        Task<JsonObject> run = RunAsync(registry.HeadlessHosts, game, Ceiling, cancellation);
+        await host.Hung.Task.WaitAsync(Wait, cancellation);
+        Advance(TimeSpan.FromMinutes(10) + TimeSpan.FromSeconds(1));
+        SessionException failed = await Assert.ThrowsAsync<SessionException>(() => run.WaitAsync(Wait, cancellation));
+
+        Assert.StartsWith($"{What(game)} did not finish within 600 s of load-adjusted time (wall ", failed.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AHostThatExitsBeforeItsHelloFailsTheCallWithItsExitCodeAndLog()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

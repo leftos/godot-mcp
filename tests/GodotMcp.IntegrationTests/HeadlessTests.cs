@@ -13,8 +13,6 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class HeadlessTests : IAsyncDisposable
 {
-    private const int TestTimeoutMs = 120_000;
-    private const int BuildTestTimeoutMs = 240_000;
     private const string BrokenScript = "extends Node\n\n\nfunc _ready() -> void:\n\tif true\n\t\tpass\n";
 
     private const string EnemyScene =
@@ -49,7 +47,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         }
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ValidateFindsAParseErrorWithItsLine()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -69,7 +67,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Null(result["csharp"]);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ValidateGroupsAnErrorUnderTheFileItNames()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -91,7 +89,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Equal(5, grouped["errors"]![0]!["line"]!.GetValue<int>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ValidateSweepsVersionedFilesWhenNoTargetsAreGiven()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -109,7 +107,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.True(result["valid"]!.GetValue<bool>());
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ValidateReportsACSharpBuildErrorAndStillChecksGdscript()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -128,7 +126,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Equal("res://broken.gd", Assert.Single(result["results"]!.AsArray())!["path"]!.GetValue<string>());
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ValidateGroupsAMissingCSharpClassUnderItsScript()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -150,7 +148,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Contains("associated class could not be found", ghost["errors"]!.ToJsonString(), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ValidateReportsAMissingCSharpClassInAnInstancedScene()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -167,7 +165,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Contains("associated class could not be found", ghost["errors"]!.ToJsonString(), StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ValidateChecksASharedCSharpScriptOnce()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -184,7 +182,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Single(ghost["errors"]!.AsArray());
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ACSharpTargetReportsItsWarningsAndTheScenesThatAttachIt()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -219,7 +217,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Empty(Directory.EnumerateFiles(Path.Combine(csProbe.Directory, ".godot", "godot-mcp"), "compile-items*.log"));
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ABrokenCSharpTargetReportsItsErrorUnderItsFile()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -238,7 +236,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Equal("this build", file["from"]!.GetValue<string>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ACSharpTargetInAProjectWithoutACsprojIsRefused()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -251,7 +249,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.EndsWith(" has no .csproj, so nothing compiles it.", refused.Message, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = BuildTestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ACSharpFileOutsideTheCompileItemsIsRefused()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -309,7 +307,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.True(result["valid"]!.GetValue<bool>(), result.ToJsonString());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ANewClassNameIsKnownAfterTheImport()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -336,7 +334,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Equal("not-needed", fourth["prep"]!["import"]!.GetValue<string>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnAutoloadIsFreedBeforeItsReady()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -356,7 +354,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.False(File.Exists(Path.Combine(probe.Directory, "ready.marker")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AnAutoloadErrorBeforeTheFirstFileIsReported()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -372,7 +370,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Equal(6, reported["errors"]![0]!["line"]!.GetValue<int>());
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AHeadlessRunLeavesNoRequestOrResultFiles()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -393,7 +391,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.False(File.Exists(probe.OverrideFile));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetSceneFileTreeListsNodesWithoutRunningScripts()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -425,7 +423,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.False(File.Exists(Path.Combine(probe.Directory, "init.marker")));
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetSceneFileTreeExpandsAnInstancedScene()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -444,7 +442,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetSceneFileTreeMergesAnInheritedScene()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -463,7 +461,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetSceneFileTreeStartsAtRoot()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -480,7 +478,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         );
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetSceneFileTreeQuotesTheErrorsGodotLoggedForABrokenScene()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -497,7 +495,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Contains("Parse Error", refused.Message, StringComparison.Ordinal);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetSceneFileTreePages()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -517,7 +515,7 @@ public sealed class HeadlessTests : IAsyncDisposable
         Assert.Null(last["next"]);
     }
 
-    [Fact(Timeout = TestTimeoutMs)]
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task DescribeClassReadsAnEngineClassHeadless()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
