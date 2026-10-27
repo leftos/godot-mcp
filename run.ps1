@@ -50,9 +50,11 @@ the same log, and the job's timeout-minutes bounds it in place of the ceiling an
            the csharp group: the dotnet command's three publishes (as below) run with plain dotnet publish, no gate of
            their own, each to .tmp/dotnet-<name>.log with its time printed, then bin/dotnet laid out, then dotnet test
            -c Release --no-build of the csharp group's classes (-Filter's, when given), after a plain dotnet build -c
-           Release -warnaserror of the test project to .tmp/itest-csharp-build.log. That build compiles and copies
-           nothing when nothing changed, as after a local itest's own build, so it leaves alone the Release output the
-           other lanes' test hosts have loaded; on the build box it rebuilds what the snapshot changed. Everything runs in the one process the gate runs, so
+           Release -warnaserror of the test project to .tmp/itest-csharp-build.log. That build runs when itest-csharp
+           runs on its own, and on the build box (an itest run's GMCP_ITEST_BUILT does not reach it); inside an itest
+           run that built the project first it is skipped, printing "itest-csharp: the test project was built by this
+           itest run; not building it again", because rebuilding the shared Release output while another lane's test
+           host has it loaded fails with MSB3027. Everything runs in the one process the gate runs, so
            the group needs nothing laid out before it and runs wherever its gate runs it, the build box included. A
            failed publish or build prints its log's last lines and "itest-csharp: dotnet <step> failed (status <n>);
            its log is <path>" (<step> being "publish of <name>" or "build of the test project"), and exits with its
@@ -1072,7 +1074,14 @@ function Invoke-ItestByGroup {
     if ($build -ne 0) {
         return $build
     }
-    $statuses = Invoke-ItestLane -Groups $Groups
+    $builtBefore = $env:GMCP_ITEST_BUILT
+    $env:GMCP_ITEST_BUILT = '1'
+    try {
+        $statuses = Invoke-ItestLane -Groups $Groups
+    }
+    finally {
+        $env:GMCP_ITEST_BUILT = $builtBefore
+    }
     $results = [ordered]@{}
     foreach ($group in @($itestGroups.Keys | Where-Object { $Groups -contains $_ })) {
         $results[$group] = $statuses[$group]
@@ -1124,9 +1133,10 @@ function Invoke-ItestFiltered {
 }
 
 # The integration test project's Release build for itest-csharp, whose dotnet test runs with --no-build: warnings as
-# errors, with no gate of its own. Incremental, it compiles and copies nothing when nothing changed (a local run after
-# itest-build), so it never rewrites the Release output the other lanes' test hosts have loaded, and on the build box it
-# rebuilds whatever the snapshot changed in a work folder an earlier run left built. Returns the build's status.
+# errors, with no gate of its own. itest-csharp runs it when it runs on its own, and on the build box, which an itest
+# run's GMCP_ITEST_BUILT does not reach; inside an itest run that built the project first it is skipped, because
+# rebuilding the shared Release output while another lane's test host has it loaded fails with MSB3027. Returns the
+# build's status.
 function Invoke-ItestCsharpBuild {
     $arguments = @('build', (Join-Path $root $itestProject), '-c', $configuration, '-warnaserror')
     return Invoke-DotnetInProcess -Caller 'itest-csharp' -Name 'itest-csharp-build' -Step 'build of the test project' -Arguments $arguments
@@ -1142,9 +1152,14 @@ function Invoke-ItestCsharp {
     if ($status -ne 0) {
         return $status
     }
-    $status = Invoke-ItestCsharpBuild
-    if ($status -ne 0) {
-        return $status
+    if ($env:GMCP_ITEST_BUILT -eq '1') {
+        Write-Host 'itest-csharp: the test project was built by this itest run; not building it again'
+    }
+    else {
+        $status = Invoke-ItestCsharpBuild
+        if ($status -ne 0) {
+            return $status
+        }
     }
     $classes = @($Filter | Where-Object { $_ })
     if ($classes.Count -eq 0) {

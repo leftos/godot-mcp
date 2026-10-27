@@ -102,6 +102,46 @@ def test_the_group_lays_out_the_helper_builds_the_tests_then_runs_them_without_a
 
 
 @pytest.mark.skipif(os.name != "nt", reason="the stand-in dotnet is a .cmd")
+def test_the_group_inside_an_itest_run_that_built_the_project_skips_the_build_and_runs_the_tests(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    shutil.copyfile(RUN_PS1, root / "run.ps1")
+    (root / "tools").mkdir()
+    (root / "tools" / "hidden-desktop.ps1").write_text(FAKE_HIDDEN_DESKTOP, encoding="utf-8", newline="\n")
+    (root / "dotnet").mkdir()
+    (root / "dotnet" / "godot_mcp_dotnet.gdextension").write_text("gdextension", encoding="utf-8", newline="\n")
+    for staged in STAGED_FILES:
+        path = root / ".tmp" / "dotnet-publish" / staged
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(staged, encoding="utf-8", newline="\n")
+    assembly = root / TEST_ASSEMBLY
+    assembly.parent.mkdir(parents=True)
+    assembly.write_text("built", encoding="utf-8", newline="\n")
+    fake = tmp_path / "fake"
+    fake.mkdir()
+    (fake / "dotnet.cmd").write_text(FAKE_DOTNET_TEST_FAILS, encoding="utf-8", newline="")
+    calls = tmp_path / "calls.txt"
+    env = {
+        **os.environ,
+        "PATH": f"{fake}{os.pathsep}{os.environ['PATH']}",
+        "FAKE_DOTNET_CALLS": str(calls),
+        "GMCP_ITEST_BUILT": "1",
+    }
+
+    command = ["pwsh", "-NoProfile", "-File", str(root / "run.ps1"), "itest-csharp"]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False, env=env)
+
+    assert result.returncode == 5, result.stdout + result.stderr
+    lines = calls.read_text(encoding="utf-8").splitlines()
+    assert [line.split()[0] for line in lines] == ["publish", "publish", "publish", "test"], lines
+    skip = "itest-csharp: the test project was built by this itest run; not building it again"
+    assert skip in result.stdout, result.stdout + result.stderr
+    test_call = lines[-1]
+    assert "-c Release --no-build" in test_call, test_call
+    assert test_call.endswith(f"--filter-class {GROUP_CLASSES}"), test_call
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the stand-in dotnet is a .cmd")
 def test_the_group_publishes_the_helper_itself_and_a_failed_publish_fails_it_naming_the_log(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
