@@ -5,14 +5,16 @@
 Builds, tests, formats and publishes godot-mcp.
 
 .DESCRIPTION
-Every command but itest-groups, itest-csharp and itest-capture (which run inside their caller's gate) runs under gate run: its
-whole output goes to .tmp/<command>.log, the last lines are printed, and it exits with the command's own status, or 124 when the gate's watchdog killed it with every process it started. The
-watchdog kills a run for the first of three reasons, each named by a kill line in the log that this script prints with
-its reading: STALLED (no output and no CPU for 120 s: it hung), TIMED OUT (the ceiling ran out on a clock that runs
-slower while other work keeps the machine busy: a busy loop or a ceiling set too tight) or BACKSTOP (five times the
-ceiling in plain wall time: the machine was busy, so run it once more alone). The ceilings below are load-adjusted.
-On GitHub Actions only, where no gate is installed, a command runs ungated instead: its output still goes to the same
-log, and the job's timeout-minutes bounds it in place of the ceiling and watchdog.
+Every command but itest-groups, itest-csharp and itest-capture (which run inside their caller's gate) runs under gate run,
+called through the repo's wrapper tools/gate.ps1, which hands it to the installed gate.exe (on a machine without one the
+wrapper runs the command directly, with no log, slot or watchdog): its whole output goes to .tmp/<command>.log, the last
+lines are printed, and it exits with the command's own status, or 124 when the gate's watchdog killed it with every
+process it started. The watchdog kills a run for the first of three reasons, each named by a kill line in the log that
+this script prints with its reading: STALLED (no output and no CPU for 120 s: it hung), TIMED OUT (the ceiling ran out on
+a clock that runs slower while other work keeps the machine busy: a busy loop or a ceiling set too tight) or BACKSTOP
+(five times the ceiling in plain wall time: the machine was busy, so run it once more alone). The ceilings below are
+load-adjusted. On GitHub Actions, where no gate is installed, a command runs ungated instead: its output still goes to
+the same log, and the job's timeout-minutes bounds it in place of the ceiling and watchdog.
 
   build    dotnet build GodotMcp.slnx in Release, warnings as errors; ceiling 300 s
   test     the unit tests (tests/GodotMcp.Tests): the project built in Release first (.tmp/test-build.log, ceiling 300 s),
@@ -25,11 +27,10 @@ log, and the job's timeout-minutes bounds it in place of the ceiling and watchdo
            first checks that every `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly
            one group, every listed class exists, every group is in exactly one lane that names only groups, and the
            heavy groups and rules tables name only groups, and stops with status 1 before running anything when not.
-           It then builds the project once in Release, on this machine (gate's --local) until GATE-557 is fixed
-           (.tmp/itest-build.log, ceiling 300 s) and runs each group as its own gate in a process of its own
-           (.tmp/itest-<group>.log, ceiling 300 s, dotnet test -c Release --no-build; the csharp group's gate runs
-           itest-csharp, below, with a ceiling of 420 s for its publishes, and the capture group's itest-capture, below,
-           with a ceiling of 420 s for its publish): each lane's groups one at a time
+           It then builds the project once in Release (.tmp/itest-build.log, ceiling 300 s) and runs each group as its own
+           gate in a process of its own (.tmp/itest-<group>.log, ceiling 300 s, dotnet test -c Release --no-build; the
+           csharp group's gate runs itest-csharp, below, with a ceiling of 420 s for its publishes, and the capture group's
+           itest-capture, below, with a ceiling of 420 s for its publish): each lane's groups one at a time
            in the table's order, the three lanes at once. A group's console output, the gate's tail and verdict, goes to
            .tmp/itest-<group>.console (errors to .tmp/itest-<group>.console.err) and is printed under
            "== itest <group> (lane <lane>)" when the group ends.
@@ -333,8 +334,6 @@ $itestRules = @(
 )
 $itestNamespace = 'GodotMcp.IntegrationTests'
 $itestProject = 'tests/GodotMcp.IntegrationTests/GodotMcp.IntegrationTests.csproj'
-# The itest build's gate runs it on this machine (--local) with this reason, until GATE-557 is fixed.
-$itestBuildLocalReason = 'GATE-557: a routed itest build leaves a nothing-back record, and the parallel lanes then build one tree at once'
 $unitTestProject = 'tests/GodotMcp.Tests/GodotMcp.Tests.csproj'
 # The configuration every build of this script and every test run uses: a test run is preceded by the build of its own
 # project here and passes -c Release --no-build, so it never builds a configuration of its own.
@@ -349,26 +348,10 @@ $gdtestStamp = Join-Path $gdtestDir '.godot/gdtest-import.stamp'
 $dotnetOut = Join-Path $root 'bin/dotnet'
 $dotnetStaging = Join-Path $logDir 'dotnet-publish'
 $captureOut = Join-Path $root 'bin/capture'
-
-# The installed gate on PATH, or $null when the machine has none.
-function Find-Gate {
-    $command = Get-Command gate -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($null -eq $command) {
-        return $null
-    }
-    return $command.Source
-}
-
-# The installed gate on PATH, for the itest lane runner and Invoke-ItestStopTree, which GitHub Actions never reaches:
-# exits 2 with the install hint when the machine has none.
-function Get-GatePath {
-    $gate = Find-Gate
-    if ($null -eq $gate) {
-        [Console]::Error.WriteLine('run.ps1: gate is not on PATH; install it from the gate repo (X:\dev\gate) with pwsh tools/install.ps1')
-        exit 2
-    }
-    return $gate
-}
+# Every gated call runs the repo's wrapper, tools/gate.ps1, in the running pwsh: the wrapper hands its words to the
+# installed gate.exe, or runs the command directly on a machine without one.
+$gateWrapper = Join-Path $root 'tools/gate.ps1'
+$pwshPath = [Environment]::ProcessPath
 
 # The last kill line of the gate in a log (a match whose first group is STALLED, TIMED OUT or BACKSTOP), or $null.
 function Get-GateKillLine {
@@ -412,7 +395,7 @@ function Invoke-Ungated {
         [Parameter(Mandatory)] [string[]]$Arguments,
         [Parameter(Mandatory)] [string]$Log
     )
-    Write-Host "run.ps1: gate is not on PATH; on GitHub Actions, running $Name ungated (no ceiling or watchdog; the job's timeout-minutes bounds it)"
+    Write-Host "run.ps1: on GitHub Actions, running $Name ungated (no ceiling or watchdog; the job's timeout-minutes bounds it)"
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Log) | Out-Null
     & $Program @Arguments *>&1 | Out-File -LiteralPath $Log -Encoding utf8
     $status = $LASTEXITCODE
@@ -420,10 +403,10 @@ function Invoke-Ungated {
     return $status
 }
 
-# Runs a program under gate run: the whole output to .tmp/<Name>.log, the last 15 lines on the screen, and the
-# process tree killed with status 124 when the watchdog stops it (stalled, past its load-adjusted ceiling, or past five
-# times it in wall time), with the log's kill line and its reading printed. On GitHub Actions only, with no gate on
-# PATH, it runs the program ungated instead.
+# Runs a program under gate run, through the wrapper tools/gate.ps1: the whole output to .tmp/<Name>.log, the last 15
+# lines on the screen, and the process tree killed with status 124 when the watchdog stops it (stalled, past its
+# load-adjusted ceiling, or past five times it in wall time), with the log's kill line and its reading printed. On
+# GitHub Actions it runs the program ungated instead.
 function Invoke-Gated {
     param(
         [Parameter(Mandatory)] [string]$Name,
@@ -431,26 +414,18 @@ function Invoke-Gated {
         [Parameter(Mandatory)] [string]$Program,
         [Parameter(Mandatory)] [string[]]$Arguments,
         [Parameter(Mandatory)] [ValidateSet('heavy', 'light')] [string]$Slot,
-        [switch]$NoMarkers,
-        [string]$LocalReason
+        [switch]$NoMarkers
     )
     $log = Join-Path $logDir "$Name.log"
     Write-Host "$Program $($Arguments -join ' ')  (log: $log, ceiling: $TimeoutSeconds s, slot: $Slot)"
-    $gate = Find-Gate
-    if ($null -eq $gate) {
-        if ($env:GITHUB_ACTIONS -eq 'true') {
-            return Invoke-Ungated -Name $Name -Program $Program -Arguments $Arguments -Log $log
-        }
-        $gate = Get-GatePath
+    if ($env:GITHUB_ACTIONS -eq 'true') {
+        return Invoke-Ungated -Name $Name -Program $Program -Arguments $Arguments -Log $log
     }
     $gateOptions = @('run', '--log', $log, '--timeout', $TimeoutSeconds, '--slot', $Slot, '--tail', 15)
     if ($NoMarkers) {
         $gateOptions += '--no-markers'
     }
-    if ($LocalReason) {
-        $gateOptions += @('--local', '--reason', $LocalReason)
-    }
-    & $gate @gateOptions -- $Program @Arguments | Out-Host
+    & $pwshPath -NoProfile -File $gateWrapper @gateOptions -- $Program @Arguments | Out-Host
     $status = $LASTEXITCODE
     if ($status -eq 124) {
         Write-Host "$Name was killed by the gate: $(Get-GateKill -Log $log)" -ForegroundColor Yellow
@@ -464,23 +439,20 @@ function Invoke-Logged {
         [Parameter(Mandatory)] [string]$Name,
         [Parameter(Mandatory)] [int]$TimeoutSeconds,
         [Parameter(Mandatory)] [string[]]$Arguments,
-        [Parameter(Mandatory)] [ValidateSet('heavy', 'light')] [string]$Slot,
-        [string]$LocalReason
+        [Parameter(Mandatory)] [ValidateSet('heavy', 'light')] [string]$Slot
     )
-    return Invoke-Gated -Name $Name -TimeoutSeconds $TimeoutSeconds -Program 'dotnet' -Arguments $Arguments -Slot $Slot -LocalReason $LocalReason
+    return Invoke-Gated -Name $Name -TimeoutSeconds $TimeoutSeconds -Program 'dotnet' -Arguments $Arguments -Slot $Slot
 }
 
 # Builds a test project in $configuration, warnings as errors, under its own gate, so the run after it has nothing to
-# build and the runner loads that build. With -LocalReason the gate runs it on this machine (--local). Returns the
-# build's status.
+# build and the runner loads that build. Returns the build's status.
 function Invoke-TestBuild {
     param(
         [Parameter(Mandatory)] [string]$Name,
-        [Parameter(Mandatory)] [string]$Project,
-        [string]$LocalReason
+        [Parameter(Mandatory)] [string]$Project
     )
     $arguments = @('build', (Join-Path $root $Project), '-c', $configuration, '-warnaserror')
-    return Invoke-Logged -Name $Name -TimeoutSeconds 300 -Arguments $arguments -Slot heavy -LocalReason $LocalReason
+    return Invoke-Logged -Name $Name -TimeoutSeconds 300 -Arguments $arguments -Slot heavy
 }
 
 # The program and arguments of an integration test run: dotnet with the given arguments, on Windows through
@@ -984,11 +956,11 @@ function Invoke-ItestGroupProcess {
     }
     $log = Join-Path $logDir "itest-$Group.log"
     $slot = Get-ItestGroupSlot -Group $Group
-    $gate = Get-GatePath
-    $words = @('run', '--log', $log, '--timeout', $ceiling, '--slot', $slot, '--tail', '15', '--', $command.Program) + $command.Arguments
+    $words = @('-NoProfile', '-File', $gateWrapper, 'run', '--log', $log, '--timeout', $ceiling, '--slot', $slot, '--tail', '15', '--',
+        $command.Program) + $command.Arguments
     Write-Host "itest ${Group}: started in lane $Lane (log: $log, ceiling: $ceiling s, slot: $slot)"
     $console = Join-Path $logDir "itest-$Group.console"
-    $process = Start-Process -FilePath $gate -ArgumentList @($words | ForEach-Object { ConvertTo-CommandLineWord -Word $_ }) `
+    $process = Start-Process -FilePath $pwshPath -ArgumentList @($words | ForEach-Object { ConvertTo-CommandLineWord -Word $_ }) `
         -NoNewWindow -PassThru -RedirectStandardOutput $console -RedirectStandardError "$console.err"
     # Without a handle taken while it runs, the process object of Start-Process has no ExitCode once it has exited.
     $null = $process.Handle
@@ -1028,13 +1000,13 @@ function Invoke-ItestLaneNext {
     $Running[$Lane] = @{ Group = $group; Process = (Invoke-ItestGroupProcess -Group $group -Lane $Lane) }
 }
 
-# Stops the gates of the groups still running (an interrupted run), each with its whole process tree.
+# Stops the gates of the groups still running (an interrupted run), each with its whole process tree: the wrapper's
+# pwsh and the gate.exe under it.
 function Invoke-ItestStopTree {
     param([Parameter(Mandatory)] [hashtable]$Running)
-    $gate = Get-GatePath
     foreach ($entry in $Running.Values) {
         if (-not $entry.Process.HasExited) {
-            & $gate stop-tree $entry.Process.Id | Out-Host
+            & $pwshPath -NoProfile -File $gateWrapper stop-tree $entry.Process.Id | Out-Host
         }
     }
 }
@@ -1091,7 +1063,7 @@ function Get-ItestLaneCount {
 function Invoke-ItestByGroup {
     param([Parameter(Mandatory)] [string[]]$Groups)
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject -LocalReason $itestBuildLocalReason
+    $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject
     if ($build -ne 0) {
         return $build
     }
@@ -1128,7 +1100,7 @@ function Get-ItestRunGroup {
 # helper published inside it) when a filter selects a csharp class.
 function Invoke-ItestFiltered {
     param([Parameter(Mandatory)] [string[]]$Filters)
-    $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject -LocalReason $itestBuildLocalReason
+    $build = Invoke-TestBuild -Name 'itest-build' -Project $itestProject
     if ($build -ne 0) {
         return $build
     }

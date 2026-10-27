@@ -21,4 +21,6 @@ linear: godot-mcp
 
 ## Gates
 
-Each runs through `run.ps1`, which wraps it in `gate run` and writes `.tmp/<command>.log`: `pwsh run.ps1 build` (warnings are errors), `pwsh run.ps1 test` (unit), `pwsh run.ps1 gdtest` (headless GDScript tests), `pwsh run.ps1 pytest` (for a change under `tools/`), `pwsh run.ps1 format-check`, and `pwsh run.ps1 itest -Since origin/main` for a landing (the full `pwsh run.ps1 itest` at a release); `prek run --all-files` runs the lint hooks (CSharpier, line length, the build, gdformat, gdlint, gdcomplexity, ruff) and no test.
+Each runs through `run.ps1`, which wraps it in `gate run` through `tools/gate.ps1` and writes `.tmp/<command>.log`: `pwsh run.ps1 build` (warnings are errors), `pwsh run.ps1 test` (unit), `pwsh run.ps1 gdtest` (headless GDScript tests), `pwsh run.ps1 pytest` (for a change under `tools/`), `pwsh run.ps1 format-check`, and `pwsh run.ps1 itest -Since origin/main` for a landing (the full `pwsh run.ps1 itest` at a release).
+
+`prek run --all-files` runs the lint hooks (CSharpier, line length, the build, gdformat, gdlint, gdcomplexity, ruff) and no test.

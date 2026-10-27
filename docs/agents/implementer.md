@@ -14,7 +14,7 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 
 ## Commands
 
-Every build and test runs through `run.ps1`, which runs it under `gate run` (the installed gate, on PATH) with a ceiling, writes `.tmp/<command>.log` and prints its tail:
+Every build and test runs through `run.ps1`, which runs it under `gate run` through the repo's wrapper `tools/gate.ps1` (which hands it to the installed gate, and on a machine without one runs the command directly, with no log, slot or ceiling) with a ceiling, writes `.tmp/<command>.log` and prints its tail:
 
 ```
 pwsh run.ps1 build                        # warnings are errors
