@@ -65,6 +65,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "options.keepGoing; options.steps [3, \"name\", \"2-5\"] plays only those steps, by index, name or inclusive range, in "
             + "ascending order, and never runs the others beyond the setup steps its profile's scratch.setup declares, which a run "
             + "given options.steps adds to the selection, so a later step that depends on a skipped one is the caller's choice. "
+            + "options.steps {\"<Scene>\": [...]} gives each scene it names its own list, a scene it leaves out playing every step, "
+            + "and a step the root's optional GetStepHidden(i) marks hidden keeps its index, plays as any other and reads "
+            + "\"<i> (hidden) <name>\" in the scene's stepList. "
             + "A step fails "
             + "on an error the game logs (push_error, an engine error, a C# exception) or a stdout or stderr line matching the "
             + "profile's scratch.patterns; after the steps the game is stopped and a non-zero exit or an ObjectDB leak turns the "
@@ -78,8 +81,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "step) is played once more alone after the others: green alone, its entry is the replay's with alone: true and counts "
             + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
             + "{passed, green, red, known, noSteps, killed, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, "
-            + "scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, timeScale?, pace, paceReason?, seconds, session, "
-            + "failedAt?, failures?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?, alone?, "
+            + "scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, stepList?, timeScale?, pace, paceReason?, seconds, "
+            + "session, failedAt?, failures?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?, alone?, "
             + "aloneFailedAt?}], timeScale?}, scenes in the order given; selected lists the indices options.steps selected, setup the "
             + "setup steps the run added to them, both fixed when the steps resolve, so a scene stopped at a step, at the boot or by "
             + "a kill still lists them; "
@@ -319,6 +322,10 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         List<string> engineArgs = EngineArgs(profile, scratch, options);
         List<string> resPaths = ResolveScenes(profile, scratch, scenes);
         CheckCeilings(options.Ceilings, resPaths);
+        (IReadOnlyList<ScratchStepToken>? steps, Dictionary<string, IReadOnlyList<ScratchStepToken>> stepsByScene) = PlanSteps(
+            options.Steps,
+            resPaths
+        );
         List<ScratchScenePlan> plans = [];
         foreach (string resPath in resPaths)
         {
@@ -332,9 +339,84 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             Listed = scenes is not null,
             SessionPrefix = prefix,
             KeepGoing = options.KeepGoing ?? false,
-            Steps = StepTokens(options.Steps),
+            Steps = steps,
+            StepsByScene = stepsByScene,
             TimeScale = options.TimeScale ?? 1,
         };
+    }
+
+    /// <summary>
+    /// options.steps as the plan holds it: a list's tokens, which every scene plays, or a map's tokens by scene; neither when it
+    /// is left out or null.
+    /// </summary>
+    /// <exception cref="McpException">
+    /// options.steps is neither an array nor an object, a map key names no scene of the plan, or a list is refused as
+    /// <see cref="StepTokens"/> refuses one (in a map, named with its scene).
+    /// </exception>
+    private static (IReadOnlyList<ScratchStepToken>? Steps, Dictionary<string, IReadOnlyList<ScratchStepToken>> ByScene) PlanSteps(
+        JsonElement? steps,
+        List<string> resPaths
+    )
+    {
+        if (steps is not { } given)
+        {
+            return (null, []);
+        }
+
+        return given.ValueKind switch
+        {
+            JsonValueKind.Null or JsonValueKind.Undefined => (null, []),
+            JsonValueKind.Array => (StepTokens([.. given.EnumerateArray()]), []),
+            JsonValueKind.Object => (null, StepsByScene(given, resPaths)),
+            _ => throw new McpException(
+                $"steps is a {Kind(given)}; it must be an array of step indices, names or ranges, or an object mapping a scene "
+                    + "name to such an array."
+            ),
+        };
+    }
+
+    /// <summary>A JSON value's kind as a refusal names it, in lower case: string, number, true, ...</summary>
+    private static string Kind(JsonElement element) => element.ValueKind.ToString().ToLowerInvariant();
+
+    /// <summary>A map form of options.steps as each scene's tokens, keyed by its scene.</summary>
+    /// <exception cref="McpException">A key names no scene of the plan, or its value is no list of tokens.</exception>
+    private static Dictionary<string, IReadOnlyList<ScratchStepToken>> StepsByScene(JsonElement map, List<string> resPaths)
+    {
+        List<string> names = [.. resPaths.Select(Path.GetFileNameWithoutExtension).Select(name => name!)];
+        Dictionary<string, IReadOnlyList<ScratchStepToken>> byScene = [];
+        foreach (JsonProperty entry in map.EnumerateObject())
+        {
+            if (!names.Contains(entry.Name))
+            {
+                throw new McpException(
+                    $"options.steps scene '{entry.Name}' is not in the plan; its scenes are {string.Join(", ", names)}. Pass one of "
+                        + "those; a scene the map leaves out plays every step."
+                );
+            }
+
+            byScene[entry.Name] = SceneTokens(entry);
+        }
+
+        return byScene;
+    }
+
+    /// <summary>One entry of a map form of options.steps as its scene's tokens.</summary>
+    /// <exception cref="McpException">The value is no array, or a list <see cref="StepTokens"/> refuses; named with its scene.</exception>
+    private static IReadOnlyList<ScratchStepToken> SceneTokens(JsonProperty entry)
+    {
+        if (entry.Value.ValueKind != JsonValueKind.Array)
+        {
+            throw new McpException($"steps for {entry.Name}: it is a {Kind(entry.Value)}; it must be an array of step indices, names or ranges.");
+        }
+
+        try
+        {
+            return StepTokens([.. entry.Value.EnumerateArray()])!;
+        }
+        catch (McpException e)
+        {
+            throw new McpException($"steps for {entry.Name}: {e.Message}", e);
+        }
     }
 
     /// <summary>options.steps as tokens, in the order given; null when left out.</summary>
@@ -864,10 +946,12 @@ internal sealed record ScratchOptions(
             + "exact name, or an inclusive range of indices (\"2-5\"); a string is read as an index first, then a name, then a range. "
             + "The union plays in ascending order, each step once, and one list applies to every scene: a token naming no step of a "
             + "scene turns that scene red before any step plays. A later step that depends on a skipped one is the caller's choice. "
+            + "An object {\"<Scene>\": [...]} in place of the list gives each scene it names its own list, a scene it leaves out "
+            + "playing every step; a step its scene's GetStepHidden(i) marks hidden keeps its index and plays as any other. "
             + "Each scene adds the steps its profile's scratch.setup declares for it to this selection, ascending with them; its "
             + "result lists the selected indices as selected and the added setup steps as setup."
     )]
-        JsonElement[]? Steps = null,
+        JsonElement? Steps = null,
     [property: Description(
         "true returns at once, once the plan is checked, with {runId, statusFile, logFile, scenes} (scenes the names in play "
             + "order), and the run plays on in the server, ended only by scratch_status {stop: true} or the server's exit, never by "

@@ -66,8 +66,8 @@ public sealed class ScratchRunOrderTests
     }
 
     [Theory]
-    [InlineData("5", "setup \"5\" of A matches no step; its steps are 0: open, 1: hit, 2: hit")]
-    [InlineData("shut", "setup \"shut\" of A matches no step; its steps are 0: open, 1: hit, 2: hit")]
+    [InlineData("5", "setup \"5\" of A matches no step; its steps are 0 open, 1 hit, 2 hit")]
+    [InlineData("shut", "setup \"shut\" of A matches no step; its steps are 0 open, 1 hit, 2 hit")]
     [InlineData("hit", "setup \"hit\" of A names 2 steps (1, 2); key it by index")]
     public void ASetupKeyNamingNoStepOrASharedNameIsAnError(string key, string refusal)
     {

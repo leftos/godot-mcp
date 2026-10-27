@@ -336,13 +336,13 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `run_scratches`
 
-- **Does:** plays each scratch scene in its own fresh headless game session, `parallel` at a time (default one after another), walking its steps itself, and gives each a verdict: `{passed, green, red, known, noSteps, killed, timeScale?, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, pace, paceReason?, timeScale?, seconds, session, failedAt?: {index, name, error, status, pattern?: {pattern, reason?}}, failures?: [{index, name, error}], alone?, aloneFailedAt?, details?: [{index, name, ok, gameMs?, until?: {met, gameMs, elapsedMs, frames}, status, error?, errors?: [{message, file, line, count?}], errorsOmitted?, lines?, cut?}], exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?}]}`.
+- **Does:** plays each scratch scene in its own fresh headless game session, `parallel` at a time (default one after another), walking its steps itself, and gives each a verdict: `{passed, green, red, known, noSteps, killed, timeScale?, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, stepList?, pace, paceReason?, timeScale?, seconds, session, failedAt?: {index, name, error, status, pattern?: {pattern, reason?}}, failures?: [{index, name, error}], alone?, aloneFailedAt?, details?: [{index, name, ok, gameMs?, until?: {met, gameMs, elapsedMs, frames}, status, error?, errors?: [{message, file, line, count?}], errorsOmitted?, lines?, cut?}], exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?}, known?}]}`.
 
   A scratch scene's root implements the **scratch protocol**: `PlayStep(int)`, `GetStepCount()`, `GetStepName(int)` and `GetStatus()`. Per step the server calls `PlayStep`, waits the scene's **pace** in game time (`wait_for {gameMs}`), then reads `GetStatus()` (its second line is `status`).
 
   Outside `run_scratches`, `PlayStep` called with one String argument on a node that has `GetStepCount` and `GetStepName` plays the step whose `GetStepName` equals that String exactly (ordinal, case-sensitive), so a windowed look plays a step by the name `run_scratches` reports. The names are read from the game on every call; a String is always a name, so a step named `"7"` is reached by name, and an int is still an index.
 
-  It holds for `call_method`, every `options.call` (`capture_frames`, `watch`, `wait_for`, `then.call` included) and `batch_drive`'s steps; a node without `GetStepName` is called as before. A name matching no step is refused with `PlayStep "<name>" matches no step; its steps are 0: a, 1: b` (`it has no steps` for an empty list), and one matching several with `PlayStep "<name>" names N steps (i, j); call it by index`.
+  It holds for `call_method`, every `options.call` (`capture_frames`, `watch`, `wait_for`, `then.call` included) and `batch_drive`'s steps; a node without `GetStepName` is called as before. A name matching no step is refused with `PlayStep "<name>" matches no step; its steps are 0 a, 1 b` (a hidden step reads `1 (hidden) b`; `it has no steps` for an empty list), and one matching several with `PlayStep "<name>" names N steps (i, j); call it by index`.
 
   A lookup that cannot read the names refuses too, ahead of those: `PlayStep "<name>": reading its step names raised: <first error>` when `GetStepCount` or `GetStepName` raised an error, `PlayStep "<name>": GetStepCount returned <value>, not a step count`, and `PlayStep "<name>": GetStepName(<index>) returned <value>, not a name`, the value written as a GDScript value (`null`, `"text"`).
 
@@ -357,6 +357,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
   A root that also has a public `GetStepUntil(i)` (C# or GDScript; an optional fifth method, found by `has_method`) gives each step a `wait_for` condition, as `{node, property, equals}` or `{expression}` would be written (an empty dictionary, or null, for a paced step, which plays as above).
 
   Such a step is played inside one `wait_for` on that condition with `PlayStep(i)` as the wait's `options.call`, so the wait's clock starts in `PlayStep`'s frame and ends when the condition holds, with the step's pace as the most game time it may take; then `GetStatus()` is read as usual. A `state` condition on a C# node is read through the C# helper, as `wait_for` reads one.
+
+  A root may also have a public `GetStepHidden(i)` (optional, found by `has_method`): true marks step i hidden, false or null leaves it shown, and any other answer refuses the scene with `GetStepHidden(<i>) returned <json>, not true or false`. A hidden step keeps its index and plays by index or name like any other.
 
   A paced step is not waited out: the next `PlayStep` comes one pace after this one, whether or not work it started (an awaited task, a tween, a timer) is still running, with or without `options.keepGoing`. Give such a step a `GetStepUntil` condition on the state that says it is done.
 
@@ -409,7 +411,13 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   `keepGoing` true (default false; no profile key) plays a scene's next step after one that failed on a pushed error or a matching line, so independent red steps are all reported; a step whose own call failed (the game gone or stuck) still stops the scene. Steps are usually stateful and sequential, so off is the default. With `keepGoing` the wait after the last step runs and the exit is judged too.
 
-  `steps` (an array of tokens; left out: every step) plays only some steps of every scene of the call, once each, in ascending order. A number is a step index. A string is read as a plain index first (as `scratch.pace` `steps` keys are, below the scene's step count), then as an exact step name, then as an inclusive range `"2-5"` of ASCII digits; `03` and `+3` are names, `"02-05"` is a range, and a name wins over a range reading.
+  `steps` (an array of tokens, or an object mapping a scene name to such an array; left out, `null` or `{}`: every step) plays only some steps, once each, in ascending order. An array applies to every scene of the call; an object gives each scene it names its own list, and a scene it leaves out plays every step.
+
+  A number is a step index. A string is read as a plain index first (as `scratch.pace` `steps` keys are, below the scene's step count), then as an exact step name, then as an inclusive range `"2-5"` of ASCII digits; `03` and `+3` are names, `"02-05"` is a range, and a name wins over a range reading.
+
+  A `steps` that is neither is refused with `steps is a {kind}; it must be an array of step indices, names or ranges, or an object mapping a scene name to such an array.`
+
+  An object key naming no scene of the plan is refused with `options.steps scene '<key>' is not in the plan; its scenes are <names>. Pass one of those; a scene the map leaves out plays every step.` A map value that is not an array reads `steps for <Scene>: it is a <kind>; it must be an array of step indices, names or ranges.`, and each list refusal below starts with `steps for <Scene>: ` for a map.
 
   An empty array, a token that is neither a number nor a string, a negative or non-integer number, a reversed range (`"5-2"`) and a duplicate token (`3` and `"3"` are one token) are refused before launch. A token matching no step (a number past the end, an unknown name, `"١-٢"`), a range reaching past the last step and a name shared by two steps make that scene red at index -1 with no step played, the message listing the scene's steps; the other scenes still play.
 
@@ -418,6 +426,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
   Every other scene field and the counts stay, so a big run is read for its failures alone. With `background: true` it is refused with "options.only is not read by a background run; pass only to scratch_status, which returns the run's result". Any other value is refused with `only must be "all" or "red", not "<value>"`.
 
   Steps not named never run, except the scene's setup steps (`scratch.setup`, below), which a partial run plays beside the selected ones; a later step that depends on a skipped step not declared as setup is the caller's choice.
+
+  A scene's `stepList` is one string per step, `"<index> <name>"` with ` (hidden)` after a hidden step's index (`"0 (hidden) fight setup"`), present only when the scene has a hidden step or the run played part of it (`selected` present).
 
   A scene's `selected` lists the indices the call's `steps` named, only when `steps` is given and resolved in that scene; `setup` lists the declared setup steps the run added to that selection, ascending, and is absent when there are none; like `selected`, it says what the run set out to play, so a scene stopped earlier still lists them.
 

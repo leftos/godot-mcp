@@ -7,7 +7,7 @@ namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// run_scratches over the whole scratch folder of the InputProbe fixture, in the real Godot, three scenes at once: every scene to
-/// the same verdict as one at a time, reported in the folder's order, and which scenes ran alone. The fact plays all 18 scenes,
+/// the same verdict as one at a time, reported in the folder's order, and which scenes ran alone. The fact plays all 19 scenes,
 /// so the class is a group of its own, apart from <see cref="ScratchFolderTests"/>, whose folder, verdicts and probe setup it
 /// shares.
 /// </summary>
@@ -39,6 +39,6 @@ public sealed class ScratchFolderParallelTests : IAsyncDisposable
         JsonArray scenes = result["scenes"]!.AsArray();
         Assert.Null(scenes[1]!["alone"]);
         Assert.False(scenes[2]!["alone"]!.GetValue<bool>());
-        Assert.Null(scenes[11]!["alone"]);
+        Assert.Null(scenes[12]!["alone"]);
     }
 }

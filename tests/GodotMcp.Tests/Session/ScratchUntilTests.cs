@@ -14,6 +14,19 @@ public sealed class ScratchUntilTests
     private const string Root = "/root/ScratchScene";
 
     [Theory]
+    [InlineData("true", true)]
+    [InlineData("false", false)]
+    [InlineData("null", false)]
+    public void AGetStepHiddenAnswerOfTrueMarksTheStepHiddenAndFalseOrNullLeavesItShown(string answer, bool hidden) =>
+        Assert.Equal((hidden, (string?)null), ScratchRun.HiddenAnswer(JsonNode.Parse(answer), 2));
+
+    [Theory]
+    [InlineData("1", "GetStepHidden(2) returned 1, not true or false")]
+    [InlineData("\"yes\"", "GetStepHidden(2) returned \"yes\", not true or false")]
+    public void AGetStepHiddenAnswerNeitherTrueFalseNorNullIsTheScenesRefusal(string answer, string error) =>
+        Assert.Equal((false, error), ScratchRun.HiddenAnswer(JsonNode.Parse(answer), 2));
+
+    [Theory]
     [InlineData("null")]
     [InlineData("{}")]
     public void NullOrAnEmptyDictionaryIsAPacedStep(string answer) =>

@@ -70,6 +70,9 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
     /// </summary>
     public IReadOnlyList<int>? Setup { get; init; }
 
+    /// <summary>The scene's step names and the steps its root marks hidden; empty before the steps are named.</summary>
+    public ScratchStepNames StepNames { get; init; } = [];
+
     /// <summary>The time scale the scene's game ran at when it differs from the call's (its profile pace opted out); else null.</summary>
     public double? TimeScale { get; init; }
 
@@ -224,6 +227,14 @@ internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchS
     public IReadOnlyList<int>? Setup { get; init; }
 
     /// <summary>
+    /// The scene's steps, one "&lt;index&gt; &lt;name&gt;" each, with " (hidden)" after the index of a step its root's
+    /// GetStepHidden marks hidden; null unless the scene has a hidden step or the run played only part of it
+    /// (<see cref="Selected"/> is present).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? StepList { get; init; }
+
+    /// <summary>
     /// The time scale the scene's game ran at when it differs from the call's, as when its profile pace has "timeScale": 1;
     /// null otherwise.
     /// </summary>
@@ -372,6 +383,7 @@ internal static partial class ScratchVerdict
         {
             Selected = seen.Selected,
             Setup = seen.Setup,
+            StepList = StepList(seen),
             TimeScale = seen.TimeScale,
             PaceReason = shown is Red or Killed ? PaceReasonAt(seen, failedAt, rules.PaceReason) : null,
             FailedAt = failedAt,
@@ -552,6 +564,10 @@ internal static partial class ScratchVerdict
         : verdict;
 
     /// <summary>Whether options.steps selected fewer than all of the scene's steps.</summary>
+    /// <summary>The scene's step list, when it has a hidden step or the call selected its steps; else null.</summary>
+    private static IReadOnlyList<string>? StepList(ScratchObservation seen) =>
+        seen.Selected is not null || seen.StepNames.Hidden.Count > 0 ? seen.StepNames.Lines() : null;
+
     private static bool PlayedInPart(ScratchObservation seen) => seen.Selected is { } selected && selected.Count < seen.Total;
 
     /// <summary>

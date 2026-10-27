@@ -464,7 +464,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal("red", scene["verdict"]!.GetValue<string>());
         Assert.Equal(-1, failedAt["index"]!.GetValue<int>());
         Assert.Equal(
-            "pace.steps key \"shut\" of ScratchGreen matches no step; its steps are 0: open, 1: move, 2: close",
+            "pace.steps key \"shut\" of ScratchGreen matches no step; its steps are 0 open, 1 move, 2 close",
             failedAt["error"]!.GetValue<string>()
         );
         Assert.Equal((0, 3), (scene["steps"]!["played"]!.GetValue<int>(), scene["steps"]!["total"]!.GetValue<int>()));
@@ -498,11 +498,41 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Equal("red", unknown["verdict"]!.GetValue<string>());
         Assert.Equal(-1, failedAt["index"]!.GetValue<int>());
         Assert.Equal(
-            "options.steps token \"nope\" of ScratchTwoRed matches no step; its steps are 0: calm, 1: first, 2: second, 3: last",
+            "options.steps token \"nope\" of ScratchTwoRed matches no step; its steps are 0 calm, 1 first, 2 second, 3 last",
             failedAt["error"]!.GetValue<string>()
         );
         Assert.Equal((0, 4), (unknown["steps"]!["played"]!.GetValue<int>(), unknown["steps"]!["total"]!.GetValue<int>()));
         Assert.Null(unknown["selected"]);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AStepsMapPlaysEachScenesOwnSteps()
+    {
+        ScratchOptions options = new(Details: true, Steps: Tokens("""{ "ScratchTwoRed": ["last"], "ScratchGreen": [0, "close"] }"""));
+
+        JsonObject result = await RunAsync(_probe.Directory, ["ScratchTwoRed", "ScratchGreen"], options, TestContext.Current.CancellationToken);
+        JsonArray scenes = result["scenes"]!.AsArray();
+
+        Assert.True(result["passed"]!.GetValue<bool>(), result.ToJsonString());
+        Assert.Equal([3], Indices(scenes[0]!["selected"]!));
+        Assert.Equal(["last"], scenes[0]!["details"]!.AsArray().Select(step => step!["name"]!.GetValue<string>()));
+        Assert.Equal([0, 2], Indices(scenes[1]!["selected"]!));
+        Assert.Equal(["open", "close"], scenes[1]!["details"]!.AsArray().Select(step => step!["name"]!.GetValue<string>()));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task APartialRunOfASceneWithAHiddenStepListsItsStepsWithTheMark()
+    {
+        ScratchOptions options = new(Steps: Tokens("[1]"));
+
+        JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchHidden"], options, TestContext.Current.CancellationToken));
+
+        Assert.True(scene["verdict"]!.GetValue<string>() == "green", scene.ToJsonString());
+        Assert.Equal([1], Indices(scene["selected"]!));
+        Assert.Equal(
+            ["0 (hidden) fight setup", "1 first view", "2 second view"],
+            scene["stepList"]!.AsArray().Select(line => line!.GetValue<string>())
+        );
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -622,7 +652,7 @@ public sealed class ScratchRunnerTests : IAsyncDisposable
         Assert.Null(step["gameMs"]);
     }
 
-    private static JsonElement[] Tokens(string json) => JsonSerializer.Deserialize<JsonElement[]>(json)!;
+    private static JsonElement Tokens(string json) => JsonSerializer.Deserialize<JsonElement>(json);
 
     private static IEnumerable<int> Indices(JsonNode indices) => indices.AsArray().Select(index => index!.GetValue<int>());
 

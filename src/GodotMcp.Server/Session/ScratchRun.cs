@@ -1,6 +1,8 @@
+using System.Collections;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -110,8 +112,21 @@ internal sealed record ScratchPlan(
     /// <summary>Whether a scene plays on past a step that failed on a pushed error or a matching line.</summary>
     public required bool KeepGoing { get; init; }
 
-    /// <summary>options.steps' tokens, which every scene resolves against its own step names; null plays every step.</summary>
+    /// <summary>
+    /// options.steps' tokens when it is a list, which every scene resolves against its own step names; null when it is left out,
+    /// which plays every step, or a map (<see cref="StepsByScene"/>).
+    /// </summary>
     public required IReadOnlyList<ScratchStepToken>? Steps { get; init; }
+
+    /// <summary>
+    /// options.steps' tokens when it is a map, keyed by the scene they apply to; a scene the map leaves out plays every step.
+    /// Empty when options.steps is a list or left out.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<ScratchStepToken>> StepsByScene { get; init; } =
+        ReadOnlyDictionary<string, IReadOnlyList<ScratchStepToken>>.Empty;
+
+    /// <summary>The tokens the scene named <paramref name="scene"/> plays; null plays every step.</summary>
+    public IReadOnlyList<ScratchStepToken>? StepsFor(string scene) => Steps ?? StepsByScene.GetValueOrDefault(scene);
 
     /// <summary>options.timeScale, the time scale the scenes' games run at unless a scene's profile pace opts out; 1 by default.</summary>
     public required double TimeScale { get; init; }
@@ -185,6 +200,32 @@ internal readonly record struct LineMark(long Stdout, long Stderr);
 internal sealed record ScratchSelection(int[]? Selected, int[] Setup, int[] Played);
 
 /// <summary>
+/// A scene's step names by index, and the indices its root's optional GetStepHidden marks hidden: a mark only, a hidden step
+/// keeping its index and playing by index or name as any other. A collection expression builds names none of which is hidden.
+/// </summary>
+[CollectionBuilder(typeof(ScratchStepNames), nameof(Create))]
+internal sealed class ScratchStepNames(IReadOnlyList<string> names, IReadOnlySet<int> hidden) : IReadOnlyList<string>
+{
+    /// <summary>The indices of the steps marked hidden.</summary>
+    public IReadOnlySet<int> Hidden => hidden;
+
+    public int Count => names.Count;
+
+    public string this[int index] => names[index];
+
+    /// <summary>Names none of which is hidden.</summary>
+    public static ScratchStepNames Create(ReadOnlySpan<string> names) => new([.. names], new HashSet<int>());
+
+    /// <summary>One line per step, "&lt;index&gt; &lt;name&gt;", with " (hidden)" after the index of a hidden step.</summary>
+    public IReadOnlyList<string> Lines() =>
+        [.. names.Select((name, index) => hidden.Contains(index) ? $"{index} (hidden) {name}" : $"{index} {name}")];
+
+    public IEnumerator<string> GetEnumerator() => names.GetEnumerator();
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
+/// <summary>
 /// Plays one scratch scene in a headless game session of its own, as an agent would with the runtime tools: launches it,
 /// asks the game for its current scene's path, checks that root for the scratch protocol, reads its step names and takes the
 /// error feed's entries so far, the boot's: an error among them fails the scene before any step plays (the lines printed so far
@@ -210,6 +251,12 @@ internal sealed class ScratchRun
     /// and the runner plays such a step inside one wait on it.
     /// </summary>
     internal const string UntilMethod = "GetStepUntil";
+
+    /// <summary>
+    /// The protocol's other optional method: a root that has it answers, per step, whether the step is hidden, which marks the
+    /// step in the scene's step list and changes nothing else.
+    /// </summary>
+    internal const string HiddenMethod = "GetStepHidden";
 
     private const string BridgeRefusalPrefix = "The bridge refused 'wait_for': ";
 
@@ -241,6 +288,7 @@ internal sealed class ScratchRun
     private readonly int _index;
     private readonly string _nonce = Guid.NewGuid().ToString("N")[..12];
     private readonly List<string> _names = [];
+    private readonly HashSet<int> _hidden = [];
     private readonly List<ScratchStep> _steps = [];
     private ScratchWalk _walk = ScratchWalk.None;
     private int[]? _selected;
@@ -256,6 +304,7 @@ internal sealed class ScratchRun
     private string? _afterError;
     private long _feedMark;
     private bool _hasUntil;
+    private bool _hasHidden;
 
     private ScratchRun(RunContext context, int index)
     {
@@ -395,7 +444,7 @@ internal sealed class ScratchRun
     /// Each of the steps <paramref name="names"/> lists' pace and why: the scene's, or a step pace keyed by the step's index, else
     /// by its name; or why a key names no single step, or two keys name one step.
     /// </summary>
-    internal static (ScratchPace[] Paces, string? Error) StepPaces(ScratchScenePlan scene, IReadOnlyList<string> names)
+    internal static (ScratchPace[] Paces, string? Error) StepPaces(ScratchScenePlan scene, ScratchStepNames names)
     {
         ScratchPace scenePace = new(scene.Pace, scene.PaceReason);
         ScratchPace[] paces = [.. names.Select(_ => scenePace)];
@@ -422,7 +471,7 @@ internal sealed class ScratchRun
     /// The steps <paramref name="tokens"/> select among those <paramref name="names"/> lists, ascending, each once; or why a token
     /// selects no step. A number is an index; a string is an index spelled plainly, else a step's exact name, else a range.
     /// </summary>
-    internal static (int[] Indices, string? Error) ResolveSteps(IReadOnlyList<ScratchStepToken> tokens, string scene, IReadOnlyList<string> names)
+    internal static (int[] Indices, string? Error) ResolveSteps(IReadOnlyList<ScratchStepToken> tokens, string scene, ScratchStepNames names)
     {
         SortedSet<int> played = [];
         foreach (ScratchStepToken token in tokens)
@@ -439,7 +488,7 @@ internal sealed class ScratchRun
         return ([.. played], null);
     }
 
-    private static (IEnumerable<int> Steps, string? Error) TokenSteps(ScratchStepToken token, string scene, IReadOnlyList<string> names)
+    private static (IEnumerable<int> Steps, string? Error) TokenSteps(ScratchStepToken token, string scene, ScratchStepNames names)
     {
         if (token.IsNumber)
         {
@@ -462,7 +511,7 @@ internal sealed class ScratchRun
         ScratchStepToken token,
         (string First, string Last) bounds,
         string scene,
-        IReadOnlyList<string> names
+        ScratchStepNames names
     )
     {
         if (!int.TryParse(bounds.Last, NumberStyles.None, CultureInfo.InvariantCulture, out int last) || last >= names.Count)
@@ -478,7 +527,7 @@ internal sealed class ScratchRun
     /// The step a key names: the index it spells, written without a sign or a leading zero, when there is such a step; else the
     /// one step of that name. <paramref name="label"/> names the key in a refusal.
     /// </summary>
-    private static (int Step, string? Error) StepOf(string key, string label, string scene, IReadOnlyList<string> names)
+    private static (int Step, string? Error) StepOf(string key, string label, string scene, ScratchStepNames names)
     {
         if (IsIndex(key, names.Count, out int index))
         {
@@ -500,10 +549,24 @@ internal sealed class ScratchRun
         && index < count
         && string.Equals(index.ToString(CultureInfo.InvariantCulture), key, StringComparison.Ordinal);
 
-    private static string NoStep(string key, string scene, IReadOnlyList<string> names) => $"{key} of {scene} matches no step; {StepList(names)}";
+    private static string NoStep(string key, string scene, ScratchStepNames names) => $"{key} of {scene} matches no step; {StepList(names)}";
 
-    private static string StepList(IReadOnlyList<string> names) =>
-        names.Count == 0 ? "it has no steps" : "its steps are " + string.Join(", ", names.Select((name, index) => $"{index}: {name}"));
+    /// <summary>The scene's steps as a refusal lists them, each as <see cref="ScratchStepNames.Lines"/> writes it.</summary>
+    private static string StepList(ScratchStepNames names) =>
+        names.Count == 0 ? "it has no steps" : "its steps are " + string.Join(", ", names.Lines());
+
+    /// <summary>
+    /// GetStepHidden(index)'s answer: true marks the step hidden; false or null leaves it shown, as a GetStepUntil answer of null
+    /// is a paced step (a root whose GetStepHidden threw answers null, its error then the boot's); any other answer is why the
+    /// scene is refused.
+    /// </summary>
+    internal static (bool Hidden, string? Error) HiddenAnswer(JsonNode? answer, int index) =>
+        answer switch
+        {
+            null => (false, null),
+            JsonValue value when value.TryGetValue(out bool hidden) => (hidden, null),
+            _ => (false, $"{HiddenMethod}({index}) returned {answer.ToJsonString()}, not true or false"),
+        };
 
     /// <summary>
     /// Whether the scene stops after <paramref name="step"/>: it failed, and either the call does not keep going or the step's
@@ -788,7 +851,7 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// Null when the scene's root has every protocol method, noting whether it also has GetStepUntil; else why not, naming the
+    /// Null when the scene's root has every protocol method, noting whether it also has GetStepUntil and GetStepHidden; else why not, naming the
     /// root and what it lacks.
     /// </summary>
     private async Task<string?> CheckProtocolAsync(GodotSession session, CancellationToken cancellationToken)
@@ -815,7 +878,13 @@ internal sealed class ScratchRun
         }
 
         (_hasUntil, string? untilError) = await HasMethodAsync(session, UntilMethod, cancellationToken);
-        return untilError;
+        if (untilError is not null)
+        {
+            return untilError;
+        }
+
+        (_hasHidden, string? hiddenError) = await HasMethodAsync(session, HiddenMethod, cancellationToken);
+        return hiddenError;
     }
 
     /// <summary>Whether the scene's root has <paramref name="method"/>, or why has_method failed.</summary>
@@ -855,9 +924,45 @@ internal sealed class ScratchRun
     /// </summary>
     private async Task<string?> ReadNamesAsync(GodotSession session, int total, CancellationToken cancellationToken)
     {
+        string? nameError = await ReadEachNameAsync(session, total, cancellationToken);
+        if (nameError is not null)
+        {
+            return nameError;
+        }
+
+        (ScratchPace[] paces, string? paceError) = StepPaces(_scene, NamedSteps);
+        if (paceError is not null)
+        {
+            return paceError;
+        }
+
+        IReadOnlyList<ScratchStepToken>? tokens = _plan.StepsFor(_scene.Name);
+        if (tokens is null)
+        {
+            _walk = new ScratchWalk(paces, [.. Enumerable.Range(0, _names.Count)], _scene.TimeScale) { Given = _scene.Ceiling };
+            return null;
+        }
+
+        (ScratchSelection selection, string? selectError) = SelectSteps(_scene, tokens, NamedSteps);
+        _selected = selection.Selected;
+        _setupOnly = selection.Setup;
+        _walk = new ScratchWalk(paces, selection.Played, _scene.TimeScale) { Given = _scene.Ceiling };
+        return selectError;
+    }
+
+    /// <summary>The scene's step names and the steps its root marks hidden, as read so far.</summary>
+    private ScratchStepNames NamedSteps => new(_names, _hidden);
+
+    /// <summary>
+    /// Reads every step's name and, for a root that has GetStepHidden, whether it marks the step hidden; null, or why a call
+    /// failed or GetStepHidden gave neither true, false nor null.
+    /// </summary>
+    private async Task<string?> ReadEachNameAsync(GodotSession session, int total, CancellationToken cancellationToken)
+    {
         for (int index = 0; index < total; index++)
         {
             (JsonNode? name, string? error) = await CallAsync(session, "GetStepName", [index], cancellationToken);
+            error ??= _hasHidden ? await ReadHiddenAsync(session, index, cancellationToken) : null;
             if (error is not null)
             {
                 return error;
@@ -866,23 +971,20 @@ internal sealed class ScratchRun
             _names.Add(StepName(name));
         }
 
-        (ScratchPace[] paces, string? paceError) = StepPaces(_scene, _names);
-        if (paceError is not null)
+        return null;
+    }
+
+    /// <summary>GetStepHidden(index), marking the step hidden when it answers true; null, or why the call or its answer failed.</summary>
+    private async Task<string?> ReadHiddenAsync(GodotSession session, int index, CancellationToken cancellationToken)
+    {
+        (JsonNode? answer, string? error) = await CallAsync(session, HiddenMethod, [index], cancellationToken);
+        (bool hidden, string? answerError) = error is null ? HiddenAnswer(answer, index) : (false, error);
+        if (hidden)
         {
-            return paceError;
+            _hidden.Add(index);
         }
 
-        if (_plan.Steps is null)
-        {
-            _walk = new ScratchWalk(paces, [.. Enumerable.Range(0, _names.Count)], _scene.TimeScale) { Given = _scene.Ceiling };
-            return null;
-        }
-
-        (ScratchSelection selection, string? selectError) = SelectSteps(_scene, _plan.Steps, _names);
-        _selected = selection.Selected;
-        _setupOnly = selection.Setup;
-        _walk = new ScratchWalk(paces, selection.Played, _scene.TimeScale) { Given = _scene.Ceiling };
-        return selectError;
+        return answerError;
     }
 
     /// <summary>
@@ -893,14 +995,14 @@ internal sealed class ScratchRun
     internal static (ScratchSelection Selection, string? Error) SelectSteps(
         ScratchScenePlan scene,
         IReadOnlyList<ScratchStepToken>? tokens,
-        IReadOnlyList<string> names
+        ScratchStepNames names
     ) => tokens is null ? (new ScratchSelection(null, [], [.. Enumerable.Range(0, names.Count)]), null) : SelectedSteps(scene, tokens, names);
 
     /// <summary>A partial run's selection, its setup steps and their union; or why a setup key or a token names no single step.</summary>
     private static (ScratchSelection Selection, string? Error) SelectedSteps(
         ScratchScenePlan scene,
         IReadOnlyList<ScratchStepToken> tokens,
-        IReadOnlyList<string> names
+        ScratchStepNames names
     )
     {
         (int[] setup, string? setupError) = SetupSteps(scene, names);
@@ -920,7 +1022,7 @@ internal sealed class ScratchRun
     /// or two steps. Resolved only on a partial run, so a key naming no step of the scene turns it red only when the call gives
     /// options.steps.
     /// </summary>
-    internal static (int[] Steps, string? Error) SetupSteps(ScratchScenePlan scene, IReadOnlyList<string> names)
+    internal static (int[] Steps, string? Error) SetupSteps(ScratchScenePlan scene, ScratchStepNames names)
     {
         SortedSet<int> steps = [];
         foreach (string key in scene.Setup)
@@ -1198,6 +1300,7 @@ internal sealed class ScratchRun
             AfterError = _afterError,
             Selected = _selected,
             Setup = _setupOnly.Length == 0 ? null : _setupOnly,
+            StepNames = NamedSteps,
             TimeScale = _scene.TimeScale == _plan.TimeScale ? null : _scene.TimeScale,
         };
 

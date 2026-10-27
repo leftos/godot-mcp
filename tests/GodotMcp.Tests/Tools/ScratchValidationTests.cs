@@ -385,6 +385,71 @@ public sealed class ScratchValidationTests : IDisposable
         Assert.Equal(refusal, Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens(steps)))));
 
     [Fact]
+    public void AStepsListAppliesToEveryScene()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+
+        ScratchPlan plan = Plan(["Beta", "Alpha"], new ScratchOptions(Steps: Tokens("""[0, "fight"]""")));
+
+        ScratchStepToken[] tokens = [new("0", IsNumber: true), new("fight", IsNumber: false)];
+        Assert.Equal(tokens, plan.Steps);
+        Assert.Empty(plan.StepsByScene);
+        Assert.All(plan.Scenes, scene => Assert.Equal(tokens, plan.StepsFor(scene.Name)));
+    }
+
+    [Fact]
+    public void AStepsMapGivesEachSceneItsOwnTokensAndASceneItLeavesOutPlaysEveryStep()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+
+        ScratchPlan plan = Plan(
+            ["Beta", "Alpha", "res://Other.tscn"],
+            new ScratchOptions(Steps: Tokens("""{ "Beta": [1, "fight"], "Other": ["2-3"] }"""))
+        );
+
+        Assert.Null(plan.Steps);
+        Assert.Equal([new("1", IsNumber: true), new ScratchStepToken("fight", IsNumber: false)], plan.StepsFor("Beta"));
+        Assert.Null(plan.StepsFor("Alpha"));
+        Assert.Equal([new ScratchStepToken("2-3", IsNumber: false)], plan.StepsFor("Other"));
+    }
+
+    [Fact]
+    public void AStepsMapKeyNamingASceneOutsideThePlanIsRefused()
+    {
+        string message = Refused(() => Plan(["res://Scratch/Beta.tscn"], new ScratchOptions(Steps: Tokens("""{ "Alpha": [0] }"""))));
+
+        Assert.Equal(
+            "options.steps scene 'Alpha' is not in the plan; its scenes are Beta. Pass one of those; a scene the map leaves out plays "
+                + "every step.",
+            message
+        );
+    }
+
+    [Theory]
+    [InlineData(
+        """{ "Other": [] }""",
+        "steps for Other: options.steps is empty; list the steps to play by index, name or range (\"2-5\"), or leave it out to play every step."
+    )]
+    [InlineData("""{ "Other": [1, 1] }""", "steps for Other: options.steps tokens 1 and 1 are the same token; keep one.")]
+    [InlineData(
+        """{ "Other": ["5-2"] }""",
+        "steps for Other: options.steps token \"5-2\" is a range whose start is after its end; write it \"2-5\"."
+    )]
+    [InlineData("""{ "Other": 3 }""", "steps for Other: it is a number; it must be an array of step indices, names or ranges.")]
+    public void ABadListInAStepsMapIsRefusedNamingItsScene(string steps, string refusal) =>
+        Assert.Equal(refusal, Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens(steps)))));
+
+    [Theory]
+    [InlineData("\"3\"", "string")]
+    [InlineData("3", "number")]
+    [InlineData("true", "true")]
+    public void StepsNeitherAnArrayNorAnObjectIsRefused(string steps, string kind) =>
+        Assert.Equal(
+            $"steps is a {kind}; it must be an array of step indices, names or ranges, or an object mapping a scene name to such an array.",
+            Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Steps: Tokens(steps))))
+        );
+
+    [Fact]
     public void ABareNumberPaceCarriesNoReason()
     {
         WriteProfile("""{ "scratch": { "folder": "Scratch", "pace": { "Beta": 2 } } }""");
@@ -645,7 +710,7 @@ public sealed class ScratchValidationTests : IDisposable
 
     private static string Refused(Func<object> action) => Assert.Throws<McpException>(action).Message;
 
-    private static JsonElement[] Tokens(string json) => JsonSerializer.Deserialize<JsonElement[]>(json)!;
+    private static JsonElement Tokens(string json) => JsonSerializer.Deserialize<JsonElement>(json);
 
     private void WriteProfile(string json) => File.WriteAllText(ProfilePath, json);
 

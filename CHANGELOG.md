@@ -6,6 +6,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Added
 
+- `run_scratches` `steps` takes a map from scene name to that scene's steps, and each scene reports `stepList` with hidden steps marked.
 - `wait_for`, `frame_control`, `batch_drive` and the text targets of `click`, `hover`, `drag` and `type_text` take `match: "prefix"` or `"contains"` beside `text`.
 
 ### Fixed

@@ -904,9 +904,9 @@ public sealed class ScratchVerdictTests
     }
 
     [Theory]
-    [InlineData("5", "pace.steps key \"5\" of Paced matches no step; its steps are 0: open, 1: hit, 2: hit")]
-    [InlineData("shut", "pace.steps key \"shut\" of Paced matches no step; its steps are 0: open, 1: hit, 2: hit")]
-    [InlineData("-1", "pace.steps key \"-1\" of Paced matches no step; its steps are 0: open, 1: hit, 2: hit")]
+    [InlineData("5", "pace.steps key \"5\" of Paced matches no step; its steps are 0 open, 1 hit, 2 hit")]
+    [InlineData("shut", "pace.steps key \"shut\" of Paced matches no step; its steps are 0 open, 1 hit, 2 hit")]
+    [InlineData("-1", "pace.steps key \"-1\" of Paced matches no step; its steps are 0 open, 1 hit, 2 hit")]
     [InlineData("hit", "pace.steps key \"hit\" of Paced names 2 steps (1, 2); key it by index")]
     public void AStepPaceKeyThatMatchesNoSingleStepIsRefused(string key, string refusal)
     {
@@ -980,7 +980,7 @@ public sealed class ScratchVerdictTests
     [Fact]
     public void AStepsStringIsAnIndexFirstThenANameThenARange()
     {
-        IReadOnlyList<string> names = ["first", "0", "1-2", "7", "+3"];
+        ScratchStepNames names = ["first", "0", "1-2", "7", "+3"];
 
         Assert.Equal([0], ScratchRun.ResolveSteps(Tokens("""["0"]"""), "Odd", names).Indices);
         Assert.Equal([3], ScratchRun.ResolveSteps(Tokens("""["7"]"""), "Odd", names).Indices);
@@ -1136,9 +1136,54 @@ public sealed class ScratchVerdictTests
         Assert.False(whole.ContainsKey("selected"));
     }
 
-    private const string TwoRedSteps = "its steps are 0: calm, 1: first, 2: second, 3: last";
+    [Fact]
+    public void AStepsRefusalMarksAHiddenStepAndKeepsItsIndex() =>
+        Assert.Equal(
+            "options.steps token \"nope\" of Base matches no step; its steps are 0 (hidden) fight setup, 1 first view",
+            ScratchRun.ResolveSteps(Tokens("""["nope"]"""), "Base", new ScratchStepNames(["fight setup", "first view"], new HashSet<int> { 0 })).Error
+        );
 
-    private static readonly IReadOnlyList<string> TwoRed = ["calm", "first", "second", "last"];
+    [Fact]
+    public void AHiddenStepStaysPlayableByIndexAndName()
+    {
+        ScratchStepNames names = new(["fight setup", "first view"], new HashSet<int> { 0 });
+
+        Assert.Equal([0, 1], ScratchRun.ResolveSteps(Tokens("""[0, "first view"]"""), "Base", names).Indices);
+        Assert.Equal([0], ScratchRun.ResolveSteps(Tokens("""["fight setup"]"""), "Base", names).Indices);
+    }
+
+    [Fact]
+    public void ASceneRunInPartListsEveryStepByIndexAndName()
+    {
+        ScratchObservation partial = new("Scene", "probe.scratch-Scene", 0.5, 3)
+        {
+            Steps = [Step(1)],
+            ExitCode = 0,
+            Selected = [1],
+            StepNames = ["open", "fight", "close"],
+        };
+
+        JsonObject json = Json(ScratchVerdict.Judge(partial, Plain));
+
+        Assert.Equal(["0 open", "1 fight", "2 close"], json["stepList"]!.AsArray().Select(line => line!.GetValue<string>()));
+    }
+
+    [Fact]
+    public void AWholeRunListsItsStepsOnlyWhenOneIsHidden()
+    {
+        ScratchObservation hidden = Seen(Step(0), Step(1)) with { StepNames = new(["fight setup", "first view"], new HashSet<int> { 0 }) };
+        ScratchObservation shown = Seen(Step(0), Step(1)) with { StepNames = ["fight setup", "first view"] };
+
+        JsonObject withHidden = Json(ScratchVerdict.Judge(hidden, Plain));
+        JsonObject without = Json(ScratchVerdict.Judge(shown, Plain));
+
+        Assert.Equal(["0 (hidden) fight setup", "1 first view"], withHidden["stepList"]!.AsArray().Select(line => line!.GetValue<string>()));
+        Assert.False(without.ContainsKey("stepList"), without.ToJsonString());
+    }
+
+    private const string TwoRedSteps = "its steps are 0 calm, 1 first, 2 second, 3 last";
+
+    private static readonly ScratchStepNames TwoRed = ["calm", "first", "second", "last"];
 
     private static IReadOnlyList<ScratchStepToken> Tokens(string json) => ScratchTools.StepTokens(JsonSerializer.Deserialize<JsonElement[]>(json))!;
 
