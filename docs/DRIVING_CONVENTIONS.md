@@ -278,10 +278,14 @@ Source: src/GodotMcp.Server/Tools/RuntimeTools.CSharp.GameTools.cs:18-19, src/Go
 Do not wait for a rare real condition (a failure, a late state, a random event) to test what renders it: the game marks a dev-only command that forces it (its `GodotMcpToolAttribute`), and the agent calls it by name. Know what that command replaces: in another project a weather panel's Apply replaced all weather, clouds included, so a run that applied rain over an existing overcast lost the clouds.
 Source: src/GodotMcp.Dotnet.Core/ToolMark.cs:12, docs/TOOLS.md:311-322. Seen: 0 here (seeded from towercab-3d).
 
-### Know what a screenshot leaves out
+### Know what a capture leaves out, and capture from inside the app where you can
 <!-- rule: what-capture-misses -->
 
+Every capture route misses something, and nothing in the result says so. A screen copy shows whatever is on top, and bringing a window forward to copy it closed an open combo popup (measured in another project), which is why a grab here reads the game's own render target rather than the screen.
+
 A capture is the main window's render target, so popups and tooltips that are separate OS windows are missing from it: every grab (screenshots, baselines, frame steps, waits, previews) pastes each visible non-embedded window at its offset from the main one (a 0.5.0 fix).
+
+Additive effects drawn with alpha 0 were missed by every still in another project's web overlay: verify such an effect with a read-back of the render buffer or a recording, never a still. A check that forces a frame to read pixels renders at the game's own clock, never the wall clock, or its time-driven lighting differs from the screenshot it is compared with.
 
 A main window parked off-screen made Windows clamp a native popup to (0,0) and lose that offset, one more reason a quiet run sits at (0,0) of a hidden desktop. A window that cannot draw (minimised, or a low-processor mode with nothing changed) produces no frame: a step is refused up front and a wait's screenshot answers a warning instead of an image.
 
