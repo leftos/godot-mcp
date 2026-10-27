@@ -63,7 +63,7 @@ public sealed partial class RealtimeRecordingTests : IDisposable
             $"ffmpeg did not start before the helper: {string.Join(", ", events)}"
         );
         DateTimeOffset deadline = _fake.DeadlineAtHelperStart ?? throw new InvalidOperationException("the helper read no deadline");
-        TimeSpan ahead = RealtimeRecording.FirstFrameAllowance + TimeSpan.FromSeconds(600);
+        TimeSpan ahead = RealtimeRecording.FirstFrameAllowance * LoadClock.BackstopFactor + TimeSpan.FromSeconds(600);
         Assert.InRange(deadline, before + ahead - Slack, after + ahead + Slack);
     }
 
@@ -111,6 +111,31 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         var cap = TimeSpan.FromSeconds(300);
         Assert.InRange(moved, before + cap, after + cap);
         Assert.True(moved < _fake.DeadlineAtHelperStart, "the deadline did not move earlier on the first bytes");
+    }
+
+    /// <summary>
+    /// The start's wait for the first frame counts load-adjusted time, which a busy machine stretches up to its backstop in wall
+    /// time; the deadline the helper reads is a wall-clock instant, so it must lie past that backstop plus the cap, or a starved
+    /// helper ends on its own deadline while the start still waits for the encoder.
+    /// </summary>
+    [Fact]
+    public async Task TheHelpersFirstDeadlineOutlastsTheStartsWaitForTheFirstFrameUnderAnyLoad()
+    {
+        const int MaxSeconds = 2;
+        DateTimeOffset before = DateTimeOffset.UtcNow;
+        RealtimeRecording recording = await _fake.StartAsync(maxSeconds: MaxSeconds);
+        await recording.StopAsync(Token);
+
+        DateTimeOffset deadline = _fake.DeadlineAtHelperStart ?? throw new InvalidOperationException("the helper read no deadline");
+        TimeSpan longestWait = RealtimeRecording.FirstFrameAllowance * LoadClock.BackstopFactor;
+        DateTimeOffset earliest = before + longestWait + TimeSpan.FromSeconds(MaxSeconds);
+        Assert.True(
+            deadline >= earliest,
+            FormattableString.Invariant($"the helper's first deadline is {(deadline - before).TotalSeconds:F1} s after the start was asked for; ")
+                + FormattableString.Invariant(
+                    $"the wait for the first frame may last {longestWait.TotalSeconds:F0} s of wall time, plus the {MaxSeconds} s cap"
+                )
+        );
     }
 
     [Fact]
@@ -486,6 +511,26 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         Assert.EndsWith("-capture.log.", refused.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A helper that sent its first frame and then ended before ffmpeg opened its encoder, as a starved ffmpeg leaves it, is not
+    /// said to have ended before its first frame.
+    /// </summary>
+    [Fact]
+    public async Task AHelperEndingAfterItsFirstFrameBeforeTheEncoderOpenedIsNotSaidToHaveEndedBeforeIt()
+    {
+        _fake.FfmpegHoldsEncoder = true;
+        _fake.HelperFrameLimit = 1;
+        _fake.HelperExit = 0;
+        _fake.HelperLines = ["godot-mcp-capture: 1 frames in 2.6 s (0.4 fps of 30)"];
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(() => _fake.StartAsync());
+
+        Assert.Equal(FakeRealtime.FrameBytes, _fake.FfmpegBytes);
+        Assert.DoesNotContain("before its first frame", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("after its first frame, before ffmpeg opened its encoder", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("godot-mcp-capture: 1 frames in 2.6 s (0.4 fps of 30)", refused.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task ARefusedStartDeletesItsDeadlineAndMkvAndKeepsItsLogs()
     {
@@ -768,6 +813,9 @@ internal sealed class FakeRealtime : IDisposable
     public HashSet<string> EncodersFailingAtStart { get; } = [];
 
     public int FfmpegExit { get; set; }
+
+    /// <summary>ffmpeg takes frames but opens no encoder before its stdin closes, as one starved of CPU does.</summary>
+    public bool FfmpegHoldsEncoder { get; set; }
 
     /// <summary>The frames the helper writes before it exits with <see cref="HelperExit"/>; null, it runs to its deadline and exits 0.</summary>
     public int? HelperFrameLimit { get; set; }
@@ -1112,7 +1160,7 @@ internal sealed class FakeFfmpeg : IRealtimeProcess
         File.WriteAllText(request.Arguments[^1], "");
         StandardInput = new CountingSink(
             frameBytes,
-            () => failAtStart ? FailAtStart(request) : OpenEncoder(request),
+            () => failAtStart ? FailAtStart(request) : owner.FfmpegHoldsEncoder || OpenEncoder(request),
             owner.CountFfmpegBytes,
             () =>
             {

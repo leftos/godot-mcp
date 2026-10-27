@@ -15,6 +15,8 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- A real-time `record_mark` start on a busy machine no longer fails because the capture helper ran out its own first deadline.
+- A real-time start whose helper ended after sending frames no longer says it ended before its first frame.
 - `run_scratches` refuses `--display-driver` and `--audio-driver` in `engineArgs`, which would give a headless scene a window or sound.
 - `run_scratches` refuses a `--resolution` Godot cannot read before any scene runs, instead of failing every scene at launch.
 - A real-time recording whose game window was minimized partway warns at stop, naming each span the clip holds a frozen frame.

@@ -102,7 +102,11 @@ internal sealed partial class RealtimeRecording
 {
     public const string Mode = "realtime";
 
-    /// <summary>How long a start waits for the first frame, in load-adjusted time; the helper's first deadline allows it too.</summary>
+    /// <summary>
+    /// How long a start waits for the first frame, in load-adjusted time, which a busy machine stretches up to
+    /// <see cref="LoadClock.BackstopFactor"/> times as long in wall time; the helper's first deadline is a wall-clock instant set
+    /// past that backstop, plus the cap, so a starved helper never ends on its own deadline while the start still waits.
+    /// </summary>
     public static readonly TimeSpan FirstFrameAllowance = TimeSpan.FromSeconds(10);
 
     /// <summary>The helper's exit status when the window changed size: the clip ends there and is kept.</summary>
@@ -680,9 +684,9 @@ internal sealed partial class RealtimeRecording
     }
 
     /// <summary>
-    /// One try of a start: the deadline at now plus the first-frame allowance plus the cap, ffmpeg, then the helper; once
-    /// ffmpeg has opened its encoder on the first frame, the deadline moves to the first bytes' time plus the cap. ffmpeg
-    /// ending, or refusing frames, before that is the encoder failing at its start.
+    /// One try of a start: the deadline at now plus the first-frame allowance's wall backstop plus the cap, ffmpeg, then the
+    /// helper; once ffmpeg has opened its encoder on the first frame, the deadline moves to the first bytes' time plus the cap.
+    /// ffmpeg ending, or refusing frames, before that is the encoder failing at its start.
     /// </summary>
     /// <returns>
     /// The running pipeline, null when the encoder failed at its start or the audio could not start, both processes gone; and,
@@ -697,7 +701,11 @@ internal sealed partial class RealtimeRecording
     )
     {
         var cap = TimeSpan.FromSeconds(context.Start.MaxSeconds);
-        WriteDeadline(context.Environment.Logger, context.Paths.Deadline, context.Environment.Time.GetUtcNow() + FirstFrameAllowance + cap);
+        WriteDeadline(
+            context.Environment.Logger,
+            context.Paths.Deadline,
+            context.Environment.Time.GetUtcNow() + FirstFrameAllowance * LoadClock.BackstopFactor + cap
+        );
         string? audioPipe = context.AudioPid is null ? null : RealtimeAudio.NewPipeName();
         RealtimePipeline pipeline = await RealtimePipeline.StartAsync(
             context.Environment,
@@ -756,7 +764,8 @@ internal sealed partial class RealtimeRecording
     {
         if (end == FirstFrameEnd.HelperEnded)
         {
-            return $"The capture helper {Describe(helper)} before its first frame, so the recording did not start: "
+            string ended = framesCame ? "after its first frame, before ffmpeg opened its encoder" : "before its first frame";
+            return $"The capture helper {Describe(helper)} {ended}, so the recording did not start: "
                 + $"{LastLines(paths.CaptureLog)}. See {paths.CaptureLog}.";
         }
 
