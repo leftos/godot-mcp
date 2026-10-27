@@ -4,7 +4,8 @@
 
 ## Do first
 
-- [ ] GMCP-315 Capture itests fail under load: clip length and first-frame assertions · release vNext — Urgent · Singles
+- [ ] GMCP-322 Flaky: ASceneRedOnlyBesideAnotherIsPlayedAgainAloneAndPasses depends on two scenes' timing · release vNext — Urgent · Singles
+- [ ] GMCP-323 Split ScratchRunnerTests: the scratch itest group runs past its ceiling on a free machine · release vNext — Urgent · Singles
 
 ## Ideas from the survey and the projects
 
@@ -35,14 +36,10 @@
 - [ ] GMCP-282 run_scratches: the wait after a reported last step cannot be set apart from its time limit · release vNext
 - [ ] GMCP-311 stop_project / list_sessions: no read-only view of who holds a folder's override.cfg
 - [ ] GMCP-281 stop_project: nothing waits for a killed game that outlives the kill wait
-- [ ] GMCP-310 run_scratches: require a line in a scene's output before it counts green · release vNext
 - [ ] GMCP-309 watch: no sample of a value as its frame drew it, beside that frame's image
 - [ ] GMCP-280 run_scratches: no windowed play of a scene's steps at their paces and untils · release vNext+1
 - [ ] GMCP-308 capture_frames: options.start cannot start the clock on a signal
 - [ ] GMCP-279 run_scratches: no watch can be armed before a scene's first step · release vNext+1
-- [ ] GMCP-145 Fail a launch fast on Godot's no-GL ANGLE error · release vNext
-- [ ] GMCP-223 Call the gate through tools/gate.ps1, never gate.exe directly · release vNext
-- [ ] GMCP-210 Drop the itest build's --local once GATE-557 lands · release vNext
 - [ ] GMCP-189 install: stops every running server and the games it drives
 - [ ] GMCP-188 click: a {text} target is refused when a code-made Control covers its label
 - [ ] GMCP-187 run_scratches: scratch.patterns never judge lines printed before the first step
@@ -129,10 +126,12 @@
 - [ ] GMCP-314 run_scratches: list each scene's steps without playing them
 - [ ] GMCP-316 run_scratches steps: the bridge's PlayStep refusal form, a duplicate map key, the options summary
 - [ ] GMCP-317 run.ps1 and docs: read the gate's exit 74 (TRANSFER FAILED) apart from a failure
+- [ ] GMCP-318 Quote a game's modal alert text when a launch's bridge never connects
+- [ ] GMCP-320 Capture helper: make its other wall-clock waits outlast the server's load-adjusted ones
+- [ ] GMCP-321 A real-time clip's timeline shrinks when a starved ffmpeg reads frames late
 
 ## Docs
 
-- [ ] GMCP-45 Document render diagnosis · release vNext
 - [ ] GMCP-81 Split markdown lines of 500+ characters
 - [ ] GMCP-117 Add a docs-owner map to the godot-mcp nextup profile
 - [ ] GMCP-194 godot-agent-sweep: point at godot-mcp's Filing friction section
