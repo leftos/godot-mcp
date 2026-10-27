@@ -776,7 +776,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   A `start.call` the bridge refuses, or that fails, fails the capture with its error and takes no frames.
 
-  Another kind is refused: `options.start takes an exists, property or expression condition; this condition is {kind}.` (a start given `uiChanged`, `true` or `"now"`, is of kind `uiChanged`, one given `text` or `under` of kind `text`, one given `stable` of kind `settled`, one given `state` of kind `state`, and one given `output` of kind `output`, whatever else it carries) A bad `start.timeoutMs` or `start.then` is refused with `wait_for`'s texts (`timeoutMs must be between 0 and 120000.`, `options.then needs call, timeScale or both.`).
+  Another kind is refused: `options.start takes an exists, property or expression condition; this condition is {kind}.` (a start given `uiChanged`, `true` or `"now"`, is of kind `uiChanged`, one given `text` or `under` of kind `text`, one given `stable` of kind `settled`, one given `state` of kind `state`, and one given `output` of kind `output`, whatever else it carries) A bad `start.timeoutMs` or `start.then` is refused with `wait_for`'s texts (`timeoutMs must be between 0 and 120000.`, `options.then needs call, timeScale, pause or a mix.`).
 
   The result adds `start: {met: true, frame, call?, then?, failedChecks?, mutedErrors?}`, `call` being `{value}`, the start call's return value, reported when the start is met and when it times out; `frame` being `Engine.get_process_frames()` where the start was met.
 
