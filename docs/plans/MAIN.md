@@ -5,7 +5,6 @@
 ## Do first
 
 - [!] GMCP-337 Flaky: ScratchStepsRunTests.APartialRunPlaysTheScenesSetupStepFirst reads step (-1, "") beside other lanes · release vNext — Urgent · Singles
-- [ ] GMCP-347 Bound the C# probe's test build by a hang guard, not two minutes of wall time · release vNext — Urgent · Singles
 
 ## Ideas from the survey and the projects
 
