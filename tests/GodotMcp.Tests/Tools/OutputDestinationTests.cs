@@ -274,6 +274,52 @@ public sealed class OutputDestinationTests : IDisposable
     }
 
     [Fact]
+    [SupportedOSPlatform("windows")]
+    public void AProjectInAFolderNamedWithATrailingSpaceIsRefusedNamingTheFolder()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "trailing-space names are made the Windows way");
+        // Only a path's last name loses its trailing space, so the project's "par " keeps it.
+        string project = _temp.Combine("par ", "game");
+        Directory.CreateDirectory(@"\\?\" + project);
+
+        McpException refused = Refused(project, "shot.png");
+
+        Assert.Equal(
+            $"path shot.png lies under the project {project}, whose name par  ends in a space or a dot; "
+                + "Windows reads such a name two ways, so named stills and clips are not written there",
+            refused.Message
+        );
+        Assert.Empty(Directory.GetFileSystemEntries(@"\\?\" + project));
+    }
+
+    [Fact]
+    [SupportedOSPlatform("windows")]
+    public void AProjectReachedThroughALinkToADottedFolderIsRefusedNamingItsFinalPath()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "symbolic links and trailing-dot names are made the Windows way");
+        string link = LinkToADottedGame();
+
+        McpException refused = Refused(link, "shot.png");
+
+        Assert.StartsWith("path shot.png lies under the project ", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("whose name real. ends in a space or a dot", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [SupportedOSPlatform("windows")]
+    public void APathIntoTheTrimmedSiblingOfADottedFinalProjectIsRefused()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "symbolic links and trailing-dot names are made the Windows way");
+        string link = LinkToADottedGame();
+        // GetRelativePath reads the sibling "real\game" as inside the project's final form "real.\game".
+        string sibling = Directory.CreateDirectory(_temp.Combine("real", "game")).FullName;
+
+        Refused(link, Path.Combine(sibling, "shot.png"));
+
+        Assert.Empty(Directory.GetFileSystemEntries(sibling));
+    }
+
+    [Fact]
     public void AJunctionToAMissingOutsideFolderIsRefusedAsOutsideBeforeItIsOpened()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
@@ -605,6 +651,25 @@ public sealed class OutputDestinationTests : IDisposable
     private static string LinkedNameRefusal(string path, string named, string part) =>
         $"path {path} leads through a link to {named}, whose name {part} ends in a space or a dot; "
         + "Windows reads such a name two ways, so it is not written";
+
+    /// <summary>
+    /// A project at <c>temp\game</c> that is a symbolic link to <c>temp\real.\game</c>, its stored target keeping the dot;
+    /// skips the test when the link cannot be made or loses the dot.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private string LinkToADottedGame()
+    {
+        string real = _temp.Combine("real.", "game");
+        Directory.CreateDirectory(@"\\?\" + real);
+        string link = _temp.Combine("game");
+        MakeSymbolicLink(link, @"\\?\" + real);
+        if (!FinalPath.ReadLink(link)!.Target.Contains("real.", StringComparison.Ordinal))
+        {
+            Assert.Skip($"the link at {link} lost the dot of its target {real}");
+        }
+
+        return link;
+    }
 
     private static string WriteCapture(string project)
     {

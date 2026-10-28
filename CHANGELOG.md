@@ -11,6 +11,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - A stop no longer reports a game killed, or a scratch scene red, when the game had already exited by itself as its grace ran out.
+- `save_screenshot` and `record_mark` refusals name the project or checkout folder itself, not a link, when that folder's name ends in a space or a dot.
 
 ## 0.23.0 - 2026-10-27
 

@@ -238,16 +238,36 @@ internal static partial class OutputDestination
             return;
         }
 
-        string? dotted = scanned[Path.GetPathRoot(scanned.AsSpan()).Length..]
-            .Split('\\', '/')
-            .FirstOrDefault(name => name is not ("" or "." or "..") && name != name.TrimEnd('.', ' '));
-        if (dotted is not null)
+        if (FirstDottedName(scanned) is { } dotted)
         {
             throw new McpException(
-                $"path {path} leads through a link to {named}, whose name {dotted} ends in a space or a dot; "
+                $"path {path} leads through a link to {named}, whose name {dotted.Part} ends in a space or a dot; "
                     + "Windows reads such a name two ways, so it is not written"
             );
         }
+    }
+
+    /// <summary>
+    /// The first name of <paramref name="scanned"/> after its root that ends in a space or a dot, with the index just past
+    /// it; null for none. A . or .. part is a step, not a name.
+    /// </summary>
+    private static (string Part, int End)? FirstDottedName(string scanned)
+    {
+        int start = Path.GetPathRoot(scanned.AsSpan()).Length;
+        while (start <= scanned.Length)
+        {
+            int separator = scanned.AsSpan(start).IndexOfAny('\\', '/');
+            int end = separator < 0 ? scanned.Length : start + separator;
+            string name = scanned[start..end];
+            if (name is not ("" or "." or "..") && name != name.TrimEnd('.', ' '))
+            {
+                return (name, end);
+            }
+
+            start = end + 1;
+        }
+
+        return null;
     }
 
     private static bool IsDevice(string stem) => DeviceNames.Contains(stem, StringComparer.OrdinalIgnoreCase);
@@ -496,7 +516,7 @@ internal static partial class OutputDestination
             }
 
             // GetFullPath trims a dot ending a name, so the target's names are checked as stored, before it is resolved.
-            CheckLinkedNames(path, StoredTarget(link), link.Target);
+            CheckDottedNames(StoredTarget(link), link.Target);
 
             // A relative symbolic link's target is taken from the link's own folder.
             string next = link.Relative ? Path.GetFullPath(link.Target, current) : AbsoluteTarget(entry, link);
@@ -600,7 +620,7 @@ internal static partial class OutputDestination
         private void CheckReached(string reached, bool finalOnly)
         {
             // GetRelativePath reads X:\W.\x as inside X:\W, so a dotted name is refused before any place is asked to hold it.
-            CheckLinkedNames(path, reached, reached);
+            CheckDottedNames(reached, reached);
             OutputPlace place =
                 PlaceOf(reached, finalOnly)
                 ?? throw new McpException(
@@ -618,5 +638,44 @@ internal static partial class OutputDestination
                 throw new McpException($"path {path} leads through a link to {reached}, under .godot/, which the editor owns; pick a tracked folder");
             }
         }
+
+        /// <summary>
+        /// Refuses <paramref name="scanned"/> when one of its names after the root ends in a space or a dot, as
+        /// <see cref="CheckLinkedNames"/> does, but names the place when the name lies within the text of an allowed place's
+        /// folder or walk start, given or final, that <paramref name="scanned"/> starts with: no link is to blame then. The
+        /// match is textual, since GetRelativePath and GetFullPath trim the name and read the dotted folder as its sibling.
+        /// </summary>
+        private void CheckDottedNames(string scanned, string named)
+        {
+            if (!OperatingSystem.IsWindows() || FirstDottedName(scanned) is not { } dotted)
+            {
+                return;
+            }
+
+            foreach (OutputPlace place in _given.Concat(_final))
+            {
+                foreach ((string text, string label) in new[] { (place.Folder, place.Label), (place.WalkFrom, place.WalkFromLabel) })
+                {
+                    if (Encloses(text, scanned, dotted.End))
+                    {
+                        throw new McpException(
+                            $"path {path} lies under {label} {text}, whose name {dotted.Part} ends in a space or a dot; "
+                                + "Windows reads such a name two ways, so named stills and clips are not written there"
+                        );
+                    }
+                }
+            }
+
+            CheckLinkedNames(path, scanned, named);
+        }
+
+        /// <summary>
+        /// Whether <paramref name="scanned"/> is <paramref name="text"/> or lies under it, compared as text, and the name ending
+        /// at <paramref name="nameEnd"/> ends within <paramref name="text"/>.
+        /// </summary>
+        private static bool Encloses(string text, string scanned, int nameEnd) =>
+            nameEnd <= text.Length
+            && scanned.StartsWith(text, StringComparison.OrdinalIgnoreCase)
+            && (scanned.Length == text.Length || scanned[text.Length] is '\\' or '/');
     }
 }

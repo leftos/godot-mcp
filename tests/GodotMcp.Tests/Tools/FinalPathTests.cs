@@ -77,6 +77,16 @@ public sealed class FinalPathTests
     }
 
     [Fact]
+    public void AnEmptySubstituteNameIsMalformed()
+    {
+        byte[] symbolic = SymbolicLink("", RelativeFlag);
+        byte[] mountPoint = MountPoint("");
+
+        AssertMalformed(symbolic, symbolic.Length);
+        AssertMalformed(mountPoint, mountPoint.Length);
+    }
+
+    [Fact]
     public void AWellFormedRelativeSymbolicLinkIsRead()
     {
         byte[] data = SymbolicLink(@"..\shots", RelativeFlag);

@@ -11,7 +11,9 @@ namespace GodotMcp.Server.Tools;
 /// </summary>
 /// <param name="Folder">The folder the output must lie in.</param>
 /// <param name="WalkFrom">Where following links on the way to the output starts.</param>
-internal sealed record OutputPlace(string Folder, string WalkFrom);
+/// <param name="Label">How a refusal names the place before its folder, as "the project".</param>
+/// <param name="WalkFromLabel">How a refusal names <paramref name="WalkFrom"/> before it, as "its checkout".</param>
+internal sealed record OutputPlace(string Folder, string WalkFrom, string Label, string WalkFromLabel);
 
 /// <summary>
 /// Where a still or clip the caller names may be written, as git places them: the project; its checkout W as a whole tree
@@ -66,16 +68,20 @@ internal sealed record OutputPlaces(string Project, string? Checkout, bool Check
 
     private List<OutputPlace> PlacesOf(string project, string? checkout, string? mainCheckout, bool projectOnly)
     {
-        List<OutputPlace> places = [new(project, project)];
+        List<OutputPlace> places = [new(project, project, "the project", "the project")];
         if (projectOnly || checkout is null)
         {
             return places;
         }
 
-        places.Add(CheckoutTracksProject ? new(checkout, checkout) : new(Path.Combine(checkout, ".tmp"), checkout));
+        places.Add(
+            CheckoutTracksProject
+                ? new(checkout, checkout, "its checkout", "its checkout")
+                : new(Path.Combine(checkout, ".tmp"), checkout, "its checkout's .tmp folder", "its checkout")
+        );
         if (mainCheckout is not null)
         {
-            places.Add(new(Path.Combine(mainCheckout, ".tmp"), mainCheckout));
+            places.Add(new(Path.Combine(mainCheckout, ".tmp"), mainCheckout, "the main checkout's .tmp folder", "the main checkout"));
         }
 
         return places;

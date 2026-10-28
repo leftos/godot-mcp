@@ -184,8 +184,9 @@ internal static partial class FinalPath
 
         int offset = BitConverter.ToUInt16(data, 8);
         int length = BitConverter.ToUInt16(data, 10);
-        // A UTF-16 name is whole 2-byte units: an odd offset or length would decode a stray byte as U+FFFD.
-        if (offset % 2 != 0 || length % 2 != 0 || names + offset + length > returned)
+        // An empty name names no target, and a UTF-16 name is whole 2-byte units: an odd offset or length would decode a
+        // stray byte as U+FFFD.
+        if (length == 0 || offset % 2 != 0 || length % 2 != 0 || names + offset + length > returned)
         {
             throw Malformed();
         }
