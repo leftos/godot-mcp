@@ -1151,8 +1151,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         )
         {
             string reason = await DescribeGraceKillAsync(request, spent, watched, () => ClosedSince(closedAt, answeredAt));
-            // The state is sampled for a second, and a game that exits meanwhile quit on its own: it is not killed.
-            if (!watched.WaitForExit(0))
+            // The state is sampled for a second, and a game that exits meanwhile quit on its own: it is not killed. HasExited reads
+            // the exit code, set before the handle is signalled, so a game whose code is set but whose signal lags counts as exited.
+            if (!watched.HasExited)
             {
                 Log.ExitGraceExpired(_logger, ProjectDir, spent.Text);
                 string? stillRunning = await kill();

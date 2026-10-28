@@ -338,6 +338,8 @@ The unit tests cover the load with `FakeTimeProvider` and `FakeLoadSource`.
 
   Before a kill after the grace the server samples the game's process for 1 s and reads whether the bridge's connection had closed, and the `killReason` says both (`GameKillReason.AfterGrace` with a `GraceKill`): a connection still open means the scene tree was never freed, a closed one means the time went into the engine's or .NET's teardown.
 
+  A game that exits during that sample quit on its own and is not killed: the last check is `Process.HasExited`, which reads the exit code, set before the handle is signalled, so a game whose signal lags keeps its own `gameExitCode`.
+
   The grace waits on the game's own process (`GodotRun.Game`, kept from the hello) when there is one, not the wrapper: on Windows `Godot_console.exe` puts the game in a job object and waits for every process in it, so a game that quit leaving a child running would read as a kill.
 
   Once the game is gone the wrapper gets 1 s to follow; one still running is ended (`RunKill.KillAndWaitAsync` on the wrapper alone, not reported as a kill), which ends the job, and the processes the game started are listed first (`LeftBehind`, a Toolhelp snapshot by parent pid and start time) as `leftRunning`.

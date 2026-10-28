@@ -346,7 +346,7 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
   Ending the wrapper closes the job, and a game killed that way still reads exit code 0 (measured), so an exit code read after a kill is not the game's.
 - **A killed process reports exited before it lets go of its files.** `Process.HasExited` and `WaitForExitAsync` read the exit code, set 0.1-2 ms after `TerminateProcess`; a killed `Godot.exe` keeps its project folder as its current directory for another 18-38 ms, and the process handle is signalled only after that (measured 2026-09-28).
 
-  Wait with the synchronous `WaitForExit(timeout)`, which waits for the signal (`ProcessExit.WaitUntilGoneAsync` runs it off the caller's thread), before touching the folder.
+  Wait with the synchronous `WaitForExit(timeout)`, which waits for the signal (`ProcessExit.WaitUntilGoneAsync` runs it off the caller's thread), before touching the folder. To decide whether a game has exited, as the stop's last check before a kill does, read `HasExited`: `WaitForExit(0)` still sees a game whose code is set as running until the signal comes.
 - **A listed child is not yet a running one.** A Toolhelp snapshot lists a process from its creation; a child whose parent dies in its first ~5-14 ms dies too, with exit code 0xC0000022 or 0xC000010A, within a millisecond of the parent. A test that orphans a child waits for a sign the child is running (`LeftBehindTests` reads the ping's first output line) before it kills the parent.
 
   A `Process` from `GetProcessById` was not started by this object, so its `ExitCode` throws `InvalidOperationException`; read `HasExited`, and hold that handle to end the process rather than looking its pid up again, since pids are reused within a run.
