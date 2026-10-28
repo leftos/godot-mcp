@@ -12,7 +12,10 @@ namespace GodotMcp.TestSupport;
 public sealed class CsProbeProject : IDisposable
 {
     private const string ProjectName = "CsProbe";
-    private static readonly TimeSpan BuildTimeout = TimeSpan.FromMinutes(2);
+
+    // A hang guard, which a passing build never reaches, not a bound it must beat: it counts wall time, and a build
+    // that is quick alone outran two minutes on a machine other builds held. In a gated run the gate's STALLED line catches a hang too.
+    private static readonly TimeSpan BuildHangGuard = TimeSpan.FromMinutes(15);
 
     // Set by a dotnet test or build run above this one; they would point the nested build at another MSBuild.
     private static readonly string[] InheritedMsBuildVariables = ["MSBuildExtensionsPath", "MSBuildSDKsPath", "MSBUILD_EXE_PATH"];
@@ -140,7 +143,7 @@ public sealed class CsProbeProject : IDisposable
     /// <summary>
     /// Runs <c>dotnet build</c> on the project with its own stdin, closed at once, no reused MSBuild nodes and no shared
     /// compiler server, so nothing it starts outlives it; throws with the output's tail when it fails or outlives
-    /// <see cref="BuildTimeout"/>.
+    /// <see cref="BuildHangGuard"/>, as hung.
     /// </summary>
     private static void Build(string project)
     {
@@ -178,11 +181,11 @@ public sealed class CsProbeProject : IDisposable
         process.StandardInput.Close();
         Task<string> output = process.StandardOutput.ReadToEndAsync();
         Task<string> error = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(BuildTimeout))
+        if (!process.WaitForExit(BuildHangGuard))
         {
             process.Kill(entireProcessTree: true);
             process.WaitForExit();
-            throw new TimeoutException($"dotnet build {project} did not finish within {BuildTimeout.TotalSeconds} s:\n{Tail(output, error)}");
+            throw new TimeoutException($"dotnet build {project} hung: still running after {BuildHangGuard.TotalMinutes} min:\n{Tail(output, error)}");
         }
 
         process.WaitForExit();
