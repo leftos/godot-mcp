@@ -1366,6 +1366,59 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitsCropKeepsThatPartOfTheMetFrame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        WaitCondition condition = new(Node: "TimeProbe", Expression: "node.process_frames % 16 == 5");
+
+        List<ContentBlock> blocks =
+        [
+            .. await _tools.WaitForAsync(
+                condition,
+                5000,
+                new WaitOptions(Screenshot: true, Crop: new ScreenshotCrop(400, 40, 120, 80)),
+                cancellationToken: cancellation
+            ),
+        ];
+        JsonNode reply = JsonNode.Parse(Text(blocks))!;
+        JsonNode screenshot = reply["screenshot"]!;
+        string path = screenshot["path"]!.GetValue<string>();
+
+        Assert.True(reply["met"]!.GetValue<bool>(), reply.ToJsonString());
+        Assert.Null(reply["warning"]);
+        Assert.Equal(120, screenshot["width"]!.GetValue<int>());
+        Assert.Equal(80, screenshot["height"]!.GetValue<int>());
+        Assert.True(File.Exists(path), path);
+        Assert.Null(screenshot["previewPath"]);
+        Assert.Equal("image/png", Assert.Single(blocks.OfType<ImageContentBlock>()).MimeType);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitsCropOutsideTheViewportWarnsAndStillMeets()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        WaitCondition condition = new(Node: "TimeProbe", Expression: "node.process_frames % 16 == 5");
+
+        List<ContentBlock> blocks =
+        [
+            .. await _tools.WaitForAsync(
+                condition,
+                5000,
+                new WaitOptions(Screenshot: true, Crop: new ScreenshotCrop(5000, 5000, 10, 10)),
+                cancellationToken: cancellation
+            ),
+        ];
+        JsonNode reply = JsonNode.Parse(Text(blocks))!;
+
+        Assert.True(reply["met"]!.GetValue<bool>(), reply.ToJsonString());
+        Assert.Null(reply["screenshot"]);
+        Assert.StartsWith("no screenshot was taken: the crop", reply["warning"]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.Empty(blocks.OfType<ImageContentBlock>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task ACheckOnceWaitCapturesTheCurrentFrame()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

@@ -989,6 +989,10 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
   `match` with a number, boolean, object, array or null `equals` is refused (`match "prefix" compares strings; equals here is a number.`, likewise `a boolean`, `an object`, `an array`, `null`).
 
   An `expression` sees `node`, `root`, `tree`, `Input` and `Engine`. `options.screenshot: true` captures the frame the condition was met on, as `take_screenshot` does, adding `screenshot {path, width, height, previewPath, previewWidth, previewHeight}` and a preview image at most 480 px wide: for a scene that changes faster than a following `take_screenshot` can catch.
+
+  `options.crop {x, y, width, height}`, in viewport coordinates as `take_screenshot`'s `crop`, keeps that part of the met frame: the saved PNG is the crop, and the image block is the crop itself when it is at most 480 px wide, else its preview.
+
+  `options.crop` needs `options.screenshot: true` (`options.crop needs options.screenshot: true: it crops the captured frame.`). A crop that only partly overlaps the viewport is cut to it, and one wholly outside leaves the wait met with no screenshot and `warning` "no screenshot was taken: the crop … lies outside the … viewport".
 - **A headless game:** `options.screenshot` on a headless game still returns the wait's result, with `warning` "a headless game draws no frames, so no screenshot was taken; read state with get_game_state, get_ui_elements or run_script, or run the scene windowed." and no engine error.
 - **Act in the met frame:** `options.then {call?: {node, method, args?} | {tool, args?}, timeScale?, pause?}`, taken by every condition but `output` and by a check-once wait, runs once in the frame the condition is first found true (the met frame): `call` first, then `timeScale` (above 0, at most 100), which scales the next frame on, then `pause: true`, which pauses the game there as `frame_control pause` does and adds `paused: true` to the result's `then`; `frame_control resume` undoes it, and a `timeScale` set beside it applies on resume.
 
@@ -1054,7 +1058,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   It takes no `options.call`, `options.edge`, `then` or `screenshot`: `options.call is taken only by a gameMs, frames, exists, property, expression, text, settled, state or signal wait; this condition is output.`
 
-  An `edge` refusal reads `options.edge applies to exists, property, expression, text and state waits; this condition is output.`; `then` and `screenshot` are refused as `options.then needs a wait that meets on a game frame; an output wait meets on a printed line.` and `options.screenshot needs a wait that meets on a game frame; an output wait meets on a printed line.`
+  An `edge` refusal reads `options.edge applies to exists, property, expression, text and state waits; this condition is output.`; `then` and `screenshot` are refused as `options.then needs a wait that meets on a game frame; an output wait meets on a printed line.` and `options.screenshot needs a wait that meets on a game frame; an output wait meets on a printed line.`, and `crop` as `options.crop needs a wait that meets on a game frame; an output wait meets on a printed line.`
 
   `timeoutMs` defaults to 10000 and is load-adjusted, and `options.maxWallMs` caps its wall time as above; `timeoutMs: 0` checks once, and needs `after` (`timeoutMs 0 checks once, which an output wait needs after for: without it there is nothing new to check.`). A pattern that takes over its one-second match timeout ends the wait with `condition.output took over 1 s to match a line; simplify the pattern.`
 

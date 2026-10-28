@@ -2,8 +2,9 @@ using System.ComponentModel;
 
 namespace GodotMcp.Server.Tools;
 
-/// <summary>Whether wait_for captures the frame its condition was met on, the method it calls as its checks start, what it
-/// runs in the frame its condition is met, whether only a rise meets it, and the wall time that ends it unmet.</summary>
+/// <summary>Whether wait_for captures the frame its condition was met on and which part of it to keep, the method it calls as
+/// its checks start, what it runs in the frame its condition is met, whether only a rise meets it, and the wall time that ends it
+/// unmet.</summary>
 internal sealed record WaitOptions(
     [property: Description(
         "Capture the frame the condition was met on as take_screenshot does (a preview at most 480 px wide); a timed-out wait "
@@ -42,7 +43,13 @@ internal sealed record WaitOptions(
         "Wall-time cap in ms: the wait ends unmet with wallCapped: true once this much real time has passed, however slowly the "
             + "load-adjusted timeout runs. Pass it with every long timeoutMs on a game that may stall."
     )]
-        double? MaxWallMs = null
+        double? MaxWallMs = null,
+    [property: Description(
+        "With screenshot: true, the part of the met frame to keep, {x, y, width, height} in viewport coordinates as "
+            + "take_screenshot's crop; the image block is the crop itself when it is at most 480 px wide, else its preview. A crop "
+            + "wholly outside the viewport gives a warning and no screenshot; the wait still meets."
+    )]
+        ScreenshotCrop? Crop = null
 );
 
 /// <summary>What wait_for runs in the frame its condition is met: a method call, an Engine.time_scale, a pause, or any mix.</summary>

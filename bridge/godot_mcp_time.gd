@@ -818,7 +818,8 @@ func _then_failure_text(params: Dictionary, ran: Dictionary, frames: int) -> Str
 
 ## Adds the capture of the frame the wait was met on to result as result.screenshot: image when a
 ## draw check took it, else the draw of the frame running now; result.warning instead when that
-## frame is not drawn, or at once on a headless game, which draws none.
+## frame is not drawn, at once on a headless game, which draws none, or when params.crop lies
+## wholly outside the viewport, which gives no screenshot and still meets the wait.
 func _with_capture(image: Image, params: Dictionary, result: Dictionary) -> Dictionary:
 	var headless: String = bridge._frame.headless_warning()
 	if not headless.is_empty():
@@ -829,6 +830,15 @@ func _with_capture(image: Image, params: Dictionary, result: Dictionary) -> Dict
 	if image == null:
 		result["warning"] = NOT_DRAWN_WARNING
 		return {"result": result}
+	if params.get("crop") is Dictionary:
+		var cropped: Variant = bridge._frame.crop(image, params["crop"])
+		if cropped is String:
+			result["warning"] = "no screenshot was taken: " + cropped
+			return {"result": result}
+		image = cropped
+		# The crop is applied here, so save_screenshot must not apply it again.
+		params = params.duplicate()
+		params.erase("crop")
 	var saved: Variant = bridge._frame.save_screenshot(image, params)
 	if saved is String:
 		return {"error": saved}

@@ -213,7 +213,9 @@ internal sealed partial class RuntimeTools
                 + "without after."
         )]
             int? timeoutMs = null,
-        [Description("{screenshot, call, then, edge, maxWallMs}: screenshot and edge false, no call or then, and no wall cap when left out.")]
+        [Description(
+            "{screenshot, crop, call, then, edge, maxWallMs}: screenshot and edge false, no crop, call or then, and no wall cap when left out."
+        )]
             WaitOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
@@ -335,8 +337,8 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>The bridge's wait parameters as <see cref="BuildWaitParameters(WaitCondition?, int?)"/> builds them, plus
-    /// {screenshot, previewMaxWidth} when <paramref name="options"/> asks for the capture, call when it gives one, and then
-    /// when it gives one.</summary>
+    /// {screenshot, previewMaxWidth} when <paramref name="options"/> asks for the capture, crop when it gives one, call when it
+    /// gives one, and then when it gives one.</summary>
     /// <exception cref="McpException">The condition, gameMs, frames or timeoutMs is refused as the other form refuses them, a
     /// call is given to a uiChanged or output wait, then is empty or its timeScale is out of range, or a call or
     /// then.call gives both forms or neither, args of the other form's shape, or an empty node, method or tool name.</exception>
@@ -359,7 +361,7 @@ internal sealed partial class RuntimeTools
         }
 
         CheckMaxWall(parameters, options.MaxWallMs);
-        AddScreenshot(parameters, options.Screenshot);
+        AddScreenshot(parameters, options.Screenshot, options.Crop);
         if (options.Call is { } call)
         {
             AddWaitCall(parameters, call);
@@ -397,12 +399,17 @@ internal sealed partial class RuntimeTools
     }
 
     /// <summary>Refuses the options an output wait cannot honour: both need a met game frame.</summary>
-    /// <exception cref="McpException">screenshot or then is given.</exception>
+    /// <exception cref="McpException">screenshot, crop or then is given.</exception>
     private static void RefuseOutputOptions(WaitOptions options)
     {
         if (options.Screenshot is true)
         {
             throw new McpException("options.screenshot needs a wait that meets on a game frame; an output wait meets on a printed line.");
+        }
+
+        if (options.Crop is not null)
+        {
+            throw new McpException("options.crop needs a wait that meets on a game frame; an output wait meets on a printed line.");
         }
 
         if (options.Then is not null)
@@ -784,7 +791,7 @@ internal sealed partial class RuntimeTools
         parameters["count"] = frames;
         parameters["deadlineMs"] = (long)StepAllowance(frames).TotalMilliseconds;
         parameters["unit"] = unit;
-        AddScreenshot(parameters, options.Screenshot);
+        AddScreenshot(parameters, options.Screenshot, null);
         AddStepConditions(parameters, options, frames, unit);
     }
 
@@ -802,12 +809,25 @@ internal sealed partial class RuntimeTools
         }
     }
 
-    private static void AddScreenshot(JsonObject parameters, bool? screenshot)
+    /// <summary>Adds the capture's parameters when <paramref name="screenshot"/> asks for one: the screenshot flag, its
+    /// preview width, and the part of the frame <paramref name="crop"/> keeps.</summary>
+    /// <exception cref="McpException">A crop is given without screenshot: true, or its width or height is under 1.</exception>
+    private static void AddScreenshot(JsonObject parameters, bool? screenshot, ScreenshotCrop? crop)
     {
+        if (crop is not null && screenshot is not true)
+        {
+            throw new McpException("options.crop needs options.screenshot: true: it crops the captured frame.");
+        }
+
         if (screenshot is true)
         {
             parameters["screenshot"] = true;
             parameters["previewMaxWidth"] = CapturePreviewMaxWidth;
+        }
+
+        if (crop is not null)
+        {
+            parameters["crop"] = BuildScreenshotParameters(ScreenshotMode.PathOnly, crop, 0)["crop"]!.DeepClone();
         }
     }
 

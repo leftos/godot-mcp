@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `wait_for` takes `options.crop` with `options.screenshot`, keeping that part of the met frame at full size up to 480 px wide.
+
 ### Fixed
 
 - A stop no longer reports a game killed, or a scratch scene red, when the game had already exited by itself as its grace ran out.

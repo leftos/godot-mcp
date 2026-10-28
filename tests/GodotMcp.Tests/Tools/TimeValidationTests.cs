@@ -873,6 +873,66 @@ public sealed class TimeValidationTests : IDisposable
         Assert.False(parameters.ContainsKey("previewMaxWidth"), parameters.ToJsonString());
     }
 
+    [Fact]
+    public void AScreenshotWaitWithACropSendsTheCrop()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(
+            new WaitCondition(Expression: "true"),
+            1000,
+            new WaitOptions(Screenshot: true, Crop: new ScreenshotCrop(400, 40, 120, 80))
+        );
+        JsonObject crop = parameters["crop"]!.AsObject();
+
+        Assert.Equal(400, crop["x"]!.GetValue<int>());
+        Assert.Equal(40, crop["y"]!.GetValue<int>());
+        Assert.Equal(120, crop["width"]!.GetValue<int>());
+        Assert.Equal(80, crop["height"]!.GetValue<int>());
+        Assert.True(parameters["screenshot"]!.GetValue<bool>());
+        Assert.Equal(480, parameters["previewMaxWidth"]!.GetValue<int>());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(false)]
+    public void ACropWithoutAScreenshotIsRefused(bool? screenshot)
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildWaitParameters(
+                new WaitCondition(Expression: "true"),
+                1000,
+                new WaitOptions(Screenshot: screenshot, Crop: new ScreenshotCrop(400, 40, 120, 80))
+            )
+        );
+
+        Assert.Equal("options.crop needs options.screenshot: true: it crops the captured frame.", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(0, 80)]
+    [InlineData(120, 0)]
+    public void AnEmptyWaitCropIsRefused(int width, int height)
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildWaitParameters(
+                new WaitCondition(Expression: "true"),
+                1000,
+                new WaitOptions(Screenshot: true, Crop: new ScreenshotCrop(400, 40, width, height))
+            )
+        );
+
+        Assert.Equal($"A crop needs a width and a height of at least 1 pixel; got {width}x{height}.", refused.Message);
+    }
+
+    [Fact]
+    public void AnOutputWaitRefusesACrop()
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildWaitParameters(new WaitCondition(Output: "joined"), 1000, new WaitOptions(Crop: new ScreenshotCrop(400, 40, 120, 80)))
+        );
+
+        Assert.Equal("options.crop needs a wait that meets on a game frame; an output wait meets on a printed line.", refused.Message);
+    }
+
     [Theory]
     [InlineData(500, null)]
     [InlineData(null, 3)]
