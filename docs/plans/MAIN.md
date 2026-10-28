@@ -4,10 +4,8 @@
 
 ## Do first
 
-- [ ] GMCP-335 Flaky: HeadlessPropertyTests.SetNodePropertiesIsAllOrNothing gets a failed headless run beside other lanes · release vNext — Urgent · Singles
-- [ ] GMCP-336 Flaky: ScratchRunnerTests.AGreenSceneStopsCleanlyAndItsSessionKeepsItsOutput comes back red beside other lanes · release vNext — Urgent · Singles
-- [ ] GMCP-337 Flaky: ScratchStepsRunTests.APartialRunPlaysTheScenesSetupStepFirst reads step (-1, "") beside other lanes · release vNext — Urgent · Singles
-- [ ] GMCP-339 Flaky: ScratchRunnerTests.ALineATimerPrintsFailsTheStepItPrintedIn charges a timer's line to the step before beside other lanes · release vNext — Urgent · Singles
+- [!] GMCP-337 Flaky: ScratchStepsRunTests.APartialRunPlaysTheScenesSetupStepFirst reads step (-1, "") beside other lanes · release vNext — Urgent · Singles
+- [ ] GMCP-347 Bound the C# probe's test build by a hang guard, not two minutes of wall time · release vNext — Urgent · Singles
 
 ## Ideas from the survey and the projects
 
@@ -43,7 +41,6 @@
 - [ ] GMCP-188 click: a {text} target is refused when a code-made Control covers its label
 - [ ] GMCP-187 run_scratches: scratch.patterns never judge lines printed before the first step
 - [ ] GMCP-172 run_project dropIdle: a deliberate hold collapses with the idle time between calls
-- [/] GMCP-171 record_mark/save_screenshot: no destination outside a worktree's own checkout · release vNext
 - [ ] GMCP-169 run_scratches: a one-scene call replays its red scene alone
 - [ ] GMCP-166 Real-time recording with the display off records a flat frame without saying why
 - [ ] GMCP-63 Name a Control's rect when its centre lies outside its SubViewport or embedded window
@@ -57,7 +54,6 @@
 - [ ] GMCP-116 Find whether a real-time recording's helper and ffmpeg stretch load-adjusted waits
 - [ ] GMCP-149 Keep run_scratches' exit lines as short as a failing step's
 - [ ] GMCP-152 Give GodotSession a run-launch seam so unit tests pin restart's capture-before-quit order
-- [ ] GMCP-156 Close save_screenshot's link holes: .godot through a project junction, short-name targets, the checkout walk
 - [ ] GMCP-158 Give transforms a structured JSON form in tool results, and compare settled transforms as numbers
 - [ ] GMCP-159 itest: move scratch and reads out of the timing lane
 - [ ] GMCP-161 TimeTests: step 10 frames, not 120, in the no-draw deadline test
@@ -135,6 +131,12 @@
 - [ ] GMCP-331 run.ps1 test -Filter with a * in the middle runs no tests and exits 5
 - [ ] GMCP-334 save_screenshot: off Windows a capture symlink is followed and copied (final-path checks skipped)
 - [ ] GMCP-338 TempDirectory cleanup follows links out of the temp folder when clearing attributes
+- [ ] GMCP-340 run_scratches: a step's window ends at server latency, not at its pace in game time
+- [ ] GMCP-341 run_scratches: a game that exited 0 before the stop's kill reads as killed and red
+- [ ] GMCP-342 itests: scratch walk, marker, call and pace bounds count wall time beside other lanes
+- [ ] GMCP-343 save_screenshot: a dotted place folder, an empty link name and an untested reached-name check
+- [ ] GMCP-345 Server shutdown never cuts a Movie Maker recording's clips
+- [ ] GMCP-346 record_mark delivery: folders made before a failed move, the shutdown cap mid-copy, two untested branches
 
 ## Docs
 
