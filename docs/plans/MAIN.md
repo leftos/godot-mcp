@@ -8,17 +8,16 @@
 
 ## Ideas from the survey and the projects
 
-- [ ] GMCP-231 wait_for: no full-size crop of the frame a wait met
 - [ ] GMCP-68 Adopt driving lessons from the sibling projects
-  - [ ] GMCP-69 Probe h264_nvenc with a real 256x256 encode before cutting clips
-  - [ ] GMCP-70 Give each launch a scratch user:// folder so drives never touch real saves
-  - [ ] GMCP-71 Tell agents to say "hands off" before driving a game on the user's desktop
-  - [ ] GMCP-72 Answer native file dialogs from a queue instead of showing them
-  - [ ] GMCP-73 Name native file dialogs as out of reach in TOOLS.md and the skill
+  - [ ] GMCP-69 Probe h264_nvenc with a real 256x256 encode before cutting clips · release vNext
+  - [ ] GMCP-70 Give each launch a scratch user:// folder so drives never touch real saves · release vNext
+  - [ ] GMCP-71 Tell agents to say "hands off" before driving a game on the user's desktop · release vNext
+  - [ ] GMCP-72 Answer native file dialogs from a queue instead of showing them · release vNext
+  - [ ] GMCP-73 Name native file dialogs as out of reach in TOOLS.md and the skill · release vNext
   - [ ] GMCP-74 Report frame-rate drops below a floor in the game's output
   - [ ] GMCP-75 Give bridge replies stable error codes and answer malformed frames
 - [ ] GMCP-115 fired: a point click over a SubViewport listens on the container, not the inner Control
-- [ ] GMCP-197 Let a wait place a record mark in the frame it is met · release vNext+1
+- [ ] GMCP-197 Let a wait place a record mark in the frame it is met · release vNext
 - [ ] GMCP-198 Say how frame_control pause interacts with SceneTreeTimer, or add a hold that stops them
 - [ ] GMCP-202 Prove WriteWatch.Unwatch: a unit test, the real run_csharp path, a scoped suspend
 - [ ] GMCP-207 Test a failing GetStepUntil call and rule a step that pauses the tree
@@ -27,15 +26,16 @@
 - [ ] GMCP-213 Random-gap clock pings to tighten the drive clock over a long watch
 - [ ] GMCP-224 Watch a dialogue runner's autoload signals without naming each one
 - [ ] GMCP-225 Watch an interactive music stream's current clip, and per-channel bus peaks
+- [ ] GMCP-348 frame_control: a step's screenshot takes no crop
 
 ## Singles
 
 - [ ] GMCP-311 stop_project / list_sessions: no read-only view of who holds a folder's override.cfg
 - [ ] GMCP-281 stop_project: nothing waits for a killed game that outlives the kill wait
 - [ ] GMCP-309 watch: no sample of a value as its frame drew it, beside that frame's image
-- [ ] GMCP-280 run_scratches: no windowed play of a scene's steps at their paces and untils · release vNext+1
+- [ ] GMCP-280 run_scratches: no windowed play of a scene's steps at their paces and untils · release vNext
 - [ ] GMCP-308 capture_frames: options.start cannot start the clock on a signal
-- [ ] GMCP-279 run_scratches: no watch can be armed before a scene's first step · release vNext+1
+- [ ] GMCP-279 run_scratches: no watch can be armed before a scene's first step · release vNext
 - [ ] GMCP-189 install: stops every running server and the games it drives
 - [ ] GMCP-188 click: a {text} target is refused when a code-made Control covers its label
 - [ ] GMCP-187 run_scratches: scratch.patterns never judge lines printed before the first step
@@ -130,12 +130,10 @@
 - [ ] GMCP-331 run.ps1 test -Filter with a * in the middle runs no tests and exits 5
 - [ ] GMCP-334 save_screenshot: off Windows a capture symlink is followed and copied (final-path checks skipped)
 - [ ] GMCP-338 TempDirectory cleanup follows links out of the temp folder when clearing attributes
-- [ ] GMCP-340 run_scratches: a step's window ends at server latency, not at its pace in game time
-- [ ] GMCP-341 run_scratches: a game that exited 0 before the stop's kill reads as killed and red
-- [ ] GMCP-342 itests: scratch walk, marker, call and pace bounds count wall time beside other lanes
-- [ ] GMCP-343 save_screenshot: a dotted place folder, an empty link name and an untested reached-name check
-- [ ] GMCP-345 Server shutdown never cuts a Movie Maker recording's clips
-- [ ] GMCP-346 record_mark delivery: folders made before a failed move, the shutdown cap mid-copy, two untested branches
+- [ ] GMCP-340 run_scratches: a step's window ends at server latency, not at its pace in game time · release vNext
+- [ ] GMCP-342 itests: scratch walk, marker, call and pace bounds count wall time beside other lanes · release vNext+1
+- [ ] GMCP-345 Server shutdown never cuts a Movie Maker recording's clips · release vNext
+- [ ] GMCP-346 record_mark delivery: folders made before a failed move, the shutdown cap mid-copy, two untested branches · release vNext
 
 ## Docs
 
