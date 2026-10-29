@@ -1,9 +1,11 @@
 # prek hooks (prek install; prek run --all-files). The format check runs first, cs-line-length then catches the C# lines
-# over 150 characters that CSharpier does not wrap (comments), and the warnings-as-errors build gates the result;
-# gdlint checks the GDScript the server ships, and gdcomplexity holds it to the same complexity and length limits as
-# the C#. Ruff (ruff.toml) checks the Python tools. The Agent Mail guard blocks a commit over another Claude Code
-# session's file lease, and passes on a machine without the user-level guard. No hook runs a test suite: `run.ps1 test`,
-# `gdtest` and `pytest` run by hand.
+# over 150 characters that CSharpier does not wrap (comments); the warnings-as-errors build runs at pre-push, so a commit
+# runs only checks scoped to its staged files. gdlint checks the GDScript the server ships, and gdcomplexity holds it to
+# the same complexity and length limits as the C#. Ruff (ruff.toml) checks the Python tools. The Agent Mail guard blocks
+# a commit over another Claude Code session's file lease, and passes on a machine without the user-level guard. No hook
+# runs a test suite: `run.ps1 test`, `gdtest` and `pytest` run by hand.
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -31,6 +33,7 @@ repos:
         language: system
         pass_filenames: false
         files: \.(cs|csproj|props|slnx|editorconfig)$|^global\.json$
+        stages: [pre-push]
       - id: gdformat
         name: gdformat check
         entry: gdformat --check

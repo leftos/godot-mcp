@@ -24,7 +24,7 @@ pwsh run.ps1 itest [-Filter "*ClassName"] # real Godot; -Since origin/main runs 
 pwsh run.ps1 pytest                       # a change under tools/
 pwsh run.ps1 format-check                 # CSharpier and the style pass
 pwsh run.ps1 drive -Calls <file.json>     # drive this tree's own server build against a game
-prek run --all-files                      # the lint hooks (CSharpier, line length, build, gdformat, gdlint, gdcomplexity, ruff); no test
+prek run --all-files                      # the lint hooks (CSharpier, line length, gdformat, gdlint, gdcomplexity, ruff); no test, no build
 ```
 
 A `run.ps1` command writes its `.tmp/<command>.log` itself, so a shell redirect never targets that same file: the gate then cannot replace its earlier log ("cannot remove the earlier …\.tmp\format-check.log … os error 32"). Redirect to another name, or not at all.
