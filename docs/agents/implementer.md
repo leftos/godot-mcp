@@ -20,7 +20,7 @@ Every build and test runs through `run.ps1`, which runs it under `gate run` thro
 pwsh run.ps1 build                        # warnings are errors
 pwsh run.ps1 test [-Filter "*ClassName"]  # unit tests
 pwsh run.ps1 gdtest                       # headless GDScript tests under tests/bridge
-pwsh run.ps1 itest [-Filter "*ClassName"] # real Godot; -Since origin/main runs only the groups a change touches
+pwsh run.ps1 itest [-Filter "*ClassName"] # real Godot, one routed gate run (.tmp/itest-gate.log); -Since origin/main runs only the groups a change touches
 pwsh run.ps1 pytest                       # a change under tools/
 pwsh run.ps1 format-check                 # CSharpier and the style pass
 pwsh run.ps1 drive -Calls <file.json>     # drive this tree's own server build against a game

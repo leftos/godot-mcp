@@ -20,9 +20,11 @@ An MCP server (C# / .NET 10, `src/GodotMcp.Server`) and an in-game bridge (GDScr
 - `skills/godot-agent-sweep/SKILL.md`: how an agent file declares its godot tool classes and what `--sweep-agents` does at install; a change to the classes, the marker or the sweep's output updates it in the same commit.
 - `docs/agents/implementer.md`: the overlay the `implementer` agent reads in place of this file; a change to the Non-negotiables or the everyday commands below updates it in the same commit.
 - `docs/DEVELOPMENT.md`: toolchain, commands, gates, what each test class covers, and the footguns: read the footguns before touching process launching, a tool's signature, logging, or the bridge's input handling.
-- Everyday commands: `pwsh run.ps1 build`, `pwsh run.ps1 test` (unit), `pwsh run.ps1 itest` (real Godot); `-Filter "*ClassName"` runs one test class; `pwsh run.ps1 itest -Since origin/main` runs only the itest groups a change touches (`itest-groups -Since <ref>` lists them), a landing's itest, the full `itest` at a release; `pwsh run.ps1 drive -Calls <file.json>` drives this tree's own server build against a game without installing it; `pwsh run.ps1 package` builds the release zip.
+- Everyday commands: `pwsh run.ps1 build`, `pwsh run.ps1 test` (unit), `pwsh run.ps1 itest` (real Godot); `-Filter "*ClassName"` runs one test class; `pwsh run.ps1 itest -Since origin/main` runs only the itest groups a change touches (`itest-groups -Since <ref>` lists them; `itest` chooses them locally and sends the builder the list), a landing's itest, the full `itest` at a release; `pwsh run.ps1 drive -Calls <file.json>` drives this tree's own server build against a game without installing it; `pwsh run.ps1 package` builds the release zip.
 
-  A release is a pushed `vX.Y.Z` tag (the procedure is DEVELOPMENT.md's "CI and releases"); pushing a tag publishes to everyone, so ask first. Each writes `.tmp/<command>.log` (a full `itest` writes `.tmp/itest-<group>.log` per class group) and prints its tail.
+  A release is a pushed `vX.Y.Z` tag (the procedure is DEVELOPMENT.md's "CI and releases"); pushing a tag publishes to everyone, so ask first. Each writes `.tmp/<command>.log` and prints its tail.
+
+  An `itest` goes out as one heavy gate run that the gate routes to the builder, so it writes `.tmp/itest-gate.log` here, with the verdicts and tails, while the lane logs (`.tmp/itest-<group>.log`) stay on the builder; when the builder's desktop stays busy for 60 s the gate runs it locally and they are local. `itest -InGate` is the inner form the gate runs, never run by hand.
 
 ## Architecture
 

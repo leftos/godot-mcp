@@ -5,7 +5,7 @@
 Builds, tests, formats and publishes godot-mcp.
 
 .DESCRIPTION
-Every command but itest-groups, itest-csharp and itest-capture (which run inside their caller's gate) runs under gate run,
+Every command but itest -InGate, itest-groups, itest-csharp and itest-capture (which run inside their caller's gate) runs under gate run,
 called through the repo's wrapper tools/gate.ps1, which hands it to the installed gate.exe (on a machine without one the
 wrapper runs the command directly, with no log, slot or watchdog): its whole output goes to .tmp/<command>.log, the last
 lines are printed, and it exits with the command's own status, or 124 when the gate's watchdog killed it with every
@@ -19,14 +19,23 @@ the same log, and the job's timeout-minutes bounds it in place of the ceiling an
   build    dotnet build GodotMcp.slnx in Release, warnings as errors; ceiling 300 s
   test     the unit tests (tests/GodotMcp.Tests): the project built in Release first (.tmp/test-build.log, ceiling 300 s),
            then its dotnet test -c Release --no-build; ceiling 180 s
-  itest    the integration tests against the real Godot (GODOT_PATH, else a Godot*console*.exe on PATH), in the class
+  itest    runs as one heavy gate run, which the gate routes to the builder: pwsh -NoProfile -File run.ps1 itest -InGate
+           under gate run from the repo root, .tmp/itest-gate.log, ceiling 1800 s; the lane gates inside it run without
+           slots. The builder's copy of the repo cannot see this repo's history, so with -Since <ref> the groups are
+           selected here first, printing itest-groups' lines (below), and the inner run gets them as -Groups <a,b,...>
+           in the groups table's order; with none selected it prints "itest: no group touched by the changes since
+           <ref>" and exits 0 with no gate run. -Filter and -Groups pass through as given; a bare itest passes neither.
+           The refusals, status 2, come before that run: -Filter with -Since, -Groups with either or naming no group,
+           a -Filter selecting classes of both the visible-desktop group and a hidden-desktop one, and a -Since ref git
+           cannot resolve. itest -InGate, the form the gate runs, does what follows in the process it is started in:
+           the integration tests against the real Godot (GODOT_PATH, else a Godot*console*.exe on PATH), in the class
            groups of the table at the top of this script, which run in the three lanes of the table below it: timing
            (lifecycle, stopping, watchdog, input, time, recording, capture, reads, scratch, scratchpace, scratchfolder,
-           scratchparallel, scratchuntil: the groups that assert wall-clock times), build (prep, scene, csharp) and untimed
-           (sessions, attach, headless, nodes, scratchsteps, scratchbackground). It
-           first checks that every `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly
-           one group, every listed class exists, every group is in exactly one lane that names only groups, and the
-           heavy groups and rules tables name only groups, and stops with status 1 before running anything when not.
+           scratchparallel, scratchuntil: the groups that assert wall-clock times), build (prep, scene, csharp) and
+           untimed (sessions, attach, headless, nodes, scratchsteps, scratchbackground). It first checks that every
+           `public sealed class <Name>Tests` in tests/GodotMcp.IntegrationTests is in exactly one group, every listed
+           class exists, every group is in exactly one lane that names only groups, and the heavy groups and rules
+           tables name only groups, and stops with status 1 before running anything when not.
            It then builds the project once in Release (.tmp/itest-build.log, ceiling 300 s) and runs each group as its own
            gate in a process of its own (.tmp/itest-<group>.log, ceiling 300 s, dotnet test -c Release --no-build; the
            csharp group's gate runs itest-csharp, below, with a ceiling of 420 s for its publishes, and the capture group's
@@ -45,7 +54,8 @@ the same log, and the job's timeout-minutes bounds it in place of the ceiling an
            With -Since <ref> it runs only the groups itest-groups (below) selects, which leave the visible groups out
            unless a change touches recording or capture, in their lanes as above, after
            printing itest-groups' lines; with none selected it prints "itest: no group touched by the changes since
-           <ref>" and exits 0. -Since with -Filter is refused with status 2.
+           <ref>" and exits 0. -Since with -Filter is refused with status 2. With -Groups <a,b,...> it runs exactly
+           those groups, in their lanes as above, after the check above.
   itest-csharp  the command the csharp group's gate runs, and a -Filter itest's gate when the filter matches a class of
            the csharp group: the dotnet command's three publishes (as below) run with plain dotnet publish, no gate of
            their own, each to .tmp/dotnet-<name>.log with its time printed, then bin/dotnet laid out, then dotnet test
@@ -147,6 +157,13 @@ into one '-' and trimmed of '-' at both ends (.tmp/itest-filter-SessionLifecycle
 runs of different classes in one tree at once keep their logs apart and never write a group's log; a filter that leaves
 no slug logs to .tmp/itest.log.
 
+-Groups narrows itest to the named groups, comma-separated, e.g. -Groups time,csharp: the form a routed itest -Since
+hands its inner run, since the builder cannot select groups from history it does not hold. A name the groups table does
+not hold is refused with status 2, "itest -Groups names no group <name>; the groups are <list>.", as is -Groups with
+-Filter or -Since: "itest takes one of -Filter, -Since or -Groups."
+
+-InGate runs itest in the process it is started in, the inner form of the routed run that itest starts.
+
 Every command runs from the folder of this script, whatever folder it was started from, and gives the caller's location
 back when it ends; a relative -Calls path is read against the caller's location.
 
@@ -174,7 +191,11 @@ param(
 
     [string]$Since = '',
 
-    [string]$Calls = ''
+    [string]$Calls = '',
+
+    [string]$Groups = '',
+
+    [switch]$InGate
 )
 
 Set-StrictMode -Version Latest
@@ -234,6 +255,8 @@ $itestCsharpCeiling = $itestCeiling + 120
 # The ceiling of the capture group's gate (and a filtered itest of its classes), which also publishes the window capture
 # helper: the tests' 300 s plus 120 s, as the csharp group's. The publish's time is unmeasured.
 $itestCaptureCeiling = $itestCeiling + 120
+# The ceiling of the one heavy gate run a whole itest goes out as, the gate repo's figure for the routed itest.
+$itestRoutedCeiling = 1800
 # Which groups a changed file touches, for itest-groups and itest -Since: ordered pairs of a path pattern, '/'-separated
 # from the repo root ('*' matches within one folder, '**' across folders), and what a match selects: 'all' (every group
 # but the visible groups table's), 'none', 'class' (the group listing the class a test file is named for), or a list of
@@ -1097,14 +1120,21 @@ function Invoke-ItestByGroup {
     return 0
 }
 
-# The groups an unfiltered itest runs: every group, or with -Since only those the changes since that ref touch. Returns
-# @{ Status; Groups }: 1 when the tables have drifted from the project, 2 when git cannot resolve the ref, else 0.
+# The groups an unfiltered itest runs: -Groups' names when given, else every group, or with -Since only those the
+# changes since that ref touch. Returns @{ Status; Groups }: 1 when the tables have drifted from the project, 2 when git
+# cannot resolve the ref, else 0.
 function Get-ItestRunGroup {
-    param([Parameter(Mandatory)] [AllowEmptyString()] [string]$Since)
+    param(
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Since,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$GroupNames
+    )
     $drift = Get-ItestGroupDrift
     if ($drift) {
         [Console]::Error.WriteLine($drift)
         return @{ Status = 1; Groups = @() }
+    }
+    if ($GroupNames.Count -gt 0) {
+        return @{ Status = 0; Groups = $GroupNames }
     }
     if (-not $Since) {
         return @{ Status = 0; Groups = @($itestGroups.Keys) }
@@ -1192,27 +1222,112 @@ function Invoke-ItestCapture {
     return $LASTEXITCODE
 }
 
-# The itest command: -Filter's classes, or the groups (all of them, or those -Since's changes touch) in their lanes.
-# -Filter with -Since is refused with status 2, as is a -Filter spanning the visible-desktop group and a hidden-desktop
-# one; no group touched by the changes is status 0 with nothing run.
+# Why -Groups is refused: with -Filter or -Since, or naming a group the groups table does not hold. Empty when it is not.
+function Get-ItestGroupsRefusal {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Filters,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Since,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$GroupNames
+    )
+    if ($GroupNames.Count -eq 0) {
+        return ''
+    }
+    if ($Filters.Count -gt 0 -or $Since) {
+        return 'itest takes one of -Filter, -Since or -Groups.'
+    }
+    $unknown = @($GroupNames | Where-Object { @($itestGroups.Keys) -cnotcontains $_ })
+    if ($unknown.Count -gt 0) {
+        return "itest -Groups names no group $($unknown -join ', '); the groups are $(@($itestGroups.Keys) -join ', ')."
+    }
+    return ''
+}
+
+# Why an itest's arguments are refused, needing no build: -Filter with -Since, -Groups with either or naming no group,
+# or a -Filter spanning the visible-desktop group and a hidden-desktop one. Empty when they are not.
+function Get-ItestRefusal {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Filters,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Since,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$GroupNames
+    )
+    $groupsRefusal = Get-ItestGroupsRefusal -Filters $Filters -Since $Since -GroupNames $GroupNames
+    if ($groupsRefusal) {
+        return $groupsRefusal
+    }
+    if ($Filters.Count -gt 0 -and $Since) {
+        return 'itest takes -Filter or -Since, not both: -Filter runs the classes it names, -Since the groups a diff touches.'
+    }
+    if ($Filters.Count -gt 0) {
+        return Get-ItestFilterSpanRefusal -Filters $Filters
+    }
+    return ''
+}
+
+# The itest command as one heavy gate run, which the gate routes to the builder: pwsh -NoProfile -File run.ps1 itest
+# -InGate under gate run from the repo root (.tmp/itest-gate.log, ceiling 1800 s), the lanes' gates inside it running
+# without slots. The builder's copy of the repo cannot see this repo's history, so -Since's groups are selected here,
+# itest-groups' lines printed, and the inner run gets them as -Groups in table order; with none selected it prints that
+# no group was touched and returns 0 with no gate run. -Filter and -Groups pass through; a bare itest passes nothing.
+# Arguments refused with no build are refused here first, status 2. Returns the gate's status.
+function Invoke-ItestRouted {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Filters,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Since,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$GroupNames
+    )
+    $refusal = Get-ItestRefusal -Filters $Filters -Since $Since -GroupNames $GroupNames
+    if ($refusal) {
+        [Console]::Error.WriteLine($refusal)
+        return 2
+    }
+    $routedGroups = $GroupNames
+    if ($Since) {
+        $selection = Invoke-ItestGroupSelection -Since $Since
+        if ($selection.Status -ne 0) {
+            return $selection.Status
+        }
+        if ($selection.Groups.Count -eq 0) {
+            Write-Host "itest: no group touched by the changes since $Since"
+            return 0
+        }
+        $routedGroups = $selection.Groups
+    }
+    $inner = @('pwsh', '-NoProfile', '-File', 'run.ps1', 'itest', '-InGate')
+    if ($Filters.Count -gt 0) {
+        $inner += @('-Filter', $Filters[0])
+    }
+    if ($routedGroups.Count -gt 0) {
+        $inner += @('-Groups', ($routedGroups -join ','))
+    }
+    $log = Join-Path $logDir 'itest-gate.log'
+    Write-Host "$($inner -join ' ')  (log: $log, ceiling: $itestRoutedCeiling s, slot: heavy)"
+    $gateOptions = @('run', '--cd', $root, '--log', $log, '--timeout', $itestRoutedCeiling, '--slot', 'heavy', '--tail', 15)
+    & $pwshPath -NoProfile -File $gateWrapper @gateOptions -- @inner | Out-Host
+    $status = $LASTEXITCODE
+    if ($status -eq 124) {
+        Write-Host "itest was killed by the gate: $(Get-GateKill -Log $log)" -ForegroundColor Yellow
+    }
+    return $status
+}
+
+# The itest command in the process it is started in (itest -InGate): -Filter's classes, or the groups (all of them, -Groups'
+# names, or those -Since's changes touch) in their lanes. The refusals of Get-ItestRefusal are status 2; no group touched
+# by the changes is status 0 with nothing run.
 function Invoke-Itest {
     param(
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Filters,
-        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Since
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$Since,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$GroupNames
     )
-    if ($Filters.Count -gt 0 -and $Since) {
-        [Console]::Error.WriteLine('itest takes -Filter or -Since, not both: -Filter runs the classes it names, -Since the groups a diff touches.')
+    $refusal = Get-ItestRefusal -Filters $Filters -Since $Since -GroupNames $GroupNames
+    if ($refusal) {
+        [Console]::Error.WriteLine($refusal)
         return 2
     }
     if ($Filters.Count -gt 0) {
-        $span = Get-ItestFilterSpanRefusal -Filters $Filters
-        if ($span) {
-            [Console]::Error.WriteLine($span)
-            return 2
-        }
         return Invoke-ItestFiltered -Filters $Filters
     }
-    $run = Get-ItestRunGroup -Since $Since
+    $run = Get-ItestRunGroup -Since $Since -GroupNames $GroupNames
     if ($run.Status -ne 0) {
         return $run.Status
     }
@@ -1490,6 +1605,7 @@ function Invoke-Drive {
 }
 
 [string[]]$filterClasses = @($Filter | Where-Object { $_ })
+[string[]]$groupNames = @($Groups -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 
 # A relative -Calls path names a file from where the caller stands, so it is read before the location moves.
 if (-not [string]::IsNullOrWhiteSpace($Calls)) {
@@ -1515,7 +1631,10 @@ try {
             exit (Invoke-Logged -Name 'test' -TimeoutSeconds 180 -Arguments $arguments -Slot $slot)
         }
         'itest' {
-            exit (Invoke-Itest -Filters $filterClasses -Since $Since)
+            if ($InGate) {
+                exit (Invoke-Itest -Filters $filterClasses -Since $Since -GroupNames $groupNames)
+            }
+            exit (Invoke-ItestRouted -Filters $filterClasses -Since $Since -GroupNames $groupNames)
         }
         'itest-groups' {
             exit (Invoke-ItestGroupSelection -Since $Since).Status
