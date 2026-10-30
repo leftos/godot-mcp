@@ -1031,7 +1031,7 @@ internal sealed class FakeRealtime : IDisposable
     private OutputTarget Destination(string path, bool overwrite)
     {
         var places = OutputPlaces.Find(ProjectDir, NullLogger.Instance);
-        return new OutputTarget(places, path, OutputDestination.Resolve(places, path, ".mp4", overwrite));
+        return OutputDestination.Resolve(places, path, ".mp4", overwrite);
     }
 
     public static RealtimeTarget Target(string ffmpeg) =>

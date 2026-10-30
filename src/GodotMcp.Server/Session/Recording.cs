@@ -102,7 +102,7 @@ internal sealed class Recording(string path)
     }
 
     /// <summary>Refuses a destination an earlier clip of this recording already goes to, so its delivery cannot be refused late.</summary>
-    /// <exception cref="SessionException">An earlier clip's start named the same full path, in any case.</exception>
+    /// <exception cref="SessionException">An earlier clip's start named a path reaching the same final path, in any case.</exception>
     public void CheckDestination(OutputTarget? destination)
     {
         if (destination is null)
@@ -115,7 +115,7 @@ internal sealed class Recording(string path)
             List<ClipSpan> clips = _open is { } open ? [.. _clips, open] : _clips;
             for (int index = 0; index < clips.Count; index++)
             {
-                if (string.Equals(clips[index].Destination?.FullPath, destination.FullPath, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(clips[index].Destination?.FinalPath, destination.FinalPath, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new SessionException(
                         $"path {destination.Requested} is already where clip {index + 1} of this recording goes; name another file"

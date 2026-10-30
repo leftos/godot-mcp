@@ -1,7 +1,10 @@
+using System.Collections.ObjectModel;
+using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
+using GodotMcp.Tests.Tools;
 using GodotMcp.TestSupport;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -297,6 +300,52 @@ public sealed class RecordingMarksTests
     }
 
     [Fact]
+    public async Task ASecondMarkNamingAnEarlierClipsFileThroughAJunctionIsRefused()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
+        using TempDirectory project = new();
+        Recording recording = await MovieInAsync(project);
+        ScreenshotPathValidationTests.MakeJunction(project.Combine("j"), Directory.CreateDirectory(project.Combine("clips")).FullName);
+        recording.Mark("start", 0, Destination(project, "clips/a.mp4", overwrite: false), overwrite: false);
+        recording.Mark("stop", 60);
+        OutputTarget again = Destination(project, "j/a.mp4", overwrite: true);
+
+        SessionException refused = Assert.Throws<SessionException>(() => recording.Mark("start", 120, again, overwrite: true));
+
+        Assert.Equal("path j/a.mp4 is already where clip 1 of this recording goes; name another file", refused.Message);
+        Assert.Single(recording.Clips());
+    }
+
+    [Fact]
+    [SupportedOSPlatform("windows")]
+    public async Task AClipWhosePathNowLeadsToAnEarlierDeliveredClipIsKept()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");
+        using TempDirectory project = new();
+        Recording recording = await MovieInAsync(project);
+        OutputTarget first = Destination(project, "clips/a.mp4", overwrite: false);
+        OutputTarget second = Destination(project, "other/a.mp4", overwrite: true);
+        recording.Mark("start", 0, first, overwrite: false);
+        recording.Mark("stop", 60);
+        recording.Mark("start", 120, second, overwrite: true);
+        recording.Mark("stop", 180);
+        string clips = Directory.CreateDirectory(project.Combine("clips")).FullName;
+        ScreenshotPathValidationTests.MakeJunction(project.Combine("other"), clips);
+
+        RecordingResult result = await CutMakingClipsAsync(recording, failFirst: false);
+
+        string kept = RecordingCut.ClipPath(recording.Path, 2);
+        string final = Path.Combine(FinalPath.Of(clips), "a.mp4");
+        Assert.Equal([first.FullPath, kept], result.Clips!);
+        Assert.Equal(Path.GetFileName(RecordingCut.ClipPath(recording.Path, 1)), File.ReadAllText(first.FullPath));
+        Assert.Equal(Path.GetFileName(kept), File.ReadAllText(kept));
+        Assert.Equal(
+            $"the clip could not be moved to {second.FullPath}: clip 1 of this recording was delivered to {final}; it is kept at {kept}",
+            result.Warning
+        );
+    }
+
+    [Fact]
     public async Task AClipWhoseCopyInRecordingsCannotBeDeletedIsReportedAtItsDestination()
     {
         using TempDirectory project = new();
@@ -304,7 +353,7 @@ public sealed class RecordingMarksTests
         string clip = RecordingCut.ClipPath(recording.Path, 1);
         File.WriteAllText(clip, "clip");
         OutputTarget destination = Destination(project, "clips/a.mp4", overwrite: false);
-        (string Path, string? Warning) delivered;
+        (string Path, string? FinalPath, string? Warning) delivered;
         using (new FileStream(clip, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
             // A copy across volumes, then the source's delete, which the open handle makes fail.
@@ -312,6 +361,7 @@ public sealed class RecordingMarksTests
                 clip,
                 destination,
                 overwrite: false,
+                ReadOnlyDictionary<string, int>.Empty,
                 (source, to, overwrite) =>
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(to)!);
@@ -407,12 +457,12 @@ public sealed class RecordingMarksTests
     private static OutputTarget Destination(TempDirectory project, string path, bool overwrite)
     {
         var places = OutputPlaces.Find(project.Path, NullLogger.Instance);
-        return new OutputTarget(places, path, OutputDestination.Resolve(places, path, ".mp4", overwrite));
+        return OutputDestination.Resolve(places, path, ".mp4", overwrite);
     }
 
     /// <summary>
-    /// Cuts the recording with an ffmpeg that writes each output file it is asked for, except that with
-    /// <paramref name="failFirst"/> the first encode fails, as one without libx264 does.
+    /// Cuts the recording with an ffmpeg that writes each output file it is asked for, holding the file's own name so clips
+    /// can be told apart, except that with <paramref name="failFirst"/> the first encode fails, as one without libx264 does.
     /// </summary>
     private static Task<RecordingResult> CutMakingClipsAsync(Recording recording, bool failFirst)
     {
@@ -425,7 +475,7 @@ public sealed class RecordingMarksTests
                 bool fails = failFirst && ++runs == 1;
                 if (!fails)
                 {
-                    File.WriteAllText(request.Arguments[^1], "clip");
+                    File.WriteAllText(request.Arguments[^1], Path.GetFileName(request.Arguments[^1]));
                 }
 
                 return Task.FromResult(new ToolProcessResult(fails ? 8 : 0, TimeSpan.Zero, KillReason.None));

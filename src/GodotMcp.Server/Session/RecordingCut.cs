@@ -144,6 +144,7 @@ internal static class RecordingCut
         List<string> clips = [];
         List<string> notes = [];
         List<string> warnings = [];
+        Dictionary<string, int> delivered = new(StringComparer.OrdinalIgnoreCase);
         foreach (ClipSpan span in recording.Clips())
         {
             ClipOutcome outcome = await CutClipAsync(context, span, clips.Count + 1, cancellationToken);
@@ -160,7 +161,7 @@ internal static class RecordingCut
                 };
             }
 
-            clips.Add(Place(clip, span, warnings));
+            clips.Add(Place(clip, span, clips.Count + 1, warnings, delivered));
         }
 
         return DeleteFullMovie(recording.Path, clips, notes, warnings);
@@ -168,9 +169,11 @@ internal static class RecordingCut
 
     /// <summary>
     /// Where a cut clip ends up: moved to its start mark's destination, if any, or kept beside the movie when it has none, when
-    /// it fell back to the movie's own container, or when the move fails, each failure adding to <paramref name="warnings"/>.
+    /// it fell back to the movie's own container, when the move fails, or when its destination now reaches a file an earlier
+    /// clip in <paramref name="delivered"/> went to, each failure adding to <paramref name="warnings"/>; a delivered clip's
+    /// final path joins <paramref name="delivered"/> under its 1-based <paramref name="number"/>.
     /// </summary>
-    private static string Place(string clip, ClipSpan span, List<string> warnings)
+    private static string Place(string clip, ClipSpan span, int number, List<string> warnings, Dictionary<string, int> delivered)
     {
         if (span.Destination is not { } destination)
         {
@@ -183,7 +186,12 @@ internal static class RecordingCut
             return clip;
         }
 
-        (string placed, string? warning) = ClipDelivery.Deliver(clip, destination, span.Overwrite);
+        (string placed, string? final, string? warning) = ClipDelivery.Deliver(clip, destination, span.Overwrite, delivered);
+        if (final is not null)
+        {
+            delivered.Add(final, number);
+        }
+
         if (warning is not null)
         {
             warnings.Add(warning);

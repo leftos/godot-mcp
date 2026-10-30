@@ -20,6 +20,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- Two `record_mark` clips of one recording can no longer reach the same file through a junction or link and overwrite each other.
 - A `save_screenshot` or `record_mark` destination of 260 characters or more is written, not refused as a path Windows cannot give.
 - A `save_screenshot` or `record_mark` clip write that fails no longer leaves behind the empty folders it made for its path.
 - A headless `run_project` or `run_scratches` game lays out at the project's window size, not 64x64, without `--resolution`.

@@ -3,11 +3,18 @@ using ModelContextProtocol;
 
 namespace GodotMcp.Server.Tools;
 
-/// <summary>A checked destination: the places it was checked against, the path as the caller gave it, and its full path.</summary>
+/// <summary>
+/// A checked destination: the places it was checked against, the path as the caller gave it, its full path, and the file
+/// it reaches once every link is followed.
+/// </summary>
 /// <param name="Places">The places the path was checked against, kept so the write checks it again against the same.</param>
 /// <param name="Requested">The path as the caller gave it, which refusals quote.</param>
 /// <param name="FullPath">The file the path names.</param>
-internal sealed record OutputTarget(OutputPlaces Places, string Requested, string FullPath);
+/// <param name="FinalPath">
+/// The file the path reaches as Windows gives it, every link on the way followed, so two spellings of one file compare
+/// equal; off Windows, the full path.
+/// </param>
+internal sealed record OutputTarget(OutputPlaces Places, string Requested, string FullPath, string FinalPath);
 
 /// <summary>
 /// The rule for a file the caller names for a still or a clip: it ends in the output's extension, is project-relative,
@@ -40,21 +47,23 @@ internal static partial class OutputDestination
         "LPT³",
     ];
 
-    /// <summary>The full path <paramref name="path"/> names, checked, and refused when it exists without <paramref name="overwrite"/>.</summary>
+    /// <summary>The destination <paramref name="path"/> names, checked, and refused when it exists without <paramref name="overwrite"/>.</summary>
     /// <param name="places">Where the output may lie.</param>
     /// <param name="path">Project-relative, res:// or fully qualified.</param>
     /// <param name="extension">The extension the path must end in, such as ".png".</param>
     /// <param name="overwrite">Whether an existing file there may be replaced.</param>
     /// <exception cref="McpException">The path breaks the rule, or names an existing file without <paramref name="overwrite"/>.</exception>
-    internal static string Resolve(OutputPlaces places, string path, string extension, bool overwrite)
+    internal static OutputTarget Resolve(OutputPlaces places, string path, string extension, bool overwrite)
     {
-        string full = Check(places, path, extension);
-        return overwrite || !File.Exists(full) ? full : throw new McpException($"{path} exists; pass options.overwrite true to replace it");
+        OutputTarget target = Check(places, path, extension);
+        return overwrite || !File.Exists(target.FullPath)
+            ? target
+            : throw new McpException($"{path} exists; pass options.overwrite true to replace it");
     }
 
-    /// <summary>The full path <paramref name="path"/> names, checked against the rule; whether a file is there is not checked.</summary>
+    /// <summary>The destination <paramref name="path"/> names, checked against the rule; whether a file is there is not checked.</summary>
     /// <exception cref="McpException">The path breaks the rule, or the project is on a network path.</exception>
-    internal static string Check(OutputPlaces places, string path, string extension)
+    internal static OutputTarget Check(OutputPlaces places, string path, string extension)
     {
         if (!path.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
         {
@@ -76,8 +85,8 @@ internal static partial class OutputDestination
 
         string full = Path.GetFullPath(Path.IsPathRooted(relative) ? relative : Path.Combine(places.Project, relative));
         CheckLocalDrive(path, full);
-        new DestinationCheck(places, path, isRes).Run(full, relative);
-        return full;
+        string final = new DestinationCheck(places, path, isRes).Run(full, relative);
+        return new OutputTarget(places, path, full, final);
     }
 
     /// <summary>
@@ -386,7 +395,8 @@ internal static partial class OutputDestination
         /// following every link and holding every position the walk reaches to the places, then holds the final path Windows
         /// gives to the places in their final forms.
         /// </summary>
-        public void Run(string full, string written)
+        /// <returns>The final path Windows gives for the file; off Windows, <paramref name="full"/>.</returns>
+        public string Run(string full, string written)
         {
             OutputPlace place = PlaceOf(full, finalOnly: false) ?? throw new McpException(OutsideMessage());
             string fromWalk = Path.GetRelativePath(place.WalkFrom, full);
@@ -402,7 +412,7 @@ internal static partial class OutputDestination
             }
 
             CheckNames(path, written);
-            CheckFinalPath(full, Walk(place.WalkFrom, Parts(fromWalk)));
+            return CheckFinalPath(full, Walk(place.WalkFrom, Parts(fromWalk)));
         }
 
         private string OutsideMessage() =>
@@ -631,11 +641,12 @@ internal static partial class OutputDestination
         /// components below it, to the places in their final forms: long names, every link Windows follows, followed. The
         /// requested path's own deepest existing part must reach the same final path, so a link the walk misread is caught.
         /// </summary>
-        private void CheckFinalPath(string full, Walked walked)
+        /// <returns>The final path with the missing components below it; off Windows, <paramref name="full"/>, unchecked.</returns>
+        private string CheckFinalPath(string full, Walked walked)
         {
             if (!OperatingSystem.IsWindows())
             {
-                return;
+                return full;
             }
 
             string final = FinalOf(walked.Existing);
@@ -652,7 +663,9 @@ internal static partial class OutputDestination
                 throw new McpException($"path {path} leads to {reckoned} by Windows' reckoning but to {final} by its links; it is not written");
             }
 
-            CheckReached(Path.Combine([final, .. walked.Missing]), finalOnly: true);
+            string reached = Path.Combine([final, .. walked.Missing]);
+            CheckReached(reached, finalOnly: true);
+            return reached;
         }
 
         private static string Ancestor(string full, int levels)

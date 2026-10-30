@@ -1355,7 +1355,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   The path is checked at `start` and again when the clip is delivered, against the places found at the start (no git runs at the delivery). A Movie Maker start mark takes only `path` and `overwrite`; a start that sets `fps`, `maxSeconds` or `audio` is refused: `a Movie Maker recording's start mark takes only options.path and options.overwrite; fps, maxSeconds and audio set a real-time recording`.
 
-  A Movie Maker mark that names a path an earlier clip of the same recording goes to is refused: `path {path} is already where clip {n} of this recording goes; name another file`.
+  A Movie Maker mark that names a path an earlier clip of the same recording goes to is refused: `path {path} is already where clip {n} of this recording goes; name another file`. The paths are compared as the files they reach, links followed, so two spellings of one file through a junction are refused too, and so is a destination that is itself a link to an earlier clip's file. At the cut each clip's destination is checked again, so one that now leads to the file an earlier clip was delivered to (a junction made after the marks) is kept in recordings/ with the warning `the clip could not be moved to {dest}: clip {n} of this recording was delivered to {final}; it is kept at {clip}`.
 
   The `start` result gains `destination`, the full path, left out without a `path`; `list_sessions.recording` of a running real-time recording shows it too. The `path` of a real-time `start` and of a running `list_sessions` entry is the `.mp4` under `recordings/` that the capture is remuxed to.
 

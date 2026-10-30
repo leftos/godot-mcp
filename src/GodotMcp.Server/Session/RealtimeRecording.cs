@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
 using System.Text;
@@ -963,9 +964,9 @@ internal sealed partial class RealtimeRecording
         }
 
         string? mkvLeft = DeleteFiles([Paths.Mkv]);
-        (string clipPath, string? undelivered) = _start.Destination is { } destination
-            ? ClipDelivery.Deliver(Paths.Mp4, destination, _start.Overwrite)
-            : (Paths.Mp4, null);
+        (string clipPath, _, string? undelivered) = _start.Destination is { } destination
+            ? ClipDelivery.Deliver(Paths.Mp4, destination, _start.Overwrite, ReadOnlyDictionary<string, int>.Empty)
+            : (Paths.Mp4, null, null);
         RealtimeClip clip = Clip(length, clipPath);
         return new RealtimeOutcome(new RealtimeStopped(clip, Warnings(helper, clip, [_endNote, deadlineLeft, mkvLeft, undelivered])), null);
     }

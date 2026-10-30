@@ -140,7 +140,7 @@ internal sealed partial class RuntimeTools
         }
 
         var places = OutputPlaces.Find(target.ProjectDir, target.Logger);
-        return new OutputTarget(places, path, OutputDestination.Resolve(places, path, ClipExtension, started.Overwrite));
+        return OutputDestination.Resolve(places, path, ClipExtension, started.Overwrite);
     }
 
     /// <summary>

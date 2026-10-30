@@ -33,7 +33,7 @@ internal static class ScreenshotTarget
     internal static OutputTarget Resolve(string projectDir, string path, bool overwrite, ILogger logger)
     {
         var places = OutputPlaces.Find(projectDir, logger);
-        return new OutputTarget(places, path, OutputDestination.Resolve(places, path, Extension, overwrite));
+        return OutputDestination.Resolve(places, path, Extension, overwrite);
     }
 
     /// <summary>
@@ -53,7 +53,7 @@ internal static class ScreenshotTarget
             throw new McpException($"the capture {capturePath} is not under the session's screenshots folder {folder}; it is not copied");
         }
 
-        string destination = OutputDestination.Check(target.Places, target.Requested, Extension);
+        string destination = OutputDestination.Check(target.Places, target.Requested, Extension).FullPath;
         try
         {
             using FileStream capture = new(capturePath, FileMode.Open, FileAccess.Read, FileShare.Read);
