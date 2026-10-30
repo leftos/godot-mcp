@@ -205,6 +205,8 @@ Prefer it for any change of more than one edit, then `validate`, then `preview_s
 
   A change an earlier tool call made can rise and fall before your next call's first check (that call reaches the game 0.2 s to seconds later), so put the call that causes the change in the same request: `start.call` (shaped as `options.call`; the bridge takes the start's baseline check, then calls, so the start sees its own call's rise), or `wait_for`'s `options.call`. An `every` series always has a point at 0, taken one frame into `options.call`'s motion, not before it.
 
+  While a run records (`record: true`) the game runs uncapped and its clock keeps going between your calls, often faster than real time, so a 4 s effect a call started can be over before your next call looks: observe a timed effect in the request that starts it.
+
   `wait_for` takes the same `options.call` with `{gameMs}`, `{frames}`, `{node, exists}`, `{node, property, equals}` or `{expression}`: the call runs in the frame the checks start and the first check follows it, so a step and its condition share a clock; a `signal`, `uiChanged` (`true` or `"now"`) or `output` wait refuses it.
 
   A game driven by InputMap actions: `simulate_action {action}` taps one. To hunt a crash no scripted drive finds: `stress_input {pool, count, seed}` fires random actions, keys and element clicks and reports the new errors by the iteration they appeared at; pass a failing run's `seed` back to replay it.

@@ -1327,6 +1327,8 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 - **Use:** bracket the moment worth keeping; when the run ends (`stop_project`, the game quitting, `restart_project`) each start-stop pair is cut to its own file with ffmpeg, and a start left open clips to the end. A start that names a `path` has its clip moved there once it is cut.
 - **Edges:** marks alternate start, stop. A recording runs at a fixed 60 fps, so game time advances 1/60 s a frame whatever the wall clock does, and the game runs uncapped.
 
+  Game time therefore keeps running between tool calls, faster than the wall clock on a light scene (measured 4x) and somewhat slower on a heavy one (0.8x on one game's staging scene): an effect a call starts (a 4 s tween) can finish during the agent's think time before its next call looks. Observe a timed effect in the request that starts it: `capture_frames` or `watch` with `options.call`, `wait_for` with `options.call` and `options.screenshot` or `options.then.pause`, or calls sent together in one turn.
+
   `wait_for`'s `timeoutMs` and the gesture durations (`drag`'s `durationMs`, `hover`'s tooltip wait, a gamepad sweep) count clip time, 60 frames a second, and a wait's result adds `clipMs`; a recorded wait is released after 10 s + 100 ms a frame of load-adjusted time, so a long wait in a slow game can meet `batch_drive`'s 300 s deadline.
 
   A game started with `--write-movie` by hand and then attached keeps wall-clock durations. Capped at 10 minutes of frames; not with `--headless`. Without ffmpeg the full movie is kept and the result reports an error. If the server exits, the movie is lost: the server's shutdown does not cut a movie's clips.
