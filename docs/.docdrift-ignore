@@ -1,0 +1,20 @@
+# Runtime state the server writes into a game's .godot/godot-mcp/ or its install folder
+armed.json
+attach.json
+remote.json
+runtimeconfig.json
+# A file the docs name as absent by design
+pyproject.toml
+# A game repo's own script that run_scratches replaces
+Run-Scratches.ps1
+# Godot engine source files, cited from F:\Godot\src-4.7.2
+ExtensionMethods.cs
+GodotPlugins.runtimeconfig.json
+GodotSharp/Api/Debug/GodotPlugins.runtimeconfig.json
+InteropUtils.cs
+Main.cs
+PluginLoadContext.cs
+ScriptManagerBridge.cs
+ScriptMethodsGenerator.cs
+ScriptPathAttributeGenerator.cs
+ScriptPropertiesGenerator.cs
