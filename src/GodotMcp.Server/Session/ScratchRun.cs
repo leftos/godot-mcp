@@ -253,9 +253,10 @@ internal sealed class ScratchStepNames(IReadOnlyList<string> names, IReadOnlySet
 /// <summary>
 /// Plays one scratch scene in a headless game session of its own, as an agent would with the runtime tools: launches it,
 /// asks the game for its current scene's path, checks that root for the scratch protocol, reads its step names and takes the
-/// error feed's entries so far, the boot's: an error among them fails the scene before any step plays (the lines printed so far
-/// are never judged). A step pace keyed to no single step, or an options.steps token naming none, refuses the scene before any
-/// step plays. Then per step it plays (every step, or a partial run's selected steps with the setup steps its profile adds to them,
+/// error feed's entries so far, the boot's: an error among them, or a line printed so far that a pattern matches, fails the scene
+/// before any step plays. A step pace key naming two steps, two keys naming one step, or an options.steps token naming none,
+/// refuses the scene before any step plays; a step pace key naming no step is skipped and named in the scene's warnings. Then
+/// per step it plays (every step, or a partial run's selected steps with the setup steps its profile adds to them,
 /// in ascending order) it calls PlayStep, waits the step's pace in game time (for a root that has GetStepUntil and a step it gives
 /// a condition, plays the step inside one wait_for on that condition instead, PlayStep the wait's call, until it holds or the pace
 /// has passed in game time), reads GetStatus and takes the feed's entries since the last window, stopping at the first failed
@@ -325,6 +326,7 @@ internal sealed class ScratchRun
     private string _rootPath = string.Empty;
     private List<string> _launchLines = [];
     private IReadOnlyList<ErrorEntry> _bootErrors = [];
+    private readonly List<string> _warnings = [];
     private List<string> _paceLines = [];
     private string? _afterError;
     private long _feedMark;
@@ -468,29 +470,37 @@ internal sealed class ScratchRun
 
     /// <summary>
     /// Each of the steps <paramref name="names"/> lists' pace and why: the scene's, or a step pace keyed by the step's index, else
-    /// by its name; or why a key names no single step, or two keys name one step.
+    /// by its name; or why a key names two steps, or two keys name one step. A key naming no step sets no step's pace and is
+    /// named in the warnings.
     /// </summary>
-    internal static (ScratchPace[] Paces, string? Error) StepPaces(ScratchScenePlan scene, ScratchStepNames names)
+    internal static (ScratchPace[] Paces, string? Error, IReadOnlyList<string> Warnings) StepPaces(ScratchScenePlan scene, ScratchStepNames names)
     {
         ScratchPace scenePace = new(scene.Pace, scene.PaceReason);
         ScratchPace[] paces = [.. names.Select(_ => scenePace)];
         Dictionary<int, string> keyOf = [];
+        List<string> warnings = [];
         foreach ((string key, ScratchPace pace) in scene.StepPaces)
         {
+            if (!IsIndex(key, names.Count, out _) && !names.Contains(key, StringComparer.Ordinal))
+            {
+                warnings.Add($"scratch.pace.steps key \"{key}\" matches no step of {scene.Name}, so it sets no step's pace");
+                continue;
+            }
+
             (int step, string? error) = StepOf(key, PaceKeyLabel, scene.Name, names);
             error ??= keyOf.TryGetValue(step, out string? other)
                 ? $"pace.steps keys \"{other}\" and \"{key}\" of {scene.Name} both name step {step}; keep one"
                 : null;
             if (error is not null)
             {
-                return ([], error);
+                return ([], error, warnings);
             }
 
             keyOf[step] = key;
             paces[step] = pace;
         }
 
-        return (paces, null);
+        return (paces, null, warnings);
     }
 
     /// <summary>
@@ -854,7 +864,7 @@ internal sealed class ScratchRun
             return Seen(session.Name) with { Refusal = refusal };
         }
 
-        if (_names.Count > 0 && ScratchVerdict.FeedError(_bootErrors) is null)
+        if (_names.Count > 0 && !ScratchVerdict.RedAtBoot(_bootErrors, _launchLines, _plan.Patterns))
         {
             _deadline = _registry.Clock.Start(_walk.Ceiling, cancellationToken);
             await PlayStepsAsync(session, _deadline.Token);
@@ -921,7 +931,7 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// Reads the step count and every step's name, then closes the launch window: its lines are never judged, and the error
+    /// Reads the step count and every step's name, then closes the launch window: its lines are the boot's, as the error
     /// feed's entries so far are the boot's.
     /// </summary>
     private async Task<string?> ReadStepsAsync(GodotSession session, CancellationToken cancellationToken)
@@ -956,7 +966,8 @@ internal sealed class ScratchRun
             return nameError;
         }
 
-        (ScratchPace[] paces, string? paceError) = StepPaces(_scene, NamedSteps);
+        (ScratchPace[] paces, string? paceError, IReadOnlyList<string> paceWarnings) = StepPaces(_scene, NamedSteps);
+        _warnings.AddRange(paceWarnings);
         if (paceError is not null)
         {
             return paceError;
@@ -1333,6 +1344,7 @@ internal sealed class ScratchRun
             StepNames = NamedSteps,
             TimeScale = _scene.TimeScale == _plan.TimeScale ? null : _scene.TimeScale,
             ExitHold = _scene.ExitHold,
+            Warnings = [.. _warnings],
         };
 
     private static int WholeNumber(JsonNode? node) =>

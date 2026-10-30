@@ -50,7 +50,7 @@ public sealed class ScratchFolderTests : IAsyncDisposable
         "green",
         "red",
         "red",
-        "green",
+        "red",
         "known",
         "green",
         "green",
@@ -124,7 +124,7 @@ public sealed class ScratchFolderTests : IAsyncDisposable
         Assert.Equal(FolderVerdicts, scenes.Select(scene => scene!["verdict"]!.GetValue<string>()));
         Assert.Equal(FolderScenes.Select(name => "InputProbe.scratch-" + name), scenes.Select(scene => scene!["session"]!.GetValue<string>()));
         Assert.False(result["passed"]!.GetValue<bool>());
-        Assert.Equal((9, 9, 1, 1, 1), Counts(result));
+        Assert.Equal((8, 10, 1, 1, 1), Counts(result));
     }
 
     internal static (int Green, int Red, int Known, int NoSteps, int Killed) Counts(JsonObject result) =>

@@ -78,12 +78,18 @@ public sealed class ScratchRunnerTests : ScratchRunBase
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
-    public async Task LaunchLinesAreNeverJudgedAndARenamedRootIsFound()
+    public async Task ALaunchLineMatchingAPatternIsRedAtTheBootAndARenamedRootIsFound()
     {
         JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchLaunchNoise"], options: null, TestContext.Current.CancellationToken));
 
-        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
-        Assert.Equal(1, scene["steps"]!["played"]!.GetValue<int>());
+        JsonNode failedAt = scene["failedAt"]!;
+        Assert.Equal("red", scene["verdict"]!.GetValue<string>());
+        Assert.Equal(
+            (-1, "boot", "ERROR: launch noise"),
+            (failedAt["index"]!.GetValue<int>(), failedAt["name"]!.GetValue<string>(), failedAt["error"]!.GetValue<string>())
+        );
+        Assert.NotNull(failedAt["pattern"]);
+        Assert.Equal((0, 1), (scene["steps"]!["played"]!.GetValue<int>(), scene["steps"]!["total"]!.GetValue<int>()));
         DebugOutput output = _harness.Sessions.GetDebugOutput("InputProbe.scratch-ScratchLaunchNoise", 100, before: null);
         Assert.Contains("ERROR: launch noise", output.Stderr);
     }

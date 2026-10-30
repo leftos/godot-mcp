@@ -97,11 +97,31 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
-    public void LinesBeforeTheFirstStepAreNeverJudged()
+    public void ABootLineMatchingAPatternTurnsTheSceneRedAtBoot()
     {
-        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0)) with { LaunchLines = ["ERROR: launch noise", "SCRIPT ERROR: early"] }, Plain);
+        IReadOnlyList<ScratchPattern> patterns = [new ScratchPattern(ScratchProfile.Compile(@"^\[Warning\] slow"), "boot warnings fail")];
+        ScratchObservation seen = Seen() with { Total = 2, LaunchLines = ["loaded", "[Warning] slow shader", "[Warning] slow again"] };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(seen, Plain with { Patterns = patterns, Details = ScratchDetails.Full, Known = "flaky" });
+
+        Assert.Equal(ScratchVerdict.Red, result.Verdict);
+        Assert.Equal(
+            new ScratchFailure(-1, "boot", "[Warning] slow shader", "") { Pattern = new ScratchMatch(@"^\[Warning\] slow", "boot warnings fail") },
+            result.FailedAt
+        );
+        Assert.Equal(new ScratchStepCount(0, 2), result.Steps);
+        Assert.Null(result.Details);
+        Assert.Null(result.Known);
+        Assert.False(ScratchVerdict.PlaysAgainAlone(result, parallel: 2));
+    }
+
+    [Fact]
+    public void ABootLineMatchingNoPatternLeavesTheBootGreen()
+    {
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0)) with { LaunchLines = ["error: lower case", "  ERROR: indented"] }, Plain);
 
         Assert.Equal(ScratchVerdict.Green, result.Verdict);
+        Assert.Null(result.FailedAt);
         Assert.Null(result.Exit.Lines);
     }
 
@@ -1020,7 +1040,7 @@ public sealed class ScratchVerdictTests
     {
         ScratchScenePlan scene = PacedScene(new() { ["1"] = new ScratchPace(30, "the fight plays long"), ["close"] = new ScratchPace(2, null) });
 
-        (ScratchPace[] paces, string? error) = ScratchRun.StepPaces(scene, ["open", "fight", "close", "rest"]);
+        (ScratchPace[] paces, string? error, _) = ScratchRun.StepPaces(scene, ["open", "fight", "close", "rest"]);
 
         Assert.Null(error);
         Assert.Equal([0.5, 30, 2, 0.5], paces.Select(pace => pace.Seconds));
@@ -1032,7 +1052,7 @@ public sealed class ScratchVerdictTests
     {
         ScratchScenePlan scene = PacedScene(new() { ["03"] = new ScratchPace(3, null) });
 
-        (ScratchPace[] paces, string? error) = ScratchRun.StepPaces(scene, ["a", "b", "c", "d", "03"]);
+        (ScratchPace[] paces, string? error, _) = ScratchRun.StepPaces(scene, ["a", "b", "c", "d", "03"]);
 
         Assert.Null(error);
         Assert.Equal([0.5, 0.5, 0.5, 0.5, 3], paces.Select(pace => pace.Seconds));
@@ -1076,30 +1096,55 @@ public sealed class ScratchVerdictTests
     {
         ScratchScenePlan scene = PacedScene(new() { ["0"] = new ScratchPace(3, null), ["7"] = new ScratchPace(4, null) });
 
-        (ScratchPace[] paces, string? error) = ScratchRun.StepPaces(scene, ["first", "0", "7"]);
+        (ScratchPace[] paces, string? error, _) = ScratchRun.StepPaces(scene, ["first", "0", "7"]);
 
         Assert.Null(error);
         Assert.Equal([3, 0.5, 4], paces.Select(pace => pace.Seconds));
     }
 
     [Theory]
-    [InlineData("5", "pace.steps key \"5\" of Paced matches no step; its steps are 0 open, 1 hit, 2 hit")]
-    [InlineData("shut", "pace.steps key \"shut\" of Paced matches no step; its steps are 0 open, 1 hit, 2 hit")]
-    [InlineData("-1", "pace.steps key \"-1\" of Paced matches no step; its steps are 0 open, 1 hit, 2 hit")]
-    [InlineData("hit", "pace.steps key \"hit\" of Paced names 2 steps (1, 2); key it by index")]
-    public void AStepPaceKeyThatMatchesNoSingleStepIsRefused(string key, string refusal)
+    [InlineData("5")]
+    [InlineData("shut")]
+    [InlineData("-1")]
+    public void AStalePaceKeyIsNamedInTheScenesWarningsAndThePlayGoesOn(string key)
     {
         ScratchScenePlan scene = PacedScene(new() { ["open"] = new ScratchPace(1, null), [key] = new ScratchPace(2, null) });
 
-        Assert.Equal(refusal, ScratchRun.StepPaces(scene, ["open", "hit", "hit"]).Error);
+        (ScratchPace[] paces, string? error, IReadOnlyList<string> warnings) = ScratchRun.StepPaces(scene, ["open", "hit", "hit"]);
+
+        Assert.Null(error);
+        Assert.Equal([1, 0.5, 0.5], paces.Select(pace => pace.Seconds));
+        Assert.Equal([$"scratch.pace.steps key \"{key}\" matches no step of Paced, so it sets no step's pace"], warnings);
     }
 
     [Fact]
-    public void AStepPaceKeyOnASceneWithoutStepsIsRefused() =>
+    public void AStepPaceKeyNamingTwoStepsIsRefused()
+    {
+        ScratchScenePlan scene = PacedScene(new() { ["open"] = new ScratchPace(1, null), ["hit"] = new ScratchPace(2, null) });
+
+        (_, string? error, IReadOnlyList<string> warnings) = ScratchRun.StepPaces(scene, ["open", "hit", "hit"]);
+
+        Assert.Equal("pace.steps key \"hit\" of Paced names 2 steps (1, 2); key it by index", error);
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void AStepPaceKeyOnASceneWithoutStepsIsAWarning() =>
         Assert.Equal(
-            "pace.steps key \"0\" of Paced matches no step; it has no steps",
-            ScratchRun.StepPaces(PacedScene(new() { ["0"] = new ScratchPace(1, null) }), []).Error
+            ["scratch.pace.steps key \"0\" matches no step of Paced, so it sets no step's pace"],
+            ScratchRun.StepPaces(PacedScene(new() { ["0"] = new ScratchPace(1, null) }), []).Warnings
         );
+
+    [Fact]
+    public void ASceneCarriesItsWarningsAndOmitsThemWhenItHasNone()
+    {
+        ScratchSceneResult warned = ScratchVerdict.Judge(Seen(Step(0)) with { Warnings = ["a stale key"] }, Plain);
+        ScratchSceneResult plain = ScratchVerdict.Judge(Seen(Step(0)), Plain);
+
+        Assert.Equal(ScratchVerdict.Green, warned.Verdict);
+        Assert.Equal(["a stale key"], Json(warned)["warnings"]!.AsArray().Select(item => item!.GetValue<string>()));
+        Assert.False(Json(plain).ContainsKey("warnings"));
+    }
 
     [Fact]
     public void TwoStepPaceKeysForOneStepAreRefused() =>

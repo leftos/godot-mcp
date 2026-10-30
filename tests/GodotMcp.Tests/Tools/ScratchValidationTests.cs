@@ -535,11 +535,24 @@ public sealed class ScratchValidationTests : IDisposable
     public void ParallelIsTheOptionsElseTheProfilesElseOne()
     {
         ScratchPlan none = Plan(["res://Other.tscn"]);
+        WriteScene("Scratch/Gamma.tscn", "Gamma");
         WriteProfile("""{ "scratch": { "folder": "Scratch", "parallel": 3 } }""");
         ScratchPlan profiled = Plan(null);
         ScratchPlan given = Plan(null, new ScratchOptions(Parallel: 2));
 
         Assert.Equal((1, 3, 2), (none.Parallel, profiled.Parallel, given.Parallel));
+    }
+
+    [Fact]
+    public void AOneSceneRunPlansOneSlotWhateverParallelSays()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch", "parallel": 4 } }""");
+
+        ScratchPlan given = Plan(["res://Other.tscn"], new ScratchOptions(Parallel: 3));
+        ScratchPlan profiled = Plan(["Beta"]);
+        ScratchPlan folder = Plan(null);
+
+        Assert.Equal((1, 1, 2), (given.Parallel, profiled.Parallel, folder.Parallel));
     }
 
     [Fact]

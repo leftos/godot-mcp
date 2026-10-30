@@ -71,7 +71,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "A step fails "
             + "on an error the game logs (push_error, an engine error, a C# exception) or a stdout or stderr line matching the "
             + "profile's scratch.patterns; after the steps the game is stopped and a non-zero exit or an ObjectDB leak turns the "
-            + "scene red. Settings live in godot-mcp.json's scratch section "
+            + "scene red. An error logged, or a line matching scratch.patterns printed, between the launch and the first step turns "
+            + "the scene red at the boot (failedAt index -1, name \"boot\", with pattern for a line) and plays no step. "
+            + "Settings live in godot-mcp.json's scratch section "
             + "{folder, userArgs, engineArgs, pace, ceilings, setup, known, patterns, expect, expectFor, parallel}, where setup "
             + "{<scene>: [step, ...]} "
             + "names a scene's declared setup steps, which a run given options.steps adds to the selection; a key is resolved only "
@@ -81,21 +83,24 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "naming each pattern never matched and its reason, a red step keeping its failedAt; a killed, refused or no-steps "
             + "scene and a run given options.steps that plays only part of a scene are not checked. Scenes "
             + "start parallel at a time: those listed in scenes in that order, a folder run's largest pace (a scene's or "
-            + "one of its steps') divided by the scene's time scale first; with more than one, a red or killed scene (not known, "
+            + "one of its steps') divided by the scene's time scale first; with parallel above 1 and more than one scene, a red or "
+            + "killed scene (not known, "
             + "not refused before its first "
             + "step) is played once more alone after the others: green alone, its entry is the replay's with alone: true and counts "
             + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
             + "{passed, green, red, known, noSteps, killed, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, "
             + "scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, stepList?, timeScale?, pace, paceReason?, exitHold?, seconds, "
             + "session, failedAt?, failures?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?, missing?}, known?, "
-            + "alone?, "
+            + "warnings?, alone?, "
             + "aloneFailedAt?}], timeScale?}, scenes in the order given; selected lists the indices options.steps selected, setup the "
             + "setup steps the run added to them, both fixed when the steps resolve, so a scene stopped at a step, at the boot or by "
             + "a kill still lists them; "
             + "timeScale is options.timeScale when it is not 1, and a scene's own timeScale (1) shows its game ran at another speed "
             + "than the call's, its scratch.pace entry having \"timeScale\": 1; "
             + "failedAt is the first failed step and failures [{index, name, error}] "
-            + "every one; failedAt.pattern {pattern, reason?} names the scratch.patterns entry a failing line matched; details "
+            + "every one; warnings lists, one sentence each, what the run noticed of a scene without failing it: a scratch.pace.steps "
+            + "key naming no step of it, which sets no step's pace (a key naming two steps, or two keys one step, refuses the scene); "
+            + "failedAt.pattern {pattern, reason?} names the scratch.patterns entry a failing line matched; details "
             + "lists every played step of a red or killed scene, or of any scene with options.details, by its status line "
             + "{index, name, ok, gameMs?, until?, status}, or with options.details \"compact\" a green step as one line, \"<index> ok "
             + "<name> <gameMs>ms\" or \"... until met|unmet <ms>ms\", then \" | \" and its [scratch] notes joined by \" / \", cut at "
@@ -352,7 +357,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         return new ScratchPlan(projectDir, plans, scratch.Patterns, prepare, details)
         {
             DetailChars = options.DetailChars ?? ScratchVerdict.DefaultDetailChars,
-            Parallel = options.Parallel ?? scratch.Parallel,
+            Parallel = Math.Max(1, Math.Min(options.Parallel ?? scratch.Parallel, plans.Count)),
             Listed = scenes is not null,
             SessionPrefix = prefix,
             KeepGoing = options.KeepGoing ?? false,
@@ -979,7 +984,8 @@ internal sealed record ScratchOptions(
     )]
         int? DetailChars = null,
     [property: Description(
-        "How many scenes play at once, 1 to 4; else the profile's scratch.parallel, else 1. Above 1, a red or killed scene is "
+        "How many scenes play at once, 1 to 4; else the profile's scratch.parallel, else 1; never more than the scenes in the run. "
+            + "With parallel above 1 and more than one scene, a red or killed scene is "
             + "played once more alone after the others."
     )]
         int? Parallel = null,

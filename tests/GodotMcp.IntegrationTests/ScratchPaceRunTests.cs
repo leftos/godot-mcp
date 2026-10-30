@@ -128,7 +128,7 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
-    public async Task AStepPaceKeyThatMatchesNoStepIsRedBeforeAnyStepPlays()
+    public async Task AStepPaceKeyThatMatchesNoStepIsAWarningAndTheScenePlaysOn()
     {
         string profile = """
             {
@@ -142,14 +142,12 @@ public sealed class ScratchPaceRunTests : ScratchRunBase
 
         JsonObject scene = Single(await RunAsync(_probe.Directory, ["ScratchGreen"], options: null, TestContext.Current.CancellationToken));
 
-        JsonNode failedAt = scene["failedAt"]!;
-        Assert.Equal("red", scene["verdict"]!.GetValue<string>());
-        Assert.Equal(-1, failedAt["index"]!.GetValue<int>());
+        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
         Assert.Equal(
-            "pace.steps key \"shut\" of ScratchGreen matches no step; its steps are 0 open, 1 move, 2 close",
-            failedAt["error"]!.GetValue<string>()
+            ["scratch.pace.steps key \"shut\" matches no step of ScratchGreen, so it sets no step's pace"],
+            scene["warnings"]!.AsArray().Select(warning => warning!.GetValue<string>())
         );
-        Assert.Equal((0, 3), (scene["steps"]!["played"]!.GetValue<int>(), scene["steps"]!["total"]!.GetValue<int>()));
+        Assert.Equal((3, 3), (scene["steps"]!["played"]!.GetValue<int>(), scene["steps"]!["total"]!.GetValue<int>()));
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
