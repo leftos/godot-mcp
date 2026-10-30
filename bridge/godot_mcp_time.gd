@@ -2,7 +2,7 @@ extends Node
 ## The godot-mcp bridge's clock, a child of the bridge: pauses, resumes and steps the scene tree
 ## (the step itself runs in its Step child, godot_mcp_step.gd, under this clock's running mark),
 ## sets Engine.time_scale, waits for a condition checked each frame, and captures frames at
-## points of game time.
+## points of game time. A signal wait runs in its SignalWait child, godot_mcp_signal_wait.gd.
 ##
 ## It runs while the tree is paused: the bridge is PROCESS_MODE_ALWAYS and this child inherits
 ## it (scene/main/node.cpp L907-935 in 4.7.2), and SceneTree emits process_frame and
@@ -12,6 +12,7 @@ extends Node
 signal step_woken(arrived: bool)
 
 const STEP_SCRIPT := "godot_mcp_step.gd"
+const SIGNAL_WAIT_SCRIPT := "godot_mcp_signal_wait.gd"
 const PAUSED_REFUSAL := (
 	"The game is paused, so only a signal wait or a check-once wait (timeoutMs 0) can be met; "
 	+ "resume or step it first."
@@ -51,6 +52,8 @@ var bridge: Node
 ## The tree a met then pauses, get_tree() when null: gdtest's stand-ins replace it, since its nodes
 ## are outside any tree.
 var then_tree: Object = null
+## The SignalWait child (godot_mcp_signal_wait.gd beside this script), which runs a signal wait.
+var signal_wait: Node
 ## What runs now, "step" or "frames" (capture_frames), or empty: while one runs, pause, resume, a
 ## step and a capture are refused until it ends.
 var _running: String = ""
@@ -69,6 +72,10 @@ func _init() -> void:
 	_stepper.name = "Step"
 	_stepper.time = self
 	add_child(_stepper)
+	signal_wait = (load(script_dir.path_join(SIGNAL_WAIT_SCRIPT)) as GDScript).new()
+	signal_wait.name = "SignalWait"
+	signal_wait.time = self
+	add_child(signal_wait)
 
 
 ## Runs params.action: pause, resume, step {count, unit, screenshot, previewMaxWidth} or
@@ -244,7 +251,7 @@ func _await_start(params: Dictionary, start: Dictionary, frame: Signal) -> Dicti
 	var start_called: Dictionary = {}
 	var outcome: Dictionary
 	if str(params["start"].get("kind", "")) == "signal":
-		outcome = await _poll_signal_start(params, start_called, frame)
+		outcome = await signal_wait._poll_signal_start(params, start_called, frame)
 	else:
 		outcome = await _poll_probe_start(params, start_called)
 	outcome = _start_outcome(outcome, params)
@@ -272,28 +279,6 @@ func _poll_probe_start(params: Dictionary, called: Dictionary) -> Dictionary:
 	var outcome: Dictionary = await _poll(probe, float(timeout_ms), params)
 	bridge._conditions.add_failed_checks(outcome, failures)
 	return outcome
-
-
-## A signal start, connected as wait_for's signal wait connects (_wait_for_signal): now, or with
-## start.call in frame's next emission right before the call, whose {value} goes into called; then
-## polled (_poll), so it is met on the first check after the emission, as that wait is. Its
-## connection is released however the poll ends. Returns the outcome with args (_as_signal_outcome).
-func _poll_signal_start(params: Dictionary, called: Dictionary, frame: Signal) -> Dictionary:
-	var condition: Dictionary = params["start"]
-	var source: Variant = _signal_source(condition)
-	if source is String:
-		return {"error": source}
-	if condition.get("call") is Dictionary:
-		await frame
-	var hold: Dictionary = {}
-	var caught: Variant = signal_probe(condition, hold)
-	if caught is String:
-		return {"error": caught}
-	var outcome: Dictionary = {"error": _call_once(condition, called)}
-	if str(outcome["error"]).is_empty():
-		outcome = await _poll(caught, float(condition.get("timeoutMs", 10000)), params)
-	hold["release"].call()
-	return _as_signal_outcome(outcome)
 
 
 ## The start's poll outcome as the capture goes on from it: not met when a cancel came or the
@@ -469,7 +454,7 @@ func wait_for(params: Dictionary) -> Dictionary:
 	var kind: String = str(params.get("kind", ""))
 	var timeout_ms: int = int(params.get("timeoutMs", 10000))
 	if kind == "signal":
-		return await _wait_for_signal(params, timeout_ms, get_tree().process_frame)
+		return await signal_wait._wait_for_signal(params, timeout_ms, get_tree().process_frame)
 	var refusal: String = _paused_refusal(get_tree().paused, timeout_ms, params.has("limitGameMs"))
 	if not refusal.is_empty():
 		return {"error": refusal}
@@ -905,91 +890,6 @@ func _capture_this_frame() -> Image:
 	if RenderingServer.frame_post_draw.is_connected(grab):
 		RenderingServer.frame_post_draw.disconnect(grab)
 	return null if shot.is_empty() else shot[0]
-
-
-## Resolves on params.node's next emission of params.signal, with its arguments. await has no
-## timeout, so a variadic lambda catches the emission and the wait polls it once a frame. With
-## params.call, the node and its signal are checked now, and the signal is connected in frame's
-## next emission (the tree's process_frame), right before the method is called there, as a probe
-## wait calls it (_start_probe_wait): an emission the call makes at once is caught, and one in the
-## frames before the call is not. SceneTree emits process_frame every frame, paused or not
-## (scene/main/scene_tree.cpp L713 in 4.7.2), so a signal wait on a paused tree reaches its call
-## too.
-func _wait_for_signal(params: Dictionary, timeout_ms: int, frame: Signal) -> Dictionary:
-	var source: Variant = _signal_source(params)
-	if source is String:
-		return {"error": source}
-	if params.get("call") is Dictionary:
-		await frame
-	var hold: Dictionary = {}
-	var caught: Variant = signal_probe(params, hold)
-	if caught is String:
-		return {"error": caught}
-	return await _call_and_poll_signal(caught, params, timeout_ms, hold)
-
-
-## Calls params.call, if any (_call_once), then polls caught, the connected signal probe, and
-## releases hold's connection either way. Returns the signal outcome, with call: {value} when a
-## method was called, or {error} when the call failed.
-func _call_and_poll_signal(
-	caught: Callable, params: Dictionary, timeout_ms: int, hold: Dictionary
-) -> Dictionary:
-	var called: Dictionary = {}
-	var failed: String = _call_once(params, called)
-	if not failed.is_empty():
-		hold["release"].call()
-		return {"error": failed}
-	var outcome: Dictionary = await _poll_capturing(caught, timeout_ms, params)
-	hold["release"].call()
-	return _with_call(_as_signal_outcome(outcome), called)
-
-
-## A probe met once params.node has emitted params.signal since now, with that first emission's
-## arguments as its value, connected now; hold.release disconnects it. A String saying why when
-## the node or its signal is missing. A step's until shares it.
-func signal_probe(params: Dictionary, hold: Dictionary) -> Variant:
-	var found: Variant = _signal_source(params)
-	if found is String:
-		return found
-	var node: Node = found
-	var signal_name: String = _text(params, "signal")
-	var fired: Array = []
-	var on_signal := func(...args: Array) -> void:
-		if fired.is_empty():
-			fired.append(args)
-	node.connect(signal_name, on_signal)
-	# A lambda holding a freed node logs an error when called, so release holds a weak reference.
-	var held: WeakRef = weakref(node)
-	hold["release"] = func() -> void:
-		var source: Object = held.get_ref()
-		if source != null and source.is_connected(signal_name, on_signal):
-			source.disconnect(signal_name, on_signal)
-	return func() -> Array:
-		return [not fired.is_empty(), null if fired.is_empty() else bridge._json.to_json(fired[0])]
-
-
-## params.node when it is there and has params.signal; else a String saying which is missing.
-func _signal_source(params: Dictionary) -> Variant:
-	var node_name: String = _text(params, "node")
-	var signal_name: String = _text(params, "signal")
-	var node: Node = bridge._find_node(node_name)
-	if node == null:
-		return bridge._inspect.not_found(node_name, "get_scene_tree lists the nodes' paths")
-	if not node.has_signal(signal_name):
-		return "%s has no signal '%s'" % [node.get_path(), signal_name]
-	return node
-
-
-## A signal wait's outcome: the arguments as args instead of value, and no last.
-func _as_signal_outcome(outcome: Dictionary) -> Dictionary:
-	if outcome.has("error"):
-		return outcome
-	var result: Dictionary = outcome["result"]
-	if result.has("value"):
-		result["args"] = result["value"]
-		result.erase("value")
-	result.erase("last")
-	return {"result": result}
 
 
 ## params[key] when it is a String, else empty: the server leaves out fields it has no value for.

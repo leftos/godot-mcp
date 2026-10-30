@@ -109,7 +109,7 @@ func _until_of(params: Dictionary) -> Variant:
 	var probe: Variant
 	match until["kind"]:
 		"signal":
-			probe = time.signal_probe(condition, until)
+			probe = time.signal_wait.signal_probe(condition, until)
 		"gameMs":
 			probe = _game_time_probe(int(condition.get("gameMs", 0)), until)
 		_:
@@ -337,7 +337,7 @@ func _until_report(until: Dictionary, result: Dictionary) -> String:
 	outcome["result"]["value" if seen[0] else "last"] = seen[1]
 	time.bridge._conditions.add_failed_checks(outcome, until["failures"])
 	if until["kind"] == "signal":
-		outcome = time._as_signal_outcome(outcome)
+		outcome = time.signal_wait._as_signal_outcome(outcome)
 	result.merge(outcome["result"])
 	return ""
 

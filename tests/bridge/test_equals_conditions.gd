@@ -2,7 +2,7 @@ extends "res://gd_test.gd"
 ## A property or state condition's equals (bridge/godot_mcp_conditions.gd): its JSON comparison
 ## (json_equal, which the watch shares), and null meets a present
 ## null and never a missing key, and a string compared by match prefix or contains, as stored. The
-## nodes are in no tree, as test_conditions.gd's state rig holds them.
+## nodes are in no tree, as test_conditions_scene.gd's state rig holds them.
 
 ## A marked node's script whose _mcp_state returns its state variable.
 const STATE_SOURCE := (

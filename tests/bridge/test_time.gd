@@ -386,8 +386,10 @@ func test_a_signal_wait_connects_before_its_call_so_an_emission_the_call_makes_i
 		"call": {"node": "CallTarget", "method": "ping", "args": [4]},
 	}
 	var hold: Dictionary = {}
-	var caught: Variant = rig["time"].signal_probe(params, hold)
-	var outcome: Dictionary = await rig["time"]._call_and_poll_signal(caught, params, 1000, hold)
+	var caught: Variant = rig["time"].signal_wait.signal_probe(params, hold)
+	var outcome: Dictionary = await rig["time"].signal_wait._call_and_poll_signal(
+		caught, params, 1000, hold
+	)
 	assert_true(outcome.has("result"), "the wait answers: %s" % outcome)
 	assert_eq(outcome["result"]["met"], true, "the emission inside the call is caught")
 	assert_eq(outcome["result"]["args"], [4], "with its arguments")
@@ -402,8 +404,10 @@ func test_a_signal_wait_whose_call_fails_fails_and_releases_its_connection() -> 
 		"node": "CallTarget", "signal": "pinged", "call": {"node": "CallTarget", "method": "fail"}
 	}
 	var hold: Dictionary = {}
-	var caught: Variant = rig["time"].signal_probe(params, hold)
-	var outcome: Dictionary = await rig["time"]._call_and_poll_signal(caught, params, 1000, hold)
+	var caught: Variant = rig["time"].signal_wait.signal_probe(params, hold)
+	var outcome: Dictionary = await rig["time"].signal_wait._call_and_poll_signal(
+		caught, params, 1000, hold
+	)
 	assert_eq(outcome, {"error": "the method failed"}, "the call's error fails the wait")
 	assert_eq(rig["target"].get_signal_connection_list("pinged").size(), 0, "released")
 	_free_then_rig(rig)
@@ -418,7 +422,7 @@ func test_a_signal_wait_connects_in_its_calls_frame_so_an_earlier_emission_is_no
 	}
 	var outcomes: Array = []
 	var waiting := func() -> void:
-		outcomes.append(await rig["time"]._wait_for_signal(params, 1000, test_frame))
+		outcomes.append(await rig["time"].signal_wait._wait_for_signal(params, 1000, test_frame))
 	waiting.call()
 	assert_eq(outcomes, [], "the wait holds for the call's frame")
 	rig["target"].pinged.emit(9)

@@ -16,7 +16,8 @@ extends Node
 ## godot_mcp_watch_monitors.gd. Audio players' voices are read each frame, paused ones too, by
 ## godot_mcp_watch_audio.gd. One watch runs at a time; one whose window ended holds its timeline
 ## until a stop collects it. It never takes the clock's running mark, so steps, waits and captures
-## run beside it.
+## run beside it. Its property and expression tracks are built and read by
+## godot_mcp_watch_tracks.gd.
 
 ## Emitted when the watch's first frame has run and when a watch ends.
 signal changed
@@ -26,6 +27,7 @@ const CONDITIONS_SCRIPT := "godot_mcp_conditions.gd"
 const MONITORS_SCRIPT := "godot_mcp_watch_monitors.gd"
 const AUDIO_SCRIPT := "godot_mcp_watch_audio.gd"
 const BUSES_SCRIPT := "godot_mcp_watch_buses.gd"
+const TRACKS_SCRIPT := "godot_mcp_watch_tracks.gd"
 ## The change points a track keeps from its start, and from its end in a ring.
 const FIRST_POINTS := 200
 const LAST_POINTS := 50
@@ -112,6 +114,8 @@ var _monitors_script: GDScript
 var _audio_script: GDScript
 ## The bus levels' script, which the audio script reads a watch's buses through.
 var _buses_script: GDScript
+## The tracks' script, which builds and reads a watch's property and expression tracks.
+var _tracks_script: GDScript
 ## The watch running or held, or empty (see _new_watch for its fields).
 var _watch: Dictionary = {}
 ## Why no watch runs, while _watch is empty.
@@ -127,6 +131,7 @@ func _init() -> void:
 	audio_player = func(node: Node) -> bool: return _audio_script.is_player(node)
 	_buses_script = load(script_dir.path_join(BUSES_SCRIPT)) as GDScript
 	bus_peak = func(index: int) -> float: return _buses_script.peak(index)
+	_tracks_script = load(script_dir.path_join(TRACKS_SCRIPT)) as GDScript
 	frame_counter = _engine_frames
 	group_members = _tree_group
 	usec_clock = Callable(Time, "get_ticks_usec")
@@ -233,48 +238,16 @@ func _busy_refusal() -> String:
 	return RUN_REFUSAL if _watch["run"] else RUNNING_REFUSAL
 
 
-## The tracks of params.properties and params.expressions (_property_track, _expression_track),
-## or the first refusal. capture_frames resolves its tracks here too, and reads them (read_values).
+## The tracks of params.properties and params.expressions (the tracks script's value_tracks), or
+## the first refusal. capture_frames resolves its tracks here too, and reads them (read_values).
 func value_tracks(params: Dictionary) -> Variant:
-	var tracks: Array = []
-	var refusal: String = _resolve(params.get("properties"), _property_track, tracks)
-	if refusal.is_empty():
-		refusal = _resolve(params.get("expressions"), _expression_track, tracks)
-	return tracks if refusal.is_empty() else refusal
+	return _tracks_script.value_tracks(self, params)
 
 
-## Reads tracks now, as a watch samples them (_read): {values: {<key>: JSON value}}, keyed as the
-## server keys a track (track_key), plus trackErrors: {<key>: text} for each read that failed,
-## whose value is then null; {} for no tracks.
+## Reads tracks now, as a watch samples them (the tracks script's read_values): {values}, plus
+## trackErrors for each read that failed; {} for no tracks.
 func read_values(tracks: Array) -> Dictionary:
-	if tracks.is_empty():
-		return {}
-	var values: Dictionary = {}
-	var errors: Dictionary = {}
-	for track: Dictionary in tracks:
-		var value: Variant = _read(track)
-		var failure: Variant = _read_failure(track, value)
-		values[track_key(track)] = bridge._json.to_json(value) if failure == null else null
-		if failure != null:
-			errors[track_key(track)] = failure
-	return {"values": values} if errors.is_empty() else {"values": values, "trackErrors": errors}
-
-
-## A track's key: its name, else its node and property as the request gave them, node:property.
-static func track_key(track: Dictionary) -> String:
-	var spec: Dictionary = track["spec"]
-	if spec.get("name") is String:
-		return spec["name"]
-	return "%s:%s" % [spec.get("node", ""), spec.get("property", "")]
-
-
-## Why _read's value is not the track's: a freed node's or a failed expression's text, else null.
-static func _read_failure(track: Dictionary, value: Variant) -> Variant:
-	if _is_error(value):
-		return value["$error"]
-	if track.has("path") and value is Dictionary and value.has("$freed"):
-		return "its node %s was freed" % track["node_path"]
-	return null
+	return _tracks_script.read_values(self, tracks)
 
 
 ## Adds the track make builds from each spec in specs to tracks; returns the first refusal, or "".
@@ -330,45 +303,6 @@ func _new_watch(params: Dictionary, tracks: Array, source: Signal) -> Dictionary
 	}
 	watch["handler"] = _on_frame.bind(watch)
 	return watch
-
-
-## A property track {node, property, name?, minDelta?}: refused when the node or the property is
-## missing, or when minDelta is set and the first read is not numeric.
-func _property_track(spec: Dictionary) -> Variant:
-	var node_name: String = str(spec.get("node", ""))
-	var property: String = str(spec.get("property", ""))
-	var node: Node = bridge._find_node(node_name)
-	if node == null:
-		return bridge._inspect.not_found(node_name, "get_scene_tree lists the nodes' paths")
-	var first: String = property.get_slice(":", 0)
-	if not bridge._json.has_property(node, first):
-		return "'%s' has no property '%s'." % [node.get_path(), first]
-	var track: Dictionary = _new_track(spec, node)
-	track["path"] = NodePath(property)
-	return _checked_min_delta(track)
-
-
-## An expression track {name, expression, node?, minDelta?}, parsed once with wait_for's inputs
-## (node too, also the base instance, when given) through the conditions' parse_condition:
-## refused when its node is missing, when it does not parse (Expression ignores trailing text and
-## GDScript syntax it has no operator for) or when minDelta is set and its first read is not
-## numeric.
-func _expression_track(spec: Dictionary) -> Variant:
-	var name: String = str(spec.get("name", ""))
-	var node: Node = null
-	if spec.get("node") is String:
-		node = bridge._find_node(spec["node"])
-		if node == null:
-			return bridge._inspect.not_found(spec["node"], "get_scene_tree lists the nodes' paths")
-	var names: PackedStringArray = _conditions_script.EXPRESSION_INPUTS.duplicate()
-	if node != null:
-		names.append("node")
-	var parsed: Variant = _conditions_script.parse_condition(str(spec.get("expression", "")), names)
-	if parsed is String:
-		return "The expression of track '%s' does not parse: %s" % [name, parsed]
-	var track: Dictionary = _new_track(spec, node)
-	track["expression"] = parsed
-	return _checked_min_delta(track)
 
 
 ## A signal track {node, signal} or {group, signal}: its emitter as given (the node's path, or the
@@ -504,57 +438,11 @@ static func _disconnect_signals(watch: Dictionary) -> void:
 	connections.clear()
 
 
-## A track's state: its spec, its node (null for an expression without one), minDelta (0 for the
-## default rule), the samples' summary and the kept points (_keep).
-func _new_track(spec: Dictionary, node: Node) -> Dictionary:
-	return {
-		"spec": spec,
-		"node": node,
-		"has_node": node != null,
-		"node_path": _path_of(node),
-		"min_delta": float(spec.get("minDelta", 0.0)),
-		"done": false,
-		"samples": 0,
-		"last": null,
-		"has_kept": false,
-		"last_kept": null,
-		"kept": 0,
-		"first_points": [],
-		"ring": [],
-		"ring_head": 0,
-		"range_kind": -1,
-		"min": [],
-		"max": [],
-		"min_at": [],
-		"max_at": [],
-	}
-
-
 ## The node's path in the tree; its name when it is in none; "" for no node.
 static func _path_of(node: Node) -> String:
 	if node == null:
 		return ""
 	return str(node.get_path()) if node.is_inside_tree() else str(node.name)
-
-
-## track, or the refusal of its minDelta when a read now is neither a number nor a vector; an
-## expression whose read fails is accepted. A track without minDelta is not read here, so an
-## expression runs only in the frames it samples.
-func _checked_min_delta(track: Dictionary) -> Variant:
-	if float(track["min_delta"]) <= 0.0:
-		return track
-	var first: Variant = _read(track)
-	if _range_kind(first) >= 0 or _is_error(first):
-		return track
-	return MIN_DELTA_REFUSAL % [_label(track), type_string(typeof(first))]
-
-
-## The track's name for a message: its name, else its node and property.
-func _label(track: Dictionary) -> String:
-	var spec: Dictionary = track["spec"]
-	if spec.get("name") is String:
-		return spec["name"]
-	return "%s:%s" % [track["node_path"], spec.get("property", "")]
 
 
 ## The track's value now, raw: a property through get_indexed, or {"$freed": true} once its node is
@@ -594,10 +482,6 @@ func _evaluate(expression: Expression, node: Node) -> Variant:
 	if expression.has_execute_failed():
 		return {"$error": expression.get_error_text()}
 	return value
-
-
-static func _is_error(value: Variant) -> bool:
-	return value is Dictionary and value.size() == 1 and value.has("$error")
 
 
 ## TYPE_FLOAT for a number, the vector's type for a vector, else -1.
