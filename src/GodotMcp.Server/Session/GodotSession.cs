@@ -65,6 +65,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     internal const int ClockPingCount = 5;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private volatile TaskCompletionSource _exitHandled = NewExitHandled();
     private readonly ILogger _logger = registry.Logger;
     private volatile bool _pending = true;
     private volatile SessionClock _clock = new();
@@ -131,6 +132,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// handshake pings', then each pong a later clock ping brings.
     /// </summary>
     internal SessionClock Clock => _clock;
+
+    /// <summary>Completes when the handler of the current run's exit has finished, its folder released or kept; for tests.</summary>
+    internal Task ExitHandled => _exitHandled.Task;
 
     /// <summary>Whether the session is starting, its run is running, or its attached game is still connected.</summary>
     public bool IsLive => _pending || HasGame;
@@ -674,6 +678,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             GodotRun run = new(ProjectDir, CreateRunProcess(startInfo, request.Quiet), previous);
             StartProcess(run, previous is null ? null : ProcessId);
             MarkGameStarted();
+            _exitHandled = NewExitHandled();
             _run = run;
             _recording = moviePath is null ? null : new Recording(moviePath) { DropIdle = request.DropIdle };
             ProcessId = run.Process.Id;
@@ -1317,6 +1322,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     private Task<string?> KillAndWaitAsync(Process? wrapper, Process? game) =>
         RunKill.KillAndWaitAsync(wrapper, game, registry.LaunchClock, _logger, ProjectDir);
 
+    /// <summary>A fresh source for <see cref="ExitHandled"/>, one per run, whose awaiters never run inside the exit's handler.</summary>
+    private static TaskCompletionSource NewExitHandled() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     /// <summary>
     /// Releases the folder once the session's current run has exited. The exit of a run a restart has replaced only logs:
     /// the folder and its override belong to the newer run. Internal so the unit tests can raise an exit.
@@ -1333,6 +1341,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             return;
         }
 
+        TaskCompletionSource? handled = null;
         try
         {
             if (!ReferenceEquals(run, _run))
@@ -1346,6 +1355,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 return;
             }
 
+            handled = _exitHandled;
             Snapshots.Clear();
             registry.Captures.End(Name, CaptureStore.EndedByExit);
             await FinishRecordingAsync();
@@ -1362,6 +1372,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         finally
         {
             _gate.Release();
+            handled?.TrySetResult();
         }
 
         // A grandchild still holding the game's pipes keeps its output from ending, so the file is closed after the drain grace

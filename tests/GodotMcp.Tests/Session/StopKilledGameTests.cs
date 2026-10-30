@@ -13,7 +13,8 @@ namespace GodotMcp.Tests.Session;
 /// stop_project on a folder whose stopped session's game a stop killed and that outlived the kill wait: the call waits for that
 /// game once more, killing it again, and reports it when it outlives this wait too. Each run's process is a fake over a stand-in
 /// child, its game another stand-in whose exit the test's own debugger holds, so the game is not gone exactly as long as the
-/// test wants. The clocks are fake and advance only where a test says so.
+/// test wants. The clocks are fake and advance only where a test says so. A run whose process ends on its own has its exit
+/// handled, the folder released, before the session says so.
 /// </summary>
 [Collection(LaunchRefusesNoGlTests.GodotPathCollection)]
 public sealed class StopKilledGameTests : IAsyncDisposable
@@ -150,6 +151,34 @@ public sealed class StopKilledGameTests : IAsyncDisposable
         SessionException refused = await Assert.ThrowsAsync<SessionException>(() => _sessions.StopFolderAsync(project, null, cancellation));
 
         Assert.Equal($"No Godot session or warm headless host runs in {project}.", refused.Message);
+    }
+
+    // The run's process ends on its own, as a game that quits does. ExitHandled completes only after the exit's handler has
+    // released the folder, so the override is already gone when the completion's continuation looks.
+    [Fact]
+    public async Task ARunsExitIsHandledOnlyOnceItsFolderIsReleased()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Project("game");
+        Task<LaunchResult> launch = _sessions.LaunchAsync(Request(project), "server", cancellation);
+        await RegistryHarness.WaitUntilAsync(() => !_launched.IsEmpty, launch);
+        FakeRunProcess run = _launched.First();
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, run.Token, project, new FakeHello(), cancellation);
+        _ = await launch.WaitAsync(RegistryHarness.HangGuard, cancellation);
+        string overrideFile = OverrideFile.PathIn(project);
+        Assert.True(File.Exists(overrideFile));
+        Task<bool> overrideLeftWhenHandled = _sessions
+            .Resolve("server")
+            .ExitHandled.ContinueWith(
+                _ => File.Exists(overrideFile),
+                cancellation,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default
+            );
+
+        run.Process.Kill(entireProcessTree: true);
+
+        Assert.False(await overrideLeftWhenHandled.WaitAsync(RegistryHarness.HangGuard, cancellation));
     }
 
     /// <summary>The product's own open of a stopped game, which lets the game's held exit go on once the game is opened.</summary>

@@ -15,6 +15,9 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
 {
     private static readonly TimeSpan PingTimeout = TimeSpan.FromSeconds(5);
 
+    // A hang guard: a game that quit ends its session and has its exit handled long before this.
+    private static readonly TimeSpan ExitHangGuard = TimeSpan.FromMinutes(5);
+
     // Quits a moment after returning, so the reply goes out before the game ends.
     private const string QuitSoonScript =
         "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
@@ -246,20 +249,17 @@ public sealed class SessionLifecycleTests : IAsyncDisposable
         await _harness.Sessions.LaunchAsync(Request(), "server", cancellation);
         await _harness.Sessions.LaunchAsync(Request(), "client", cancellation);
 
+        GodotSession client = _harness.Sessions.Resolve("client");
         await tools.RunScriptAsync(QuitSoonScript, 10_000, "client", cancellation);
-        bool clientEnded = await Poll.UntilAsync(
-            () => !_harness.Sessions.List(includeStopped: true).Single(session => session.Name == "client").Live,
-            TimeSpan.FromSeconds(10),
-            cancellation
-        );
+        bool clientEnded = await Poll.UntilAsync(() => !client.IsLive, ExitHangGuard, cancellation);
+        Assert.True(clientEnded, "the client session stayed live 5 min after its game quit");
 
-        // The exit handler releases the folder a moment after the process ends; give it that moment before looking.
-        await Task.Delay(TimeSpan.FromSeconds(1), cancellation);
+        // The exit's handler releases the folder after the process ends; look once it has.
+        await client.ExitHandled.WaitAsync(ExitHangGuard, cancellation);
         bool overrideAfterQuit = File.Exists(_probe.OverrideFile);
         bool serverAnswered = await PingAsync("server");
         StopResult serverStopped = await _harness.Sessions.StopAsync("server", cancellation);
 
-        Assert.True(clientEnded);
         Assert.True(overrideAfterQuit);
         Assert.True(serverAnswered);
         Assert.True(serverStopped.OverrideRemoved);
