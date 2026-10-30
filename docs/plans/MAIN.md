@@ -4,15 +4,12 @@
 
 ## Do first
 
-- [!] GMCP-337 Flaky: ScratchStepsRunTests.APartialRunPlaysTheScenesSetupStepFirst reads step (-1, "") beside other lanes · release vNext+1 — Urgent · Singles
-- [ ] GMCP-342 itests: scratch walk, marker, call and pace bounds count wall time beside other lanes · release vNext+1 — Urgent · Singles
-- [ ] GMCP-354 Flaky: ScratchFolderTests.TheScratchFolderPlaysEachSceneToItsVerdict reads a scene red beside other lanes · release vNext+1 — Urgent · Singles
-- [ ] GMCP-355 Flaky: SessionLifecycleTests.AGameThatQuitsLeavesTheOverrideForTheOtherSession races on override-folders.txt beside other lanes · release vNext+1 — Urgent · Singles
-- [ ] GMCP-358 Flaky: RealtimeRecordingTests.AGameThatQuitsKeepsItsClipForTheNextStop reads the game alive after its clip · release vNext+1 — Urgent · Singles
-- [ ] GMCP-197 Let a wait place a record mark in the frame it is met · release vNext — High · Ideas from the survey and the projects
-- [/] GMCP-189 install: stops every running server and the games it drives · release vNext — High · Singles
-- [ ] GMCP-172 run_project dropIdle: a deliberate hold collapses with the idle time between calls · release vNext — High · Singles
-- [/] GMCP-349 take_screenshot, wait_for and capture_frames: a still has no destination path · release vNext — High · Singles
+- [ ] GMCP-172 run_project dropIdle: a deliberate hold collapses with the idle time between calls · release vNext — High · dropIdle call ledger
+
+## dropIdle call ledger
+
+- [ ] GMCP-372 dropIdle call ledger (b): cut a dropIdle clip to its in-call ranges, keeping their audio (sub-issue of GMCP-172) · release vNext
+- [ ] GMCP-374 Merge feat/dropidle-call-ledger to main (#274) (sub-issue of GMCP-172)
 
 ## Ideas from the survey and the projects
 
@@ -124,10 +121,17 @@
 - [ ] GMCP-338 TempDirectory cleanup follows links out of the temp folder when clearing attributes
 - [ ] GMCP-340 run_scratches: a step's window ends at server latency, not at its pace in game time · release vNext+1
 - [ ] GMCP-345 Server shutdown never cuts a Movie Maker recording's clips · release vNext+1
-- [/] GMCP-346 record_mark delivery: folders made before a failed move, the shutdown cap mid-copy, two untested branches · release vNext
 - [ ] GMCP-356 FinalPath.ForWin32: a short path ending in a dot or space is not prefixed as .NET prefixes it · release vNext+1
-- [ ] GMCP-357 Split godot_mcp_time.gd, godot_mcp_watch.gd and test_conditions.gd before they pass gdlint's 1000-line limit · release vNext+1
-- [ ] GMCP-359 Route run.ps1 itest to the builder as one heavy gate run, and give its call in the docs · release vNext+1
+- [ ] GMCP-360 Server exit: a clip delivery already copying across volumes when the exit begins can leave its temp · release vNext+1
+- [ ] GMCP-361 override-folders list: a hold past its budget runs its work unprotected, any IOException is retried, a cut rewrite empties the list · release vNext+1
+- [ ] GMCP-362 A session stays live while Godot's console wrapper outlives its game · release vNext+1
+- [ ] GMCP-363 Two unit tests assert 'not completed' after a wall-clock delay · release vNext+1
+- [ ] GMCP-364 Output destinations: a folder swapped for a junction between the path check and the write receives the file · release vNext+1
+- [ ] GMCP-365 TimeTests: a capture_frames test expects fixed file names a long frame can merge · release vNext+1
+- [ ] GMCP-366 Scratch walk: the ping before a kill and the kill path's watch collection still count wall time in the itests
+- [ ] GMCP-368 A .tmp destination refused because a link leads it out says nothing about the link · release vNext+1
+- [ ] GMCP-370 record_mark and wait_for then.record: a mark on a recording whose run ended is reported as placed · release vNext+1
+- [ ] GMCP-373 Bridge: a late reply from a lost connection can answer a reused id on the re-attached one · release vNext+1
 
 ## Docs
 
