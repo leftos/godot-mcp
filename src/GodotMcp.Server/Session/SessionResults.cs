@@ -224,6 +224,10 @@ internal sealed record StopResult(string Session, string ProjectPath, int? ExitC
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Warning { get; init; }
 
+    /// <inheritdoc cref="HostStopResult.GameStillRunning"/>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<int>? GameStillRunning { get; init; }
+
     /// <summary>Whether the stop also stopped the warm headless host on the session's folder.</summary>
     public bool HeadlessHostStopped { get; init; }
 }
@@ -270,9 +274,19 @@ internal sealed record HostStopResult(string ProjectPath, bool HeadlessHostStopp
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool ArmedRemoved { get; init; }
 
-    /// <summary>Why a file was left in place, one clause a file joined with "; "; left out when none was.</summary>
+    /// <summary>
+    /// Why a file was left in place, one clause a file joined with "; ", preceded by the sentence naming each game in
+    /// <see cref="GameStillRunning"/> when there is one; left out when there is neither.
+    /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public string? Warning { get; init; }
+
+    /// <summary>
+    /// The pids of the games a stop killed that this call waited for once more and that were still running when its wait
+    /// ended, so their project folder stays in use until they are gone; left out when there was none.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<int>? GameStillRunning { get; init; }
 }
 
 /// <summary>A game attach_project reached: its bridge said hello, and whether it was told to park its window.</summary>

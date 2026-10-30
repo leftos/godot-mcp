@@ -115,6 +115,12 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     internal TimeSpan TeardownGrace { get; init; } = DefaultTeardownGrace;
 
     /// <summary>
+    /// Opens the game a stopped session recorded, from its pid and creation time, when it still runs: <see cref="RunKill.OpenIfStillRunning"/>
+    /// unless set, as a unit test sets it to stand in for the process boundary.
+    /// </summary>
+    internal Func<int, DateTime, Process?> OpenStoppedGame { get; set; } = RunKill.OpenIfStillRunning;
+
+    /// <summary>
     /// How a run's process is created, from the start info the launch built and whether the run is quiet:
     /// <see cref="GodotSession"/>'s own creation, suspended on the hidden desktop for a quiet run on Windows, unless set, as a
     /// test sets a fake process whose output it feeds, so a launch is tested without Godot.
@@ -353,7 +359,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             return await target.StopAsync(cancellationToken);
         }
 
-        var stopped = (StopResult)await target.StopAsync(cancellationToken);
+        StopResult stopped = await StopSessionAsync(target, cancellationToken);
         bool hostStopped = Volatile.Read(ref _headlessHosts) is { } hosts && await hosts.StopIfIdleAsync(target.ProjectDir, "stop_project");
         return stopped with { HeadlessHostStopped = hostStopped };
     }
@@ -395,7 +401,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         GodotSession? target = FindSessionIn(projectDir, session);
         if (target is not null)
         {
-            var stopped = (StopResult)await target.StopAsync(cancellationToken);
+            StopResult stopped = await StopSessionAsync(target, cancellationToken);
             return stopped with { HeadlessHostStopped = await StopHeadlessHostAsync(projectDir, cancellationToken) };
         }
 
@@ -403,12 +409,80 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
-    /// stop_project on a folder no session runs: under the folder's prep lock, stops its warm headless host if one runs, then
-    /// clears a dead server's leftover override.cfg and armed.json (<see cref="OverrideFolders.ClearStale"/>).
+    /// Stops a run or attached session; one already stopped when the call began also has its game waited for once more, as a
+    /// stop killed it and it may still be running (<see cref="WaitForStoppedGamesAsync"/>).
     /// </summary>
-    /// <exception cref="SessionException">Nothing was stopped or removed; names why a file was left in place.</exception>
+    private async Task<StopResult> StopSessionAsync(GodotSession target, CancellationToken cancellationToken)
+    {
+        bool alreadyStopped = !target.IsLive;
+        var stopped = (StopResult)await target.StopAsync(cancellationToken);
+        if (!alreadyStopped || await WaitForStoppedGamesAsync([target], target.ProjectDir) is not { } waited)
+        {
+            return stopped;
+        }
+
+        return stopped with
+        {
+            GameStillRunning = StillRunningOrNull(waited),
+            Warning = GodotSession.JoinWarnings(stopped.Warning, waited.Warning),
+        };
+    }
+
+    /// <summary>
+    /// Waits once more for the games of <paramref name="stopped"/> that still run, the process each recorded with its creation
+    /// time (<see cref="OpenStoppedGame"/>): a stop killed them and they outlived its kill wait. Each is killed again and all are
+    /// waited for on one kill wait (<see cref="RunKill.KillAndWaitAllAsync"/>); the handles opened are released whatever the
+    /// wait ends with.
+    /// </summary>
+    /// <returns>What the wait ended with; null when no game of theirs still ran, so there was nothing to wait for.</returns>
+    private async Task<KilledGamesWait?> WaitForStoppedGamesAsync(IEnumerable<GodotSession> stopped, string projectDir)
+    {
+        List<Process> games = [];
+        try
+        {
+            foreach (GodotSession session in stopped)
+            {
+                if (session.GameProcessId is int pid && session.GameStartTime is DateTime started && OpenStoppedGame(pid, started) is { } game)
+                {
+                    games.Add(game);
+                }
+            }
+
+            return games.Count == 0 ? null : await RunKill.KillAndWaitAllAsync(games, LaunchClock, logger, projectDir);
+        }
+        finally
+        {
+            foreach (Process game in games)
+            {
+                game.Dispose();
+            }
+        }
+    }
+
+    /// <summary>The stopped run sessions on the folder, whose games a stop may have killed.</summary>
+    private GodotSession[] StoppedRunsIn(string projectDir)
+    {
+        lock (_lock)
+        {
+            return
+            [
+                .. Ordered()
+                    .Where(session => session.Kind == SessionKind.Run && !session.IsLive && ProjectPaths.AreSame(session.ProjectDir, projectDir)),
+            ];
+        }
+    }
+
+    private static IReadOnlyList<int>? StillRunningOrNull(KilledGamesWait waited) => waited.StillRunning.Count == 0 ? null : waited.StillRunning;
+
+    /// <summary>
+    /// stop_project on a folder no session runs: first waits once more for a killed game of a stopped session there that still
+    /// runs (<see cref="WaitForStoppedGamesAsync"/>), then, under the folder's prep lock, stops its warm headless host if one
+    /// runs and clears a dead server's leftover override.cfg and armed.json (<see cref="OverrideFolders.ClearStale"/>).
+    /// </summary>
+    /// <exception cref="SessionException">Nothing was waited for, stopped or removed; names why a file was left in place.</exception>
     private async Task<HostStopResult> StopIdleFolderAsync(string projectDir, CancellationToken cancellationToken)
     {
+        KilledGamesWait? waited = await WaitForStoppedGamesAsync(StoppedRunsIn(projectDir), projectDir);
         SemaphoreSlim folderLock = PrepLock(projectDir);
         await folderLock.WaitAsync(cancellationToken);
         bool hostStopped;
@@ -428,20 +502,48 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             throw new SessionException(DescribeFailedClear(projectDir, hostStopped, cleared), failure.Error);
         }
 
+        return IdleStopResult(projectDir, hostStopped, cleared, waited);
+    }
+
+    /// <summary>
+    /// What an idle folder stop that cleared without failing reports: what it waited for, stopped and removed, and why each file
+    /// left stayed.
+    /// </summary>
+    /// <exception cref="SessionException">Nothing was waited for, stopped or removed; names why a file was left in place.</exception>
+    private static HostStopResult IdleStopResult(string projectDir, bool hostStopped, LeftoverClear cleared, KilledGamesWait? waited)
+    {
         string? left = cleared.Left.Count > 0 ? string.Join("; ", cleared.Left) : null;
-        if (!hostStopped && !cleared.OverrideRemoved && !cleared.ArmedRemoved)
+        if (waited is null && !hostStopped && !cleared.OverrideRemoved && !cleared.ArmedRemoved)
         {
             string refusal = $"No Godot session or warm headless host runs in {projectDir}.";
-            throw new SessionException(left is null ? refusal : $"{refusal} {char.ToUpperInvariant(left[0])}{left[1..]}.");
+            throw new SessionException(left is null ? refusal : $"{refusal} {AsSentence(left)}");
         }
 
         return new HostStopResult(projectDir, hostStopped)
         {
             OverrideRemoved = cleared.OverrideRemoved,
             ArmedRemoved = cleared.ArmedRemoved,
-            Warning = left,
+            Warning = IdleStopWarning(waited, left),
+            GameStillRunning = waited is null ? null : StillRunningOrNull(waited),
         };
     }
+
+    /// <summary>
+    /// An idle folder stop's warning: the clauses of the files left in place as they are, or after the sentence naming the
+    /// killed games still running, as a sentence of their own.
+    /// </summary>
+    private static string? IdleStopWarning(KilledGamesWait? waited, string? left)
+    {
+        if (waited?.Warning is not { } games)
+        {
+            return left;
+        }
+
+        return left is null ? games : $"{games} {AsSentence(left)}";
+    }
+
+    /// <summary>Clauses joined with "; " made a sentence: capitalised, with a full stop.</summary>
+    private static string AsSentence(string clauses) => $"{Capitalised(clauses)}.";
 
     /// <summary>
     /// A failed clear's refusal: what the stop had already done in the folder, then which removal failed and why, then why

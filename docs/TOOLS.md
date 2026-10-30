@@ -171,7 +171,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   `projectPath` in place of `session` frees a folder: it stops the warm headless host there (waiting for a headless call running on it) and the session running there, if one does; with `session` too both must name the same folder, and several live sessions there are refused, naming them.
 
-  With no session running there, `projectPath` also clears a dead server's leftover `override.cfg` and `.godot/godot-mcp/armed.json`, and the result is `{projectPath, headlessHostStopped, overrideRemoved?, armedRemoved?, warning?}`: `headlessHostStopped` can be false, and `overrideRemoved`, `armedRemoved` (booleans) and `warning` are left out when false or null.
+  With no session running there, `projectPath` also clears a dead server's leftover `override.cfg` and `.godot/godot-mcp/armed.json`, and the result is `{projectPath, headlessHostStopped, overrideRemoved?, armedRemoved?, warning?, gameStillRunning?}`: `headlessHostStopped` can be false, and `overrideRemoved`, `armedRemoved` (booleans) and `warning` are left out when false or null.
 
   Each file is removed only when every godot-mcp server its owners line names has exited (a file with no owners line counts as stale; an owner entry that cannot be parsed counts as live), and an `override.cfg` without godot-mcp's marker is never touched. `attach.json`, join, dormant and scratch status files and the `.git/info/exclude` line are left alone.
 
@@ -200,6 +200,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
   A kill ends the game's own process and the wrapper with everything each started, then waits for both together for 5 s of load-adjusted time (25 s of wall time at the backstop); the game's exit code is not read afterwards, so `gameExitCode` stays null and `exitCode` stays -1.
 
   A game still running after that wait adds to `warning`: `The killed game (pid <pid>) was still running after <spent>; its project folder stays in use until it is gone.` With the game gone but the wrapper not, it adds `The killed console wrapper (pid <pid>) was still running after <spent>.` instead. `<spent>` is `5 s of load-adjusted time (wall 5.2 s, machine free 90% on average)`, or at the backstop `25 s of wall time, 5 x its 5 s kill wait (load-adjusted 3 s, machine free 10% on average)`.
+
+  Calling `stop_project` again on that folder (with `projectPath`, or naming the stopped session) waits once more: each killed game still running (its pid with the same start time, so a pid since reused by another process counts as gone) is killed again and waited for on one more 5 s load-adjusted kill wait. A game still running after it too is listed by pid in `gameStillRunning` (in both result shapes) and named in `warning` (`The killed games (pids <a>, <b>) were still running after <spent>; their project folder stays in use until they are gone.` for several); a game it waited for and saw go counts as something the call did, so the folder's "No Godot session or warm headless host runs in <dir>." refusal comes only from a call with nothing left to wait for. Check this before an `override.cfg` check or a worktree's removal.
 
   `warning` joins its parts with one space, in the order debugger, kill wait, window size; a debugger's sentence never replaces the kill wait's, in a run or an attach.
 

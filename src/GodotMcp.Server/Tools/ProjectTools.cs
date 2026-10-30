@@ -248,7 +248,9 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "The result is then {projectPath, headlessHostStopped, overrideRemoved?, armedRemoved?, warning?}, the warning "
             + "naming each file left in place and why; with nothing stopped or removed the call is refused with the same "
             + "reasons. A warm host holds its folder, so stop it this way before renaming or deleting the folder, as when "
-            + "removing a worktree."
+            + "removing a worktree. Calling it again on the folder (with projectPath, or naming the stopped session) waits once "
+            + "more for a game a stop killed that is still running, killing it again; one still running after that wait too is "
+            + "listed by pid in gameStillRunning, and the warning says the folder stays in use until it is gone."
     )]
     public async Task<string> StopProjectAsync(
         [Description(SessionDescription)] string? session = null,

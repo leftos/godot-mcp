@@ -8,6 +8,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - `wait_for` takes `options.crop` with `options.screenshot`, keeping that part of the met frame at full size up to 480 px wide.
 
+### Changed
+
+- Calling `stop_project` again on a folder waits once more for a killed game still running, listing any that outlive it in `gameStillRunning`.
+
 ### Fixed
 
 - A `save_screenshot` or `record_mark` clip write that fails no longer leaves behind the empty folders it made for its path.

@@ -14,8 +14,12 @@ namespace GodotMcp.Tests.Session;
 /// waiting out the handshake; the OpenGL 3.3 warning before a working ANGLE fallback is not that failure. Each launch's process
 /// is a fake over a real child process, so a run has a pid and an exit while the test feeds the lines a reader thread would.
 /// </summary>
+[Collection(GodotPathCollection)]
 public sealed class LaunchRefusesNoGlTests : IAsyncDisposable
 {
+    /// <summary>The test classes that set GODOT_PATH for their launches, run one at a time so none restores it under another.</summary>
+    internal const string GodotPathCollection = "GODOT_PATH";
+
     private const string AngleError = "ERROR: Failed to create ANGLE OpenGL window.";
 
     private const string OpenGlWarning = "WARNING: Your video card drivers seem not to support the required OpenGL 3.3 version, switching to ANGLE.";
