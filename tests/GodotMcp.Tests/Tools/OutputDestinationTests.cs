@@ -125,6 +125,35 @@ public sealed class OutputDestinationTests : IDisposable
     }
 
     [Fact]
+    [SupportedOSPlatform("windows")]
+    public void AStillWhoseExistingFolderIsPastMaxPathIsAccepted()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "MAX_PATH and the long path prefix are Windows'");
+        string project = Directory.CreateDirectory(_temp.Combine("game")).FullName;
+        string folder = Path.Combine(project, new string('a', 150), new string('b', 150));
+        Directory.CreateDirectory(@"\\?\" + folder);
+
+        Assert.Equal(Path.Combine(folder, "shot.png"), Resolve(project, Path.Combine(folder, "shot.png")));
+        Assert.Equal(folder, FinalPath.Of(folder));
+    }
+
+    [Fact]
+    [SupportedOSPlatform("windows")]
+    public void AMovePastMaxPathRenames()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "MAX_PATH and the long path prefix are Windows'");
+        string source = _temp.Combine("shot.png");
+        File.WriteAllBytes(source, PngBytes);
+        string folder = _temp.Combine(new string('a', 150), new string('b', 150));
+        Directory.CreateDirectory(@"\\?\" + folder);
+        string destination = Path.Combine(folder, "shot.png");
+
+        Assert.True(FinalPath.Rename(source, destination, overwrite: false));
+        Assert.Equal(PngBytes, File.ReadAllBytes(@"\\?\" + destination));
+        Assert.False(File.Exists(source));
+    }
+
+    [Fact]
     public void AJunctionInsideAnotherJunctionsTargetLeadingOutsideIsRefused()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are a Windows link");

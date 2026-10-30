@@ -111,6 +111,41 @@ public sealed class FinalPathTests
         Assert.Null(FinalPath.ParseLink(data, data.Length));
     }
 
+    [Fact]
+    public void APathOf259CharactersIsPassedPlain()
+    {
+        string path = @"X:\" + new string('a', 256);
+
+        Assert.Equal(path, FinalPath.ForWin32(path));
+    }
+
+    [Fact]
+    public void APathOf260CharactersGetsTheLongPathPrefix()
+    {
+        string path = @"X:\" + new string('a', 257);
+
+        Assert.Equal(@"\\?\" + path, FinalPath.ForWin32(path));
+    }
+
+    [Fact]
+    public void ALongUncPathGetsTheUncLongPathPrefix()
+    {
+        string rest = @"server\share\" + new string('a', 260);
+
+        Assert.Equal(@"\\?\UNC\" + rest, FinalPath.ForWin32(@"\\" + rest));
+    }
+
+    [Theory]
+    [InlineData(@"\\?\X:\")]
+    [InlineData(@"\\?\UNC\server\share\")]
+    [InlineData(@"\\.\X:\")]
+    public void ALongPathAlreadyInDeviceFormIsPassedAsGiven(string prefix)
+    {
+        string path = prefix + new string('a', 300);
+
+        Assert.Equal(path, FinalPath.ForWin32(path));
+    }
+
     private static void AssertMalformed(byte[] data, int returned)
     {
         IOException refused = Assert.Throws<IOException>(() => FinalPath.ParseLink(data, returned));

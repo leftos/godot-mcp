@@ -75,6 +75,9 @@ internal static partial class FinalPath
     private const string LongPathPrefix = @"\\?\";
     private const string UncPrefix = @"\\?\UNC\";
 
+    /// <summary><c>MAX_PATH</c>: the length from which .NET passes a path to Windows with the long path prefix.</summary>
+    private const int MaxShortPath = 260;
+
     /// <summary>
     /// The final path of the file or folder at <paramref name="path"/>, opened following every link, without the
     /// <c>\\?\</c> prefix: <c>X:\…</c> on a local volume, <c>\\server\share\…</c> on a network one.
@@ -82,7 +85,7 @@ internal static partial class FinalPath
     /// <exception cref="IOException">The path cannot be opened or its final path cannot be read.</exception>
     internal static string Of(string path)
     {
-        using SafeFileHandle handle = CreateFileW(path, FileReadAttributes, ShareAll, 0, OpenExisting, BackupSemantics, 0);
+        using SafeFileHandle handle = CreateFileW(ForWin32(path), FileReadAttributes, ShareAll, 0, OpenExisting, BackupSemantics, 0);
         return handle.IsInvalid ? throw Failure() : Of(handle);
     }
 
@@ -128,7 +131,15 @@ internal static partial class FinalPath
     /// <exception cref="IOException">The entry or its reparse data cannot be read.</exception>
     internal static StoredLink? ReadLink(string path)
     {
-        using SafeFileHandle handle = CreateFileW(path, FileReadAttributes, ShareAll, 0, OpenExisting, BackupSemantics | OpenReparsePoint, 0);
+        using SafeFileHandle handle = CreateFileW(
+            ForWin32(path),
+            FileReadAttributes,
+            ShareAll,
+            0,
+            OpenExisting,
+            BackupSemantics | OpenReparsePoint,
+            0
+        );
         if (handle.IsInvalid)
         {
             int error = Marshal.GetLastPInvokeError();
@@ -215,7 +226,7 @@ internal static partial class FinalPath
     /// <exception cref="IOException">The rename failed for another reason, such as an existing destination without overwrite.</exception>
     internal static bool Rename(string source, string destination, bool overwrite)
     {
-        if (MoveFileExW(source, destination, overwrite ? MoveReplaceExisting : 0))
+        if (MoveFileExW(ForWin32(source), ForWin32(destination), overwrite ? MoveReplaceExisting : 0))
         {
             return true;
         }
@@ -223,6 +234,42 @@ internal static partial class FinalPath
         int error = Marshal.GetLastPInvokeError();
         return error == NotSameDevice ? false : throw Failure(error);
     }
+
+    /// <summary>
+    /// <paramref name="path"/> as a Win32 call must take it to reach the entry .NET's own file calls reach, in a process that
+    /// is not long-path aware: a fully qualified path of 260 characters or more gets the <c>\\?\</c> prefix
+    /// (<c>\\server\share\…</c> becomes <c>\\?\UNC\server\share\…</c>); a path already in device form (<c>\\?\</c>,
+    /// <c>\\.\</c>, <c>\??\</c>), a relative path and a shorter path are passed as given.
+    /// </summary>
+    /// <remarks>
+    /// .NET's rule for its file calls: <c>PathInternal.EnsureExtendedPrefixIfNeeded</c> and <c>EnsureExtendedPrefix</c> with
+    /// <c>MaxShortPath</c> = 260, in dotnet/runtime <c>src/libraries/Common/src/System/IO/PathInternal.Windows.cs</c>.
+    /// </remarks>
+    internal static string ForWin32(string path)
+    {
+        if (path.Length < MaxShortPath || !Path.IsPathFullyQualified(path) || IsDevicePath(path))
+        {
+            return path;
+        }
+
+        return path.StartsWith(@"\\", StringComparison.Ordinal) ? UncPrefix + path[2..] : LongPathPrefix + path;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="path"/> starts <c>\\?\</c>, <c>\\.\</c> or <c>\??\</c>, either separator counted as in .NET's
+    /// <c>IsDevice</c>.
+    /// </summary>
+    private static bool IsDevicePath(string path)
+    {
+        if (path.StartsWith(@"\??\", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return path.Length >= 4 && IsSeparator(path[0]) && IsSeparator(path[1]) && (path[2] is '.' or '?') && IsSeparator(path[3]);
+    }
+
+    private static bool IsSeparator(char c) => c is '\\' or '/';
 
     private static IOException Failure() => Failure(Marshal.GetLastPInvokeError());
 
