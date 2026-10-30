@@ -128,7 +128,8 @@ public sealed class OverrideOwnersTests : IDisposable
 
         Assert.Equal(
             $"{project}'s override.cfg injects the bridge from D:/tools/bridge.gd for another godot-mcp server (pid {foreign.ProcessId}); "
-                + $"this server's is {OurBridge()}: two godot-mcp installs cannot share a folder at once.",
+                + $"this server's is {OurBridge()}: two godot-mcp installs cannot share a folder at once; "
+                + "run /mcp in the session on the older version to reconnect it to the installed one.",
             refused.Message
         );
         Assert.Equal(before, File.ReadAllText(OverrideFile.PathIn(project)));

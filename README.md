@@ -60,7 +60,7 @@ Paste this into Claude Code, in the folder of the Godot game you want it to driv
 
 ```text
 Install the godot-mcp server for this project:
-1. Run this in PowerShell (it downloads the latest release into %LOCALAPPDATA%\godot-mcp, installs the .NET 10 runtime through winget if it is missing, copies the godot-mcp and godot-agent-sweep skills into ~/.claude/skills, and brings the server's tools to every agent marked for them):
+1. Run this in PowerShell (it downloads the latest release into a version folder under %LOCALAPPDATA%\godot-mcp, behind a launcher exe that stays at the same path, installs the .NET 10 runtime through winget if it is missing, copies the godot-mcp and godot-agent-sweep skills into ~/.claude/skills, and brings the server's tools to every agent marked for them):
    & ([scriptblock]::Create((irm https://github.com/leftos/godot-mcp/releases/latest/download/install.ps1))) -InstallDotNet
    It must end with "install: server at ... (version ...)" and print a `claude mcp add` line.
 2. Run that `claude mcp add` line from this project's folder, with GODOT_PATH set to <path to Godot_v4.7.2-stable_win64_console.exe>.
@@ -69,11 +69,11 @@ Install the godot-mcp server for this project:
 
 After the restart, ask for anything in the list above ("run the game and click Start", "why does the inventory close when I drag an item?"). The agent loads the `godot-mcp` skill, which teaches it the drive loop.
 
-To update, run the same install line again, and restart the agent session to pick up the new server. `-Version X.Y.Z` installs a given release instead of the latest; `-ZipPath <file>` installs a downloaded zip offline. Every release, with what changed, is on the [releases page](https://github.com/leftos/godot-mcp/releases).
+To update, run the same install line again. The install adds the new version beside the old and stops no running server: a Claude session keeps the version it started with until you run `/mcp` in it to reconnect it to the new one, and the install lists each session still on an older version. Two godot-mcp versions cannot drive one project folder at once, so the session that finds the other version on a folder refuses and names the `/mcp` to run in the session on the older one. `-Version X.Y.Z` installs a given release instead of the latest; `-ZipPath <file>` installs a downloaded zip offline. Every release, with what changed, is on the [releases page](https://github.com/leftos/godot-mcp/releases).
 
 ### From source
 
-To build it yourself, you need the [.NET 10 SDK](https://dotnet.microsoft.com/download), PowerShell 7 (`pwsh`), and Visual Studio Build Tools 2022 with the C++ workload (for the C# helper's native shim). Clone the repository and run `pwsh run.ps1 install` in it: it builds the server into the same `%LOCALAPPDATA%\godot-mcp` and links the skill folder back to the clone, so `git pull` and `pwsh run.ps1 install` update both. Then register it as in step 2.
+To build it yourself, you need the [.NET 10 SDK](https://dotnet.microsoft.com/download), PowerShell 7 (`pwsh`), and Visual Studio Build Tools 2022 with the C++ workload (for the C# helper's native shim). Clone the repository and run `pwsh run.ps1 install` in it: it builds the server into the same `%LOCALAPPDATA%\godot-mcp`, as a new version folder behind the launcher, and links the skill folders to that version's copy, so `git pull` and `pwsh run.ps1 install` update both. Then register it as in step 2.
 
 ## Configuration
 

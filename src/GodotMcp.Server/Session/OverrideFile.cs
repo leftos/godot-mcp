@@ -247,7 +247,8 @@ internal static class OverrideFile
         if (theirs.Bridge != ours.Bridge)
         {
             return $"{projectDir}'s override.cfg injects the bridge from {theirs.Bridge} for another godot-mcp server (pid {other.ProcessId}); "
-                + $"this server's is {ours.Bridge}: two godot-mcp installs cannot share a folder at once.";
+                + $"this server's is {ours.Bridge}: two godot-mcp installs cannot share a folder at once; "
+                + "run /mcp in the session on the older version to reconnect it to the installed one.";
         }
 
         return $"{projectDir}'s override.cfg is in use by another godot-mcp server (pid {other.ProcessId}) with quiet={Flag(theirs.Quiet)} and "

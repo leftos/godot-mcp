@@ -108,24 +108,35 @@ the same log, and the job's timeout-minutes bounds it in place of the ceiling an
            refused when either SKILL.md or docs/TOOLS.md is missing, or a shipped file names an absolute path), then the
            dotnet command (as above), whose bin/dotnet is copied to bin/publish/dotnet, then the
            window capture helper (src/GodotMcp.Capture, framework-dependent win-x64) into an emptied bin/capture
-           (.tmp/capture.log), copied to bin/publish/capture; ceiling 300 s each
-  install  publish (as above), then mirror bin/publish into $env:LOCALAPPDATA\godot-mcp (robocopy /MIR, no retries),
-           link ~/.claude/skills/godot-mcp to the install folder's skill/ and ~/.claude/skills/godot-agent-sweep to its
-           agent-sweep-skill/ as directory junctions, and run the installed godot-mcp.exe --sweep-agents, printing
-           its lines as they come; ceiling 300 s for the publish, then 300 s in a heavy slot for the copy, the links and the
-           sweep, whose commits run the swept repositories' hooks (which can build). They are tools/install.ps1, logged
-           to .tmp/install.log. A junction that points
-           elsewhere is replaced; anything else at a link path is refused, never deleted. A sweep that cannot start is
-           reported and the install succeeds; one that exits non-zero makes the install exit 1, undoing nothing.
-           GODOT_MCP_INSTALL_DIR overrides the install folder, GODOT_MCP_SKILLS_DIR the folder the links are made in.
-           Before the mirror it stops every godot-mcp.exe running from the install folder, printing one line each
-           that names the Claude session and project it served, to reconnect there with /mcp.
+           (.tmp/capture.log), copied to bin/publish/capture, then the launcher (src/GodotMcp.Launcher) published
+           NativeAOT (win-x64) to bin/publish/launcher/godot-mcp.exe with its pdb (.tmp/launcher.log), which install
+           places as the install folder's godot-mcp.exe and package zips as godot-mcp-launcher.exe; ceiling 300 s each
+  install  publish (as above), then tools/install.ps1 (tools/InstallLayout.psm1's layout), logged to .tmp/install.log,
+           into the install folder $env:LOCALAPPDATA\godot-mcp, holding its install.lock throughout (a second install
+           waits up to GODOT_MCP_INSTALL_LOCK_WAIT_S seconds, 60 when unset, then refuses). An install from before the
+           launcher (no current file) is migrated first: every godot-mcp.exe running as the folder's godot-mcp.exe is
+           stopped, with one line naming the Claude session and project it served, and the flat files are removed.
+           bin/publish, all but launcher/, is copied into a new version folder versions\<semver>-<sha> (.2, .3, ...
+           when taken); its godot-mcp.exe --list-tools must exit 0, then the current file is pointed at it in one
+           rename, its VERSION is copied beside the launcher, and bin/publish/launcher/godot-mcp.exe is placed as the
+           folder's godot-mcp.exe (a different one, even running, is renamed aside to godot-mcp.exe.old-<guid>).
+           Servers already running keep the version they started with: none is stopped. ~/.claude/skills/godot-mcp
+           and ~/.claude/skills/godot-agent-sweep are linked to the new version's skill/ and agent-sweep-skill/ as
+           directory junctions (one pointing elsewhere is replaced; anything else at a link path is refused, never
+           deleted). One line then names each Claude session and project whose server still runs an older version, to
+           reconnect there with /mcp; version folders other than the current and the previous one are removed when
+           nothing runs from them. Last, the new version's godot-mcp.exe --sweep-agents runs, printing its lines as
+           they come: a sweep that cannot start is reported and the install succeeds; one that exits non-zero makes the
+           install exit 1, undoing nothing. Ceiling 300 s for the publish, then 300 s in a heavy slot for the rest,
+           since the sweep's commits run the swept repositories' hooks (which can build). GODOT_MCP_INSTALL_DIR
+           overrides the install folder, GODOT_MCP_SKILLS_DIR the folder the links are made in.
   package  the release download: bin/publish removed, publish (as above, so bin/publish already holds the skills as
-           skill/ and agent-sweep-skill/), then tools/package.ps1 zips bin/publish with a VERSION file (the published
-           product version) into
-           .tmp/package/godot-mcp-<X.Y.Z>-win-x64.zip, writes .tmp/package/install.ps1 (tools/install-release.ps1
-           with tools/InstalledServers.psm1 inlined, the release's installer), and prints both paths; .tmp/package.log, ceiling 300 s for the
-           publish, 60 s for the zip. The release workflow runs this command, so a local zip is built as CI builds it.
+           skill/ and agent-sweep-skill/), then tools/package.ps1 zips bin/publish, its launcher/godot-mcp.exe as
+           godot-mcp-launcher.exe at the zip's root (without its pdb), and a VERSION file (the published product
+           version) into .tmp/package/godot-mcp-<X.Y.Z>-win-x64.zip, writes .tmp/package/install.ps1
+           (tools/install-release.ps1 with tools/InstalledServers.psm1 and tools/InstallLayout.psm1 inlined, the
+           release's installer), and prints both paths; .tmp/package.log, ceiling 300 s for the publish, 60 s for the
+           zip. The release workflow runs this command, so a local zip is built as CI builds it.
   gdtest   the bridge's GDScript unit tests (tests/bridge/test_*.gd) in headless Godot (GODOT_PATH, else a
            Godot*console*.exe on PATH). It first imports tests/bridge (godot --headless --path tests/bridge --import,
            .tmp/gdtest-import.log, ceiling 120 s) when a test script is newer than the last import, so the project's
