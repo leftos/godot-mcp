@@ -55,6 +55,9 @@ internal sealed class SessionHarness : IAsyncDisposable
             // scene killed at its ceiling gives the scene one (options.ceilings), which is never floored. It is under the xUnit
             // hang guard of a test that plays a scene (TestTimeouts.OwnLaunchMs).
             ScratchBoundFloor = TimeSpan.FromMinutes(10),
+            // One retry of a launch whose Godot crashed at boot with 0xC06D007F inside the GPU driver's OpenGL start-up, before
+            // the bridge connected, seen on two machines and gone on rerun; any other early exit fails the launch.
+            RetryBootCrashOnce = true,
             // Hang guards in minutes, not bounds a starved game must beat to quit cleanly: the gate starts Godot at BelowNormal
             // and the listener's clock is wall time, and a stop's kill turns a run red. They are under the xUnit hang guard a
             // test that launches a game carries (TestTimeouts.OwnLaunchMs).

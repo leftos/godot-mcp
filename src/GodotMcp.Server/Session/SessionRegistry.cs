@@ -102,6 +102,13 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// </summary>
     internal TimeSpan ScratchBoundFloor { get; init; } = TimeSpan.Zero;
 
+    /// <summary>
+    /// Whether a launch whose Godot exited with <see cref="GodotSession.BootCrashExitCode"/> before its bridge connected is
+    /// started once more: off unless set, as the itest harness sets it, since Godot can crash at boot with 0xC06D007F in the GPU
+    /// driver's start-up, a fault no product path reaches. Any other exit, and a second crash, fail the launch as before.
+    /// </summary>
+    internal bool RetryBootCrashOnce { get; init; }
+
     /// <summary>The server's own <see cref="ExitGrace"/>: 3 s of load-adjusted time.</summary>
     internal static readonly TimeSpan DefaultExitGrace = TimeSpan.FromSeconds(3);
 

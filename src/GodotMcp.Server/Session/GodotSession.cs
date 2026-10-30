@@ -621,6 +621,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
+    /// <summary>
+    /// The exit code of Godot's crash at boot inside the GPU driver's OpenGL start-up: 0xC06D007F, a delay-load "procedure not
+    /// found", which a launch on a registry with <see cref="SessionRegistry.RetryBootCrashOnce"/> retries once.
+    /// </summary>
+    internal const int BootCrashExitCode = unchecked((int)0xC06D007F);
+
     internal static string CreateToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
 
     /// <summary>Adds a captured frame from this session's bridge to its capture in the registry's store.</summary>
@@ -671,17 +677,8 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
             registry.WriteOverride(this, bridgeScript);
             GitExclude.Ensure(ProjectDir, OverrideFile.FileName, _logger);
-            string token = CreateToken();
-            string? moviePath = PrepareMoviePath(request);
-            BridgeEndpoint bridge = new(registry.Listener.Port, token);
-            ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(godotPath, request, bridge, moviePath);
-            GodotRun run = new(ProjectDir, CreateRunProcess(startInfo, request.Quiet), previous);
-            StartProcess(run, previous is null ? null : ProcessId);
-            MarkGameStarted();
-            _exitHandled = NewExitHandled();
-            _run = run;
-            _recording = moviePath is null ? null : new Recording(moviePath) { DropIdle = request.DropIdle };
-            ProcessId = run.Process.Id;
+            Func<int, string>? marker = previous is not null && ProcessId is int replaced ? started => RestartMarker(replaced, started) : null;
+            (GodotRun run, string token) = StartGodot(request, godotPath, previous, marker);
             return new PreparedRun
             {
                 Run = run,
@@ -698,6 +695,89 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         }
     }
 
+    /// <summary>
+    /// Creates and starts Godot for <paramref name="request"/> with a fresh bridge token, and makes the new run the session's.
+    /// </summary>
+    /// <param name="request">What to launch.</param>
+    /// <param name="godotPath">The Godot executable.</param>
+    /// <param name="carried">The run whose output buffers and output file the new run continues; null for a first launch.</param>
+    /// <param name="marker">
+    /// The marker line the carried output gets once the new process has its pid, from that pid; null for no marker.
+    /// </param>
+    /// <returns>The started run and the token its bridge's hello must carry.</returns>
+    private (GodotRun Run, string Token) StartGodot(LaunchRequest request, string godotPath, GodotRun? carried, Func<int, string>? marker)
+    {
+        string token = CreateToken();
+        string? moviePath = PrepareMoviePath(request);
+        BridgeEndpoint bridge = new(registry.Listener.Port, token);
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(godotPath, request, bridge, moviePath);
+        GodotRun run = new(ProjectDir, CreateRunProcess(startInfo, request.Quiet), carried);
+        StartProcess(run, marker);
+        MarkGameStarted();
+        _exitHandled = NewExitHandled();
+        _run = run;
+        _recording = moviePath is null ? null : new Recording(moviePath) { DropIdle = request.DropIdle };
+        ProcessId = run.Process.Id;
+        return (run, token);
+    }
+
+    /// <summary>
+    /// Whether a run whose handshake failed is retried: the registry retries a boot crash
+    /// (<see cref="SessionRegistry.RetryBootCrashOnce"/>) and the run exited with <see cref="BootCrashExitCode"/>.
+    /// </summary>
+    private bool IsBootCrashToRetry(GodotRun run) => registry.RetryBootCrashOnce && !run.IsRunning && run.ExitCode == BootCrashExitCode;
+
+    /// <summary>The line a restart writes into the output it carries over, once the new game has its pid.</summary>
+    private static string RestartMarker(int replaced, int started) =>
+        $"[godot-mcp] restarted: the previous game (pid {replaced}) was stopped; output below is from pid {started}.";
+
+    /// <summary>The line a retry after a boot crash writes into the output it carries over, once the new game has its pid.</summary>
+    private static string BootCrashMarker(int crashed, int started) =>
+        $"[godot-mcp] Godot (pid {crashed}) crashed at boot with 0xC06D007F; retried, output below is from pid {started}";
+
+    /// <summary>
+    /// Starts Godot once more for a run that crashed at boot: the crashed run's output capture stopped as a restart stops its
+    /// old run's, then a fresh process for the same request under the folder's prep lock, with no second prep, whose output
+    /// carries on the crashed run's buffers and file after a marker line. The crashed run is let go of once the new one is the
+    /// session's, and also when the wait for the lock is cancelled.
+    /// </summary>
+    /// <exception cref="SessionException">The server's exit has begun, or Godot could not start.</exception>
+    /// <exception cref="OperationCanceledException">The wait for the folder's prep lock was cancelled.</exception>
+    private async Task<PreparedRun> RelaunchAfterBootCrashAsync(LaunchRequest request, PreparedRun crashed, CancellationToken cancellationToken)
+    {
+        StopOutputCapture(crashed.Run);
+        int crashedProcessId = crashed.Run.Process.Id;
+        SemaphoreSlim folderLock = registry.PrepLock(ProjectDir);
+        try
+        {
+            await folderLock.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            await crashed.Run.DisposeAsync();
+            throw;
+        }
+
+        PreparedRun relaunched;
+        try
+        {
+            registry.RefuseStartAtShutdown();
+            LogBootCrashRetried(_logger);
+            (GodotRun run, string token) = StartGodot(request, crashed.Godot, crashed.Run, started => BootCrashMarker(crashedProcessId, started));
+            relaunched = crashed with { Run = run, Token = token };
+        }
+        finally
+        {
+            folderLock.Release();
+        }
+
+        await crashed.Run.DisposeAsync();
+        return relaunched;
+    }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Godot crashed at boot with 0xC06D007F; retrying the launch once (itest harness)")]
+    private static partial void LogBootCrashRetried(ILogger logger);
+
     /// <returns>
     /// The launch, how the run it replaced ended and how that run's recording ended; both are null for a launch, and the
     /// recording also for a replaced run that recorded nothing.
@@ -710,9 +790,19 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     {
         registry.RefuseStartAtShutdown();
         PreparedRun prepared = await PrepareAndStartAsync(request, previous, cancellationToken);
+        BridgeConnection connection;
+        try
+        {
+            connection = await WaitForHandshakeAsync(prepared.Run, new HandshakeExpectation(prepared.Token, ProjectDir), cancellationToken);
+        }
+        catch (SessionException) when (IsBootCrashToRetry(prepared.Run))
+        {
+            prepared = await RelaunchAfterBootCrashAsync(request, prepared, cancellationToken);
+            connection = await WaitForHandshakeAsync(prepared.Run, new HandshakeExpectation(prepared.Token, ProjectDir), cancellationToken);
+        }
+
         GodotRun run = prepared.Run;
         int processId = run.Process.Id;
-        BridgeConnection connection = await WaitForHandshakeAsync(run, new HandshakeExpectation(prepared.Token, ProjectDir), cancellationToken);
         // The clock is replaced before the connection is published, so no call converts a new run's stamp on the old run's clock.
         await StartClockAsync(connection);
         connection.OnErrors(Errors.Receive);
@@ -779,22 +869,22 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>
     /// Starts the run's process and its output capture. A run with no log file yet opens one, fresh for a launch and in append
-    /// mode for a restart, whose predecessor's file it writes on into; a file that cannot be opened is logged and the run goes on
-    /// without one. On a restart (<paramref name="previousProcessId"/> set) a marker line goes into both carried-over streams and
-    /// the file once, once the new process has its id and before any of its output is read. The file closes when both streams
-    /// have ended, so a stopped session holds nothing in the project folder.
+    /// mode for a restart or a retry after a boot crash, whose predecessor's file it writes on into; a file that cannot be opened
+    /// is logged and the run goes on without one. With a <paramref name="marker"/> (a restart's, a retry's) its line, made from
+    /// the new process's id, goes into both carried-over streams and the file once, before any of the new output is read. The
+    /// file closes when both streams have ended, so a stopped session holds nothing in the project folder.
     /// </summary>
-    private void StartProcess(GodotRun run, int? previousProcessId)
+    private void StartProcess(GodotRun run, Func<int, string>? marker)
     {
         run.Process.Exited += (_, _) => _ = OnRunExitedAsync(run);
         run.Launcher.Start();
         run.OutputLog ??= OpenOutputLog(run);
-        if (previousProcessId is { } previous)
+        if (marker is not null)
         {
-            string marker = $"[godot-mcp] restarted: the previous game (pid {previous}) was stopped; output below is from pid {run.Process.Id}.";
-            run.Stdout.Add(marker);
-            run.Stderr.Add(marker);
-            run.OutputLog?.Write(marker);
+            string line = marker(run.Process.Id);
+            run.Stdout.Add(line);
+            run.Stderr.Add(line);
+            run.OutputLog?.Write(line);
         }
 
         try

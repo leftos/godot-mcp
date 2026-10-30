@@ -42,7 +42,9 @@ the same log, and the job's timeout-minutes bounds it in place of the ceiling an
            itest-capture, below, with a ceiling of 420 s for its publish): each lane's groups one at a time
            in the table's order, the three lanes at once. A group's console output, the gate's tail and verdict, goes to
            .tmp/itest-<group>.console (errors to .tmp/itest-<group>.console.err) and is printed under
-           "== itest <group> (lane <lane>)" when the group ends.
+           "== itest <group> (lane <lane>)" when the group ends. A failed group then prints, under "itest <group>: failed
+           tests from <lane log>:", each failed test's block from its lane log (the "failed <Test>" line, its message and
+           its "at" frames), at most 5 tests of at most 40 lines each, or says the log has no failed test.
            Every group runs even when an earlier one fails; a summary line per group follows in the groups table's order,
            then "itest: <n> groups in <m> lanes, wall <time>", and the exit status is the first non-zero group's in
            that order. Each gate takes one of the machine's gate slots, so the three lanes take three: a heavy slot for
@@ -1010,8 +1012,73 @@ function Invoke-ItestGroupProcess {
     return $process
 }
 
+# The failure blocks of a test log, each an array of lines: a "failed <Test> (<time>)" line as Microsoft Testing Platform
+# writes it, then the indented lines after it (where it ran, the message, the "at" frames), up to an empty line or the
+# next unindented one (the next test's line, the assembly's summary). The file is streamed. A gate log's own lines (its
+# "gat" stream: process spawns and exits, its verdict) are dropped, as they interleave with the test's output, and the
+# stamp and stream of the rest ("<time> out ") taken off; a line without a stamp is read as it is.
+function Get-ItestFailureBlock {
+    param([Parameter(Mandatory)] [string]$Path)
+    $gateLine = '^\d{4}-\d{2}-\d{2}T[\d:.]+[+-]\d{2}:\d{2} gat( |$)'
+    $stamp = '^\d{4}-\d{2}-\d{2}T[\d:.]+[+-]\d{2}:\d{2} (out|err)( |$)'
+    $blocks = [System.Collections.Generic.List[object]]::new()
+    $block = $null
+    foreach ($stamped in [System.IO.File]::ReadLines($Path)) {
+        if ($stamped -match $gateLine) {
+            continue
+        }
+        $line = $stamped -replace $stamp, ''
+        if ($line -match '^failed ') {
+            $block = [System.Collections.Generic.List[string]]::new()
+            $block.Add($line)
+            $blocks.Add($block)
+        }
+        elseif ($null -ne $block -and $line -match '^\s') {
+            $block.Add($line)
+        }
+        else {
+            $block = $null
+        }
+    }
+    return $blocks.ToArray()
+}
+
+# Prints, after a failed group's console output, the failure block of each failed test in its lane log, so the message
+# reaches the outer itest log, which a rerun on the build box cannot overwrite: at most 5 tests, each at most 40 lines,
+# the last of a cut block saying how many lines the log has beyond it. A log with no failed test (a build error, a gate
+# kill) says so, and a log that cannot be read (missing, locked) says why; it never throws.
+function Show-ItestFailureBlock {
+    param(
+        [Parameter(Mandatory)] [string]$Group,
+        [Parameter(Mandatory)] [string]$Log
+    )
+    try {
+        $blocks = @(Get-ItestFailureBlock -Path $Log)
+    }
+    catch {
+        Write-Host "itest ${Group}: could not read ${Log}: $($_.Exception.GetBaseException().Message)"
+        return
+    }
+    if ($blocks.Count -eq 0) {
+        Write-Host "itest ${Group}: no failed test in $Log; read the log for the cause"
+        return
+    }
+    Write-Host "itest ${Group}: failed tests from ${Log}:"
+    foreach ($block in @($blocks | Select-Object -First 5)) {
+        if ($block.Count -le 40) {
+            $block | ForEach-Object { Write-Host $_ }
+            continue
+        }
+        $block[0..38] | ForEach-Object { Write-Host $_ }
+        Write-Host "  ... $($block.Count - 39) more lines in the log"
+    }
+    if ($blocks.Count -gt 5) {
+        Write-Host "itest ${Group}: $($blocks.Count - 5) more failed tests in the log"
+    }
+}
+
 # Prints a finished group's console output under a header, with the gate's kill line and its reading when it was
-# killed. Returns the group's exit status.
+# killed, and the failure blocks of its failed tests when it failed. Returns the group's exit status.
 function Complete-ItestGroup {
     param(
         [Parameter(Mandatory)] [string]$Group,
@@ -1025,6 +1092,9 @@ function Complete-ItestGroup {
     Get-Content -LiteralPath $console, "$console.err" -ErrorAction SilentlyContinue | Out-Host
     if ($status -eq 124) {
         Write-Host "itest-$Group was killed by the gate: $(Get-GateKill -Log (Join-Path $logDir "itest-$Group.log"))" -ForegroundColor Yellow
+    }
+    if ($status -ne 0) {
+        Show-ItestFailureBlock -Group $Group -Log (Join-Path $logDir "itest-$Group.log")
     }
     return $status
 }
