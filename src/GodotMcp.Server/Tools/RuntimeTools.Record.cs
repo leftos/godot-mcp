@@ -147,11 +147,29 @@ internal sealed partial class RuntimeTools
     /// Marks the Movie Maker recording at the movie frame the game has reached; a start with a path has it checked before the
     /// game is asked for the frame, and keeps it for its clip.
     /// </summary>
-    private static async Task<string> MarkMovieAsync(
+    private static Task<string> MarkMovieAsync(
         GodotSession target,
         Recording recording,
         string mark,
         RecordMarkOptions? started,
+        CancellationToken cancellationToken
+    ) =>
+        MarkMovieAsync(
+            target,
+            recording,
+            mark,
+            started,
+            token => CallWithErrorsAsync(target, new BridgeCall("record_mark", "movie_frame", [], MovieFrameTimeout), token),
+            cancellationToken
+        );
+
+    /// <summary>Marks with <paramref name="requestFrame"/>, which asks the game for the movie frame it has reached.</summary>
+    internal static async Task<string> MarkMovieAsync(
+        GodotSession target,
+        Recording recording,
+        string mark,
+        RecordMarkOptions? started,
+        Func<CancellationToken, Task<BridgeResult>> requestFrame,
         CancellationToken cancellationToken
     )
     {
@@ -165,11 +183,7 @@ internal sealed partial class RuntimeTools
             throw new McpException(e.Message, e);
         }
 
-        BridgeResult result = await CallWithErrorsAsync(
-            target,
-            new BridgeCall("record_mark", "movie_frame", [], MovieFrameTimeout),
-            cancellationToken
-        );
+        BridgeResult result = await requestFrame(cancellationToken);
         long frame = ReadMovieFrame(result.Reply);
         try
         {

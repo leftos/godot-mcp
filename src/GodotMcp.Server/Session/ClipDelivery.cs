@@ -21,6 +21,9 @@ internal static class ClipDelivery
     /// <param name="destination">Where its start mark asked for it.</param>
     /// <param name="overwrite">Whether an existing file there may be replaced.</param>
     /// <param name="delivered">The final paths earlier clips of the same recording were delivered to, by 1-based clip number.</param>
+    /// <param name="allowCopy">
+    /// Whether a destination on another volume may be reached by a copy; false keeps such a clip where it is with a warning.
+    /// </param>
     /// <returns>
     /// Where the clip is now; the final path it was delivered to, null when it was kept; and a warning naming both paths when
     /// something went wrong, null when nothing did.
@@ -29,8 +32,9 @@ internal static class ClipDelivery
         string clip,
         OutputTarget destination,
         bool overwrite,
-        IReadOnlyDictionary<string, int> delivered
-    ) => Deliver(clip, destination, overwrite, delivered, OutputDestination.MoveReplacing);
+        IReadOnlyDictionary<string, int> delivered,
+        bool allowCopy
+    ) => Deliver(clip, destination, overwrite, delivered, (source, to, replace) => OutputDestination.MoveReplacing(source, to, replace, allowCopy));
 
     /// <summary>Delivers with <paramref name="move"/>, which returns why its source is left after the copy, or null.</summary>
     internal static (string Path, string? FinalPath, string? Warning) Deliver(

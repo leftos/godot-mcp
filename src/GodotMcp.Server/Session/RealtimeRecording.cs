@@ -175,6 +175,9 @@ internal sealed partial class RealtimeRecording
     // Whether a caller has taken the logging of the finish's fault; under _lock.
     private bool _faultLogTaken;
 
+    // Whether the server's exit ended the recording, so its delivery moves the clip by rename only; under _lock.
+    private bool _markedForExit;
+
     private RealtimeRecording(StartContext context, RealtimePipeline pipeline, RealtimeStarted started)
     {
         _environment = context.Environment;
@@ -267,6 +270,18 @@ internal sealed partial class RealtimeRecording
             // A cancelled start answers no one, so a file it cannot delete goes unreported, as the cancel's own exception goes on.
             DeleteFiles(paths.StartFiles);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Marks the recording as ended by the server's exit: a delivery that has not begun moves the clip by rename only, and a
+    /// destination on another volume keeps the clip in recordings/ with a warning, since the exit leaves no time to copy it.
+    /// </summary>
+    public void MarkExit()
+    {
+        lock (_lock)
+        {
+            _markedForExit = true;
         }
     }
 
@@ -964,11 +979,30 @@ internal sealed partial class RealtimeRecording
         }
 
         string? mkvLeft = DeleteFiles([Paths.Mkv]);
-        (string clipPath, _, string? undelivered) = _start.Destination is { } destination
-            ? ClipDelivery.Deliver(Paths.Mp4, destination, _start.Overwrite, ReadOnlyDictionary<string, int>.Empty)
-            : (Paths.Mp4, null, null);
+        (string clipPath, _, string? undelivered) = _start.Destination is { } destination ? Deliver(destination) : (Paths.Mp4, null, null);
         RealtimeClip clip = Clip(length, clipPath);
         return new RealtimeOutcome(new RealtimeStopped(clip, Warnings(helper, clip, [_endNote, deadlineLeft, mkvLeft, undelivered])), null);
+    }
+
+    /// <summary>
+    /// Moves the .mp4 to <paramref name="destination"/> through the environment's rename; once the server's exit has marked the
+    /// recording, by rename only, so a destination on another volume keeps the clip with a warning.
+    /// </summary>
+    private (string Path, string? FinalPath, string? Warning) Deliver(OutputTarget destination)
+    {
+        bool allowCopy;
+        lock (_lock)
+        {
+            allowCopy = !_markedForExit;
+        }
+
+        return ClipDelivery.Deliver(
+            Paths.Mp4,
+            destination,
+            _start.Overwrite,
+            ReadOnlyDictionary<string, int>.Empty,
+            (source, to, overwrite) => OutputDestination.MoveReplacing(source, to, overwrite, allowCopy, _environment.Rename)
+        );
     }
 
     /// <returns>Why the remux did not make the .mp4; null when it did.</returns>

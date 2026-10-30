@@ -125,29 +125,42 @@ internal static partial class OutputDestination
 
     /// <summary>
     /// Moves <paramref name="source"/> to <paramref name="destination"/>, creating its folders when missing: on one volume a
-    /// rename that replaces the destination's folder entry, never writing through a link there; across volumes a
-    /// <see cref="CopyReplacing"/> of the source, which is deleted once the copy is in place. A failed write deletes its
-    /// temporary file and removes the folders it made, deepest first, while they are empty; a folder it cannot remove is
-    /// named in the exception; the source stays where it was.
+    /// rename that replaces the destination's folder entry, never writing through a link there; across volumes, when
+    /// <paramref name="allowCopy"/>, a <see cref="CopyReplacing"/> of the source, which is deleted once the copy is in place.
+    /// A failed write deletes its temporary file and removes the folders it made, deepest first, while they are empty; a
+    /// folder it cannot remove is named in the exception; the source stays where it was.
     /// </summary>
+    /// <param name="source">The file to move.</param>
+    /// <param name="destination">Where it goes.</param>
+    /// <param name="overwrite">Whether an existing file there may be replaced.</param>
+    /// <param name="allowCopy">Whether a move across volumes may copy; false at the server's exit, which leaves no time to copy.</param>
     /// <returns>Null once the source is gone; why the source could not be deleted after its copy reached the destination.</returns>
-    /// <exception cref="IOException">A step failed, or the destination exists and <paramref name="overwrite"/> is false.</exception>
+    /// <exception cref="IOException">
+    /// A step failed, the destination exists and <paramref name="overwrite"/> is false, or the move crosses volumes and
+    /// <paramref name="allowCopy"/> is false.
+    /// </exception>
     /// <exception cref="UnauthorizedAccessException">A step was denied.</exception>
-    internal static string? MoveReplacing(string source, string destination, bool overwrite) => MoveReplacing(source, destination, overwrite, Rename);
+    internal static string? MoveReplacing(string source, string destination, bool overwrite, bool allowCopy) =>
+        MoveReplacing(source, destination, overwrite, allowCopy, Rename);
 
     /// <summary>Moves with <paramref name="rename"/>, which returns false when the two paths lie on different volumes.</summary>
-    internal static string? MoveReplacing(string source, string destination, bool overwrite, Func<string, string, bool, bool> rename)
+    internal static string? MoveReplacing(string source, string destination, bool overwrite, bool allowCopy, Func<string, string, bool, bool> rename)
     {
         string? leftover = null;
-        InFolders(destination, () => leftover = MoveIntoFolder(source, destination, overwrite, rename));
+        InFolders(destination, () => leftover = MoveIntoFolder(source, destination, overwrite, allowCopy, rename));
         return leftover;
     }
 
-    private static string? MoveIntoFolder(string source, string destination, bool overwrite, Func<string, string, bool, bool> rename)
+    private static string? MoveIntoFolder(string source, string destination, bool overwrite, bool allowCopy, Func<string, string, bool, bool> rename)
     {
         if (rename(source, destination, overwrite))
         {
             return null;
+        }
+
+        if (!allowCopy)
+        {
+            throw new IOException($"{source} is on another volume than {destination}; the server's exit leaves no time to copy it");
         }
 
         using (FileStream from = new(source, FileMode.Open, FileAccess.Read, FileShare.Read))
@@ -221,8 +234,12 @@ internal static partial class OutputDestination
         }
     }
 
-    /// <summary>A rename that never becomes a copy on Windows; false when the two paths lie on different volumes.</summary>
-    private static bool Rename(string source, string destination, bool overwrite)
+    /// <summary>
+    /// A rename that never becomes a copy on Windows, false when the two paths lie on different volumes. Elsewhere File.Move,
+    /// which copies across file systems itself and never returns false, so <see cref="MoveReplacing(string, string, bool, bool)"/>'s
+    /// allowCopy false is not enforced there.
+    /// </summary>
+    internal static bool Rename(string source, string destination, bool overwrite)
     {
         if (OperatingSystem.IsWindows())
         {

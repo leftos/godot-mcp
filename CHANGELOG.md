@@ -21,6 +21,8 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Fixed
 
+- At the server's exit a real-time clip is moved, never copied across volumes; one bound for another volume stays in `recordings/` with a warning.
+- The server's exit prints each real-time recording's warnings to stderr instead of dropping them.
 - Two `record_mark` clips of one recording can no longer reach the same file through a junction or link and overwrite each other.
 - A `save_screenshot` or `record_mark` destination of 260 characters or more is written, not refused as a path Windows cannot give.
 - A `save_screenshot` or `record_mark` clip write that fails no longer leaves behind the empty folders it made for its path.

@@ -572,7 +572,7 @@ public sealed class OutputDestinationTests : IDisposable
         string destination = _temp.Combine("taken.mp4");
         File.WriteAllBytes(destination, [9]);
 
-        Assert.Throws<IOException>(() => OutputDestination.MoveReplacing(source, destination, overwrite: false));
+        Assert.Throws<IOException>(() => OutputDestination.MoveReplacing(source, destination, overwrite: false, allowCopy: true));
 
         Assert.Equal([1, 2, 3], File.ReadAllBytes(source));
         Assert.Equal([9], File.ReadAllBytes(destination));
@@ -589,7 +589,7 @@ public sealed class OutputDestinationTests : IDisposable
         string source = Path.Combine(Directory.CreateDirectory(_temp.Combine("recordings")).FullName, "clip.mp4");
         File.WriteAllBytes(source, [7, 7, 7]);
 
-        OutputDestination.MoveReplacing(source, destination, overwrite: true);
+        OutputDestination.MoveReplacing(source, destination, overwrite: true, allowCopy: true);
 
         Assert.Equal([7, 7, 7], File.ReadAllBytes(destination));
         Assert.Equal([1, 2], File.ReadAllBytes(other));
@@ -605,7 +605,7 @@ public sealed class OutputDestinationTests : IDisposable
         string destination = Directory.CreateDirectory(_temp.Combine("taken.mp4")).FullName;
         File.WriteAllBytes(Path.Combine(destination, "kept.txt"), [5]);
 
-        Exception? failure = Record.Exception(() => OutputDestination.MoveReplacing(source, destination, overwrite: true));
+        Exception? failure = Record.Exception(() => OutputDestination.MoveReplacing(source, destination, overwrite: true, allowCopy: true));
 
         Assert.True(failure is IOException or UnauthorizedAccessException, $"expected an IO or access failure, got {failure}");
         Assert.Equal([1, 2, 3], File.ReadAllBytes(source));
@@ -629,7 +629,7 @@ public sealed class OutputDestinationTests : IDisposable
         Exception? failure;
         using (sourceHeldOpen ? new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read) : null)
         {
-            failure = Record.Exception(() => OutputDestination.MoveReplacing(source, destination, overwrite: true));
+            failure = Record.Exception(() => OutputDestination.MoveReplacing(source, destination, overwrite: true, allowCopy: true));
         }
 
         Assert.True(failure is IOException or UnauthorizedAccessException, $"expected an IO or access failure, got {failure}");
@@ -676,7 +676,7 @@ public sealed class OutputDestinationTests : IDisposable
         File.WriteAllBytes(source, [1, 2, 3]);
         string destination = _temp.Combine("moved.mp4");
 
-        string? leftover = OutputDestination.MoveReplacing(source, destination, overwrite: false, OnAnotherVolume);
+        string? leftover = OutputDestination.MoveReplacing(source, destination, overwrite: false, allowCopy: true, OnAnotherVolume);
 
         Assert.Null(leftover);
         Assert.Equal([1, 2, 3], File.ReadAllBytes(destination));
@@ -694,7 +694,7 @@ public sealed class OutputDestinationTests : IDisposable
         string source = Path.Combine(Directory.CreateDirectory(_temp.Combine("recordings")).FullName, "clip.mp4");
         File.WriteAllBytes(source, [7, 7, 7]);
 
-        OutputDestination.MoveReplacing(source, destination, overwrite: true, OnAnotherVolume);
+        OutputDestination.MoveReplacing(source, destination, overwrite: true, allowCopy: true, OnAnotherVolume);
 
         Assert.Equal([7, 7, 7], File.ReadAllBytes(destination));
         Assert.Equal([1, 2], File.ReadAllBytes(other));
@@ -709,7 +709,9 @@ public sealed class OutputDestinationTests : IDisposable
         // A folder stands where the clip would go, which no move replaces, overwrite or not.
         string destination = Directory.CreateDirectory(_temp.Combine("taken.mp4")).FullName;
 
-        Exception? failure = Record.Exception(() => OutputDestination.MoveReplacing(source, destination, overwrite: true, OnAnotherVolume));
+        Exception? failure = Record.Exception(() =>
+            OutputDestination.MoveReplacing(source, destination, overwrite: true, allowCopy: true, OnAnotherVolume)
+        );
 
         Assert.True(failure is IOException or UnauthorizedAccessException, $"expected an IO or access failure, got {failure}");
         Assert.Equal([1, 2, 3], File.ReadAllBytes(source));
@@ -727,7 +729,7 @@ public sealed class OutputDestinationTests : IDisposable
         using (new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.None))
         {
             failure = Record.Exception(() =>
-                OutputDestination.MoveReplacing(source, Path.Combine(made, "deeper", "clip.mp4"), overwrite: true, OnAnotherVolume)
+                OutputDestination.MoveReplacing(source, Path.Combine(made, "deeper", "clip.mp4"), overwrite: true, allowCopy: true, OnAnotherVolume)
             );
         }
 
@@ -745,12 +747,44 @@ public sealed class OutputDestinationTests : IDisposable
         // A name longer than any file system allows: new is made, then the folder below it fails.
         string destination = Path.Combine(made, new string('x', 300), "clip.mp4");
 
-        Exception? failure = Record.Exception(() => OutputDestination.MoveReplacing(source, destination, overwrite: true));
+        Exception? failure = Record.Exception(() => OutputDestination.MoveReplacing(source, destination, overwrite: true, allowCopy: true));
 
         Assert.True(failure is IOException or UnauthorizedAccessException, $"expected an IO or access failure, got {failure}");
         Assert.DoesNotContain("could not be removed", failure.Message, StringComparison.Ordinal);
         Assert.False(Directory.Exists(made));
         Assert.Equal([1, 2, 3], File.ReadAllBytes(source));
+    }
+
+    [Fact]
+    public void ARenameOnlyMoveOnOneVolumeMovesTheFile()
+    {
+        string source = _temp.Combine("clip.mp4");
+        File.WriteAllBytes(source, [1, 2, 3]);
+        string destination = _temp.Combine("new", "moved.mp4");
+
+        string? leftover = OutputDestination.MoveReplacing(source, destination, overwrite: false, allowCopy: false);
+
+        Assert.Null(leftover);
+        Assert.Equal([1, 2, 3], File.ReadAllBytes(destination));
+        Assert.False(File.Exists(source));
+    }
+
+    [Fact]
+    public void ARenameOnlyMoveToAnotherVolumeIsRefusedAndKeepsTheSource()
+    {
+        string source = _temp.Combine("clip.mp4");
+        File.WriteAllBytes(source, [1, 2, 3]);
+        string made = _temp.Combine("new");
+        string destination = Path.Combine(made, "deeper", "clip.mp4");
+
+        IOException refused = Assert.Throws<IOException>(() =>
+            OutputDestination.MoveReplacing(source, destination, overwrite: true, allowCopy: false, OnAnotherVolume)
+        );
+
+        Assert.Equal($"{source} is on another volume than {destination}; the server's exit leaves no time to copy it", refused.Message);
+        Assert.Equal([1, 2, 3], File.ReadAllBytes(source));
+        Assert.False(Directory.Exists(made), $"the refused move left the folder {made} it made");
+        Assert.Empty(Directory.GetFiles(_temp.Path, ".godot-mcp-*.tmp", SearchOption.AllDirectories));
     }
 
     /// <summary>A rename that finds the two paths on different volumes, so the move copies.</summary>

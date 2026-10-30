@@ -671,6 +671,13 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             armed = [.. _armed.Keys];
             _armed.Clear();
             GodotSession[] uncovered = [.. sessions.Where(_shutDown.Add)];
+
+            // Marked here, before any task runs, so no finish already under way can begin a copy the exit would cut short.
+            foreach (GodotSession session in uncovered)
+            {
+                session.MarkRealtimeExit();
+            }
+
             Task earlier = _gamesStopped;
             gamesStopped = _gamesStopped =
                 uncovered.Length == 0 ? earlier : Task.WhenAll(earlier, Task.Run(() => StopGamesAtShutdownAsync(uncovered)));
@@ -711,10 +718,11 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
-    /// Ends every session's real-time recording at once, then waits for every launch or restart in flight to settle, then
-    /// stops every session's game at once and waits for them and for the recordings' clips, all sharing
-    /// <see cref="ShutdownCap"/> of wall time; then kills every game still running of the sessions it took. A session still
-    /// starting at the cap is handed back to a later pass and its game, once it has one, killed.
+    /// Ends every session's real-time recording at once, each already marked for the exit by <see cref="Shutdown"/>, then waits
+    /// for every launch or restart in flight to settle, then stops every session's game at once and waits for them and for
+    /// the recordings' clips, all sharing <see cref="ShutdownCap"/> of wall time; then kills every game still running of the
+    /// sessions it took. A session still starting at the cap is handed back to a later pass and its game, once it has one,
+    /// killed.
     /// </summary>
     private async Task StopGamesAtShutdownAsync(GodotSession[] sessions)
     {
@@ -730,7 +738,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             await Console.Error.WriteLineAsync(
                 all.IsCompleted
                     ? $"godot-mcp: the real-time recordings had not all finished {ShutdownCap.TotalSeconds:0} s into the shutdown; "
-                        + "an .mkv or a deadline file may be left in a project's .godot/godot-mcp/recordings."
+                        + "an .mkv or a deadline file may be left in a project's .godot/godot-mcp/recordings. "
+                        + "A clip not yet moved to its destination stays in .godot/godot-mcp/recordings/."
                     : $"godot-mcp: the games had not all quit {ShutdownCap.TotalSeconds:0} s into the shutdown; killing the rest."
             );
         }
@@ -755,8 +764,8 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
-    /// One session's <see cref="GodotSession.FinishRealtimeAsync"/>, its real-time recording ended and its clip finished, a
-    /// failure reported to stderr so the others go on.
+    /// One session's <see cref="GodotSession.FinishRealtimeAsync"/>, its real-time recording ended and its clip finished, its
+    /// outcome's warnings and its error written to stderr, a line each, and a failure reported there too so the others go on.
     /// </summary>
     [SuppressMessage(
         "Design",
@@ -767,7 +776,11 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     {
         try
         {
-            await session.FinishRealtimeAsync();
+            RealtimeOutcome? outcome = await session.FinishRealtimeAsync();
+            foreach (string warning in new[] { outcome?.Stopped?.Warning, outcome?.Error }.OfType<string>())
+            {
+                await Console.Error.WriteLineAsync($"godot-mcp: {warning}");
+            }
         }
         catch (Exception e)
         {

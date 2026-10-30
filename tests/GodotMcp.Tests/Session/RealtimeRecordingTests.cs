@@ -761,6 +761,56 @@ public sealed partial class RealtimeRecordingTests : IDisposable
     }
 
     [Fact]
+    public async Task AnExitDeliveryToAnotherVolumeKeepsTheClipWithAWarning()
+    {
+        string clips = Path.Combine(_fake.ProjectDir, "clips");
+        string destination = Path.Combine(clips, "x.mp4");
+        _fake.Rename = (_, _, _) => false;
+        RealtimeRecording recording = await _fake.StartAsync(path: "clips/x.mp4");
+
+        recording.MarkExit();
+        await recording.EndCaptureAsync();
+        RealtimeOutcome outcome = await recording.Finished.WaitAsync(RegistryHarness.HangGuard, Token);
+
+        RealtimeStopped stopped = Assert.IsType<RealtimeStopped>(outcome.Stopped);
+        AssertKeptForTheExit(recording, destination, stopped);
+        Assert.False(Directory.Exists(clips), $"the exit's delivery left the folder {clips} it made");
+    }
+
+    [Fact]
+    public async Task ARecordingMarkedForTheExitBeforeItsRemuxDeliversByRenameOnly()
+    {
+        string destination = Path.Combine(Directory.CreateDirectory(Path.Combine(_fake.ProjectDir, "clips")).FullName, "x.mp4");
+        _fake.Rename = (_, _, _) => false;
+        RealtimeRecording recording = await _fake.StartAsync(path: "clips/x.mp4");
+        _fake.BeforeRemux = () =>
+        {
+            recording.MarkExit();
+            return Task.CompletedTask;
+        };
+
+        RealtimeStopped stopped = await recording.StopAsync(Token);
+
+        AssertKeptForTheExit(recording, destination, stopped);
+        Assert.Empty(Directory.GetFileSystemEntries(Path.GetDirectoryName(destination)!));
+    }
+
+    [Fact]
+    public async Task AStopDeliveryToAnotherVolumeStillCopies()
+    {
+        string destination = Path.Combine(_fake.ProjectDir, "clips", "x.mp4");
+        _fake.Rename = (_, _, _) => false;
+        RealtimeRecording recording = await _fake.StartAsync(path: "clips/x.mp4");
+
+        RealtimeStopped stopped = await recording.StopAsync(Token);
+
+        Assert.Equal(destination, stopped.Clip.Path);
+        Assert.True(File.Exists(destination), $"the clip was not copied to {destination}");
+        Assert.False(File.Exists(recording.Paths.Mp4), "the copied clip's source was left in recordings/");
+        Assert.DoesNotContain("could not be moved", stopped.Warning ?? "", StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ARealtimeStartToAPathOutsideTheProjectIsRefusedBeforeAnyProcessStarts()
     {
         await using RegistryHarness harness = new();
@@ -778,6 +828,21 @@ public sealed partial class RealtimeRecordingTests : IDisposable
         Assert.Equal($"path {path} resolves outside the project {project}; save inside the project", refused.Message);
         Assert.Empty(_fake.Starts);
         Assert.Empty(_fake.Runs);
+    }
+
+    /// <summary>The clip kept in recordings/ with the exit's refusal to copy it to another volume, nothing left at the destination.</summary>
+    private static void AssertKeptForTheExit(RealtimeRecording recording, string destination, RealtimeStopped stopped)
+    {
+        string clip = recording.Paths.Mp4;
+        Assert.Contains(
+            $"the clip could not be moved to {destination}: {clip} is on another volume than {destination}; "
+                + $"the server's exit leaves no time to copy it; it is kept at {clip}",
+            stopped.Warning ?? "",
+            StringComparison.Ordinal
+        );
+        Assert.Equal(clip, stopped.Clip.Path);
+        Assert.True(File.Exists(clip), "the kept clip is not in recordings/");
+        Assert.False(File.Exists(destination), $"a file was written at {destination}");
     }
 
     private static string LastInput(ToolProcessRequest encode) => encode.Arguments[encode.Arguments.ToList().LastIndexOf("-i") + 1];
@@ -891,8 +956,12 @@ internal sealed class FakeRealtime : IDisposable
             Start = StartProcess,
             Run = RunAsync,
             Logger = new CallbackLogger(this),
+            Rename = (source, destination, overwrite) => Rename(source, destination, overwrite),
         };
     }
+
+    /// <summary>The rename a clip's delivery tries first, false for another volume; the real one unless a test sets it.</summary>
+    public Func<string, string, bool, bool> Rename { get; set; } = OutputDestination.Rename;
 
     public RealtimeEnvironment Environment { get; }
 

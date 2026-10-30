@@ -1,3 +1,4 @@
+using GodotMcp.Server.Tools;
 using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Session;
@@ -77,6 +78,13 @@ internal sealed class RealtimeEnvironment
     /// <summary>Where the recording logs what it works around, such as a deadline file held at its move.</summary>
     public required ILogger Logger { get; init; }
 
+    /// <summary>
+    /// The rename that delivers a finished clip to its destination (<see cref="OutputDestination.Rename"/>): on Windows false
+    /// when the two paths lie on different volumes; elsewhere File.Move, which copies across file systems itself and never
+    /// reports another volume, so a delivery's rename-only rule at the server's exit is not enforced there.
+    /// </summary>
+    public required Func<string, string, bool, bool> Rename { get; init; }
+
     /// <summary>The encoder probes, kept for the environment's life; a start failure's cooldown runs on <see cref="Time"/>.</summary>
     public EncoderProbeCache Encoders => LazyInitializer.EnsureInitialized(ref _encoders, () => new EncoderProbeCache(Time));
 
@@ -94,5 +102,6 @@ internal sealed class RealtimeEnvironment
             Start = request => new ToolRealtimeProcess(ToolProcess.Start(request, logger)),
             Run = (request, cancellationToken) => ToolProcess.RunAsync(request, logger, cancellationToken),
             Logger = logger,
+            Rename = OutputDestination.Rename,
         };
 }

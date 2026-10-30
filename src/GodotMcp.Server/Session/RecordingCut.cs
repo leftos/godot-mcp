@@ -186,7 +186,7 @@ internal static class RecordingCut
             return clip;
         }
 
-        (string placed, string? final, string? warning) = ClipDelivery.Deliver(clip, destination, span.Overwrite, delivered);
+        (string placed, string? final, string? warning) = ClipDelivery.Deliver(clip, destination, span.Overwrite, delivered, allowCopy: true);
         if (final is not null)
         {
             delivered.Add(final, number);

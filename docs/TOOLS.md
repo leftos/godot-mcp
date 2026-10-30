@@ -1361,6 +1361,8 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   A finished clip's path (`record_mark` `stop`'s `clip.path`, and `recording.clips` of `stop_project`, `restart_project`, `detach_project` and a game's exit) is where the file is: the destination once delivered, else the `recordings/` path. The move is a rename; across volumes it is a copy to a temporary file beside the destination, renamed into place, then the source deleted. A symlink or hard link at the destination is replaced, never written through.
 
+  When the server exits, a real-time recording's clip is delivered by rename only: a destination on another volume keeps the clip in `recordings/` with the usual warning (`the clip could not be moved to {dest}: {clip} is on another volume than {dest}; the server's exit leaves no time to copy it; it is kept at {clip}`). The server prints each recording's warning and error to stderr as `godot-mcp: {text}`, one line each. A stop, restart, game exit or detach still copies across volumes.
+
   A delivery that fails is a warning, never a lost clip (a real-time `warning`, a Movie Maker `recording.warning`; several are joined with `; `): `the clip could not be moved to {dest}: {reason}; it is kept at {recordings path}`. A failed delivery removes the folders it made for the destination; one it could not remove is named in the reason (`the folder {f} it made could not be removed: {why}`).
 
   Two more: `the clip fell back to .avi, so it is kept at {recordings path} instead of {dest}` (a Movie Maker clip whose encode failed and was copied as recorded; the `Clip N was copied …` note stays in `error`); and `the clip was moved to {dest}, but its copy at {recordings path} could not be deleted: {reason}`.

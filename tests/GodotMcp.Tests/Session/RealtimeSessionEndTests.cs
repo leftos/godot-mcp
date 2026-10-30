@@ -19,6 +19,9 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
 {
     private const string Game = "game";
 
+    /// <summary>The destination the exit's tests name, which their rename finds on another volume.</summary>
+    private const string ExitClip = "clips/x.mp4";
+
     private const string MutedWarning = "no audio: session 'game' renders no sound (options.mute or a quiet run), so the clip has no audio track";
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -301,6 +304,45 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
 
         Assert.Equal(Broke, listed.Error);
         Assert.Equal(listed, stopped.Recording);
+    }
+
+    [Fact]
+    public async Task TheExitDeliversARunningRecordingsClipByRenameOnly()
+    {
+        await AttachAsync();
+        _fake.Rename = (_, _, _) => false;
+        await _tools.RecordMarkAsync("start", new RecordMarkOptions(Path: ExitClip), session: Game, cancellationToken: Token);
+        GodotSession session = _harness.Sessions.Resolve(Game);
+
+        session.MarkRealtimeExit();
+        RealtimeOutcome? outcome = await session.FinishRealtimeAsync().WaitAsync(RegistryHarness.HangGuard, Token);
+
+        AssertKeptForTheExit(session, outcome);
+    }
+
+    [Fact]
+    public async Task TheExitDeliversTheClipOfAStartStillInFlightByRenameOnly()
+    {
+        await AttachAsync();
+        _fake.Rename = (_, _, _) => false;
+        TaskCompletionSource probing = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource marked = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _fake.BeforeProbe = async _ =>
+        {
+            probing.TrySetResult();
+            await marked.Task.WaitAsync(RegistryHarness.HangGuard, Token);
+        };
+        Task<string> start = _tools.RecordMarkAsync("start", new RecordMarkOptions(Path: ExitClip), session: Game, cancellationToken: Token);
+        await probing.Task.WaitAsync(RegistryHarness.HangGuard, Token);
+        GodotSession session = _harness.Sessions.Resolve(Game);
+
+        session.MarkRealtimeExit();
+        Task<RealtimeOutcome?> finish = session.FinishRealtimeAsync();
+        marked.TrySetResult();
+        await start;
+        RealtimeOutcome? outcome = await finish.WaitAsync(RegistryHarness.HangGuard, Token);
+
+        AssertKeptForTheExit(session, outcome);
     }
 
     [Fact]
@@ -620,6 +662,21 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
             await release.Task.WaitAsync(RegistryHarness.HangGuard, Token);
         };
         return (remuxing, release);
+    }
+
+    /// <summary>The exit's outcome: the clip kept in recordings/ with the refusal to copy it to another volume, nothing at its destination.</summary>
+    private static void AssertKeptForTheExit(GodotSession session, RealtimeOutcome? outcome)
+    {
+        RealtimeStopped stopped = outcome?.Stopped ?? throw new InvalidOperationException($"the exit finished no clip: {outcome?.Error}");
+        string destination = Path.Combine(session.ProjectDir, "clips", "x.mp4");
+        Assert.Contains(
+            $"the clip could not be moved to {destination}: {stopped.Clip.Path} is on another volume than {destination}; "
+                + "the server's exit leaves no time to copy it",
+            stopped.Warning ?? "",
+            StringComparison.Ordinal
+        );
+        Assert.True(File.Exists(stopped.Clip.Path), $"the kept clip {stopped.Clip.Path} is gone");
+        Assert.False(File.Exists(destination), $"the clip was copied to {destination}");
     }
 
     private async Task<string> StartAsync() =>

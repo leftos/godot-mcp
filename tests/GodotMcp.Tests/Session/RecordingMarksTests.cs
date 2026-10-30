@@ -1,12 +1,15 @@
 using System.Collections.ObjectModel;
 using System.Runtime.Versioning;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Tests.Tools;
+using GodotMcp.Tests.Wire;
 using GodotMcp.TestSupport;
 using Microsoft.Extensions.Logging.Abstractions;
+using ModelContextProtocol;
 
 namespace GodotMcp.Tests.Session;
 
@@ -16,6 +19,61 @@ public sealed class RecordingMarksTests
 
     /// <summary>How record_mark serialises its results: the web defaults, camelCase names.</summary>
     private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AMovieStartWhosePathIsRefusedNeverAsksForTheFrame(bool takenByAnEarlierClip)
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("game");
+        using FakeBridge game = await harness.AttachFakeGameAsync(project, "game", new FakeHello());
+        GodotSession session = harness.Sessions.Resolve("game");
+        Recording recording = new(Path.Combine(project, ".godot", "godot-mcp", "recordings", "movie.avi"));
+        using TempDirectory outside = new();
+        string path;
+        string expected;
+        if (takenByAnEarlierClip)
+        {
+            // The path passes the output rule, but an earlier clip of the same recording goes there.
+            path = "clips/a.mp4";
+            recording.Mark(
+                Recording.StartMark,
+                10,
+                OutputDestination.Resolve(OutputPlaces.Find(project, NullLogger.Instance), path, ".mp4", false),
+                false
+            );
+            recording.Mark(Recording.StopMark, 20);
+            expected = $"path {path} is already where clip 1 of this recording goes; name another file";
+        }
+        else
+        {
+            path = Path.Combine(outside.Path, "x.mp4");
+            expected = $"path {path} resolves outside the project {project}; save inside the project";
+        }
+
+        int clipsBefore = recording.Clips().Count;
+        bool asked = false;
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            RuntimeTools.MarkMovieAsync(
+                session,
+                recording,
+                Recording.StartMark,
+                new RecordMarkOptions(Path: path),
+                _ =>
+                {
+                    asked = true;
+                    return Task.FromResult(new RuntimeTools.BridgeResult(JsonNode.Parse("""{"frame": 30}"""), []));
+                },
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Equal(expected, refused.Message);
+        Assert.False(asked, "the game was asked for the movie frame before the path was refused");
+        Assert.Equal(clipsBefore, recording.Clips().Count);
+    }
 
     [Fact]
     public void MarksMustAlternate()

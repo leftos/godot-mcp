@@ -35,6 +35,10 @@ internal sealed partial class GodotSession
     // game is launched or attached; under _realtimeLock.
     private bool _realtimeSessionEnding;
 
+    // Whether the server's exit has begun, so every recording of the session, one published by a start in flight included,
+    // delivers its clip by rename only; never cleared; under _realtimeLock.
+    private bool _realtimeExiting;
+
     /// <summary>
     /// Starts a real-time recording of the game's window at <paramref name="fps"/>, ending on its own after
     /// <paramref name="maxSeconds"/>, and returns once its encoder has opened on the first frame. With
@@ -75,6 +79,10 @@ internal sealed partial class GodotSession
             {
                 _realtime = recording;
                 ended = _realtimeEndedWhileStarting;
+                if (_realtimeExiting)
+                {
+                    recording.MarkExit();
+                }
             }
 
             if (ended)
@@ -143,9 +151,11 @@ internal sealed partial class GodotSession
 
     /// <summary>
     /// Ends the session's real-time recording, a start still in flight included, and waits until its clip is finished or has
-    /// failed, as the server's exit does so that no .mkv or deadline file outlives it.
+    /// failed, as the server's exit does so that no .mkv or deadline file outlives it; the exit marks the session first
+    /// (<see cref="MarkRealtimeExit"/>), so the clip is delivered by rename only.
     /// </summary>
-    internal async Task FinishRealtimeAsync()
+    /// <returns>The recording's outcome, its warnings included; null when the session has none.</returns>
+    internal async Task<RealtimeOutcome?> FinishRealtimeAsync()
     {
         (RealtimeRecording? recording, Task starting) = MarkRealtimeEnded();
         if (recording is not null)
@@ -159,9 +169,20 @@ internal sealed partial class GodotSession
             recording = _realtime;
         }
 
-        if (recording is not null)
+        return recording is null ? null : await recording.Finished;
+    }
+
+    /// <summary>
+    /// Marks the server's exit as begun for the session, at once and before anything is awaited: its recording, and one a start
+    /// still in flight publishes later, deliver their clips by rename only (<see cref="RealtimeRecording.MarkExit"/>), so no
+    /// copy across volumes begins that the exit could cut short.
+    /// </summary>
+    internal void MarkRealtimeExit()
+    {
+        lock (_realtimeLock)
         {
-            await recording.Finished;
+            _realtimeExiting = true;
+            _realtime?.MarkExit();
         }
     }
 
