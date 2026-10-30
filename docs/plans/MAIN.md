@@ -5,11 +5,11 @@
 ## Ideas from the survey and the projects
 
 - [ ] GMCP-68 Adopt driving lessons from the sibling projects
-  - [ ] GMCP-69 Probe h264_nvenc with a real 256x256 encode before cutting clips · release vNext+1
-  - [ ] GMCP-70 Give each launch a scratch user:// folder so drives never touch real saves · release vNext+1
-  - [ ] GMCP-71 Tell agents to say "hands off" before driving a game on the user's desktop · release vNext+1
-  - [ ] GMCP-72 Answer native file dialogs from a queue instead of showing them · release vNext+1
-  - [ ] GMCP-73 Name native file dialogs as out of reach in TOOLS.md and the skill · release vNext+1
+  - [ ] GMCP-69 Probe h264_nvenc with a real 256x256 encode before cutting clips
+  - [ ] GMCP-70 Give each launch a scratch user:// folder so drives never touch real saves
+  - [ ] GMCP-71 Tell agents to say "hands off" before driving a game on the user's desktop
+  - [ ] GMCP-72 Answer native file dialogs from a queue instead of showing them
+  - [ ] GMCP-73 Name native file dialogs as out of reach in TOOLS.md and the skill
   - [ ] GMCP-74 Report frame-rate drops below a floor in the game's output
   - [ ] GMCP-75 Give bridge replies stable error codes and answer malformed frames
 - [ ] GMCP-115 fired: a point click over a SubViewport listens on the container, not the inner Control
@@ -110,21 +110,21 @@
 - [ ] GMCP-331 run.ps1 test -Filter with a * in the middle runs no tests and exits 5
 - [ ] GMCP-334 save_screenshot: off Windows a capture symlink is followed and copied (final-path checks skipped)
 - [ ] GMCP-338 TempDirectory cleanup follows links out of the temp folder when clearing attributes
-- [ ] GMCP-340 run_scratches: a step's window ends at server latency, not at its pace in game time · release vNext+1
-- [ ] GMCP-345 Server shutdown never cuts a Movie Maker recording's clips · release vNext+1
-- [ ] GMCP-356 FinalPath.ForWin32: a short path ending in a dot or space is not prefixed as .NET prefixes it · release vNext+1
-- [ ] GMCP-360 Server exit: a clip delivery already copying across volumes when the exit begins can leave its temp · release vNext+1
-- [ ] GMCP-361 override-folders list: a hold past its budget runs its work unprotected, any IOException is retried, a cut rewrite empties the list · release vNext+1
-- [ ] GMCP-362 A session stays live while Godot's console wrapper outlives its game · release vNext+1
-- [ ] GMCP-363 Two unit tests assert 'not completed' after a wall-clock delay · release vNext+1
-- [ ] GMCP-364 Output destinations: a folder swapped for a junction between the path check and the write receives the file · release vNext+1
-- [ ] GMCP-365 TimeTests: a capture_frames test expects fixed file names a long frame can merge · release vNext+1
+- [ ] GMCP-340 run_scratches: a step's window ends at server latency, not at its pace in game time
+- [ ] GMCP-345 Server shutdown never cuts a Movie Maker recording's clips
+- [ ] GMCP-356 FinalPath.ForWin32: a short path ending in a dot or space is not prefixed as .NET prefixes it
+- [ ] GMCP-360 Server exit: a clip delivery already copying across volumes when the exit begins can leave its temp
+- [ ] GMCP-361 override-folders list: a hold past its budget runs its work unprotected, any IOException is retried, a cut rewrite empties the list
+- [ ] GMCP-362 A session stays live while Godot's console wrapper outlives its game
+- [ ] GMCP-363 Two unit tests assert 'not completed' after a wall-clock delay
+- [ ] GMCP-364 Output destinations: a folder swapped for a junction between the path check and the write receives the file
+- [ ] GMCP-365 TimeTests: a capture_frames test expects fixed file names a long frame can merge
 - [ ] GMCP-366 Scratch walk: the ping before a kill and the kill path's watch collection still count wall time in the itests
-- [ ] GMCP-368 A .tmp destination refused because a link leads it out says nothing about the link · release vNext+1
-- [ ] GMCP-370 record_mark and wait_for then.record: a mark on a recording whose run ended is reported as placed · release vNext+1
-- [ ] GMCP-373 Bridge: a late reply from a lost connection can answer a reused id on the re-attached one · release vNext+1
-- [ ] GMCP-375 dropIdle: a call the server stopped waiting for leaves the clip though the game still runs it · release vNext+1
-- [ ] GMCP-376 wait_for then.record: its mark does not close the other calls open at its frame · release vNext+1
+- [ ] GMCP-368 A .tmp destination refused because a link leads it out says nothing about the link
+- [ ] GMCP-370 record_mark and wait_for then.record: a mark on a recording whose run ended is reported as placed
+- [ ] GMCP-373 Bridge: a late reply from a lost connection can answer a reused id on the re-attached one
+- [ ] GMCP-375 dropIdle: a call the server stopped waiting for leaves the clip though the game still runs it
+- [ ] GMCP-376 wait_for then.record: its mark does not close the other calls open at its frame
 
 ## Docs
 
