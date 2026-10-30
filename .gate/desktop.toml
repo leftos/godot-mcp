@@ -1,15 +1,7 @@
 patterns = [
+  'pwsh -NoProfile -File run.ps1 itest',
+  'pwsh -NoProfile -File run.ps1 itest -*',
   'pwsh -NoProfile -File run.ps1 itest-csharp',
   'pwsh -NoProfile -File run.ps1 itest-csharp -Filter *',
-  'pwsh -NoProfile -File tools?hidden-desktop.ps1 -- dotnet test --project tests?GodotMcp.IntegrationTests?GodotMcp.IntegrationTests.csproj -c Release* -- --filter-class GodotMcp.IntegrationTests.PrepTests GodotMcp.IntegrationTests.RestartTests',
-  'pwsh -NoProfile -File tools?hidden-desktop.ps1 -- dotnet test --project tests?GodotMcp.IntegrationTests?GodotMcp.IntegrationTests.csproj -c Release* -- --filter-class `*PrepTests',
-  'pwsh -NoProfile -File tools?hidden-desktop.ps1 -- dotnet test --project tests?GodotMcp.IntegrationTests?GodotMcp.IntegrationTests.csproj -c Release* -- --filter-class `*.PrepTests',
-  'pwsh -NoProfile -File tools?hidden-desktop.ps1 -- dotnet test --project tests?GodotMcp.IntegrationTests?GodotMcp.IntegrationTests.csproj -c Release* -- --filter-class GodotMcp.IntegrationTests.PrepTests',
-  'pwsh -NoProfile -File tools?hidden-desktop.ps1 -- dotnet test --project tests?GodotMcp.IntegrationTests?GodotMcp.IntegrationTests.csproj -c Release* -- --filter-class `*RestartTests',
-  'pwsh -NoProfile -File tools?hidden-desktop.ps1 -- dotnet test --project tests?GodotMcp.IntegrationTests?GodotMcp.IntegrationTests.csproj -c Release* -- --filter-class `*.RestartTests',
-  'pwsh -NoProfile -File tools?hidden-desktop.ps1 -- dotnet test --project tests?GodotMcp.IntegrationTests?GodotMcp.IntegrationTests.csproj -c Release* -- --filter-class GodotMcp.IntegrationTests.RestartTests',
-  'pwsh -NoProfile -File tools?hidden-desktop.ps1 -- dotnet test --project tests?GodotMcp.IntegrationTests?GodotMcp.IntegrationTests.csproj -c Release* -- --filter-class GodotMcp.IntegrationTests.HeadlessTests GodotMcp.IntegrationTests.HeadlessMeshTests GodotMcp.IntegrationTests.WarmHeadlessTests',
-  'pwsh -NoProfile -File tools?hidden-desktop.ps1 -- dotnet test --project tests?GodotMcp.IntegrationTests?GodotMcp.IntegrationTests.csproj -c Release* -- --filter-class `*HeadlessTests',
-  'pwsh -NoProfile -File tools?hidden-desktop.ps1 -- dotnet test --project tests?GodotMcp.IntegrationTests?GodotMcp.IntegrationTests.csproj -c Release* -- --filter-class `*.HeadlessTests',
-  'pwsh -NoProfile -File tools?hidden-desktop.ps1 -- dotnet test --project tests?GodotMcp.IntegrationTests?GodotMcp.IntegrationTests.csproj -c Release* -- --filter-class GodotMcp.IntegrationTests.HeadlessTests',
+  'pwsh -NoProfile -File tools?hidden-desktop.ps1 -- dotnet test --project tests?GodotMcp.IntegrationTests?GodotMcp.IntegrationTests.csproj -c Release* -- --filter-class *',
 ]
