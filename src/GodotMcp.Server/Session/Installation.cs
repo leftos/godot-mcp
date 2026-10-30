@@ -5,6 +5,9 @@ internal static class Installation
 {
     public const string GodotPathVariable = "GODOT_PATH";
     public const string FfmpegPathVariable = "FFMPEG_PATH";
+
+    /// <summary>The launcher's own path, which the installed launcher sets for the server it starts.</summary>
+    public const string LauncherVariable = "GODOT_MCP_LAUNCHER";
     public const string SolutionFileName = "GodotMcp.slnx";
 
     /// <summary>A Godot console build's file name, matched without regard to case.</summary>
@@ -25,8 +28,17 @@ internal static class Installation
         FindGodot(
             Environment.GetEnvironmentVariable(GodotPathVariable),
             Environment.GetEnvironmentVariable("PATH"),
-            Environment.ProcessPath ?? FallbackServerExecutable
+            RegisteredExecutable(Environment.GetEnvironmentVariable(LauncherVariable), Environment.ProcessPath)
         );
+
+    /// <summary>
+    /// What a <c>claude mcp add</c> line names as the server: <paramref name="launcher"/> when it is set and not blank, so an
+    /// installed server never names its version folder, else <paramref name="processPath"/>, else <c>godot-mcp.exe</c>.
+    /// </summary>
+    /// <param name="launcher">The <c>GODOT_MCP_LAUNCHER</c> the server was started with.</param>
+    /// <param name="processPath">The server's own executable.</param>
+    internal static string RegisteredExecutable(string? launcher, string? processPath) =>
+        !string.IsNullOrWhiteSpace(launcher) ? launcher : processPath ?? FallbackServerExecutable;
 
     /// <summary>
     /// The rule with its inputs passed in: <paramref name="configured"/> when it is set and not blank, and refused when it

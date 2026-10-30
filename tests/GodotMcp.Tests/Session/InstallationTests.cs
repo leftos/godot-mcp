@@ -154,6 +154,24 @@ public sealed class InstallationTests : IDisposable
         );
     }
 
+    [Fact]
+    public void TheRegisterLineNamesTheLauncherWhenOneStartedTheServer()
+    {
+        const string launcher = @"C:\opt\godot-mcp\launcher\godot-mcp.exe";
+
+        Assert.Equal(launcher, Installation.RegisteredExecutable(launcher, ServerExe));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("  ")]
+    public void TheRegisterLineNamesTheServerItselfWithoutALauncher(string? launcher)
+    {
+        Assert.Equal(ServerExe, Installation.RegisteredExecutable(launcher, ServerExe));
+        Assert.Equal("godot-mcp.exe", Installation.RegisteredExecutable(launcher, null));
+    }
+
     private string TempFolder(string name)
     {
         string folder = _temp.Combine(name);

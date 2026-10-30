@@ -36,4 +36,12 @@
     <Compile Include="..\..\src\GodotMcp.Capture\MinimizedSpans.cs" Link="Capture\MinimizedSpans.cs" />
     <Compile Include="..\..\src\GodotMcp.Capture\PixelRect.cs" Link="Capture\PixelRect.cs" />
   </ItemGroup>
+
+  <!-- The launcher's assembly is named godot-mcp like the server's, so a reference would put two godot-mcp.dll in one
+       output; its pure pointer and command line files are compiled in here instead. -->
+  <ItemGroup>
+    <Compile Include="..\..\src\GodotMcp.Launcher\CommandLine.cs" Link="Launcher\CommandLine.cs" />
+    <Compile Include="..\..\src\GodotMcp.Launcher\LauncherException.cs" Link="Launcher\LauncherException.cs" />
+    <Compile Include="..\..\src\GodotMcp.Launcher\ServerPointer.cs" Link="Launcher\ServerPointer.cs" />
+  </ItemGroup>
 </Project>

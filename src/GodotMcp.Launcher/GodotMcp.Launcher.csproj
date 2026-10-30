@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The stable launcher installed as godot-mcp.exe: one self-contained NativeAOT file that starts the current version's server. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>godot-mcp</AssemblyName>
+    <RootNamespace>GodotMcp.Launcher</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- LibraryImport's generated P/Invoke stubs are unsafe code (ServerProcess.cs). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PublishAot>true</PublishAot>
+    <IsAotCompatible>true</IsAotCompatible>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+</Project>

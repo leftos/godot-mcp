@@ -311,6 +311,7 @@ $itestRules = @(
     @('src/GodotMcp.Dotnet*/**', 'csharp'),
     @('dotnet/**', 'csharp'),
     @('src/GodotMcp.Server/Agents/**', 'none'),
+    @('src/GodotMcp.Launcher/**', 'none'),
     @('tests/GodotMcp.IntegrationTests/ScratchRunnerTests.cs', $itestScratchGroups),
     @('tests/GodotMcp.IntegrationTests/ScratchRunBase.cs', @('scratch', 'scratchsteps', 'scratchpace')),
     @('tests/GodotMcp.IntegrationTests/ScratchFolderTests.cs', @('scratchfolder', 'scratchparallel')),
@@ -1398,7 +1399,8 @@ function Invoke-CapturePublish {
 }
 
 # Publishes the server into bin/publish, copies the agent skills in beside it, then the C# helper, copying bin/dotnet to
-# bin/publish/dotnet, then the window capture helper, copying bin/capture to bin/publish/capture.
+# bin/publish/dotnet, then the window capture helper, copying bin/capture to bin/publish/capture, then the launcher into
+# bin/publish/launcher.
 function Invoke-Publish {
     $status = Invoke-Logged -Name 'publish' -TimeoutSeconds 300 -Arguments (Get-PublishArgumentList) -Slot heavy
     if ($status -ne 0) {
@@ -1418,7 +1420,15 @@ function Invoke-Publish {
         return $status
     }
     Copy-Folder -Source $captureOut -Destination (Join-Path $root 'bin/publish/capture')
-    return 0
+    return Invoke-Logged -Name 'launcher' -TimeoutSeconds 300 -Arguments (Get-LauncherPublishArgumentList) -Slot heavy
+}
+
+# The dotnet arguments of the launcher's NativeAOT publish: one self-contained godot-mcp.exe in bin/publish/launcher.
+function Get-LauncherPublishArgumentList {
+    return @(
+        'publish', (Join-Path $root 'src/GodotMcp.Launcher/GodotMcp.Launcher.csproj'),
+        '-c', 'Release', '-r', 'win-x64', '-o', (Join-Path $root 'bin/publish/launcher')
+    )
 }
 
 # Publishes, then runs tools/install.ps1 under its own gate: the mirror into the install folder, the skill junctions and
