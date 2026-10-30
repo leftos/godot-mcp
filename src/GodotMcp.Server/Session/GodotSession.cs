@@ -633,6 +633,18 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     private void ReceiveCaptured(JsonObject frame) => registry.Captures.Receive(Name, frame);
 
     /// <summary>
+    /// Notes the frames a call ran in on the run's Movie Maker recording until its clips are cut, a reply read after the game
+    /// exited included; with none, they are dropped.
+    /// </summary>
+    private void ReceiveReplyFrames(long read, long replied)
+    {
+        if (_recording is { Outcome: null } recording)
+        {
+            recording.AddCall(read, replied);
+        }
+    }
+
+    /// <summary>
     /// Under the folder's prep lock, which every launch takes, so no game starts on the folder while a prep builds or
     /// imports there: looks Godot up, builds a stale C# assembly and runs a due import (unless the request says never),
     /// stops the run a restart replaces, writes the override and starts Godot. The prep runs before anything is stopped or
@@ -807,6 +819,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         await StartClockAsync(connection);
         connection.OnErrors(Errors.Receive);
         connection.OnCaptured(ReceiveCaptured);
+        connection.OnReplyFrames(ReceiveReplyFrames);
         run.Connection = connection;
         GameProcessId = connection.GameProcessId;
         GameStartTime = null;

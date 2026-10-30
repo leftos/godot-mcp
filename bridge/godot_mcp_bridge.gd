@@ -128,6 +128,8 @@ var _handlers: Dictionary = {}
 ## The cancellable requests still running: id -> the params Dictionary their handler holds, from
 ## the frame that read them until their reply.
 var _running_requests: Dictionary = {}
+## Every request not yet answered: id -> _process_frames() when it was read.
+var _read_in: Dictionary = {}
 ## The run_script calls whose execute is suspended at an await: id -> {instance, state, before},
 ## the script's instance, the GDScriptFunctionState execute returned and the _snapshot from the
 ## call's start. They are the bridge's only references to the instance and its coroutine, so
@@ -420,6 +422,7 @@ func _end_connection() -> void:
 	for request: int in _running_requests.keys():
 		_cancel(request)
 	_running_requests.clear()
+	_read_in.clear()
 	_dormant_if_armed()
 	_owns_pointer = false
 	if launched:
@@ -507,6 +510,7 @@ func _handle_frame(text: String) -> void:
 		push_warning("godot-mcp bridge: dropped a frame that is not a request: %s" % text.left(200))
 		return
 	var id: int = int(request["id"])
+	_read_in[id] = _process_frames()
 	var command: String = str(request.get("command", ""))
 	var params: Dictionary = {}
 	if request.get("params") is Dictionary:
@@ -933,13 +937,26 @@ func _free_unless_counted(instance: Variant) -> void:
 func _reply_ok(id: int, result: Variant) -> void:
 	_running_requests.erase(id)
 	_flush_errors()
-	_send({"id": id, "ok": true, "result": result})
+	_send({"id": id, "ok": true, "result": result, "frames": _frames_of(id)})
 
 
 func _reply_error(id: int, message: String) -> void:
 	_running_requests.erase(id)
 	_flush_errors()
-	_send({"id": id, "ok": false, "error": message})
+	_send({"id": id, "ok": false, "error": message, "frames": _frames_of(id)})
+
+
+## [read, replied]: the frame request id was read in (this one when unknown) and this frame.
+func _frames_of(id: int) -> Array:
+	var now: int = _process_frames()
+	var read: int = _read_in.get(id, now)
+	_read_in.erase(id)
+	return [read, now]
+
+
+## Engine.get_process_frames(): the frame a request is read or answered in.
+func _process_frames() -> int:
+	return Engine.get_process_frames()
 
 
 ## Writes one frame; none without a stream or before the hello (a late reply to a lost one).

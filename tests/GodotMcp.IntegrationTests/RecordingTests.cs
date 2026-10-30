@@ -296,6 +296,26 @@ public sealed class RecordingTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AWaitBetweenMarksIsACallRangeCoveringItsFrames()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await LaunchAsync(record: true);
+        long start = await MarkAsync("start");
+
+        await _tools.WaitForAsync(new WaitCondition(GameMs: 500), null, null, cancellation);
+
+        long stop = await MarkAsync("stop");
+        Recording recording = _harness.Sessions.Resolve(null).ActiveRecording ?? throw new InvalidOperationException("the run is not recording.");
+        IReadOnlyList<FrameRange> calls = recording.CallRanges(new ClipSpan(start, stop));
+        // 500 ms of game time is 30 movie frames, all drawn while the wait_for call ran.
+        const int frames = 500 * GodotCommandLine.MovieFramesPerSecond / 1000;
+        Assert.True(
+            calls.Any(range => range.To - range.From >= frames),
+            $"no call range between the marks at {start} and {stop} spans the wait's {frames} frames: {string.Join(", ", calls)}"
+        );
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AWaitTimeoutInARecordingRunsItsLengthInMovieFrames()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

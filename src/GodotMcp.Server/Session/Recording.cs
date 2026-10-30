@@ -14,6 +14,9 @@ internal sealed record ClipSpan(long StartFrame, long? StopFrame)
     public bool Overwrite { get; init; }
 }
 
+/// <summary>A run of movie frames from <paramref name="From"/> to <paramref name="To"/>, both included.</summary>
+internal readonly record struct FrameRange(long From, long To);
+
 /// <summary>
 /// What record_mark returns for a Movie Maker recording: the mark, the movie frame it fell on, that frame's time in the movie,
 /// the mode, always <see cref="Recording.MovieMode"/>, and for a start with a path, where its clip will be moved.
@@ -41,6 +44,7 @@ internal sealed class Recording(string path)
 
     private readonly Lock _lock = new();
     private readonly List<ClipSpan> _clips = [];
+    private readonly List<FrameRange> _calls = [];
     private ClipSpan? _open;
 
     /// <summary>The full movie's absolute path.</summary>
@@ -149,6 +153,54 @@ internal sealed class Recording(string path)
             {
                 throw new SessionException("No clip is open; mark start first.");
             }
+        }
+    }
+
+    /// <summary>
+    /// Notes the frames one call ran in, from the frame its request was read in to the one it was answered in, both included;
+    /// a call overlapping or adjacent to one already noted merges with it.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="read"/> is after <paramref name="replied"/>.</exception>
+    public void AddCall(long read, long replied)
+    {
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(read, replied);
+        lock (_lock)
+        {
+            long from = read;
+            long to = replied;
+            int index = 0;
+            while (index < _calls.Count && _calls[index].To + 1 < from)
+            {
+                index++;
+            }
+
+            while (index < _calls.Count && _calls[index].From <= to + 1)
+            {
+                from = Math.Min(from, _calls[index].From);
+                to = Math.Max(to, _calls[index].To);
+                _calls.RemoveAt(index);
+            }
+
+            _calls.Insert(index, new FrameRange(from, to));
+        }
+    }
+
+    /// <summary>
+    /// The merged frame ranges calls ran in, in frame order, clipped to <paramref name="clip"/>: from its start frame up to, not
+    /// including, its stop frame, or to the last call when it has no stop.
+    /// </summary>
+    public IReadOnlyList<FrameRange> CallRanges(ClipSpan clip)
+    {
+        long from = clip.StartFrame;
+        long to = clip.StopFrame is { } stop ? stop - 1 : long.MaxValue;
+        lock (_lock)
+        {
+            return
+            [
+                .. _calls
+                    .Where(range => range.To >= from && range.From <= to)
+                    .Select(range => new FrameRange(Math.Max(range.From, from), Math.Min(range.To, to))),
+            ];
         }
     }
 

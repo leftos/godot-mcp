@@ -82,7 +82,10 @@ func test_take_screenshot_refuses_a_headless_game_before_it_waits_for_a_frame() 
 	var frame: Node = _waiting_frame()
 	bridge._frame = frame
 	bridge._handle_screenshot(7, {})
-	var refused: Dictionary = {"id": 7, "ok": false, "error": HEADLESS_REFUSAL}
+	var now: int = Engine.get_process_frames()
+	var refused: Dictionary = {
+		"id": 7, "ok": false, "error": HEADLESS_REFUSAL, "frames": [now, now]
+	}
 	assert_eq(bridge.sent, [refused], "the refusal, sent as the call returns")
 	assert_eq(frame.waited, false, "no frame was waited for")
 	frame.free()
@@ -94,7 +97,10 @@ func test_a_scaled_take_screenshot_still_refuses_a_headless_game_first() -> void
 	var frame: Node = _waiting_frame()
 	bridge._frame = frame
 	bridge._handle_screenshot(8, {"scale": 2.0})
-	var refused: Dictionary = {"id": 8, "ok": false, "error": HEADLESS_REFUSAL}
+	var now: int = Engine.get_process_frames()
+	var refused: Dictionary = {
+		"id": 8, "ok": false, "error": HEADLESS_REFUSAL, "frames": [now, now]
+	}
 	assert_eq(bridge.sent, [refused], "the headless refusal, not a scale one")
 	assert_eq(frame.waited, false, "no frame was waited for")
 	frame.free()

@@ -553,6 +553,148 @@ public sealed class BridgeConnectionTests : IDisposable
         Assert.Empty(errors);
     }
 
+    [Fact]
+    public async Task AReplysFramesReachTheirObserverBeforeTheCallReturns()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+        List<(long Read, long Replied)> frames = [];
+        connection.OnReplyFrames((read, replied) => frames.Add((read, replied)));
+
+        Task<JsonNode?> sent = connection.SendAsync("ping", null, Wait, cancellation);
+        JsonObject request = await ReadRequiredAsync(bridge, "the request", cancellation);
+        await bridge.WriteAsync(ReplyWithFrames(request, new JsonArray(7, 12)), cancellation);
+        await sent.WaitAsync(Wait, cancellation);
+        (long, long)[] atReply = [.. frames];
+
+        Assert.Equal([(7L, 12L)], atReply);
+    }
+
+    [Fact]
+    public async Task AReplyWithoutFramesReachesNoObserver()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+        List<(long Read, long Replied)> frames = [];
+        connection.OnReplyFrames((read, replied) => frames.Add((read, replied)));
+
+        Task answer = bridge.AnswerOneAsync("pong", cancellation);
+        JsonNode? reply = await connection.SendAsync("ping", null, Wait, cancellation);
+        await answer;
+
+        Assert.Equal("pong", reply?["name"]?.GetValue<string>());
+        Assert.Empty(frames);
+    }
+
+    [Theory]
+    [InlineData("[9, 8]")]
+    [InlineData("[1, 2, 3]")]
+    [InlineData("[4]")]
+    [InlineData("\"7, 12\"")]
+    [InlineData("[\"7\", 12]")]
+    [InlineData("[-1, 4]")]
+    [InlineData("[7.5, 12]")]
+    public async Task MalformedFramesReachNoObserver(string framesJson)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+        List<(long Read, long Replied)> frames = [];
+        connection.OnReplyFrames((read, replied) => frames.Add((read, replied)));
+
+        Task<JsonNode?> sent = connection.SendAsync("ping", null, Wait, cancellation);
+        JsonObject request = await ReadRequiredAsync(bridge, "the request", cancellation);
+        await bridge.WriteAsync(ReplyWithFrames(request, JsonNode.Parse(framesJson)), cancellation);
+        JsonNode? reply = await sent.WaitAsync(Wait, cancellation);
+
+        Assert.Equal("pong", reply?["name"]?.GetValue<string>());
+        Assert.Empty(frames);
+    }
+
+    [Fact]
+    public async Task AWholeFloatFrameIsReadAsItsNumber()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+        List<(long Read, long Replied)> frames = [];
+        connection.OnReplyFrames((read, replied) => frames.Add((read, replied)));
+
+        Task<JsonNode?> sent = connection.SendAsync("ping", null, Wait, cancellation);
+        JsonObject request = await ReadRequiredAsync(bridge, "the request", cancellation);
+        await bridge.WriteAsync(ReplyWithFrames(request, JsonNode.Parse("[7.0, 12]")), cancellation);
+        await sent.WaitAsync(Wait, cancellation);
+        (long, long)[] atReply = [.. frames];
+
+        Assert.Equal([(7L, 12L)], atReply);
+    }
+
+    [Fact]
+    public async Task ALateReplysFramesStillReachTheObserver()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+        TaskCompletionSource<(long Read, long Replied)> observed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        connection.OnReplyFrames((read, replied) => observed.TrySetResult((read, replied)));
+
+        Task<JsonNode?> sent = connection.SendAsync("call_method", [], TimeSpan.FromSeconds(6), cancellation);
+        JsonObject request = await ReadRequiredAsync(bridge, "the request", cancellation);
+        await RunUntilAsync(sent, TimeSpan.FromSeconds(60), cancellation);
+        await Assert.ThrowsAsync<LoadTimeoutException>(() => sent.WaitAsync(HangGuard, cancellation));
+        await bridge.WriteAsync(ReplyWithFrames(request, new JsonArray(30, 95)), cancellation);
+
+        Assert.Equal((30L, 95L), await observed.Task.WaitAsync(Wait, cancellation));
+    }
+
+    [Fact]
+    public async Task AThrowingFramesObserverDoesNotStopReplies()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+        int calls = 0;
+        connection.OnReplyFrames(
+            (_, _) =>
+            {
+                calls++;
+                throw new InvalidOperationException("the observer failed");
+            }
+        );
+
+        Task<JsonNode?> first = connection.SendAsync("ping", null, Wait, cancellation);
+        await bridge.WriteAsync(
+            ReplyWithFrames(await ReadRequiredAsync(bridge, "the first request", cancellation), new JsonArray(1, 2)),
+            cancellation
+        );
+        JsonNode? firstReply = await first.WaitAsync(Wait, cancellation);
+        Task answer = bridge.AnswerOneAsync("again", cancellation);
+        JsonNode? secondReply = await connection.SendAsync("ping", null, Wait, cancellation);
+        await answer;
+
+        Assert.Equal(1, calls);
+        Assert.Equal("pong", firstReply?["name"]?.GetValue<string>());
+        Assert.Equal("again", secondReply?["name"]?.GetValue<string>());
+    }
+
+    /// <summary>An ok reply to <paramref name="request"/> named pong, carrying <paramref name="frames"/> as its frames field.</summary>
+    private static JsonObject ReplyWithFrames(JsonObject request, JsonNode? frames) =>
+        new()
+        {
+            ["id"] = request["id"]!.DeepClone(),
+            ["ok"] = true,
+            ["result"] = new JsonObject { ["name"] = "pong" },
+            ["frames"] = frames,
+        };
+
     private async Task<BridgeConnection> AcceptAsync(CancellationToken cancellation)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);

@@ -8,8 +8,9 @@ using Microsoft.Extensions.Logging;
 namespace GodotMcp.Server.Wire;
 
 /// <summary>
-/// One accepted, handshaken bridge. Requests <c>{id, command, params}</c> go out; replies <c>{id, ok, result|error}</c>
-/// come back in any order and are matched by id, so several requests may be in flight at once. Frames without an id whose
+/// One accepted, handshaken bridge. Requests <c>{id, command, params}</c> go out; replies <c>{id, ok, result|error, frames}</c>
+/// come back in any order and are matched by id, so several requests may be in flight at once; each reply's
+/// <c>frames: [read, replied]</c> goes first to the handler <see cref="OnReplyFrames"/> sets. Frames without an id whose
 /// type is "errors" carry the game's logged errors and go to the handler <see cref="OnErrors"/> sets, in arrival order,
 /// before any reply read after them; those whose type is "captured" carry a running input capture's events and go to the
 /// handler <see cref="OnCaptured"/> sets. Any other frame without an id is dropped.
@@ -32,6 +33,7 @@ internal sealed class BridgeConnection : IAsyncDisposable
     private readonly Task _readLoop;
     private Action<JsonObject>? _errorsHandler;
     private volatile Action<JsonObject>? _capturedHandler;
+    private volatile Action<long, long>? _replyFramesHandler;
     private long _nextId;
 
     /// <param name="client">The accepted connection, its hello already read.</param>
@@ -388,6 +390,14 @@ internal sealed class BridgeConnection : IAsyncDisposable
     /// </summary>
     public void OnCaptured(Action<JsonObject> handler) => _capturedHandler = handler;
 
+    /// <summary>
+    /// Sets the handler for each reply's <c>frames: [read, replied]</c>, the process frames its request was read and answered
+    /// in, called on the read loop before the reply completes its call, late replies included. A reply without the field (a
+    /// bridge older than it), or with one that is not two whole numbers from 0 with read no later than replied, calls nothing;
+    /// a handler that throws is logged and loses that pair, never the read loop.
+    /// </summary>
+    public void OnReplyFrames(Action<long, long> handler) => _replyFramesHandler = handler;
+
     public async ValueTask DisposeAsync()
     {
         await _closing.CancelAsync();
@@ -495,6 +505,7 @@ internal sealed class BridgeConnection : IAsyncDisposable
             return;
         }
 
+        DeliverReplyFrames(reply);
         if (!_pending.TryRemove(id, out PendingRequest? pending))
         {
             Log.DroppedLateReply(_logger, id);
@@ -578,23 +589,47 @@ internal sealed class BridgeConnection : IAsyncDisposable
     private static string ReadError(JsonObject reply) =>
         HandshakeExpectation.ReadString(reply, "error") ?? reply["error"]?.ToJsonString() ?? "no error message";
 
-    private static bool TryReadId(JsonObject reply, out long id)
+    private void DeliverReplyFrames(JsonObject reply)
     {
-        id = 0;
-        if (reply["id"] is not JsonValue value)
+        if (
+            _replyFramesHandler is { } handler
+            && reply["frames"] is JsonArray { Count: 2 } frames
+            && TryReadLong(frames[0], out long read)
+            && TryReadLong(frames[1], out long replied)
+            && read >= 0
+            && read <= replied
+        )
+        {
+            try
+            {
+                handler(read, replied);
+            }
+            catch (Exception e)
+            {
+                Log.ReplyFramesDropped(_logger, read, replied, e);
+            }
+        }
+    }
+
+    private static bool TryReadId(JsonObject reply, out long id) => TryReadLong(reply["id"], out id);
+
+    private static bool TryReadLong(JsonNode? node, out long number)
+    {
+        number = 0;
+        if (node is not JsonValue value)
         {
             return false;
         }
 
-        if (value.TryGetValue(out id))
+        if (value.TryGetValue(out number))
         {
             return true;
         }
 
         // GDScript's JSON parser reads every number as a float, so a bridge may echo 7 as 7.0.
-        if (value.TryGetValue(out double number) && number == Math.Floor(number))
+        if (value.TryGetValue(out double floating) && floating == Math.Floor(floating))
         {
-            id = (long)number;
+            number = (long)floating;
             return true;
         }
 

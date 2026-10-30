@@ -105,9 +105,7 @@ func test_a_suspended_execute_returns_a_function_state() -> void:
 
 func test_a_cancelled_run_script_never_resumes() -> void:
 	var bridge: Node = _recording_bridge()
-	var params: Dictionary = {"source": _counting_script("pass")}
-	bridge._track(5, "run_script", params)
-	bridge._handle_run_script(5, params)
+	_request(bridge, 5, "run_script", {"source": _counting_script("pass")})
 	_frames(2)
 	assert_eq(_tree().root.get_meta(COUNTER, -1), 2, "the script counts each frame")
 	assert_true(bridge.sent.is_empty(), "a suspended script is not answered yet")
@@ -121,6 +119,7 @@ func test_a_cancelled_run_script_never_resumes() -> void:
 	assert_eq(reply.get("error"), SCRIPT_STOPPED, "it says the script was stopped")
 	assert_true(bridge._running_scripts.is_empty(), "no script is left running")
 	assert_true(bridge._running_requests.is_empty(), "no request is left running")
+	assert_true(bridge._read_in.is_empty(), "no read frame is left for the answered request")
 	_tree().root.remove_meta(COUNTER)
 	_free_bridge(bridge)
 
@@ -187,10 +186,9 @@ func test_a_finished_run_script_keeps_its_time_scale() -> void:
 
 func test_a_lost_connection_drops_running_scripts() -> void:
 	var bridge: Node = _recording_bridge()
-	var params: Dictionary = {"source": _counting_script("Engine.time_scale = 2.0")}
-	bridge._track(7, "run_script", params)
-	bridge._handle_run_script(7, params)
+	_request(bridge, 7, "run_script", {"source": _counting_script("Engine.time_scale = 2.0")})
 	_frames(1)
+	assert_eq(bridge._read_in.keys(), [7], "the running script's read frame is kept")
 	bridge._end_connection()
 	_frames(3)
 	assert_eq(_tree().root.get_meta(COUNTER, -1), 1, "the dropped script never resumes")
@@ -198,6 +196,7 @@ func test_a_lost_connection_drops_running_scripts() -> void:
 	assert_approx(Engine.time_scale, 2.0, "nothing is restored with no server to tell")
 	assert_true(bridge._running_scripts.is_empty(), "no script is left running")
 	assert_true(bridge._running_requests.is_empty(), "no request is left running")
+	assert_true(bridge._read_in.is_empty(), "no read frame is left for a lost connection")
 	Engine.time_scale = 1.0
 	_tree().root.remove_meta(COUNTER)
 	_free_bridge(bridge)
@@ -224,6 +223,48 @@ func test_pong_carries_the_bridge_ticks() -> void:
 	var ticks: Variant = bridge.sent[0].get("result", {}).get("ticksUsec")
 	assert_true(ticks is int, "the pong carries the bridge's ticks")
 	assert_true(int(ticks) >= before and int(ticks) <= after, "read while the ping was handled")
+	_free_bridge(bridge)
+
+
+func test_ok_and_error_replies_carry_the_frames_their_request_was_read_and_answered_in() -> void:
+	var bridge: Node = _recording_bridge()
+	var read: int = bridge.frame_count
+	_request(bridge, 5, "ping", {})
+	_request(bridge, 6, "dance", {})
+	var replied: int = bridge.frame_count
+	assert_eq(bridge.sent.size(), 2, "both requests are answered")
+	for reply: Dictionary in bridge.sent:
+		var frames: Variant = reply.get("frames")
+		assert_true(
+			frames is Array and frames.size() == 2, "reply %s carries [read, replied]" % reply
+		)
+		if frames is Array and frames.size() == 2:
+			assert_eq(frames[0], read, "read in the frame the request was taken: %s" % reply)
+			assert_true(frames[0] <= frames[1], "answered no earlier than read: %s" % reply)
+			assert_true(frames[1] <= replied, "answered by the time the call returned: %s" % reply)
+	assert_eq(bridge.sent[0].get("ok"), true, "the ping's reply is an ok one")
+	assert_eq(bridge.sent[1].get("ok"), false, "the unknown command's is an error")
+	assert_true(bridge._read_in.is_empty(), "no read frame is left once both are answered")
+	_free_bridge(bridge)
+
+
+func test_a_reply_frames_later_carries_the_frame_its_request_was_read_in() -> void:
+	var bridge: Node = _recording_bridge()
+	var source: String = (
+		"extends RefCounted\n\n\nfunc execute(tree: SceneTree) -> Variant:\n"
+		+ "\tawait tree.process_frame\n\treturn 7\n"
+	)
+	var read: int = bridge.frame_count
+	_request(bridge, 6, "run_script", {"source": source})
+	assert_true(bridge.sent.is_empty(), "a suspended script is not answered yet")
+	_frames(1)
+	assert_eq(bridge.sent.size(), 1, "the script is answered once it returns")
+	var frames: Variant = bridge.sent[0].get("frames") if not bridge.sent.is_empty() else null
+	assert_true(frames is Array and frames.size() == 2, "the reply carries [read, replied]")
+	if frames is Array and frames.size() == 2:
+		assert_eq(frames[0], read, "read in the frame the request was taken")
+		assert_true(frames[0] < frames[1], "answered a frame later: %s" % [frames])
+	assert_true(bridge._read_in.is_empty(), "no read frame is left once it is answered")
 	_free_bridge(bridge)
 
 
@@ -340,10 +381,19 @@ func _recording_bridge() -> Node:
 					"",
 					"var sent: Array = []",
 					"var quits: int = 0",
+					"var frame_count: int = 0",
 					"",
 					"",
 					"func _ready() -> void:",
 					"\tpass",
+					"",
+					"",
+					"func _process_frames() -> int:",
+					"\treturn frame_count",
+					"",
+					"",
+					"func count_frame() -> void:",
+					"\tframe_count += 1",
 					"",
 					"",
 					"func _send(message: Dictionary) -> void:",
@@ -359,7 +409,14 @@ func _recording_bridge() -> Node:
 	bridge._time = _time_script.new()
 	bridge._watch = _watch_script.new()
 	bridge._json = load_bridge_script("godot_mcp_json.gd")
+	bridge._handlers = bridge._command_handlers()
+	_tree().process_frame.connect(bridge.count_frame)
 	return bridge
+
+
+## Hands the bridge one request as the server sends it, so it is read as a real one is.
+func _request(bridge: Node, id: int, command: String, params: Dictionary) -> void:
+	bridge._handle_frame(JSON.stringify({"id": id, "command": command, "params": params}))
 
 
 func _free_bridge(bridge: Node) -> void:

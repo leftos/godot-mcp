@@ -39,6 +39,9 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Warning, Message = "Dropped a bridge captured frame: handling it failed.")]
     public static partial void CapturedFrameDropped(ILogger logger, Exception exception);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Dropped a bridge reply's frames {Read} to {Replied}: handling them failed.")]
+    public static partial void ReplyFramesDropped(ILogger logger, long read, long replied, Exception exception);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Dropped the bridge's reply to request {Id}: it timed out or was never sent.")]
     public static partial void DroppedLateReply(ILogger logger, long id);
 
