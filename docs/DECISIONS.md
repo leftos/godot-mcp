@@ -241,7 +241,7 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
 
       The hit must be in the match's window, so a popup's Control is never accepted.
 
-      A covering Control with no `owner` (made in code beside the instance) is foreign and refused.
+      A covering Control with no `owner` (made in code) counts as its nearest owned ancestor: it is part of the instance when that ancestor is the instance's root or a node the instance owns, and foreign (refused) when it sits under the scene root or under another scene instanced inside. Accepted cost: a code-made dimmer or blocker the instance adds under itself takes the label's press, as an owner-set one already does.
 
       Ruled out: skipping the hit check (a modal takes the click and the call reports success), matching only click-taking Controls (cards stay unreachable by title), widening the rule to every owned match (an inline backdrop of the same scene would take a click aimed at a Button, and the call would report success), and accepting ownerless siblings of the instance root (any dimmer or input catcher in the same container would take the click silently).
     - **An item not reachable now is refused with the fix and the numbers**, except a closed `OptionButton`/`MenuButton` popup, which the gesture opens with a real click on the button first (`aimedAt.opened`). Ruled out: refusing the closed popup too (every option pick takes two calls) and reaching items by setting state (`scroll_to_item`, `show_popup`), which skips the input a player makes.

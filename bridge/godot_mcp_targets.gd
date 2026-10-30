@@ -743,18 +743,35 @@ func lands_on(hit: Control, aim: Dictionary) -> bool:
 
 
 ## Whether hit, the Control a press lands on, belongs to target's scene instance, for a target
-## that acts on no press of its own (_reads_only) and has an owner: hit is that owner or has it
-## too, in the target's own window (an embedded popup's Control, its owner the scene root, is
-## another window's), and is not itself the root of another scene instanced inside it (a modal's
-## backdrop in the HUD, whose owner is the HUD too, keeps the click from the HUD's label). A card's
-## title Label beside the Button that takes the card's clicks is pressed through that Button; a Play
-## Button under its own scene's ConfirmQuit Panel is not, since the Panel presses nothing the match
-## names.
+## that acts on no press of its own (_reads_only) and has an owner: hit reaches that owner on the
+## walk up (_reaches_instance), in the target's own window (an embedded popup's Control, its owner
+## the scene root, is another window's), and is not the root of another scene instanced inside it
+## (a modal's backdrop in the HUD, whose owner is the HUD too, keeps the click from the HUD's
+## label). A card's title Label beside the Button that takes the card's clicks is pressed through
+## that Button, and a Control the card's own script made under it, which no scene owns, is pressed
+## as part of the card; a Play Button under its own scene's ConfirmQuit Panel is not, since the
+## Panel presses nothing the match names.
 static func same_instance_hit(hit: Control, target: Control) -> bool:
 	var instance: Node = target.owner
 	if instance == null or not _reads_only(target) or hit.get_window() != target.get_window():
 		return false
-	return hit == instance or (hit.owner == instance and hit.scene_file_path.is_empty())
+	return _reaches_instance(hit, instance)
+
+
+## Whether hit is instance, or a node the walk up from it reaches is: the walk passes the nodes
+## that have no owner and are no scene's root, and ends at the first node that does have one or is
+## such a root. That node must be instance itself or a node instance owns and a scene of its own
+## has not instanced: a Control made by the instance's script with no owner, under it or under a
+## node it owns, is part of the instance, while one under another scene instanced inside it is not.
+static func _reaches_instance(hit: Control, instance: Node) -> bool:
+	var node: Node = hit
+	while node != null:
+		if node == instance:
+			return true
+		if node.owner != null or not node.scene_file_path.is_empty():
+			break
+		node = node.get_parent()
+	return node != null and node.owner == instance and node.scene_file_path.is_empty()
 
 
 ## Whether a Control acts on no press of its own: it ignores the mouse, or it is a text Control (a

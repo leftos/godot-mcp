@@ -19,6 +19,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - A one-scene `run_scratches` call no longer plays its red scene a second time alone.
 - A `run_scratches` scene whose boot prints a line matching `scratch.patterns` is red at the boot.
 - A `scratch.pace.steps` key matching no step is a scene warning, not a refusal of the whole scene.
+- A `{text}` target covered by a Control its own scene instance made in code is pressed through it, not refused as covered.
 - A stop no longer reports a game killed, or a scratch scene red, when the game had already exited by itself as its grace ran out.
 - `save_screenshot` and `record_mark` refusals name the project or checkout folder itself, not a link, when that folder's name ends in a space or a dot.
 

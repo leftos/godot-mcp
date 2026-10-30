@@ -110,6 +110,61 @@ func test_lands_on_refuses_an_ownerless_sibling_over_a_text_match() -> void:
 	targets.free()
 
 
+func test_same_instance_hit_takes_code_made_controls_under_the_instance() -> void:
+	var targets: Node = _targets_script.new()
+	var card := _control("Card", Control.MOUSE_FILTER_IGNORE)
+	var title := RichTextLabel.new()
+	title.name = "Title"
+	card.add_child(title)
+	title.owner = card
+	var slot := _control("Slot", Control.MOUSE_FILTER_STOP)
+	card.add_child(slot)
+	assert_true(
+		targets.same_instance_hit(slot, title), "a Control.new() child of the instance root"
+	)
+	var shelf := _control("Shelf", Control.MOUSE_FILTER_IGNORE)
+	card.add_child(shelf)
+	shelf.owner = card
+	var inner := _control("Inner", Control.MOUSE_FILTER_STOP)
+	shelf.add_child(inner)
+	assert_true(
+		targets.same_instance_hit(inner, title), "a Control.new() child of a node the instance owns"
+	)
+	card.free()
+	targets.free()
+
+
+func test_same_instance_hit_refuses_code_made_controls_outside_the_instance() -> void:
+	var targets: Node = _targets_script.new()
+	var scene_root := _control("SceneRoot", Control.MOUSE_FILTER_IGNORE)
+	var card := _control("Card", Control.MOUSE_FILTER_IGNORE)
+	var title := RichTextLabel.new()
+	title.name = "Title"
+	scene_root.add_child(card)
+	card.add_child(title)
+	title.owner = card
+	var loose := _control("Loose", Control.MOUSE_FILTER_STOP)
+	scene_root.add_child(loose)
+	assert_true(
+		not targets.same_instance_hit(loose, title),
+		"a Control.new() beside the instance under the root"
+	)
+	var other := _control("OtherCard", Control.MOUSE_FILTER_IGNORE)
+	other.scene_file_path = "res://other_card.tscn"
+	card.add_child(other)
+	var cover := _control("Cover", Control.MOUSE_FILTER_STOP)
+	other.add_child(cover)
+	assert_true(
+		not targets.same_instance_hit(cover, title), "a Control.new() under another scene's root"
+	)
+	other.owner = card
+	assert_true(
+		not targets.same_instance_hit(other, title), "another scene's root, owned by the instance"
+	)
+	scene_root.free()
+	targets.free()
+
+
 func test_container_transform_scales_by_the_shrink_only_with_stretch() -> void:
 	var targets: Node = _targets_script.new()
 	var at := Transform2D(0.0, Vector2(100, 40))

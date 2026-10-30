@@ -333,6 +333,28 @@ public sealed class TextTargetTests(SharedProbeSession shared) : IAsyncLifetime,
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task ALabelMatchIsPressedThroughACodeMadeControlOfItsOwnSceneInstance()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            CardBlock
+                + "var slot := Control.new()\n\t"
+                + "slot.name = \"Slot\"\n\t"
+                + "slot.position = Vector2.ZERO\n\t"
+                + "slot.size = Vector2(160, 100)\n\t"
+                + "card.add_child(slot)\n\treturn true",
+            cancellation
+        );
+
+        JsonNode clicked = await ClickAsync(new InputTarget(Text: "Strike"), cancellation);
+
+        AssertAimed(clicked["aimedAt"]!, "/root/Card/Title", "Label", 480, 225);
+        AssertMatched(clicked["aimedAt"]!, "Strike");
+        Assert.Equal("/root/Card/Slot", clicked["pressedOn"]!["path"]!.GetValue<string>());
+        Assert.Equal(0, await PressesAsync("Card/Hit", cancellation));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task ALabelMatchUnderAModalIsRefused()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
