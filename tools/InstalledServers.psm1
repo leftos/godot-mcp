@@ -1,13 +1,15 @@
 <#
 .SYNOPSIS
-Finds and stops the godot-mcp servers running from an install folder, naming the Claude Code session that started each.
+Finds the godot-mcp processes an install folder runs, naming the Claude Code session that started each, and stops a
+flat server.
 
 .DESCRIPTION
-Used by tools/install.ps1, and by tools/install-release.ps1 when it runs from the repo. The release's published install.ps1
-runs with no file beside it, so tools/package.ps1 copies this file's text into its InstalledServers region. Runs under
-Windows PowerShell 5.1 and PowerShell 7.
+Used by tools/install.ps1 and tools/InstallLayout.psm1, and by tools/install-release.ps1 when it runs from the repo.
+The release's published install.ps1 runs with no file beside it, so tools/package.ps1 copies this file's text into its
+InstalledServers region. Runs under Windows PowerShell 5.1 and PowerShell 7.
 
-A server's client is the process that started it: Claude Code's claude.exe, whose command line carries
+A server's client is the process that started it, or for a versioned server the process that started its launcher:
+Claude Code's claude.exe, whose command line carries
 --session-id <uuid>. That session's transcript is $env:USERPROFILE\.claude\projects\<folder>\<uuid>.jsonl, and its lines
 carry the session's project folder as "cwd".
 #>
@@ -15,12 +17,26 @@ carry the session's project folder as "cwd".
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# The --session-id on the command line of the process that started the server, or $null when that process is gone or
-# carries none. A parent created after the server is another process that took the id of the one that exited.
-function Get-ClientSessionId {
+# The process that started a process, or $null when it is gone. A parent created after the child is another process that
+# took the id of the one that exited.
+function Get-ParentProcess {
     param([Parameter(Mandatory)] [ciminstance]$Process)
     $parent = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $($Process.ParentProcessId)"
     if ($null -eq $parent -or $parent.CreationDate -gt $Process.CreationDate) {
+        return $null
+    }
+    return $parent
+}
+
+# The --session-id on the command line of the client that started the server, or $null when that process is gone or
+# carries none. A versioned server's parent is its launcher, a godot-mcp.exe too, so its client is one step further up.
+function Get-ClientSessionId {
+    param([Parameter(Mandatory)] [ciminstance]$Process)
+    $parent = Get-ParentProcess -Process $Process
+    if ($null -ne $parent -and $parent.Name -eq 'godot-mcp.exe') {
+        $parent = Get-ParentProcess -Process $parent
+    }
+    if ($null -eq $parent) {
         return $null
     }
     $uuid = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
@@ -79,14 +95,41 @@ function Get-ClientProject {
     }
 }
 
+# What a godot-mcp.exe at a path is to an install folder, @{ Kind; Version }, or $null when it is none of its own:
+# <folder>\godot-mcp.exe is the Launcher when current is beside it and the Flat server of an install from before the
+# launcher when it is not; <folder>\versions\<name>\godot-mcp.exe is a Versioned server of version folder <name>.
+function Get-ServerKind {
+    param(
+        [Parameter(Mandatory)] [string]$Folder,
+        [Parameter(Mandatory)] [string]$Path
+    )
+    if ($Path -ieq (Join-Path $Folder 'godot-mcp.exe')) {
+        if (Test-Path -LiteralPath (Join-Path $Folder 'current') -PathType Leaf) {
+            return @{ Kind = 'Launcher'; Version = $null }
+        }
+        return @{ Kind = 'Flat'; Version = $null }
+    }
+    $versions = (Join-Path $Folder 'versions') + '\'
+    if (-not $Path.StartsWith($versions, [StringComparison]::OrdinalIgnoreCase)) {
+        return $null
+    }
+    $parts = $Path.Substring($versions.Length).Split('\')
+    if ($parts.Count -ne 2 -or $parts[1] -ine 'godot-mcp.exe') {
+        return $null
+    }
+    return @{ Kind = 'Versioned'; Version = $parts[0] }
+}
+
 <#
 .SYNOPSIS
-The godot-mcp.exe processes whose image is inside an install folder.
+The godot-mcp.exe processes an install folder runs: its launchers, its versioned servers and a flat server.
 
 .DESCRIPTION
 Win32_Process gives the image path without the access checks Get-Process's Path needs under Windows PowerShell. Each
-server is returned as {ProcessId, SessionId, Project}: the Claude Code session that started it and that session's project
-folder, each $null when unknown.
+process is returned as {ProcessId, SessionId, Project, Kind, Version}: the Claude Code session that started it and that
+session's project folder, each $null when unknown; Kind is Launcher (<InstallDir>\godot-mcp.exe with current beside
+it), Versioned (<InstallDir>\versions\<name>\godot-mcp.exe, Version being <name>) or Flat (<InstallDir>\godot-mcp.exe
+of an install from before the launcher, with no current).
 
 .PARAMETER InstallDir
 The install folder, as a full path.
@@ -95,16 +138,21 @@ function Get-InstalledServer {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param([Parameter(Mandatory)] [string]$InstallDir)
-    $prefix = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\', '/') + '\'
-    $running = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'godot-mcp.exe'" |
-            Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) })
+    $folder = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\', '/')
+    $running = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'godot-mcp.exe'" | Where-Object { $_.ExecutablePath })
     foreach ($process in $running) {
+        $kind = Get-ServerKind -Folder $folder -Path $process.ExecutablePath
+        if ($null -eq $kind) {
+            continue
+        }
         $sessionId = Get-ClientSessionId -Process $process
         $project = $null
         if ($null -ne $sessionId) {
             $project = Get-ClientProject -SessionId $sessionId
         }
-        [pscustomobject]@{ ProcessId = [int]$process.ProcessId; SessionId = $sessionId; Project = $project }
+        [pscustomobject]@{
+            ProcessId = [int]$process.ProcessId; SessionId = $sessionId; Project = $project; Kind = $kind.Kind; Version = $kind.Version
+        }
     }
 }
 
@@ -122,11 +170,12 @@ function Format-StoppedServer {
 
 <#
 .SYNOPSIS
-Stops every godot-mcp.exe running from an install folder, and names the Claude Code session each served.
+Stops the flat server an install folder from before the launcher runs, and names the Claude Code session each served.
 
 .DESCRIPTION
-Stops each server Get-InstalledServer finds, waits up to 10 s for it to exit, and writes one line for it to the host, so
-the person installing can reconnect those sessions. Returns the stopped servers.
+Stops each Flat server Get-InstalledServer finds (a process whose image is exactly <InstallDir>\godot-mcp.exe, with no
+current beside it), waits up to 10 s for it to exit, and writes one line for it to the host, so the person installing
+can reconnect those sessions. Launchers and versioned servers keep running. Returns the stopped servers.
 
 .PARAMETER InstallDir
 The install folder, as a full path.
@@ -137,7 +186,7 @@ function Stop-InstalledServer {
     [CmdletBinding(SupportsShouldProcess)]
     [OutputType([pscustomobject])]
     param([Parameter(Mandatory)] [string]$InstallDir)
-    foreach ($server in @(Get-InstalledServer -InstallDir $InstallDir)) {
+    foreach ($server in @(Get-InstalledServer -InstallDir $InstallDir | Where-Object { $_.Kind -eq 'Flat' })) {
         if (-not $PSCmdlet.ShouldProcess("godot-mcp.exe (pid $($server.ProcessId))", 'Stop')) {
             continue
         }

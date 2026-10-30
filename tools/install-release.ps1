@@ -8,22 +8,28 @@ Published with every release as the asset install.ps1, and meant to run straight
   & ([scriptblock]::Create((irm https://github.com/leftos/godot-mcp/releases/latest/download/install.ps1))) -InstallDotNet
 
 It runs under Windows PowerShell 5.1 and PowerShell 7. The published install.ps1 depends on no file beside it: it is
-this script with tools/InstalledServers.psm1 inlined by tools/package.ps1, while this script, run from the repo, imports
-the module from beside it.
+this script with tools/InstalledServers.psm1 and tools/InstallLayout.psm1 inlined by tools/package.ps1, while this
+script, run from the repo, imports the modules from beside it.
 
 1. Checks for the .NET 10 runtime (Microsoft.NETCore.App 10.*) where the framework-dependent godot-mcp.exe looks for
    it: DOTNET_ROOT_X64, else DOTNET_ROOT, else the registered install location, else %ProgramFiles%\dotnet. When it is
    missing it installs it through winget with -InstallDotNet, asks first when a person is at the console, and
    otherwise stops.
-2. Downloads the release zip (or takes -ZipPath) and checks it holds a godot-mcp release.
-3. Stops every godot-mcp.exe running from the install folder, printing one line for each that names the Claude
-   session it served and that session's project, so the session can be reconnected with /mcp. Then replaces the
-   folder's contents with the zip's, and
-   replaces <SkillsDir>\godot-mcp with the zip's skill/ folder and <SkillsDir>\godot-agent-sweep with its
+2. Downloads the release zip (or takes -ZipPath) and checks it holds a godot-mcp release with the launcher; a release
+   from before the launcher is refused and named, to be installed with its own install.ps1.
+3. Lays out the install folder as tools/InstallLayout.psm1 describes, holding its install.lock to the end (a second
+   install waits up to 60 s, then refuses). An install from before the launcher is migrated first: every godot-mcp.exe
+   running as <InstallDir>\godot-mcp.exe is stopped, with one line naming the Claude session it served and that
+   session's project, so the session can be reconnected with /mcp. The zip's server tree goes into a new
+   versions\<version> folder, which must pass godot-mcp.exe --list-tools before current is pointed at it; the zip's
+   godot-mcp-launcher.exe becomes <InstallDir>\godot-mcp.exe. Servers already running keep the version they started with.
+4. Replaces <SkillsDir>\godot-mcp with the new version's skill/ folder and <SkillsDir>\godot-agent-sweep with its
    agent-sweep-skill/ folder. A link there (the junction a from-source install makes) is removed as a link: the folder
    it points to is never touched.
-4. Prints where the server and the skills are, and the command that registers the server with Claude Code.
-5. Runs the installed godot-mcp.exe --sweep-agents, which brings the godot tools of their marked classes into the
+5. Prints where the server and the skills are, the command that registers the server with Claude Code, and one line for
+   each Claude session whose server still runs an older version; removes the version folders other than the current
+   and the previous one that nothing runs from.
+6. Runs the new version's godot-mcp.exe --sweep-agents, which brings the godot tools of their marked classes into the
    Claude Code agent files, and prints its lines. A sweep that cannot start is reported and the install still succeeds;
    a sweep that exits non-zero stops the installer with a message, though nothing it installed is undone.
 
@@ -40,7 +46,7 @@ Install the .NET 10 runtime through winget without asking when it is missing.
 
 .PARAMETER InstallDir
 The folder the server is installed into. GODOT_MCP_INSTALL_DIR when omitted, else %LOCALAPPDATA%\godot-mcp. A folder
-that holds files but no godot-mcp.exe or VERSION is refused, never emptied.
+that holds files but no godot-mcp.exe, VERSION, current, versions or install.lock is refused, never emptied.
 
 .PARAMETER SkillsDir
 The folder the godot-mcp and godot-agent-sweep skill folders are installed into. GODOT_MCP_SKILLS_DIR when omitted, else ~/.claude/skills.
@@ -65,6 +71,8 @@ $ProgressPreference = 'SilentlyContinue'
 
 $repository = 'https://github.com/leftos/godot-mcp'
 $assetName = 'godot-mcp-win-x64.zip'
+# The launcher's name at the zip's root, beside the server's own godot-mcp.exe; it is installed as <InstallDir>\godot-mcp.exe.
+$launcherName = 'godot-mcp-launcher.exe'
 $manualInstall = 'install the .NET Runtime 10 from https://dotnet.microsoft.com/download/dotnet/10.0'
 # The winget package of the .NET 10 runtime: https://github.com/microsoft/winget-pkgs/tree/master/manifests/m/Microsoft/DotNet/Runtime/10
 $wingetId = 'Microsoft.DotNet.Runtime.10'
@@ -237,6 +245,11 @@ function Expand-ReleaseZip {
             throw "install: $Zip is not a godot-mcp release: it has no $($entry -replace '\\', '/')."
         }
     }
+    # A release from before the launcher would be laid out without one; its own install.ps1 installs it flat.
+    if (-not (Test-Path -LiteralPath (Join-Path $Destination $launcherName) -PathType Leaf)) {
+        $version = (Get-Content -LiteralPath (Join-Path $Destination 'VERSION') -Raw).Trim()
+        throw "install: $version predates the launcher; install it with that release's own install.ps1"
+    }
 }
 
 # Removes a file or a folder; a link (a junction or a symbolic link) is removed as a link, never followed, so the folder
@@ -268,41 +281,34 @@ function Remove-Entry {
 Import-Module -Name (Join-Path $PSScriptRoot 'InstalledServers.psm1') -Force
 #endregion
 
-# Replaces the install folder's contents with the unpacked release, the skill folders aside.
-function Install-Server {
-    param(
-        [Parameter(Mandatory)] [string]$Unpacked,
-        [Parameter(Mandatory)] [string]$Folder
-    )
+#region InstallLayout
+# Enter-InstallLock, Install-Version, Write-OlderSession and Remove-OldVersion, from tools/InstallLayout.psm1 beside this
+# script. The published install.ps1 runs with no file beside it: tools/package.ps1 replaces this region with the module's text.
+Import-Module -Name (Join-Path $PSScriptRoot 'InstallLayout.psm1') -Force
+#endregion
+
+# Refuses a file, or a folder holding files none of which a godot-mcp install has, so no one's folder is ever emptied.
+function Assert-InstallFolder {
+    param([Parameter(Mandatory)] [string]$Folder)
     if (Test-Path -LiteralPath $Folder -PathType Leaf) {
         throw "install: $Folder is a file, not a folder. Choose another -InstallDir."
     }
-    New-Item -ItemType Directory -Force -Path $Folder | Out-Null
+    if (-not (Test-Path -LiteralPath $Folder -PathType Container)) {
+        return
+    }
     $existing = @(Get-ChildItem -LiteralPath $Folder -Force)
-    $isInstall = (Test-Path -LiteralPath (Join-Path $Folder 'godot-mcp.exe')) -or (Test-Path -LiteralPath (Join-Path $Folder 'VERSION'))
+    $marks = @('godot-mcp.exe', 'VERSION', 'current', 'versions', 'install.lock')
+    $isInstall = @($existing | Where-Object { $marks -contains $_.Name }).Count -gt 0
     if ($existing.Count -gt 0 -and -not $isInstall) {
         throw "install: $Folder holds files but no godot-mcp.exe or VERSION, so it is not a godot-mcp install; it is left alone. " +
             'Choose another -InstallDir.'
     }
-    $null = Stop-InstalledServer -InstallDir $Folder
-    try {
-        foreach ($item in $existing) {
-            Remove-Entry -Path $item.FullName
-        }
-    }
-    catch {
-        throw "install: emptying $Folder failed: $($_.Exception.Message) A godot-mcp.exe still running from it holds its files: " +
-            'stop the Claude sessions that use it, then run the installer again.'
-    }
-    foreach ($item in @(Get-ChildItem -LiteralPath $Unpacked -Force | Where-Object { $_.Name -notin @('skill', 'agent-sweep-skill') })) {
-        Copy-Item -LiteralPath $item.FullName -Destination $Folder -Recurse
-    }
 }
 
-# Replaces <Folder>\<Name> with the unpacked release's <Source> folder and returns its path.
+# Replaces <Folder>\<Name> with the version folder's <Source> folder and returns its path.
 function Install-Skill {
     param(
-        [Parameter(Mandatory)] [string]$Unpacked,
+        [Parameter(Mandatory)] [string]$Version,
         [Parameter(Mandatory)] [string]$Source,
         [Parameter(Mandatory)] [string]$Folder,
         [Parameter(Mandatory)] [string]$Name
@@ -310,7 +316,7 @@ function Install-Skill {
     $skill = Join-Path $Folder $Name
     New-Item -ItemType Directory -Force -Path $Folder | Out-Null
     Remove-Entry -Path $skill
-    Copy-Item -LiteralPath (Join-Path $Unpacked $Source) -Destination $skill -Recurse
+    Copy-Item -LiteralPath (Join-Path $Version $Source) -Destination $skill -Recurse
     return $skill
 }
 
@@ -355,20 +361,43 @@ function Invoke-ReleaseInstall {
         $zip = Get-ReleaseZip -Wanted $Wanted -LocalZip $LocalZip -WorkDir $work
         $unpacked = Join-Path $work 'unpacked'
         Expand-ReleaseZip -Zip $zip -Destination $unpacked
-        $installed = (Get-Content -LiteralPath (Join-Path $unpacked 'VERSION') -Raw).Trim()
-        Install-Server -Unpacked $unpacked -Folder $serverFolder
-        $skill = Install-Skill -Unpacked $unpacked -Source 'skill' -Folder $skillsFolder -Name 'godot-mcp'
-        $sweepSkill = Install-Skill -Unpacked $unpacked -Source 'agent-sweep-skill' -Folder $skillsFolder -Name 'godot-agent-sweep'
+        Assert-InstallFolder -Folder $serverFolder
+        $lock = Enter-InstallLock -InstallDir $serverFolder
+        try {
+            Install-Release -Unpacked $unpacked -ServerFolder $serverFolder -SkillsFolder $skillsFolder
+        }
+        finally {
+            $lock.Dispose()
+        }
     }
     finally {
         Remove-WorkFolder -Folder $work
     }
-    $exe = Join-Path $serverFolder 'godot-mcp.exe'
-    Write-Host "install: server at $exe (version $installed), skill at $skill"
+}
+
+# Installs the unpacked release as a new version, its skills, and runs its agent sweep; run holding the install lock.
+function Install-Release {
+    param(
+        [Parameter(Mandatory)] [string]$Unpacked,
+        [Parameter(Mandatory)] [string]$ServerFolder,
+        [Parameter(Mandatory)] [string]$SkillsFolder
+    )
+    $version = (Get-Content -LiteralPath (Join-Path $Unpacked 'VERSION') -Raw).Trim()
+    $request = @{
+        InstallDir = $ServerFolder; Version = $version; Source = $Unpacked; Exclude = @($launcherName)
+        Launcher = (Join-Path $Unpacked $launcherName)
+    }
+    $installed = Install-Version @request
+    $skill = Install-Skill -Version $installed.Folder -Source 'skill' -Folder $SkillsFolder -Name 'godot-mcp'
+    $sweepSkill = Install-Skill -Version $installed.Folder -Source 'agent-sweep-skill' -Folder $SkillsFolder -Name 'godot-agent-sweep'
+    $exe = Join-Path $ServerFolder 'godot-mcp.exe'
+    Write-Host "install: server at $exe (version $version), skill at $skill"
     Write-Host "install: agent sweep skill at $sweepSkill"
     Write-Host 'install: to use it in a Godot project, register it from that project''s folder:'
     Write-Host "  claude mcp add godot -s local -e GODOT_PATH=<your Godot console exe> -- `"$exe`""
-    $sweep = Invoke-AgentSweep -Exe $exe
+    Write-OlderSession -InstallDir $ServerFolder -Current $installed.Name -NewVersion $version
+    Remove-OldVersion -InstallDir $ServerFolder -Keep @($installed.Name, $installed.Previous)
+    $sweep = Invoke-AgentSweep -Exe (Join-Path $installed.Folder 'godot-mcp.exe')
     if ($sweep -ne 0) {
         throw "install: the agent sweep exited with status $sweep; the server and skills are installed. " +
             "Fix what its lines name, then run `"$exe`" --sweep-agents."

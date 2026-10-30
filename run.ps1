@@ -312,6 +312,7 @@ $itestRules = @(
     @('dotnet/**', 'csharp'),
     @('src/GodotMcp.Server/Agents/**', 'none'),
     @('src/GodotMcp.Launcher/**', 'none'),
+    @('tools/InstallLayout.psm1', 'none'),
     @('tests/GodotMcp.IntegrationTests/ScratchRunnerTests.cs', $itestScratchGroups),
     @('tests/GodotMcp.IntegrationTests/ScratchRunBase.cs', @('scratch', 'scratchsteps', 'scratchpace')),
     @('tests/GodotMcp.IntegrationTests/ScratchFolderTests.cs', @('scratchfolder', 'scratchparallel')),

@@ -30,7 +30,7 @@ class FakeServer:
         self.parent.wait(timeout=30)
 
 
-def _child_pid(parent: int) -> int:
+def child_pid(parent: int) -> int:
     """The pid of the godot-mcp.exe the parent started, waited for up to 20 s."""
     source = (
         "$deadline = (Get-Date).AddSeconds(20); "
@@ -49,14 +49,21 @@ def start_fake_server(install_dir: Path, *, session_id: str | None) -> FakeServe
     install_dir.mkdir(parents=True, exist_ok=True)
     exe = install_dir / "godot-mcp.exe"
     shutil.copyfile(PING, exe)
-    command = f"& '{exe}' -n 60 127.0.0.1 | Out-Null"
+    return start_process(exe, ["-n", "60", "127.0.0.1"], session_id=session_id)
+
+
+def start_process(exe: Path, arguments: list[str], *, session_id: str | None) -> FakeServer:
+    """Starts exe with the arguments from a pwsh parent whose command line ends in a comment carrying
+    --session-id <session_id>, or no comment when session_id is None."""
+    quoted = " ".join("'" + argument.replace("'", "''") + "'" for argument in arguments)
+    command = f"& '{exe}' {quoted} | Out-Null"
     if session_id is not None:
         command += f"; # --session-id {session_id}"
     parent = subprocess.Popen(
         ["pwsh", "-NoProfile", "-Command", command], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
     try:
-        return FakeServer(parent=parent, pid=_child_pid(parent.pid))
+        return FakeServer(parent=parent, pid=child_pid(parent.pid))
     except Exception:
         parent.kill()
         raise
