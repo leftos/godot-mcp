@@ -83,15 +83,18 @@ internal static partial class OutputDestination
     /// <summary>
     /// Copies <paramref name="source"/> from where it stands to <paramref name="destination"/>, creating its folders when
     /// missing: the bytes go to a new file of a random name in the destination's folder, which is then moved over the
-    /// destination's folder entry, so a link or hard link there is replaced, never written through. The temporary file is
-    /// deleted when a step fails.
+    /// destination's folder entry, so a link or hard link there is replaced, never written through. A failed write deletes
+    /// its temporary file and removes the folders it made, deepest first, while they are empty; a folder it cannot remove is
+    /// named in the exception; the source stays where it was.
     /// </summary>
     /// <exception cref="IOException">A step failed, or the destination exists and <paramref name="overwrite"/> is false.</exception>
     /// <exception cref="UnauthorizedAccessException">A step was denied.</exception>
-    internal static void CopyReplacing(Stream source, string destination, bool overwrite)
+    internal static void CopyReplacing(Stream source, string destination, bool overwrite) =>
+        InFolders(destination, () => CopyIntoFolder(source, destination, overwrite));
+
+    private static void CopyIntoFolder(Stream source, string destination, bool overwrite)
     {
         string folder = Path.GetDirectoryName(destination)!;
-        Directory.CreateDirectory(folder);
         string temporary = Path.Combine(folder, $".godot-mcp-{Path.GetRandomFileName()}.tmp");
         bool created = false;
         try
@@ -114,15 +117,26 @@ internal static partial class OutputDestination
     /// <summary>
     /// Moves <paramref name="source"/> to <paramref name="destination"/>, creating its folders when missing: on one volume a
     /// rename that replaces the destination's folder entry, never writing through a link there; across volumes a
-    /// <see cref="CopyReplacing"/> of the source, which is deleted once the copy is in place. A failed move deletes nothing.
+    /// <see cref="CopyReplacing"/> of the source, which is deleted once the copy is in place. A failed write deletes its
+    /// temporary file and removes the folders it made, deepest first, while they are empty; a folder it cannot remove is
+    /// named in the exception; the source stays where it was.
     /// </summary>
     /// <returns>Null once the source is gone; why the source could not be deleted after its copy reached the destination.</returns>
     /// <exception cref="IOException">A step failed, or the destination exists and <paramref name="overwrite"/> is false.</exception>
     /// <exception cref="UnauthorizedAccessException">A step was denied.</exception>
-    internal static string? MoveReplacing(string source, string destination, bool overwrite)
+    internal static string? MoveReplacing(string source, string destination, bool overwrite) => MoveReplacing(source, destination, overwrite, Rename);
+
+    /// <summary>Moves with <paramref name="rename"/>, which returns false when the two paths lie on different volumes.</summary>
+    internal static string? MoveReplacing(string source, string destination, bool overwrite, Func<string, string, bool, bool> rename)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-        if (Rename(source, destination, overwrite))
+        string? leftover = null;
+        InFolders(destination, () => leftover = MoveIntoFolder(source, destination, overwrite, rename));
+        return leftover;
+    }
+
+    private static string? MoveIntoFolder(string source, string destination, bool overwrite, Func<string, string, bool, bool> rename)
+    {
+        if (rename(source, destination, overwrite))
         {
             return null;
         }
@@ -133,6 +147,54 @@ internal static partial class OutputDestination
         }
 
         return DeleteSource(source);
+    }
+
+    /// <summary>
+    /// Creates <paramref name="destination"/>'s folder and the missing ones above it, then runs <paramref name="write"/>;
+    /// when the creation or the write fails, removes the folders it made, deepest first, while they are empty, and stops at
+    /// the first that cannot be removed, which the exception then names.
+    /// </summary>
+    private static void InFolders(string destination, Action write)
+    {
+        string folder = Path.GetDirectoryName(destination)!;
+        List<string> made = MissingFolders(folder);
+        try
+        {
+            Directory.CreateDirectory(folder);
+            write();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            RemoveFolders(made, e);
+            throw;
+        }
+    }
+
+    /// <summary>The folders from <paramref name="folder"/> up that do not exist, deepest first.</summary>
+    private static List<string> MissingFolders(string folder)
+    {
+        List<string> missing = [];
+        for (string? current = folder; current is not null && !Directory.Exists(current); current = Path.GetDirectoryName(current))
+        {
+            missing.Add(current);
+        }
+
+        return missing;
+    }
+
+    private static void RemoveFolders(List<string> made, Exception failure)
+    {
+        foreach (string folder in made.Where(Directory.Exists))
+        {
+            try
+            {
+                Directory.Delete(folder, recursive: false);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                throw new IOException($"{failure.Message}; the folder {folder} it made could not be removed: {e.Message}", failure);
+            }
+        }
     }
 
     /// <summary>Deletes a moved file's source once its copy is in place.</summary>

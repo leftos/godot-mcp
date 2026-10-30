@@ -583,6 +583,150 @@ public sealed class OutputDestinationTests : IDisposable
         Assert.Equal([5], File.ReadAllBytes(Path.Combine(destination, "kept.txt")));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AFailedMoveRemovesTheFoldersItMade(bool sourceHeldOpen)
+    {
+        Assert.SkipUnless(!sourceHeldOpen || OperatingSystem.IsWindows(), "only Windows refuses to rename a file held open");
+        string source = _temp.Combine("clip.mp4");
+        if (sourceHeldOpen)
+        {
+            File.WriteAllBytes(source, [1, 2, 3]);
+        }
+
+        string made = _temp.Combine("new");
+        string destination = Path.Combine(made, "deeper", "clip.mp4");
+        Exception? failure;
+        using (sourceHeldOpen ? new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read) : null)
+        {
+            failure = Record.Exception(() => OutputDestination.MoveReplacing(source, destination, overwrite: true));
+        }
+
+        Assert.True(failure is IOException or UnauthorizedAccessException, $"expected an IO or access failure, got {failure}");
+        Assert.False(Directory.Exists(made));
+        if (sourceHeldOpen)
+        {
+            Assert.Equal([1, 2, 3], File.ReadAllBytes(source));
+        }
+    }
+
+    [Fact]
+    public void AFailedSaveRemovesTheFoldersItMade()
+    {
+        string made = _temp.Combine("new");
+        using FailingRead source = new(() => { });
+
+        Assert.Throws<IOException>(() => OutputDestination.CopyReplacing(source, Path.Combine(made, "deeper", "shot.png"), overwrite: false));
+
+        Assert.False(Directory.Exists(made));
+        Assert.Empty(Directory.GetFiles(_temp.Path, ".godot-mcp-*.tmp", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public void AFailedSaveNamesAFolderItCouldNotRemove()
+    {
+        string made = _temp.Combine("new");
+        string deeper = Path.Combine(made, "deeper");
+        string kept = Path.Combine(deeper, "keep.txt");
+        using FailingRead source = new(() => File.WriteAllBytes(kept, [5]));
+
+        IOException failure = Assert.Throws<IOException>(() =>
+            OutputDestination.CopyReplacing(source, Path.Combine(deeper, "shot.png"), overwrite: false)
+        );
+
+        Assert.Contains($"the folder {deeper} it made could not be removed", failure.Message, StringComparison.Ordinal);
+        Assert.Equal([5], File.ReadAllBytes(kept));
+        Assert.True(Directory.Exists(made));
+    }
+
+    [Fact]
+    public void ACrossVolumeMoveCopiesAndDeletesTheSource()
+    {
+        string source = _temp.Combine("clip.mp4");
+        File.WriteAllBytes(source, [1, 2, 3]);
+        string destination = _temp.Combine("moved.mp4");
+
+        string? leftover = OutputDestination.MoveReplacing(source, destination, overwrite: false, OnAnotherVolume);
+
+        Assert.Null(leftover);
+        Assert.Equal([1, 2, 3], File.ReadAllBytes(destination));
+        Assert.False(File.Exists(source));
+    }
+
+    [Fact]
+    public void ACrossVolumeMoveReplacesAHardLinkWithoutWritingThroughIt()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "mklink /H is a Windows command");
+        string other = _temp.Combine("other.mp4");
+        File.WriteAllBytes(other, [1, 2]);
+        string destination = _temp.Combine("clip.mp4");
+        ScreenshotPathValidationTests.MakeHardLink(destination, other);
+        string source = Path.Combine(Directory.CreateDirectory(_temp.Combine("recordings")).FullName, "clip.mp4");
+        File.WriteAllBytes(source, [7, 7, 7]);
+
+        OutputDestination.MoveReplacing(source, destination, overwrite: true, OnAnotherVolume);
+
+        Assert.Equal([7, 7, 7], File.ReadAllBytes(destination));
+        Assert.Equal([1, 2], File.ReadAllBytes(other));
+        Assert.False(File.Exists(source));
+    }
+
+    [Fact]
+    public void AFailedCrossVolumeMoveKeepsTheSourceAndLeavesNoTemporary()
+    {
+        string source = _temp.Combine("clip.mp4");
+        File.WriteAllBytes(source, [1, 2, 3]);
+        // A folder stands where the clip would go, which no move replaces, overwrite or not.
+        string destination = Directory.CreateDirectory(_temp.Combine("taken.mp4")).FullName;
+
+        Exception? failure = Record.Exception(() => OutputDestination.MoveReplacing(source, destination, overwrite: true, OnAnotherVolume));
+
+        Assert.True(failure is IOException or UnauthorizedAccessException, $"expected an IO or access failure, got {failure}");
+        Assert.Equal([1, 2, 3], File.ReadAllBytes(source));
+        Assert.Empty(Directory.GetFiles(_temp.Path, ".godot-mcp-*.tmp", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public void AFailedCrossVolumeMoveRemovesTheFoldersItMade()
+    {
+        string source = _temp.Combine("clip.mp4");
+        File.WriteAllBytes(source, [1, 2, 3]);
+        string made = _temp.Combine("new");
+        Exception? failure;
+        // Held without read sharing, the source cannot be opened for the copy.
+        using (new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            failure = Record.Exception(() =>
+                OutputDestination.MoveReplacing(source, Path.Combine(made, "deeper", "clip.mp4"), overwrite: true, OnAnotherVolume)
+            );
+        }
+
+        Assert.True(failure is IOException or UnauthorizedAccessException, $"expected an IO or access failure, got {failure}");
+        Assert.False(Directory.Exists(made));
+        Assert.Equal([1, 2, 3], File.ReadAllBytes(source));
+    }
+
+    [Fact]
+    public void AFolderCreationThatFailsPartwayRemovesTheFoldersItMade()
+    {
+        string source = _temp.Combine("clip.mp4");
+        File.WriteAllBytes(source, [1, 2, 3]);
+        string made = _temp.Combine("new");
+        // A name longer than any file system allows: new is made, then the folder below it fails.
+        string destination = Path.Combine(made, new string('x', 300), "clip.mp4");
+
+        Exception? failure = Record.Exception(() => OutputDestination.MoveReplacing(source, destination, overwrite: true));
+
+        Assert.True(failure is IOException or UnauthorizedAccessException, $"expected an IO or access failure, got {failure}");
+        Assert.DoesNotContain("could not be removed", failure.Message, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(made));
+        Assert.Equal([1, 2, 3], File.ReadAllBytes(source));
+    }
+
+    /// <summary>A rename that finds the two paths on different volumes, so the move copies.</summary>
+    private static bool OnAnotherVolume(string source, string destination, bool overwrite) => false;
+
     [Fact]
     public void AForgedWorktreeTheMainCheckoutDoesNotListGetsNoMainTmpFolder()
     {
@@ -725,5 +869,37 @@ public sealed class OutputDestinationTests : IDisposable
         {
             Assert.Skip($"creating a symbolic link needs a privilege this run lacks: {e.Message}");
         }
+    }
+
+    /// <summary>A source whose every read runs <paramref name="beforeFailing"/> and then fails.</summary>
+    private sealed class FailingRead(Action beforeFailing) : Stream
+    {
+        public override bool CanRead => true;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => false;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            beforeFailing();
+            throw new IOException("the source could not be read");
+        }
+
+        public override void Flush() { }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }

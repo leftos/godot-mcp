@@ -294,7 +294,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 ### `save_screenshot`
 
 - **Does:** `take_screenshot`'s capture, written to `path`, a file in the project (such as a tracked picture), in the git checkout holding it or in the main checkout's `.tmp` folder (the places below), in one call. Returns `take_screenshot`'s result with `path` the named file and `capturePath` the copy under `.godot/godot-mcp/screenshots/`, beside which any preview stays, plus the image unless `responseMode` is `path_only`.
-- **Use:** `path` (project-relative, `res://` or absolute); `crop` as `take_screenshot`'s; `options {overwrite, responseMode, previewMaxWidth}`, the last two as `take_screenshot`'s `responseMode` and `previewMaxWidth`. Missing folders are created.
+- **Use:** `path` (project-relative, `res://` or absolute); `crop` as `take_screenshot`'s; `options {overwrite, responseMode, previewMaxWidth}`, the last two as `take_screenshot`'s `responseMode` and `previewMaxWidth`. Missing folders are created; a save that fails removes the ones it made, and names one it could not remove.
 - **Edges:** `path` must end in `.png` and lie in one of the places below, after every link on the way is followed; it is checked before the shot is taken and again right before the write.
 
   The places: the project; the project's git checkout, as a whole tree when it tracks `<project>/project.godot` and otherwise only its `.tmp` folder; and, when the project is in a linked worktree that the main checkout lists, the main checkout's `.tmp` folder only. `res://` stays project-only. The places come from git (`rev-parse --show-toplevel`, `ls-files`, `worktree list`), so a folder that merely holds a `.git` entry is not a checkout.
@@ -1344,7 +1344,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   A finished clip's path (`record_mark` `stop`'s `clip.path`, and `recording.clips` of `stop_project`, `restart_project`, `detach_project` and a game's exit) is where the file is: the destination once delivered, else the `recordings/` path. The move is a rename; across volumes it is a copy to a temporary file beside the destination, renamed into place, then the source deleted. A symlink or hard link at the destination is replaced, never written through.
 
-  A delivery that fails is a warning, never a lost clip (a real-time `warning`, a Movie Maker `recording.warning`; several are joined with `; `): `the clip could not be moved to {dest}: {reason}; it is kept at {recordings path}`.
+  A delivery that fails is a warning, never a lost clip (a real-time `warning`, a Movie Maker `recording.warning`; several are joined with `; `): `the clip could not be moved to {dest}: {reason}; it is kept at {recordings path}`. A failed delivery removes the folders it made for the destination; one it could not remove is named in the reason (`the folder {f} it made could not be removed: {why}`).
 
   Two more: `the clip fell back to .avi, so it is kept at {recordings path} instead of {dest}` (a Movie Maker clip whose encode failed and was copied as recorded; the `Clip N was copied …` note stays in `error`); and `the clip was moved to {dest}, but its copy at {recordings path} could not be deleted: {reason}`.
 - **Real-time recording:** `record_mark {mark: "start", options?}` on a windowed session not launched with `options.record` films its window as a player sees it, on the game's own clock (durations and `wait_for` stay real time).
