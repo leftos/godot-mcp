@@ -853,7 +853,7 @@ public sealed class ScratchVerdictTests
     public void AMissingStdoutMarkerPointsAtBuffering(bool stdoutArrived, bool stderrArrived, string hint) =>
         Assert.Equal(
             "the step 2 end marker reached stdout and stderr not both within 10 s" + hint,
-            ScratchRun.MarkerTimeout("step 2", stdoutArrived, stderrArrived)
+            ScratchRun.MarkerTimeout("step 2", TimeSpan.FromSeconds(10), stdoutArrived, stderrArrived)
         );
 
     [Fact]

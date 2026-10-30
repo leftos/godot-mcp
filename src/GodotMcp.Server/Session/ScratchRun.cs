@@ -170,14 +170,17 @@ internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyLi
     /// </summary>
     public double? ExitHold { get; init; }
 
+    /// <summary>The least the ceiling the played steps give is: <see cref="SessionRegistry.ScratchBoundFloor"/>.</summary>
+    public TimeSpan Floor { get; init; }
+
     /// <summary>
     /// The scene's ceiling: <see cref="Given"/> when the call or the profile sets one, else that of the played steps, from each
-    /// one's pace and the exit hold; see <see cref="ScratchRun.Ceiling"/>.
+    /// one's pace and the exit hold (<see cref="ScratchRun.Ceiling"/>), at least <see cref="Floor"/>.
     /// </summary>
     public TimeSpan Ceiling =>
         Given is { } given
             ? TimeSpan.FromSeconds(given.Seconds)
-            : ScratchRun.Ceiling([.. Played.Select(step => Paces[step].Seconds)], TimeScale, ExitHold);
+            : ScratchBounds.Floored(ScratchRun.Ceiling([.. Played.Select(step => Paces[step].Seconds)], TimeScale, ExitHold), Floor);
 
     /// <summary>
     /// The game milliseconds waited after the last step played: the exit hold, else that step's own pace, in game time or in wall
@@ -226,6 +229,25 @@ internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyLi
 
     /// <summary>Seconds a profile or a call wrote, to the thousandth.</summary>
     private static string GivenSeconds(double seconds) => seconds.ToString("0.###", CultureInfo.InvariantCulture);
+}
+
+/// <summary>
+/// The bounds a scene's walk holds its game to besides its ceiling, each the longer of its own value and <paramref name="Floor"/>
+/// (<see cref="SessionRegistry.ScratchBoundFloor"/>): a bridge call's timeout, a window's marker wait and a pace wait's release.
+/// </summary>
+internal sealed record ScratchBounds(TimeSpan Floor)
+{
+    /// <summary>How long a bridge call the walk makes runs before the bridge cancels it.</summary>
+    public TimeSpan Call => Floored(ScratchRun.CallTimeout, Floor);
+
+    /// <summary>How long a window's end markers are waited for, in load-adjusted time.</summary>
+    public TimeSpan Markers => Floored(ScratchRun.StepAllowance, Floor);
+
+    /// <summary>When a wait of <paramref name="gameMs"/> at <paramref name="timeScale"/> is released; see <see cref="ScratchRun.Release"/>.</summary>
+    public TimeSpan Release(int gameMs, double timeScale) => Floored(ScratchRun.Release(gameMs, timeScale), Floor);
+
+    /// <summary>The longer of <paramref name="bound"/> and <paramref name="floor"/>.</summary>
+    internal static TimeSpan Floored(TimeSpan bound, TimeSpan floor) => bound > floor ? bound : floor;
 }
 
 /// <summary>A line number in each of a session's stdout and stderr: the edge of a step's window.</summary>
@@ -315,13 +337,14 @@ internal sealed class ScratchRun
         "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\tvar scene: Node = scene_tree.current_scene\n"
         + "\treturn \"\" if scene == null else str(scene.get_path())\n";
 
-    private static readonly TimeSpan CallTimeout = TimeSpan.FromSeconds(10);
+    internal static readonly TimeSpan CallTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan ReplyAllowance = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan StepAllowance = TimeSpan.FromSeconds(10);
+    internal static readonly TimeSpan StepAllowance = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan MarkerPoll = TimeSpan.FromMilliseconds(10);
     private static readonly LineMark EveryLine = new(long.MaxValue, long.MaxValue);
 
     private readonly SessionRegistry _registry;
+    private readonly ScratchBounds _bounds;
     private readonly CSharpBridge _csharp;
     private readonly ScratchPlan _plan;
     private readonly ScratchScenePlan _scene;
@@ -353,6 +376,7 @@ internal sealed class ScratchRun
     private ScratchRun(RunContext context, int index)
     {
         _registry = context.Registry;
+        _bounds = new ScratchBounds(context.Registry.ScratchBoundFloor);
         _csharp = context.CSharp;
         _plan = context.Plan;
         _scene = context.Plan.Scenes[index];
@@ -768,9 +792,9 @@ internal sealed class ScratchRun
     }
 
     /// <summary>Why a window's markers did not both arrive in time; a stdout marker missing beside stderr's points at buffering.</summary>
-    internal static string MarkerTimeout(string label, bool stdoutArrived, bool stderrArrived)
+    internal static string MarkerTimeout(string label, TimeSpan allowance, bool stdoutArrived, bool stderrArrived)
     {
-        string text = $"the {label} end marker reached stdout and stderr not both within {StepAllowance.TotalSeconds:0} s";
+        string text = $"the {label} end marker reached stdout and stderr not both within {allowance.TotalSeconds:0} s";
         return !stdoutArrived && stderrArrived
             ? text + "; stdout may be buffered: is application/run/flush_stdout_on_print.debug off in project.godot?"
             : text;
@@ -900,7 +924,7 @@ internal sealed class ScratchRun
             await StartWatchAsync(session, cancellationToken);
             _deadline = _registry.Clock.Start(_walk.Ceiling, cancellationToken);
             await PlayStepsAsync(session, _deadline.Token);
-            await CollectWatchAsync(session, CallTimeout, cancellationToken);
+            await CollectWatchAsync(session, _bounds.Call, cancellationToken);
         }
 
         return Seen(session.Name);
@@ -920,7 +944,7 @@ internal sealed class ScratchRun
         JsonObject parameters = RuntimeTools.BuildWatchParameters("start", watch.Tracks, watch.Window ?? _walk.DefaultWatchWindow, watch.Options);
         try
         {
-            await session.SendAsync(WatchCommand, parameters, CallTimeout + ReplyAllowance, cancellationToken, CallTimeout);
+            await session.SendAsync(WatchCommand, parameters, _bounds.Call + ReplyAllowance, cancellationToken, _bounds.Call);
             _watching = true;
         }
         catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
@@ -1066,6 +1090,7 @@ internal sealed class ScratchRun
             {
                 Given = _scene.Ceiling,
                 ExitHold = _scene.ExitHold,
+                Floor = _bounds.Floor,
             };
             return null;
         }
@@ -1073,7 +1098,12 @@ internal sealed class ScratchRun
         (ScratchSelection selection, string? selectError) = SelectSteps(_scene, tokens, NamedSteps);
         _selected = selection.Selected;
         _setupOnly = selection.Setup;
-        _walk = new ScratchWalk(paces, selection.Played, _scene.TimeScale) { Given = _scene.Ceiling, ExitHold = _scene.ExitHold };
+        _walk = new ScratchWalk(paces, selection.Played, _scene.TimeScale)
+        {
+            Given = _scene.Ceiling,
+            ExitHold = _scene.ExitHold,
+            Floor = _bounds.Floor,
+        };
         return selectError;
     }
 
@@ -1253,7 +1283,7 @@ internal sealed class ScratchRun
     /// </summary>
     private async Task<StepPlay> PlayInsideUntilAsync(GodotSession session, int index, JsonObject wait, int gameMs, CancellationToken limit)
     {
-        TimeSpan release = Release(gameMs, _scene.TimeScale);
+        TimeSpan release = _bounds.Release(gameMs, _scene.TimeScale);
         try
         {
             ScratchUntil until = UntilFigures(await session.SendAsync("wait_for", wait, release + ReplyAllowance, limit, release));
@@ -1310,20 +1340,25 @@ internal sealed class ScratchRun
             ? (
                 lines,
                 dropped,
-                MarkerTimeout(label, MarkerLine(stdout, after.Stdout, marker) is not null, MarkerLine(stderr, after.Stderr, marker) is not null)
+                MarkerTimeout(
+                    label,
+                    _bounds.Markers,
+                    MarkerLine(stdout, after.Stdout, marker) is not null,
+                    MarkerLine(stderr, after.Stderr, marker) is not null
+                )
             )
             : (lines, dropped, null);
     }
 
     /// <summary>
-    /// The markers' line numbers once both streams hold them, or null when <see cref="StepAllowance"/> of load-adjusted time
-    /// passes first, on the registry's clock as every other wait of the walk: the server's own output readers starve with
+    /// The markers' line numbers once both streams hold them, or null when <see cref="ScratchBounds.Markers"/> of load-adjusted
+    /// time passes first, on the registry's clock as every other wait of the walk: the server's own output readers starve with
     /// the server on a loaded machine, so a wall-time wait would end before they have read lines the game already printed.
     /// The output is read once more after the deadline is seen to expire, so lines read meanwhile still count.
     /// </summary>
     private async Task<LineMark?> WaitForMarkersAsync(GodotSession session, string marker, CancellationToken limit)
     {
-        using LoadDeadline allowance = _registry.Clock.Start(StepAllowance, limit);
+        using LoadDeadline allowance = _registry.Clock.Start(_bounds.Markers, limit);
         while (true)
         {
             bool expired = allowance.Expired;
@@ -1359,11 +1394,11 @@ internal sealed class ScratchRun
     }
 
     /// <summary>run_script with <paramref name="source"/>: its execute's value, or why it failed.</summary>
-    private static Task<(JsonNode? Value, string? Error)> ScriptAsync(GodotSession session, string source, CancellationToken limit) =>
+    private Task<(JsonNode? Value, string? Error)> ScriptAsync(GodotSession session, string source, CancellationToken limit) =>
         SendAsync(session, "run_script", new JsonObject { ["source"] = source }, limit);
 
     /// <summary>A bridge command's value, or why it failed. A timeout or the ceiling is left to throw.</summary>
-    private static async Task<(JsonNode? Value, string? Error)> SendAsync(
+    private async Task<(JsonNode? Value, string? Error)> SendAsync(
         GodotSession session,
         string command,
         JsonObject parameters,
@@ -1372,7 +1407,7 @@ internal sealed class ScratchRun
     {
         try
         {
-            JsonNode? reply = await session.SendAsync(command, parameters, CallTimeout + ReplyAllowance, limit, CallTimeout);
+            JsonNode? reply = await session.SendAsync(command, parameters, _bounds.Call + ReplyAllowance, limit, _bounds.Call);
             return (reply?["value"]?.DeepClone(), null);
         }
         catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
@@ -1387,7 +1422,7 @@ internal sealed class ScratchRun
     /// </summary>
     private async Task<string?> WaitAsync(GodotSession session, int gameMs, CancellationToken limit)
     {
-        TimeSpan release = Release(gameMs, _scene.TimeScale);
+        TimeSpan release = _bounds.Release(gameMs, _scene.TimeScale);
         JsonObject parameters = new()
         {
             ["gameMs"] = gameMs,

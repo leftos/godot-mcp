@@ -94,6 +94,14 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// </summary>
     internal TimeSpan HeadlessCeilingFloor { get; init; } = TimeSpan.Zero;
 
+    /// <summary>
+    /// The least each bound a scratch scene's walk holds its game to is given: its call timeouts, its marker waits, its pace
+    /// waits' release and the ceiling its paces give, each its own value unless set, as the itest harness sets it to a hang
+    /// guard in minutes, since the gate starts Godot at BelowNormal and the harness's listener clock is wall time. A ceiling
+    /// the call or the profile gives is the caller's and is never floored.
+    /// </summary>
+    internal TimeSpan ScratchBoundFloor { get; init; } = TimeSpan.Zero;
+
     /// <summary>The server's own <see cref="ExitGrace"/>: 3 s of load-adjusted time.</summary>
     internal static readonly TimeSpan DefaultExitGrace = TimeSpan.FromSeconds(3);
 

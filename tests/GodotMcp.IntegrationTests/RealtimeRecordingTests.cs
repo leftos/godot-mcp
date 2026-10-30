@@ -337,12 +337,17 @@ public sealed partial class RealtimeRecordingTests : IAsyncDisposable
     public async Task AGameThatQuitsKeepsItsClipForTheNextStop()
     {
         await LaunchAsync(quiet: false, TestContext.Current.CancellationToken);
+        GodotSession session = _harness.Sessions.Resolve(null);
+        using var game = Process.GetProcessById(session.GameProcessId ?? throw new InvalidOperationException("the hello carried no game pid."));
         string path = (await MarkAsync("start"))["path"]!.GetValue<string>();
         await Task.Delay(500, Token);
 
         await _tools.RunScriptAsync(QuitSoonScript, 10_000, cancellationToken: Token);
         bool finished = await Poll.UntilAsync(() => ListedRecording()?.Clips is not null, CaptureWindows.HangGuard, Token);
         RecordingResult? listed = ListedRecording();
+        // The clip can be listed before the game's process is gone; the stop then finds it alive and kills it.
+        bool exited = await ProcessExit.WaitUntilGoneAsync(game, CaptureWindows.HangGuard);
+        Assert.True(exited, $"the game did not exit within {CaptureWindows.HangGuard.TotalSeconds} s after it quit");
         StopResult stopped = await _harness.Sessions.StopAsync(Session, Token);
         RecordingResult? listedAfterStop = ListedRecording();
         StopResult again = await _harness.Sessions.StopAsync(Session, Token);

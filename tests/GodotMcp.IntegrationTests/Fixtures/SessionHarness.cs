@@ -50,6 +50,11 @@ internal sealed class SessionHarness : IAsyncDisposable
             // and the listener's clock is wall time. It is under the xUnit hang guard of a test that starts a host
             // (TestTimeouts.OwnLaunchMs).
             HeadlessCeilingFloor = TimeSpan.FromMinutes(10),
+            // A hang guard in minutes, not a bound a starved scratch game must beat: each call, marker wait, pace wait and
+            // derived ceiling of a scene's walk runs on the listener's clock, which is wall time here. A test that needs a
+            // scene killed at its ceiling gives the scene one (options.ceilings), which is never floored. It is under the xUnit
+            // hang guard of a test that plays a scene (TestTimeouts.OwnLaunchMs).
+            ScratchBoundFloor = TimeSpan.FromMinutes(10),
             // Hang guards in minutes, not bounds a starved game must beat to quit cleanly: the gate starts Godot at BelowNormal
             // and the listener's clock is wall time, and a stop's kill turns a run red. They are under the xUnit hang guard a
             // test that launches a game carries (TestTimeouts.OwnLaunchMs).

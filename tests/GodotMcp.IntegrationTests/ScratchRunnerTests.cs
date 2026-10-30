@@ -109,7 +109,12 @@ public sealed class ScratchRunnerTests : ScratchRunBase
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStepPastItsCeilingIsKilledAndItsGameStopped()
     {
-        JsonObject result = await RunAsync(_probe.Directory, ["ScratchBusy"], options: null, TestContext.Current.CancellationToken);
+        JsonObject result = await RunAsync(
+            _probe.Directory,
+            ["ScratchBusy"],
+            new ScratchOptions(Ceilings: new() { ["ScratchBusy"] = 5 }),
+            TestContext.Current.CancellationToken
+        );
 
         JsonObject scene = Single(result);
         Assert.Equal("killed", scene["verdict"]!.GetValue<string>());
