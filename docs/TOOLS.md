@@ -863,7 +863,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   A `signal` start (`{node, signal}`) is met at the first check after the emission, as `wait_for`'s signal wait is, and `start.call` runs after the signal is connected, so the emission its own call causes is caught. `edge` is refused (`options.edge applies to exists, property and expression waits; this condition is signal.`), and so is `timeoutMs: 0` (`timeoutMs 0 checks once, which a signal wait cannot do; give it a timeout.`).
 
-  `start.then {call?, timeScale?}` runs in the met frame as `wait_for`'s `options.then` does (`call` first, then `timeScale`), and the capture's own `options.call` runs after it, in that frame, where the clock starts. A start already true at the call starts the clock at the next process frame, as a capture without one.
+  `start.then {call?, timeScale?}` runs in the met frame as `wait_for`'s `options.then` does (`call` first, then `timeScale`; `record` is refused: `options.start.then.record applies to wait_for only.`), and the capture's own `options.call` runs after it, in that frame, where the clock starts. A start already true at the call starts the clock at the next process frame, as a capture without one.
 
   `start.call` takes `options.call`'s shape (a method call or a game tool) and makes the call that causes the change the start waits for: the bridge waits one frame, takes the start's baseline check (for an `edge` start, its first false check), then makes the call, so the start sees the rise its own call makes.
 
@@ -873,7 +873,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   A `start.call` the bridge refuses, or that fails, fails the capture with its error and takes no frames.
 
-  Another kind is refused: `options.start takes an exists, property, expression or signal condition; this condition is {kind}.` (a start given `uiChanged`, `true` or `"now"`, is of kind `uiChanged`, one given `text` or `under` of kind `text`, one given `stable` of kind `settled`, one given `state` of kind `state`, and one given `output` of kind `output`, whatever else it carries) A bad `start.timeoutMs` or `start.then` is refused with `wait_for`'s texts (`timeoutMs must be between 0 and 120000.`, `options.then needs call, timeScale, pause or a mix.`).
+  Another kind is refused: `options.start takes an exists, property, expression or signal condition; this condition is {kind}.` (a start given `uiChanged`, `true` or `"now"`, is of kind `uiChanged`, one given `text` or `under` of kind `text`, one given `stable` of kind `settled`, one given `state` of kind `state`, and one given `output` of kind `output`, whatever else it carries) A bad `start.timeoutMs` or `start.then` is refused with `wait_for`'s texts (`timeoutMs must be between 0 and 120000.`, `options.then needs call, timeScale, pause, record or a mix.`).
 
   The result adds `start: {met: true, frame, args?, call?, then?, failedChecks?, mutedErrors?}`, `args` being a signal start's emission arguments, `call` being `{value}`, the start call's return value, reported when the start is met and when it times out; `frame` being `Engine.get_process_frames()` where the start was met.
 
@@ -1049,15 +1049,21 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   `options.crop` needs `options.screenshot: true` (`options.crop needs options.screenshot: true: it crops the captured frame.`). A crop that only partly overlaps the viewport is cut to it, and one wholly outside leaves the wait met with no screenshot and `warning` "no screenshot was taken: the crop … lies outside the … viewport".
 - **A headless game:** `options.screenshot` on a headless game still returns the wait's result, with `warning` "a headless game draws no frames, so no screenshot was taken; read state with get_game_state, get_ui_elements or run_script, or run the scene windowed." and no engine error.
-- **Act in the met frame:** `options.then {call?: {node, method, args?} | {tool, args?}, timeScale?, pause?}`, taken by every condition but `output` and by a check-once wait, runs once in the frame the condition is first found true (the met frame): `call` first, then `timeScale` (above 0, at most 100), which scales the next frame on, then `pause: true`, which pauses the game there as `frame_control pause` does and adds `paused: true` to the result's `then`; `frame_control resume` undoes it, and a `timeScale` set beside it applies on resume.
+- **Act in the met frame:** `options.then {call?: {node, method, args?} | {tool, args?}, timeScale?, pause?, record?: {mark, path?, overwrite?}}`, taken by every condition but `output` and by a check-once wait, runs once in the frame the condition is first found true (the met frame): `call` first, then `timeScale` (above 0, at most 100), which scales the next frame on, then `pause: true`, which pauses the game there as `frame_control pause` does and adds `paused: true` to the result's `then`; `frame_control resume` undoes it, and a `timeScale` set beside it applies on resume.
 
-  A `then` needs at least one of the three (`options.then needs call, timeScale, pause or a mix.`).
+  `record: {mark: "start" | "stop", path?, overwrite?}` places a Movie Maker record mark in the met frame, so a clip opens on the frame the wait found (a `record_mark` sent after the wait would start frames later, with idle movie frames between). A `start` includes the met frame. `path` and `overwrite` are a start's, as `record_mark start`'s options take them (`overwrite` needs `path`); a `stop` takes neither.
+
+  The mark, its `path` and the clip state are checked before the wait is sent, with `record_mark`'s refusals. The result's `then.record` is `record_mark`'s movie result `{mark, frame, seconds, mode: "movie", destination?}`, or `{mark, error}` when the recording refuses the mark once the wait met (a stop on its start's frame): the wait stays met.
+
+  Refused before the wait: a real-time recording (`options.then.record places a mark in a Movie Maker recording's met frame; this session's recording is real-time, so use then: {pause: true}, then record_mark start, then frame_control resume.`), a session with no recording (`options.then.record needs a recording: start one with run_project's record option.`), a `mark` other than `start` or `stop`, `path` or `overwrite` on a `stop`, and `overwrite` without `path`.
+
+  A `then` needs at least one of the four (`options.then needs call, timeScale, pause, record or a mix.`).
 
   Where a pause lands: a plain wait pauses before the met frame's `_process`, after its physics, so a read afterwards gives the values the wait met but anything the game updates in `_process` (a shader parameter, an animation) may still show the previous frame. Give `options.screenshot: true` when a picture or crop must match the values: that wait pauses after the met frame is drawn. For whole stepped frames from a paused game, `frame_control step {options: {until}}` stops on the met frame too.
 
   A failed `then.call` does not pause (its error says `the game was not paused`), and neither does a wait whose met frame comes while a `frame_control` step or a `capture_frames` runs: the wait fails, naming the running one. `capture_frames`' `start.then` refuses `pause` (`capture_frames' start.then cannot pause: a paused game adds no game time, so the capture would never advance.`).
 
-  A slow-motion shot of a moment: `wait_for {condition: {expression: "…"}, options: {then: {timeScale: 0.2}}}`, then `capture_frames`, or give `capture_frames` an `options.start` that waits for the condition and counts its points from the met frame. The result adds `then: {frame, call?: {value}, timeScale?, paused?}`, `frame` being `Engine.get_process_frames()` when it ran.
+  A slow-motion shot of a moment: `wait_for {condition: {expression: "…"}, options: {then: {timeScale: 0.2}}}`, then `capture_frames`, or give `capture_frames` an `options.start` that waits for the condition and counts its points from the met frame. The result adds `then: {frame, call?: {value}, timeScale?, paused?, record?}`, `frame` being `Engine.get_process_frames()` when it ran.
 
   A plain wait runs it at that frame's start, before the nodes process (a check met at once runs it inside the request); with `options.screenshot` it runs after the met frame is drawn and grabbed, but a check-once wait runs it before its capture, which can then show its effect; a signal wait runs it in the frame the wait notices the emission.
 
@@ -1377,7 +1383,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 ### `record_mark`
 
 - **Does:** in a session launched with `options.record` (Movie Maker), marks the `start` or `stop` of a clip at the movie frame reached: `{mark, frame, seconds, mode: "movie", destination?}`; a `start` takes only `options.path` and `options.overwrite` (see the clip destination, below), a `stop` no `options`. In any other session with a window, `start` records the window in real time and `stop` ends it (below).
-- **Use:** bracket the moment worth keeping; when the run ends (`stop_project`, the game quitting, `restart_project`) each start-stop pair is cut to its own file with ffmpeg, and a start left open clips to the end. A start that names a `path` has its clip moved there once it is cut.
+- **Use:** bracket the moment worth keeping; for a start exactly on the frame a condition comes true, give `wait_for` `options.then.record` rather than a `record_mark` after the wait, which would start frames later; when the run ends (`stop_project`, the game quitting, `restart_project`) each start-stop pair is cut to its own file with ffmpeg, and a start left open clips to the end. A start that names a `path` has its clip moved there once it is cut.
 - **Edges:** marks alternate start, stop. A recording runs at a fixed 60 fps, so game time advances 1/60 s a frame whatever the wall clock does, and the game runs uncapped.
 
   Game time therefore keeps running between tool calls, faster than the wall clock on a light scene (measured 4x) and somewhat slower on a heavy one (0.8x on one game's staging scene): an effect a call starts (a 4 s tween) can finish during the agent's think time before its next call looks. Observe a timed effect in the request that starts it: `capture_frames` or `watch` with `options.call`, `wait_for` with `options.call` and `options.screenshot` or `options.then.pause`, or calls sent together in one turn.
@@ -1688,7 +1694,7 @@ The section is parsed strictly with the rest of the file: an unknown key, a wron
 ### Record a clip around a bug
 
 1. `run_project {projectPath, options: {record: true, dropIdle: true}}`: `recording.path` is the movie in progress. `dropIdle` keeps the clip to the action: without it the clip also holds every idle frame drawn while you were between tool calls. Leave it out when a still moment or the sound matters.
-2. Drive to just before the bug. `record_mark {mark: "start"}`: note `frame`.
+2. Drive to just before the bug. `record_mark {mark: "start"}`: note `frame`. To open the clip on the frame a condition comes true, send `wait_for {condition, options: {then: {record: {mark: "start"}}}}` instead: its `then.record` is the same result.
 3. Trigger the bug with the input tools. The run is at a fixed 60 fps, so millisecond durations no longer match game time: wait on conditions with `wait_for`, not on durations.
 4. `record_mark {mark: "stop"}`.
 5. `stop_project`: `recording.clips` lists one `.mp4` for the pair, and the full movie is gone; `recording.error` means ffmpeg was missing or failed and `recording.path` is kept instead.

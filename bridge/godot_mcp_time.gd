@@ -791,7 +791,9 @@ func _run_then_into(drawn: Dictionary) -> void:
 
 
 ## Runs params.then now, once: its call through the inspector, then its timeScale, then its pause.
-## Returns {frame, call?, timeScale?, paused?}, {failed, frame} when the call failed, {failed_pause,
+## A then.record adds movieFrame, the frames Movie Maker has written before this one, as
+## movie_frame answers it in this frame; the server places the mark there. Returns {frame,
+## movieFrame?, call?, timeScale?, paused?}, {failed, frame} when the call failed, {failed_pause,
 ## frame} when a step or a capture still ran and the pause was skipped, or {} when params has no
 ## then.
 func _run_then(params: Dictionary) -> Dictionary:
@@ -800,6 +802,8 @@ func _run_then(params: Dictionary) -> Dictionary:
 	var then: Dictionary = params["then"]
 	var frame: int = Engine.get_process_frames()
 	var ran: Dictionary = {"frame": frame}
+	if then.get("record") is Dictionary:
+		ran["movieFrame"] = Engine.get_process_frames()
 	if then.get("call") is Dictionary:
 		var called: Variant = bridge._inspect.call_now(then["call"])
 		if called is String:

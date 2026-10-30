@@ -173,16 +173,7 @@ internal sealed partial class RuntimeTools
         CancellationToken cancellationToken
     )
     {
-        OutputTarget? destination = ResolveClipTarget(target, started);
-        try
-        {
-            recording.CheckDestination(destination);
-        }
-        catch (SessionException e)
-        {
-            throw new McpException(e.Message, e);
-        }
-
+        OutputTarget? destination = CheckedClipTarget(target, recording, started);
         BridgeResult result = await requestFrame(cancellationToken);
         long frame = ReadMovieFrame(result.Reply);
         try
@@ -197,15 +188,114 @@ internal sealed partial class RuntimeTools
         }
     }
 
-    /// <summary>The frame in the bridge's movie_frame reply, a whole number that GDScript's JSON may send as a float.</summary>
-    /// <exception cref="McpException">The reply has no whole, non-negative frame.</exception>
-    internal static long ReadMovieFrame(JsonNode? reply)
+    /// <summary>The destination a Movie Maker start's options name, resolved and checked against the recording's earlier clips.</summary>
+    /// <exception cref="McpException">The path breaks the output rule, names an existing file without overwrite, or is where an
+    /// earlier clip of <paramref name="recording"/> goes.</exception>
+    private static OutputTarget? CheckedClipTarget(GodotSession target, Recording recording, RecordMarkOptions? started)
     {
-        if (reply?["frame"] is JsonValue value && value.TryGetValue(out double frame) && frame >= 0 && frame == Math.Floor(frame))
+        OutputTarget? destination = ResolveClipTarget(target, started);
+        try
         {
-            return (long)frame;
+            recording.CheckDestination(destination);
+        }
+        catch (SessionException e)
+        {
+            throw new McpException(e.Message, e);
         }
 
-        throw new McpException($"The bridge's movie_frame reply has no frame: {reply?.ToJsonString() ?? "null"}.");
+        return destination;
     }
+
+    /// <summary>The frame in the bridge's movie_frame reply, a whole number that GDScript's JSON may send as a float.</summary>
+    /// <exception cref="McpException">The reply has no whole, non-negative frame.</exception>
+    internal static long ReadMovieFrame(JsonNode? reply) =>
+        WholeFrame(reply?["frame"]) ?? throw new McpException($"The bridge's movie_frame reply has no frame: {reply?.ToJsonString() ?? "null"}.");
+
+    /// <summary>A whole, non-negative frame number, which GDScript's JSON may send as a float; null for anything else.</summary>
+    private static long? WholeFrame(JsonNode? node) =>
+        node is JsonValue value && value.TryGetValue(out double frame) && frame >= 0 && frame == Math.Floor(frame) ? (long)frame : null;
+
+    /// <summary>A then.record mark checked before its wait starts: the recording it marks and the start's destination.</summary>
+    internal sealed record ThenMark(Recording Recording, string Mark, OutputTarget? Destination, bool Overwrite);
+
+    /// <summary>wait_for's then.record checked against the session before the wait is sent; null when the wait has none.</summary>
+    /// <exception cref="McpException">As <see cref="CheckThenRecord"/>, or no session is running.</exception>
+    private ThenMark? PrepareThenMark(ThenRecord? record, string? session)
+    {
+        if (record is null)
+        {
+            return null;
+        }
+
+        GodotSession target = Find(session);
+        return CheckThenRecord(target, target.ActiveRecording, record);
+    }
+
+    /// <summary>
+    /// Checks a then.record mark as record_mark would check it on <paramref name="movie"/>, the session's Movie Maker recording,
+    /// before the wait starts: the start's destination and the clip state the mark needs.
+    /// </summary>
+    /// <exception cref="McpException">The session has no Movie Maker recording (a real-time one or none), the destination is
+    /// refused, a start comes while a clip is open, or a stop with none open.</exception>
+    internal static ThenMark CheckThenRecord(GodotSession target, Recording? movie, ThenRecord record)
+    {
+        if (movie is null)
+        {
+            throw new McpException(
+                target.RecordingState?.Mode == RealtimeRecording.Mode
+                    ? "options.then.record places a mark in a Movie Maker recording's met frame; this session's recording is real-time, "
+                        + "so use then: {pause: true}, then record_mark start, then frame_control resume."
+                    : "options.then.record needs a recording: start one with run_project's record option."
+            );
+        }
+
+        try
+        {
+            movie.CheckMark(record.Mark);
+        }
+        catch (SessionException e)
+        {
+            throw new McpException(e.Message, e);
+        }
+
+        RecordMarkOptions? started =
+            record.Mark == Recording.StartMark ? new RecordMarkOptions(Path: record.Path, Overwrite: record.Overwrite) : null;
+        return new ThenMark(movie, record.Mark, CheckedClipTarget(target, movie, started), record.Overwrite);
+    }
+
+    /// <summary>
+    /// Places a then.record mark at the movie frame the bridge read in the met frame, replacing then.movieFrame with
+    /// then.record: the mark as record_mark returns it, or {mark, error} when the recording refuses it, so a met wait stays met.
+    /// Nothing for a wait that did not meet, or no mark.
+    /// </summary>
+    internal static void PlaceThenMark(JsonObject reply, ThenMark? mark)
+    {
+        if (mark is null || reply["then"] is not JsonObject then)
+        {
+            return;
+        }
+
+        then.Remove("movieFrame", out JsonNode? movieFrame);
+        then["record"] = MarkThen(mark, movieFrame);
+    }
+
+    private static JsonObject MarkThen(ThenMark mark, JsonNode? movieFrame)
+    {
+        if (WholeFrame(movieFrame) is not { } frame)
+        {
+            return ThenMarkError(mark, $"The bridge's met then has no movieFrame: {movieFrame?.ToJsonString() ?? "null"}.");
+        }
+
+        try
+        {
+            MarkResult marked = mark.Recording.Mark(mark.Mark, frame, mark.Destination, mark.Overwrite);
+            return JsonSerializer.SerializeToNode(marked, Json)!.AsObject();
+        }
+        catch (SessionException e)
+        {
+            return ThenMarkError(mark, e.Message);
+        }
+    }
+
+    private static JsonObject ThenMarkError(ThenMark mark, string error) => new() { ["mark"] = mark.Mark, ["error"] = error };
 }

@@ -139,6 +139,18 @@ internal sealed class FakeBridge : IDisposable
     /// <summary>Reads the next request the pump queued without answering it.</summary>
     public Task<JsonObject> ReadRequestAsync(CancellationToken cancellationToken) => ReadNextAsync(cancellationToken);
 
+    /// <summary>Takes every request the pump has queued so far without answering any, without waiting for more.</summary>
+    public List<JsonObject> TakeQueued()
+    {
+        List<JsonObject> queued = [];
+        while (_requests.Reader.TryRead(out JsonObject? request))
+        {
+            queued.Add(request);
+        }
+
+        return queued;
+    }
+
     /// <summary>Answers <paramref name="request"/>, read by <see cref="ReadRequestAsync"/>, with <paramref name="result"/>.</summary>
     public Task ReplyAsync(JsonObject request, JsonObject result, CancellationToken cancellationToken) =>
         WriteFrameAsync(

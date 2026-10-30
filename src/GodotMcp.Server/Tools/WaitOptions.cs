@@ -25,11 +25,13 @@ internal sealed record WaitOptions(
     )]
         MethodCall? Call = null,
     [property: Description(
-        "Any condition kind: {call?, timeScale?, pause?}, run once in the frame the condition is met, so an effect starts there "
-            + "with no round trip. call is a method the bridge calls there, as options.call (a coroutine is not awaited); timeScale "
-            + "sets Engine.time_scale right after it; pause: true leaves the game paused on that frame, as frame_control pause does, "
-            + "so a later read sees the state the condition did. The result adds then: {frame, call?: {value}, timeScale?, paused?}. "
-            + "A refused or failing call fails the wait and leaves timeScale unset and the game running; a timeout runs nothing."
+        "Any condition kind: {call?, timeScale?, pause?, record?}, run once in the frame the condition is met, so an effect starts "
+            + "there with no round trip. call is a method the bridge calls there, as options.call (a coroutine is not awaited); "
+            + "timeScale sets Engine.time_scale right after it; pause: true leaves the game paused on that frame, as frame_control "
+            + "pause does, so a later read sees the state the condition did; record {mark, path?, overwrite?} marks a Movie Maker "
+            + "recording's clip start or stop at that frame, as record_mark does. The result adds then: {frame, call?: {value}, "
+            + "timeScale?, paused?, record?}. A refused or failing call fails the wait and leaves timeScale unset and the game "
+            + "running; a timeout runs nothing."
     )]
         WaitThen? Then = null,
     [property: Description(
@@ -62,7 +64,8 @@ internal sealed record WaitOptions(
     [property: Description("Replace an existing file at path; without it, saving over an existing file is refused.")] bool? Overwrite = null
 );
 
-/// <summary>What wait_for runs in the frame its condition is met: a method call, an Engine.time_scale, a pause, or any mix.</summary>
+/// <summary>What wait_for runs in the frame its condition is met: a method call, an Engine.time_scale, a pause, a record mark, or
+/// any mix.</summary>
 internal sealed record WaitThen(
     [property: Description(
         "The method to call in the met frame, as options.call: {node, method, args}; a coroutine is not awaited. Or {tool, args: "
@@ -84,5 +87,27 @@ internal sealed record WaitThen(
             + "picture matches the values. capture_frames' start.then refuses it, as a paused game adds no game time, so the capture "
             + "would never advance."
     )]
-        bool? Pause = null
+        bool? Pause = null,
+    [property: Description(
+        "{mark: start | stop, path?, overwrite?}: marks the session's Movie Maker recording (run_project options.record) at the "
+            + "movie frame the condition was met in, as record_mark does there, with no idle movie frames between; a start includes "
+            + "the met frame. path and overwrite are a start's, as record_mark start's options take them. The mark, the path and "
+            + "the clip state are checked before the wait starts, refused as record_mark refuses them; a real-time recording, or "
+            + "none, is refused. then adds record: {mark, mode: movie, frame, seconds, destination?}, as record_mark returns, or "
+            + "{mark, error} when the recording refuses the mark once the wait met (a stop on its start's frame); the wait stays "
+            + "met. capture_frames' start.then refuses it."
+    )]
+        ThenRecord? Record = null
+);
+
+/// <summary>The record mark wait_for's then places in the met frame of a Movie Maker recording.</summary>
+internal sealed record ThenRecord(
+    [property: Description("start or stop.")] string Mark,
+    [property: Description(
+        "On start only, where the finished clip is moved: a project-relative, res:// or absolute .mp4 path in the project, its "
+            + "checkout when it tracks the project, or from a linked worktree the main checkout's .tmp, as record_mark start's "
+            + "options.path. Without it the clip stays under .godot/godot-mcp/recordings/."
+    )]
+        string? Path = null,
+    [property: Description("On start only: replace an existing file at path; default false, which refuses one.")] bool Overwrite = false
 );

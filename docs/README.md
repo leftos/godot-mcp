@@ -98,7 +98,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Main checkout | The first entry of `git worktree list`, used by `save_screenshot`'s places only when it is not bare, is not the project's own checkout and lists it: only its `.tmp` folder is open, so a picture saved from a linked worktree outlives `git worktree remove` |
 | Marker | The first-line comment that identifies an `override.cfg` as the server's own; one without it is the user's and is never touched |
 | Match | How a text, or a string `equals` on a property or state, is compared: `exact` (the default), `prefix` or `contains` |
-| Met frame | The frame in which a wait first finds its condition true: the frame `wait_for`'s `options.then` acts in and a step-until stops on |
+| Met frame | The frame in which a wait first finds its condition true: the frame `wait_for`'s `options.then` acts in (a `then.record` mark opens or closes a clip there) and a step-until stops on |
 | Mix burst | The 4096 frames (about 93 ms of audio) the Dummy driver mixes at once, then sleeps, in a quiet or headless run; a peak read sees only a burst's last step, so a sound under about 81 ms may never be heard by a bus read |
 | Movie recording | The Movie Maker recording `run_project` `options.record` launches: one AVI at a fixed 60 fps, off the wall clock, whose `record_mark` marks note movie frames and whose clips are cut when the run ends; a mark there reports `mode: "movie"` |
 | Mute window | A span in which the bridge's `Logger` drops the engine errors a native method raises directly on the main thread while a condition or watch expression runs, kept per script path and counted for `mutedErrors`; the game's own errors and other threads' still land |
@@ -152,7 +152,7 @@ The map. An MCP server (C#, .NET 10) and an in-game bridge (GDScript) that let a
 | Step-until | A `frame_control` step with `options.until`, a `wait_for` condition checked after each stepped frame: the step stops, paused, on the met frame, and `count` is then the most frames it runs |
 | Teardown grace | The 7 s of load-adjusted time (`SessionRegistry.TeardownGrace`) a stop gives past the 3 s grace to a game that acknowledged the quit and closed its bridge, so it is in the engine's own teardown: 10 s in all before a kill. A recording run's grace has no teardown phase. |
 | Text target | An input tool's `{text}` target: the visible Control whose shown text equals the given text (or starts with or contains it, by `match`), optionally searched `under` a node; the result's `aimedAt.matched` says what it matched |
-| Then action | `wait_for`'s `options.then {call?, timeScale?, pause?}`: a method call, a time scale and a pause run once in the met frame |
+| Then action | `wait_for`'s `options.then {call?, timeScale?, pause?, record?}`: a method call, a time scale, a pause and a Movie Maker record mark run once in the met frame |
 | Tool annotations | The MCP hints each tool declares (`readOnlyHint`, `destructiveHint`, `openWorldHint`) so a client's permission rules can allow the reads |
 | Tool mark | `[GodotMcpTool("what it does")]`, an attribute class the game declares itself and the helper matches by its name `GodotMcpToolAttribute` in any namespace |
 | Tooltip span | A RichTextLabel's run of text whose `get_tooltip` answers a tooltip of its own: a `[hint]`, a `[url]` with a tooltip or an image's; found by sampling the label, aimed at with `item` |

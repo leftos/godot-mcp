@@ -75,6 +75,160 @@ public sealed class RecordingMarksTests
         Assert.Equal(clipsBefore, recording.Clips().Count);
     }
 
+    [Theory]
+    [InlineData("start", "A clip is already open, started at frame 10; mark stop before the next start.")]
+    [InlineData("stop", "No clip is open; mark start first.")]
+    public async Task AThenRecordTheRecordingWouldRefuseIsRefusedBeforeTheWait(string mark, string expected)
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("game");
+        using FakeBridge game = await harness.AttachFakeGameAsync(project, "game", new FakeHello());
+        Recording recording = new(Path.Combine(project, ".godot", "godot-mcp", "recordings", "movie.avi"));
+        if (mark == Recording.StartMark)
+        {
+            recording.Mark(Recording.StartMark, 10);
+        }
+
+        int clipsBefore = recording.Clips().Count;
+
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.CheckThenRecord(harness.Sessions.Resolve("game"), recording, new ThenRecord(mark))
+        );
+
+        Assert.Equal(expected, refused.Message);
+        Assert.Equal(clipsBefore, recording.Clips().Count);
+    }
+
+    [Fact]
+    public async Task AThenRecordPathAnEarlierClipTookIsRefusedBeforeTheWait()
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("game");
+        using FakeBridge game = await harness.AttachFakeGameAsync(project, "game", new FakeHello());
+        Recording recording = new(Path.Combine(project, ".godot", "godot-mcp", "recordings", "movie.avi"));
+        recording.Mark(
+            Recording.StartMark,
+            10,
+            OutputDestination.Resolve(OutputPlaces.Find(project, NullLogger.Instance), "clips/a.mp4", ".mp4", false),
+            false
+        );
+        recording.Mark(Recording.StopMark, 20);
+
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.CheckThenRecord(harness.Sessions.Resolve("game"), recording, new ThenRecord("start", "clips/a.mp4"))
+        );
+
+        Assert.Equal("path clips/a.mp4 is already where clip 1 of this recording goes; name another file", refused.Message);
+    }
+
+    [Fact]
+    public async Task AMetThenRecordMarksTheMovieFrameTheBridgeReadInTheMetFrame()
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("game");
+        using FakeBridge game = await harness.AttachFakeGameAsync(project, "game", new FakeHello());
+        Recording recording = new(Path.Combine(project, ".godot", "godot-mcp", "recordings", "movie.avi"));
+        RuntimeTools.ThenMark prepared = RuntimeTools.CheckThenRecord(
+            harness.Sessions.Resolve("game"),
+            recording,
+            new ThenRecord("start", "clips/a.mp4")
+        );
+        JsonObject reply = JsonNode.Parse("""{"met": true, "frames": 3, "then": {"frame": 42, "movieFrame": 42}}""")!.AsObject();
+
+        RuntimeTools.PlaceThenMark(reply, prepared);
+
+        string destination = OutputDestination.Resolve(OutputPlaces.Find(project, NullLogger.Instance), "clips/a.mp4", ".mp4", false).FullPath;
+        JsonObject expected = new()
+        {
+            ["frame"] = 42,
+            ["record"] = new JsonObject
+            {
+                ["mark"] = "start",
+                ["frame"] = 42,
+                ["seconds"] = 0.7,
+                ["mode"] = "movie",
+                ["destination"] = destination,
+            },
+        };
+        Assert.True(JsonNode.DeepEquals(expected, reply["then"]), reply.ToJsonString());
+        ClipSpan open = Assert.Single(recording.Clips());
+        Assert.Equal(42, open.StartFrame);
+        Assert.Null(open.StopFrame);
+        Assert.Equal(destination, open.Destination?.FullPath);
+    }
+
+    [Fact]
+    public async Task AThenStopOnItsStartsFrameReportsTheErrorAndKeepsTheMetWait()
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("game");
+        using FakeBridge game = await harness.AttachFakeGameAsync(project, "game", new FakeHello());
+        Recording recording = new(Path.Combine(project, ".godot", "godot-mcp", "recordings", "movie.avi"));
+        recording.Mark(Recording.StartMark, 42);
+        RuntimeTools.ThenMark prepared = RuntimeTools.CheckThenRecord(harness.Sessions.Resolve("game"), recording, new ThenRecord("stop"));
+        JsonObject reply = JsonNode.Parse("""{"met": true, "frames": 0, "then": {"frame": 42, "movieFrame": 42}}""")!.AsObject();
+
+        RuntimeTools.PlaceThenMark(reply, prepared);
+
+        Assert.True(reply["met"]!.GetValue<bool>());
+        JsonObject expected = new()
+        {
+            ["mark"] = "stop",
+            ["error"] = "A clip needs at least one frame: stop is at frame 42 and its start at frame 42.",
+        };
+        Assert.True(JsonNode.DeepEquals(expected, reply["then"]!["record"]), reply.ToJsonString());
+        Assert.Null(Assert.Single(recording.Clips()).StopFrame);
+    }
+
+    [Fact]
+    public async Task AMetThenWithoutAMovieFrameReportsTheErrorAndMarksNothing()
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("game");
+        using FakeBridge game = await harness.AttachFakeGameAsync(project, "game", new FakeHello());
+        Recording recording = new(Path.Combine(project, ".godot", "godot-mcp", "recordings", "movie.avi"));
+        RuntimeTools.ThenMark prepared = RuntimeTools.CheckThenRecord(harness.Sessions.Resolve("game"), recording, new ThenRecord("start"));
+        JsonObject reply = JsonNode.Parse("""{"met": true, "frames": 1, "then": {"frame": 42}}""")!.AsObject();
+
+        RuntimeTools.PlaceThenMark(reply, prepared);
+
+        JsonObject expected = new() { ["mark"] = "start", ["error"] = "The bridge's met then has no movieFrame: null." };
+        Assert.True(JsonNode.DeepEquals(expected, reply["then"]!["record"]), reply.ToJsonString());
+        Assert.Empty(recording.Clips());
+    }
+
+    [Fact]
+    public async Task AMovieFrameSentAsAWholeFloatPlacesTheMarkAtThatFrame()
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("game");
+        using FakeBridge game = await harness.AttachFakeGameAsync(project, "game", new FakeHello());
+        Recording recording = new(Path.Combine(project, ".godot", "godot-mcp", "recordings", "movie.avi"));
+        RuntimeTools.ThenMark prepared = RuntimeTools.CheckThenRecord(harness.Sessions.Resolve("game"), recording, new ThenRecord("start"));
+        JsonObject reply = JsonNode.Parse("""{"met": true, "frames": 1, "then": {"frame": 42, "movieFrame": 42.0}}""")!.AsObject();
+
+        RuntimeTools.PlaceThenMark(reply, prepared);
+
+        Assert.Equal(42, reply["then"]!["record"]!["frame"]!.GetValue<long>());
+        Assert.Equal(42, Assert.Single(recording.Clips()).StartFrame);
+    }
+
+    [Fact]
+    public async Task AnUnmetWaitPlacesNoMark()
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("game");
+        using FakeBridge game = await harness.AttachFakeGameAsync(project, "game", new FakeHello());
+        Recording recording = new(Path.Combine(project, ".godot", "godot-mcp", "recordings", "movie.avi"));
+        RuntimeTools.ThenMark prepared = RuntimeTools.CheckThenRecord(harness.Sessions.Resolve("game"), recording, new ThenRecord("start"));
+        JsonObject reply = JsonNode.Parse("""{"met": false, "frames": 60, "last": false}""")!.AsObject();
+
+        RuntimeTools.PlaceThenMark(reply, prepared);
+
+        Assert.Equal("""{"met":false,"frames":60,"last":false}""", reply.ToJsonString());
+        Assert.Empty(recording.Clips());
+    }
+
     [Fact]
     public void MarksMustAlternate()
     {

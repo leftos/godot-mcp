@@ -244,6 +244,21 @@ func test_then_with_only_a_time_scale_sets_it() -> void:
 	Engine.time_scale = 1.0
 
 
+func test_then_record_reads_the_movie_frame_in_the_met_frame() -> void:
+	var rig: Dictionary = _then_rig()
+	var ran: Dictionary = rig["time"]._finish_then(
+		{"result": {"met": true, "frames": 1}}, {"then": {"record": {"mark": "start"}}}, {}
+	)
+	var frame: int = Engine.get_process_frames()
+	assert_eq(ran["result"]["then"].get("movieFrame"), frame, "the frame being written now")
+	var without: Dictionary = rig["time"]._finish_then(
+		{"result": {"met": true, "frames": 1}}, {"then": {"timeScale": 1.0}}, {}
+	)
+	assert_true(not without["result"]["then"].has("movieFrame"), "no record, no movie frame")
+	_free_then_rig(rig)
+	Engine.time_scale = 1.0
+
+
 func test_a_failed_then_call_skips_the_time_scale_and_names_the_met_frame() -> void:
 	Engine.time_scale = 1.0
 	var rig: Dictionary = _then_rig()

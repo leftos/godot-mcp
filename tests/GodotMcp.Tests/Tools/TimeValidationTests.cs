@@ -1127,7 +1127,70 @@ public sealed class TimeValidationTests : IDisposable
             RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, new WaitOptions(Then: new WaitThen()))
         );
 
-        Assert.Equal("options.then needs call, timeScale, pause or a mix.", refused.Message);
+        Assert.Equal("options.then needs call, timeScale, pause, record or a mix.", refused.Message);
+    }
+
+    [Fact]
+    public void AThenRecordSendsTheBridgeOnlyItsMark()
+    {
+        WaitOptions options = new(Then: new WaitThen(Record: new ThenRecord("start", "clips/a.mp4", true)));
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, options);
+
+        Assert.Equal("""{"record":{"mark":"start"}}""", parameters["then"]!.ToJsonString());
+    }
+
+    [Fact]
+    public void AThenRecordStopIsAccepted()
+    {
+        WaitOptions options = new(Then: new WaitThen(Record: new ThenRecord("stop")));
+
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, options);
+
+        Assert.Equal("""{"record":{"mark":"stop"}}""", parameters["then"]!.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("Start")]
+    [InlineData("pause")]
+    public void AThenRecordMarkOtherThanStartOrStopIsRefused(string mark)
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.ThenParameters(new WaitThen(Record: new ThenRecord(mark)), allowPause: true)
+        );
+
+        Assert.Equal($"options.then.record.mark must be \"start\" or \"stop\"; got \"{mark}\".", refused.Message);
+    }
+
+    [Fact]
+    public void AThenRecordStopWithAPathIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.ThenParameters(new WaitThen(Record: new ThenRecord("stop", "clips/a.mp4")), allowPause: true)
+        );
+
+        Assert.Equal("options.then.record.path and overwrite belong to a start mark; a stop takes neither.", refused.Message);
+    }
+
+    [Fact]
+    public void AThenRecordOverwriteWithoutAPathIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.ThenParameters(new WaitThen(Record: new ThenRecord("start", Overwrite: true)), allowPause: true)
+        );
+
+        Assert.Equal("options.then.record.overwrite needs options.then.record.path", refused.Message);
+    }
+
+    [Fact]
+    public void ACaptureStartThenRefusesARecord()
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.ThenParameters(new WaitThen(Record: new ThenRecord("start")), allowPause: false)
+        );
+
+        Assert.Equal("options.start.then.record applies to wait_for only.", refused.Message);
     }
 
     [Fact]
@@ -1137,7 +1200,7 @@ public sealed class TimeValidationTests : IDisposable
             RuntimeTools.BuildWaitParameters(new WaitCondition(Expression: "true"), 1000, new WaitOptions(Then: new WaitThen(Pause: false)))
         );
 
-        Assert.Equal("options.then needs call, timeScale, pause or a mix.", refused.Message);
+        Assert.Equal("options.then needs call, timeScale, pause, record or a mix.", refused.Message);
     }
 
     [Fact]

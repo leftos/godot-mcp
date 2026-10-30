@@ -343,6 +343,46 @@ public sealed class RecordValidationTests : IAsyncDisposable
         Assert.False(File.Exists(Path.ChangeExtension(path, ".deadline")), "the deadline file was left behind");
     }
 
+    [Fact]
+    public async Task AThenRecordInARealtimeRecordingIsRefusedWithThePausePattern()
+    {
+        await AttachAsync(new FakeHello { WindowHandle = FakeRealtime.Hwnd });
+        await _tools.RecordMarkAsync("start", cancellationToken: Token);
+
+        McpException refused = await ThenRecordRefusedAsync();
+        await _tools.RecordMarkAsync("stop", cancellationToken: Token);
+
+        Assert.Equal(
+            "options.then.record places a mark in a Movie Maker recording's met frame; this session's recording is real-time, so use "
+                + "then: {pause: true}, then record_mark start, then frame_control resume.",
+            refused.Message
+        );
+        Assert.DoesNotContain(_games[^1].TakeQueued(), request => request["command"]?.GetValue<string>() == "wait_for");
+    }
+
+    [Fact]
+    public async Task AThenRecordWithNoRecordingIsRefused()
+    {
+        await AttachAsync(new FakeHello { WindowHandle = FakeRealtime.Hwnd });
+
+        McpException refused = await ThenRecordRefusedAsync();
+
+        Assert.Equal("options.then.record needs a recording: start one with run_project's record option.", refused.Message);
+        Assert.Empty(_fake.Starts);
+        Assert.DoesNotContain(_games[^1].TakeQueued(), request => request["command"]?.GetValue<string>() == "wait_for");
+    }
+
+    /// <summary>A wait_for with then.record start, refused; a wait the fake game were sent would time out with another text.</summary>
+    private Task<McpException> ThenRecordRefusedAsync() =>
+        Assert.ThrowsAsync<McpException>(() =>
+            _tools.WaitForAsync(
+                new WaitCondition(Expression: "true"),
+                1000,
+                new WaitOptions(Then: new WaitThen(Record: new ThenRecord("start"))),
+                cancellationToken: Token
+            )
+        );
+
     private Task<McpException> StartRefusedAsync() =>
         Assert.ThrowsAsync<McpException>(() => _tools.RecordMarkAsync("start", cancellationToken: Token));
 

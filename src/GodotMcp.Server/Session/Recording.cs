@@ -134,24 +134,35 @@ internal sealed class Recording(string path)
         }
     }
 
+    /// <summary>Refuses a mark the clip state cannot take now, as <see cref="Mark(string, long, OutputTarget?, bool)"/> would.</summary>
+    /// <exception cref="SessionException">A start while a clip is open, or a stop with none open.</exception>
+    public void CheckMark(string mark)
+    {
+        lock (_lock)
+        {
+            if (mark == StartMark && _open is { } open)
+            {
+                throw new SessionException($"A clip is already open, started at frame {open.StartFrame}; mark stop before the next start.");
+            }
+
+            if (mark == StopMark && _open is null)
+            {
+                throw new SessionException("No clip is open; mark start first.");
+            }
+        }
+    }
+
     private void Start(ClipSpan opened)
     {
-        if (_open is { } open)
-        {
-            throw new SessionException($"A clip is already open, started at frame {open.StartFrame}; mark stop before the next start.");
-        }
-
+        CheckMark(StartMark);
         CheckDestination(opened.Destination);
         _open = opened;
     }
 
     private void Stop(long frame)
     {
-        if (_open is not { } open)
-        {
-            throw new SessionException("No clip is open; mark start first.");
-        }
-
+        CheckMark(StopMark);
+        ClipSpan open = _open!;
         if (frame <= open.StartFrame)
         {
             throw new SessionException($"A clip needs at least one frame: stop is at frame {frame} and its start at frame {open.StartFrame}.");

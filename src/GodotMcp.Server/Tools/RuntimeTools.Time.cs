@@ -35,7 +35,8 @@ internal sealed partial class RuntimeTools
         "frame_control step's until takes any wait_for condition but frames: count is the most frames a step runs.";
     private const string UntilOutputRefusal =
         "frame_control step's until takes any wait_for condition but output: a step waits on the game's frames, not its printed lines.";
-    private const string EmptyThenRefusal = "options.then needs call, timeScale, pause or a mix.";
+    private const string EmptyThenRefusal = "options.then needs call, timeScale, pause, record or a mix.";
+    private const string CaptureStartRecordRefusal = "options.start.then.record applies to wait_for only.";
     private static readonly string[] FrameActions = ["pause", "resume", "step", "time_scale"];
 
     // Each condition kind: its name, whether a condition gives the kind's own field, and whether it gives the fields that
@@ -186,13 +187,16 @@ internal sealed partial class RuntimeTools
             + "runs from its entry, and another wait's first check follows it in that frame, its frames and elapsedMs counted "
             + "from there (a coroutine or a Task is not awaited). It adds call: {value}, its return value as call_method returns "
             + "it, with tool and type for a game tool; a refused call, or an error it raises, fails the wait. options.then {call?, "
-            + "timeScale?, pause?}, with any condition kind, runs once in the frame the condition is met: call is a method the bridge "
-            + "calls there, timeScale sets Engine.time_scale right after it, and pause: true leaves the game paused on that frame, as "
-            + "frame_control pause does, so a later read sees the state the condition did. A plain wait pauses before the met "
+            + "timeScale?, pause?, record?}, with any condition kind, runs once in the frame the condition is met: call is a method "
+            + "the bridge calls there, timeScale sets Engine.time_scale right after it, and pause: true leaves the game paused on "
+            + "that frame, as frame_control pause does, so a later read sees the state the condition did; record {mark, path?, "
+            + "overwrite?} marks a Movie Maker recording's clip start or stop at that frame's movie frame, as record_mark does, with "
+            + "no idle movie frames between (checked before the wait starts; a real-time recording or none is refused), and then "
+            + "gains record, record_mark's result or {mark, error} when the mark is refused after the wait met. A plain wait pauses before the met "
             + "frame's _process, after its physics, so values read are the ones the wait met, but anything the game updates in "
             + "_process (a shader, an animation) may still show the previous frame; screenshot: true pauses after the met frame is "
             + "drawn, so a picture matches the values. The result adds then: {frame, call?: "
-            + "{value}, timeScale?, paused?}. A refused or failing call fails the wait and leaves timeScale unset and the game "
+            + "{value}, timeScale?, paused?, record?}. A refused or failing call fails the wait and leaves timeScale unset and the game "
             + "running; a timeout runs nothing. options.edge: true, with an exists, property, expression, text or state wait and a "
             + "timeout above 0, meets it only on a check that finds the condition true after one that found it false, so a "
             + "condition already true waits for its next rise (for a text wait with exists: false, the text's next going)."
@@ -225,6 +229,7 @@ internal sealed partial class RuntimeTools
     )
     {
         JsonObject parameters = BuildWaitParameters(condition, timeoutMs, options);
+        ThenMark? thenMark = PrepareThenMark(options?.Then?.Record, session);
         bool overwrite = options?.Overwrite is true;
         Action<JsonObject>? copy = KeptCopy(TmpDestination(options?.Path, overwrite, WaitForToolName, session), overwrite, WaitForToolName);
         TimeSpan? wallCap = options?.MaxWallMs is { } maxWallMs ? TimeSpan.FromMilliseconds(maxWallMs) : null;
@@ -232,6 +237,7 @@ internal sealed partial class RuntimeTools
         JsonObject reply = WaitReply(result);
         CutMethodValue(reply["call"] as JsonObject);
         CutMethodValue((reply["then"] as JsonObject)?["call"] as JsonObject);
+        PlaceThenMark(reply, thenMark);
         // The bridge already saved the screenshot, so its read is local and short: a cancel that landed during the extra clock
         // ping must not lose a wait that met.
         return await WithCaptureAsync(reply, reply, result.Errors, copy, CancellationToken.None);
@@ -465,13 +471,17 @@ internal sealed partial class RuntimeTools
         parameters["edge"] = true;
     }
 
-    /// <summary>The bridge's then parameters {call?, timeScale?, pause?}, at least one of them.</summary>
-    /// <exception cref="McpException">None of call, timeScale or pause: true is given, timeScale is not above 0 and at most
-    /// <see cref="MaxTimeScale"/>, the call gives both forms or neither, args of the other form's shape, or an empty node,
-    /// method or tool name, or <paramref name="allowPause"/> is false and a pause is asked for.</exception>
+    /// <summary>The bridge's then parameters {call?, timeScale?, pause?, record?}, at least one of them; record carries only its
+    /// mark, as the server keeps its path.</summary>
+    /// <param name="then">The then as given.</param>
+    /// <param name="allowPause">True for wait_for's then; false for capture_frames' start.then, which refuses pause and record.</param>
+    /// <exception cref="McpException">None of call, timeScale, pause: true or record is given, timeScale is not above 0 and at
+    /// most <see cref="MaxTimeScale"/>, the call gives both forms or neither, args of the other form's shape, or an empty node,
+    /// method or tool name, the record's mark or options are refused, or <paramref name="allowPause"/> is false and a pause or a
+    /// record is asked for.</exception>
     internal static JsonObject ThenParameters(WaitThen then, bool allowPause)
     {
-        if (then.Call is null && then.TimeScale is null && then.Pause is not true)
+        if (DoesNothing(then))
         {
             throw new McpException(EmptyThenRefusal);
         }
@@ -484,7 +494,43 @@ internal sealed partial class RuntimeTools
 
         AddThenTimeScale(parameters, then.TimeScale);
         AddThenPause(parameters, then.Pause, allowPause);
+        AddThenRecord(parameters, then.Record, allowPause);
         return parameters;
+    }
+
+    private static bool DoesNothing(WaitThen then) => then.Call is null && then.TimeScale is null && then.Pause is not true && then.Record is null;
+
+    /// <summary>Adds record: {mark} to a then's parameters.</summary>
+    /// <exception cref="McpException"><paramref name="allowPause"/> is false (capture_frames' start), the mark is neither start
+    /// nor stop, a stop gives a path or overwrite, or overwrite is given without a path.</exception>
+    private static void AddThenRecord(JsonObject parameters, ThenRecord? record, bool allowPause)
+    {
+        if (record is null)
+        {
+            return;
+        }
+
+        if (!allowPause)
+        {
+            throw new McpException(CaptureStartRecordRefusal);
+        }
+
+        if (record.Mark is not (Recording.StartMark or Recording.StopMark))
+        {
+            throw new McpException($"options.then.record.mark must be \"start\" or \"stop\"; got \"{record.Mark}\".");
+        }
+
+        if (record.Mark == Recording.StopMark && (record.Path is not null || record.Overwrite))
+        {
+            throw new McpException("options.then.record.path and overwrite belong to a start mark; a stop takes neither.");
+        }
+
+        if (record is { Overwrite: true, Path: null })
+        {
+            throw new McpException("options.then.record.overwrite needs options.then.record.path");
+        }
+
+        parameters["record"] = new JsonObject { ["mark"] = record.Mark };
     }
 
     /// <summary>Adds timeScale to a then's parameters.</summary>

@@ -6,6 +6,7 @@ using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 
 namespace GodotMcp.IntegrationTests;
 
@@ -240,6 +241,46 @@ public sealed class RecordingTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AThenRecordStartsTheClipInTheFrameTheWaitMet()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await LaunchAsync(record: true);
+        long known = (await ReadAsync("Engine.get_process_frames()")).GetValue<long>() + 30;
+
+        JsonObject waited = JsonNode
+            .Parse(
+                Text(
+                    await _tools.WaitForAsync(
+                        new WaitCondition(Expression: $"Engine.get_process_frames() >= {known}"),
+                        null,
+                        new WaitOptions(Then: new WaitThen(Record: new ThenRecord(Recording.StartMark))),
+                        cancellationToken: cancellation
+                    )
+                )
+            )!
+            .AsObject();
+        long stop = await MarkAsync("stop");
+        StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        JsonObject then = waited["then"]!.AsObject();
+        JsonObject record = then["record"]!.AsObject();
+        long metFrame = then["frame"]!.GetValue<long>();
+        Assert.False(then.ContainsKey("movieFrame"), waited.ToJsonString());
+        Assert.Equal("start", record["mark"]!.GetValue<string>());
+        Assert.Equal("movie", record["mode"]!.GetValue<string>());
+        // The condition reads the frame counter the mark reads, so the met frame is the first one at or past the known frame,
+        // and the clip starts there: no idle movie frames of a round trip between.
+        Assert.True(metFrame >= known, $"the wait met at frame {metFrame}, before {known}");
+        Assert.Equal(metFrame, record["frame"]!.GetValue<long>());
+        RecordingResult recording = stopped.Recording ?? throw new InvalidOperationException("stop_project returned no recording.");
+        Assert.Null(recording.Error);
+        string clip = Assert.Single(recording.Clips!);
+        ProbedStream video = Assert.Single(await ProbeAsync(clip), stream => stream.Type == "video");
+        Assert.Equal(stop - metFrame, video.Packets);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task RealtimeOptionsOnAMovieStartAreRefused()
     {
         await LaunchAsync(record: true);
@@ -428,6 +469,8 @@ public sealed class RecordingTests : IAsyncDisposable
         Assert.Equal(mark, reply["mark"]!.GetValue<string>());
         return reply["frame"]!.GetValue<long>();
     }
+
+    private static string Text(IEnumerable<ContentBlock> blocks) => string.Concat(blocks.OfType<TextContentBlock>().Select(block => block.Text));
 
     private async Task FrameAsync(string action, int? count) =>
         await _tools.FrameControlAsync(action, count, cancellationToken: TestContext.Current.CancellationToken);
