@@ -121,7 +121,12 @@ public sealed class ScratchFolderTests : IAsyncDisposable
     {
         JsonArray scenes = result["scenes"]!.AsArray();
         Assert.Equal(FolderScenes, scenes.Select(scene => scene!["scene"]!.GetValue<string>()));
-        Assert.Equal(FolderVerdicts, scenes.Select(scene => scene!["verdict"]!.GetValue<string>()));
+        string[] verdicts = [.. scenes.Select(scene => scene!["verdict"]!.GetValue<string>())];
+        if (!verdicts.SequenceEqual(FolderVerdicts))
+        {
+            Assert.Fail($"verdicts {string.Join(", ", verdicts)}; the run: {result.ToJsonString()}");
+        }
+
         Assert.Equal(FolderScenes.Select(name => "InputProbe.scratch-" + name), scenes.Select(scene => scene!["session"]!.GetValue<string>()));
         Assert.False(result["passed"]!.GetValue<bool>());
         Assert.Equal((8, 10, 1, 1, 1), Counts(result));
