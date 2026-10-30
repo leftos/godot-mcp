@@ -143,6 +143,12 @@ internal sealed record ScratchPlan(
 
     /// <summary>options.timeScale, the time scale the scenes' games run at unless a scene's profile pace opts out; 1 by default.</summary>
     public required double TimeScale { get; init; }
+
+    /// <summary>options.watch, checked: the watch armed on every scene's session before its first step; null arms none.</summary>
+    public ScratchWatchOptions? Watch { get; init; }
+
+    /// <summary>options.windowed: the scenes' games launch in a hidden, off-screen window instead of headless.</summary>
+    public bool Windowed { get; init; }
 }
 
 /// <summary>
@@ -178,6 +184,13 @@ internal sealed record ScratchWalk(IReadOnlyList<ScratchPace> Paces, IReadOnlyLi
     /// time, whichever is longer, so the seconds × the time scale above 1.
     /// </summary>
     public int AfterGameMs => ScratchRun.GameMs(AfterSeconds * Math.Max(1, TimeScale));
+
+    /// <summary>
+    /// The window of a watch options.watch arms without one: the played steps' paces and the wait after the last step played
+    /// (<see cref="AfterGameMs"/>), in game ms, at most the watch's 120000.
+    /// </summary>
+    public WatchWindow DefaultWatchWindow =>
+        new(GameMs: (int)Math.Min(Played.Sum(step => (long)ScratchRun.GameMs(Paces[step].Seconds)) + AfterGameMs, RuntimeTools.MaxWaitGameMs));
 
     /// <summary>
     /// The most wall seconds the scene's steps can still take once <paramref name="step"/> starts: the pace of each played step
@@ -292,6 +305,8 @@ internal sealed class ScratchRun
     /// <summary>The start of every marker line the runner has the game print; such lines are never judged or listed.</summary>
     internal const string MarkerPrefix = "[godot-mcp] scratch ";
 
+    private const string WatchCommand = "watch";
+
     private const string PaceKeyLabel = "pace.steps key";
     private const string SetupLabel = "setup";
     private const string StepsTokenLabel = "options.steps token";
@@ -332,6 +347,8 @@ internal sealed class ScratchRun
     private long _feedMark;
     private bool _hasUntil;
     private bool _hasHidden;
+    private bool _watching;
+    private JsonObject? _watch;
 
     private ScratchRun(RunContext context, int index)
     {
@@ -454,13 +471,17 @@ internal sealed class ScratchRun
         );
 
     /// <summary>
-    /// The engine arguments a scene's game launches with: headless, at a <paramref name="timeScale"/> other than 1 Godot's
-    /// --time-scale, which scales every process and physics step, and then the scene's own <paramref name="engineArgs"/>.
+    /// The engine arguments a scene's game launches with: --headless unless <paramref name="windowed"/>, at a
+    /// <paramref name="timeScale"/> other than 1 Godot's --time-scale, which scales every process and physics step, and then
+    /// the scene's own <paramref name="engineArgs"/>.
     /// </summary>
-    internal static string[] EngineArgs(double timeScale, IReadOnlyList<string> engineArgs) =>
-        timeScale == 1
-            ? ["--headless", .. engineArgs]
-            : ["--headless", "--time-scale", timeScale.ToString(CultureInfo.InvariantCulture), .. engineArgs];
+    internal static string[] EngineArgs(double timeScale, IReadOnlyList<string> engineArgs, bool windowed)
+    {
+        string[] headless = windowed ? [] : ["--headless"];
+        return timeScale == 1
+            ? [.. headless, .. engineArgs]
+            : [.. headless, "--time-scale", timeScale.ToString(CultureInfo.InvariantCulture), .. engineArgs];
+    }
 
     /// <summary>
     /// The real time a wait of <paramref name="gameMs"/> game milliseconds is released at when the game's clock stands still: that
@@ -834,7 +855,15 @@ internal sealed class ScratchRun
 
     /// <summary>The request a scene's game launches with: its engine arguments, then its user arguments after --.</summary>
     internal static LaunchRequest LaunchRequestFor(ScratchPlan plan, ScratchScenePlan scene, bool quiet, bool shutOutRealGamepads, bool mute) =>
-        new(plan.ProjectDir, scene.ResPath, EngineArgs(scene.TimeScale, scene.EngineArgs), scene.UserArgs, quiet, shutOutRealGamepads, Prepare: false)
+        new(
+            plan.ProjectDir,
+            scene.ResPath,
+            EngineArgs(scene.TimeScale, scene.EngineArgs, plan.Windowed),
+            scene.UserArgs,
+            quiet,
+            shutOutRealGamepads,
+            Prepare: false
+        )
         {
             Mute = mute,
         };
@@ -849,7 +878,9 @@ internal sealed class ScratchRun
         catch (Exception e) when (e is TimeoutException || (e is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         {
             string name = _inFlight >= 0 && _inFlight < _names.Count ? _names[_inFlight] : string.Empty;
-            return Seen(session.Name) with { Kill = new ScratchFailure(_inFlight, name, KillReason(e), string.Empty) };
+            ScratchFailure kill = new(_inFlight, name, KillReason(e), string.Empty);
+            await CollectWatchAsync(session, ReplyAllowance, CancellationToken.None);
+            return Seen(session.Name) with { Kill = kill };
         }
     }
 
@@ -866,11 +897,66 @@ internal sealed class ScratchRun
 
         if (_names.Count > 0 && !ScratchVerdict.RedAtBoot(_bootErrors, _launchLines, _plan.Patterns))
         {
+            await StartWatchAsync(session, cancellationToken);
             _deadline = _registry.Clock.Start(_walk.Ceiling, cancellationToken);
             await PlayStepsAsync(session, _deadline.Token);
+            await CollectWatchAsync(session, CallTimeout, cancellationToken);
         }
 
         return Seen(session.Name);
+    }
+
+    /// <summary>
+    /// Starts options.watch on the scene's session, its window left out the walk's <see cref="ScratchWalk.DefaultWatchWindow"/>;
+    /// a start the bridge refuses or that fails on the connection is named in the scene's warnings, and the walk goes on.
+    /// </summary>
+    private async Task StartWatchAsync(GodotSession session, CancellationToken cancellationToken)
+    {
+        if (_plan.Watch is not { } watch)
+        {
+            return;
+        }
+
+        JsonObject parameters = RuntimeTools.BuildWatchParameters("start", watch.Tracks, watch.Window ?? _walk.DefaultWatchWindow, watch.Options);
+        try
+        {
+            await session.SendAsync(WatchCommand, parameters, CallTimeout + ReplyAllowance, cancellationToken, CallTimeout);
+            _watching = true;
+        }
+        catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
+        {
+            _warnings.Add($"options.watch did not start: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Stops the watch the walk started and keeps its timeline, stamped and shaped as the watch tool's stop returns it, within
+    /// <paramref name="timeout"/>; a stop that fails or times out is named in the scene's warnings. Nothing when no watch runs.
+    /// </summary>
+    private async Task CollectWatchAsync(GodotSession session, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        if (!_watching)
+        {
+            return;
+        }
+
+        _watching = false;
+        try
+        {
+            JsonNode? reply = await session.SendAsync(WatchCommand, new JsonObject { ["action"] = "stop" }, timeout, cancellationToken);
+            JsonObject timeline =
+                reply?.DeepClone() as JsonObject
+                ?? throw new InvalidOperationException($"the bridge's watch reply is not an object: {reply?.ToJsonString() ?? "null"}");
+            WatchStamps.Stamp(timeline, await session.RefreshClockAsync(cancellationToken));
+            _watch = WatchTimeline.Shape(timeline, WatchTimeline.MaxResultLength);
+        }
+        catch (Exception e)
+            when (e is InvalidOperationException or IOException or SessionException or TimeoutException
+                || (e is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            )
+        {
+            _warnings.Add($"options.watch could not be collected: {e.Message}");
+        }
     }
 
     /// <summary>Null once the game has named its current scene's path, which every call then addresses; else why not.</summary>
@@ -1345,6 +1431,7 @@ internal sealed class ScratchRun
             TimeScale = _scene.TimeScale == _plan.TimeScale ? null : _scene.TimeScale,
             ExitHold = _scene.ExitHold,
             Warnings = [.. _warnings],
+            Watch = _watch,
         };
 
     private static int WholeNumber(JsonNode? node) =>

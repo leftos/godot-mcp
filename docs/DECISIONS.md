@@ -47,7 +47,7 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
 
       A new session whose `shutOutRealGamepads` differs from the live ones' is refused, since the file holds one value. An attach is refused while another attach on the same folder is still waiting for its game.
 
-      **Scratch sessions are exempt from the agreement** (GMCP-232; an orchestrator decision, not an owner ruling). A `run_scratches` session is headless, so its quiet and pad settings never reach a player: it always runs quiet with real pads live and unmuted, copies nothing from a live session or the arm, and is never refused against the folder's arm or its other sessions.
+      **Scratch sessions are exempt from the agreement** (GMCP-232; an orchestrator decision, not an owner ruling). A `run_scratches` session is headless, so its quiet and pad settings never reach a player (a windowed one, `options.windowed`, is hidden off-screen and quiet, and keeps the exemption): it always runs quiet with real pads live and unmuted, copies nothing from a live session or the arm, and is never refused against the folder's arm or its other sessions.
 
       `run_project`, `attach_project`, `restart_project` and `arm_project` are not refused because of a scratch session, and still are for a non-scratch session or the arm.
 

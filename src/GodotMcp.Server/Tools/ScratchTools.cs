@@ -54,7 +54,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
 
     [McpServerTool(Name = ToolName, ReadOnly = false, Destructive = false, OpenWorld = false, Idempotent = false)]
     [Description(
-        "Plays scratch scenes and reports a verdict for each: every scene runs in a fresh headless game session "
+        "Plays scratch scenes and reports a verdict for each: every scene runs in a fresh game session, headless or, with "
+            + "options.windowed, in a hidden, off-screen window "
             + "(<folder>.scratch-<scene>, or '<options.session>.scratch-<scene>'), its root is called through the scratch protocol "
             + "(GetStepCount, GetStepName(i), then per step "
             + "PlayStep(i), a wait of the pace in game time, GetStatus). A root that also has a public GetStepUntil(i) gives each step a "
@@ -128,7 +129,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             string[]? scenes = null,
         [Description(
             "{pace, timeScale, userArgs, engineArgs, ceilings, prepare, details, parallel, session, keepGoing, steps, background, "
-                + "only}: pace in seconds for every "
+                + "only, watch, windowed}: pace in seconds for every "
                 + "step (else scratch.pace's for the step, else for the scene, else 0.5); timeScale the games' time scale, from 0.01 to "
                 + "100 (default 1), each game launched with --time-scale, so a pace of p s takes p / timeScale s of wall time and "
                 + "the ceiling derived from the paces scales with it, while a ceiling given by ceilings or scratch.ceilings is fixed "
@@ -151,7 +152,10 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
                 + "lines; background true returns {runId, statusFile, logFile, scenes} at once and plays the run on "
                 + "in the server, read and ended with scratch_status; only \"red\" (default \"all\") lists in each scene's details "
                 + "only its red steps, with their full readback, and no step of a green scene, every other scene field kept; it is "
-                + "refused with background, whose result scratch_status's only filters."
+                + "refused with background, whose result scratch_status's only filters; watch {tracks, window?, options?} as the "
+                + "watch tool's, armed on each scene's session before its first step, its timeline the scene's watch; windowed "
+                + "true plays each scene in a hidden, off-screen window instead of headless, so screenshots, capture_frames and "
+                + "watch work on its session (name it in a background run); paces, untils and verdicts are the same."
         )]
             ScratchOptions? options = null,
         CancellationToken cancellationToken = default
@@ -337,6 +341,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         CheckDetailChars(options.DetailChars);
         CheckParallel(options.Parallel);
         CheckOnly(options);
+        CheckWatch(options.Watch);
         ScratchDetails details = ParseDetails(options.Details);
         bool prepare = RunOptions.ParsePrepare(options.Prepare);
         string prefix = SessionPrefix(options.Session, projectDir);
@@ -364,7 +369,36 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             Steps = steps,
             StepsByScene = stepsByScene,
             TimeScale = options.TimeScale ?? 1,
+            Watch = options.Watch,
+            Windowed = options.Windowed ?? false,
         };
+    }
+
+    /// <summary>Checks options.watch as the watch tool's start checks its arguments, a window left out standing for any.</summary>
+    /// <exception cref="McpException">
+    /// options.watch gives options.call, which the runner's steps replace, or the watch tool refuses it, with its message after
+    /// "options.watch: ".
+    /// </exception>
+    private static void CheckWatch(ScratchWatchOptions? watch)
+    {
+        if (watch is null)
+        {
+            return;
+        }
+
+        if (watch.Options?.Call is not null)
+        {
+            throw new McpException("options.watch takes no options.call: the runner plays the steps");
+        }
+
+        try
+        {
+            RuntimeTools.BuildWatchParameters("start", watch.Tracks, watch.Window, watch.Options);
+        }
+        catch (McpException e)
+        {
+            throw new McpException($"options.watch: {e.Message}", e);
+        }
     }
 
     /// <summary>
@@ -1024,5 +1058,31 @@ internal sealed record ScratchOptions(
     [property: Description(
         ScratchTools.OnlyDescription + " Refused with background, which never reads it: pass only to scratch_status, which returns the run's result."
     )]
-        string? Only = null
+        string? Only = null,
+    [property: Description(
+        "{tracks, window?, options?}, as the watch tool takes them, armed on every scene's session after its steps are read and "
+            + "before its first step plays, and collected after the wait after its last step: the scene's result gains watch, the "
+            + "timeline watch stop returns. window left out is {gameMs}: the played steps' paces and the wait after the last, in "
+            + "game ms, at most 120000; a walk that outlasts the window ends the timeline early, as its stopped says. "
+            + "options.call is refused: the runner plays the steps. A watch that does not start, as on a track naming a node the "
+            + "scene lacks, is named in the scene's warnings and the scene plays on without it. A result past 20000 characters "
+            + "leaves a scene's watch out as it leaves its details out (watchOmitted: true), the whole result in its full file."
+    )]
+        ScratchWatchOptions? Watch = null,
+    [property: Description(
+        "true plays each scene in a hidden, off-screen window instead of headless, so screenshots, capture_frames and watch work "
+            + "on its session (name it in a background run); paces, untils and verdicts are the same."
+    )]
+        bool? Windowed = null
+);
+
+/// <summary>run_scratches' options.watch: the watch every scene's session runs over its steps, as the watch tool's start takes it.</summary>
+internal sealed record ScratchWatchOptions(
+    [property: Description("As the watch tool's tracks; at least one track.")] WatchTracks? Tracks = null,
+    [property: Description(
+        "As the watch tool's window: exactly one of {frames} (1 to 7200) or {gameMs} (1 to 120000); left out, the played "
+            + "steps' paces and the wait after the last, in game ms, at most 120000."
+    )]
+        WatchWindow? Window = null,
+    [property: Description("As the watch tool's options, without call: {unit, budgetMs}.")] WatchOptions? Options = null
 );

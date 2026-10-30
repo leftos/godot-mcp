@@ -776,6 +776,57 @@ public sealed class ScratchValidationTests : IDisposable
         Assert.StartsWith(".scratch-sss", name, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AWatchWithTracksAWindowAndAUnitIsPlanned()
+    {
+        ScratchWatchOptions watch = new(
+            new WatchTracks(Properties: [new WatchPropertyTrack("/root/Other", "position")]),
+            new WatchWindow(GameMs: 500),
+            new WatchOptions(Unit: "physics")
+        );
+
+        Assert.Same(watch, Plan(["res://Other.tscn"], new ScratchOptions(Watch: watch)).Watch);
+        Assert.Null(Plan(["res://Other.tscn"]).Watch);
+    }
+
+    [Fact]
+    public void AWatchCallIsRefusedSinceTheRunnerPlaysTheSteps()
+    {
+        ScratchWatchOptions watch = new(
+            new WatchTracks(Properties: [new WatchPropertyTrack("/root/Other", "position")]),
+            Options: new WatchOptions(Call: new MethodCall("/root/Other", "PlayStep"))
+        );
+
+        string message = Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Watch: watch)));
+
+        Assert.Equal("options.watch takes no options.call: the runner plays the steps", message);
+    }
+
+    [Fact]
+    public void AWatchTheWatchToolRefusesIsRefusedWithItsMessageNamingTheOption()
+    {
+        ScratchWatchOptions noTrack = new(new WatchTracks());
+        ScratchWatchOptions badWindow = new(new WatchTracks(Monitors: ["frame_ms"]), new WatchWindow(Frames: 0));
+
+        Assert.StartsWith(
+            "options.watch: tracks needs at least one track:",
+            Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Watch: noTrack))),
+            StringComparison.Ordinal
+        );
+        Assert.Equal(
+            "options.watch: frames must be between 1 and 7200; got 0.",
+            Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Watch: badWindow)))
+        );
+    }
+
+    [Fact]
+    public void WindowedIsPlannedAndHeadlessIsTheDefault()
+    {
+        Assert.True(Plan(["res://Other.tscn"], new ScratchOptions(Windowed: true)).Windowed);
+        Assert.False(Plan(["res://Other.tscn"], new ScratchOptions(Windowed: false)).Windowed);
+        Assert.False(Plan(["res://Other.tscn"]).Windowed);
+    }
+
     private string ProfilePath => Path.Combine(_project, ProjectProfile.FileName);
 
     private ScratchPlan Plan(string[]? scenes, ScratchOptions? options = null) =>

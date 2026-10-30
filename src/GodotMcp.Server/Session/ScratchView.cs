@@ -162,8 +162,9 @@ internal static class ScratchView
     }
 
     /// <summary>
-    /// Replaces scenes' details with detailsOmitted, green scenes first and then the rest, each pass from the last scene to the
-    /// first, until <paramref name="shown"/> fits with its full and cut fields; every scene's when it never fits.
+    /// Replaces scenes' details with detailsOmitted and their watch with watchOmitted, green scenes first and then the rest,
+    /// each pass from the last scene to the first, until <paramref name="shown"/> fits with its full and cut fields; every
+    /// scene's when it never fits.
     /// </summary>
     private static void Shrink(JsonObject shown, JsonObject result, int length, SpillOutcome spill)
     {
@@ -171,16 +172,30 @@ internal static class ScratchView
         IEnumerable<JsonObject> order = scenes.Where(IsGreenScene).Concat(scenes.Where(scene => !IsGreenScene(scene)));
         int shrunk = 0;
         Mark(shown, length, shrunk, spill);
-        foreach (JsonObject scene in order.Where(scene => scene["details"] is JsonArray))
+        foreach (JsonObject scene in order.Where(scene => scene["details"] is JsonArray || scene["watch"] is JsonObject))
         {
             if (Length(shown) <= MaxResultChars)
             {
                 return;
             }
 
-            scene["detailsOmitted"] = scene["details"]!.AsArray().Count;
-            scene.Remove("details");
+            LeaveOut(scene);
             Mark(shown, length, ++shrunk, spill);
+        }
+    }
+
+    /// <summary>Replaces the scene's details with detailsOmitted, their count, and its watch timeline with watchOmitted: true.</summary>
+    private static void LeaveOut(JsonObject scene)
+    {
+        if (scene["details"] is JsonArray details)
+        {
+            scene["detailsOmitted"] = details.Count;
+            scene.Remove("details");
+        }
+
+        if (scene.Remove("watch"))
+        {
+            scene["watchOmitted"] = true;
         }
     }
 

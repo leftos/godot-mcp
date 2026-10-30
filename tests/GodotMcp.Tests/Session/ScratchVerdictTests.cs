@@ -881,6 +881,18 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
+    public void AWatchLeftWithoutAWindowSamplesThePlayedStepsPacesAndTheWaitAfterInGameMs()
+    {
+        ScratchWalk held = new([new(0.5, null), new(10, null), new(2, null)], [0, 2], 1) { ExitHold = 1 };
+        ScratchWalk paced = new([new(0.5, null), new(2, null)], [0, 1], 1);
+        ScratchWalk scaled = new([new(8, null), new(32, null)], [0, 1], 4);
+
+        Assert.Equal(new WatchWindow(GameMs: 500 + 2000 + 1000), held.DefaultWatchWindow);
+        Assert.Equal(new WatchWindow(GameMs: 500 + 2000 + 2000), paced.DefaultWatchWindow);
+        Assert.Equal(new WatchWindow(GameMs: 120000), scaled.DefaultWatchWindow);
+    }
+
+    [Fact]
     public void AtTimeScaleOneTheWaitAfterTheLastStepIsTheExitHoldAndTheKillReasonNamesIt()
     {
         ScratchWalk walk = new([new(0.5, null), new(10, null)], [0, 1], 1) { ExitHold = 2 };
@@ -978,16 +990,16 @@ public sealed class ScratchVerdictTests
     [Fact]
     public void AScaledScenesGameLaunchesWithItsTimeScaleAndANormalOneAsBefore()
     {
-        Assert.Equal(["--headless", "--time-scale", "4"], ScratchRun.EngineArgs(4, []));
-        Assert.Equal(["--headless", "--time-scale", "2.5"], ScratchRun.EngineArgs(2.5, []));
-        Assert.Equal(["--headless"], ScratchRun.EngineArgs(1, []));
+        Assert.Equal(["--headless", "--time-scale", "4"], ScratchRun.EngineArgs(4, [], windowed: false));
+        Assert.Equal(["--headless", "--time-scale", "2.5"], ScratchRun.EngineArgs(2.5, [], windowed: false));
+        Assert.Equal(["--headless"], ScratchRun.EngineArgs(1, [], windowed: false));
     }
 
     [Fact]
     public void AScenesOwnEngineArgsComeAfterItsHeadlessTimeScale()
     {
-        Assert.Equal(["--headless", "--time-scale", "4", "--fixed-fps", "30"], ScratchRun.EngineArgs(4, ["--fixed-fps", "30"]));
-        Assert.Equal(["--headless", "--fixed-fps", "30"], ScratchRun.EngineArgs(1, ["--fixed-fps", "30"]));
+        Assert.Equal(["--headless", "--time-scale", "4", "--fixed-fps", "30"], ScratchRun.EngineArgs(4, ["--fixed-fps", "30"], windowed: false));
+        Assert.Equal(["--headless", "--fixed-fps", "30"], ScratchRun.EngineArgs(1, ["--fixed-fps", "30"], windowed: false));
     }
 
     [Fact]

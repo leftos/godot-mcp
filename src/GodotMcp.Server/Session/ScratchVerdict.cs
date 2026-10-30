@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.Tools;
@@ -96,6 +97,9 @@ internal sealed record ScratchObservation(string Scene, string Session, double P
     public string? StopWarning { get; init; }
 
     public IReadOnlyList<string> ExitLines { get; init; } = [];
+
+    /// <summary>The timeline of options.watch over the scene's steps, as the watch tool's stop returns it; null when none ran.</summary>
+    public JsonObject? Watch { get; init; }
 
     public double Seconds { get; init; }
 }
@@ -349,6 +353,13 @@ internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchS
     public IReadOnlyList<string>? Warnings { get; init; }
 
     /// <summary>
+    /// The timeline options.watch sampled over the scene's steps, as the watch tool's stop returns it; null when the call armed
+    /// no watch or it did not start or could not be collected (as the warnings say).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonObject? Watch { get; init; }
+
+    /// <summary>
     /// Whether the scene, red or killed beside others, passed when played again alone; null when it played once.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -485,6 +496,7 @@ internal static partial class ScratchVerdict
             Exit = ExitOf(seen, rules.Patterns, missing),
             Known = shown is KnownRed or KnownNowGreen ? rules.Known : null,
             Warnings = seen.Warnings.Count > 0 ? seen.Warnings : null,
+            Watch = seen.Watch,
         };
     }
 
