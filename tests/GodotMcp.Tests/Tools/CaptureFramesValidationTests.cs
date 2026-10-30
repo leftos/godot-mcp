@@ -383,8 +383,52 @@ public sealed class CaptureFramesValidationTests : IDisposable
     public void ACaptureWithoutAStartSendsNone() =>
         Assert.False(RuntimeTools.BuildCaptureParameters([0.3], TimeSpan.FromSeconds(11), new CaptureFramesOptions()).ContainsKey("start"));
 
+    [Fact]
+    public void ACaptureSendsASignalStartAndItsCallToTheBridge()
+    {
+        CaptureStart start = new(
+            Node: "TimeProbe",
+            Signal: "fired",
+            TimeoutMs: 4000,
+            Then: new WaitThen(TimeScale: 0.3),
+            Call: new MethodCall("TimeProbe", "fire_now", Json("[7]"))
+        );
+
+        JsonObject parameters = RuntimeTools.BuildCaptureParameters([0.3], TimeSpan.FromSeconds(15), new CaptureFramesOptions(Start: start));
+
+        JsonObject sent = parameters["start"]!.AsObject();
+        Assert.Equal("signal", sent["kind"]!.GetValue<string>());
+        Assert.Equal("TimeProbe", sent["node"]!.GetValue<string>());
+        Assert.Equal("fired", sent["signal"]!.GetValue<string>());
+        Assert.Equal(4000, sent["timeoutMs"]!.GetValue<int>());
+        Assert.Equal("""{"timeScale":0.3}""", sent["then"]!.ToJsonString());
+        Assert.Equal("fire_now", sent["call"]!["method"]!.GetValue<string>());
+        Assert.False(sent.ContainsKey("edge"), sent.ToJsonString());
+    }
+
+    [Fact]
+    public async Task AnEdgeSignalStartIsRefusedAsAnEdgeSignalWaitIs()
+    {
+        McpException refused = await RefusedAsync(
+            [0.3],
+            new CaptureFramesOptions(Start: new CaptureStart(Node: "TimeProbe", Signal: "fired", Edge: true))
+        );
+
+        Assert.Equal("options.edge applies to exists, property, expression, text and state waits; this condition is signal.", refused.Message);
+    }
+
+    [Fact]
+    public async Task ASignalStartThatChecksOnceIsRefusedAsASignalWaitIs()
+    {
+        McpException refused = await RefusedAsync(
+            [0.3],
+            new CaptureFramesOptions(Start: new CaptureStart(Node: "TimeProbe", Signal: "fired", TimeoutMs: 0))
+        );
+
+        Assert.Equal("timeoutMs 0 checks once, which a signal wait cannot do; give it a timeout.", refused.Message);
+    }
+
     [Theory]
-    [InlineData("signal")]
     [InlineData("uiChanged")]
     [InlineData("gameMs")]
     [InlineData("frames")]
@@ -396,7 +440,6 @@ public sealed class CaptureFramesValidationTests : IDisposable
     {
         CaptureStart start = kind switch
         {
-            "signal" => new(Node: "TimeProbe", Signal: "fired"),
             "uiChanged" => new(UiChanged: Json("true")),
             "gameMs" => new(GameMs: 500),
             "text" => new(Text: "Start", Under: "Lobby"),
@@ -408,7 +451,7 @@ public sealed class CaptureFramesValidationTests : IDisposable
 
         McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Start: start));
 
-        Assert.Equal($"options.start takes an exists, property or expression condition; this condition is {kind}.", refused.Message);
+        Assert.Equal($"options.start takes an exists, property, expression or signal condition; this condition is {kind}.", refused.Message);
     }
 
     [Theory]
@@ -419,7 +462,7 @@ public sealed class CaptureFramesValidationTests : IDisposable
     {
         McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Start: new CaptureStart(UiChanged: Json(uiChangedJson))));
 
-        Assert.Equal("options.start takes an exists, property or expression condition; this condition is uiChanged.", refused.Message);
+        Assert.Equal("options.start takes an exists, property, expression or signal condition; this condition is uiChanged.", refused.Message);
     }
 
     // A text field makes the start a text condition, refused as one before a text condition's own refusals could send the
@@ -433,7 +476,7 @@ public sealed class CaptureFramesValidationTests : IDisposable
 
         McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Start: start));
 
-        Assert.Equal("options.start takes an exists, property or expression condition; this condition is text.", refused.Message);
+        Assert.Equal("options.start takes an exists, property, expression or signal condition; this condition is text.", refused.Message);
     }
 
     [Fact]
@@ -455,6 +498,126 @@ public sealed class CaptureFramesValidationTests : IDisposable
         McpException refused = await RefusedAsync([0.05, 0.15], new CaptureFramesOptions(Start: start));
 
         Assert.StartsWith("No Godot session is running", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ACaptureSendsItsTracksToTheBridgeAsWatchSendsThem()
+    {
+        CaptureTracks tracks = new(
+            Properties: [new WatchPropertyTrack("TimeProbe", "process_frames"), new WatchPropertyTrack("TimeProbe", "state", Name: "phase")],
+            Expressions: [new WatchExpressionTrack("drawn", "Engine.get_process_frames()", Node: "TimeProbe")]
+        );
+
+        JsonObject parameters = RuntimeTools.BuildCaptureParameters([0.3], TimeSpan.FromSeconds(11), new CaptureFramesOptions(Tracks: tracks));
+
+        Assert.Equal(
+            """{"properties":[{"node":"TimeProbe","property":"process_frames"},"""
+                + """{"node":"TimeProbe","property":"state","name":"phase"}],"expressions":"""
+                + """[{"expression":"Engine.get_process_frames()","node":"TimeProbe","name":"drawn"}]}""",
+            parameters["tracks"]!.ToJsonString()
+        );
+    }
+
+    [Fact]
+    public void ACaptureWithoutTracksSendsNone() =>
+        Assert.False(RuntimeTools.BuildCaptureParameters([0.3], TimeSpan.FromSeconds(11), new CaptureFramesOptions()).ContainsKey("tracks"));
+
+    [Theory]
+    [InlineData("signals", """[{"node": "TimeProbe", "signal": "fired"}]""")]
+    [InlineData("monitors", """["frame_ms"]""")]
+    [InlineData("audio", """{"players": {}}""")]
+    public async Task AWatchOnlyTrackIsRefusedNamingWatch(string field, string json)
+    {
+        WatchPropertyTrack[] properties = [new("TimeProbe", "process_frames")];
+        CaptureTracks tracks = field switch
+        {
+            "signals" => new(Properties: properties, Signals: Json(json)),
+            "monitors" => new(Properties: properties, Monitors: Json(json)),
+            _ => new(Properties: properties, Audio: Json(json)),
+        };
+
+        McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Tracks: tracks));
+
+        Assert.Equal(
+            $"options.tracks.{field} is refused: capture_frames reads property and expression tracks only; watch records signals, "
+                + "monitors and audio.",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public async Task EmptyTracksAreRefused()
+    {
+        McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Tracks: new CaptureTracks(Properties: [])));
+
+        Assert.Equal(
+            "options.tracks needs at least one track: {properties: [{node, property}]} or {expressions: [{name, expression}]}.",
+            refused.Message
+        );
+    }
+
+    [Theory]
+    [InlineData(false, "TimeProbe:process_frames")]
+    [InlineData(true, "drawn")]
+    public async Task ATrackWithMinDeltaIsRefused(bool expression, string key)
+    {
+        CaptureTracks tracks = expression
+            ? new(Expressions: [new WatchExpressionTrack("drawn", "Engine.get_process_frames()", MinDelta: 1)])
+            : new(Properties: [new WatchPropertyTrack("TimeProbe", "process_frames", MinDelta: 1)]);
+
+        McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Tracks: tracks));
+
+        Assert.Equal(
+            $"options.tracks reads each track at every point and keeps every value, so minDelta does not apply; drop it from track '{key}'.",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public async Task TwoTracksOfOneKeyAreRefusedAsWatchRefusesThem()
+    {
+        CaptureTracks tracks = new(
+            Properties: [new WatchPropertyTrack("TimeProbe", "state", Name: "phase")],
+            Expressions: [new WatchExpressionTrack("phase", "true")]
+        );
+
+        McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Tracks: tracks));
+
+        Assert.Equal("Two tracks are keyed 'phase'; give one of them a different name.", refused.Message);
+    }
+
+    [Fact]
+    public async Task MoreThanThirtyTwoTracksAreRefused()
+    {
+        WatchExpressionTrack[] expressions = [.. Enumerable.Range(0, 33).Select(index => new WatchExpressionTrack($"t{index}", "true"))];
+
+        McpException refused = await RefusedAsync([0.3], new CaptureFramesOptions(Tracks: new CaptureTracks(Expressions: expressions)));
+
+        Assert.Equal("options.tracks holds 33 property and expression tracks; at most 32 together.", refused.Message);
+    }
+
+    [Fact]
+    public void APointCarriesItsFramesValuesAndTrackErrors()
+    {
+        JsonObject reply = JsonNode
+            .Parse(
+                """
+                {"frames": [
+                  {"at": 0, "frame": 40, "gameSeconds": 0.016, "late": 0.016, "path": "C:/shots/a.png", "width": 4, "height": 2,
+                   "values": {"phase": "idle", "drawn": null}, "trackErrors": {"drawn": "Invalid call."}},
+                  {"at": 0.1, "frame": 46, "gameSeconds": 0.1, "late": 0, "path": "C:/shots/b.png", "width": 4, "height": 2,
+                   "values": {"phase": "done", "drawn": 46}}
+                ]}
+                """
+            )!
+            .AsObject();
+
+        JsonArray points = RuntimeTools.CompactFrames(reply)["points"]!.AsArray();
+
+        Assert.Equal("""{"phase":"idle","drawn":null}""", points[0]!["values"]!.ToJsonString());
+        Assert.Equal("""{"drawn":"Invalid call."}""", points[0]!["trackErrors"]!.ToJsonString());
+        Assert.Equal("""{"phase":"done","drawn":46}""", points[1]!["values"]!.ToJsonString());
+        Assert.False(points[1]!.AsObject().ContainsKey("trackErrors"), points[1]!.ToJsonString());
     }
 
     private async Task<McpException> RefusedAsync(double[]? at, CaptureFramesOptions? options) =>

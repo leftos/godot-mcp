@@ -7,6 +7,8 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - An unmet `wait_for` output wait names in `before` the newest matching line printed before it began.
+- `capture_frames` `options.start` takes a signal, counting its points from the frame the emission is seen, and reports the emission's `args`.
+- `capture_frames` takes `options.tracks`, reading property and expression values in the very frame each point's image shows.
 - `wait_for` takes `options.crop` with `options.screenshot`, keeping that part of the met frame at full size up to 480 px wide.
 
 ### Changed

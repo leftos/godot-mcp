@@ -1,5 +1,6 @@
 extends "res://gd_test.gd"
-## A property or state condition's equals (bridge/godot_mcp_conditions.gd): null meets a present
+## A property or state condition's equals (bridge/godot_mcp_conditions.gd): its JSON comparison
+## (json_equal, which the watch shares), and null meets a present
 ## null and never a missing key, and a string compared by match prefix or contains, as stored. The
 ## nodes are in no tree, as test_conditions.gd's state rig holds them.
 
@@ -17,6 +18,36 @@ const STATE_BRIDGE_SOURCE := (
 )
 
 var _conditions_script: GDScript = load_bridge_script("godot_mcp_conditions.gd")
+
+
+func test_json_equal_matches_numbers_across_int_and_float_within_tolerance() -> void:
+	var conditions: GDScript = _conditions_script
+	assert_true(conditions.json_equal(3, 3.0), "an int property against a JSON number")
+	assert_true(conditions.json_equal(0.1 + 0.2, 0.3), "within 1e-6")
+	assert_true(not conditions.json_equal(1.0, 1.00001), "outside 1e-6")
+	assert_true(not conditions.json_equal(1, "1"), "a number is not its string")
+	assert_true(not conditions.json_equal(true, 1.0), "a bool is not a number")
+
+
+func test_json_equal_compares_containers_member_by_member() -> void:
+	var conditions: GDScript = _conditions_script
+	assert_true(
+		conditions.json_equal({"x": 1, "y": 2.0}, {"y": 2, "x": 1.0}), "same keys, any order"
+	)
+	assert_true(not conditions.json_equal({"x": 1}, {"x": 1, "y": 2}), "a missing key")
+	assert_true(not conditions.json_equal({"x": 1}, {"z": 1}), "a different key")
+	assert_true(conditions.json_equal([1, [2, {"a": "b"}]], [1.0, [2.0, {"a": "b"}]]), "nested")
+	assert_true(not conditions.json_equal([1, 2], [2, 1]), "order counts in an array")
+	assert_true(not conditions.json_equal([1], [1, 1]), "a different length")
+	assert_true(not conditions.json_equal([], {}), "an array is not an object")
+
+
+func test_json_equal_compares_other_values_by_type_and_value() -> void:
+	var conditions: GDScript = _conditions_script
+	assert_true(conditions.json_equal("done", "done"), "equal strings")
+	assert_true(not conditions.json_equal("done", "idle"), "different strings")
+	assert_true(conditions.json_equal(null, null), "null and null")
+	assert_true(not conditions.json_equal(null, false), "null is not false")
 
 
 func test_a_null_equals_meets_a_present_null_and_never_a_missing_key() -> void:

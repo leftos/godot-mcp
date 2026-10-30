@@ -8,8 +8,9 @@ extends Node
 ## A check returns [met, value], or [false, null, error] when its condition cannot be met.
 
 const TextTargets := preload("godot_mcp_text_targets.gd")
-const Clock := preload("godot_mcp_time.gd")
 const State := preload("godot_mcp_state.gd")
+## Numbers in a property wait match within this.
+const EQUAL_TOLERANCE := 1e-6
 
 ## An expression's inputs besides node. Expression resolves only its inputs and its base
 ## instance's members, not singletons (core/math/expression.cpp L707-734 in 4.7.2).
@@ -35,8 +36,7 @@ const WHOLE_STATE := "$"
 ## The most digits a state path's list index has: int.MaxValue's 10, the server's limit.
 const MAX_INDEX_DIGITS := 10
 
-## The bridge these conditions belong to, for its node lookup, JSON conversion, input module and
-## clock's JSON comparison.
+## The bridge these conditions belong to, for its node lookup, JSON conversion and input module.
 var bridge: Node
 
 
@@ -164,12 +164,46 @@ func _check_state(
 ## value of another type never meets it); otherwise json_equal, so null meets only null.
 static func equals_met(actual: Variant, wanted: Variant, mode: String) -> bool:
 	if mode == "exact" or not wanted is String:
-		return Clock.json_equal(actual, wanted)
+		return json_equal(actual, wanted)
 	if not actual is String:
 		return false
 	if mode == "prefix":
 		return (actual as String).begins_with(wanted)
 	return (actual as String).contains(wanted)
+
+
+## A JSON value compared with another: numbers within EQUAL_TOLERANCE, whatever their type;
+## arrays and objects member by member; anything else by type and value. The watch shares it.
+static func json_equal(actual: Variant, wanted: Variant) -> bool:
+	if _is_number(actual) and _is_number(wanted):
+		return absf(float(actual) - float(wanted)) <= EQUAL_TOLERANCE
+	if actual is Array and wanted is Array:
+		return _arrays_equal(actual, wanted)
+	if actual is Dictionary and wanted is Dictionary:
+		return _dictionaries_equal(actual, wanted)
+	return typeof(actual) == typeof(wanted) and actual == wanted
+
+
+static func _arrays_equal(actual: Array, wanted: Array) -> bool:
+	if actual.size() != wanted.size():
+		return false
+	for index in actual.size():
+		if not json_equal(actual[index], wanted[index]):
+			return false
+	return true
+
+
+static func _dictionaries_equal(actual: Dictionary, wanted: Dictionary) -> bool:
+	if actual.size() != wanted.size():
+		return false
+	for key: Variant in wanted:
+		if not actual.has(key) or not json_equal(actual[key], wanted[key]):
+			return false
+	return true
+
+
+static func _is_number(value: Variant) -> bool:
+	return value is int or value is float
 
 
 ## The value at path in state as get_game_state's keys find it (the server's StateMerge.TryFind):
@@ -260,7 +294,7 @@ func _check_settled(node_name: String, property: String, needed: int, state: Dic
 
 ## A settled check's answer from reading, [true, value] for the watched value's JSON form, or the
 ## probe answer that stood for it ([false, null] while the node is missing, or a failure), which
-## resets the count and is passed on as it is. A value equal to the last one (Clock.json_equal)
+## resets the count and is passed on as it is. A value equal to the last one (json_equal)
 ## counts one frame when frame differs from the last check's, so two checks in one frame count it
 ## once; a different one starts the count again from 0. Met once needed frames have held, its value
 ## {frames, value}, frames the frames held so far.
@@ -270,7 +304,7 @@ static func settled_answer(state: Dictionary, reading: Array, frame: int, needed
 		state["held"] = -1
 		return reading
 	var value: Variant = reading[1]
-	if int(state["held"]) < 0 or not Clock.json_equal(value, state["last"]):
+	if int(state["held"]) < 0 or not json_equal(value, state["last"]):
 		state["last"] = value
 		state["held"] = 0
 	elif frame != int(state["frame"]):

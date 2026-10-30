@@ -203,10 +203,8 @@ static func _awaits(watch: Dictionary, run: bool) -> bool:
 func begin(params: Dictionary, source: Signal) -> String:
 	if not _watch.is_empty():
 		return _busy_refusal()
-	var tracks: Array = []
-	var refusal: String = _resolve(params.get("properties"), _property_track, tracks)
-	if refusal.is_empty():
-		refusal = _resolve(params.get("expressions"), _expression_track, tracks)
+	var tracks: Variant = value_tracks(params)
+	var refusal: String = tracks if tracks is String else ""
 	var signals: Array = []
 	if refusal.is_empty():
 		refusal = _resolve(params.get("signals"), _signal_track, signals)
@@ -233,6 +231,50 @@ func _busy_refusal() -> String:
 	if _watch["state"] == "held":
 		return HELD_REFUSAL
 	return RUN_REFUSAL if _watch["run"] else RUNNING_REFUSAL
+
+
+## The tracks of params.properties and params.expressions (_property_track, _expression_track),
+## or the first refusal. capture_frames resolves its tracks here too, and reads them (read_values).
+func value_tracks(params: Dictionary) -> Variant:
+	var tracks: Array = []
+	var refusal: String = _resolve(params.get("properties"), _property_track, tracks)
+	if refusal.is_empty():
+		refusal = _resolve(params.get("expressions"), _expression_track, tracks)
+	return tracks if refusal.is_empty() else refusal
+
+
+## Reads tracks now, as a watch samples them (_read): {values: {<key>: JSON value}}, keyed as the
+## server keys a track (track_key), plus trackErrors: {<key>: text} for each read that failed,
+## whose value is then null; {} for no tracks.
+func read_values(tracks: Array) -> Dictionary:
+	if tracks.is_empty():
+		return {}
+	var values: Dictionary = {}
+	var errors: Dictionary = {}
+	for track: Dictionary in tracks:
+		var value: Variant = _read(track)
+		var failure: Variant = _read_failure(track, value)
+		values[track_key(track)] = bridge._json.to_json(value) if failure == null else null
+		if failure != null:
+			errors[track_key(track)] = failure
+	return {"values": values} if errors.is_empty() else {"values": values, "trackErrors": errors}
+
+
+## A track's key: its name, else its node and property as the request gave them, node:property.
+static func track_key(track: Dictionary) -> String:
+	var spec: Dictionary = track["spec"]
+	if spec.get("name") is String:
+		return spec["name"]
+	return "%s:%s" % [spec.get("node", ""), spec.get("property", "")]
+
+
+## Why _read's value is not the track's: a freed node's or a failed expression's text, else null.
+static func _read_failure(track: Dictionary, value: Variant) -> Variant:
+	if _is_error(value):
+		return value["$error"]
+	if track.has("path") and value is Dictionary and value.has("$freed"):
+		return "its node %s was freed" % track["node_path"]
+	return null
 
 
 ## Adds the track make builds from each spec in specs to tracks; returns the first refusal, or "".
@@ -676,12 +718,12 @@ func _sample_track(track: Dictionary, frame: int, game_ms: int, usec: int) -> vo
 
 
 ## Whether value is a change from last: numbers, and each component of two vectors of one type, by
-## at least min_delta when it is above 0, else by more than the clock's EQUAL_TOLERANCE; anything
-## else by the clock's JSON comparison (type and value, containers member by member).
+## at least min_delta when it is above 0, else by more than the conditions' EQUAL_TOLERANCE;
+## anything else by the conditions' JSON comparison (type and value, containers member by member).
 func differs(last: Variant, value: Variant, min_delta: float) -> bool:
 	var kind: int = _range_kind(value)
 	if kind < 0 or kind != _range_kind(last):
-		return not _time_script.json_equal(last, value)
+		return not _conditions_script.json_equal(last, value)
 	if kind == TYPE_FLOAT:
 		return _moved(float(value) - float(last), min_delta)
 	for index in (VECTOR_COMPONENTS[kind] as String).length():
@@ -693,7 +735,7 @@ func differs(last: Variant, value: Variant, min_delta: float) -> bool:
 func _moved(difference: float, min_delta: float) -> bool:
 	if min_delta > 0.0:
 		return absf(difference) >= min_delta
-	return absf(difference) > _time_script.EQUAL_TOLERANCE
+	return absf(difference) > _conditions_script.EQUAL_TOLERANCE
 
 
 ## Adds a numeric value to the track's min and max (per component for a vector), from the first

@@ -61,6 +61,10 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         + "func _process(_delta: float) -> void:\\n\\tif frames_left <= 0:\\n\\t\\treturn\\n\\tframes_left -= 1\\n\\t"
         + "var mover: Control = get_node('Mover')\\n\\tmover.position.x += 8\\n\\tmoved_frame = Engine.get_process_frames()\\n";
     private const string Settler = "scene_tree.root.get_node(\"SettleBox\")";
+
+    // Notes each process frame's number in drawn_frame, in that frame's _process.
+    private const string FrameMarkerScript =
+        "extends Node\\n\\nvar drawn_frame := -1\\n\\n\\nfunc _process(_delta: float) -> void:\\n\\tdrawn_frame = Engine.get_process_frames()\\n";
     private const string Mover = "SettleBox/Mover";
 
     // A state of a turn and a seat whose hp falls as the turn rises, an owner that is null and a two-line log; once armed, the
@@ -1868,6 +1872,82 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         JsonNode point = Assert.Single(captured["points"]!.AsArray())!;
         Assert.True(captured["start"]!["met"]!.GetValue<bool>(), captured.ToJsonString());
         Assert.Equal(captured["start"]!["frame"]!.GetValue<long>() + 1, point["frame"]!.GetValue<long>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task CaptureFramesWithASignalStartCountsFromTheCheckAfterTheEmission()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        await RunAsync(
+            $"var probe: Node = {Probe}\n\t"
+                + "probe.fired.connect(func(value: Variant) -> void: probe.set_meta(&\"fired_frame\", Engine.get_process_frames()))\n\t"
+                + "return true"
+        );
+        // The start connects before its call arms the probe, so the emission half a second later is the one it meets, on its
+        // poll's first check after it: in the emission's frame or the next, as wait_for's signal wait meets it.
+        CaptureStart start = new(
+            Node: "TimeProbe",
+            Signal: "fired",
+            TimeoutMs: 5000,
+            Then: new WaitThen(TimeScale: 0.5),
+            Call: new MethodCall("TimeProbe", "arm", Json("[500]"))
+        );
+
+        JsonObject captured = await CaptureFramesAsync([0, 0.1], new CaptureFramesOptions(Start: start), cancellation);
+
+        long fired = (await RunAsync($"return {Probe}.get_meta(&\"fired_frame\", -1)")).GetValue<long>();
+        JsonObject started = captured["start"]!.AsObject();
+        long metFrame = started["frame"]!.GetValue<long>();
+        JsonArray points = captured["points"]!.AsArray();
+        Assert.True(started["met"]!.GetValue<bool>(), captured.ToJsonString());
+        Assert.Equal("[500]", started["args"]!.ToJsonString());
+        Assert.False(started.ContainsKey("last"), captured.ToJsonString());
+        Assert.True(fired > 0, $"the signal never fired: {captured.ToJsonString()}");
+        Assert.InRange(metFrame, fired, fired + 1);
+        Assert.Equal(metFrame, started["then"]!["frame"]!.GetValue<long>());
+        Assert.Equal(2, points.Count);
+        Assert.Equal(metFrame, points[0]!["frame"]!.GetValue<long>());
+        Assert.True(points[1]!["frame"]!.GetValue<long>() > metFrame, captured.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACapturesTracksReadEachValueAsTheFrameItsImageShowsDrewIt()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunBodyAsync(
+            "var marker := Node.new()\n\tmarker.name = \"FrameMarker\"\n\tvar script := GDScript.new()\n\t"
+                + $"script.source_code = \"{FrameMarkerScript}\"\n\tscript.reload()\n\tmarker.set_script(script)\n\t"
+                + "scene_tree.root.add_child(marker)\n\treturn true",
+            cancellation
+        );
+        try
+        {
+            CaptureTracks tracks = new(
+                Properties: [new WatchPropertyTrack("FrameMarker", "drawn_frame")],
+                Expressions: [new WatchExpressionTrack("broken", "root.get_node(\"Missing\").name")]
+            );
+
+            JsonObject captured = await CaptureFramesAsync(null, new CaptureFramesOptions(0.05, 0.2, Tracks: tracks), cancellation);
+
+            // drawn_frame is set in each frame's _process to that frame's number, so a read after the frame is drawn, at
+            // the frame_post_draw its image is grabbed at, is the point's own frame; a read at the frame's start, before
+            // _process, would be the frame before.
+            JsonArray points = captured["points"]!.AsArray();
+            Assert.Equal(5, points.Count);
+            foreach (JsonNode? point in points)
+            {
+                long frame = point!["frame"]!.GetValue<long>();
+                Assert.Equal(frame, point["values"]!["FrameMarker:drawn_frame"]!.GetValue<long>());
+                Assert.Null(point["values"]!["broken"]);
+                Assert.False(string.IsNullOrEmpty(point["trackErrors"]?["broken"]?.GetValue<string>()), point.ToJsonString());
+                Assert.False(point["trackErrors"]!.AsObject().ContainsKey("FrameMarker:drawn_frame"), point.ToJsonString());
+            }
+        }
+        finally
+        {
+            await RunBodyAsync("scene_tree.root.get_node(\"FrameMarker\").free()\n\treturn true", cancellation);
+        }
     }
 
     [Fact(Timeout = TestTimeoutMs)]

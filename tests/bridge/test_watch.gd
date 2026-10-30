@@ -695,6 +695,60 @@ func test_an_event_carries_its_own_tick_last() -> void:
 	_free(rig)
 
 
+## capture_frames reads its tracks through these, without a watch running.
+func test_value_tracks_resolve_as_a_watch_does_and_read_values_keys_them_as_watch() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	rig["mover"].position = Vector2(3, 4)
+	var properties: Array = [
+		{"node": "Mover", "property": "position:x"},
+		{"node": "Mover", "property": "z_index", "name": "layer"},
+	]
+	var doubled: Dictionary = {
+		"name": "doubled", "node": "Mover", "expression": "node.position.y * 2"
+	}
+	var tracks: Variant = watch.value_tracks({"properties": properties, "expressions": [doubled]})
+	assert_true(tracks is Array, "resolved: %s" % [tracks])
+	assert_eq(
+		watch.read_values(tracks),
+		{"values": {"Mover:position:x": 3.0, "layer": 0, "doubled": 8.0}},
+		"each value as JSON, keyed by name, else node:property as given"
+	)
+	assert_eq(watch.read_values([]), {}, "no tracks, nothing to add")
+	assert_eq(watch._watch, {}, "no watch begins")
+	var missing: Variant = watch.value_tracks(
+		{"properties": [{"node": "Nowhere", "property": "x"}]}
+	)
+	var hint: String = "get_scene_tree lists the nodes' paths"
+	assert_eq(
+		missing, rig["bridge"]._inspect.not_found("Nowhere", hint), "refused as watch refuses"
+	)
+	_free(rig)
+
+
+func test_a_track_read_that_fails_reads_null_with_its_error_and_the_rest_still_read() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var pick: Dictionary = {"name": "pick", "node": "Mover", "expression": "[1, 2][node.z_index]"}
+	var two: Dictionary = {"name": "two", "expression": "1 + 1"}
+	var params: Dictionary = {
+		"properties": [{"node": "Mover", "property": "position:x"}], "expressions": [pick, two]
+	}
+	var tracks: Array = watch.value_tracks(params)
+	rig["mover"].z_index = 5
+	var read: Dictionary = watch.read_values(tracks)
+	assert_eq(read["values"], {"Mover:position:x": 0.0, "pick": null, "two": 2}, "pick fails")
+	assert_eq(read["trackErrors"].keys(), ["pick"], "only pick's error")
+	assert_true(str(read["trackErrors"]["pick"]) != "", "its text: %s" % [read])
+	rig["mover"].free()
+	read = watch.read_values(tracks)
+	assert_eq(read["values"], {"Mover:position:x": null, "pick": null, "two": 2}, "a freed node")
+	var freed: String = "its node Mover was freed"
+	var errors: Dictionary = {"Mover:position:x": freed, "pick": freed}
+	assert_eq(read["trackErrors"], errors, "each track on it says so")
+	_free(rig)
+
+
 ## Sets the watch's frame counter to read count[0], starting at first, and returns count.
 func _count_frames(watch: Node, first: int) -> Array:
 	var count: Array = [first]

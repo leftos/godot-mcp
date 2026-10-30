@@ -201,7 +201,9 @@ Prefer it for any change of more than one edit, then `validate`, then `preview_s
 
   When the moments count from a method that starts the effect (a scratch's `PlayStep`), give it as `options.call {node, method, args}` (`PlayStep` takes the step's name there and in `call_method`, as `run_scratches` reports it), or a C# game's own tool by name as `{tool, args: {...}}`: the bridge calls it in the frame the clock starts, so no round trip between a `call_method` and the capture shifts the points.
 
-  When the moments count from a condition (a tray showing, then slow motion), give it as `options.start {node, property, equals | exists | expression, edge?, timeoutMs?, then?, call?}`, laid out as `wait_for`'s: the points count from the frame it is met, `start.then {call?, timeScale?}` runs in that frame before `options.call`, and a start that times out answers `stopped: true` with `start: {met: false, last}`.
+  When the moments count from a condition (a tray showing, then slow motion), give it as `options.start {node, property, equals | exists | expression | signal, edge?, timeoutMs?, then?, call?}`, laid out as `wait_for`'s: the points count from the frame it is met, `start.then {call?, timeScale?}` runs in that frame before `options.call`, and a start that times out answers `stopped: true` with `start: {met: false, last}`.
+
+  To read values beside the images, give `options.tracks {properties: [{node, property}], expressions: [{name, expression}]}` as `watch`'s tracks: each point adds `values` keyed by track, read in the frame its image shows, and a failed read gives null with `trackErrors`.
 
   A change an earlier tool call made can rise and fall before your next call's first check (that call reaches the game 0.2 s to seconds later), so put the call that causes the change in the same request: `start.call` (shaped as `options.call`; the bridge takes the start's baseline check, then calls, so the start sees its own call's rise), or `wait_for`'s `options.call`. An `every` series always has a point at 0, taken one frame into `options.call`'s motion, not before it.
 

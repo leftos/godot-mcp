@@ -12,8 +12,6 @@ extends Node
 signal step_woken(arrived: bool)
 
 const STEP_SCRIPT := "godot_mcp_step.gd"
-## Numbers in a property wait match within this.
-const EQUAL_TOLERANCE := 1e-6
 const PAUSED_REFUSAL := (
 	"The game is paused, so only a signal wait or a check-once wait (timeoutMs 0) can be met; "
 	+ "resume or step it first."
@@ -191,9 +189,7 @@ func _next(source: Signal) -> bool:
 ## {error} when it cannot start, the start's condition or then fails, the call fails or a frame
 ## cannot be saved, or on a headless game.
 func capture_frames(params: Dictionary) -> Dictionary:
-	var refusal: String = bridge._frame.headless_refusal()
-	if refusal.is_empty():
-		refusal = _capture_refusal(get_tree().paused)
+	var refusal: String = _capture_setup(params)
 	if not refusal.is_empty():
 		return {"error": refusal}
 	var points: Array = params["points"] if params.get("points") is Array else []
@@ -229,7 +225,7 @@ func _capture_from_start(
 ) -> Variant:
 	if not params.get("start") is Dictionary:
 		return await _capture_points(points, params, called, false)
-	var outcome: Dictionary = await _await_start(params, start)
+	var outcome: Dictionary = await _await_start(params, start, get_tree().process_frame)
 	if outcome.has("error"):
 		return str(outcome["error"])
 	if not outcome["result"]["met"]:
@@ -238,15 +234,31 @@ func _capture_from_start(
 	return await _capture_points(points, params, called, in_frame)
 
 
-## Waits for params.start {kind, node, exists, property, equals, expression, timeoutMs, edge,
-## then, call} as wait_for waits for a condition: a probe (make_probe) checked now and then once a
-## frame (_poll), for start.timeoutMs of real time or until a cancel, running start.then in the
-## frame it is met (_start_outcome). With start.call, the poll begins in the next process_frame,
-## right after the call and an edge probe's baseline check (_start_probe_wait), so its timeout
-## counts from the call. Writes start_report, plus call: {value} when it called, into start.
-## Returns the poll's outcome, or {error} when the condition is refused, cannot be checked, or
-## start.call or then.call failed.
-func _await_start(params: Dictionary, start: Dictionary) -> Dictionary:
+## Waits for params.start {kind, node, exists, property, equals, signal, expression, timeoutMs,
+## edge, then, call} as wait_for waits for a condition, for start.timeoutMs of real time or until a
+## cancel (_poll_probe_start, or _poll_signal_start for a signal, which waits for frame, the tree's
+## process_frame, before its call), running start.then in the frame it is met (_start_outcome).
+## Writes start_report, plus call: {value} when it called, into start. Returns the poll's outcome,
+## or {error} when the condition is refused, cannot be checked, or start.call or then.call failed.
+func _await_start(params: Dictionary, start: Dictionary, frame: Signal) -> Dictionary:
+	var start_called: Dictionary = {}
+	var outcome: Dictionary
+	if str(params["start"].get("kind", "")) == "signal":
+		outcome = await _poll_signal_start(params, start_called, frame)
+	else:
+		outcome = await _poll_probe_start(params, start_called)
+	outcome = _start_outcome(outcome, params)
+	if outcome.has("result"):
+		start.merge(start_report(outcome["result"], Engine.get_process_frames()))
+		if not start_called.is_empty():
+			start["call"] = start_called
+	return outcome
+
+
+## A probe start (make_probe) checked now and then once a frame (_poll). With start.call, the poll
+## begins in the next process_frame, right after the call and an edge probe's baseline check
+## (_start_probe_wait), so its timeout counts from the call, whose {value} goes into called.
+func _poll_probe_start(params: Dictionary, called: Dictionary) -> Dictionary:
 	var condition: Dictionary = params["start"]
 	var failures: Dictionary = {}
 	var kind: String = str(condition.get("kind", ""))
@@ -254,18 +266,34 @@ func _await_start(params: Dictionary, start: Dictionary) -> Dictionary:
 	if probe is String:
 		return {"error": probe}
 	var timeout_ms: int = int(condition.get("timeoutMs", 10000))
-	var start_called: Dictionary = {}
-	var failed: String = await _start_probe_wait(probe, condition, timeout_ms, start_called)
+	var failed: String = await _start_probe_wait(probe, condition, timeout_ms, called)
 	if not failed.is_empty():
 		return {"error": failed}
 	var outcome: Dictionary = await _poll(probe, float(timeout_ms), params)
 	bridge._conditions.add_failed_checks(outcome, failures)
-	outcome = _start_outcome(outcome, params)
-	if outcome.has("result"):
-		start.merge(start_report(outcome["result"], Engine.get_process_frames()))
-		if not start_called.is_empty():
-			start["call"] = start_called
 	return outcome
+
+
+## A signal start, connected as wait_for's signal wait connects (_wait_for_signal): now, or with
+## start.call in frame's next emission right before the call, whose {value} goes into called; then
+## polled (_poll), so it is met on the first check after the emission, as that wait is. Its
+## connection is released however the poll ends. Returns the outcome with args (_as_signal_outcome).
+func _poll_signal_start(params: Dictionary, called: Dictionary, frame: Signal) -> Dictionary:
+	var condition: Dictionary = params["start"]
+	var source: Variant = _signal_source(condition)
+	if source is String:
+		return {"error": source}
+	if condition.get("call") is Dictionary:
+		await frame
+	var hold: Dictionary = {}
+	var caught: Variant = signal_probe(condition, hold)
+	if caught is String:
+		return {"error": caught}
+	var outcome: Dictionary = {"error": _call_once(condition, called)}
+	if str(outcome["error"]).is_empty():
+		outcome = await _poll(caught, float(condition.get("timeoutMs", 10000)), params)
+	hold["release"].call()
+	return _as_signal_outcome(outcome)
 
 
 ## The start's poll outcome as the capture goes on from it: not met when a cancel came or the
@@ -280,19 +308,39 @@ func _start_outcome(outcome: Dictionary, params: Dictionary) -> Dictionary:
 	return _finish_then(outcome, params["start"], {})
 
 
-## A capture's start from its poll's result: {met: true, frame} when met in frame, {met: false,
-## last} when it timed out, each with then when it ran, failedChecks when checks of it failed and
-## mutedErrors when its checks raised engine errors kept out of the error feed.
+## A capture's start from its poll's result: {met: true, frame} when met in frame, with args for a
+## signal; {met: false, last} when it timed out, with no last for a signal, which has none; each
+## with then when it ran, failedChecks when checks of it failed and mutedErrors when its checks
+## raised engine errors kept out of the error feed.
 static func start_report(result: Dictionary, frame: int) -> Dictionary:
 	var report: Dictionary = {"met": result["met"]}
 	if result["met"]:
 		report["frame"] = frame
-	else:
+		if result.has("args"):
+			report["args"] = result["args"]
+	elif result.has("last") or result.has("value"):
 		report["last"] = result.get("last", result.get("value"))
 	for key: String in ["then", "failedChecks", "mutedErrors"]:
 		if result.has(key):
 			report[key] = result[key]
 	return report
+
+
+## Why the capture cannot start (headless, _capture_refusal, or a track of params.tracks the
+## watch's value_tracks refuses), or empty, with the resolved tracks in params._tracks, which
+## _take_due reads beside each frame.
+func _capture_setup(params: Dictionary) -> String:
+	var refusal: String = bridge._frame.headless_refusal()
+	if refusal.is_empty():
+		refusal = _capture_refusal(get_tree().paused)
+	if not refusal.is_empty():
+		return refusal
+	var specs: Dictionary = params["tracks"] if params.get("tracks") is Dictionary else {}
+	var tracks: Variant = bridge._watch.value_tracks(specs)
+	if tracks is String:
+		return tracks
+	params["_tracks"] = tracks
+	return ""
 
 
 ## Why a capture cannot start now, or empty: a step or another capture runs, or the
@@ -341,10 +389,11 @@ func _take_due(points: Array, params: Dictionary, clock: Dictionary, entries: Ar
 	if not await _next(RenderingServer.frame_post_draw):
 		return false
 	var frame: Image = bridge._frame.grab_frame()
+	var read: Dictionary = bridge._watch.read_values(params.get("_tracks", []))
 	var saved: Variant = bridge._frame.save_screenshot_off_thread(frame, params)
 	if saved is String:
 		return saved
-	entries.append_array(frame_entries(due, saved, Engine.get_process_frames(), elapsed))
+	entries.append_array(frame_entries(due, saved, Engine.get_process_frames(), elapsed, read))
 	return true
 
 
@@ -378,24 +427,24 @@ static func due_points(points: Array, taken: int, elapsed: float) -> Array:
 
 
 ## One entry per due point, all sharing saved's file: {at, frame, gameSeconds, late, path, width,
-## height}, with late the seconds gameSeconds passed at by, to the millisecond.
-static func frame_entries(due: Array, saved: Dictionary, frame: int, elapsed: float) -> Array:
+## height}, with late the seconds gameSeconds passed at by, to the millisecond, and the frame's
+## read, {values, trackErrors?} (the watch's read_values) or {}, merged in.
+static func frame_entries(
+	due: Array, saved: Dictionary, frame: int, elapsed: float, read: Dictionary
+) -> Array:
 	var entries: Array = []
 	for at: Variant in due:
-		(
-			entries
-			. append(
-				{
-					"at": at,
-					"frame": frame,
-					"gameSeconds": elapsed,
-					"late": snappedf(elapsed - float(at), 0.001),
-					"path": saved["path"],
-					"width": saved["width"],
-					"height": saved["height"],
-				}
-			)
-		)
+		var entry: Dictionary = {
+			"at": at,
+			"frame": frame,
+			"gameSeconds": elapsed,
+			"late": snappedf(elapsed - float(at), 0.001),
+			"path": saved["path"],
+			"width": saved["width"],
+			"height": saved["height"],
+		}
+		entry.merge(read)
+		entries.append(entry)
 	return entries
 
 
@@ -941,40 +990,6 @@ func _as_signal_outcome(outcome: Dictionary) -> Dictionary:
 		result.erase("value")
 	result.erase("last")
 	return {"result": result}
-
-
-## A JSON value compared with another: numbers within EQUAL_TOLERANCE, whatever their type;
-## arrays and objects member by member; anything else by type and value. The watch shares it.
-static func json_equal(actual: Variant, wanted: Variant) -> bool:
-	if _is_number(actual) and _is_number(wanted):
-		return absf(float(actual) - float(wanted)) <= EQUAL_TOLERANCE
-	if actual is Array and wanted is Array:
-		return _arrays_equal(actual, wanted)
-	if actual is Dictionary and wanted is Dictionary:
-		return _dictionaries_equal(actual, wanted)
-	return typeof(actual) == typeof(wanted) and actual == wanted
-
-
-static func _arrays_equal(actual: Array, wanted: Array) -> bool:
-	if actual.size() != wanted.size():
-		return false
-	for index in actual.size():
-		if not json_equal(actual[index], wanted[index]):
-			return false
-	return true
-
-
-static func _dictionaries_equal(actual: Dictionary, wanted: Dictionary) -> bool:
-	if actual.size() != wanted.size():
-		return false
-	for key: Variant in wanted:
-		if not actual.has(key) or not json_equal(actual[key], wanted[key]):
-			return false
-	return true
-
-
-static func _is_number(value: Variant) -> bool:
-	return value is int or value is float
 
 
 ## params[key] when it is a String, else empty: the server leaves out fields it has no value for.

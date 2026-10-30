@@ -2,45 +2,15 @@
 # Each test is a public method the runner finds by its test_ prefix, so the count is the coverage;
 # the tests call the clock's private helpers directly.
 extends "res://gd_test.gd"
-## The clock's pure logic (bridge/godot_mcp_time.gd): wait_for's JSON comparison and its reading
-## of the server's fields (test_conditions.gd has its condition kinds and expression parsing).
+## The clock's pure logic (bridge/godot_mcp_time.gd): wait_for's reading of the server's fields
+## (test_conditions.gd has its condition kinds and expression parsing, test_equals_conditions.gd
+## its JSON comparison).
 ## The node is never added to the tree; only functions that do not need it are called.
 
 ## Stands in for the tree's process_frame in a game-time wait, so its connections can be read.
 signal test_frame
 
 var _time_script: GDScript = load_bridge_script("godot_mcp_time.gd")
-
-
-func test_json_equal_matches_numbers_across_int_and_float_within_tolerance() -> void:
-	var time: Node = _time_script.new()
-	assert_true(time.json_equal(3, 3.0), "an int property against a JSON number")
-	assert_true(time.json_equal(0.1 + 0.2, 0.3), "within 1e-6")
-	assert_true(not time.json_equal(1.0, 1.00001), "outside 1e-6")
-	assert_true(not time.json_equal(1, "1"), "a number is not its string")
-	assert_true(not time.json_equal(true, 1.0), "a bool is not a number")
-	time.free()
-
-
-func test_json_equal_compares_containers_member_by_member() -> void:
-	var time: Node = _time_script.new()
-	assert_true(time.json_equal({"x": 1, "y": 2.0}, {"y": 2, "x": 1.0}), "same keys, any order")
-	assert_true(not time.json_equal({"x": 1}, {"x": 1, "y": 2}), "a missing key")
-	assert_true(not time.json_equal({"x": 1}, {"z": 1}), "a different key")
-	assert_true(time.json_equal([1, [2, {"a": "b"}]], [1.0, [2.0, {"a": "b"}]]), "nested")
-	assert_true(not time.json_equal([1, 2], [2, 1]), "order counts in an array")
-	assert_true(not time.json_equal([1], [1, 1]), "a different length")
-	assert_true(not time.json_equal([], {}), "an array is not an object")
-	time.free()
-
-
-func test_json_equal_compares_other_values_by_type_and_value() -> void:
-	var time: Node = _time_script.new()
-	assert_true(time.json_equal("done", "done"), "equal strings")
-	assert_true(not time.json_equal("done", "idle"), "different strings")
-	assert_true(time.json_equal(null, null), "null and null")
-	assert_true(not time.json_equal(null, false), "null is not false")
-	time.free()
 
 
 func test_paused_refusal_lets_only_a_check_once_wait_run_while_paused() -> void:
@@ -460,6 +430,61 @@ func test_a_signal_wait_connects_in_its_calls_frame_so_an_earlier_emission_is_no
 	_free_then_rig(rig)
 
 
+## A capture's signal start is met on its poll's first check after the emission, as a signal wait
+## is: here the emission start.call makes in the call's frame, so the clock starts in that frame.
+func test_a_signal_start_met_by_its_calls_emission_reports_args_and_releases_it() -> void:
+	var rig: Dictionary = _then_rig()
+	var ping: Dictionary = {"node": "CallTarget", "method": "ping", "args": [4]}
+	var run: Dictionary = _run_signal_start(rig, {"call": ping, "timeoutMs": 1000}, {})
+	assert_eq(run["outcomes"].size(), 1, "the start answers in its call's frame")
+	assert_eq(run["outcomes"][0]["result"]["met"], true, "met: %s" % run["outcomes"][0])
+	assert_eq(run["outcomes"][0]["result"]["frames"], 0, "on the check right after the call")
+	assert_eq(run["start"].get("args"), [4], "the emission's arguments")
+	assert_eq(run["start"].get("call"), {"value": 4}, "and the call's value")
+	assert_eq(run["start"].get("frame"), Engine.get_process_frames(), "and the met frame")
+	assert_true(not run["start"].has("last"), "no last: %s" % run["start"])
+	assert_eq(rig["target"].get_signal_connection_list("pinged").size(), 0, "released")
+	_free_then_rig(rig)
+
+
+func test_a_signal_start_releases_its_connection_however_it_ends_unmet() -> void:
+	var ping: Dictionary = {"node": "CallTarget", "method": "ping", "args": [4]}
+	var fail: Dictionary = {"node": "CallTarget", "method": "fail"}
+	var endings: Dictionary = {
+		"timeout": [{"timeoutMs": 0}, {}],
+		"cancel": [{"timeoutMs": 1000}, {"_cancelled": true}],
+		"deadline": [{"call": ping, "timeoutMs": 1000}, {"_deadline": true}],
+		"failed call": [{"call": fail, "timeoutMs": 1000}, {}],
+	}
+	for ending: String in endings:
+		var rig: Dictionary = _then_rig()
+		var run: Dictionary = _run_signal_start(rig, endings[ending][0], endings[ending][1])
+		assert_eq(run["outcomes"].size(), 1, "%s: the start answers" % ending)
+		var outcome: Dictionary = run["outcomes"][0]
+		if ending == "failed call":
+			assert_eq(outcome, {"error": "the method failed"}, "the call's error fails the start")
+		else:
+			var report: Dictionary = run["start"]
+			report.erase("call")
+			assert_eq(report, {"met": false}, "%s: not met, with no last or args" % ending)
+		var connected: int = rig["target"].get_signal_connection_list("pinged").size()
+		assert_eq(connected, 0, "%s: released" % ending)
+		_free_then_rig(rig)
+
+
+## A missing signal's refusal names the node's path, which a node outside a running tree cannot
+## give without an engine error, so this takes a missing node.
+func test_a_signal_start_on_a_missing_node_fails_and_reports_nothing() -> void:
+	var rig: Dictionary = _then_rig()
+	var run: Dictionary = _run_signal_start(rig, {"node": "Nowhere", "timeoutMs": 1000}, {})
+	assert_eq(run["outcomes"].size(), 1, "the start answers at once")
+	var hint: String = "get_scene_tree lists the nodes' paths"
+	var missing: String = rig["bridge"]._inspect.not_found("Nowhere", hint)
+	assert_eq(run["outcomes"][0], {"error": missing}, "wait_for's not-found text")
+	assert_eq(run["start"], {}, "no report")
+	_free_then_rig(rig)
+
+
 func test_stopping_draw_checks_lets_the_wait_state_go() -> void:
 	var time: Node = _time_script.new()
 	var drawn: Dictionary = {}
@@ -550,6 +575,26 @@ func _then_rig() -> Dictionary:
 	var time: Node = _time_script.new()
 	time.bridge = bridge
 	return {"time": time, "target": target, "bridge": bridge}
+
+
+## Runs a capture's start on CallTarget's pinged with fields over its condition and request over
+## the capture's params (_deadline: true marks the capture's deadline passed), emitting test_frame
+## once when the start holds for its call's frame. Returns {outcomes, start}: the start's outcome,
+## once it answered, and its report.
+func _run_signal_start(rig: Dictionary, fields: Dictionary, request: Dictionary) -> Dictionary:
+	var condition: Dictionary = {"kind": "signal", "node": "CallTarget", "signal": "pinged"}
+	condition.merge(fields, true)
+	var params: Dictionary = {"start": condition}
+	params.merge(request)
+	rig["time"]._deadline_passed = bool(params.get("_deadline", false))
+	var start: Dictionary = {}
+	var outcomes: Array = []
+	var waiting := func() -> void:
+		outcomes.append(await rig["time"]._await_start(params, start, test_frame))
+	waiting.call()
+	if outcomes.is_empty():
+		test_frame.emit()
+	return {"outcomes": outcomes, "start": start}
 
 
 func _free_then_rig(rig: Dictionary) -> void:

@@ -112,7 +112,7 @@ func test_a_point_is_due_at_or_after_its_time() -> void:
 
 func test_two_points_due_in_one_frame_share_a_grab() -> void:
 	var due: Array = _time_script.due_points([0.1, 0.3, 0.3], 1, 0.35)
-	var entries: Array = _time_script.frame_entries(due, SAVED, 42, 0.35)
+	var entries: Array = _time_script.frame_entries(due, SAVED, 42, 0.35, {})
 	assert_eq(due, [0.3, 0.3], "both equal points are due")
 	assert_eq(entries.size(), 2, "one entry per point")
 	assert_eq(entries[0]["path"], entries[1]["path"], "one file")
@@ -122,6 +122,16 @@ func test_two_points_due_in_one_frame_share_a_grab() -> void:
 	assert_eq(entries[0]["height"], 32, "the height saved")
 
 
+func test_every_entry_of_a_frame_carries_the_values_read_with_it() -> void:
+	var read: Dictionary = {"values": {"hp": 3, "pick": null}, "trackErrors": {"pick": "failed"}}
+	var entries: Array = _time_script.frame_entries([0.1, 0.1], SAVED, 5, 0.12, read)
+	for entry: Dictionary in entries:
+		assert_eq(entry["values"], {"hp": 3, "pick": null}, "the frame's values")
+		assert_eq(entry["trackErrors"], {"pick": "failed"}, "and its failed reads")
+	var bare: Dictionary = _time_script.frame_entries([0.1], SAVED, 5, 0.12, {})[0]
+	assert_true(not bare.has("values") and not bare.has("trackErrors"), "no tracks: %s" % bare)
+
+
 func test_points_passed_in_one_long_frame_are_all_due() -> void:
 	assert_eq(
 		_time_script.due_points([0.1, 0.2, 0.3, 0.4], 0, 0.3), [0.1, 0.2, 0.3], "up to elapsed"
@@ -129,16 +139,16 @@ func test_points_passed_in_one_long_frame_are_all_due() -> void:
 
 
 func test_an_entry_says_how_late_its_frame_came() -> void:
-	var entries: Array = _time_script.frame_entries([0.1, 0.3], SAVED, 7, 0.3504)
+	var entries: Array = _time_script.frame_entries([0.1, 0.3], SAVED, 7, 0.3504, {})
 	assert_eq(entries[0]["at"], 0.1, "the point")
 	assert_approx(entries[0]["gameSeconds"], 0.3504, "the frame's game time")
 	assert_approx(entries[0]["late"], 0.25, "late to the millisecond")
 	assert_approx(entries[1]["late"], 0.05, "the later point is less late")
-	assert_approx(_time_script.frame_entries([0.5], SAVED, 1, 0.5)[0]["late"], 0.0, "on time")
+	assert_approx(_time_script.frame_entries([0.5], SAVED, 1, 0.5, {})[0]["late"], 0.0, "on time")
 
 
 func test_a_capture_that_took_every_point_has_no_stopped_or_missed() -> void:
-	var entries: Array = _time_script.frame_entries([0.1], SAVED, 3, 0.12)
+	var entries: Array = _time_script.frame_entries([0.1], SAVED, 3, 0.12, {})
 	var result: Dictionary = _time_script.frames_result([0.1], entries)
 	assert_eq(result["frames"], entries, "the frames")
 	assert_true(not result.has("stopped"), "not stopped")
@@ -154,7 +164,7 @@ func test_a_cancel_mid_run_answers_stopped_and_missed() -> void:
 	time._running_params = params
 	assert_true(time.cancel(params), "the running capture is cancelled")
 	assert_eq(woken, [false], "its wait is woken as by its deadline")
-	var taken: Array = _time_script.frame_entries([0.05], SAVED, 9, 0.06)
+	var taken: Array = _time_script.frame_entries([0.05], SAVED, 9, 0.06, {})
 	var result: Dictionary = _time_script.frames_result(params["points"], taken)
 	assert_eq(result["frames"].size(), 1, "the frame taken")
 	assert_eq(result["stopped"], true, "stopped")
@@ -195,6 +205,13 @@ func test_a_start_that_timed_out_reports_its_last_value_and_no_frame() -> void:
 		{"met": false, "elapsedMs": 300, "frames": 18, "last": "idle"}, 58
 	)
 	assert_eq(report, {"met": false, "last": "idle"}, "not met, with the last value seen")
+
+
+func test_a_met_signal_start_reports_its_args_and_an_unmet_one_no_last() -> void:
+	var met: Dictionary = _time_script.start_report({"met": true, "frames": 3, "args": [7]}, 12)
+	assert_eq(met, {"met": true, "frame": 12, "args": [7]}, "met, its frame and its args")
+	var unmet: Dictionary = _time_script.start_report({"met": false, "frames": 30}, 40)
+	assert_eq(unmet, {"met": false}, "a signal start that timed out has no last")
 
 
 func test_a_start_reports_its_failed_checks_and_muted_errors() -> void:

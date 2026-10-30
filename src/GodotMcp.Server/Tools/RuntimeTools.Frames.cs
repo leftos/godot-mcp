@@ -43,7 +43,7 @@ internal sealed partial class RuntimeTools
             + "game's timers do. Each point is taken in the first frame at or after it; a late frame is still taken, and late says "
             + "by how much. Points due in the same frame share one file. At most 1000 points and 120 s. Each frame is saved as "
             + "take_screenshot saves it, path only, no image. Returns {folder, files, width, height, points: [{at, frame, file, "
-            + "gameSeconds, late}], shared}: folder is the directory of the PNGs, files names each distinct one once in the "
+            + "gameSeconds, late, values?, trackErrors?}], shared}: folder is the directory of the PNGs, files names each distinct one once in the "
             + "order first taken, a point's file indexes files, and shared is how many points took a file an earlier point "
             + "took. When options.timeoutMs (by default the last point's seconds + 10 s + 100 ms per point, load-adjusted) "
             + "passes first, for example under a small time_scale, it answers the frames taken with stopped: true and missed, "
@@ -53,8 +53,10 @@ internal sealed partial class RuntimeTools
             + "for a game tool, calls it in the frame the clock starts, so the points count from its entry (a coroutine or a "
             + "Task is not awaited), and adds call: {value}, its return value as call_method returns it, with tool and type for "
             + "a game tool; a refused call, or an error it raises, fails the capture with no frames. options.start {node, "
-            + "property, equals | exists | expression, edge?, timeoutMs?, then?, call?}, a condition laid out as wait_for's, makes the "
-            + "clock wait for it: the points count from the frame it is met, where start.then runs (call, then timeScale; pause is "
+            + "property, equals | exists | expression | signal, edge?, timeoutMs?, then?, call?}, a condition laid out as wait_for's, "
+            + "makes the clock wait for it: the points count from the frame it is met (a signal's: the first check after its "
+            + "emission, as wait_for's signal wait meets it; edge is refused for a signal), "
+            + "where start.then runs (call, then timeScale; pause is "
             + "refused, as a paused game adds no game time) and then options.call; a start already true at the request, with no "
             + "start.call, starts the clock at the next frame, as without one. start.call, laid out as options.call, runs in the "
             + "next frame, after an edge start's baseline check and before the check that can meet the start, so the start sees "
@@ -62,9 +64,12 @@ internal sealed partial class RuntimeTools
             + "earlier tool call made may already have happened before the start's first check, so an edge start sent after the "
             + "call that starts a short effect can miss its rise. Its timeoutMs, real time, 10000 when left out, counted from "
             + "after start.call, is added to the capture's, at most 600000 in all. Met, the result adds start: {met: true, frame, "
-            + "then?, call?, failedChecks?, mutedErrors?} (the last two as wait_for reports them), call: {value} as "
-            + "options.call's; a start that times out is still a success, with stopped: true, no frames and start: {met: false, "
-            + "last, call?, failedChecks?, mutedErrors?}."
+            + "args?, then?, call?, failedChecks?, mutedErrors?} (args, a signal's emission arguments; the last two as wait_for "
+            + "reports them), call: {value} as options.call's; a start that times out is still a success, with stopped: true, no "
+            + "frames and start: {met: false, last?, call?, failedChecks?, mutedErrors?} (no last for a signal). options.tracks "
+            + "{properties?, expressions?}, laid out as watch's tracks (minDelta aside), reads each track at the frame_post_draw its "
+            + "point's image is grabbed at, so the value is the one that frame drew: each point adds values: {<track>: value}, "
+            + "keyed as watch keys a track, and trackErrors: {<track>: message} with null in values for a read that failed."
     )]
     public async Task<string> CaptureFramesAsync(
         [Description(
@@ -73,8 +78,8 @@ internal sealed partial class RuntimeTools
         )]
             double[]? at = null,
         [Description(
-            "{every, for, crop, timeoutMs, call, start}: every and for instead of at; no crop, the default timeout, no call and no "
-                + "start when left out."
+            "{every, for, crop, timeoutMs, call, start, tracks}: every and for instead of at; no crop, the default timeout, no "
+                + "call, no start and no tracks when left out."
         )]
             CaptureFramesOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
@@ -126,7 +131,7 @@ internal sealed partial class RuntimeTools
 
     /// <summary>
     /// The bridge's frames parameters: the path-only screenshot's with options.crop, {points, deadlineMs}, call when given,
-    /// and start (<see cref="StartParameters"/>) when given.
+    /// start (<see cref="StartParameters"/>) when given, and tracks (<see cref="CaptureTrackParameters"/>) when given.
     /// </summary>
     /// <exception cref="McpException">
     /// The crop is refused, the call gives both forms or neither, args of the other form's shape, or an empty node, method
@@ -147,7 +152,72 @@ internal sealed partial class RuntimeTools
             parameters["start"] = StartParameters(start);
         }
 
+        if (options?.Tracks is { } tracks)
+        {
+            parameters["tracks"] = CaptureTrackParameters(tracks);
+        }
+
         return parameters;
+    }
+
+    /// <summary>The bridge's tracks parameters: the property and expression tracks as watch sends them.</summary>
+    /// <exception cref="McpException">
+    /// A signal, monitor or audio track; no track or more than <see cref="MaxWatchTracks"/>; a track with minDelta; or a track
+    /// refused as watch refuses it.
+    /// </exception>
+    internal static JsonObject CaptureTrackParameters(CaptureTracks tracks)
+    {
+        string? watchOnly =
+            tracks.Signals is not null ? "signals"
+            : tracks.Monitors is not null ? "monitors"
+            : tracks.Audio is not null ? "audio"
+            : null;
+        if (watchOnly is not null)
+        {
+            throw new McpException(
+                $"options.tracks.{watchOnly} is refused: capture_frames reads property and expression tracks only; watch records "
+                    + "signals, monitors and audio."
+            );
+        }
+
+        WatchPropertyTrack[] properties = tracks.Properties ?? [];
+        WatchExpressionTrack[] expressions = tracks.Expressions ?? [];
+        CheckCaptureTrackCount(properties.Length + expressions.Length);
+        RefuseMinDelta(properties, expressions);
+        JsonObject parameters = [];
+        AddValueTracks(parameters, properties, expressions);
+        return parameters;
+    }
+
+    private static void CheckCaptureTrackCount(int count)
+    {
+        if (count == 0)
+        {
+            throw new McpException(
+                "options.tracks needs at least one track: {properties: [{node, property}]} or {expressions: [{name, expression}]}."
+            );
+        }
+
+        if (count > MaxWatchTracks)
+        {
+            throw new McpException($"options.tracks holds {count} property and expression tracks; at most {MaxWatchTracks} together.");
+        }
+    }
+
+    /// <summary>Refuses minDelta, which only filters a watch's change points: a capture keeps the value at every point.</summary>
+    private static void RefuseMinDelta(WatchPropertyTrack[] properties, WatchExpressionTrack[] expressions)
+    {
+        IEnumerable<string> keys = properties
+            .OfType<WatchPropertyTrack>()
+            .Where(track => track.MinDelta is not null)
+            .Select(track => track.Name ?? $"{track.Node}:{track.Property}")
+            .Concat(expressions.OfType<WatchExpressionTrack>().Where(track => track.MinDelta is not null).Select(track => track.Name));
+        if (keys.FirstOrDefault() is { } key)
+        {
+            throw new McpException(
+                "options.tracks reads each track at every point and keeps every value, so minDelta does not apply; " + $"drop it from track '{key}'."
+            );
+        }
     }
 
     /// <summary>
@@ -155,8 +225,9 @@ internal sealed partial class RuntimeTools
     /// (<see cref="BuildWaitParameters(WaitCondition?, int?)"/>), plus then, edge and call when given.
     /// </summary>
     /// <exception cref="McpException">
-    /// The condition is not exactly one kind, or a kind other than exists, property or expression; timeoutMs is out of range;
-    /// then is refused as wait_for's options.then is; edge is given with timeoutMs 0; or call is refused as options.call is.
+    /// The condition is not exactly one kind, or a kind other than exists, property, expression or signal; timeoutMs is out of
+    /// range, or 0 for a signal; then is refused as wait_for's options.then is; edge is given with timeoutMs 0 or a signal; or
+    /// call is refused as options.call is.
     /// </exception>
     internal static JsonObject StartParameters(CaptureStart start)
     {
@@ -179,9 +250,9 @@ internal sealed partial class RuntimeTools
             After: start.After
         );
         string kind = StartKindOf(condition);
-        if (kind is not ("exists" or "property" or "expression"))
+        if (kind is not ("exists" or "property" or "expression" or "signal"))
         {
-            throw new McpException($"options.start takes an exists, property or expression condition; this condition is {kind}.");
+            throw new McpException($"options.start takes an exists, property, expression or signal condition; this condition is {kind}.");
         }
 
         JsonObject parameters = BuildWaitParameters(condition, start.TimeoutMs);
@@ -356,7 +427,7 @@ internal sealed partial class RuntimeTools
             taken[path] = file;
         }
 
-        return new JsonObject
+        JsonObject point = new()
         {
             ["at"] = frame["at"]?.DeepClone(),
             ["frame"] = frame["frame"]?.DeepClone(),
@@ -364,6 +435,15 @@ internal sealed partial class RuntimeTools
             ["gameSeconds"] = frame["gameSeconds"]?.DeepClone(),
             ["late"] = frame["late"]?.DeepClone(),
         };
+        foreach (string key in (string[])["values", "trackErrors"])
+        {
+            if (frame[key] is { } carried)
+            {
+                point[key] = carried.DeepClone();
+            }
+        }
+
+        return point;
     }
 
     private static string Invariant(FormattableString message) => message.ToString(CultureInfo.InvariantCulture);
