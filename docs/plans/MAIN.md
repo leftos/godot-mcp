@@ -8,7 +8,6 @@
 
 ## dropIdle call ledger
 
-- [ ] GMCP-372 dropIdle call ledger (b): cut a dropIdle clip to its in-call ranges, keeping their audio (sub-issue of GMCP-172) · release vNext
 - [ ] GMCP-374 Merge feat/dropidle-call-ledger to main (#274) (sub-issue of GMCP-172)
 
 ## Ideas from the survey and the projects
