@@ -268,6 +268,26 @@ func test_a_reply_frames_later_carries_the_frame_its_request_was_read_in() -> vo
 	_free_bridge(bridge)
 
 
+func test_movie_frame_lists_the_read_frames_of_the_other_unanswered_requests() -> void:
+	var bridge: Node = _recording_bridge()
+	bridge._read_in[3] = 40
+	bridge._read_in[4] = 45
+	bridge.frame_count = 50
+	_request(bridge, 9, "movie_frame", {})
+	assert_eq(bridge.sent.size(), 1, "movie_frame is answered at once")
+	var result: Variant = bridge.sent[0].get("result") if not bridge.sent.is_empty() else null
+	var open: Variant = result.get("open") if result is Dictionary else null
+	assert_true(open is Array, "the reply lists the open requests: %s" % [result])
+	if open is Array:
+		var reads: Dictionary = {}
+		for pair: Variant in open:
+			if pair is Array and pair.size() == 2:
+				reads[pair[0]] = pair[1]
+		assert_eq(open.size(), 2, "one entry per other unanswered request: %s" % [open])
+		assert_eq(reads, {3: 40, 4: 45}, "[id, read] of each, not its own: %s" % [open])
+	_free_bridge(bridge)
+
+
 func test_a_launched_game_never_welcomed_does_not_quit_on_a_lost_connection() -> void:
 	var bridge: Node = _recording_bridge()
 	bridge._endpoint_source = _dormant_script.SOURCE_ENV

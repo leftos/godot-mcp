@@ -37,9 +37,9 @@ internal sealed record RunOptions(
     )]
         bool? Record = null,
     [property: Description(
-        "With record: each cut clip drops every frame identical to the one before it, so the idle time between tool calls "
-            + "disappears and the clip plays the action at real speed. Such clips have no audio, and a deliberate still "
-            + "collapses too. Refused without record."
+        "With record: each cut clip keeps only the frames drawn while a tool call ran, a wait_for gameMs hold included, with their "
+            + "audio, and drops every frame drawn between calls, so the time between tool calls disappears. A game animation that runs "
+            + "only between calls leaves the clip. Refused without record."
     )]
         bool? DropIdle = null,
     [property: Description(

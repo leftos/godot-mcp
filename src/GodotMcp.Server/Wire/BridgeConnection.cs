@@ -54,6 +54,9 @@ internal sealed class BridgeConnection : IAsyncDisposable
 
     public bool IsOpen => !_readLoop.IsCompleted;
 
+    /// <summary>Whether request <paramref name="id"/> was sent and is still awaiting its reply: not answered, timed out or cancelled.</summary>
+    public bool IsPending(long id) => _pending.ContainsKey(id);
+
     /// <summary>Completes once the connection has ended, whichever side closed it.</summary>
     public Task Closed => _readLoop;
 

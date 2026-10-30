@@ -26,7 +26,7 @@ internal sealed record LaunchRequest(
     /// <summary>Whether the run is recorded from launch with Godot's Movie Maker.</summary>
     public bool Record { get; init; }
 
-    /// <summary>Whether the recording's clips drop frames identical to the one before, and their audio.</summary>
+    /// <summary>Whether the recording's clips keep only the frames drawn during tool calls, with their audio.</summary>
     public bool DropIdle { get; init; }
 
     /// <summary>

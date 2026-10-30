@@ -279,6 +279,41 @@ public sealed class BridgeConnectionTests : IDisposable
     }
 
     [Fact]
+    public async Task ARequestIsPendingOnlyUntilItsReplyArrivesOrItTimesOut()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+
+        Task<JsonNode?> answered = connection.SendAsync("ping", new JsonObject(), TimeSpan.FromSeconds(15), cancellation);
+        JsonObject first = await ReadRequiredAsync(bridge, "the answered request", cancellation);
+        long answeredId = first["id"]!.GetValue<long>();
+        bool pendingBeforeItsReply = connection.IsPending(answeredId);
+        await bridge.ReplyAsync(first, new JsonObject(), cancellation);
+        await answered.WaitAsync(Wait, cancellation);
+        bool pendingAfterItsReply = connection.IsPending(answeredId);
+
+        Task<JsonNode?> unanswered = connection.SendAsync(
+            "wait_for",
+            new JsonObject { ["timeoutMs"] = 10_000 },
+            TimeSpan.FromSeconds(15),
+            cancellation
+        );
+        JsonObject second = await ReadRequiredAsync(bridge, "the unanswered request", cancellation);
+        long unansweredId = second["id"]!.GetValue<long>();
+        bool pendingBeforeItsTimeout = connection.IsPending(unansweredId);
+        Run(TimeSpan.FromSeconds(15.2));
+        await Assert.ThrowsAsync<LoadTimeoutException>(() => unanswered.WaitAsync(Wait, cancellation));
+        bool pendingAfterItsTimeout = connection.IsPending(unansweredId);
+
+        Assert.True(pendingBeforeItsReply, "a request awaiting its reply is not pending");
+        Assert.False(pendingAfterItsReply, "a request is still pending after its reply arrived");
+        Assert.True(pendingBeforeItsTimeout, "a request awaiting its reply is not pending");
+        Assert.False(pendingAfterItsTimeout, "a request is still pending after it timed out");
+    }
+
+    [Fact]
     public async Task ARequestWithoutReleaseSendsNoCancel()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

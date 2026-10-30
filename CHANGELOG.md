@@ -18,6 +18,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Changed
 
+- `dropIdle` clips keep every frame drawn during a tool call, `wait_for` holds included, with their audio, and drop only the frames between calls.
 - Installing a new version stops no running server; each keeps its version until `/mcp`, and the install names sessions still on an older one.
 - A real-time recording start refused because the game exited names the game's exit code and its last stderr lines.
 - Calling `stop_project` again on a folder waits once more for a killed game still running, listing any that outlive it in `gameStillRunning`.

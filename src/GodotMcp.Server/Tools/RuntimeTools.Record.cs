@@ -160,22 +160,28 @@ internal sealed partial class RuntimeTools
             mark,
             started,
             token => CallWithErrorsAsync(target, new BridgeCall("record_mark", "movie_frame", [], MovieFrameTimeout), token),
+            target.IsRequestPending,
             cancellationToken
         );
 
-    /// <summary>Marks with <paramref name="requestFrame"/>, which asks the game for the movie frame it has reached.</summary>
+    /// <summary>
+    /// Marks with <paramref name="requestFrame"/>, which asks the game for the movie frame it has reached, after closing at that
+    /// frame each request the reply lists as unanswered that <paramref name="isPending"/> says the server still awaits.
+    /// </summary>
     internal static async Task<string> MarkMovieAsync(
         GodotSession target,
         Recording recording,
         string mark,
         RecordMarkOptions? started,
         Func<CancellationToken, Task<BridgeResult>> requestFrame,
+        Func<long, bool> isPending,
         CancellationToken cancellationToken
     )
     {
         OutputTarget? destination = CheckedClipTarget(target, recording, started);
         BridgeResult result = await requestFrame(cancellationToken);
         long frame = ReadMovieFrame(result.Reply);
+        CloseOpenCalls(recording, result.Reply?["open"], frame, isPending);
         try
         {
             MarkResult marked = recording.Mark(mark, frame, destination, started?.Overwrite ?? false);
@@ -210,6 +216,31 @@ internal sealed partial class RuntimeTools
     /// <exception cref="McpException">The reply has no whole, non-negative frame.</exception>
     internal static long ReadMovieFrame(JsonNode? reply) =>
         WholeFrame(reply?["frame"]) ?? throw new McpException($"The bridge's movie_frame reply has no frame: {reply?.ToJsonString() ?? "null"}.");
+
+    /// <summary>
+    /// Notes each <c>[id, read]</c> request the movie_frame reply lists as still unanswered as a call from the frame it was read in
+    /// to the mark's <paramref name="frame"/>. An entry of any other shape, read after the mark's frame, or whose id
+    /// <paramref name="isPending"/> says the server no longer awaits (a request that timed out because its handler died), is skipped.
+    /// </summary>
+    private static void CloseOpenCalls(Recording recording, JsonNode? open, long frame, Func<long, bool> isPending)
+    {
+        if (open is not JsonArray entries)
+        {
+            return;
+        }
+
+        foreach (JsonNode? entry in entries)
+        {
+            if (OpenRequest(entry) is ({ } id, { } read) && read <= frame && isPending(id))
+            {
+                recording.AddCall(read, frame);
+            }
+        }
+    }
+
+    /// <summary>The id and read frame of one <c>[id, read]</c> entry of the movie_frame reply's open list; nulls for any other shape.</summary>
+    private static (long? Id, long? Read) OpenRequest(JsonNode? entry) =>
+        entry is JsonArray { Count: 2 } pair ? (WholeFrame(pair[0]), WholeFrame(pair[1])) : (null, null);
 
     /// <summary>A whole, non-negative frame number, which GDScript's JSON may send as a float; null for anything else.</summary>
     private static long? WholeFrame(JsonNode? node) =>

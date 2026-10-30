@@ -1,12 +1,14 @@
 using System.ComponentModel;
 using System.Globalization;
+using System.Text;
 using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Session;
 
 /// <summary>
 /// Cuts a finished recording into its marked clips with ffmpeg, each encoded to H.264 and AAC in an .mp4; with the
-/// recording's <see cref="Recording.DropIdle"/>, frames identical to the one before are dropped and so is the audio. A clip
+/// recording's <see cref="Recording.DropIdle"/>, the frames drawn between tool calls are dropped and the frames drawn during
+/// a call (<see cref="Recording.CallRanges"/>) are kept with their audio, video and audio cut on the same ranges. A clip
 /// whose encode fails is cut by stream copy to an .avi instead: every MJPEG frame is a keyframe and the audio is PCM, so a copy
 /// cuts at any frame. The full movie is deleted once every clip is cut; without marks it is the result. A missing ffmpeg or
 /// a failed copy keeps the full movie and is reported in the result, never thrown: the run's stop has already succeeded.
@@ -31,8 +33,8 @@ internal static class RecordingCut
     /// <summary>yuv420p needs an even width and height; a window of odd size loses its last row or column.</summary>
     private const string EvenSize = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
 
-    /// <summary>Drops frames identical to the one before, then numbers the rest one 1/60 s frame apart.</summary>
-    private static readonly string DropIdleFilter = $"mpdecimate,setpts=N/{GodotCommandLine.MovieFramesPerSecond}/TB,{EvenSize}";
+    /// <summary>How the dropIdle filter scripts are written: UTF-8 without a byte order mark.</summary>
+    private static readonly UTF8Encoding ScriptEncoding = new(encoderShouldEmitUTF8Identifier: false);
 
     private static readonly CutStep EncodeStep = new("encoding", "", "");
     private static readonly CutStep CopyStep = new("cutting", "; the full file is kept", " The full file is kept.");
@@ -59,14 +61,16 @@ internal static class RecordingCut
 
     /// <summary>
     /// ffmpeg's arguments for one clip's encode: the frames from the start frame up to, not including, the stop frame (to the
-    /// end without one), as H.264 in an .mp4, with AAC audio, or with idle frames and audio dropped. -ss and -to are input
-    /// options, so the filters see only the clip's frames: with -accurate_seek, the default when transcoding, the frames
-    /// between the seek point and -ss are decoded and discarded (ffmpeg.html, -ss and -accurate_seek), and -to stops reading
-    /// the input there. As output options they would trim the filters' output, whose timestamps idle dropping renumbers.
-    /// Each boundary sits half a frame before its frame's timestamp (frame / 60 s), so rounding never moves it onto the
-    /// neighbouring frame.
+    /// end without one), as H.264 in an .mp4, with AAC audio. With <paramref name="dropIdle"/>, the video and audio filters
+    /// are read from its scripts (ffmpeg's -/vf and -/af), which keep only the frames drawn during calls and their audio. -ss
+    /// and -to are input options, so the filters see only the clip's frames, counted from its start frame: with
+    /// -accurate_seek, the default when transcoding, the frames between the seek point and -ss are decoded and discarded
+    /// (ffmpeg.html, -ss and -accurate_seek), and -to stops reading the input there. As output options they would trim the
+    /// filters' output, whose timestamps idle dropping renumbers. Each boundary sits a quarter frame before its frame's timestamp
+    /// (frame / 60 s), so the microsecond and timebase rounding never moves it onto the neighbouring frame; the clip's last
+    /// frame's audio therefore ends a quarter frame early, at the -to.
     /// </summary>
-    public static List<string> EncodeArguments(string moviePath, ClipSpan span, string clipPath, bool dropIdle)
+    public static List<string> EncodeArguments(string moviePath, ClipSpan span, string clipPath, DropIdleScripts? dropIdle)
     {
         List<string> arguments = ["-hide_banner", "-nostdin", "-y", "-ss", BoundarySeconds(span.StartFrame)];
         if (span.StopFrame is { } stop)
@@ -74,17 +78,47 @@ internal static class RecordingCut
             arguments.AddRange(["-to", BoundarySeconds(stop)]);
         }
 
-        string[] audio = dropIdle ? ["-an"] : ["-c:a", "aac"];
-        arguments.AddRange(["-i", moviePath, "-vf", dropIdle ? DropIdleFilter : EvenSize]);
-        arguments.AddRange(["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", .. audio]);
+        string[] filters = dropIdle is null ? ["-vf", EvenSize] : ["-/vf", dropIdle.Video, "-/af", dropIdle.Audio];
+        arguments.AddRange(["-i", moviePath, .. filters]);
+        arguments.AddRange(["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac"]);
         arguments.AddRange(["-movflags", "+faststart", clipPath]);
         return arguments;
     }
 
     /// <summary>
+    /// The n-th clip's dropIdle filter scripts, beside the full movie: <c>&lt;stem&gt;-clip&lt;n&gt;.vf.txt</c> for the video and
+    /// <c>&lt;stem&gt;-clip&lt;n&gt;.af.txt</c> for the audio.
+    /// </summary>
+    public static DropIdleScripts DropIdleScriptsFor(string moviePath, int number) =>
+        new(ClipPathWith(moviePath, number, ".vf.txt"), ClipPathWith(moviePath, number, ".af.txt"));
+
+    /// <summary>
+    /// The dropIdle filters for a clip from <paramref name="startFrame"/>: the video keeps the frames of
+    /// <paramref name="ranges"/>, counted from the clip's first frame, and numbers them one 1/60 s frame apart; the audio keeps
+    /// the same ranges as times and renumbers its samples. Movie Maker writes one audio chunk per frame, and after the seek a
+    /// quarter frame before the start frame the chunk of frame f starts at (f - seek) / 60 s, with a piece of the frame before
+    /// at 0 s: each audio bound sits midway between two chunks' starts, so rounding never moves it onto a chunk. Without ranges
+    /// the start frame alone is kept, so the selection is never empty.
+    /// </summary>
+    internal static (string Video, string Audio) DropIdleFilters(IReadOnlyList<FrameRange> ranges, long startFrame)
+    {
+        IReadOnlyList<FrameRange> kept = ranges.Count > 0 ? ranges : [new FrameRange(startFrame, startFrame)];
+        double seek = SeekFrames(startFrame);
+        string frames = string.Join(
+            "+",
+            kept.Select(range => string.Create(CultureInfo.InvariantCulture, $@"between(n\,{range.From - startFrame}\,{range.To - startFrame})"))
+        );
+        string times = string.Join(
+            "+",
+            kept.Select(range => $@"between(t\,{FrameSeconds(AudioFrom(range.From, startFrame, seek))}\,{FrameSeconds(range.To + 0.5 - seek)})")
+        );
+        return ($"select={frames},setpts=N/{GodotCommandLine.MovieFramesPerSecond}/TB,{EvenSize}", $"aselect={times},asetpts=N/SR/TB");
+    }
+
+    /// <summary>
     /// ffmpeg's arguments for one clip's copy, the fallback when its encode fails: the streams copied from the start frame up
     /// to, not including, the stop frame (to the end without one). As output options, -ss drops packets before it and -to
-    /// stops at it; each sits half a frame before its frame's timestamp, as in <see cref="EncodeArguments"/>.
+    /// stops at it; each sits a quarter frame before its frame's timestamp, as in <see cref="EncodeArguments"/>.
     /// </summary>
     public static List<string> CopyArguments(string moviePath, ClipSpan span, string clipPath)
     {
@@ -228,22 +262,33 @@ internal static class RecordingCut
     }
 
     /// <summary>
-    /// Encodes the <paramref name="number"/>-th clip, or copies it when the encode fails.
+    /// Encodes the <paramref name="number"/>-th clip, or copies it when the encode fails. With the recording's
+    /// <see cref="Recording.DropIdle"/>, its filter scripts are written before the encode and deleted after it.
     /// </summary>
     /// <returns>The clip's file, null when the copy failed too; and what went wrong on the way.</returns>
     private static async Task<ClipOutcome> CutClipAsync(CutContext context, ClipSpan span, int number, CancellationToken cancellationToken)
     {
         Recording recording = context.Recording;
         string encoded = ClipPath(recording.Path, number);
-        List<string> encode = EncodeArguments(recording.Path, span, encoded, recording.DropIdle);
-        string? encodeError = await RunAsync(context, Request(context, encode, span, append: number > 1), encoded, EncodeStep, cancellationToken);
-        if (encodeError is null)
+        DropIdleScripts? scripts = recording.DropIdle ? DropIdleScriptsFor(recording.Path, number) : null;
+        string? encodeError;
+        List<string> leftovers;
+        try
         {
-            return new ClipOutcome(encoded, []);
+            encodeError = await EncodeAsync(context, span, number, scripts, cancellationToken);
+        }
+        finally
+        {
+            leftovers = scripts is null ? [] : DeleteScripts(scripts);
         }
 
-        List<string> notes = [encodeError];
-        if (DeletePartial(encoded) is { } partial)
+        if (encodeError is null)
+        {
+            return new ClipOutcome(encoded, leftovers);
+        }
+
+        List<string> notes = [encodeError, .. leftovers];
+        if (DeleteNote(encoded, "partial") is { } partial)
         {
             notes.Add(partial);
         }
@@ -259,6 +304,39 @@ internal static class RecordingCut
         string idle = recording.DropIdle ? ", its idle frames kept," : "";
         return new ClipOutcome(copied, [.. notes, $"Clip {number} was copied to {copied}{idle} as recorded instead."]);
     }
+
+    /// <returns>Why ffmpeg did not encode the <paramref name="number"/>-th clip, or null when it did.</returns>
+    private static async Task<string?> EncodeAsync(
+        CutContext context,
+        ClipSpan span,
+        int number,
+        DropIdleScripts? scripts,
+        CancellationToken cancellationToken
+    )
+    {
+        Recording recording = context.Recording;
+        string encoded = ClipPath(recording.Path, number);
+        if (scripts is not null)
+        {
+            (string video, string audio) = DropIdleFilters(recording.CallRanges(span), span.StartFrame);
+            try
+            {
+                await File.WriteAllTextAsync(scripts.Video, video, ScriptEncoding, cancellationToken);
+                await File.WriteAllTextAsync(scripts.Audio, audio, ScriptEncoding, cancellationToken);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return $"The dropIdle filters for {encoded} could not be written: {e.Message}";
+            }
+        }
+
+        List<string> encode = EncodeArguments(recording.Path, span, encoded, scripts);
+        return await RunAsync(context, Request(context, encode, span, append: number > 1), encoded, EncodeStep, cancellationToken);
+    }
+
+    /// <returns>Why either of the clip's filter scripts could not be deleted; empty when both are gone.</returns>
+    private static List<string> DeleteScripts(DropIdleScripts scripts) =>
+        [.. new[] { scripts.Video, scripts.Audio }.Select(script => DeleteNote(script, "filter script")).OfType<string>()];
 
     private static ToolProcessRequest Request(CutContext context, List<string> arguments, ClipSpan span, bool append) =>
         new(context.Ffmpeg, arguments, Path.GetDirectoryName(context.Recording.Path)!, LogPath(context.Recording.Path), CeilingFor(span))
@@ -309,17 +387,17 @@ internal static class RecordingCut
         }
     }
 
-    /// <returns>Why a failed encode's partial file could not be deleted, or null when it is gone.</returns>
-    private static string? DeletePartial(string clipPath)
+    /// <returns>Why the <paramref name="kind"/> file at <paramref name="path"/> could not be deleted, or null when it is gone.</returns>
+    private static string? DeleteNote(string path, string kind)
     {
         try
         {
-            File.Delete(clipPath);
+            File.Delete(path);
             return null;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            return $"The partial {clipPath} could not be deleted: {e.Message}";
+            return $"The {kind} {path} could not be deleted: {e.Message}";
         }
     }
 
@@ -356,8 +434,28 @@ internal static class RecordingCut
     private static string ClipPathWith(string moviePath, int number, string extension) =>
         Path.Combine(Path.GetDirectoryName(moviePath)!, $"{Path.GetFileNameWithoutExtension(moviePath)}-clip{number}{extension}");
 
-    private static string BoundarySeconds(long frame) =>
-        Math.Max(0, (frame - 0.5) / GodotCommandLine.MovieFramesPerSecond).ToString("0.######", CultureInfo.InvariantCulture);
+    /// <summary>
+    /// A seek or stop boundary a quarter frame before its frame's timestamp, so the microsecond and timebase rounding never
+    /// moves it onto the neighbouring frame.
+    /// </summary>
+    private static string BoundarySeconds(long frame) => FrameSeconds(SeekFrames(frame));
+
+    /// <summary>Where a boundary at <paramref name="frame"/> sits, in frames: a quarter frame before it, never before the movie.</summary>
+    private static double SeekFrames(long frame) => Math.Max(0, frame - 0.25);
+
+    /// <summary>
+    /// The audio time, in frames after the seek, a range from <paramref name="from"/> starts at: midway between the piece of the
+    /// frame before the start frame and the start frame's chunk for a range from the start frame, else midway between the
+    /// chunks of the frame before and of <paramref name="from"/>.
+    /// </summary>
+    private static double AudioFrom(long from, long startFrame, double seek) => from == startFrame ? (startFrame - seek) / 2 : from - 0.5 - seek;
+
+    /// <summary>A movie frame's time in seconds, as ffmpeg reads it: up to six decimals, invariant culture.</summary>
+    private static string FrameSeconds(double frame) =>
+        (frame / GodotCommandLine.MovieFramesPerSecond).ToString("0.######", CultureInfo.InvariantCulture);
+
+    /// <summary>The files a dropIdle encode reads its video and audio filters from.</summary>
+    internal sealed record DropIdleScripts(string Video, string Audio);
 
     /// <summary>
     /// What a failed step was doing, and what its failure message adds: <see cref="Consequence"/> before the log's path,

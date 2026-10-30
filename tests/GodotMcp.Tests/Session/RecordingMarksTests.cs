@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Runtime.Versioning;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -66,6 +67,7 @@ public sealed class RecordingMarksTests
                     asked = true;
                     return Task.FromResult(new RuntimeTools.BridgeResult(JsonNode.Parse("""{"frame": 30}"""), []));
                 },
+                _ => true,
                 TestContext.Current.CancellationToken
             )
         );
@@ -73,6 +75,37 @@ public sealed class RecordingMarksTests
         Assert.Equal(expected, refused.Message);
         Assert.False(asked, "the game was asked for the movie frame before the path was refused");
         Assert.Equal(clipsBefore, recording.Clips().Count);
+    }
+
+    [Theory]
+    [InlineData("""{"frame": 100, "open": [[7, 90], [8, 95]]}""", true)]
+    [InlineData("""{"frame": 100, "open": [[7, 90], [9, 80]]}""", true)]
+    [InlineData("""{"frame": 100, "open": [[9, 80]]}""", false)]
+    [InlineData("""{"frame": 100, "open": [[7, 120], [7, 1.5], [7, -1], [7], [7, 90, 1], [1.5, 90], [-1, 90], ["x", 90], 90, "x"]}""", false)]
+    [InlineData("""{"frame": 100, "open": "x"}""", false)]
+    [InlineData("""{"frame": 100}""", false)]
+    public async Task AMarkClosesTheOpenRequestsStillPendingAtItsFrame(string movieFrameReply, bool closes)
+    {
+        // Request 9 is no longer pending on the server (it timed out), so the bridge's stale entry for it is skipped.
+        await using RegistryHarness harness = new();
+        string project = harness.Project("game");
+        using FakeBridge game = await harness.AttachFakeGameAsync(project, "game", new FakeHello());
+        GodotSession session = harness.Sessions.Resolve("game");
+        Recording recording = new(Path.Combine(project, ".godot", "godot-mcp", "recordings", "movie.avi"));
+
+        await RuntimeTools.MarkMovieAsync(
+            session,
+            recording,
+            Recording.StartMark,
+            null,
+            _ => Task.FromResult(new RuntimeTools.BridgeResult(JsonNode.Parse(movieFrameReply), [])),
+            id => id != 9,
+            TestContext.Current.CancellationToken
+        );
+
+        FrameRange[] expected = closes ? [new FrameRange(90, 100)] : [];
+        Assert.Equal(expected, recording.CallRanges(new ClipSpan(0, null)));
+        Assert.Equal([new ClipSpan(100, null)], recording.Clips());
     }
 
     [Theory]
@@ -271,7 +304,7 @@ public sealed class RecordingMarksTests
         recording.Mark("start", 120);
 
         IReadOnlyList<ClipSpan> clips = recording.Clips();
-        List<string> encode = RecordingCut.EncodeArguments(Movie, clips[1], RecordingCut.ClipPath(Movie, 2), dropIdle: false);
+        List<string> encode = RecordingCut.EncodeArguments(Movie, clips[1], RecordingCut.ClipPath(Movie, 2), dropIdle: null);
         List<string> copy = RecordingCut.CopyArguments(Movie, clips[1], RecordingCut.FallbackClipPath(Movie, 2));
 
         Assert.Equal([new ClipSpan(0, 60), new ClipSpan(120, null)], clips);
@@ -323,26 +356,118 @@ public sealed class RecordingMarksTests
     {
         string clip = RecordingCut.ClipPath(Movie, 1);
 
-        List<string> fromTheFirstFrame = RecordingCut.EncodeArguments(Movie, new ClipSpan(0, 30), clip, dropIdle: false);
-        List<string> between = RecordingCut.EncodeArguments(Movie, new ClipSpan(90, 150), clip, dropIdle: false);
+        List<string> fromTheFirstFrame = RecordingCut.EncodeArguments(Movie, new ClipSpan(0, 30), clip, dropIdle: null);
+        List<string> between = RecordingCut.EncodeArguments(Movie, new ClipSpan(90, 150), clip, dropIdle: null);
 
-        // Each boundary sits half a frame before its frame: frame 90 is at 1.5 s, frame 150 at 2.5 s.
+        // Each boundary sits a quarter frame before its frame: frame 90 is at 1.5 s, frame 150 at 2.5 s.
         Assert.Equal(@"C:\Games\Probe\.godot\godot-mcp\recordings\20260926-120000-000-Probe-clip1.mp4", clip);
-        Assert.Equal([.. Head("0", "0.491667"), .. Encode(EvenSize), "-c:a", "aac", "-movflags", "+faststart", clip], fromTheFirstFrame);
-        Assert.Equal([.. Head("1.491667", "2.491667"), .. Encode(EvenSize), "-c:a", "aac", "-movflags", "+faststart", clip], between);
+        Assert.Equal([.. Head("0", "0.495833"), .. Encode(EvenSize), "-c:a", "aac", "-movflags", "+faststart", clip], fromTheFirstFrame);
+        Assert.Equal([.. Head("1.495833", "2.495833"), .. Encode(EvenSize), "-c:a", "aac", "-movflags", "+faststart", clip], between);
     }
 
     [Fact]
-    public void DropIdleDecimatesAndDropsTheAudio()
+    public void DropIdleReadsItsFiltersFromScriptsAndKeepsTheAudio()
     {
         string clip = RecordingCut.ClipPath(Movie, 1);
+        RecordingCut.DropIdleScripts scripts = RecordingCut.DropIdleScriptsFor(Movie, 1);
 
-        List<string> arguments = RecordingCut.EncodeArguments(Movie, new ClipSpan(90, 150), clip, dropIdle: true);
+        List<string> arguments = RecordingCut.EncodeArguments(Movie, new ClipSpan(90, 150), clip, scripts);
 
         Assert.Equal(
-            [.. Head("1.491667", "2.491667"), .. Encode($"mpdecimate,setpts=N/60/TB,{EvenSize}"), "-an", "-movflags", "+faststart", clip],
+            new RecordingCut.DropIdleScripts(
+                @"C:\Games\Probe\.godot\godot-mcp\recordings\20260926-120000-000-Probe-clip1.vf.txt",
+                @"C:\Games\Probe\.godot\godot-mcp\recordings\20260926-120000-000-Probe-clip1.af.txt"
+            ),
+            scripts
+        );
+        Assert.Equal(
+            [
+                .. Head("1.495833", "2.495833"),
+                "-/vf",
+                scripts.Video,
+                "-/af",
+                scripts.Audio,
+                .. Encode(EvenSize)[2..],
+                "-c:a",
+                "aac",
+                "-movflags",
+                "+faststart",
+                clip,
+            ],
             arguments
         );
+    }
+
+    [Fact]
+    public void DropIdleFiltersKeepTheCallRangesCountedFromTheClipsStart()
+    {
+        (string video, string audio) = RecordingCut.DropIdleFilters([new FrameRange(90, 90), new FrameRange(130, 149)], 90);
+
+        // The seek is a quarter frame before frame 90, so each audio bound sits midway between two chunks' timestamps.
+        Assert.Equal(@"select=between(n\,0\,0)+between(n\,40\,59),setpts=N/60/TB,scale=trunc(iw/2)*2:trunc(ih/2)*2", video);
+        Assert.Equal(@"aselect=between(t\,0.002083\,0.0125)+between(t\,0.6625\,0.995833),asetpts=N/SR/TB", audio);
+    }
+
+    [Fact]
+    public void DropIdleFiltersFromTheMoviesFirstFrameStartTheAudioAtZero()
+    {
+        (string video, string audio) = RecordingCut.DropIdleFilters([new FrameRange(0, 0), new FrameRange(40, 59)], 0);
+
+        Assert.Equal(@"select=between(n\,0\,0)+between(n\,40\,59),setpts=N/60/TB,scale=trunc(iw/2)*2:trunc(ih/2)*2", video);
+        Assert.Equal(@"aselect=between(t\,0\,0.008333)+between(t\,0.658333\,0.991667),asetpts=N/SR/TB", audio);
+    }
+
+    [Fact]
+    public void DropIdleFiltersWithoutCallsKeepTheStartFrame()
+    {
+        (string video, string audio) = RecordingCut.DropIdleFilters([], 90);
+
+        Assert.Equal(@"select=between(n\,0\,0),setpts=N/60/TB,scale=trunc(iw/2)*2:trunc(ih/2)*2", video);
+        Assert.Equal(@"aselect=between(t\,0.002083\,0.0125),asetpts=N/SR/TB", audio);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(8)]
+    public async Task DropIdleScriptsLastOnlyAsLongAsTheEncode(int encodeExitCode)
+    {
+        using TempDirectory directory = new();
+        string movie = Path.Combine(directory.Path, "20260926-120000-000-Probe.avi");
+        await File.WriteAllTextAsync(movie, "movie", TestContext.Current.CancellationToken);
+        Recording recording = new(movie) { DropIdle = true };
+        recording.Mark("start", 90);
+        recording.AddCall(90, 90);
+        recording.AddCall(130, 149);
+        recording.Mark("stop", 150);
+        RecordingCut.DropIdleScripts scripts = RecordingCut.DropIdleScriptsFor(movie, 1);
+        List<(IReadOnlyList<string> Arguments, string? Video, string? Audio)> runs = [];
+
+        RecordingResult result = await RecordingCut.CutClipsAsync(
+            recording,
+            "ffmpeg.exe",
+            (request, _) =>
+            {
+                runs.Add((request.Arguments, ReadScript(scripts.Video), ReadScript(scripts.Audio)));
+                int exitCode = runs.Count == 1 ? encodeExitCode : 0;
+                return Task.FromResult(new ToolProcessResult(exitCode, TimeSpan.Zero, KillReason.None));
+            },
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.Equal(encodeExitCode == 0 ? 1 : 2, runs.Count);
+        Assert.Contains("-/vf", runs[0].Arguments);
+        Assert.Equal(@"select=between(n\,0\,0)+between(n\,40\,59),setpts=N/60/TB,scale=trunc(iw/2)*2:trunc(ih/2)*2", runs[0].Video);
+        Assert.Equal(@"aselect=between(t\,0.002083\,0.0125)+between(t\,0.6625\,0.995833),asetpts=N/SR/TB", runs[0].Audio);
+        if (runs.Count == 2)
+        {
+            Assert.Null(runs[1].Video);
+            Assert.Null(runs[1].Audio);
+        }
+
+        Assert.False(File.Exists(scripts.Video), "the video filter script was left behind");
+        Assert.False(File.Exists(scripts.Audio), "the audio filter script was left behind");
+        string expectedClip = encodeExitCode == 0 ? RecordingCut.ClipPath(movie, 1) : RecordingCut.FallbackClipPath(movie, 1);
+        Assert.Equal([expectedClip], result.Clips!);
     }
 
     [Fact]
@@ -354,8 +479,8 @@ public sealed class RecordingMarksTests
         List<string> between = RecordingCut.CopyArguments(Movie, new ClipSpan(90, 150), clip);
 
         Assert.Equal(@"C:\Games\Probe\.godot\godot-mcp\recordings\20260926-120000-000-Probe-clip1.avi", clip);
-        Assert.Equal(["-hide_banner", "-nostdin", "-y", "-i", Movie, "-ss", "0", "-to", "0.491667", "-c", "copy", clip], fromTheFirstFrame);
-        Assert.Equal(["-hide_banner", "-nostdin", "-y", "-i", Movie, "-ss", "1.491667", "-to", "2.491667", "-c", "copy", clip], between);
+        Assert.Equal(["-hide_banner", "-nostdin", "-y", "-i", Movie, "-ss", "0", "-to", "0.495833", "-c", "copy", clip], fromTheFirstFrame);
+        Assert.Equal(["-hide_banner", "-nostdin", "-y", "-i", Movie, "-ss", "1.495833", "-to", "2.495833", "-c", "copy", clip], between);
     }
 
     [Fact]
@@ -653,6 +778,9 @@ public sealed class RecordingMarksTests
     private const string EvenSize = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
 
     private static string[] Head(string start, string stop) => ["-hide_banner", "-nostdin", "-y", "-ss", start, "-to", stop, "-i", Movie];
+
+    /// <summary>A filter script's exact text, a byte order mark included; null when it does not exist.</summary>
+    private static string? ReadScript(string path) => File.Exists(path) ? Encoding.UTF8.GetString(File.ReadAllBytes(path)) : null;
 
     private static string[] Encode(string filter) => ["-vf", filter, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"];
 

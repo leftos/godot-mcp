@@ -113,19 +113,40 @@ public sealed class RecordingTests : IAsyncDisposable
         await Task.Delay(1000, cancellation);
         await FrameAsync("step", 10);
         long stop = await MarkAsync("stop");
+        long kept = CallFrames(start, stop);
 
         StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
 
-        RecordingResult recording = stopped.Recording ?? throw new InvalidOperationException("stop_project returned no recording.");
-        Assert.Null(recording.Error);
-        string clip = Assert.Single(recording.Clips!);
-        Assert.Equal(RecordingCut.ClipPath(launched.Recording!.Path!, 1), clip);
-        IReadOnlyList<ProbedStream> streams = await ProbeAsync(clip);
-        ProbedStream video = Assert.Single(streams);
+        IReadOnlyList<ProbedStream> streams = await ProbeClipAsync(stopped, launched);
+        ProbedStream video = Assert.Single(streams, stream => stream.Type == "video");
         Assert.Equal("h264", video.Codec);
-        Assert.True(stop - start > 40, $"the marks at {start} and {stop} do not span the idle second");
-        // The still frame at the start mark and the 10 stepped ones: measured 11 kept of a 253-frame span (2026-09-27).
-        Assert.InRange(video.Packets, 10, 12);
+        AssertAacAudioSpansTheVideo(streams);
+        // The frames drawn during calls between the marks are kept, the idle second between them is not.
+        Assert.Equal(kept, video.Packets);
+        Assert.True(kept < stop - start, $"the clip keeps {kept} frames of the {stop - start} between the marks, so no idle frame was dropped");
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ADropIdleClipKeepsAHoldInsideACallAndDropsTheGapsBetweenCalls()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        LaunchResult launched = await LaunchAsync(record: true, dropIdle: true);
+        long start = await MarkAsync("start");
+        await Task.Delay(1000, cancellation);
+        await _tools.WaitForAsync(new WaitCondition(GameMs: 500), null, null, cancellation);
+        await Task.Delay(1000, cancellation);
+        long stop = await MarkAsync("stop");
+        long kept = CallFrames(start, stop);
+
+        StopResult stopped = await _harness.Sessions.StopAsync(null, cancellation);
+
+        IReadOnlyList<ProbedStream> streams = await ProbeClipAsync(stopped, launched);
+        ProbedStream video = Assert.Single(streams, stream => stream.Type == "video");
+        AssertAacAudioSpansTheVideo(streams);
+        Assert.Equal(kept, video.Packets);
+        // 500 ms of game time is 30 movie frames, all drawn while the wait_for call ran.
+        Assert.True(kept >= 500 * GodotCommandLine.MovieFramesPerSecond / 1000, $"the clip keeps {kept} frames, fewer than the 500 ms hold");
+        Assert.True(kept < stop - start, $"the clip keeps {kept} frames of the {stop - start} between the marks, so no gap was dropped");
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -490,6 +511,40 @@ public sealed class RecordingTests : IAsyncDisposable
         return reply["frame"]!.GetValue<long>();
     }
 
+    /// <summary>How many frames of the running recording were drawn during calls, from the start mark's frame up to the stop's.</summary>
+    private long CallFrames(long start, long stop)
+    {
+        Recording recording = _harness.Sessions.Resolve(null).ActiveRecording ?? throw new InvalidOperationException("the run is not recording.");
+        return recording.CallRanges(new ClipSpan(start, stop)).Sum(range => range.To - range.From + 1);
+    }
+
+    /// <summary>
+    /// A dropIdle clip's audio is AAC and lasts as long as its video, within 0.05 s: its audio was cut on the same ranges as
+    /// the video.
+    /// </summary>
+    private static void AssertAacAudioSpansTheVideo(IReadOnlyList<ProbedStream> streams)
+    {
+        ProbedStream video = Assert.Single(streams, stream => stream.Type == "video");
+        ProbedStream audio = Assert.Single(streams, stream => stream.Type == "audio");
+        Assert.Equal("aac", audio.Codec);
+        double videoSeconds = video.Duration ?? throw new InvalidOperationException("ffprobe gave the clip's video no duration.");
+        double audioSeconds = audio.Duration ?? throw new InvalidOperationException("ffprobe gave the clip's audio no duration.");
+        Assert.True(
+            Math.Abs(audioSeconds - videoSeconds) <= 0.05,
+            $"the clip's audio lasts {audioSeconds} s and its video {videoSeconds} s, more than 0.05 s apart"
+        );
+    }
+
+    /// <summary>The streams of the one clip a stopped dropIdle recording was cut into, checked to be where it belongs.</summary>
+    private static async Task<IReadOnlyList<ProbedStream>> ProbeClipAsync(StopResult stopped, LaunchResult launched)
+    {
+        RecordingResult recording = stopped.Recording ?? throw new InvalidOperationException("stop_project returned no recording.");
+        Assert.Null(recording.Error);
+        string clip = Assert.Single(recording.Clips!);
+        Assert.Equal(RecordingCut.ClipPath(launched.Recording!.Path!, 1), clip);
+        return await ProbeAsync(clip);
+    }
+
     private static string Text(IEnumerable<ContentBlock> blocks) => string.Concat(blocks.OfType<TextContentBlock>().Select(block => block.Text));
 
     private async Task FrameAsync(string action, int? count) =>
@@ -518,7 +573,7 @@ public sealed class RecordingTests : IAsyncDisposable
                 "error",
                 "-count_packets",
                 "-show_entries",
-                "stream=codec_type,codec_name,r_frame_rate,nb_read_packets",
+                "stream=codec_type,codec_name,r_frame_rate,nb_read_packets,duration",
                 "-of",
                 "json",
                 file,
@@ -544,10 +599,19 @@ public sealed class RecordingTests : IAsyncDisposable
                     stream.GetProperty("codec_type").GetString()!,
                     stream.GetProperty("codec_name").GetString()!,
                     stream.GetProperty("r_frame_rate").GetString()!,
-                    long.Parse(stream.GetProperty("nb_read_packets").GetString()!, CultureInfo.InvariantCulture)
+                    long.Parse(stream.GetProperty("nb_read_packets").GetString()!, CultureInfo.InvariantCulture),
+                    Seconds(stream)
                 )),
         ];
     }
 
-    private sealed record ProbedStream(string Type, string Codec, string FrameRate, long Packets);
+    /// <summary>The stream's duration in seconds; null when ffprobe gives none (an .avi's streams may have none).</summary>
+    private static double? Seconds(JsonElement stream) =>
+        stream.TryGetProperty("duration", out JsonElement duration)
+        && double.TryParse(duration.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double seconds)
+            ? seconds
+            : null;
+
+    /// <summary>A stream as ffprobe reads it: its type, codec, frame rate, packet count and duration (null when it has none).</summary>
+    private sealed record ProbedStream(string Type, string Codec, string FrameRate, long Packets, double? Duration);
 }

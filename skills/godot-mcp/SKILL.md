@@ -136,7 +136,7 @@ A `wait` assertion takes any `wait_for` condition, `{output}` included: the serv
 
 **Recording.** `run_project {options: {record: true}}` records a movie at a fixed 60 fps (game time then no longer matches wall time; `wait_for`'s `timeoutMs` and gesture durations count clip time, so an `expression: "false"` wait of 1500 ms holds a 1.5 s still); `record_mark` `start`/`stop` pairs become `.mp4` clips when the run ends.
 
-Add `dropIdle: true` beside `record` to cut the idle frames drawn between your tool calls out of each clip (the clip then plays just the action, silent); leave it out when a still moment or the sound matters.
+Add `dropIdle: true` beside `record` to cut the frames drawn between your tool calls out of each clip (the clip keeps only what was drawn while a call ran, a `wait_for` hold included, with its audio); leave it out when the moment you want runs between calls, such as a game animation you let play while you think.
 
 To open (or close) a movie clip on the very frame a condition comes true, give that `wait_for` `options.then.record {mark: "start" | "stop", path?, overwrite?}` rather than a `record_mark` after it, which would start frames later; the result's `then.record` is `record_mark`'s movie result, or `{mark, error}` when the mark fails after the wait met (the wait stays met). It is refused before the wait on a real-time recording or none.
 

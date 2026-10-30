@@ -50,7 +50,7 @@ internal sealed class Recording(string path)
     /// <summary>The full movie's absolute path.</summary>
     public string Path { get; } = path;
 
-    /// <summary>Whether the cut clips drop frames identical to the one before, and their audio.</summary>
+    /// <summary>Whether the cut clips keep only the frames drawn during tool calls, with their audio.</summary>
     public bool DropIdle { get; init; }
 
     /// <summary>How the recording ended; null while its run goes on.</summary>

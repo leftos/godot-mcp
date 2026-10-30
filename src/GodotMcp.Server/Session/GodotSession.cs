@@ -601,6 +601,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         return _run is { IsRunning: true, Connection: { IsOpen: true } live } ? live : throw new SessionException(NoneRunning);
     }
 
+    /// <summary>Whether the live run's bridge connection still awaits the reply to request <paramref name="id"/>; false with no live run.</summary>
+    internal bool IsRequestPending(long id) => _run is { IsRunning: true, Connection: { IsOpen: true } live } && live.IsPending(id);
+
     /// <summary>Releases the override file after a failed start and, when nothing started, drops the session from the registry.</summary>
     /// <returns>Whether the override file was removed; a failed removal is logged, so the start's own error reaches the caller.</returns>
     private bool AbandonStart(bool forget)

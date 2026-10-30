@@ -657,9 +657,14 @@ func _handle_welcome(id: int, _params: Dictionary) -> void:
 ## Replies with the number of frames Movie Maker has written so far, the index of the next one.
 ## The writer begins before the first iteration (4.7.2 main.cpp L4855) and adds one frame at
 ## the end of every iteration, after the process frame count is raised (L5119, L5151), so a
-## command handled during an iteration sees exactly the frames written before it.
+## command handled during an iteration sees exactly the frames written before it. open lists
+## [id, read frame] of every other request not yet answered, so the server can close their calls.
 func _handle_movie_frame(id: int, _params: Dictionary) -> void:
-	_reply_ok(id, {"frame": Engine.get_process_frames()})
+	var open: Array = []
+	for other: int in _read_in:
+		if other != id:
+			open.append([other, _read_in[other]])
+	_reply_ok(id, {"frame": Engine.get_process_frames(), "open": open})
 
 
 ## Replies with every Control (visible ones only unless visibleOnly is false), each described;
