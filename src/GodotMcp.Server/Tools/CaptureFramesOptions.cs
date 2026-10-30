@@ -51,7 +51,19 @@ internal sealed record CaptureFramesOptions(
             + "trackErrors: {<track>: message}, and the capture goes on. A missing node or property, or an expression that does "
             + "not parse, refuses the capture before its clock starts. Signal, monitor and audio tracks are watch's."
     )]
-        CaptureTracks? Tracks = null
+        CaptureTracks? Tracks = null,
+    [property: Description(
+        "A .png stem to copy the frames to: frame k of the n distinct files lands at <stem>-<k>.png, k zero-padded to the "
+            + "width of n (anim.png gives anim-00.png to anim-11.png for 12 files), in the checkout's .tmp folder or the main "
+            + "checkout's .tmp folder only, checked as save_screenshot checks its path. Every name the points could give is "
+            + "checked before the capture starts, and each file again at its write; folder and files then name the copies and "
+            + "captureFolder the capture's folder under .godot/godot-mcp/screenshots/. A copy that fails removes the copies "
+            + "made and keeps the result whole: folder and files name the frames under .godot/, and warning says why and names "
+            + "that folder, which keeps every frame."
+    )]
+        string? Path = null,
+    [property: Description("Replace existing files at path's names; without it, a capture whose names include an existing file is refused.")]
+        bool? Overwrite = null
 );
 
 /// <summary>

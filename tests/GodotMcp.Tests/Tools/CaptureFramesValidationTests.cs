@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Server.Wire;
+using GodotMcp.TestSupport;
 using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol;
 
@@ -414,7 +415,7 @@ public sealed class CaptureFramesValidationTests : IDisposable
             new CaptureFramesOptions(Start: new CaptureStart(Node: "TimeProbe", Signal: "fired", Edge: true))
         );
 
-        Assert.Equal("options.edge applies to exists, property, expression, text and state waits; this condition is signal.", refused.Message);
+        Assert.Equal("options.edge applies to exists, property and expression waits; this condition is signal.", refused.Message);
     }
 
     [Fact]
@@ -619,6 +620,98 @@ public sealed class CaptureFramesValidationTests : IDisposable
         Assert.Equal("""{"phase":"done","drawn":46}""", points[1]!["values"]!.ToJsonString());
         Assert.False(points[1]!.AsObject().ContainsKey("trackErrors"), points[1]!.ToJsonString());
     }
+
+    [Theory]
+    [InlineData(0, 1, "anim-0.png")]
+    [InlineData(3, 9, "anim-3.png")]
+    [InlineData(0, 10, "anim-00.png")]
+    [InlineData(7, 12, "anim-07.png")]
+    [InlineData(5, 100, "anim-005.png")]
+    public void FrameKOfNLandsAtTheStemWithKPaddedToTheWidthOfN(int index, int count, string expected) =>
+        Assert.Equal($".tmp/shots/{expected}", FrameTargets.Name(".tmp/shots/anim.png", index, count));
+
+    [Fact]
+    public void AFrameStemMustEndInPng()
+    {
+        using TempDirectory checkout = TmpCheckout();
+
+        McpException refused = Assert.Throws<McpException>(() => ResolveFrames(checkout.Path, ".tmp/anim", 3, overwrite: false));
+
+        Assert.Equal("path must end in .png: .tmp/anim", refused.Message);
+    }
+
+    [Fact]
+    public void AFrameStemOutsideATmpFolderIsRefused()
+    {
+        using TempDirectory checkout = TmpCheckout();
+
+        McpException refused = Assert.Throws<McpException>(() => ResolveFrames(checkout.Path, "shots/anim.png", 3, overwrite: false));
+
+        Assert.Equal(ScreenshotPathValidationTests.TmpOnlyRefusal("capture_frames"), refused.Message);
+    }
+
+    [Theory]
+    // 12 points can give 1 to 12 distinct files: anim-0 to anim-8 for up to 9 of them, anim-00 to anim-11 for 10 to 12.
+    [InlineData("anim-7.png", 12, true)]
+    [InlineData("anim-07.png", 12, true)]
+    [InlineData("anim-11.png", 12, true)]
+    [InlineData("anim-12.png", 12, false)]
+    [InlineData("anim-07.png", 9, false)]
+    [InlineData("anim-4.png", 5, true)]
+    [InlineData("anim-5.png", 5, false)]
+    [InlineData("anim.png", 5, false)]
+    public void EveryNameACaptureCouldWriteIsCheckedAtTheStart(string existing, int points, bool refused)
+    {
+        using TempDirectory checkout = TmpCheckout();
+        string shots = Directory.CreateDirectory(Path.Combine(checkout.Path, ".tmp", "shots")).FullName;
+        File.WriteAllBytes(Path.Combine(shots, existing), [1]);
+
+        if (refused)
+        {
+            McpException refusal = Assert.Throws<McpException>(() => ResolveFrames(checkout.Path, ".tmp/shots/anim.png", points, overwrite: false));
+            Assert.Equal($".tmp/shots/{existing} exists; pass options.overwrite true to replace it", refusal.Message);
+        }
+        else
+        {
+            ResolveFrames(checkout.Path, ".tmp/shots/anim.png", points, overwrite: false);
+        }
+
+        ResolveFrames(checkout.Path, ".tmp/shots/anim.png", points, overwrite: true);
+    }
+
+    [Fact]
+    public void AFrameCopyThatFailsRemovesTheCopiesKeepsTheCaptureAndWarns()
+    {
+        using TempDirectory checkout = TmpCheckout();
+        string captureFolder = Directory.CreateDirectory(Path.Combine(checkout.Path, ".godot", "godot-mcp", "screenshots")).FullName;
+        File.WriteAllBytes(Path.Combine(captureFolder, "f0.png"), [1]);
+        File.WriteAllBytes(Path.Combine(captureFolder, "f1.png"), [2]);
+        FrameTargets targets = ResolveFrames(checkout.Path, ".tmp/shots/anim.png", 2, overwrite: false);
+        string shots = Directory.CreateDirectory(Path.Combine(checkout.Path, ".tmp", "shots")).FullName;
+        File.WriteAllBytes(Path.Combine(shots, "anim-1.png"), [9]);
+        JsonObject result = new() { ["folder"] = captureFolder, ["files"] = new JsonArray("f0.png", "f1.png") };
+
+        targets.Deliver(result);
+
+        string warning = result["warning"]!.GetValue<string>();
+        Assert.StartsWith("the frames could not be copied to .tmp/shots/anim-1.png: ", warning, StringComparison.Ordinal);
+        Assert.EndsWith($"; they are kept in {captureFolder}", warning, StringComparison.Ordinal);
+        Assert.Equal(captureFolder, result["folder"]!.GetValue<string>());
+        Assert.Equal(["f0.png", "f1.png"], result["files"]!.AsArray().Select(file => file!.GetValue<string>()));
+        Assert.False(File.Exists(Path.Combine(shots, "anim-0.png")));
+        Assert.Equal([9], File.ReadAllBytes(Path.Combine(shots, "anim-1.png")));
+    }
+
+    /// <summary>A git checkout tracking nothing, so only its .tmp folder is open.</summary>
+    private static TempDirectory TmpCheckout()
+    {
+        TempDirectory checkout = new();
+        Git.Run(checkout.Path, "init", "--quiet", "--initial-branch=main");
+        return checkout;
+    }
+
+    private static FrameTargets ResolveFrames(string project, string path, int points, bool overwrite) =>
+        FrameTargets.Resolve(OutputPlaces.Find(project, NullLogger.Instance), path, points, overwrite);
 
     private async Task<McpException> RefusedAsync(double[]? at, CaptureFramesOptions? options) =>
         await Assert.ThrowsAsync<McpException>(() => _tools.CaptureFramesAsync(at, options, null, TestContext.Current.CancellationToken));

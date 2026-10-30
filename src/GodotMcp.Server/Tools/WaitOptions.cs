@@ -49,7 +49,17 @@ internal sealed record WaitOptions(
             + "take_screenshot's crop; the image block is the crop itself when it is at most 480 px wide, else its preview. A crop "
             + "wholly outside the viewport gives a warning and no screenshot; the wait still meets."
     )]
-        ScreenshotCrop? Crop = null
+        ScreenshotCrop? Crop = null,
+    [property: Description(
+        "With screenshot: true, "
+            + RuntimeTools.TmpPathDescription
+            + " Checked before the wait starts and written after it "
+            + "meets: screenshot.path is then that file and screenshot.capturePath the copy under .godot/godot-mcp/screenshots/. "
+            + "A wait that ends with no screenshot (not met, or a crop wholly outside the viewport) writes nothing; a copy "
+            + "that fails leaves screenshot.path naming the capture under .godot/ and adds screenshot.warning saying why."
+    )]
+        string? Path = null,
+    [property: Description("Replace an existing file at path; without it, saving over an existing file is refused.")] bool? Overwrite = null
 );
 
 /// <summary>What wait_for runs in the frame its condition is met: a method call, an Engine.time_scale, a pause, or any mix.</summary>

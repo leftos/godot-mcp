@@ -110,7 +110,8 @@ internal sealed partial class RuntimeTools
     [Description(
         "Plays a list of steps against a running game in one call, in order, and stops at the first failed assertion or "
             + "failed tool step. A step is either {tool, args}: a runtime tool by its name with the arguments it takes on its "
-            + "own (take_screenshot and compare_screenshot are forced to path_only; image blocks are dropped), or an assertion "
+            + "own (take_screenshot and compare_screenshot are forced to path_only; image blocks are dropped; a take_screenshot "
+            + "with path, or a wait_for or capture_frames with options.path, is refused, as a batch step writes no file), or an assertion "
             + "{assert, ...}: property {node, property, equals, match?, timeoutMs?}, expression {expression, timeoutMs?} and state "
             + "{node, state, equals, match?, timeoutMs?}, the value at a key path of the node's state as wait_for's state condition reads it (for "
             + "all three, timeoutMs defaults to 0: checked once, now, even while paused), wait {any wait_for condition, gameMs "
@@ -509,7 +510,32 @@ internal sealed partial class RuntimeTools
         {
             throw new McpException($"{at}: a tool step does not take sessions; only no_errors does.");
         }
+
+        if (WrittenPathOption(step) is { } option)
+        {
+            throw new McpException(
+                $"{at}: '{step.Tool}' with {option} cannot run in a batch: a batch step writes nothing into the project; "
+                    + $"call {step.Tool} on its own to write the file."
+            );
+        }
     }
+
+    /// <summary>The option naming a file a take_screenshot, wait_for or capture_frames step would write; null for none.</summary>
+    private static string? WrittenPathOption(BatchStep step) =>
+        step.Tool switch
+        {
+            TakeScreenshotToolName when HasValue(step.Args, "path") => "path",
+            WaitForToolName or "capture_frames" when ValuesOf(step.Args, "options").OfType<JsonObject>().Any(options => HasValue(options, "path")) =>
+                "options.path",
+            _ => null,
+        };
+
+    /// <summary>Whether any key of <paramref name="args"/> matching <paramref name="key"/>, ignoring case as arguments bind, holds a value.</summary>
+    private static bool HasValue(JsonObject? args, string key) => ValuesOf(args, key).Any(value => value is not null);
+
+    /// <summary>The values of every key of <paramref name="args"/> matching <paramref name="key"/>, ignoring case as arguments bind.</summary>
+    private static IEnumerable<JsonNode?> ValuesOf(JsonObject? args, string key) =>
+        args?.Where(entry => string.Equals(entry.Key, key, StringComparison.OrdinalIgnoreCase)).Select(entry => entry.Value) ?? [];
 
     /// <summary>Checks a group: parallel alone, 2 to 8 members, and each a tool step or an assertion a group may hold.</summary>
     private static void CheckGroup(string at, BatchStep step, IReadOnlyList<BatchStep> members)

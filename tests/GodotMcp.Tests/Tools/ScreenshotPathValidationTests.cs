@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json.Nodes;
 using GodotMcp.Server.Tools;
 using GodotMcp.TestSupport;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -441,6 +442,206 @@ public sealed class ScreenshotPathValidationTests : IDisposable
 
         Assert.StartsWith($"saving the screenshot to {destination} failed: ", refused.Message, StringComparison.Ordinal);
         Assert.Equal([1, 2], File.ReadAllBytes(destination));
+    }
+
+    [Theory]
+    [InlineData("take_screenshot")]
+    [InlineData("wait_for")]
+    [InlineData("capture_frames")]
+    public void AFrameToolsPathOutsideATmpFolderIsRefused(string tool)
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+
+        McpException refused = Assert.Throws<McpException>(() => InTmp(project, "docs/shot.png", overwrite: false, tool));
+
+        Assert.Equal(TmpOnlyRefusal(tool), refused.Message);
+    }
+
+    [Fact]
+    public void AFrameToolsPathInTheCheckoutsTmpFolderIsAccepted()
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+
+        Assert.Equal(Path.Combine(CheckoutTmp, "shots", "a.png"), InTmp(project, "../../.tmp/shots/a.png", overwrite: false, "take_screenshot"));
+    }
+
+    [Fact]
+    public void AFrameToolsPathInTheMainCheckoutsTmpFolderIsAccepted()
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        string main = Path.Combine(_main.Path, ".tmp", "a.png");
+
+        Assert.Equal(main, InTmp(project, main, overwrite: false, "wait_for"));
+    }
+
+    [Fact]
+    public void AFrameToolsPathInATrackedCheckoutOutsideItsTmpFolderIsRefused()
+    {
+        Git.Run(_temp.Path, "init", "--quiet", "--initial-branch=main");
+        File.WriteAllText(Path.Combine(_temp.Path, "project.godot"), "");
+        Git.Run(_temp.Path, "add", "project.godot");
+
+        McpException refused = Assert.Throws<McpException>(() => InTmp(_temp.Path, "shot.png", overwrite: false, "take_screenshot"));
+
+        Assert.Equal(TmpOnlyRefusal("take_screenshot"), refused.Message);
+        Assert.Equal(Path.Combine(_temp.Path, ".tmp", "shot.png"), InTmp(_temp.Path, ".tmp/shot.png", overwrite: false, "take_screenshot"));
+    }
+
+    [Fact]
+    public void AnExistingFileOutsideATmpFolderGetsTheTmpRefusal()
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        File.WriteAllBytes(Path.Combine(project, "shot.png"), PngBytes);
+
+        McpException refused = Assert.Throws<McpException>(() => InTmp(project, "shot.png", overwrite: false, "take_screenshot"));
+
+        Assert.Equal(TmpOnlyRefusal("take_screenshot"), refused.Message);
+    }
+
+    [Fact]
+    public void AnExistingFileInTheTmpFolderIsRefusedWithoutOverwriteOnAFrameTool()
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        string existing = Path.Combine(CheckoutTmp, "a.png");
+        Directory.CreateDirectory(CheckoutTmp);
+        File.WriteAllBytes(existing, PngBytes);
+
+        McpException refused = Assert.Throws<McpException>(() => InTmp(project, existing, overwrite: false, "wait_for"));
+
+        Assert.Equal($"{existing} exists; pass options.overwrite true to replace it", refused.Message);
+        Assert.Equal(existing, InTmp(project, existing, overwrite: true, "wait_for"));
+    }
+
+    [Fact]
+    public void AJunctionUnderTmpIntoTheProjectIsRefusedOnAFrameTool()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are made with mklink");
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        Directory.CreateDirectory(Path.Combine(project, "docs"));
+        Directory.CreateDirectory(CheckoutTmp);
+        MakeJunction(Path.Combine(CheckoutTmp, "p"), project);
+
+        McpException refused = Assert.Throws<McpException>(() => InTmp(project, "../../.tmp/p/docs/x.png", overwrite: false, "capture_frames"));
+
+        Assert.Equal(TmpOnlyRefusal("capture_frames"), refused.Message);
+    }
+
+    [Fact]
+    public void AFrameToolsSaveWritesTheCaptureIntoTheTmpFolder()
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        string capture = WriteCaptureIn(project);
+        OutputTarget target = ScreenshotTarget.ResolveInTmp(project, "../../.tmp/shots/a.png", false, "take_screenshot", NullLogger.Instance);
+
+        ScreenshotTarget.SaveInTmp(capture, target, overwrite: false, "take_screenshot");
+
+        Assert.Equal(PngBytes, File.ReadAllBytes(Path.Combine(CheckoutTmp, "shots", "a.png")));
+    }
+
+    [Fact]
+    public void ATmpFolderThatIsAJunctionIntoTheProjectIsRefusedOnAFrameTool()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are made with mklink");
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        Directory.CreateDirectory(Path.Combine(project, "docs"));
+        MakeJunction(CheckoutTmp, project);
+
+        McpException refused = Assert.Throws<McpException>(() => InTmp(project, "../../.tmp/docs/x.png", overwrite: false, "take_screenshot"));
+
+        Assert.Equal(TmpOnlyRefusal("take_screenshot"), refused.Message);
+    }
+
+    [Fact]
+    public void AWorktreeInsideTheMainCheckoutsTmpFolderIsHeldToItsOwnTmpFolder()
+    {
+        string game = Directory.CreateDirectory(Path.Combine(_main.Path, "game")).FullName;
+        File.WriteAllText(Path.Combine(game, "project.godot"), "");
+        Git.InitAndCommitAll(_main.Path);
+        string worktree = Path.Combine(_main.Path, ".tmp", "wt");
+        Git.Run(_main.Path, "worktree", "add", "--quiet", worktree);
+        string project = Path.Combine(worktree, "game");
+
+        McpException refused = Assert.Throws<McpException>(() => InTmp(project, "docs/x.png", overwrite: false, "take_screenshot"));
+
+        Assert.Equal(TmpOnlyRefusal("take_screenshot"), refused.Message);
+        Assert.Equal(Path.Combine(worktree, ".tmp", "x.png"), InTmp(project, "../.tmp/x.png", overwrite: false, "take_screenshot"));
+    }
+
+    [Fact]
+    public void AFrameToolsSaveHoldsTheTargetToTheTmpFoldersAgainAtTheWrite()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "junctions are made with mklink");
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        string capture = WriteCaptureIn(project);
+        string shots = Directory.CreateDirectory(Path.Combine(CheckoutTmp, "shots")).FullName;
+        OutputTarget target = ScreenshotTarget.ResolveInTmp(project, "../../.tmp/shots/a.png", false, "take_screenshot", NullLogger.Instance);
+        Directory.Delete(shots);
+        MakeJunction(shots, project);
+
+        McpException refused = Assert.Throws<McpException>(() => ScreenshotTarget.SaveInTmp(capture, target, overwrite: false, "take_screenshot"));
+
+        Assert.Equal(TmpOnlyRefusal("take_screenshot"), refused.Message);
+        Assert.False(File.Exists(Path.Combine(project, "a.png")));
+    }
+
+    [Fact]
+    public void AFrameToolsPathInAProjectInNoCheckoutIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() => InTmp(Project, ".tmp/a.png", overwrite: false, "wait_for"));
+
+        Assert.Equal(
+            $".tmp/a.png is refused: wait_for writes only into a git checkout's .tmp folder, and {Project} is in no git checkout",
+            refused.Message
+        );
+    }
+
+    [Fact]
+    public void AScaledShotWithAPathCarriesTheScaleFieldsAndTheCopy()
+    {
+        JsonObject text = new() { ["path"] = "capture.png" };
+        JsonNode reply = JsonNode.Parse("""{"scale": 2, "warning": "the screen let the window grow to 1.5"}""")!;
+
+        RuntimeTools.TakeScreenshotFields(2, files => files["path"] = "copy.png")!(text, reply);
+
+        Assert.Equal("""{"path":"copy.png","scale":2,"warning":"the screen let the window grow to 1.5"}""", text.ToJsonString());
+    }
+
+    [Fact]
+    public void AWaitForCopyThatFailsKeepsTheCaptureAndWarns()
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+        string capture = WriteCaptureIn(project);
+        OutputTarget target = ScreenshotTarget.ResolveInTmp(project, "../../.tmp/met.png", false, "wait_for", NullLogger.Instance);
+        Directory.CreateDirectory(CheckoutTmp);
+        File.WriteAllBytes(target.FullPath, [1, 2]);
+        JsonObject files = new() { ["path"] = capture };
+
+        RuntimeTools.KeptCopy(target, overwrite: false, "wait_for")!(files);
+
+        string warning = files["warning"]!.GetValue<string>();
+        Assert.StartsWith("the still could not be copied to ../../.tmp/met.png: ", warning, StringComparison.Ordinal);
+        Assert.EndsWith($"; it is kept at {capture}", warning, StringComparison.Ordinal);
+        Assert.Equal(capture, files["path"]!.GetValue<string>());
+        Assert.False(files.ContainsKey("capturePath"), files.ToJsonString());
+        Assert.Equal([1, 2], File.ReadAllBytes(target.FullPath));
+    }
+
+    internal static string TmpOnlyRefusal(string tool) =>
+        tool == "take_screenshot"
+            ? "path on take_screenshot writes only into the checkout's or the main checkout's .tmp folder; "
+                + "use save_screenshot to write a still elsewhere in the project"
+            : $"options.path on {tool} writes only into the checkout's or the main checkout's .tmp folder";
+
+    private static string InTmp(string project, string path, bool overwrite, string tool) =>
+        ScreenshotTarget.ResolveInTmp(project, path, overwrite, tool, NullLogger.Instance).FullPath;
+
+    private static string WriteCaptureIn(string project)
+    {
+        string folder = Path.Combine(project, ".godot", "godot-mcp", "screenshots");
+        Directory.CreateDirectory(folder);
+        string capture = Path.Combine(folder, "capture.png");
+        File.WriteAllBytes(capture, PngBytes);
+        return capture;
     }
 
     /// <summary>

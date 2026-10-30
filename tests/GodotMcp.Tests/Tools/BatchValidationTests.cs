@@ -257,6 +257,27 @@ public sealed class BatchValidationTests : IDisposable
         Assert.Contains("wait_for", refused.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("take_screenshot", """{"path": ".tmp/shot.png"}""", "path")]
+    [InlineData("take_screenshot", """{"Path": ".tmp/shot.png"}""", "path")]
+    [InlineData(
+        "wait_for",
+        """{"condition": {"gameMs": 100}, "options": {"screenshot": true, "path": null, "Path": ".tmp/met.png"}}""",
+        "options.path"
+    )]
+    [InlineData("wait_for", """{"condition": {"gameMs": 100}, "options": {"screenshot": true, "path": ".tmp/met.png"}}""", "options.path")]
+    [InlineData("capture_frames", """{"at": [0.1], "options": {"path": ".tmp/anim.png"}}""", "options.path")]
+    public async Task AFrameToolStepNamingAPathIsRefused(string tool, string args, string option)
+    {
+        McpException refused = await RefusedAsync([new BatchStep(Tool: tool, Args: JsonNode.Parse(args)!.AsObject())]);
+
+        Assert.Equal(
+            $"step 0: '{tool}' with {option} cannot run in a batch: a batch step writes nothing into the project; "
+                + $"call {tool} on its own to write the file.",
+            refused.Message
+        );
+    }
+
     [Fact]
     public async Task BatchDriveCannotNestItself()
     {

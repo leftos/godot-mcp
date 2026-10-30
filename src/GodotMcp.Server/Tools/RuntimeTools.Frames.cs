@@ -69,7 +69,11 @@ internal sealed partial class RuntimeTools
             + "frames and start: {met: false, last?, call?, failedChecks?, mutedErrors?} (no last for a signal). options.tracks "
             + "{properties?, expressions?}, laid out as watch's tracks (minDelta aside), reads each track at the frame_post_draw its "
             + "point's image is grabbed at, so the value is the one that frame drew: each point adds values: {<track>: value}, "
-            + "keyed as watch keys a track, and trackErrors: {<track>: message} with null in values for a read that failed."
+            + "keyed as watch keys a track, and trackErrors: {<track>: message} with null in values for a read that failed. "
+            + "options.path, a .png stem in the checkout's or the main checkout's .tmp folder, also copies the files there: "
+            + "frame k of n lands at <stem>-<k>.png, k zero-padded to the width of n, folder and files then name the copies, and "
+            + "captureFolder names the folder under .godot/ that keeps the frames; a copy that fails leaves folder and files "
+            + "naming the frames there and adds warning."
     )]
     public async Task<string> CaptureFramesAsync(
         [Description(
@@ -78,8 +82,8 @@ internal sealed partial class RuntimeTools
         )]
             double[]? at = null,
         [Description(
-            "{every, for, crop, timeoutMs, call, start, tracks}: every and for instead of at; no crop, the default timeout, no "
-                + "call, no start and no tracks when left out."
+            "{every, for, crop, timeoutMs, call, start, tracks, path, overwrite}: every and for instead of at; no crop, the "
+                + "default timeout, no call, no start, no tracks, no path and overwrite false when left out."
         )]
             CaptureFramesOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
@@ -89,9 +93,20 @@ internal sealed partial class RuntimeTools
         double[] points = CapturePoints(at, options);
         TimeSpan allowance = CaptureAllowance(points, options?.TimeoutMs, options?.Start);
         JsonObject parameters = BuildCaptureParameters(points, allowance, options);
+        FrameTargets? destination = options?.Path is { } path ? FrameDestination(path, points.Length, options.Overwrite is true, session) : null;
         await PrepareGameToolCallsAsync("capture_frames", parameters, session, cancellationToken);
         BridgeResult result = await CallWithErrorsAsync(Find(session), CaptureCall(parameters, allowance), cancellationToken);
-        return ErrorReport.AddTo(CompactFrames(CaptureReply(result)), result.Errors).ToJsonString();
+        JsonObject compact = CompactFrames(CaptureReply(result));
+        destination?.Deliver(compact);
+        return ErrorReport.AddTo(compact, result.Errors).ToJsonString();
+    }
+
+    /// <summary>The .tmp stem capture_frames copies its frames to, checked with every name it could write before anything is captured.</summary>
+    /// <exception cref="McpException">No session, or the stem or one of its names is refused.</exception>
+    private FrameTargets FrameDestination(string path, int points, bool overwrite, string? session)
+    {
+        Session.GodotSession target = Find(session);
+        return FrameTargets.Resolve(OutputPlaces.Find(target.ProjectDir, target.Logger), path, points, overwrite);
     }
 
     /// <summary>
@@ -263,7 +278,7 @@ internal sealed partial class RuntimeTools
 
         if (start.Edge is true)
         {
-            AddEdge(parameters);
+            AddEdge(parameters, StartEdgeKinds);
         }
 
         if (start.Call is { } call)

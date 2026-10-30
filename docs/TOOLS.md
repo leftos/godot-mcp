@@ -284,11 +284,23 @@ For an agent driving a Godot project through this server: which tool fits a job,
 ### `take_screenshot`
 
 - **Does:** captures the game's next drawn frame to a PNG under `.godot/godot-mcp/screenshots/` and returns its path and size, plus an image.
-- **Use:** `responseMode` `path_only`, `preview` (default, at most `previewMaxWidth` wide, 480 by default) or `full`; `crop {x, y, width, height}` in viewport coordinates, mapped to the screenshot's pixels: in a window stretched to twice the project's size, the PNG is twice the rectangle's size; `scale` 1 to 4 (1 by default) grows the window for this one capture, so the PNG has that many times the pixels of the same frame and a crop selects the same rectangle at that scale (a `batch_drive` `take_screenshot` step takes it too; `save_screenshot` does not).
+- **Use:** `responseMode` `path_only`, `preview` (default, at most `previewMaxWidth` wide, 480 by default) or `full`; `crop {x, y, width, height}` in viewport coordinates, mapped to the screenshot's pixels: in a window stretched to twice the project's size, the PNG is twice the rectangle's size.
+
+  `scale` 1 to 4 (1 by default) grows the window for this one capture, so the PNG has that many times the pixels of the same frame and a crop selects the same rectangle at that scale (a `batch_drive` `take_screenshot` step takes it too; `save_screenshot` does not).
+
+  `path` and `options {overwrite}` keep the shot as a file (below).
 - **A larger capture (`scale`):** above 1, the bridge sets the root Window's size to that many times its size, waits a drawn frame, grabs, restores, and waits up to 30 process frames for the restore. The window visibly resizes for a moment and the game gets two `size_changed` events. The result adds `scale` (the scale reached, two decimals) and a `warning` when the window grew less than asked (`the window could only grow to <W>x<H>, not <w>x<h>, so the capture is <s>x, not <scale>x`) or did not return (`the window did not return to <W>x<H>; it is <w>x<h>`).
 
   Refused: `scale must be 1 to 4; got <x>.`; `scale needs the project's stretch mode canvas_items (it is <mode>): any other mode re-lays out the game or adds no detail; relaunch with --resolution instead`; `scale needs a windowed, not maximized or fullscreen, window: Windows does not resize it; relaunch with --resolution instead`; `scale is refused while the run records: the resize would be in the clip`. A headless game gets the headless refusal first. The engine facts are in DECISIONS.md.
-- **Edges:** the crop is in viewport coordinates (see Rules); a letterboxed window crops the same content, and a crop wholly outside the viewport fails as "the crop (x, y, w, h) lies outside the (W, H) viewport". `path_only` saves context when only the file matters. To keep the shot as a project file (a tracked picture), use `save_screenshot`: this tool writes only under the ignored `.godot/`.
+- **Edges:** the crop is in viewport coordinates (see Rules); a letterboxed window crops the same content, and a crop wholly outside the viewport fails as "the crop (x, y, w, h) lies outside the (W, H) viewport". `path_only` saves context when only the file matters. To keep the shot as a project file (a tracked picture), use `save_screenshot`: this tool writes only under the ignored `.godot/` and, with `path`, into a `.tmp` folder.
+
+  `path` (project-relative, `res://` or absolute, ending in `.png`) also copies the PNG to that file, which only the checkout's `.tmp` folder or the main checkout's `.tmp` folder accepts. It is checked as `save_screenshot` checks its path (the places below, links followed, missing folders created), then held to the two `.tmp` folders as written and by the final path of its deepest existing folder, before the shot is taken and again right before the write.
+
+  A `.tmp` folder that is itself a junction leading elsewhere is refused, and `res://` stays in the project, so it fits only a project inside a `.tmp` folder.
+
+  A path elsewhere is refused with "path on take_screenshot writes only into the checkout's or the main checkout's .tmp folder; use save_screenshot to write a still elsewhere in the project", and one for a project in no git checkout with "<path> is refused: take_screenshot writes only into a git checkout's .tmp folder, and <project> is in no git checkout". The result's `path` is then that file and `capturePath` the copy under `.godot/godot-mcp/screenshots/`, beside which any preview stays.
+
+  An existing file is refused ("<path> exists; pass options.overwrite true to replace it") unless `options.overwrite` is true. `scale` works beside `path`: the result then carries `scale` and any `warning` with `path` and `capturePath`. A `batch_drive` `take_screenshot` step with `path` is refused.
 
   The capture is the root viewport's texture with every visible popup and tooltip on it: embedded ones (Godot's default) are in the texture, and in a project that sets `display/window/subwindows/embed_subwindows=false`, where each is its own OS window, they are pasted where the window shows them, at any stretch mode and window size. Every capture (baselines, frame steps, `wait_for`, `preview_scene`) does the same.
 - **A headless game:** a game started with `--headless` (a `run_scratches` session, or one the user attached) draws no frames, so this tool fails with "a headless game draws no frames, so there is nothing to capture; read state with get_game_state, get_ui_elements or run_script, or run the scene windowed." No engine error reaches `get_errors` and nothing is awaited. `save_screenshot`, `save_screenshot_baseline`, `compare_screenshot` and `capture_frames` fail the same way.
@@ -822,10 +834,22 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
 ### `capture_frames`
 
-- **Does:** saves the game's frame at each of a list of moments in one call, with no round trip per frame: `{folder, files, width, height, points: [{at, frame, file, gameSeconds, late, values?, trackErrors?}], shared, stopped?, missed?, call?, start?}`, paths only, no images.
+- **Does:** saves the game's frame at each of a list of moments in one call, with no round trip per frame: `{folder, files, width, height, points: [{at, frame, file, gameSeconds, late, values?, trackErrors?}], shared, stopped?, missed?, call?, start?, captureFolder?}`, paths only, no images.
 
   `folder` is the directory of the PNGs and `files` names each distinct one once, in the order first taken; a point's `file` is its index into `files`, `frame` the engine frame it was taken in, and `shared` counts the points that took a file an earlier point took (a game running slower than the points are spaced shares frames). A capture stopped before its first point has empty `files` and `points` and no `folder`, `width` or `height`.
 - **Use:** frames at set points of an animation or a timer-driven sequence. `at` (1 to 1000 ascending seconds, each 0 to 120), or `options {every, for}` for evenly spaced points, always including one at 0 (`every` 0.5 with `for` 1 gives 0, 0.5 and 1.0, and with `for` 1.2 the same; the point at 0 counts against the 1000-point cap, so 1001 is refused with "makes 1001 points", and an `every` longer than `for` is refused); `options.crop` as `take_screenshot`'s.
+
+  `options.path`, a `.png` stem, also copies the frames to files numbered from it: frame k of the n distinct files lands at `<stem>-<k>.png`, k zero-padded to the width of n (`anim.png` gives `anim-00.png` to `anim-11.png` for 12 files). Only the checkout's `.tmp` folder or the main checkout's `.tmp` folder accepts it, checked as `save_screenshot` checks a path.
+
+  `res://` stays in the project, so it fits only a project inside a `.tmp` folder, and a `.tmp` folder that is itself a junction leading elsewhere is refused.
+
+  A path elsewhere is refused with "options.path on capture_frames writes only into the checkout's or the main checkout's .tmp folder", and one for a project in no git checkout with "<path> is refused: capture_frames writes only into a git checkout's .tmp folder, and <project> is in no git checkout".
+
+  Every name the points could give is checked before the capture starts, and each file again at its write; an existing name is refused unless `options.overwrite` is true. `folder` and `files` then name the copies, and `captureFolder` the capture's own folder under `.godot/godot-mcp/screenshots/`, which keeps every frame.
+
+  A copy that fails does not fail the call: the result stays whole, `folder` and `files` name the frames under `.godot/`, there is no `captureFolder`, the copies this call made are removed, and a top-level `warning` reads "the frames could not be copied to <frame name>: <reason>; they are kept in <captureFolder>".
+
+  Each copy that cannot be removed adds "; the copy <copy> could not be removed: <reason>" to the warning. A capture that took no frame writes nothing. A `batch_drive` step with `options.path` is refused.
 
   The seconds are game time from the call's start, the sum of each frame's delta, so they follow `Engine.time_scale` as the game's own timers do. `options.call {node, method, args?}` calls a method in the clock's first frame, before the nodes process it, so the points count from the method's entry with no round trip between: capture the frames of an effect the method starts. A scratch root's `PlayStep` takes a step's name there (the scratch protocol under `run_scratches`).
 
@@ -837,7 +861,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   `options.start {node, property, equals | exists | expression | signal, edge?, timeoutMs?, then?, call?}` is a condition laid out as `wait_for`'s, of kind `exists`, `property`, `expression` or `signal`, that the clock waits for: the points count from the frame it is met, not from the call, so a round trip after a `wait_for` does not shift them. `equals: null` there waits for a present null, as in `wait_for`; `start` takes no `match`.
 
-  A `signal` start (`{node, signal}`) is met at the first check after the emission, as `wait_for`'s signal wait is, and `start.call` runs after the signal is connected, so the emission its own call causes is caught. `edge` is refused (`options.edge applies to exists, property, expression, text and state waits; this condition is signal.`), and so is `timeoutMs: 0` (`timeoutMs 0 checks once, which a signal wait cannot do; give it a timeout.`).
+  A `signal` start (`{node, signal}`) is met at the first check after the emission, as `wait_for`'s signal wait is, and `start.call` runs after the signal is connected, so the emission its own call causes is caught. `edge` is refused (`options.edge applies to exists, property and expression waits; this condition is signal.`), and so is `timeoutMs: 0` (`timeoutMs 0 checks once, which a signal wait cannot do; give it a timeout.`).
 
   `start.then {call?, timeScale?}` runs in the met frame as `wait_for`'s `options.then` does (`call` first, then `timeScale`), and the capture's own `options.call` runs after it, in that frame, where the clock starts. A start already true at the call starts the clock at the next process frame, as a capture without one.
 
@@ -1012,6 +1036,16 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
   An `expression` sees `node`, `root`, `tree`, `Input` and `Engine`. `options.screenshot: true` captures the frame the condition was met on, as `take_screenshot` does, adding `screenshot {path, width, height, previewPath, previewWidth, previewHeight}` and a preview image at most 480 px wide: for a scene that changes faster than a following `take_screenshot` can catch.
 
   `options.crop {x, y, width, height}`, in viewport coordinates as `take_screenshot`'s `crop`, keeps that part of the met frame: the saved PNG is the crop, and the image block is the crop itself when it is at most 480 px wide, else its preview.
+
+  `options.path` with `screenshot: true` also copies the capture to a `.png` in the checkout's `.tmp` folder or the main checkout's `.tmp` folder, as `take_screenshot`'s `path` does (`options.overwrite` replaces an existing file).
+
+  It is checked before the wait starts and written after it meets: `screenshot.path` is then that file and `screenshot.capturePath` the copy under `.godot/godot-mcp/screenshots/`. A wait that ends with no screenshot (not met, or a crop wholly outside the viewport) writes nothing.
+
+  A copy that fails does not fail the wait: the result stays whole, `screenshot.path` names the capture under `.godot/`, there is no `capturePath`, and `screenshot.warning` reads "the still could not be copied to <path as given>: <reason>; it is kept at <capture>".
+
+  A path outside the two `.tmp` folders, a `.tmp` folder that is a junction leading elsewhere and a project in no git checkout are refused before the wait starts, as `capture_frames`' are ("options.path on wait_for writes only into the checkout's or the main checkout's .tmp folder"); `res://` stays in the project, so it fits only a project inside a `.tmp` folder.
+
+   `options.path` without `screenshot: true` is refused ("options.path needs options.screenshot: true: it names the file the captured frame is written to."), and so is one in a `batch_drive` step.
 
   `options.crop` needs `options.screenshot: true` (`options.crop needs options.screenshot: true: it crops the captured frame.`). A crop that only partly overlaps the viewport is cut to it, and one wholly outside leaves the wait met with no screenshot and `warning` "no screenshot was taken: the crop … lies outside the … viewport".
 - **A headless game:** `options.screenshot` on a headless game still returns the wait's result, with `warning` "a headless game draws no frames, so no screenshot was taken; read state with get_game_state, get_ui_elements or run_script, or run the scene windowed." and no engine error.
@@ -1314,7 +1348,9 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   One gap remains: an error in the next step's own session that lands between one step's end and the next step's call can show on no entry (a short window, GMCP-211); a final `no_errors {sessions: "all"}` catches it. A session restarted mid-batch (`restart_project`) keeps its feed and numbering, so its cursor carries on; one relaunched under the same name is a new session the batch does not follow.
 
-  `take_screenshot` and `compare_screenshot` steps are forced to `path_only` and images dropped. Not batchable: the lifecycle tools, `preview_scene`, `save_screenshot` (it writes a file into the project) and the headless tools. The whole batch stops after 300 s of load-adjusted time.
+  `take_screenshot` and `compare_screenshot` steps are forced to `path_only` and images dropped.
+
+  A `take_screenshot` step with `path`, or a `wait_for` or `capture_frames` step with `options.path` (the keys matched in any letter case), is refused at validation ("a batch step writes nothing into the project; call <tool> on its own to write the file"). Not batchable: the lifecycle tools, `preview_scene`, `save_screenshot` (it writes a file into the project) and the headless tools. The whole batch stops after 300 s of load-adjusted time.
   A `fired` assertion checks the `fired` list of the nearest earlier tool step (assertion steps between are skipped), so it follows a `click`, `mouse_button`, `drag`, `key` or `type_text`; with no tool step before it the batch is refused at validation (`step {index}: assert 'fired' needs a tool step before it, whose fired list it checks.`).
   `node` matches an entry whose absolute node equals it or ends with `/` + it on a segment boundary: `Ready` and `Main/Ready` match `/root/Main/Ready`, `/Main/Ready` does not (no slash trimming). `signal` is the signal name.
   `equals` is a JSON array compared as JSON with the entry's whole `args` (an entry with no `args` reads as `[]`); absent or null, any args match. A non-array `equals` is refused (`equals must be an array of the emission's arguments; got {json}.`). A folded entry with `count` matches like any other, its args being the run's last.

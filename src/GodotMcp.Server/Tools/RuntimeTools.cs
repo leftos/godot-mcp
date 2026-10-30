@@ -24,6 +24,13 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     internal const int MaxPageSize = 500;
     internal const int MaxValueLength = 20000;
     internal const string SaveScreenshotToolName = "save_screenshot";
+    internal const string TakeScreenshotToolName = "take_screenshot";
+    internal const string WaitForToolName = "wait_for";
+    internal const string TmpPathDescription =
+        "A PNG to copy the capture to, ending in .png: project-relative, res:// or absolute, in the checkout's .tmp folder or "
+        + "the main checkout's .tmp folder only, checked as save_screenshot checks its path (a res:// path stays in the project, "
+        + "so it fits only a project inside a .tmp folder; missing folders are created; never through a link that leads out of "
+        + "a .tmp folder).";
     internal const string ResponseModeDescription =
         "path_only: the path and size only; preview: also the image, scaled down to previewMaxWidth when wider "
         + "(the scaled copy is saved beside the full one); full: also the full-resolution image.";
@@ -49,7 +56,9 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
             + "(which git ignores). Returns the file's absolute path and size, plus an image unless responseMode is path_only: by "
             + "default a preview at most 480 px wide, saved beside the full-size PNG, whose path is always returned. A game "
             + "that animates draws a different frame each time, so for a before/after pair pause it with frame_control first, "
-            + "take both shots, then resume it."
+            + "take both shots, then resume it. path also copies the PNG to a file in the checkout's or the main checkout's .tmp "
+            + "folder, checked as save_screenshot checks its path; the result's path is then that file and capturePath the "
+            + "copy under .godot/godot-mcp/screenshots/, beside which any preview stays."
     )]
     public async Task<IEnumerable<ContentBlock>> TakeScreenshotAsync(
         [Description(ResponseModeDescription)] string responseMode = "preview",
@@ -69,6 +78,9 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
                 + "warning when the screen let the window grow less than asked."
         )]
             double scale = 1,
+        [Description(TmpPathDescription)] string? path = null,
+        [Description("{overwrite}: replace an existing file at path; without it, saving over an existing file is refused.")]
+            TakeScreenshotOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
@@ -81,8 +93,32 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
             throw new McpException(RecordingScaleRefusal);
         }
 
-        Action<JsonObject, JsonNode?>? addFields = scale > 1 ? CopyScaleFields : null;
-        return await ScreenshotAsync(target, "take_screenshot", new ScreenshotRequest(mode, parameters), addFields, cancellationToken);
+        bool overwrite = options?.Overwrite is true;
+        Action<JsonObject>? copy = TmpCopy(TmpDestination(path, overwrite, TakeScreenshotToolName, session), overwrite, TakeScreenshotToolName);
+        return await ScreenshotAsync(
+            target,
+            TakeScreenshotToolName,
+            new ScreenshotRequest(mode, parameters),
+            TakeScreenshotFields(scale, copy),
+            cancellationToken
+        );
+    }
+
+    /// <summary>
+    /// take_screenshot's additions to its result: a scaled capture's scale fields, then the copy to path; null for neither.
+    /// </summary>
+    internal static Action<JsonObject, JsonNode?>? TakeScreenshotFields(double scale, Action<JsonObject>? copy)
+    {
+        if (scale <= 1)
+        {
+            return copy is null ? null : (text, _) => copy(text);
+        }
+
+        return (text, reply) =>
+        {
+            CopyScaleFields(text, reply);
+            copy?.Invoke(text);
+        };
     }
 
     /// <summary>parameters with take_screenshot's scale added when it is above 1, the bridge's default.</summary>
@@ -121,7 +157,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     [McpServerTool(Name = SaveScreenshotToolName, ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Captures the running game's next drawn frame as take_screenshot does and writes the PNG straight to path in one call; "
-            + "take_screenshot is the read-only way, saving only under .godot/. path is project-relative, res:// or absolute and "
+            + "take_screenshot writes only under .godot/ and, given a path, into a .tmp folder. path is project-relative, res:// or absolute and "
             + "must end in .png. It may lie in the project; in the git checkout holding it, as a whole tree when the checkout "
             + "tracks the project's project.godot, else only in its .tmp folder; or in the main checkout's .tmp folder when that "
             + "checkout is a git worktree. Never inside a .git folder or under a .godot folder outside a .tmp; a res:// path stays "
@@ -154,7 +190,7 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
             target,
             SaveScreenshotToolName,
             new ScreenshotRequest(mode, parameters),
-            (text, _) => CopyCapture(text, destination, settings.Overwrite),
+            (text, _) => CopyCapture(text, destination.FullPath, capture => ScreenshotTarget.Save(capture, destination, settings.Overwrite)),
             cancellationToken
         );
     }
@@ -172,13 +208,67 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
         return CaptureAsync(target, call, request.Mode, addFields, cancellationToken);
     }
 
-    /// <summary>Copies the capture to the destination, which becomes the result's path; capturePath keeps the capture's.</summary>
-    private static void CopyCapture(JsonObject text, OutputTarget destination, bool overwrite)
+    /// <summary>
+    /// Copies the capture named by <paramref name="files"/>' path with <paramref name="save"/>; <paramref name="destination"/>
+    /// becomes the path, and capturePath keeps the capture's.
+    /// </summary>
+    internal static void CopyCapture(JsonObject files, string destination, Action<string> save)
     {
-        string capture = text["path"]!.GetValue<string>();
-        ScreenshotTarget.Save(capture, destination, overwrite);
-        text["path"] = destination.FullPath;
-        text["capturePath"] = capture;
+        string capture = files["path"]!.GetValue<string>();
+        save(capture);
+        files["path"] = destination;
+        files["capturePath"] = capture;
+    }
+
+    /// <summary>
+    /// The .tmp file <paramref name="path"/> names for <paramref name="tool"/> in the session's project, checked before
+    /// anything is captured; null without a path.
+    /// </summary>
+    /// <exception cref="McpException">
+    /// No session, or the path is refused as
+    /// <see cref="ScreenshotTarget.ResolveInTmp(string, string, bool, string, Microsoft.Extensions.Logging.ILogger)"/> refuses it.
+    /// </exception>
+    private OutputTarget? TmpDestination(string? path, bool overwrite, string tool, string? session)
+    {
+        if (path is null)
+        {
+            return null;
+        }
+
+        GodotSession target = Find(session);
+        return ScreenshotTarget.ResolveInTmp(target.ProjectDir, path, overwrite, tool, target.Logger);
+    }
+
+    /// <summary>The copy of a capture to <paramref name="destination"/>, held to the .tmp folders again at the write; null without one.</summary>
+    private static Action<JsonObject>? TmpCopy(OutputTarget? destination, bool overwrite, string tool) =>
+        destination is null
+            ? null
+            : files => CopyCapture(files, destination.FullPath, capture => ScreenshotTarget.SaveInTmp(capture, destination, overwrite, tool));
+
+    /// <summary>
+    /// <see cref="TmpCopy"/> for a call whose result stands without the copy: a copy that fails leaves path naming the
+    /// capture and adds a warning, rather than failing a call whose wait already met.
+    /// </summary>
+    internal static Action<JsonObject>? KeptCopy(OutputTarget? destination, bool overwrite, string tool)
+    {
+        if (TmpCopy(destination, overwrite, tool) is not { } copy)
+        {
+            return null;
+        }
+
+        return files =>
+        {
+            string capture = files["path"]!.GetValue<string>();
+            try
+            {
+                copy(files);
+            }
+            catch (McpException e)
+            {
+                files["warning"] =
+                    $"the still could not be copied to {destination!.Requested}: {ScreenshotTarget.ReasonOf(e)}; it is kept at {capture}";
+            }
+        };
     }
 
     /// <summary>

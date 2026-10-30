@@ -1370,6 +1370,103 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task WaitForCopiesTheMetFrameToATmpPath()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        WaitCondition condition = new(Node: "TimeProbe", Expression: "node.process_frames % 16 == 5");
+        string tmp = Path.Combine(_shared.ProbeDirectory, ".tmp");
+        string named = Path.Combine(tmp, "gmcp-349", "met.png");
+        try
+        {
+            WaitOptions options = new(Screenshot: true, Path: ".tmp/gmcp-349/met.png");
+            JsonNode reply = JsonNode.Parse(Text([.. await _tools.WaitForAsync(condition, 5000, options, cancellationToken: cancellation)]))!;
+            JsonNode screenshot = reply["screenshot"]!;
+            string capture = screenshot["capturePath"]!.GetValue<string>();
+
+            Assert.True(reply["met"]!.GetValue<bool>(), reply.ToJsonString());
+            Assert.Equal(named, screenshot["path"]!.GetValue<string>());
+            Assert.Equal(File.ReadAllBytes(capture), File.ReadAllBytes(named));
+            Assert.Equal(Path.Combine(_shared.ProbeDirectory, ".godot", "godot-mcp", "screenshots"), Path.GetDirectoryName(capture));
+
+            McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+                _tools.WaitForAsync(condition, 5000, options with { Path = "met.png" }, cancellationToken: cancellation)
+            );
+            Assert.Equal(TmpOnlyRefusal("wait_for"), refused.Message);
+        }
+        finally
+        {
+            if (Directory.Exists(tmp))
+            {
+                Directory.Delete(tmp, recursive: true);
+            }
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task CaptureFramesCopiesItsFilesToATmpStem()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string tmp = Path.Combine(_shared.ProbeDirectory, ".tmp");
+        string shots = Path.Combine(tmp, "gmcp-349");
+        try
+        {
+            JsonObject captured = await CaptureFramesAsync([0.1, 0.3, 0.3], new CaptureFramesOptions(Path: ".tmp/gmcp-349/anim.png"), cancellation);
+            string captureFolder = captured["captureFolder"]!.GetValue<string>();
+
+            Assert.Equal(shots, captured["folder"]!.GetValue<string>());
+            // A long frame under load can merge the points' frames, so the count of distinct files sets the names.
+            JsonArray files = captured["files"]!.AsArray();
+            Assert.InRange(files.Count, 1, 2);
+            Assert.Equal(
+                Enumerable.Range(0, files.Count).Select(index => FrameTargets.Name("anim.png", index, files.Count)),
+                files.Select(name => name!.GetValue<string>())
+            );
+            Assert.All(FramePaths(captured), path => Assert.True(File.Exists(path), captured.ToJsonString()));
+            Assert.Equal(Path.Combine(_shared.ProbeDirectory, ".godot", "godot-mcp", "screenshots"), captureFolder);
+
+            McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+                CaptureFramesAsync([0.1], new CaptureFramesOptions(Path: "anim.png"), cancellation)
+            );
+            Assert.Equal(TmpOnlyRefusal("capture_frames"), refused.Message);
+        }
+        finally
+        {
+            if (Directory.Exists(tmp))
+            {
+                Directory.Delete(tmp, recursive: true);
+            }
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATimedOutWaitForWritesNothingAtItsPath()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddTimeProbeAsync(cancellation);
+        WaitCondition never = new(Node: "TimeProbe", Expression: "false");
+        string tmp = Path.Combine(_shared.ProbeDirectory, ".tmp");
+        try
+        {
+            WaitOptions options = new(Screenshot: true, Path: ".tmp/gmcp-349/never.png");
+            JsonNode reply = JsonNode.Parse(Text([.. await _tools.WaitForAsync(never, 200, options, cancellationToken: cancellation)]))!;
+
+            Assert.False(reply["met"]!.GetValue<bool>(), reply.ToJsonString());
+            Assert.Null(reply["screenshot"]);
+            Assert.False(File.Exists(Path.Combine(tmp, "gmcp-349", "never.png")));
+        }
+        finally
+        {
+            if (Directory.Exists(tmp))
+            {
+                Directory.Delete(tmp, recursive: true);
+            }
+        }
+    }
+
+    private static string TmpOnlyRefusal(string tool) => $"options.path on {tool} writes only into the checkout's or the main checkout's .tmp folder";
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AWaitsCropKeepsThatPartOfTheMetFrame()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

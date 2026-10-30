@@ -178,7 +178,9 @@ internal sealed partial class RuntimeTools
             + "in another session. options.screenshot: true "
             + "captures the frame the condition was met on as take_screenshot does, for a scene that changes faster than a "
             + "following take_screenshot can catch, adding screenshot to the result (a timed-out wait captures nothing, and a "
-            + "frame that was not drawn gives a warning instead). options.call {node, method, args}, or {tool, args} for a game "
+            + "frame that was not drawn gives a warning instead); options.path with it also copies the capture to a file in the "
+            + "checkout's or the main checkout's .tmp folder, checked before the wait starts, which screenshot.path then names, "
+            + "with screenshot.capturePath the copy under .godot/. options.call {node, method, args}, or {tool, args} for a game "
             + "tool, with any wait but a uiChanged one, calls it in the frame the checks start (a signal wait connects first, so a "
             + "signal the call emits at once is caught): a gameMs or frames count "
             + "runs from its entry, and another wait's first check follows it in that frame, its frames and elapsedMs counted "
@@ -214,7 +216,8 @@ internal sealed partial class RuntimeTools
         )]
             int? timeoutMs = null,
         [Description(
-            "{screenshot, crop, call, then, edge, maxWallMs}: screenshot and edge false, no crop, call or then, and no wall cap when left out."
+            "{screenshot, crop, path, overwrite, call, then, edge, maxWallMs}: screenshot, overwrite and edge false, no crop, path, "
+                + "call or then, and no wall cap when left out."
         )]
             WaitOptions? options = null,
         [Description(ProjectTools.SessionDescription)] string? session = null,
@@ -222,6 +225,8 @@ internal sealed partial class RuntimeTools
     )
     {
         JsonObject parameters = BuildWaitParameters(condition, timeoutMs, options);
+        bool overwrite = options?.Overwrite is true;
+        Action<JsonObject>? copy = KeptCopy(TmpDestination(options?.Path, overwrite, WaitForToolName, session), overwrite, WaitForToolName);
         TimeSpan? wallCap = options?.MaxWallMs is { } maxWallMs ? TimeSpan.FromMilliseconds(maxWallMs) : null;
         BridgeResult result = await CallWaitAsync(parameters, wallCap, session, cancellationToken);
         JsonObject reply = WaitReply(result);
@@ -229,7 +234,7 @@ internal sealed partial class RuntimeTools
         CutMethodValue((reply["then"] as JsonObject)?["call"] as JsonObject);
         // The bridge already saved the screenshot, so its read is local and short: a cancel that landed during the extra clock
         // ping must not lose a wait that met.
-        return await WithCaptureAsync(reply, reply, result.Errors, CancellationToken.None);
+        return await WithCaptureAsync(reply, reply, result.Errors, copy, CancellationToken.None);
     }
 
     /// <summary>wait_for without a capture, answered as its JSON text: the form a batch step runs.</summary>
@@ -362,6 +367,11 @@ internal sealed partial class RuntimeTools
 
         CheckMaxWall(parameters, options.MaxWallMs);
         AddScreenshot(parameters, options.Screenshot, options.Crop);
+        if (options.Path is not null && options.Screenshot is not true)
+        {
+            throw new McpException("options.path needs options.screenshot: true: it names the file the captured frame is written to.");
+        }
+
         if (options.Call is { } call)
         {
             AddWaitCall(parameters, call);
@@ -374,7 +384,7 @@ internal sealed partial class RuntimeTools
 
         if (options.Edge is true)
         {
-            AddEdge(parameters);
+            AddEdge(parameters, WaitEdgeKinds);
         }
     }
 
@@ -429,14 +439,22 @@ internal sealed partial class RuntimeTools
             );
     }
 
-    /// <summary>Adds edge: true to an exists, property, expression, text or state wait's parameters.</summary>
+    /// <summary>The wait kinds wait_for's options.edge applies to.</summary>
+    private static readonly string[] WaitEdgeKinds = ["exists", "property", "expression", "text", "state"];
+
+    /// <summary>The kinds capture_frames' options.start.edge applies to: a start refuses text and state as kinds.</summary>
+    private static readonly string[] StartEdgeKinds = ["exists", "property", "expression"];
+
+    /// <summary>Adds edge: true to the parameters of a wait of one of <paramref name="kinds"/>.</summary>
+    /// <param name="parameters">The wait's parameters.</param>
+    /// <param name="kinds">The kinds an edge applies to, the last joined with "and" in the refusal.</param>
     /// <exception cref="McpException">The wait is of another kind, or checks once (timeoutMs 0).</exception>
-    private static void AddEdge(JsonObject parameters)
+    private static void AddEdge(JsonObject parameters, string[] kinds)
     {
         string kind = parameters["kind"]!.GetValue<string>();
-        if (kind is not ("exists" or "property" or "expression" or "text" or "state"))
+        if (!kinds.Contains(kind))
         {
-            throw new McpException($"options.edge applies to exists, property, expression, text and state waits; this condition is {kind}.");
+            throw new McpException($"options.edge applies to {string.Join(", ", kinds[..^1])} and {kinds[^1]} waits; this condition is {kind}.");
         }
 
         if (parameters["timeoutMs"]!.GetValue<int>() == 0)
@@ -1160,17 +1178,19 @@ internal sealed partial class RuntimeTools
         JsonObject reply =
             result.Reply as JsonObject
             ?? throw new McpException($"The bridge's frame reply is not an object: {result.Reply?.ToJsonString() ?? "null"}.");
-        return await WithCaptureAsync(FrameState(reply), reply, result.Errors, cancellationToken);
+        return await WithCaptureAsync(FrameState(reply), reply, result.Errors, null, cancellationToken);
     }
 
     /// <summary>
     /// <paramref name="text"/> with the errors as one text block; when <paramref name="reply"/> carries a screenshot, text's
-    /// screenshot is its saved files as take_screenshot names them, and the preview image follows.
+    /// screenshot is its saved files as take_screenshot names them, changed by <paramref name="copy"/> when given, and the
+    /// preview image follows.
     /// </summary>
     private static async Task<IEnumerable<ContentBlock>> WithCaptureAsync(
         JsonObject text,
         JsonObject reply,
         IReadOnlyList<ErrorEntry> errors,
+        Action<JsonObject>? copy,
         CancellationToken cancellationToken
     )
     {
@@ -1180,7 +1200,9 @@ internal sealed partial class RuntimeTools
         }
 
         ScreenshotFiles files = ReadScreenshotFiles(screenshot);
-        text["screenshot"] = JsonSerializer.SerializeToNode(files, Json);
+        JsonObject shot = JsonSerializer.SerializeToNode(files, Json)!.AsObject();
+        copy?.Invoke(shot);
+        text["screenshot"] = shot;
         byte[] image = await ReadImageAsync(files.PreviewPath ?? files.Path, cancellationToken);
         return [new TextContentBlock { Text = ErrorReport.AddTo(text, errors).ToJsonString() }, ImageContentBlock.FromBytes(image, "image/png")];
     }

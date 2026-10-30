@@ -181,6 +181,43 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task TakeScreenshotCopiesTheCaptureToATmpPathAndKeepsItUnderDotGodot()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string tmp = Path.Combine(_shared.ProbeDirectory, ".tmp");
+        string named = Path.Combine(tmp, "gmcp-349", "take.png");
+        try
+        {
+            List<ContentBlock> blocks =
+            [
+                .. await _tools.TakeScreenshotAsync("path_only", RedSquare, path: ".tmp/gmcp-349/take.png", cancellationToken: cancellation),
+            ];
+            JsonNode reply = JsonNode.Parse(Text(blocks))!;
+            string capture = reply["capturePath"]!.GetValue<string>();
+
+            Assert.Equal(named, reply["path"]!.GetValue<string>());
+            Assert.Equal(File.ReadAllBytes(capture), File.ReadAllBytes(named));
+            Assert.Equal(Path.Combine(_shared.ProbeDirectory, ".godot", "godot-mcp", "screenshots"), Path.GetDirectoryName(capture));
+
+            McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+                _tools.TakeScreenshotAsync("path_only", path: "docs-shots/take.png", cancellationToken: cancellation)
+            );
+            Assert.Equal(
+                "path on take_screenshot writes only into the checkout's or the main checkout's .tmp folder; use save_screenshot to "
+                    + "write a still elsewhere in the project",
+                refused.Message
+            );
+        }
+        finally
+        {
+            if (Directory.Exists(tmp))
+            {
+                Directory.Delete(tmp, recursive: true);
+            }
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AResetUndoesPauseTimeScaleHeldInputAndSceneChanges()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

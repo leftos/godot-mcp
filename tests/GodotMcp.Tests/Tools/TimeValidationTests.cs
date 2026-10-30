@@ -41,6 +41,30 @@ public sealed class TimeValidationTests : IDisposable
         _listener.Dispose();
     }
 
+    [Fact]
+    public void AWaitsPathWithoutScreenshotIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() =>
+            RuntimeTools.BuildWaitParameters(new WaitCondition(GameMs: 100), 1000, new WaitOptions(Path: ".tmp/met.png"))
+        );
+
+        Assert.Equal("options.path needs options.screenshot: true: it names the file the captured frame is written to.", refused.Message);
+    }
+
+    [Fact]
+    public void AWaitsPathAndOverwriteStayOnTheServer()
+    {
+        JsonObject parameters = RuntimeTools.BuildWaitParameters(
+            new WaitCondition(GameMs: 100),
+            1000,
+            new WaitOptions(Screenshot: true, Path: ".tmp/met.png", Overwrite: true)
+        );
+
+        Assert.True(parameters["screenshot"]!.GetValue<bool>(), parameters.ToJsonString());
+        Assert.False(parameters.ContainsKey("path"), parameters.ToJsonString());
+        Assert.False(parameters.ContainsKey("overwrite"), parameters.ToJsonString());
+    }
+
     [Theory]
     [InlineData("jump", null, null, null, null, "action must be one of pause, resume, step, time_scale.")]
     [InlineData("Pause", null, null, null, null, "action must be one of pause, resume, step, time_scale.")]
