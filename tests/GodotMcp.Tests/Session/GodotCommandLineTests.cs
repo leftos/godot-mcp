@@ -1,12 +1,17 @@
 using System.Diagnostics;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
+using GodotMcp.TestSupport;
 
 namespace GodotMcp.Tests.Session;
 
-public sealed class GodotCommandLineTests
+public sealed class GodotCommandLineTests : IDisposable
 {
     private const string Project = @"C:\My Games\Probe";
+
+    private readonly TempDirectory _temp = new();
+
+    public void Dispose() => _temp.Dispose();
 
     [Fact]
     public void PutsPathSceneAndEngineArgsBeforeTheSeparatorAndUserArgsAfter()
@@ -322,6 +327,76 @@ public sealed class GodotCommandLineTests
         Assert.False(startInfo.Environment.ContainsKey(GodotCommandLine.WindowSizeVariable));
     }
 
+    [Fact]
+    public void AHeadlessLaunchWithoutResolutionTakesTheProjectsViewportSize()
+    {
+        string project = ProjectWithWindowSettings("window/size/viewport_width=1920\nwindow/size/viewport_height=1080\n");
+        LaunchRequest request = new(project, null, ["--headless"], [], false, false, Prepare: true);
+
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", request, new BridgeEndpoint(4321, "t0k3n"), moviePath: null);
+
+        Assert.Equal("1920x1080", startInfo.Environment[GodotCommandLine.WindowSizeVariable]);
+    }
+
+    [Fact]
+    public void AHeadlessLaunchTakesTheWindowOverrideWhenSet()
+    {
+        string project = ProjectWithWindowSettings(
+            "window/size/viewport_width=1920\nwindow/size/viewport_height=1080\n"
+                + "window/size/window_width_override=1280\nwindow/size/window_height_override=720\n"
+        );
+        LaunchRequest request = new(project, null, ["--headless"], [], false, false, Prepare: true);
+
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", request, new BridgeEndpoint(4321, "t0k3n"), moviePath: null);
+
+        Assert.Equal("1280x720", startInfo.Environment[GodotCommandLine.WindowSizeVariable]);
+    }
+
+    [Fact]
+    public void AHeadlessLaunchOfAProjectWithNoWindowSettingsTakesGodotsDefault()
+    {
+        // 1152x648 is Godot's own default (4.7.2 core/config/project_settings.cpp L1719-1720).
+        string project = ProjectWithWindowSettings(string.Empty);
+        LaunchRequest request = new(project, null, ["--headless"], [], false, false, Prepare: true);
+
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", request, new BridgeEndpoint(4321, "t0k3n"), moviePath: null);
+
+        Assert.Equal("1152x648", startInfo.Environment[GodotCommandLine.WindowSizeVariable]);
+    }
+
+    [Fact]
+    public void ADisplayDriverHeadlessLaunchCountsAsHeadless()
+    {
+        string project = ProjectWithWindowSettings("window/size/viewport_width=1600\nwindow/size/viewport_height=900\n");
+        LaunchRequest request = new(project, null, ["--display-driver", "headless"], [], false, false, Prepare: true);
+
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", request, new BridgeEndpoint(4321, "t0k3n"), moviePath: null);
+
+        Assert.Equal("1600x900", startInfo.Environment[GodotCommandLine.WindowSizeVariable]);
+    }
+
+    [Fact]
+    public void AResolutionStillWinsOnAHeadlessLaunch()
+    {
+        string project = ProjectWithWindowSettings("window/size/viewport_width=1920\nwindow/size/viewport_height=1080\n");
+        LaunchRequest request = new(project, null, ["--headless", "--resolution", "1280x720"], [], false, false, Prepare: true);
+
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", request, new BridgeEndpoint(4321, "t0k3n"), moviePath: null);
+
+        Assert.Equal("1280x720", startInfo.Environment[GodotCommandLine.WindowSizeVariable]);
+    }
+
+    [Fact]
+    public void AWindowedLaunchWithoutResolutionSetsNoWindowSize()
+    {
+        string project = ProjectWithWindowSettings("window/size/viewport_width=1920\nwindow/size/viewport_height=1080\n");
+        LaunchRequest request = new(project, null, ["--verbose"], [], false, false, Prepare: true);
+
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", request, new BridgeEndpoint(4321, "t0k3n"), moviePath: null);
+
+        Assert.False(startInfo.Environment.ContainsKey(GodotCommandLine.WindowSizeVariable));
+    }
+
     [Theory]
     [InlineData("16385x720", "outside 1 to 16384")]
     [InlineData("720x16385", "outside 1 to 16384")]
@@ -362,5 +437,14 @@ public sealed class GodotCommandLineTests
         );
         Assert.Null(GodotCommandLine.DescribeWindowMismatch(new WindowSize(3840, 2160), new WindowSize(3840, 2160)));
         Assert.Null(GodotCommandLine.DescribeWindowMismatch(null, new WindowSize(3840, 1421)));
+    }
+
+    /// <summary>A project folder whose project.godot holds <paramref name="windowSettings"/> under its <c>[display]</c> section.</summary>
+    private string ProjectWithWindowSettings(string windowSettings)
+    {
+        string projectDir = _temp.Combine("Probe");
+        Directory.CreateDirectory(projectDir);
+        File.WriteAllText(Path.Combine(projectDir, "project.godot"), "config_version=5\n\n[display]\n\n" + windowSettings);
+        return projectDir;
     }
 }

@@ -56,7 +56,7 @@ A process that declares a `prep` (a command, like its `command`) runs it first, 
 
 Every other runtime tool refuses it, except `restart_project`, which stops it and starts its stored command and ready line again; `batch_drive` runs a `wait` with `output` on it and refuses a tool step. Stop it by name, never with `projectPath`.
 
-`stop_project`'s `alreadyExited` says the game had ended before the stop, and `gameExitCode` is the game's own code (`exitCode` is the console wrapper's). Several sessions can run at once, on one folder or several (a host and a headless guest of one project): name them with `options.session`, and launch a headless client with `engineArgs: ["--headless", "--resolution", "<the project's viewport size>"]`, since a headless root window is 64x64.
+`stop_project`'s `alreadyExited` says the game had ended before the stop, and `gameExitCode` is the game's own code (`exitCode` is the console wrapper's). Several sessions can run at once, on one folder or several (a host and a headless guest of one project): name them with `options.session`, and launch a headless client with `engineArgs: ["--headless"]`: it lays out at the project's window size, as a windowed run does.
 
 Pass the `session` `run_project` returned to every call from the first one: another agent's game can start on the same server at any time, and a call without a name is then refused.
 

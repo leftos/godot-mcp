@@ -67,10 +67,13 @@ internal static partial class GodotCommandLine
     public const string PreviewVariable = "GODOT_MCP_PREVIEW";
 
     /// <summary>
-    /// The window size the engine arguments' --resolution asks for, as <c>WIDTHxHEIGHT</c>. Windows holds a window created larger
-    /// than the desktop to the desktop's size (4.7.2 <c>display_server_windows.cpp</c> <c>_create_window</c> L7175-7257), and a
-    /// resize after start is not held (<c>window_set_size</c>'s <c>MoveWindow</c>, L2492-2520), so the bridge resizes the window
-    /// to it once the game has started.
+    /// The window size the launch asks for, as <c>WIDTHxHEIGHT</c>: the engine arguments' --resolution, or, on a headless run
+    /// without one, the size the project's project.godot lays the game out at (<see cref="ProjectWindowSize"/>). The headless
+    /// display server drops the size it is given and the root window then clamps to 64x64 (4.7.2
+    /// <c>servers/display/display_server_headless.cpp</c> L38-41, <c>scene/main/scene_tree.cpp</c> L2069), so this variable is
+    /// all a headless run honors. Windows holds a window created larger than the desktop to the desktop's size (4.7.2
+    /// <c>display_server_windows.cpp</c> <c>_create_window</c> L7175-7257), and a resize after start is not held
+    /// (<c>window_set_size</c>'s <c>MoveWindow</c>, L2492-2520), so the bridge resizes the window to it once the game has started.
     /// </summary>
     public const string WindowSizeVariable = "GODOT_MCP_WINDOW_SIZE";
 
@@ -207,7 +210,7 @@ internal static partial class GodotCommandLine
             throw new SessionException(HeadlessRecordingRefusal);
         }
 
-        if (engineArgs.Index().Any(entry => entry.Item == "--display-driver" && engineArgs.ElementAtOrDefault(entry.Index + 1) == "headless"))
+        if (HasHeadlessDisplayDriver(engineArgs))
         {
             throw new SessionException(HeadlessDisplayRecordingRefusal);
         }
@@ -241,6 +244,13 @@ internal static partial class GodotCommandLine
 
         return size;
     }
+
+    /// <summary>Whether the engine arguments run Godot headless: --headless, or the headless display driver.</summary>
+    private static bool IsHeadless(IReadOnlyList<string> engineArgs) => engineArgs.Contains("--headless") || HasHeadlessDisplayDriver(engineArgs);
+
+    /// <summary>Whether the engine arguments pick the headless display driver: --display-driver followed by headless.</summary>
+    private static bool HasHeadlessDisplayDriver(IReadOnlyList<string> engineArgs) =>
+        engineArgs.Index().Any(entry => entry.Item == "--display-driver" && engineArgs.ElementAtOrDefault(entry.Index + 1) == "headless");
 
     /// <summary>What a launch result says when the game's window is not the size --resolution asked for; null when it is.</summary>
     public static string? DescribeWindowMismatch(WindowSize? asked, WindowSize? window) =>
@@ -302,7 +312,8 @@ internal static partial class GodotCommandLine
     /// The start info for a run. Arguments go through <see cref="ProcessStartInfo.ArgumentList"/>, which quotes each one,
     /// so an argument with spaces reaches Godot whole. stdin is redirected so Godot never inherits the server's: that is
     /// the MCP pipe, and on Windows starting a child that inherits a pipe the server is blocked reading stalls the start
-    /// until the read completes.
+    /// until the read completes. A headless run without --resolution takes the project's own window size, so the bridge lays
+    /// it out as a windowed run does.
     /// </summary>
     public static ProcessStartInfo CreateStartInfo(string godotPath, LaunchRequest request, BridgeEndpoint bridge, string? moviePath)
     {
@@ -342,6 +353,10 @@ internal static partial class GodotCommandLine
         if (RequestedWindowSize(request.EngineArgs) is { } size)
         {
             startInfo.Environment[WindowSizeVariable] = size.ToString();
+        }
+        else if (IsHeadless(request.EngineArgs))
+        {
+            startInfo.Environment[WindowSizeVariable] = ProjectWindowSize.Read(request.ProjectPath).ToString();
         }
         else
         {
