@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -21,6 +22,12 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
 
     /// <summary>The destination the exit's tests name, which their rename finds on another volume.</summary>
     private const string ExitClip = "clips/x.mp4";
+
+    /// <summary>The helper's last line when the window its hwnd named is gone, as when the game's process has ended.</summary>
+    private const string NoWindow = "godot-mcp-capture: --hwnd 4242 names no window.";
+
+    /// <summary>The start of the refusal of a capture whose helper exited with code 2 before its first frame.</summary>
+    private const string HelperEndedFirst = "The capture helper exited with code 2 before its first frame, so the recording did not start: ";
 
     private const string MutedWarning = "no audio: session 'game' renders no sound (options.mute or a quiet run), so the clip has no audio track";
 
@@ -186,6 +193,45 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
 
         Assert.Null(whileStarting);
         Assert.Equal("realtime", ListedRecording()?.Mode);
+    }
+
+    [Fact]
+    public async Task AStartWhoseGameExitsBeforeTheCaptureSaysTheGameExited()
+    {
+        Process game = StartGameThatCrashesWhenToldTo();
+        try
+        {
+            await AttachToGameAsync(new AttachRequest(_harness.Project(Game), Game, RegistryHarness.LongWait, false, false, null), game);
+            HelperEndsWithNoWindow();
+            _fake.BeforeProbe = async _ =>
+            {
+                game.StandardInput.Close();
+                await game.WaitForExitAsync(Token).WaitAsync(RegistryHarness.HangGuard, Token);
+            };
+
+            SessionException refused = await Assert.ThrowsAsync<SessionException>(StartDirectlyAsync);
+
+            Assert.StartsWith(HelperEndedFirst, refused.Message, StringComparison.Ordinal);
+            Assert.Contains(NoWindow, refused.Message, StringComparison.Ordinal);
+            Assert.EndsWith("-capture.log. The game exited during the start (code -1073741819).", refused.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            RegistryHarness.EndStandInGame(game);
+        }
+    }
+
+    [Fact]
+    public async Task AStartWhoseGameStillRunsIsRefusedWithTheHelpersMessageUnchanged()
+    {
+        await AttachWithPidAsync(new AttachRequest(_harness.Project(Game), Game, RegistryHarness.LongWait, false, false, null));
+        HelperEndsWithNoWindow();
+
+        SessionException refused = await Assert.ThrowsAsync<SessionException>(StartDirectlyAsync);
+
+        Assert.StartsWith(HelperEndedFirst, refused.Message, StringComparison.Ordinal);
+        Assert.Contains(NoWindow, refused.Message, StringComparison.Ordinal);
+        Assert.EndsWith("-capture.log.", refused.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -696,19 +742,52 @@ public sealed class RealtimeSessionEndTests : IAsyncDisposable
     /// game the harness ends.
     /// </summary>
     /// <returns>Whether the attach file the game read told it to mute, and the pid its hello carried.</returns>
-    private async Task<(bool ToldToMute, int Pid)> AttachWithPidAsync(AttachRequest request)
+    private Task<(bool ToldToMute, int Pid)> AttachWithPidAsync(AttachRequest request) => AttachToGameAsync(request, _harness.StartOwnedGame());
+
+    /// <summary>
+    /// Attaches as <paramref name="request"/> asks to a fake game whose hello carries the fake window and
+    /// <paramref name="standIn"/>'s pid.
+    /// </summary>
+    /// <returns>Whether the attach file the game read told it to mute, and the pid its hello carried.</returns>
+    private async Task<(bool ToldToMute, int Pid)> AttachToGameAsync(AttachRequest request, Process standIn)
     {
         string attachFile = AttachFile.PathIn(request.ProjectPath);
         Task<AttachResult> attach = _harness.Sessions.AttachAsync(request, Token);
         await RegistryHarness.WaitUntilAsync(() => File.Exists(attachFile), attach);
         JsonNode written = JsonNode.Parse(File.ReadAllText(attachFile))!;
-        int pid = _harness.StartOwnedGame().Id;
+        int pid = standIn.Id;
         FakeHello hello = new() { ProcessId = pid, WindowHandle = FakeRealtime.Hwnd };
         FakeBridge game = await FakeBridge.DialAsync(_harness.Listener.Port, written["token"]!.GetValue<string>(), request.ProjectPath, hello, Token);
         _games.Add(game);
         await attach;
         return (written["mute"]!.GetValue<bool>(), pid);
     }
+
+    /// <summary>
+    /// A stand-in game that runs until its standard input is closed, then exits with an access violation's code
+    /// (0xC0000005), as a game that crashed does.
+    /// </summary>
+    private static Process StartGameThatCrashesWhenToldTo() =>
+        Process.Start(
+            new ProcessStartInfo("cmd.exe", "/c set /p _= & exit -1073741819")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+            }
+        )!;
+
+    /// <summary>The capture helper exits with code 2 before its first frame, saying the window it was given is gone.</summary>
+    private void HelperEndsWithNoWindow()
+    {
+        _fake.HelperFrameLimit = 0;
+        _fake.HelperExit = 2;
+        _fake.HelperLines = [NoWindow];
+    }
+
+    /// <summary>A real-time start on the session itself, whose refusal is the <see cref="SessionException"/> it throws.</summary>
+    private Task<RealtimeStarted> StartDirectlyAsync() =>
+        _harness.Sessions.Resolve(Game).StartRealtimeAsync(30, 600, audio: false, destination: null, overwrite: false, Token);
 
     /// <summary>A record_mark start with the default options, then its stop.</summary>
     /// <returns>The start's result.</returns>

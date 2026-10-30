@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using GodotMcp.Server.Tools;
 
@@ -73,7 +74,7 @@ internal sealed partial class GodotSession
                 Destination = destination,
                 Overwrite = overwrite,
             };
-            RealtimeRecording recording = await RealtimeRecording.StartAsync(environment, start, cancellationToken);
+            RealtimeRecording recording = await StartRecordingAsync(environment, start, cancellationToken);
             bool ended;
             lock (_realtimeLock)
             {
@@ -101,6 +102,44 @@ internal sealed partial class GodotSession
 
             settled.TrySetResult();
         }
+    }
+
+    /// <summary>
+    /// Starts the recording <paramref name="start"/> describes. A refusal while the game's own process, kept from its hello,
+    /// has exited says so after the recording's own message, with the game's exit code and its last stderr lines.
+    /// </summary>
+    /// <exception cref="SessionException">The recording did not start; nothing is left running.</exception>
+    private async Task<RealtimeRecording> StartRecordingAsync(
+        RealtimeEnvironment environment,
+        RealtimeStart start,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            return await RealtimeRecording.StartAsync(environment, start, cancellationToken);
+        }
+        catch (SessionException e) when (DescribeGameExit() is { } exited)
+        {
+            throw new SessionException($"{e.Message} {exited}", e);
+        }
+    }
+
+    /// <summary>
+    /// "The game exited during the start (code N)", with the run's last stderr lines when it has any, for a game whose own
+    /// process, kept from its hello, has exited; null while it runs or without a handle on it.
+    /// </summary>
+    private string? DescribeGameExit()
+    {
+        Process? game = Kind == SessionKind.Attach ? _attachedGame : _run?.Game;
+        if (game is not { HasExited: true })
+        {
+            return null;
+        }
+
+        string exited = FormattableString.Invariant($"The game exited during the start (code {game.ExitCode})");
+        IReadOnlyList<string>? stderr = LastStderrLines(HangProbe.StderrLineCount);
+        return stderr is { Count: > 0 } lines ? $"{exited}; its last stderr lines: {string.Join('\n', lines)}" : $"{exited}.";
     }
 
     /// <summary>
