@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -33,6 +34,8 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
 
     /// <summary>How the bridge's answer to a call_method it stopped awaiting at its timeout begins.</summary>
     private const string CallForgottenAnswer = "no longer awaited: ";
+    private const double MaxScreenshotScale = 4;
+    private const string RecordingScaleRefusal = "scale is refused while the run records: the resize would be in the clip";
     private static readonly TimeSpan ScreenshotTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan UiElementsTimeout = TimeSpan.FromSeconds(10);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -57,13 +60,62 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
         )]
             ScreenshotCrop? crop = null,
         [Description(PreviewMaxWidthDescription)] int previewMaxWidth = 480,
+        [Description(
+            "1 to 4, 1 by default: above 1, the game's window grows to that many times its size for this one capture, so the "
+                + "PNG has that many times the pixels of the same frame and a crop selects the same rectangle at that scale. The "
+                + "window visibly resizes for a moment and the game gets two size_changed events, one as it grows and one as it "
+                + "is restored. Refused unless the project's stretch mode is canvas_items, the window is windowed (not "
+                + "maximized or fullscreen) and the run does not record. The result then adds scale, the scale reached, and a "
+                + "warning when the screen let the window grow less than asked."
+        )]
+            double scale = 1,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
     {
         ScreenshotMode mode = ParseMode(responseMode);
-        JsonObject parameters = BuildScreenshotParameters(mode, crop, previewMaxWidth);
-        return await ScreenshotAsync(Find(session), "take_screenshot", new ScreenshotRequest(mode, parameters), null, cancellationToken);
+        JsonObject parameters = AddScale(BuildScreenshotParameters(mode, crop, previewMaxWidth), scale);
+        GodotSession target = Find(session);
+        if (scale > 1 && IsRecordingRealtime(target))
+        {
+            throw new McpException(RecordingScaleRefusal);
+        }
+
+        Action<JsonObject, JsonNode?>? addFields = scale > 1 ? CopyScaleFields : null;
+        return await ScreenshotAsync(target, "take_screenshot", new ScreenshotRequest(mode, parameters), addFields, cancellationToken);
+    }
+
+    /// <summary>parameters with take_screenshot's scale added when it is above 1, the bridge's default.</summary>
+    /// <exception cref="McpException">The scale is not 1 to 4.</exception>
+    internal static JsonObject AddScale(JsonObject parameters, double scale)
+    {
+        if (!(scale >= 1 && scale <= MaxScreenshotScale))
+        {
+            throw new McpException($"scale must be 1 to 4; got {scale.ToString(CultureInfo.InvariantCulture)}.");
+        }
+
+        if (scale > 1)
+        {
+            parameters["scale"] = scale;
+        }
+
+        return parameters;
+    }
+
+    /// <summary>Whether the session's real-time recording is running, which a scaled capture's resize would show in.</summary>
+    private static bool IsRecordingRealtime(GodotSession target) =>
+        target.RecordingState is { Mode: RealtimeRecording.Mode, Clips: null, Error: null };
+
+    /// <summary>A scaled capture's scale reached and its warning, copied from the bridge's reply into the result.</summary>
+    private static void CopyScaleFields(JsonObject text, JsonNode? reply)
+    {
+        foreach (string field in (string[])["scale", "warning"])
+        {
+            if (reply?[field] is { } value)
+            {
+                text[field] = value.DeepClone();
+            }
+        }
     }
 
     [McpServerTool(Name = SaveScreenshotToolName, ReadOnly = false, Destructive = false, OpenWorld = false)]

@@ -21,6 +21,39 @@ const HEADLESS_WARNING := (
 	"a headless game draws no frames, so no screenshot was taken; read state with "
 	+ "get_game_state, get_ui_elements or run_script, or run the scene windowed."
 )
+## What a scaled capture answers when the root's stretch mode is not canvas_items, with the mode.
+const SCALE_MODE_REFUSAL := (
+	"scale needs the project's stretch mode canvas_items (it is %s): any other mode re-lays out "
+	+ "the game or adds no detail; relaunch with --resolution instead"
+)
+## What a scaled capture answers on a maximized or fullscreen window.
+const SCALE_WINDOW_REFUSAL := (
+	"scale needs a windowed, not maximized or fullscreen, window: Windows does not resize it; "
+	+ "relaunch with --resolution instead"
+)
+## What a scaled capture answers while Movie Maker records.
+const SCALE_RECORDING_REFUSAL := (
+	"scale is refused while the run records: " + "the resize would be in the clip"
+)
+## The warning of a scaled capture whose window grew less than asked.
+const SCALE_CLAMPED_WARNING := (
+	"the window could only grow to %dx%d, not %dx%d, " + "so the capture is %sx, not %sx"
+)
+## The warning of a scaled capture whose window did not return to its size.
+const SCALE_UNRESTORED_WARNING := "the window did not return to %dx%d; it is %dx%d"
+## The project setting's name of each Window.ContentScaleMode, as a refusal names it.
+const STRETCH_MODE_NAMES := {
+	Window.CONTENT_SCALE_MODE_DISABLED: "disabled",
+	Window.CONTENT_SCALE_MODE_CANVAS_ITEMS: "canvas_items",
+	Window.CONTENT_SCALE_MODE_VIEWPORT: "viewport",
+}
+## The window modes the OS does not resize (platform/windows/display_server_windows.cpp
+## L2503-2505 in 4.7.2).
+const UNRESIZABLE_MODES: Array[int] = [
+	Window.MODE_MAXIMIZED, Window.MODE_FULLSCREEN, Window.MODE_EXCLUSIVE_FULLSCREEN
+]
+## The process frames a scaled capture waits for its window to return to its size.
+const RESTORE_FRAMES := 30
 ## The most frame saves encoding off the main thread at once (save_screenshot_off_thread): an
 ## image of a 1920 x 1080 frame holds 8 MB, so past this a due frame is saved on the main thread.
 ## The server's MaxCaptureSavesInFlight (RuntimeTools.Frames.cs) holds the same value and sizes
@@ -274,13 +307,119 @@ func crop(image: Image, region: Dictionary) -> Variant:
 		int(region.get("width", 0)),
 		int(region.get("height", 0))
 	)
-	var mapped: Rect2i = _rect_through(_viewport_to_frame(), Rect2(wanted))
-	mapped.size = mapped.size.maxi(1)
-	var inside: Rect2i = mapped.intersection(Rect2i(Vector2i.ZERO, image.get_size()))
+	var inside: Rect2i = crop_rect(_viewport_to_frame(), wanted, image.get_size())
 	if not inside.has_area():
 		var viewport_size := Vector2i(get_viewport().get_visible_rect().size)
 		return "the crop %s lies outside the %s viewport" % [wanted, viewport_size]
 	return image.get_region(inside)
+
+
+## The part of a frame of frame_size inside wanted, a rect in viewport coordinates mapped to frame
+## pixels through to_frame, never less than a pixel a side; no area when none of it is inside.
+static func crop_rect(to_frame: Transform2D, wanted: Rect2i, frame_size: Vector2i) -> Rect2i:
+	var mapped: Rect2i = _rect_through(to_frame, Rect2(wanted))
+	mapped.size = mapped.size.maxi(1)
+	return mapped.intersection(Rect2i(Vector2i.ZERO, frame_size))
+
+
+## Saves the next drawn frame as save_screenshot does; with params.scale above 1, the frame
+## grab_scaled takes, its reply adding scale and any warning.
+func capture_screenshot(params: Dictionary) -> Variant:
+	var scale: float = float(params.get("scale", 1.0))
+	if scale <= 1.0:
+		await wait_for_drawn_frame()
+		return save_screenshot(grab_frame(), params)
+	var shot: Variant = await grab_scaled(scale, params.get("crop"))
+	if shot is String:
+		return shot
+	var uncropped: Dictionary = params.duplicate()
+	uncropped.erase("crop")
+	var saved: Variant = save_screenshot(shot["image"], uncropped)
+	if saved is Dictionary:
+		shot.erase("image")
+		saved.merge(shot)
+	return saved
+
+
+## Why a scaled capture is refused, or empty: the root's stretch mode must be canvas_items, the only
+## one that renders a bigger window at more pixels without re-laying the game out
+## (scene/main/window.cpp L1328-1331, L1407-1424 in 4.7.2); its window mode one the OS resizes; and
+## Movie Maker must not record (movie_path empty).
+static func scale_refusal(stretch_mode: int, window_mode: int, movie_path: String) -> String:
+	if stretch_mode != Window.CONTENT_SCALE_MODE_CANVAS_ITEMS:
+		return SCALE_MODE_REFUSAL % STRETCH_MODE_NAMES.get(stretch_mode, str(stretch_mode))
+	if window_mode in UNRESIZABLE_MODES:
+		return SCALE_WINDOW_REFUSAL
+	if not movie_path.is_empty():
+		return SCALE_RECORDING_REFUSAL
+	return ""
+
+
+## The root window grown to scale times its size for one drawn frame, that frame grabbed (cropped to
+## region, a viewport rect, through the grown frame's own transform when region is a Dictionary),
+## and the window restored: {image, scale[, warning]} as scaled_shot gives it, or a String saying
+## why not. The refusals come before any resize.
+func grab_scaled(scale: float, region: Variant) -> Variant:
+	var root: Window = get_tree().root
+	var refusal: String = scale_refusal(
+		root.content_scale_mode, root.mode, Engine.get_write_movie_path()
+	)
+	if not refusal.is_empty():
+		return refusal
+	var original: Vector2i = root.size
+	var wanted := Vector2i((Vector2(original) * scale).round())
+	root.size = wanted
+	await get_tree().process_frame
+	await wait_for_drawn_frame()
+	var got: Vector2i = root.size
+	var image: Image = grab_frame()
+	var shot: Variant = crop(image, region) if image != null and region is Dictionary else image
+	var unrestored: String = await _restore_size(root, original)
+	if shot == null:
+		return NO_IMAGE
+	if shot is String:
+		return shot
+	var result: Dictionary = scaled_shot(shot, original, wanted, got, scale)
+	_add_warning(result, unrestored)
+	return result
+
+
+## result with warning added to its warning, joined by "; " when it has one; unchanged when warning
+## is empty.
+static func _add_warning(result: Dictionary, warning: String) -> void:
+	if warning.is_empty():
+		return
+	var earlier: String = result.get("warning", "")
+	result["warning"] = warning if earlier.is_empty() else earlier + "; " + warning
+
+
+## {image, scale}, scale the window's growth reached (its smaller side's, to two decimals), plus a
+## warning when got, the size the window reached, is smaller than wanted.
+static func scaled_shot(
+	image: Image, original: Vector2i, wanted: Vector2i, got: Vector2i, scale: float
+) -> Dictionary:
+	var reached: float = minf(float(got.x) / original.x, float(got.y) / original.y)
+	var shot: Dictionary = {"image": image, "scale": roundf(reached * 100.0) / 100.0}
+	if got.x < wanted.x or got.y < wanted.y:
+		var sizes: Array = [got.x, got.y, wanted.x, wanted.y]
+		shot["warning"] = SCALE_CLAMPED_WARNING % (sizes + [_decimals(reached), _decimals(scale)])
+	return shot
+
+
+## value with at most two decimals and no trailing zeros: 2, 1.5, 2.34.
+static func _decimals(value: float) -> String:
+	return ("%.2f" % value).rstrip("0").rstrip(".")
+
+
+## Sets root back to original and waits, up to RESTORE_FRAMES process frames, until its size reads
+## back as original; returns SCALE_UNRESTORED_WARNING when it never does, else empty.
+func _restore_size(root: Window, original: Vector2i) -> String:
+	root.size = original
+	for _waited: int in RESTORE_FRAMES:
+		await get_tree().process_frame
+		if root.size == original:
+			return ""
+	return SCALE_UNRESTORED_WARNING % [original.x, original.y, root.size.x, root.size.y]
 
 
 ## Writes image scaled to max_width as a PNG at path, adding previewPath, previewWidth and

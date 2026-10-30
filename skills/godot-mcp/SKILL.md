@@ -60,7 +60,7 @@ Every other runtime tool refuses it, except `restart_project`, which stops it an
 
 Pass the `session` `run_project` returned to every call from the first one: another agent's game can start on the same server at any time, and a call without a name is then refused.
 
-**Seeing.** `take_screenshot` (read-only, saves under `.godot/`; with `crop` in viewport coordinates, so a rect from `get_ui_elements` or `hover` crops as it is; for a 2x crop, launch at twice the project's size with `--resolution`, which is given exactly), `get_ui_elements` (filter by class, e.g. `BaseButton`), and `preview_scene`, which shows one scene without playing it: it starts the scene quiet, screenshots its first frames and stops, beside any live session.
+**Seeing.** `take_screenshot` (read-only, saves under `.godot/`; with `crop` in viewport coordinates, so a rect from `get_ui_elements` or `hover` crops as it is; `scale: 2` (1 to 4) grows the window for that one capture, so a crop has that many times the pixels, in a windowed `canvas_items` project that is not recording; for any other project, launch at twice the project's size with `--resolution`, which is given exactly), `get_ui_elements` (filter by class, e.g. `BaseButton`), and `preview_scene`, which shows one scene without playing it: it starts the scene quiet, screenshots its first frames and stops, beside any live session.
 
 `save_screenshot` takes `take_screenshot`'s arguments plus a `path` and writes the PNG to that project file, e.g. a tracked picture, into the git checkout holding the project (the whole checkout when it tracks the project's `project.godot`, else its `.tmp` folder only), or, from a linked worktree, into the main checkout's `.tmp` folder (an absolute path such as `<main checkout>/.tmp/shot.png`).
 

@@ -14,6 +14,17 @@ const HEADLESS_WARNING := (
 	"a headless game draws no frames, so no screenshot was taken; read state with "
 	+ "get_game_state, get_ui_elements or run_script, or run the scene windowed."
 )
+const SCALE_MODE_REFUSAL := (
+	"scale needs the project's stretch mode canvas_items (it is %s): any other mode re-lays out "
+	+ "the game or adds no detail; relaunch with --resolution instead"
+)
+const SCALE_WINDOW_REFUSAL := (
+	"scale needs a windowed, not maximized or fullscreen, window: Windows does not resize it; "
+	+ "relaunch with --resolution instead"
+)
+const SCALE_RECORDING_REFUSAL := (
+	"scale is refused while the run records: " + "the resize would be in the clip"
+)
 
 var _frame_script: GDScript = load_bridge_script("godot_mcp_frame.gd")
 var _time_script: GDScript = load_bridge_script("godot_mcp_time.gd")
@@ -76,6 +87,76 @@ func test_take_screenshot_refuses_a_headless_game_before_it_waits_for_a_frame() 
 	assert_eq(frame.waited, false, "no frame was waited for")
 	frame.free()
 	bridge.free()
+
+
+func test_a_scaled_take_screenshot_still_refuses_a_headless_game_first() -> void:
+	var bridge: Node = _recording_bridge()
+	var frame: Node = _waiting_frame()
+	bridge._frame = frame
+	bridge._handle_screenshot(8, {"scale": 2.0})
+	var refused: Dictionary = {"id": 8, "ok": false, "error": HEADLESS_REFUSAL}
+	assert_eq(bridge.sent, [refused], "the headless refusal, not a scale one")
+	assert_eq(frame.waited, false, "no frame was waited for")
+	frame.free()
+	bridge.free()
+
+
+func test_scale_is_refused_under_any_stretch_mode_but_canvas_items() -> void:
+	var frame: Node = _frame_script.new()
+	var windowed: int = Window.MODE_WINDOWED
+	var disabled: String = frame.scale_refusal(Window.CONTENT_SCALE_MODE_DISABLED, windowed, "")
+	var viewport: String = frame.scale_refusal(Window.CONTENT_SCALE_MODE_VIEWPORT, windowed, "")
+	assert_eq(disabled, SCALE_MODE_REFUSAL % "disabled", "disabled")
+	assert_eq(viewport, SCALE_MODE_REFUSAL % "viewport", "viewport")
+	var canvas_items: int = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+	assert_eq(frame.scale_refusal(canvas_items, windowed, ""), "", "canvas_items, windowed")
+	frame.free()
+
+
+func test_scale_is_refused_on_a_maximized_or_fullscreen_window() -> void:
+	var frame: Node = _frame_script.new()
+	var canvas_items: int = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+	var modes: Array[int] = [
+		Window.MODE_MAXIMIZED, Window.MODE_FULLSCREEN, Window.MODE_EXCLUSIVE_FULLSCREEN
+	]
+	for mode: int in modes:
+		var refusal: String = frame.scale_refusal(canvas_items, mode, "")
+		assert_eq(refusal, SCALE_WINDOW_REFUSAL, "window mode %d" % mode)
+	frame.free()
+
+
+func test_scale_is_refused_while_movie_maker_records() -> void:
+	var frame: Node = _frame_script.new()
+	var canvas_items: int = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+	var refusal: String = frame.scale_refusal(canvas_items, Window.MODE_WINDOWED, "clip.avi")
+	assert_eq(refusal, SCALE_RECORDING_REFUSAL, "a Movie Maker run")
+	frame.free()
+
+
+func test_a_crop_maps_to_the_scaled_frames_pixels() -> void:
+	var twice := Transform2D.IDENTITY.scaled(Vector2(2, 2))
+	var frame_size := Vector2i(1280, 720)
+	var square: Rect2i = _frame_script.crop_rect(twice, Rect2i(400, 40, 120, 80), frame_size)
+	assert_eq(square, Rect2i(800, 80, 240, 160), "the red square at 2x")
+	var edge: Rect2i = _frame_script.crop_rect(twice, Rect2i(600, 300, 100, 100), frame_size)
+	assert_eq(edge, Rect2i(1200, 600, 80, 120), "a crop past the frame's edge, clipped")
+
+
+func test_a_scaled_shot_reports_the_scale_reached() -> void:
+	var original := Vector2i(640, 360)
+	var image := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+	var full: Dictionary = _frame_script.scaled_shot(
+		image, original, Vector2i(1280, 720), Vector2i(1280, 720), 2.0
+	)
+	assert_eq(full, {"image": image, "scale": 2.0}, "the window grew as asked")
+	var clamped: Dictionary = _frame_script.scaled_shot(
+		image, original, Vector2i(2560, 1440), Vector2i(1500, 900), 4.0
+	)
+	var warning: String = (
+		"the window could only grow to 1500x900, not 2560x1440, "
+		+ "so the capture is 2.34x, not 4x"
+	)
+	assert_eq(clamped, {"image": image, "scale": 2.34, "warning": warning}, "the screen clamped it")
 
 
 ## A bridge whose frames are kept in its sent Array rather than written to a socket: a subclass

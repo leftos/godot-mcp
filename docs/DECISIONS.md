@@ -620,6 +620,10 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
     - It ends the wait through the existing `cancel`, so the bridge and its `backstopMs` do not change; a met answer that arrives after the cancel stays met with no `wallCapped`, and when the load-adjusted ceiling and the cap expire together the ceiling wins.
     - A game too stuck to answer the cancel fails the call within the cap and the 5 s reply allowance in wall time, with the usual no-answer error naming the cap, rather than running on to the load-adjusted reply deadline or its backstop.
 
+43. **A larger capture is an OS window resize under `canvas_items`** (`take_screenshot` `scale`; engine facts from Godot 4.7.2's source). Only growing the OS window gives real extra detail, and only under stretch mode `canvas_items`: the layout is kept and text is re-rasterised at the larger size by oversampling. The bridge grows the root Window for one capture, grabs and restores it, and refuses `scale` for any other stretch mode, a maximized or fullscreen window and a recording run (the refusals are in TOOLS.md).
+    - Ruled out: stretch mode `viewport`, which scales the fixed-size render up and adds no detail; `disabled`, which re-lays out the Controls so the picture is not the same frame; `scaling_3d_scale` and `content_scale_factor`, which do not give a larger PNG of the same layout; and a `SubViewport`, which cannot re-render the live tree.
+    - The cost accepted: the window visibly resizes for a moment and the game gets two `size_changed` events, which is why a recording refuses it and a project in another stretch mode relaunches with `--resolution`.
+
 ## Wire
 
 - **The server listens and the bridge dials in.** The server binds `127.0.0.1:0` and keeps the listener open, then passes the port and a session token to Godot through environment variables (`GODOT_MCP_PORT`, `GODOT_MCP_TOKEN`). This removes the reference server's free-port race and its regex-editing of the port into GDScript.

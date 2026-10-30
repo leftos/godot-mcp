@@ -11,6 +11,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `capture_frames` takes `options.tracks`, reading property and expression values in the very frame each point's image shows.
 - `run_scratches` takes `options.watch`, armed on each scene before its first step, returning the timeline as the scene's `watch`.
 - `run_scratches` takes `options.windowed`, playing scenes in a hidden off-screen window so screenshots, `capture_frames` and `watch` work on them.
+- `take_screenshot` takes `scale` (1 to 4), growing the window for one capture so it has that many times the pixels.
 - `wait_for` takes `options.crop` with `options.screenshot`, keeping that part of the met frame at full size up to 480 px wide.
 
 ### Changed

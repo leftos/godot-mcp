@@ -280,6 +280,72 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AScale2CaptureIsTwiceThePlainOneAndTheNextPlainOneIsBackToItsSize()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonNode plain = await ScaledReplyAsync(null, 1, cancellation);
+        JsonNode scaled = await ScaledReplyAsync(null, 2, cancellation);
+        JsonNode after = await ScaledReplyAsync(null, 1, cancellation);
+
+        // A screen too small for twice the window clamps it: the capture is then at the size the window reached, and says so.
+        if (scaled["warning"] is { } warning)
+        {
+            Assert.StartsWith("the window could only grow to ", warning.GetValue<string>(), StringComparison.Ordinal);
+            Assert.True(Size(scaled).Width > Size(plain).Width, $"the scaled capture is no bigger: {scaled.ToJsonString()}");
+        }
+        else
+        {
+            Assert.Equal((Size(plain).Width * 2, Size(plain).Height * 2), Size(scaled));
+            Assert.Equal(2.0, scaled["scale"]!.GetValue<double>());
+        }
+
+        Assert.Equal(Size(plain), Size(after));
+        Assert.Null(plain["scale"]);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACropAtScale2KeepsTheSameRegionAtTwiceItsSize()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonNode scaled = await ScaledReplyAsync(RedSquare, 2, cancellation);
+        string path = scaled["path"]!.GetValue<string>();
+        JsonNode corners = await RunAsync(CornerColoursScript(path), cancellation);
+
+        Assert.Null(scaled["warning"]);
+        Assert.Equal((240.0, 160.0), Size(scaled));
+        Assert.All(corners.AsArray(), corner => Assert.Equal([255, 0, 0], corner!.AsArray().Select(channel => channel!.GetValue<int>())));
+    }
+
+    [Theory(Timeout = TestTimeouts.OwnLaunchMs)]
+    [InlineData("viewport")]
+    [InlineData("disabled")]
+    public async Task AScaledCaptureIsRefusedUnderAnyStretchModeButCanvasItems(string mode)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using ProbeProject probe = new();
+        string settings = File.ReadAllText(probe.ProjectFile)
+            .Replace("window/stretch/mode=\"canvas_items\"", $"window/stretch/mode=\"{mode}\"", StringComparison.Ordinal);
+        File.WriteAllText(probe.ProjectFile, settings);
+        await using SessionHarness harness = new();
+        RuntimeTools tools = new(harness.Sessions, TestCSharp.Unused());
+        await harness.Sessions.LaunchAsync(new LaunchRequest(probe.Directory, null, [], [], true, false, Prepare: true), null, cancellation);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            tools.TakeScreenshotAsync("path_only", scale: 2, cancellationToken: cancellation)
+        );
+        await harness.Sessions.StopAsync(null, cancellation);
+
+        Assert.Contains(
+            $"scale needs the project's stretch mode canvas_items (it is {mode}): any other mode re-lays out the game or adds no "
+                + "detail; relaunch with --resolution instead",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task PreviewIsNoWiderThanPreviewMaxWidth()
     {
         List<ContentBlock> blocks =
@@ -568,6 +634,11 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         + "low = low.min(Vector2i(x, y))\n\t\t\t\t"
         + "high = high.max(Vector2i(x, y))\n\t"
         + "return {\"found\": high.x >= 0, \"x\": low.x, \"y\": low.y, \"width\": high.x - low.x + 1, \"height\": high.y - low.y + 1}";
+
+    private async Task<JsonNode> ScaledReplyAsync(ScreenshotCrop? crop, double scale, CancellationToken cancellation) =>
+        JsonNode.Parse(Text(await _tools.TakeScreenshotAsync("path_only", crop, scale: scale, cancellationToken: cancellation)))!;
+
+    private static (double Width, double Height) Size(JsonNode reply) => (reply["width"]!.GetValue<double>(), reply["height"]!.GetValue<double>());
 
     private static string Text(IEnumerable<ContentBlock> blocks) => string.Concat(blocks.OfType<TextContentBlock>().Select(block => block.Text));
 

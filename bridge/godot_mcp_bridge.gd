@@ -754,15 +754,15 @@ func _handle_shutdown(id: int, _params: Dictionary) -> void:
 	_quit(get_tree())
 
 
-## Saves the next drawn frame of the root viewport as the frame module's save_screenshot does;
-## on a headless game, replies the frame module's refusal before waiting for any frame.
+## Saves the next drawn frame of the root viewport as the frame module's capture_screenshot does,
+## at params.scale when it is above 1; on a headless game, replies the frame module's refusal
+## before waiting for any frame.
 func _handle_screenshot(id: int, params: Dictionary) -> void:
 	var refusal: String = _frame.headless_refusal()
 	if not refusal.is_empty():
 		_reply_error(id, refusal)
 		return
-	await _frame.wait_for_drawn_frame()
-	var saved: Variant = _frame.save_screenshot(_frame.grab_frame(), params)
+	var saved: Variant = await _frame.capture_screenshot(params)
 	if saved is String:
 		_reply_error(id, saved)
 		return
