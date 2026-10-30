@@ -93,13 +93,15 @@ internal sealed record WaitCondition(
         "An output wait: a .NET regular expression matched against a line the session's game printed. Met, value is {line, "
             + "stream, lineNumber, groups, at}, groups its capture groups (the whole match excluded), null for a group that did not "
             + "match, and at the server's read time of the line on the drive clock, not the game's print time. The server answers "
-            + "it from the captured output, so it works while the game is paused."
+            + "it from the captured output, so it works while the game is paused. An unmet output wait names in before the newest "
+            + "matching line printed before it began, and a wait on a game that has exited ends at once with exited: true."
     )]
         string? Output = null,
     [property: Description("With output: match stdout, stderr or any (the default); any scans stdout first.")] string? Stream = null,
     [property: Description(
         "With output: scan only lines numbered after this one, 0 or more, on both streams; 0 scans every held line, and one from "
-            + "before a restart still counts."
+            + "before a restart still counts. To wait from a known line, pass get_debug_output's stdoutTotalLines (or "
+            + "stderrTotalLines) as after."
     )]
         long? After = null
 );

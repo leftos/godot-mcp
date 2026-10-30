@@ -595,10 +595,15 @@ internal sealed partial class RuntimeTools
         reply["clockErrorMs"] = errorMs;
     }
 
+    /// <summary>What ended an output wait unmet: the caller's stream and pattern, the mark it named in each stream (null for a
+    /// wait that gave no after), and whether the session's game had exited.</summary>
+    private readonly record struct OutputStop(string Stream, Regex Pattern, long? StdoutMark, long? StderrMark, bool Exited);
+
     /// <summary>
     /// An output wait: the attached refusal, the line marks, and the poll of the session's captured output until a line
     /// matches or <paramref name="timeoutMs"/> passes in load-adjusted time, or <paramref name="wallCap"/> in wall time,
-    /// when the timeout result adds wallCapped: true. It sends nothing to the bridge, so it works while the game is paused.
+    /// when the timeout result adds wallCapped: true. A session whose game has exited ends the wait once its output has
+    /// drained, answering exited: true. It sends nothing to the bridge, so it works while the game is paused.
     /// </summary>
     /// <exception cref="McpException">The session is attached, or the pattern took over its match timeout.</exception>
     private static async Task<BridgeResult> WaitForOutputAsync(
@@ -617,6 +622,7 @@ internal sealed partial class RuntimeTools
         long started = Stopwatch.GetTimestamp();
         using LoadDeadline deadline = LoadClock.Shared.Start(TimeSpan.FromMilliseconds(timeoutMs), wallCap, cancellationToken);
         (OutputPage stdout, OutputPage stderr, long stdoutAfter, long stderrAfter) = OutputStart(target, after);
+        bool leaving = false;
         WriteWatch.Ready();
         while (true)
         {
@@ -631,12 +637,21 @@ internal sealed partial class RuntimeTools
                 return new BridgeResult(OutputMet(found, ElapsedMs(started)), []);
             }
 
-            if (OutputExpired(timeoutMs, deadline) || !await PollOutputAsync(deadline, cancellationToken))
+            if (!await OutputWaitingAsync(timeoutMs, deadline, leaving, cancellationToken))
             {
-                return new BridgeResult(OutputTimeout(stdout, stderr, ElapsedMs(started), deadline.Reason == Session.DeadlineReason.WallCap), []);
+                OutputStop stop = new(stream, regex, BeforeMark(after, stdoutAfter), BeforeMark(after, stderrAfter), leaving);
+                bool wallCapped = deadline.Reason == Session.DeadlineReason.WallCap;
+                return new BridgeResult(OutputUnmet(stdout, stderr, stop, ElapsedMs(started), wallCapped), []);
             }
 
             (stdout, stderr) = OutputPages(target);
+            if (target.IsLive)
+            {
+                continue;
+            }
+
+            (stdout, stderr) = await DrainedPagesAsync(target, deadline, cancellationToken);
+            leaving = !target.IsLive;
         }
     }
 
@@ -670,6 +685,19 @@ internal sealed partial class RuntimeTools
 
     private static bool OutputExpired(int timeoutMs, LoadDeadline deadline) => timeoutMs == 0 || deadline.Expired;
 
+    /// <summary>
+    /// Whether an output wait goes on after a scan with no match: false once its timeout passes in load-adjusted time or its wall
+    /// cap does, and once its session has gone, which leaves only the final scan of what its output readers drained.
+    /// </summary>
+    private static async Task<bool> OutputWaitingAsync(int timeoutMs, LoadDeadline deadline, bool leaving, CancellationToken cancellationToken) =>
+        !leaving && !OutputExpired(timeoutMs, deadline) && await PollOutputAsync(deadline, cancellationToken);
+
+    /// <summary>
+    /// The line number a wait's before scan reads in one stream: the total it started at, or null for a wait that gave an after,
+    /// which names no earlier line.
+    /// </summary>
+    private static long? BeforeMark(long? after, long total) => after is null ? total : null;
+
     private static async Task<bool> PollOutputAsync(LoadDeadline deadline, CancellationToken cancellationToken)
     {
         try
@@ -681,6 +709,28 @@ internal sealed partial class RuntimeTools
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// The pages to scan once a session whose game has exited has had its output read to its end, so a line its process printed
+    /// just before the exit is still read; a reader still draining at the wait's own deadline is left behind.
+    /// </summary>
+    private static async Task<(OutputPage Stdout, OutputPage Stderr)> DrainedPagesAsync(
+        GodotSession target,
+        LoadDeadline deadline,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            await target.OutputDrained.WaitAsync(deadline.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The deadline passed while a reader was still draining: the lines it passed on so far are all this wait sees.
+        }
+
+        return OutputPages(target);
     }
 
     /// <summary>The met answer: {met, elapsedMs, value: {line, stream, lineNumber, groups, at}}, at the drive time the line was
@@ -732,6 +782,73 @@ internal sealed partial class RuntimeTools
 
     private static string? LastOutputLine(OutputPage page) =>
         page.Lines.Count == 0 ? null : OutputBuffer.Cut(page.Lines[^1], OutputBuffer.MaxLineLength);
+
+    /// <summary>
+    /// The answer of a wait that ended unmet: <see cref="OutputTimeout"/>'s, plus exited: true when the session's game had
+    /// exited, and for a wait that gave no after, before: the newest held matching line at or below its mark.
+    /// </summary>
+    private static JsonObject OutputUnmet(OutputPage stdout, OutputPage stderr, OutputStop stop, int elapsedMs, bool wallCapped)
+    {
+        JsonObject unmet = OutputTimeout(stdout, stderr, elapsedMs, wallCapped);
+        if (stop.Exited)
+        {
+            unmet["exited"] = true;
+        }
+
+        if (OutputBefore(stdout, stderr, stop) is { } before)
+        {
+            unmet["before"] = before;
+        }
+
+        return unmet;
+    }
+
+    /// <summary>
+    /// The newest held line at or below the wait's mark that its pattern matches, as {line, stream, lineNumber}, stdout first
+    /// when the stream is any; null when none does, and for a wait that gave an after.
+    /// </summary>
+    private static JsonObject? OutputBefore(OutputPage stdout, OutputPage stderr, OutputStop stop)
+    {
+        if (
+            (stop.Stream is "any" or "stdout")
+            && stop.StdoutMark is { } stdoutMark
+            && BeforeIn(stdout, "stdout", stop.Pattern, stdoutMark) is { } outLine
+        )
+        {
+            return outLine;
+        }
+
+        return (stop.Stream is "any" or "stderr") && stop.StderrMark is { } stderrMark ? BeforeIn(stderr, "stderr", stop.Pattern, stderrMark) : null;
+    }
+
+    /// <summary>
+    /// The newest line of <paramref name="page"/>, at or below <paramref name="mark"/>, that <paramref name="pattern"/> matches,
+    /// as {line, stream, lineNumber}; null when none does.
+    /// </summary>
+    private static JsonObject? BeforeIn(OutputPage page, string stream, Regex pattern, long mark)
+    {
+        if (page.FirstLine is not { } first)
+        {
+            return null;
+        }
+
+        for (int index = (int)(Math.Min(first + page.Lines.Count - 1, mark) - first); index >= 0; index--)
+        {
+            if (!pattern.IsMatch(page.Lines[index]))
+            {
+                continue;
+            }
+
+            return new JsonObject
+            {
+                ["line"] = OutputBuffer.Cut(page.Lines[index], OutputBuffer.MaxLineLength),
+                ["stream"] = stream,
+                ["lineNumber"] = first + index,
+            };
+        }
+
+        return null;
+    }
 
     private static int ElapsedMs(long started) => (int)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
 

@@ -355,6 +355,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         };
     }
 
+    /// <summary>
+    /// Completes once the output of the session's run has been read to its end, so no line it printed can still be in flight;
+    /// completed at once for a session with no run to read, as a process session has.
+    /// </summary>
+    public Task OutputDrained => _run?.OutputDrained ?? Task.CompletedTask;
+
     /// <summary>The held lines of each stream uncut, with each stream's line count: what an output wait reads, so a line
     /// longer than <see cref="OutputBuffer.MaxLineLength"/> is still matched whole. An attached session has no captured output.</summary>
     /// <exception cref="SessionException">The session is attached.</exception>
@@ -788,11 +794,11 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
         try
         {
-            run.Launcher.BeginRead(WithOutputLog(run, run.Stdout.Add), WithOutputLog(run, run.Stderr.Add), () => run.OutputLog?.Dispose());
+            run.Launcher.BeginRead(WithOutputLog(run, run.Stdout.Add), WithOutputLog(run, run.Stderr.Add), run.OutputEnded);
         }
         catch
         {
-            run.OutputLog?.Dispose();
+            run.OutputEnded();
             throw;
         }
     }

@@ -116,6 +116,9 @@ internal sealed class GodotRun(string projectDir, IRunProcess launcher, GodotRun
     // its predecessor's lines over, so only a line arriving through this run's handlers can settle it.
     private readonly TaskCompletionSource<string> _noGlWindowLine = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    // Settled once both of this run's output streams have reached their end, so no line of it can still be in flight.
+    private readonly TaskCompletionSource _outputDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     private Process? _game;
     private int? _gameExitCode;
     private bool _killed;
@@ -143,6 +146,19 @@ internal sealed class GodotRun(string projectDir, IRunProcess launcher, GodotRun
 
     /// <summary>The open file the run writes its whole output to; null until the run starts, and when no file could be opened.</summary>
     public RunOutputLog? OutputLog { get; set; }
+
+    /// <summary>
+    /// Completes once both of the run's output streams have been read to their end, so no line its process printed can still be
+    /// in flight; a run whose output was never read never completes it.
+    /// </summary>
+    public Task OutputDrained => _outputDrained.Task;
+
+    /// <summary>Closes the run's output file and marks its output read to its end.</summary>
+    public void OutputEnded()
+    {
+        OutputLog?.Dispose();
+        _outputDrained.TrySetResult();
+    }
 
     /// <summary>
     /// The first line of this run's own output that says Godot could not create an ANGLE OpenGL window, trimmed; it never

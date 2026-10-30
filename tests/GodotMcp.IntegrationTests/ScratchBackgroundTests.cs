@@ -133,6 +133,39 @@ public sealed partial class ScratchBackgroundTests : IAsyncDisposable
         Assert.Equal("interrupted", (await StatusAsync(runId, stop: null, cancellation))["state"]!.GetValue<string>());
     }
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AnOutputWaitOnASceneSessionWhoseGameHasExitedEndsUnmetSayingSo()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonObject started = await StartAsync(pace: 1, cancellation);
+        await WaitForCompletionAsync(started, cancellation);
+        string session = ScratchRunnerTests.Single(ReadStatus(started)["result"]!.AsObject())["session"]!.GetValue<string>();
+        RuntimeTools runtime = new(_harness.Sessions, TestCSharp.Unused());
+
+        JsonObject wait = JsonNode
+            .Parse(await runtime.WaitForAsync(new WaitCondition(Output: "never printed"), 5000, session, cancellation))!
+            .AsObject();
+
+        Assert.Equal((false, true), (wait["met"]!.GetValue<bool>(), wait["exited"]?.GetValue<bool>() ?? false));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AnUnmetOutputWaitNamesTheMatchingLinePrintedBeforeIt()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonObject started = await StartAsync(pace: 1, cancellation);
+        await WaitForCompletionAsync(started, cancellation);
+        string session = ScratchRunnerTests.Single(ReadStatus(started)["result"]!.AsObject())["session"]!.GetValue<string>();
+        RuntimeTools runtime = new(_harness.Sessions, TestCSharp.Unused());
+
+        JsonObject wait = JsonNode
+            .Parse(await runtime.WaitForAsync(new WaitCondition(Output: "scratch step 1 end"), 1000, session, cancellation))!
+            .AsObject();
+
+        Assert.False(wait["met"]!.GetValue<bool>());
+        Assert.StartsWith("[godot-mcp] scratch step 1 end ", wait["before"]?["line"]?.GetValue<string>() ?? "", StringComparison.Ordinal);
+    }
+
     // ScratchUntilReleased holds its first step until the test writes its release file, so its quiet scratch session is live
     // through the drive's start and restart, which a scratch session no longer binds to its quiet and pad settings. Its step's
     // 120 s pace is a cap that turns the run red, never green, should the release not come.
