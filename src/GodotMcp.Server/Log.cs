@@ -42,6 +42,19 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Warning, Message = "Dropped a bridge reply's frames {Read} to {Replied}: handling them failed.")]
     public static partial void ReplyFramesDropped(ILogger logger, long read, long replied, Exception exception);
 
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Dropped the note that the bridge connection ended with a call in flight: handling it failed."
+    )]
+    public static partial void CallsInFlightDropped(ILogger logger, Exception exception);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "The bridge connection of {Session} had not ended {Seconds} s after its game exited; "
+            + "the recording is cut without its in-flight note."
+    )]
+    public static partial void BridgeEndWaitEnded(ILogger logger, string session, double seconds);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Dropped the bridge's reply to request {Id}: it timed out or was never sent.")]
     public static partial void DroppedLateReply(ILogger logger, long id);
 

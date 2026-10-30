@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
+using GodotMcp.Server.Wire;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
@@ -243,8 +244,7 @@ internal sealed partial class RuntimeTools
         entry is JsonArray { Count: 2 } pair ? (WholeFrame(pair[0]), WholeFrame(pair[1])) : (null, null);
 
     /// <summary>A whole, non-negative frame number, which GDScript's JSON may send as a float; null for anything else.</summary>
-    private static long? WholeFrame(JsonNode? node) =>
-        node is JsonValue value && value.TryGetValue(out double frame) && frame >= 0 && frame == Math.Floor(frame) ? (long)frame : null;
+    private static long? WholeFrame(JsonNode? node) => WholeNumber.TryRead(node, out long frame) && frame >= 0 ? frame : null;
 
     /// <summary>A then.record mark checked before its wait starts: the recording it marks and the start's destination.</summary>
     internal sealed record ThenMark(Recording Recording, string Mark, OutputTarget? Destination, bool Overwrite);

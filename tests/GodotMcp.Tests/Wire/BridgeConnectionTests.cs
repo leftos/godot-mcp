@@ -286,11 +286,11 @@ public sealed class BridgeConnectionTests : IDisposable
         using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
         await using BridgeConnection connection = await accept;
 
-        Task<JsonNode?> answered = connection.SendAsync("ping", new JsonObject(), TimeSpan.FromSeconds(15), cancellation);
+        Task<JsonNode?> answered = connection.SendAsync("ping", [], TimeSpan.FromSeconds(15), cancellation);
         JsonObject first = await ReadRequiredAsync(bridge, "the answered request", cancellation);
         long answeredId = first["id"]!.GetValue<long>();
         bool pendingBeforeItsReply = connection.IsPending(answeredId);
-        await bridge.ReplyAsync(first, new JsonObject(), cancellation);
+        await bridge.ReplyAsync(first, [], cancellation);
         await answered.WaitAsync(Wait, cancellation);
         bool pendingAfterItsReply = connection.IsPending(answeredId);
 
@@ -718,6 +718,104 @@ public sealed class BridgeConnectionTests : IDisposable
         Assert.Equal(1, calls);
         Assert.Equal("pong", firstReply?["name"]?.GetValue<string>());
         Assert.Equal("again", secondReply?["name"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task AConnectionEndingWithAWrittenRequestTellsItsObserverOnce()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+        int calls = 0;
+        connection.OnEndedWithCallsInFlight(() => Interlocked.Increment(ref calls));
+
+        Task<JsonNode?> first = await SendWrittenAsync(connection, "wait_for", cancellation);
+        Task<JsonNode?> second = await SendWrittenAsync(connection, "call_method", cancellation);
+        bridge.Dispose();
+        await connection.Closed.WaitAsync(HangGuard, cancellation);
+
+        Assert.Equal(1, calls);
+        await Assert.ThrowsAsync<IOException>(() => first.WaitAsync(HangGuard, cancellation));
+        await Assert.ThrowsAsync<IOException>(() => second.WaitAsync(HangGuard, cancellation));
+    }
+
+    [Fact]
+    public async Task AConnectionEndingWithNothingPendingTellsNoObserver()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+        int calls = 0;
+        connection.OnEndedWithCallsInFlight(() => Interlocked.Increment(ref calls));
+
+        bridge.Dispose();
+        await connection.Closed.WaitAsync(HangGuard, cancellation);
+
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public async Task AConnectionEndingWithOnlyTheShutdownPendingTellsNoObserver()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+        int calls = 0;
+        connection.OnEndedWithCallsInFlight(() => Interlocked.Increment(ref calls));
+
+        // The stop's quit goes out raw, as GodotSession.AskToQuitAsync sends it; raw sends are never calls in flight.
+        Task<JsonNode?> shutdown = connection.SendRawAsync("shutdown", null, HangGuard, cancellation);
+        await ReadRequiredAsync(bridge, "the shutdown", cancellation);
+        bridge.Dispose();
+        await connection.Closed.WaitAsync(HangGuard, cancellation);
+
+        Assert.Equal(0, calls);
+        await Assert.ThrowsAsync<IOException>(() => shutdown.WaitAsync(HangGuard, cancellation));
+    }
+
+    [Fact]
+    public async Task AThrowingInFlightObserverStillFailsThePendingRequests()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+        int calls = 0;
+        connection.OnEndedWithCallsInFlight(() =>
+        {
+            Interlocked.Increment(ref calls);
+            throw new InvalidOperationException("the observer failed");
+        });
+
+        Task<JsonNode?> sent = await SendWrittenAsync(connection, "wait_for", cancellation);
+        bridge.Dispose();
+        await connection.Closed.WaitAsync(HangGuard, cancellation);
+
+        Assert.Equal(1, calls);
+        IOException ended = await Assert.ThrowsAsync<IOException>(() => sent.WaitAsync(HangGuard, cancellation));
+        Assert.StartsWith("The bridge c", ended.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Sends <paramref name="command"/> with a reply wait the test never reaches, and returns its call once the request is
+    /// marked written: the write watch is released only after the connection has marked it.
+    /// </summary>
+    private static async Task<Task<JsonNode?>> SendWrittenAsync(BridgeConnection connection, string command, CancellationToken cancellation)
+    {
+        WriteWatch watch = new();
+        Task<JsonNode?> sent = SendWatchedAsync(watch, connection, command, cancellation);
+        await watch.Released.WaitAsync(HangGuard, cancellation);
+        Assert.True(watch.Sent, $"'{command}' was not written");
+        return sent;
+    }
+
+    private static Task<JsonNode?> SendWatchedAsync(WriteWatch watch, BridgeConnection connection, string command, CancellationToken cancellation)
+    {
+        watch.Watch();
+        return connection.SendAsync(command, [], HangGuard, cancellation);
     }
 
     /// <summary>An ok reply to <paramref name="request"/> named pong, carrying <paramref name="frames"/> as its frames field.</summary>

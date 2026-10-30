@@ -225,7 +225,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             int? gameExitCode = await run.ReleaseGameAsync();
             Snapshots.Clear();
             registry.Captures.End(Name, CaptureStore.EndedByStop);
-            RecordingResult? recording = await FinishRecordingAsync() ?? await TakeRealtimeResultAsync();
+            RecordingResult? recording = await FinishRecordingAsync(run) ?? await TakeRealtimeResultAsync();
             bool removed = registry.ReleaseFolder(this);
             return new StopResult(Name, run.ProjectDir, run.ExitCode, ended.Killed, removed)
             {
@@ -636,14 +636,27 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     private void ReceiveCaptured(JsonObject frame) => registry.Captures.Receive(Name, frame);
 
     /// <summary>
-    /// Notes the frames a call ran in on the run's Movie Maker recording until its clips are cut, a reply read after the game
-    /// exited included; with none, they are dropped.
+    /// Notes the frames a call ran in on <paramref name="recording"/>, the Movie Maker recording of the run whose connection
+    /// read the reply, until its clips are cut, a reply read after the game exited included; with none, they are dropped.
     /// </summary>
-    private void ReceiveReplyFrames(long read, long replied)
+    private static void ReceiveReplyFrames(Recording? recording, long read, long replied)
     {
-        if (_recording is { Outcome: null } recording)
+        if (recording is { Outcome: null })
         {
             recording.AddCall(read, replied);
+        }
+    }
+
+    /// <summary>
+    /// Keeps <paramref name="recording"/>, the Movie Maker recording of the run whose bridge ended with a call in flight, from
+    /// its last known frame to the end of the movie, since no reply will note that call's frames; with no recording, or one
+    /// already cut, nothing.
+    /// </summary>
+    private static void KeepRecordingToEnd(Recording? recording)
+    {
+        if (recording is { Outcome: null })
+        {
+            recording.KeepToEnd();
         }
     }
 
@@ -687,7 +700,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 Snapshots.Clear();
                 registry.Captures.End(Name, CaptureStore.EndedByRestart);
                 StopOutputCapture(previous);
-                previousRecording = await FinishRecordingAsync() ?? await TakeRealtimeResultAsync();
+                previousRecording = await FinishRecordingAsync(previous) ?? await TakeRealtimeResultAsync();
             }
 
             registry.WriteOverride(this, bridgeScript);
@@ -822,7 +835,10 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         await StartClockAsync(connection);
         connection.OnErrors(Errors.Receive);
         connection.OnCaptured(ReceiveCaptured);
-        connection.OnReplyFrames(ReceiveReplyFrames);
+        // Bound to this run's own recording, so a late reply or end of this connection never reaches a later run's movie.
+        Recording? runRecording = _recording;
+        connection.OnReplyFrames((read, replied) => ReceiveReplyFrames(runRecording, read, replied));
+        connection.OnEndedWithCallsInFlight(() => KeepRecordingToEnd(runRecording));
         run.Connection = connection;
         GameProcessId = connection.GameProcessId;
         GameStartTime = null;
@@ -1464,7 +1480,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             handled = _exitHandled;
             Snapshots.Clear();
             registry.Captures.End(Name, CaptureStore.EndedByExit);
-            await FinishRecordingAsync();
+            await FinishRecordingAsync(run);
             await KeepRealtimeResultAsync();
             if (registry.ReleaseFolder(this))
             {

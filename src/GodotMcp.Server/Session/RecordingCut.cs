@@ -97,22 +97,30 @@ internal static class RecordingCut
     /// <paramref name="ranges"/>, counted from the clip's first frame, and numbers them one 1/60 s frame apart; the audio keeps
     /// the same ranges as times and renumbers its samples. Movie Maker writes one audio chunk per frame, and after the seek a
     /// quarter frame before the start frame the chunk of frame f starts at (f - seek) / 60 s, with a piece of the frame before
-    /// at 0 s: each audio bound sits midway between two chunks' starts, so rounding never moves it onto a chunk. Without ranges
-    /// the start frame alone is kept, so the selection is never empty.
+    /// at 0 s: each audio bound sits midway between two chunks' starts, so rounding never moves it onto a chunk. An open-ended
+    /// range (<see cref="FrameRange.OpenEnd"/>) keeps everything from its start on, with no upper bound in the filter. Without
+    /// ranges the start frame alone is kept, so the selection is never empty.
     /// </summary>
     internal static (string Video, string Audio) DropIdleFilters(IReadOnlyList<FrameRange> ranges, long startFrame)
     {
         IReadOnlyList<FrameRange> kept = ranges.Count > 0 ? ranges : [new FrameRange(startFrame, startFrame)];
         double seek = SeekFrames(startFrame);
-        string frames = string.Join(
-            "+",
-            kept.Select(range => string.Create(CultureInfo.InvariantCulture, $@"between(n\,{range.From - startFrame}\,{range.To - startFrame})"))
-        );
-        string times = string.Join(
-            "+",
-            kept.Select(range => $@"between(t\,{FrameSeconds(AudioFrom(range.From, startFrame, seek))}\,{FrameSeconds(range.To + 0.5 - seek)})")
-        );
+        string frames = string.Join("+", kept.Select(range => FramesTerm(range, startFrame)));
+        string times = string.Join("+", kept.Select(range => TimesTerm(range, startFrame, seek)));
         return ($"select={frames},setpts=N/{GodotCommandLine.MovieFramesPerSecond}/TB,{EvenSize}", $"aselect={times},asetpts=N/SR/TB");
+    }
+
+    /// <summary>The video selection of one range, its frames counted from <paramref name="startFrame"/>.</summary>
+    private static string FramesTerm(FrameRange range, long startFrame) =>
+        range.IsOpenEnded
+            ? string.Create(CultureInfo.InvariantCulture, $@"gte(n\,{range.From - startFrame})")
+            : string.Create(CultureInfo.InvariantCulture, $@"between(n\,{range.From - startFrame}\,{range.To - startFrame})");
+
+    /// <summary>The audio selection of one range, as times after the seek a quarter frame before <paramref name="startFrame"/>.</summary>
+    private static string TimesTerm(FrameRange range, long startFrame, double seek)
+    {
+        string from = FrameSeconds(AudioFrom(range.From, startFrame, seek));
+        return range.IsOpenEnded ? $@"gte(t\,{from})" : $@"between(t\,{from}\,{FrameSeconds(range.To + 0.5 - seek)})";
     }
 
     /// <summary>
@@ -183,6 +191,7 @@ internal static class RecordingCut
         {
             ClipOutcome outcome = await CutClipAsync(context, span, clips.Count + 1, cancellationToken);
             notes.AddRange(outcome.Notes);
+            warnings.AddRange(outcome.Warnings);
             if (outcome.Clip is not { } clip)
             {
                 return new RecordingResult
@@ -263,32 +272,32 @@ internal static class RecordingCut
 
     /// <summary>
     /// Encodes the <paramref name="number"/>-th clip, or copies it when the encode fails. With the recording's
-    /// <see cref="Recording.DropIdle"/>, its filter scripts are written before the encode and deleted after it.
+    /// <see cref="Recording.DropIdle"/>, its filter scripts are written before the encode and deleted after it; a script that
+    /// cannot be deleted is a warning, since the clip itself is unharmed.
     /// </summary>
-    /// <returns>The clip's file, null when the copy failed too; and what went wrong on the way.</returns>
+    /// <returns>The clip's file, null when the copy failed too; what went wrong on the way; and the warnings.</returns>
     private static async Task<ClipOutcome> CutClipAsync(CutContext context, ClipSpan span, int number, CancellationToken cancellationToken)
     {
         Recording recording = context.Recording;
-        string encoded = ClipPath(recording.Path, number);
-        DropIdleScripts? scripts = recording.DropIdle ? DropIdleScriptsFor(recording.Path, number) : null;
+        ClipFiles files = new(number, ClipPath(recording.Path, number), recording.DropIdle ? DropIdleScriptsFor(recording.Path, number) : null);
         string? encodeError;
         List<string> leftovers;
         try
         {
-            encodeError = await EncodeAsync(context, span, number, scripts, cancellationToken);
+            encodeError = await EncodeAsync(context, span, files, cancellationToken);
         }
         finally
         {
-            leftovers = scripts is null ? [] : DeleteScripts(scripts);
+            leftovers = files.Scripts is { } scripts ? DeleteScripts(scripts) : [];
         }
 
         if (encodeError is null)
         {
-            return new ClipOutcome(encoded, leftovers);
+            return new ClipOutcome(files.Encoded, [], leftovers);
         }
 
-        List<string> notes = [encodeError, .. leftovers];
-        if (DeleteNote(encoded, "partial") is { } partial)
+        List<string> notes = [encodeError];
+        if (DeleteNote(files.Encoded, "partial") is { } partial)
         {
             notes.Add(partial);
         }
@@ -298,24 +307,18 @@ internal static class RecordingCut
         string? copyError = await RunAsync(context, Request(context, copy, span, append: true), copied, CopyStep, cancellationToken);
         if (copyError is not null)
         {
-            return new ClipOutcome(null, [.. notes, copyError]);
+            return new ClipOutcome(null, [.. notes, copyError], leftovers);
         }
 
         string idle = recording.DropIdle ? ", its idle frames kept," : "";
-        return new ClipOutcome(copied, [.. notes, $"Clip {number} was copied to {copied}{idle} as recorded instead."]);
+        return new ClipOutcome(copied, [.. notes, $"Clip {number} was copied to {copied}{idle} as recorded instead."], leftovers);
     }
 
-    /// <returns>Why ffmpeg did not encode the <paramref name="number"/>-th clip, or null when it did.</returns>
-    private static async Task<string?> EncodeAsync(
-        CutContext context,
-        ClipSpan span,
-        int number,
-        DropIdleScripts? scripts,
-        CancellationToken cancellationToken
-    )
+    /// <returns>Why ffmpeg did not encode the clip into <paramref name="files"/>' encoded path, or null when it did.</returns>
+    private static async Task<string?> EncodeAsync(CutContext context, ClipSpan span, ClipFiles files, CancellationToken cancellationToken)
     {
         Recording recording = context.Recording;
-        string encoded = ClipPath(recording.Path, number);
+        (int number, string encoded, DropIdleScripts? scripts) = files;
         if (scripts is not null)
         {
             (string video, string audio) = DropIdleFilters(recording.CallRanges(span), span.StartFrame);
@@ -467,5 +470,9 @@ internal static class RecordingCut
     private sealed record CutContext(Recording Recording, string Ffmpeg, Func<ToolProcessRequest, CancellationToken, Task<ToolProcessResult>> Run);
 
     /// <summary>One clip's file, null when it could not be cut; and the failures on the way.</summary>
-    private sealed record ClipOutcome(string? Clip, IReadOnlyList<string> Notes);
+    /// <summary>The result of one clip's cut: its file, or null; what went wrong, for the error; and the warnings.</summary>
+    private sealed record ClipOutcome(string? Clip, IReadOnlyList<string> Notes, IReadOnlyList<string> Warnings);
+
+    /// <summary>The n-th clip's encoded path and, under dropIdle, its filter scripts.</summary>
+    private sealed record ClipFiles(int Number, string Encoded, DropIdleScripts? Scripts);
 }

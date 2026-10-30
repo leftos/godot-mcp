@@ -51,7 +51,7 @@ The full guide to every tool, with the edges that bite, is [docs/TOOLS.md](docs/
 - Windows 10 or 11 (the server is built for win-x64).
 - [Godot 4.7.2](https://godotengine.org/download), the console executable (`..._console.exe`); the .NET edition if your game uses C#.
 - The [.NET 10 runtime](https://dotnet.microsoft.com/download/dotnet/10.0); the installer offers to install it through winget when it is missing.
-- Optional: [ffmpeg](https://ffmpeg.org) on `PATH` (`winget install Gyan.FFmpeg`), to cut recordings into clips; real-time recordings need it. They also need the capture helper (`capture/godot-mcp-capture.exe`), which ships in the package beside the server, and Windows 10 2004 or later; the game's sound in a real-time clip needs Windows build 20348 or later (Windows 11), else the clip has video only.
+- Optional: [ffmpeg](https://ffmpeg.org) 7.0 or later on `PATH` (`winget install Gyan.FFmpeg`), to cut recordings into clips (an older one cannot read the `dropIdle` filter scripts, so those clips fall back to `.avi` copies with the idle frames kept); real-time recordings need it. They also need the capture helper (`capture/godot-mcp-capture.exe`), which ships in the package beside the server, and Windows 10 2004 or later; the game's sound in a real-time clip needs Windows build 20348 or later (Windows 11), else the clip has video only.
 - An MCP client; the steps below use [Claude Code](https://claude.com/claude-code).
 
 ## Install it: tell your agent

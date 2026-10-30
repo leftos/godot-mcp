@@ -86,6 +86,71 @@ public sealed class RecordingCallsTests
     public void ARecordingWithNoCallsHasNoRanges() => Assert.Empty(new Recording(Movie).CallRanges(Everything));
 
     [Fact]
+    public void KeepToEndKeepsFromTheLastCallsEndToAStoppedSpansLastFrame()
+    {
+        Recording recording = new(Movie);
+        recording.AddCall(10, 15);
+        recording.AddCall(30, 35);
+
+        recording.KeepToEnd();
+
+        Assert.Equal([new FrameRange(10, 15), new FrameRange(30, 99)], recording.CallRanges(new ClipSpan(0, 100)));
+    }
+
+    [Fact]
+    public void KeepToEndRunsAnOpenClipToTheEndOfTheMovie()
+    {
+        Recording recording = new(Movie);
+        recording.Mark(Recording.StartMark, 12);
+        recording.AddCall(10, 15);
+        recording.AddCall(50, 60);
+
+        recording.KeepToEnd();
+
+        Assert.Equal([new FrameRange(12, 15), new FrameRange(50, FrameRange.OpenEnd)], recording.CallRanges(Assert.Single(recording.Clips())));
+    }
+
+    [Fact]
+    public void KeepToEndWithoutCallsKeepsFromTheClipsStart()
+    {
+        Recording recording = new(Movie);
+        recording.Mark(Recording.StartMark, 40);
+
+        recording.KeepToEnd();
+
+        Assert.Equal([new FrameRange(40, FrameRange.OpenEnd)], recording.CallRanges(Assert.Single(recording.Clips())));
+    }
+
+    [Fact]
+    public void ATailInsideACallMergesIntoIt()
+    {
+        Recording recording = new(Movie);
+        recording.AddCall(10, 50);
+        recording.Mark(Recording.StartMark, 20);
+
+        recording.KeepToEnd();
+
+        Assert.Equal([new FrameRange(20, FrameRange.OpenEnd)], recording.CallRanges(Assert.Single(recording.Clips())));
+    }
+
+    [Fact]
+    public void ATailAfterAStoppedClipAddsNothingToIt()
+    {
+        Recording recording = new(Movie);
+        recording.Mark(Recording.StartMark, 0);
+        recording.AddCall(5, 8);
+        recording.Mark(Recording.StopMark, 20);
+        recording.Mark(Recording.StartMark, 30);
+        recording.AddCall(35, 40);
+
+        recording.KeepToEnd();
+
+        IReadOnlyList<ClipSpan> clips = recording.Clips();
+        Assert.Equal([new FrameRange(5, 8)], recording.CallRanges(clips[0]));
+        Assert.Equal([new FrameRange(35, FrameRange.OpenEnd)], recording.CallRanges(clips[1]));
+    }
+
+    [Fact]
     public void ACallAnsweredBeforeItWasReadIsRefused()
     {
         Recording recording = new(Movie);

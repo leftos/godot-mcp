@@ -14,8 +14,18 @@ internal sealed record ClipSpan(long StartFrame, long? StopFrame)
     public bool Overwrite { get; init; }
 }
 
-/// <summary>A run of movie frames from <paramref name="From"/> to <paramref name="To"/>, both included.</summary>
-internal readonly record struct FrameRange(long From, long To);
+/// <summary>
+/// A run of movie frames from <paramref name="From"/> to <paramref name="To"/>, both included; a <paramref name="To"/> of
+/// <see cref="OpenEnd"/> runs to the end of the movie.
+/// </summary>
+internal readonly record struct FrameRange(long From, long To)
+{
+    /// <summary>The <see cref="To"/> of a range that runs to the end of the movie.</summary>
+    public const long OpenEnd = long.MaxValue;
+
+    /// <summary>Whether the range runs to the end of the movie.</summary>
+    public bool IsOpenEnded => To == OpenEnd;
+}
 
 /// <summary>
 /// What record_mark returns for a Movie Maker recording: the mark, the movie frame it fell on, that frame's time in the movie,
@@ -46,6 +56,7 @@ internal sealed class Recording(string path)
     private readonly List<ClipSpan> _clips = [];
     private readonly List<FrameRange> _calls = [];
     private ClipSpan? _open;
+    private long? _keptFrom;
 
     /// <summary>The full movie's absolute path.</summary>
     public string Path { get; } = path;
@@ -186,22 +197,69 @@ internal sealed class Recording(string path)
     }
 
     /// <summary>
+    /// Keeps every frame from the last frame the recording knows to the end of the movie, for a run whose bridge ended with a
+    /// call in flight, which no reply will note: the last known frame is the latest of any noted call's end and any mark's
+    /// frame, or 0 with none. A second call keeps the earlier of the two.
+    /// </summary>
+    public void KeepToEnd()
+    {
+        lock (_lock)
+        {
+            long last = LastKnownFrame();
+            _keptFrom = Math.Min(_keptFrom ?? last, last);
+        }
+    }
+
+    /// <summary>
     /// The merged frame ranges calls ran in, in frame order, clipped to <paramref name="clip"/>: from its start frame up to, not
-    /// including, its stop frame, or to the last call when it has no stop.
+    /// including, its stop frame. A tail <see cref="KeepToEnd"/> kept is one more range, merged with any it overlaps or touches,
+    /// from its frame to the clip's last frame, or <see cref="FrameRange.OpenEnd"/> when the clip has no stop; a tail after a
+    /// stopped clip's last frame adds nothing to it.
     /// </summary>
     public IReadOnlyList<FrameRange> CallRanges(ClipSpan clip)
     {
         long from = clip.StartFrame;
-        long to = clip.StopFrame is { } stop ? stop - 1 : long.MaxValue;
+        long to = clip.StopFrame is { } stop ? stop - 1 : FrameRange.OpenEnd;
         lock (_lock)
         {
-            return
+            List<FrameRange> ranges =
             [
                 .. _calls
                     .Where(range => range.To >= from && range.From <= to)
                     .Select(range => new FrameRange(Math.Max(range.From, from), Math.Min(range.To, to))),
             ];
+            if (_keptFrom is { } kept && Math.Max(kept, from) <= to)
+            {
+                AppendTail(ranges, Math.Max(kept, from), to);
+            }
+
+            return ranges;
         }
+    }
+
+    /// <summary>Adds the tail from <paramref name="from"/> to <paramref name="to"/>, the clip's end, merging every range it reaches.</summary>
+    private static void AppendTail(List<FrameRange> ranges, long from, long to)
+    {
+        while (ranges.Count > 0 && ranges[^1].To >= from - 1)
+        {
+            from = Math.Min(from, ranges[^1].From);
+            ranges.RemoveAt(ranges.Count - 1);
+        }
+
+        ranges.Add(new FrameRange(from, to));
+    }
+
+    /// <summary>The latest of the noted calls' ends and the marks' frames; 0 with neither.</summary>
+    private long LastKnownFrame()
+    {
+        long last = _calls.Count > 0 ? _calls[^1].To : 0;
+        List<ClipSpan> clips = _open is { } open ? [.. _clips, open] : _clips;
+        foreach (ClipSpan clip in clips)
+        {
+            last = Math.Max(last, clip.StopFrame ?? clip.StartFrame);
+        }
+
+        return last;
     }
 
     private void Start(ClipSpan opened)

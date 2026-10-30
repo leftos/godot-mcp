@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Runtime.Versioning;
 using System.Text;
 using System.Text.Json;
@@ -418,6 +419,17 @@ public sealed class RecordingMarksTests
     }
 
     [Fact]
+    public void DropIdleFiltersKeepAnOpenEndedLastRangeToTheClipsEnd()
+    {
+        (string video, string audio) = RecordingCut.DropIdleFilters([new FrameRange(90, 90), new FrameRange(130, FrameRange.OpenEnd)], 90);
+
+        // The open range keeps every frame and sample from its start on, with no upper bound in the filter text.
+        Assert.Equal(@"select=between(n\,0\,0)+gte(n\,40),setpts=N/60/TB,scale=trunc(iw/2)*2:trunc(ih/2)*2", video);
+        Assert.Equal(@"aselect=between(t\,0.002083\,0.0125)+gte(t\,0.6625),asetpts=N/SR/TB", audio);
+        Assert.DoesNotContain(FrameRange.OpenEnd.ToString(CultureInfo.InvariantCulture), video + audio, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DropIdleFiltersWithoutCallsKeepTheStartFrame()
     {
         (string video, string audio) = RecordingCut.DropIdleFilters([], 90);
@@ -468,6 +480,43 @@ public sealed class RecordingMarksTests
         Assert.False(File.Exists(scripts.Audio), "the audio filter script was left behind");
         string expectedClip = encodeExitCode == 0 ? RecordingCut.ClipPath(movie, 1) : RecordingCut.FallbackClipPath(movie, 1);
         Assert.Equal([expectedClip], result.Clips!);
+    }
+
+    [Fact]
+    public async Task AFilterScriptThatCannotBeDeletedIsAWarningNotAnError()
+    {
+        using TempDirectory directory = new();
+        string movie = Path.Combine(directory.Path, "20260926-120000-000-Probe.avi");
+        await File.WriteAllTextAsync(movie, "movie", TestContext.Current.CancellationToken);
+        Recording recording = new(movie) { DropIdle = true };
+        recording.Mark("start", 90);
+        recording.AddCall(90, 99);
+        recording.Mark("stop", 100);
+        RecordingCut.DropIdleScripts scripts = RecordingCut.DropIdleScriptsFor(movie, 1);
+        FileStream? held = null;
+        RecordingResult result;
+        try
+        {
+            result = await RecordingCut.CutClipsAsync(
+                recording,
+                "ffmpeg.exe",
+                (_, _) =>
+                {
+                    // Opened without delete sharing, the video script cannot be deleted once the encode is over.
+                    held = new FileStream(scripts.Video, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    return Task.FromResult(new ToolProcessResult(0, TimeSpan.Zero, KillReason.None));
+                },
+                TestContext.Current.CancellationToken
+            );
+        }
+        finally
+        {
+            held?.Dispose();
+        }
+
+        Assert.Null(result.Error);
+        Assert.Equal([RecordingCut.ClipPath(movie, 1)], result.Clips!);
+        Assert.StartsWith($"The filter script {scripts.Video} could not be deleted: ", result.Warning, StringComparison.Ordinal);
     }
 
     [Fact]

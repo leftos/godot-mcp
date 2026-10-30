@@ -17,6 +17,9 @@ namespace GodotMcp.IntegrationTests;
 /// </summary>
 public sealed class RecordingTests : IAsyncDisposable
 {
+    /// <summary>How many frames into a wait the game quits by itself: 2 s of clip time.</summary>
+    private const int QuitFramesIntoTheWait = 120;
+
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
     private readonly RuntimeTools _tools;
@@ -147,6 +150,55 @@ public sealed class RecordingTests : IAsyncDisposable
         // 500 ms of game time is 30 movie frames, all drawn while the wait_for call ran.
         Assert.True(kept >= 500 * GodotCommandLine.MovieFramesPerSecond / 1000, $"the clip keeps {kept} frames, fewer than the 500 ms hold");
         Assert.True(kept < stop - start, $"the clip keeps {kept} frames of the {stop - start} between the marks, so no gap was dropped");
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ADropIdleClipKeepsAWaitTheGameQuitDuring()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        LaunchResult launched = await LaunchAsync(record: true, dropIdle: true);
+        string quitFrameFile = Path.Combine(_probe.Directory, "quit-frame.txt").Replace('\\', '/');
+        // The game quits by itself a fixed number of frames into the wait, counted from the wait's first check, so it ends
+        // mid-call and the wait never gets its reply; it writes the frame it quit in first.
+        await _tools.RunScriptAsync(
+            "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n"
+                + "\tvar script := GDScript.new()\n"
+                + "\tscript.source_code = \"extends Node\\nvar waited := 0\\nfunc _process(_delta: float) -> void:\\n"
+                + "\\tif not get_tree().root.has_meta(\\\"waiting\\\"):\\n\\t\\treturn\\n"
+                + "\\twaited += 1\\n"
+                + $"\\tif waited == {QuitFramesIntoTheWait}:\\n"
+                + $"\\t\\tFileAccess.open(\\\"{quitFrameFile}\\\", FileAccess.WRITE).store_string(str(Engine.get_process_frames()))\\n"
+                + "\\t\\tget_tree().quit()\\n\"\n"
+                + "\tscript.reload()\n"
+                + "\tvar quitter := Node.new()\n"
+                + "\tquitter.set_script(script)\n"
+                + "\tscene_tree.root.add_child(quitter)\n"
+                + "\treturn true\n",
+            10_000,
+            cancellationToken: cancellation
+        );
+        long start = await MarkAsync("start");
+
+        // The condition is never met; each check sets the flag the quitter counts from.
+        McpException ended = await Assert.ThrowsAnyAsync<McpException>(() =>
+            _tools.WaitForAsync(new WaitCondition(Expression: "root.set_meta(\"waiting\", true) != null"), 60_000, null, cancellation)
+        );
+        RecordingResult recording = await WaitForOutcomeAsync(cancellation);
+
+        Assert.Contains("connection to the game ended", ended.Message, StringComparison.Ordinal);
+        Assert.Null(recording.Error);
+        string clip = Assert.Single(recording.Clips!);
+        Assert.Equal(RecordingCut.ClipPath(launched.Recording!.Path!, 1), clip);
+        IReadOnlyList<ProbedStream> streams = await ProbeAsync(clip);
+        ProbedStream video = Assert.Single(streams, stream => stream.Type == "video");
+        AssertAacAudioSpansTheVideo(streams);
+        long quitFrame = long.Parse(await File.ReadAllTextAsync(quitFrameFile, cancellation), CultureInfo.InvariantCulture);
+        // Every frame from the mark to the quit is kept, the wait's included, within the frame the quit itself may add.
+        long markToQuit = quitFrame - start + 1;
+        Assert.True(
+            Math.Abs(video.Packets - markToQuit) <= 2,
+            $"the clip keeps {video.Packets} frames; the mark was at frame {start} and the game quit at frame {quitFrame}"
+        );
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

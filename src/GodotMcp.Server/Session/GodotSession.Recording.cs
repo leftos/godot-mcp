@@ -55,11 +55,12 @@ internal sealed partial class GodotSession
     }
 
     /// <summary>
-    /// Under the session's gate, once the current run has ended: cuts its recording's clips, once, and keeps the outcome. A
-    /// second call returns the kept outcome.
+    /// Under the session's gate, once <paramref name="run"/>, the run that recorded, has ended: cuts its recording's clips, once,
+    /// and keeps the outcome. The cut waits for the game's exit and then for the end of the run's bridge connection, so a call
+    /// in flight as the game went is noted first. A second call returns the kept outcome.
     /// </summary>
     /// <returns>The outcome; null when the run did not record.</returns>
-    private async Task<RecordingResult?> FinishRecordingAsync()
+    private async Task<RecordingResult?> FinishRecordingAsync(GodotRun run)
     {
         if (_recording is not { } recording)
         {
@@ -69,10 +70,30 @@ internal sealed partial class GodotSession
         if (recording.Outcome is null)
         {
             await WaitForGameExitAsync();
+            await WaitForBridgeEndAsync(run);
             recording.Outcome = await RecordingCut.FinishAsync(recording, _logger, CancellationToken.None);
         }
 
         return recording.Outcome;
+    }
+
+    /// <summary>
+    /// Waits up to <see cref="GameExitWait"/> for <paramref name="run"/>'s bridge connection to end, so its read loop has noted
+    /// any call in flight on the recording. A run whose connection is already disposed (a stop or restart ends it first) or
+    /// that never connected has nothing to wait for; a connection still open then is logged and the cut goes on.
+    /// </summary>
+    private async Task WaitForBridgeEndAsync(GodotRun run)
+    {
+        if (run.Connection is not { } connection)
+        {
+            return;
+        }
+
+        await connection.Closed.WaitAsync(GameExitWait).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (!connection.Closed.IsCompleted)
+        {
+            Log.BridgeEndWaitEnded(_logger, Name, GameExitWait.TotalSeconds);
+        }
     }
 
     /// <summary>

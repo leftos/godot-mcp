@@ -34,6 +34,7 @@ internal sealed class BridgeConnection : IAsyncDisposable
     private Action<JsonObject>? _errorsHandler;
     private volatile Action<JsonObject>? _capturedHandler;
     private volatile Action<long, long>? _replyFramesHandler;
+    private volatile Action? _endedWithCallsInFlightHandler;
     private long _nextId;
 
     /// <param name="client">The accepted connection, its hello already read.</param>
@@ -401,6 +402,14 @@ internal sealed class BridgeConnection : IAsyncDisposable
     /// </summary>
     public void OnReplyFrames(Action<long, long> handler) => _replyFramesHandler = handler;
 
+    /// <summary>
+    /// Sets the handler called once, on the read loop as the connection ends and before its pending requests fail, when a request
+    /// sent through <see cref="SendAsync"/> or <see cref="SendCappedAsync"/> and written to the bridge is still unanswered then:
+    /// a call the game was running when it went. Raw sends (the shutdown, pings, cancels) never count as calls in flight. A
+    /// handler that throws is logged, and the pending requests still fail.
+    /// </summary>
+    public void OnEndedWithCallsInFlight(Action handler) => _endedWithCallsInFlightHandler = handler;
+
     public async ValueTask DisposeAsync()
     {
         await _closing.CancelAsync();
@@ -486,6 +495,7 @@ internal sealed class BridgeConnection : IAsyncDisposable
 
         string message = reason.Message;
         Log.BridgeConnectionEnded(_logger, message);
+        DeliverEndedWithCallsInFlight();
         foreach (PendingRequest pending in _pending.Values)
         {
             pending.Reply.TrySetException(reason);
@@ -597,8 +607,8 @@ internal sealed class BridgeConnection : IAsyncDisposable
         if (
             _replyFramesHandler is { } handler
             && reply["frames"] is JsonArray { Count: 2 } frames
-            && TryReadLong(frames[0], out long read)
-            && TryReadLong(frames[1], out long replied)
+            && WholeNumber.TryRead(frames[0], out long read)
+            && WholeNumber.TryRead(frames[1], out long replied)
             && read >= 0
             && read <= replied
         )
@@ -614,30 +624,28 @@ internal sealed class BridgeConnection : IAsyncDisposable
         }
     }
 
-    private static bool TryReadId(JsonObject reply, out long id) => TryReadLong(reply["id"], out id);
-
-    private static bool TryReadLong(JsonNode? node, out long number)
+    /// <summary>
+    /// Calls the in-flight handler once when a written request is still pending; raw sends (the shutdown, pings, cancels) are
+    /// never marked written, so they never count.
+    /// </summary>
+    private void DeliverEndedWithCallsInFlight()
     {
-        number = 0;
-        if (node is not JsonValue value)
+        if (_endedWithCallsInFlightHandler is not { } handler || !_pending.Values.Any(pending => pending.IsWritten))
         {
-            return false;
+            return;
         }
 
-        if (value.TryGetValue(out number))
+        try
         {
-            return true;
+            handler();
         }
-
-        // GDScript's JSON parser reads every number as a float, so a bridge may echo 7 as 7.0.
-        if (value.TryGetValue(out double floating) && floating == Math.Floor(floating))
+        catch (Exception e)
         {
-            number = (long)floating;
-            return true;
+            Log.CallsInFlightDropped(_logger, e);
         }
-
-        return false;
     }
+
+    private static bool TryReadId(JsonObject reply, out long id) => WholeNumber.TryRead(reply["id"], out id);
 
     private sealed class PendingRequest(string command)
     {
