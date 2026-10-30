@@ -63,6 +63,12 @@ public sealed class ScratchFolderTests : IAsyncDisposable
         "red",
     ];
 
+    /// <summary>
+    /// The folder run's ceilings: ScratchBusy's spinning step is killed at a ceiling it is given, since the harness floors the
+    /// ceiling its pace gives and its calls' timeouts at a hang guard in minutes.
+    /// </summary>
+    internal static Dictionary<string, double> FolderCeilings => new() { ["ScratchBusy"] = 5 };
+
     private readonly ProbeProject _probe = new();
     private readonly SessionHarness _harness = new();
     private readonly ScratchTools _scratch;
@@ -78,7 +84,12 @@ public sealed class ScratchFolderTests : IAsyncDisposable
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task TheScratchFolderPlaysEachSceneToItsVerdict()
     {
-        JsonObject result = await RunFolderAsync(_scratch, _probe, options: null, TestContext.Current.CancellationToken);
+        JsonObject result = await RunFolderAsync(
+            _scratch,
+            _probe,
+            new ScratchOptions(Ceilings: FolderCeilings),
+            TestContext.Current.CancellationToken
+        );
 
         AssertFolderVerdicts(result);
         JsonNode prep = result["prep"]!;

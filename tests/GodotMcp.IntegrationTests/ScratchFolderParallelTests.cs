@@ -31,7 +31,7 @@ public sealed class ScratchFolderParallelTests : IAsyncDisposable
         JsonObject result = await ScratchFolderTests.RunFolderAsync(
             _scratch,
             _probe,
-            new ScratchOptions(Parallel: 3),
+            new ScratchOptions(Parallel: 3, Ceilings: ScratchFolderTests.FolderCeilings),
             TestContext.Current.CancellationToken
         );
 
