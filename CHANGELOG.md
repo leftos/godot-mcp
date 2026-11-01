@@ -8,6 +8,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - An output path starting `.tmp/` is taken from the project's git checkout, not the project folder, so a project in a subfolder can use it.
 
+### Fixed
+
+- A set no longer fails on float rounding: `set_node_properties`, `add_node`, `set_property` and `cs_set` take `rotation_degrees` and other 32-bit values.
+
 ## 0.24.0 - 2026-10-30
 
 ### Added

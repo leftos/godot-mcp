@@ -275,7 +275,7 @@ func set_property(params: Dictionary) -> Variant:
 		return _not_converted(node, property_name, info, raw, converted)
 	node.set(property_name, converted[1])
 	var after: Variant = node.get(property_name)
-	if not _bridge._json.same(after, converted[1]):
+	if not _bridge._json.same_set(after, converted[1]):
 		node.set(property_name, before)
 		return (
 			(

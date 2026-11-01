@@ -19,6 +19,11 @@ const VECTOR_KEYS := {
 	TYPE_RECT2I: ["x", "y", "width", "height"],
 }
 const INTEGER_VECTORS: Array[int] = [TYPE_VECTOR2I, TYPE_VECTOR3I, TYPE_VECTOR4I, TYPE_RECT2I]
+## The types whose is_equal_approx compares every component approximately: the ones a property may
+## store in 32 bits, or as a rotation, and so read back with drift in the last digits.
+const APPROXIMATE_TYPES: Array[int] = [
+	TYPE_VECTOR2, TYPE_VECTOR3, TYPE_VECTOR4, TYPE_RECT2, TYPE_COLOR
+]
 ## The element type of each packed array.
 const PACKED_ELEMENTS := {
 	TYPE_PACKED_BYTE_ARRAY: TYPE_INT,
@@ -668,6 +673,58 @@ static func same(after: Variant, value: Variant) -> bool:
 	if _both_arrays(after, value):
 		return _same_elements(after, value)
 	return typeof(after) == typeof(value) and after == value
+
+
+## Whether a property reads back the value a set wrote: same() for everything same() compares,
+## except that every float a value may carry compares by is_equal_approx, including each component
+## of a Vector2/3/4, a Rect2 and a Color, each element of a Packed float array, and each value of
+## an Array or a Dictionary at any depth. A set is read back from the property it was just stored
+## in, and Godot keeps many of them in 32 bits or as a rotation, so the value differs in its last
+## digits. same() itself stays exact for those, because the save-fidelity checks judge a stored
+## line as the engine does. An integer, a string, a bool, null, a dictionary key and every length
+## compare exactly, and an array of one kind against another compares element by element.
+static func same_set(after: Variant, value: Variant) -> bool:
+	if typeof(value) == TYPE_NIL:
+		return _is_null(after)
+	if _is_array(after) and _is_array(value):
+		return _same_set_elements(after, value)
+	if typeof(after) == TYPE_DICTIONARY and typeof(value) == TYPE_DICTIONARY:
+		return _same_set_entries(after, value)
+	return _same_set_scalar(after, value)
+
+
+## Whether two values of the same kind read back the same: a float, and every component of a
+## Vector2/3/4, a Rect2 and a Color, by is_equal_approx; a String and a StringName by their text;
+## anything else exactly.
+static func _same_set_scalar(after: Variant, value: Variant) -> bool:
+	if typeof(after) == TYPE_FLOAT and typeof(value) == TYPE_FLOAT:
+		return is_equal_approx(after, value)
+	if typeof(after) == typeof(value) and typeof(value) in APPROXIMATE_TYPES:
+		return after.is_equal_approx(value)
+	if _both_text(after, value):
+		return after == value
+	return typeof(after) == typeof(value) and after == value
+
+
+## Whether two array-likes, of one kind or two, have the same size and every pair of elements
+## reads back the same.
+static func _same_set_elements(after: Variant, value: Variant) -> bool:
+	if after.size() != value.size():
+		return false
+	for index in after.size():
+		if not same_set(after[index], value[index]):
+			return false
+	return true
+
+
+## Whether two dictionaries hold the same keys, each value reading back the same.
+static func _same_set_entries(after: Variant, value: Variant) -> bool:
+	if after.size() != value.size():
+		return false
+	for key: Variant in value:
+		if not after.has(key) or not same_set(after[key], value[key]):
+			return false
+	return true
 
 
 ## Whether a read-back value is null. A cleared native Object property reads back as a null Ref,

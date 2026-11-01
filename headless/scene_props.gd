@@ -343,7 +343,7 @@ static func _set_checked(
 	var before: Variant = _get_prop(node, property)
 	_set_prop(node, property, value)
 	var after: Variant = _get_prop(node, property)
-	if not Json.same(after, value):
+	if not Json.same_set(after, value):
 		var read: String = JSON.stringify(SceneValues.to_json(after, root))
 		var failed: String = (
 			"Property '%s' on '%s' did not take the value: it read %s after the set."
@@ -417,7 +417,7 @@ static func _anchor_refusal(node: Node, path: String, property: String, value: V
 		return ""
 	if ClassDB.class_get_property(node, "layout_mode") != 0:
 		return ""
-	if is_zero_approx(float(value)) or Json.same(_get_prop(node, property), value):
+	if is_zero_approx(float(value)) or Json.same_set(_get_prop(node, property), value):
 		return ""
 	var message: String = (
 		"Property '%s' on '%s' was refused: %s takes only with layout_mode 1 (Anchors), the mode "
@@ -436,7 +436,7 @@ static func _container_refusal(
 ) -> String:
 	if not (property in CONTAINER_PLACED_PROPERTIES):
 		return ""
-	if Json.same(_get_prop(node, property), value):
+	if Json.same_set(_get_prop(node, property), value):
 		return ""
 	var message: String = (
 		"Property '%s' on '%s' was refused: under a Container, layout_mode is 2 (Container) and "

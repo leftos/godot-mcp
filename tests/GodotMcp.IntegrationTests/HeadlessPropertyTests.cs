@@ -146,6 +146,23 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AddNodeTakesRotationDegreesThatReadBackThroughRadians()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        AddNodeOptions options = new("Box", new() { ["rotation_degrees"] = Json("""{"x": -50, "y": 30, "z": 0}""") });
+
+        JsonNode added = JsonNode.Parse(
+            await _tools.AddNodeAsync(probe.Directory, "level.tscn", "DirectionalLight3D", "Sun", options, cancellation)
+        )!;
+        JsonNode read = await PropertiesAsync(probe.Directory, "level.tscn", [new NodePropertyQuery("Box/Sun", ["rotation_degrees"])], cancellation);
+
+        Assert.Equal("Box/Sun", added["path"]!.GetValue<string>());
+        Assert.InRange(read["results"]![0]!["properties"]!["rotation_degrees"]!["x"]!.GetValue<double>(), -50.001, -49.999);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeSetsAThemeTypeVariation()
     {
         // Godot 4.7.2 declares Control.theme_type_variation as a String and reads it back as a StringName (control.cpp L5033, L3670).

@@ -1165,7 +1165,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
 - **Does:** sets one property of a live node, converting the JSON `value` by the property's declared type, and reads it back: `{path, property, before, after}`.
 - **Use:** putting the game into a state to test (`{x, y}` for a Vector2, `"#rrggbb"` or `{r, g, b, a}` for a Color).
-- **Edges:** fails, putting the old value back, when the read-back differs (a read-only property, a clamping setter). Typed arrays and dictionaries (`Array[int]`, `Dictionary[String, int]`), exported or not, take a JSON array or object; one whose elements, keys or values are Objects or Resources (`Array[Node2D]`, `Array[Texture2D]`) is refused, and the error says why.
+- **Edges:** fails, putting the old value back, when the read-back differs (a read-only property, a clamping setter). Every float in the value, each component of a vector, `Rect2` or `Color` and each element of an array or dictionary included, is compared as Godot's `is_equal_approx` compares it, so a value stored in 32 bits or as a rotation (`rotation_degrees`) reads back as the same; integers compare exactly. Typed arrays and dictionaries (`Array[int]`, `Dictionary[String, int]`), exported or not, take a JSON array or object; one whose elements, keys or values are Objects or Resources (`Array[Node2D]`, `Array[Texture2D]`) is refused, and the error says why.
 
 ### `call_method`
 
@@ -1203,7 +1203,7 @@ A `warning` is added after any other when the pressed Control is a disabled `Bas
 
   A string is given as itself (`"value": "Normal"`), not as JSON text holding a string (`"\"Normal\""`); an enum name sent wrapped in quotes anyway reads as the name between them, and an unknown one is refused showing the value as sent. `set_property` reads its `value` the same way, except that a string's quotes are content there and are written into the property.
 - **Use:** to put a C# game object into a state for a test when no method gets it there.
-- **Edges:** writes what reflection allows: non-public and `init` setters and readonly instance fields; refuses a property with no setter (or no getter, since it cannot be read back), a `const`, a `static readonly` field, and a path through a struct, whose set would change a copy (set the struct whole). A list index or dictionary key must already exist.
+- **Edges:** writes what reflection allows: non-public and `init` setters and readonly instance fields; refuses a property with no setter (or no getter, since it cannot be read back), a `const`, a `static readonly` field, and a path through a struct, whose set would change a copy (set the struct whole). A list index or dictionary key must already exist. The read-back takes a number within 1e-5 (relative, or absolute near zero) of the one written, so a `float` or a rotation's rounding is no refusal; two whole numbers must match exactly.
 
   When the member reads something else after the set (a setter that clamps), the old value is put back and the call fails with both (each cut at 2000 characters); a read-back that throws puts the old value back too, and a put-back that fails says what the member now reads. `before` and `after` over 20000 characters come back as `{valuePreview, valueLength}`. A setter that throws fails with the exception's type, message and stack.
 
@@ -1536,7 +1536,7 @@ A host stops by itself after 5 minutes (wall time) with no call; at most 4 run p
 
 ### `set_node_properties`
 
-- **Does:** sets 1 to 100 `updates` `{nodePath, property, value}`, reads each back, and saves: `{results: [{nodePath, property, before, after}]}`.
+- **Does:** sets 1 to 100 `updates` `{nodePath, property, value}`, reads each back (floats compared as `set_property` compares them), and saves: `{results: [{nodePath, property, before, after}]}`.
 - **Use:** values as `set_property` takes them, typed arrays and dictionaries included; a resource as a `res://` or `uid://` path, `{resource: path}`, `{type, ...properties}` or null; a Node-typed export (GDScript or C#, a `[GlobalClass]` type included) as a path from the scene's root (`"Card"`, `"Board/Card"`, not the `../Card` the saved file holds).
 - **Refusals:** a Node-typed export given a non-string or absolute path, a path with no node, or a node of the wrong class is refused with the reason (`no node at "Card" from the scene root`, `"Card" is a Label; the export takes Button`; a node whose script has a class name is named by it, `"Card" is a CardView (Control); …`, and a hint listing several classes reads `takes Node2D or Control`).
 - **Edges:** a node from a base scene, or inside an editable instance, may be set (saved as an override); inside another instance it is refused. A non-zero `anchor_*` on a Control in Position layout (`layout_mode` 0) is refused unless the node already holds that value: set `layout_mode` 1 first (a full rect is `layout_mode` 1, `anchors_preset` 15, `grow_*` 2); the editor cannot make a Position node with anchors.

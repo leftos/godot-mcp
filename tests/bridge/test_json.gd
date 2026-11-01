@@ -621,6 +621,49 @@ func test_same_compares_a_packed_array_and_an_array_by_element() -> void:
 	assert_true(_json.same([&"a"], PackedStringArray(["a"])), "text by the text rule")
 
 
+func test_same_set_takes_a_float32_round_trip_of_degrees() -> void:
+	var degrees := Vector3(-50, 30, 0)
+	var node := Node3D.new()
+	node.rotation_degrees = degrees
+	var read: Vector3 = node.rotation_degrees
+	node.free()
+	assert_true(read != degrees, "the degrees read back differ in their last digits")
+	assert_true(_json.same_set(read, degrees), "the degrees a basis round trip reads back")
+	assert_true(not _json.same(Vector3(-50.000004, 30, 0), degrees), "same stays exact on a vector")
+
+
+func test_same_set_refuses_a_real_difference() -> void:
+	assert_true(
+		not _json.same_set(Vector3(-50.01, 30, 0), Vector3(-50, 30, 0)), "a vector 0.01 out"
+	)
+	assert_true(not _json.same_set(Color(0.99, 0, 0), Color(1, 0, 0)), "a colour 0.01 out")
+
+
+func test_same_set_compares_colors_rects_and_packed_arrays_within_tolerance() -> void:
+	assert_true(_json.same_set(Color(1.0000001, 0, 0), Color(1, 0, 0)), "a colour 1e-7 out")
+	assert_true(_json.same_set(Rect2(1.000001, 2, 30, 40), Rect2(1, 2, 30, 40)), "a rect 1e-6 out")
+	var drift: PackedVector3Array = PackedVector3Array([Vector3(1.000001, 2, 3)])
+	var held: PackedVector3Array = PackedVector3Array([Vector3(1, 2, 3)])
+	assert_true(_json.same_set(drift, held), "a packed vector array a component 1e-6 out")
+	var longer: PackedVector3Array = PackedVector3Array([Vector3(1, 2, 3), Vector3(4, 5, 6)])
+	assert_true(not _json.same_set(longer, held), "a packed vector array of a different length")
+
+
+func test_same_set_recurses_into_arrays_and_dictionaries() -> void:
+	var wanted: Array = [Vector2(1, 2), {"a": 0.1}]
+	var read: Array = [Vector2(1.0000001, 2), {"a": 0.1 + 0.0000001}]
+	assert_true(_json.same_set(read, wanted), "a drifted vector and a drifted dictionary value")
+	assert_true(not _json.same_set([{"a": 0.1}], [{"b": 0.1}]), "a dictionary with another key")
+	assert_true(not _json.same_set([1, 2], [1, 2, 3]), "arrays of different lengths")
+
+
+func test_same_set_keeps_integers_exact() -> void:
+	assert_true(
+		not _json.same_set(Vector3i(1, 2, 3), Vector3i(1, 2, 4)), "an int vector off by one"
+	)
+	assert_true(_json.same_set(5, 5), "an int")
+
+
 func test_is_shown_keeps_script_and_editor_properties() -> void:
 	assert_true(_json.is_shown({"usage": PROPERTY_USAGE_SCRIPT_VARIABLE}), "a script variable")
 	assert_true(_json.is_shown({"usage": PROPERTY_USAGE_DEFAULT}), "an editor property")

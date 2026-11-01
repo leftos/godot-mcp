@@ -84,6 +84,40 @@ public sealed class MemberSetterTests
         Assert.Equal("start", holder.Text);
     }
 
+    [Fact]
+    public void AFloatMemberTakesADoubleThatRoundsThroughSingle()
+    {
+        SinglePrecision holder = new();
+
+        JsonObject result = Set(holder, "Value", JsonValue.Create(0.1));
+
+        // A single-precision hold reads 0.1 back as 0.10000000149011612, the value written within a rounding step.
+        Assert.Equal(0.10000000149011612, result["after"]!.GetValue<double>());
+        Assert.Equal(0.10000000149011612, holder.Value);
+    }
+
+    [Fact]
+    public void ARealDifferenceIsStillRefused()
+    {
+        RoundingToOneDecimal holder = new();
+
+        string message = Refusal(holder, "Value", JsonValue.Create(1.26));
+
+        Assert.Equal("'Value' did not take the value: it read 1.3 after the set, so it was put back to 0.5.", message);
+        Assert.Equal(0.5, holder.Value);
+    }
+
+    [Fact]
+    public void AVectorLikeObjectTakesAFloatRoundTrip()
+    {
+        DriftingRotation holder = new();
+
+        JsonObject result = Set(holder, "Rotation", JsonNode.Parse("""{"X": 1.5, "Y": 2, "Z": 0}"""));
+
+        Assert.Equal(2, result["after"]!["Y"]!.GetValue<double>());
+        Assert.InRange(result["after"]!["X"]!.GetValue<double>(), 1.5, 1.50000001);
+    }
+
     private static JsonObject Set(object root, string path, JsonNode? value) =>
         MemberSetter.Set(
             MemberPath.Slot(MemberRoot.Of(root), MemberPath.Parse(path), AllInstance),
@@ -163,6 +197,74 @@ public sealed class MemberSetterTests
         {
             get => _value == 99 ? throw new InvalidOperationException("unreadable") : _value;
             set => _value = value;
+        }
+    }
+
+    /// <summary>Holds its value in single precision, as a Godot vector component is held.</summary>
+    private sealed class SinglePrecision
+    {
+        private float _value;
+
+        public double Value
+        {
+            get => _value;
+            set => _value = (float)value;
+        }
+    }
+
+    /// <summary>Rounds the value it is given to one decimal place.</summary>
+    private sealed class RoundingToOneDecimal
+    {
+        private double _value = 0.5;
+
+        public double Value
+        {
+            get => _value;
+            set => _value = Math.Round(value, 1);
+        }
+    }
+
+    /// <summary>A rotation of three degrees, as a Godot Vector3 is written: an object of three numbers.</summary>
+    private sealed class Rotation
+    {
+        private double _x;
+        private double _y;
+        private double _z;
+
+        public double X
+        {
+            get => _x;
+            set => _x = value;
+        }
+
+        public double Y
+        {
+            get => _y;
+            set => _y = value;
+        }
+
+        public double Z
+        {
+            get => _z;
+            set => _z = value;
+        }
+    }
+
+    /// <summary>Stores each degree a float32 rounding step off the one it was given, as a Godot rotation held as a basis does.</summary>
+    private sealed class DriftingRotation
+    {
+        private Rotation _rotation = new();
+
+        public Rotation Rotation
+        {
+            get => _rotation;
+            set =>
+                _rotation = new Rotation
+                {
+                    X = value.X + 1e-9,
+                    Y = value.Y,
+                    Z = value.Z,
+                };
         }
     }
 
