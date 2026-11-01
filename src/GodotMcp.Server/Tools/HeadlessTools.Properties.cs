@@ -53,7 +53,8 @@ internal sealed partial class HeadlessTools
         [Description("The new node's name; it may not hold . : @ / \" or %.")] string nodeName,
         [Description(
             "{parent, properties, position}: the parent's path from the scene's root (\".\", the root, by default), {name: value} to "
-                + "set, and where the node goes among its siblings ({index}, {before} or {after}; last by default)."
+                + "set (a name, or a `:` path to a sub-resource's property or a value's component: position:x), "
+                + "and where the node goes among its siblings ({index}, {before} or {after}; last by default)."
         )]
             AddNodeOptions? options = null,
         CancellationToken cancellationToken = default
@@ -100,7 +101,10 @@ internal sealed partial class HeadlessTools
     [Description(
         "Sets properties on a scene file's nodes and saves it, in a headless Godot, without running the game. Each value is "
             + "set and read back, an engine property as the engine holds it even when a C# field of the same name hides it; a "
-            + "read-back that differs fails. A node the scene inherits from its base scene may be set (the override is saved in "
+            + "read-back that differs fails. A property may be a `:` path to a sub-resource's property or a value's component "
+            + "(material_override:albedo_color, position:x); a path through a resource saved in its own file, or one the base or "
+            + "instanced scene holds, is refused, since this scene would not save the change. "
+            + "A node the scene inherits from its base scene may be set (the override is saved in "
             + "this scene); a node inside an instanced scene is refused unless the instance is an editable "
             + "instance. All or nothing: when any entry fails, nothing is saved and the error names every failing entry. Returns "
             + "{results: [{nodePath, property, before, after}], uidFilesWritten?, warning?, errors?}; a value whose JSON is longer than "
@@ -113,7 +117,10 @@ internal sealed partial class HeadlessTools
     public async Task<string> SetNodePropertiesAsync(
         [Description(ProjectPathDescription)] string projectPath,
         [Description(ScenePathDescription)] string scenePath,
-        [Description("1 to 100 {nodePath, property, value}: the node's path from the scene's root, the property's name, and its new value.")]
+        [Description(
+            "1 to 100 {nodePath, property, value}: the node's path from the scene's root, the property's name or a `:` path to a "
+                + "sub-resource's property or a value's component, and its new value."
+        )]
             PropertyUpdate[] updates,
         CancellationToken cancellationToken = default
     )
@@ -159,8 +166,9 @@ internal sealed partial class HeadlessTools
         [Description(ProjectPathDescription)] string projectPath,
         [Description("The scene: a res:// path or a path relative to the project folder, ending .tscn or .scn.")] string scenePath,
         [Description(
-            "1 to 50 {nodePath, properties?, changedOnly?}: the node's path from the scene's root, the property names to read "
-                + "(all shown when left out), and whether to read only the values the scene file stores."
+            "1 to 50 {nodePath, properties?, changedOnly?}: the node's path from the scene's root, the property names to read, "
+                + "each a name or a `:` path to a sub-resource's property or a value's component (all shown when left out), "
+                + "and whether to read only the values the scene file stores."
         )]
             NodePropertyQuery[] nodes,
         [Description("{prepare}: " + PrepareDescription)] HeadlessOptions? options = null,
@@ -337,13 +345,21 @@ internal sealed record AddNodeOptions(
 /// <summary>One property set_node_properties sets.</summary>
 internal sealed record PropertyUpdate(
     [property: Description("The node's path from the scene's root: \".\" for the root, Boss/Sprite for a child.")] string NodePath,
-    [property: Description("The property's name, as the inspector's tooltip or get_node_properties gives it.")] string Property,
+    [property: Description(
+        "The property's name, as the inspector's tooltip or get_node_properties gives it, or a `:` path to a sub-resource's property "
+            + "or a value's component: material_override:albedo_color, position:x."
+    )]
+        string Property,
     [property: Description("The new value, as JSON; null clears a resource or node property.")] JsonElement Value
 );
 
 /// <summary>One node get_node_properties reads.</summary>
 internal sealed record NodePropertyQuery(
     [property: Description("The node's path from the scene's root: \".\" for the root, Boss/Sprite for a child.")] string NodePath,
-    [property: Description("The property names to read; every property the inspector shows when left out.")] string[]? Properties = null,
+    [property: Description(
+        "The property names to read, each a name or a `:` path to a sub-resource's property or a value's component; every property "
+            + "the inspector shows when left out."
+    )]
+        string[]? Properties = null,
     [property: Description("Read only the values the scene file stores for the node; false by default.")] bool? ChangedOnly = null
 );

@@ -246,6 +246,68 @@ public sealed class InspectionTests(CsProbeBuild csProbe, SharedProbeSession sha
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetPropertyReachesASubresourceOfALiveNode()
+    {
+        await RunAsync(
+            _tools,
+            "var cube := MeshInstance3D.new()\n\tcube.name = \"Cube\"\n\tcube.material_override = StandardMaterial3D.new()\n\t"
+                + "scene_tree.root.add_child(cube)\n\treturn true",
+            TestContext.Current.CancellationToken
+        );
+
+        JsonNode set = await SetAsync("Cube", "material_override:albedo_color", """{"r": 1, "g": 0, "b": 0, "a": 1}""");
+        JsonNode color = await RunAsync("return scene_tree.root.get_node(\"Cube\").material_override.albedo_color");
+
+        Assert.Equal("material_override:albedo_color", set["property"]!.GetValue<string>());
+        Assert.Equal([1.0, 1.0, 1.0, 1.0], Components(set["before"], Rgba));
+        Assert.Equal([1.0, 0.0, 0.0, 1.0], Components(set["after"], Rgba));
+        Assert.Equal([1.0, 0.0, 0.0, 1.0], Components(color, Rgba));
+        Assert.False(set.AsObject().ContainsKey("resource"), "A material made in the game has no resource path to name.");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetPropertyThroughAPathPutsTheLeafBackWhenItDoesNotTake()
+    {
+        // BoxMesh.set_subdivide_width clamps a negative count to 0 (4.7.2 scene/resources/3d/primitive_meshes.cpp L1009).
+        await RunAsync(
+            _tools,
+            "var boxy := MeshInstance3D.new()\n\tboxy.name = \"Boxy\"\n\tvar box := BoxMesh.new()\n\tbox.subdivide_width = 2\n\t"
+                + "boxy.mesh = box\n\tscene_tree.root.add_child(boxy)\n\treturn true",
+            TestContext.Current.CancellationToken
+        );
+
+        McpException failed = await Assert.ThrowsAsync<McpException>(() => SetAsync("Boxy", "mesh:subdivide_width", "-1"));
+        JsonNode width = await RunAsync("return scene_tree.root.get_node(\"Boxy\").mesh.subdivide_width");
+
+        Assert.Contains(
+            "Property 'mesh:subdivide_width' on '/root/Boxy' did not take the value: it read 0 after the set, so it was put back to 2.",
+            failed.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(2, width.GetValue<int>());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task SetPropertyRefusesAPathThroughTheBridge()
+    {
+        await RunAsync(
+            _tools,
+            "var script := GDScript.new()\n\tscript.source_code = \"extends Node\\nvar target: Node\\n\"\n\tscript.reload()\n\t"
+                + "var pointer := Node.new()\n\tpointer.set_script(script)\n\tpointer.name = \"Pointer\"\n\t"
+                + "pointer.target = scene_tree.root.get_node(\"GodotMcpBridge\")\n\tscene_tree.root.add_child(pointer)\n\treturn true",
+            TestContext.Current.CancellationToken
+        );
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => SetAsync("Pointer", "target:process_priority", "3"));
+
+        Assert.Contains(
+            "'/root/GodotMcpBridge' is part of the godot-mcp bridge, which the inspection tools do not reach.",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task SetUnknownPropertyFails()
     {
         await AddInspectProbeAsync(_tools, TestContext.Current.CancellationToken);

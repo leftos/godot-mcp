@@ -105,6 +105,52 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         + "[node name=\"Tabs\" type=\"TabBar\" parent=\"Layout/Top\"]\nlayout_mode = 2\n\n"
         + "[node name=\"Bottom\" type=\"HBoxContainer\" parent=\"Layout\"]\nlayout_mode = 2\n";
 
+    // cube.tscn: a MeshInstance3D Cube whose material_override is a blue StandardMaterial3D built into the scene.
+    private const string CubeScene =
+        "[gd_scene load_steps=2 format=3]\n\n[sub_resource type=\"StandardMaterial3D\" id=\"StandardMaterial3D_blue\"]\n"
+        + "albedo_color = Color(0, 0, 1, 1)\n\n[node name=\"Stage\" type=\"Node3D\"]\n\n"
+        + "[node name=\"Cube\" type=\"MeshInstance3D\" parent=\".\"]\nmaterial_override = SubResource(\"StandardMaterial3D_blue\")\n";
+
+    private const string BlueMaterial = "[gd_resource type=\"StandardMaterial3D\" format=3]\n\n[resource]\nalbedo_color = Color(0, 0, 1, 1)\n";
+
+    // cube_external.tscn: the same Cube, its material the resource file art/blue.tres.
+    private const string ExternalCubeScene =
+        "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"Material\" path=\"res://art/blue.tres\" id=\"1\"]\n\n"
+        + "[node name=\"Stage\" type=\"Node3D\"]\n\n[node name=\"Cube\" type=\"MeshInstance3D\" parent=\".\"]\n"
+        + "material_override = ExtResource(\"1\")\n";
+
+    // cube_derived.tscn: a scene inheriting cube.tscn, whose Cube's material the base scene holds.
+    private const string DerivedCubeScene =
+        "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"PackedScene\" path=\"res://cube.tscn\" id=\"1\"]\n\n"
+        + "[node name=\"Stage\" instance=ExtResource(\"1\")]\n";
+
+    // cube_shared.tscn: two MeshInstance3D nodes sharing one built-in material.
+    private const string SharedCubeScene =
+        "[gd_scene format=3]\n\n[sub_resource type=\"StandardMaterial3D\" id=\"StandardMaterial3D_blue\"]\n"
+        + "albedo_color = Color(0, 0, 1, 1)\n\n[node name=\"Stage\" type=\"Node3D\"]\n\n"
+        + "[node name=\"Cube\" type=\"MeshInstance3D\" parent=\".\"]\nmaterial_override = SubResource(\"StandardMaterial3D_blue\")\n\n"
+        + "[node name=\"Twin\" type=\"MeshInstance3D\" parent=\".\"]\nmaterial_override = SubResource(\"StandardMaterial3D_blue\")\n";
+
+    // cube_mesh.tscn: a Cube whose built-in BoxMesh holds the resource file art/blue.tres as its material.
+    private const string MeshMaterialScene =
+        "[gd_scene format=3]\n\n[ext_resource type=\"Material\" path=\"res://art/blue.tres\" id=\"1\"]\n\n"
+        + "[sub_resource type=\"BoxMesh\" id=\"BoxMesh_box\"]\nmaterial = ExtResource(\"1\")\n\n"
+        + "[node name=\"Stage\" type=\"Node3D\"]\n\n[node name=\"Cube\" type=\"MeshInstance3D\" parent=\".\"]\n"
+        + "mesh = SubResource(\"BoxMesh_box\")\n";
+
+    // spot.tscn: a Node3D root at (1, 2, 3), stored as Godot stores a Node3D's position: in its transform.
+    private const string SpotScene =
+        "[gd_scene format=3]\n\n[node name=\"Spot\" type=\"Node3D\"]\ntransform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 2, 3)\n";
+
+    // table.tscn: a Node3D Table whose script exports a Dictionary.
+    private const string TableScript = "extends Node3D\n\n@export var table := {\"a\": 1}\n";
+    private const string TableScene =
+        "[gd_scene format=3]\n\n[ext_resource type=\"Script\" path=\"res://table.gd\" id=\"1\"]\n\n"
+        + "[node name=\"Stage\" type=\"Node3D\"]\n\n[node name=\"Table\" type=\"Node3D\" parent=\".\"]\nscript = ExtResource(\"1\")\n";
+
+    private const string RedJson = """{"r": 1, "g": 0, "b": 0, "a": 1}""";
+    private static readonly string[] Rgba = ["r", "g", "b", "a"];
+
     // ShadowTrail.cs: a Node2D script whose private field scale shadows Node2D.scale.
     private static readonly Dictionary<string, string> ShadowTrailSources = new() { ["ShadowTrail.cs"] = ShadowTrailSource };
 
@@ -958,6 +1004,303 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task SetNodePropertiesReachesABuiltInMaterialsColor()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteCubeScenes(probe.Directory);
+
+        JsonNode set = JsonNode.Parse(
+            await _tools.SetNodePropertiesAsync(
+                probe.Directory,
+                "cube.tscn",
+                [new PropertyUpdate("Cube", "material_override:albedo_color", Json(RedJson))],
+                cancellation
+            )
+        )!;
+
+        JsonNode result = set["results"]![0]!;
+        Assert.Equal("material_override:albedo_color", result["property"]!.GetValue<string>());
+        Assert.Equal([0.0, 0.0, 1.0, 1.0], Channels(result["before"]!));
+        Assert.Equal([1.0, 0.0, 0.0, 1.0], Channels(result["after"]!));
+        string saved = Read(probe.Directory, "cube.tscn");
+        Assert.Contains(
+            "[sub_resource type=\"StandardMaterial3D\" id=\"StandardMaterial3D_blue\"]\nalbedo_color = Color(1, 0, 0, 1)\n",
+            saved,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain("Color(0, 0, 1, 1)", saved, StringComparison.Ordinal);
+        Assert.Equal(["material_override = SubResource(\"StandardMaterial3D_blue\")"], Section(probe.Directory, "cube.tscn", "Cube").Body);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task SetNodePropertiesRefusesAPathThroughAnExternalMaterial()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteCubeScenes(probe.Directory);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SetNodePropertiesAsync(
+                probe.Directory,
+                "cube_external.tscn",
+                [new PropertyUpdate("Cube", "material_override:albedo_color", Json(RedJson))],
+                cancellation
+            )
+        );
+
+        Assert.Equal(
+            "set_node_properties failed: Property 'material_override:albedo_color' on 'Cube': material_override is res://art/blue.tres, "
+                + "a resource file this scene only references; set material_override to a {type: \"StandardMaterial3D\", ...} value to "
+                + "give the node its own, or edit res://art/blue.tres.",
+            refused.Message
+        );
+        Assert.Equal(ExternalCubeScene, Read(probe.Directory, "cube_external.tscn"));
+        Assert.Equal(BlueMaterial, Read(probe.Directory, Path.Combine("art", "blue.tres")));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task SetNodePropertiesRefusesAPathThroughABaseScenesMaterial()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteCubeScenes(probe.Directory);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SetNodePropertiesAsync(
+                probe.Directory,
+                "cube_derived.tscn",
+                [new PropertyUpdate("Cube", "material_override:albedo_color", Json(RedJson))],
+                cancellation
+            )
+        );
+
+        Assert.Equal(
+            "set_node_properties failed: Property 'material_override:albedo_color' on 'Cube': material_override belongs to the base "
+                + "scene res://cube.tscn; set material_override whole to override it.",
+            refused.Message
+        );
+        Assert.Equal(DerivedCubeScene, Read(probe.Directory, "cube_derived.tscn"));
+        Assert.Equal(CubeScene, Read(probe.Directory, "cube.tscn"));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AddNodeTakesAComponentPath()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteCubeScenes(probe.Directory);
+        AddNodeOptions options = new(Properties: new() { ["position:x"] = Json("2") });
+
+        await _tools.AddNodeAsync(probe.Directory, "cube.tscn", "Node3D", "Marker", options, cancellation);
+
+        JsonNode read = await PropertiesAsync(probe.Directory, "cube.tscn", [new NodePropertyQuery("Marker", ["position"])], cancellation);
+        JsonNode position = read["results"]![0]!["properties"]!["position"]!;
+        AssertVector(position, 2, 0);
+        Assert.Equal(0, position["z"]!.GetValue<double>());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task GetNodePropertiesReadsASubresourcePath()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteCubeScenes(probe.Directory);
+
+        JsonNode read = await PropertiesAsync(
+            probe.Directory,
+            "cube.tscn",
+            [new NodePropertyQuery("Cube", ["material_override:albedo_color"])],
+            cancellation
+        );
+
+        Assert.Equal([0.0, 0.0, 1.0, 1.0], Channels(read["results"]![0]!["properties"]!["material_override:albedo_color"]!));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task GetNodePropertiesChangedOnlyKeepsAPathWhoseHeadIsStored()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteCubeScenes(probe.Directory);
+
+        JsonNode read = await PropertiesAsync(
+            probe.Directory,
+            "cube.tscn",
+            [new NodePropertyQuery("Cube", ["material_override:albedo_color"], ChangedOnly: true)],
+            cancellation
+        );
+
+        Assert.Equal([0.0, 0.0, 1.0, 1.0], Channels(read["results"]![0]!["properties"]!["material_override:albedo_color"]!));
+    }
+
+    [Theory(Timeout = TestTimeouts.OwnLaunchMs)]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SetNodePropertiesSetsAPathAfterTheUpdateThatReplacesItsHead(bool wholeFirst)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteCubeScenes(probe.Directory);
+        PropertyUpdate whole = new("Cube", "material_override", Json("""{"type": "StandardMaterial3D"}"""));
+        PropertyUpdate color = new("Cube", "material_override:albedo_color", Json(RedJson));
+
+        await _tools.SetNodePropertiesAsync(probe.Directory, "cube_external.tscn", wholeFirst ? [whole, color] : [color, whole], cancellation);
+
+        string saved = Read(probe.Directory, "cube_external.tscn");
+        Assert.Contains("[sub_resource type=\"StandardMaterial3D\" id=\"", saved, StringComparison.Ordinal);
+        Assert.Contains("albedo_color = Color(1, 0, 0, 1)\n", saved, StringComparison.Ordinal);
+        Assert.StartsWith(
+            "material_override = SubResource(",
+            Assert.Single(Section(probe.Directory, "cube_external.tscn", "Cube").Body),
+            StringComparison.Ordinal
+        );
+        Assert.Equal(BlueMaterial, Read(probe.Directory, Path.Combine("art", "blue.tres")));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task SetNodePropertiesRefusalNamesThePathThatHoldsTheFile()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteCubeScenes(probe.Directory);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SetNodePropertiesAsync(
+                probe.Directory,
+                "cube_mesh.tscn",
+                [new PropertyUpdate("Cube", "mesh:material:albedo_color", Json(RedJson))],
+                cancellation
+            )
+        );
+
+        Assert.Equal(
+            "set_node_properties failed: Property 'mesh:material:albedo_color' on 'Cube': mesh:material is res://art/blue.tres, a "
+                + "resource file this scene only references; set mesh:material to a {type: \"StandardMaterial3D\", ...} value to give "
+                + "the node its own, or edit res://art/blue.tres.",
+            refused.Message
+        );
+        Assert.Equal(MeshMaterialScene, Read(probe.Directory, "cube_mesh.tscn"));
+    }
+
+    [Theory(Timeout = TestTimeouts.OwnLaunchMs)]
+    [InlineData("cube.tscn", "Cube", "material_override:nope:x", "Cube has no property material_override:nope.")]
+    [InlineData(
+        "table.tscn",
+        "Table",
+        "table:a",
+        "Property 'table:a' on 'Table': property paths reach Object properties and one value component; a indexes a Dictionary."
+    )]
+    [InlineData("cube.tscn", "Cube", "mesh:material", "Property 'mesh:material' on 'Cube': mesh holds no object, so it has no property material.")]
+    [InlineData(
+        "wired.tscn",
+        "Holder",
+        "target:position",
+        "Property 'target:position' on 'Holder': target holds a node; set the property on that node's own path."
+    )]
+    [InlineData(
+        "cube.tscn",
+        "Cube",
+        "material_override:resource_path",
+        "Property 'material_override:resource_path' on 'Cube': material_override:resource_path names a resource's file path, which a "
+            + "scene edit cannot change."
+    )]
+    public async Task SetNodePropertiesRefusesAPathItCannotSet(string scene, string node, string property, string refusal)
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        WriteCubeScenes(probe.Directory);
+        string original = Read(probe.Directory, scene);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.SetNodePropertiesAsync(probe.Directory, scene, [new PropertyUpdate(node, property, Json("1"))], cancellation)
+        );
+
+        Assert.Equal("set_node_properties failed: " + refusal, refused.Message);
+        Assert.Equal(original, Read(probe.Directory, scene));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task SetNodePropertiesSavesASharedBuiltInMaterialOnceForBothNodes()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteCubeScenes(probe.Directory);
+
+        await _tools.SetNodePropertiesAsync(
+            probe.Directory,
+            "cube_shared.tscn",
+            [new PropertyUpdate("Cube", "material_override:albedo_color", Json(RedJson))],
+            cancellation
+        );
+
+        string saved = Read(probe.Directory, "cube_shared.tscn");
+        Assert.Single(saved.Split('\n'), line => line.StartsWith("[sub_resource ", StringComparison.Ordinal));
+        Assert.Contains(
+            "[sub_resource type=\"StandardMaterial3D\" id=\"StandardMaterial3D_blue\"]\nalbedo_color = Color(1, 0, 0, 1)\n",
+            saved,
+            StringComparison.Ordinal
+        );
+        string[] reference = ["material_override = SubResource(\"StandardMaterial3D_blue\")"];
+        Assert.Equal(reference, Section(probe.Directory, "cube_shared.tscn", "Cube").Body);
+        Assert.Equal(reference, Section(probe.Directory, "cube_shared.tscn", "Twin").Body);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task SetNodePropertiesSetsOneComponentAndKeepsTheOthers()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteCubeScenes(probe.Directory);
+
+        JsonNode set = JsonNode.Parse(
+            await _tools.SetNodePropertiesAsync(probe.Directory, "spot.tscn", [new PropertyUpdate(".", "position:x", Json("5"))], cancellation)
+        )!;
+
+        Assert.Equal(1.0, set["results"]![0]!["before"]!.GetValue<double>());
+        Assert.Equal(5.0, set["results"]![0]!["after"]!.GetValue<double>());
+        Assert.Equal(["transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 2, 3)"], Section(probe.Directory, "spot.tscn", "Spot").Body);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task SetNodePropertiesSetsAComponentOfASubresourceValue()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteCubeScenes(probe.Directory);
+
+        await _tools.SetNodePropertiesAsync(
+            probe.Directory,
+            "cube.tscn",
+            [new PropertyUpdate("Cube", "material_override:albedo_color:a", Json("0.5"))],
+            cancellation
+        );
+
+        Assert.Contains("albedo_color = Color(0, 0, 1, 0.5)\n", Read(probe.Directory, "cube.tscn"), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ABatchStepSetsAPath()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteCubeScenes(probe.Directory);
+        JsonObject update = new()
+        {
+            ["nodePath"] = "Cube",
+            ["property"] = "material_override:albedo_color",
+            ["value"] = JsonNode.Parse(RedJson),
+        };
+        SceneBatchStep[] steps = [new("set_node_properties", new JsonObject { ["updates"] = new JsonArray(update) })];
+
+        JsonObject batch = JsonNode.Parse(await _tools.BatchSceneOperationsAsync(probe.Directory, "cube.tscn", steps, cancellation))!.AsObject();
+
+        Assert.True(batch["passed"]!.GetValue<bool>(), batch.ToJsonString());
+        Assert.Contains("albedo_color = Color(1, 0, 0, 1)\n", Read(probe.Directory, "cube.tscn"), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task GetNodePropertiesChangedOnlyReadsTheStoredValues()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -1304,6 +1647,19 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
     }
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task SetNodePropertiesSetsAComponentOfAnEngineVectorAScriptFieldHides()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.BuiltWith(ShadowTrailSources));
+        WriteShadowScene(csProbe);
+
+        await _tools.SetNodePropertiesAsync(csProbe.Directory, "effects.tscn", [new PropertyUpdate("Scaled", "scale:x", Json("3"))], cancellation);
+
+        Assert.Equal(["scale = Vector2(3, 2)", "script = ExtResource(\"1_shadow\")"], Section(csProbe.Directory, "effects.tscn", "Scaled").Body);
+        Assert.False(csProbe.PrepHasBuilt, "The op built C#; the copy's prebuilt assembly should have been up to date.");
+    }
+
     private static string InstancingScene(string instanced, string rootName) =>
         "[gd_scene load_steps=2 format=3]\n\n[ext_resource type=\"PackedScene\" path=\""
         + instanced
@@ -1318,6 +1674,8 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         Assert.Equal(x, vector["x"]!.GetValue<double>());
         Assert.Equal(y, vector["y"]!.GetValue<double>());
     }
+
+    private static double[] Channels(JsonNode color) => [.. Rgba.Select(channel => color[channel]!.GetValue<double>())];
 
     private static string Read(string directory, string relative) => File.ReadAllText(Path.Combine(directory, relative));
 
@@ -1363,6 +1721,20 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         File.WriteAllText(Path.Combine(directory, "greeter.gd"), GreeterScript);
         File.WriteAllText(Path.Combine(directory, "greeter.tscn"), GreeterScene);
         File.WriteAllText(Path.Combine(directory, "ui.tscn"), UiScene);
+    }
+
+    private static void WriteCubeScenes(string directory)
+    {
+        Directory.CreateDirectory(Path.Combine(directory, "art"));
+        File.WriteAllText(Path.Combine(directory, "art", "blue.tres"), BlueMaterial);
+        File.WriteAllText(Path.Combine(directory, "cube.tscn"), CubeScene);
+        File.WriteAllText(Path.Combine(directory, "cube_external.tscn"), ExternalCubeScene);
+        File.WriteAllText(Path.Combine(directory, "cube_derived.tscn"), DerivedCubeScene);
+        File.WriteAllText(Path.Combine(directory, "cube_shared.tscn"), SharedCubeScene);
+        File.WriteAllText(Path.Combine(directory, "cube_mesh.tscn"), MeshMaterialScene);
+        File.WriteAllText(Path.Combine(directory, "spot.tscn"), SpotScene);
+        File.WriteAllText(Path.Combine(directory, "table.gd"), TableScript);
+        File.WriteAllText(Path.Combine(directory, "table.tscn"), TableScene);
     }
 
     private async Task<JsonNode> PropertiesAsync(string projectDir, string scenePath, NodePropertyQuery[] nodes, CancellationToken cancellation) =>

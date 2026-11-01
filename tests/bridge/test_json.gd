@@ -639,6 +639,74 @@ func test_same_set_refuses_a_real_difference() -> void:
 	assert_true(not _json.same_set(Color(0.99, 0, 0), Color(1, 0, 0)), "a colour 0.01 out")
 
 
+func test_resolve_path_reaches_a_property_of_a_held_material() -> void:
+	var mesh := MeshInstance3D.new()
+	var material := StandardMaterial3D.new()
+	mesh.material_override = material
+	var resolved: Dictionary = _json.resolve_path(mesh, "material_override:albedo_color", true)
+	mesh.free()
+	assert_true(resolved.get("holder") == material, "the material holds the leaf")
+	assert_eq(resolved.get("property"), "albedo_color", "the leaf, named on its holder")
+	assert_eq(int(resolved.get("info", {}).get("type", TYPE_NIL)), TYPE_COLOR, "a Color leaf")
+	assert_eq(resolved.get("objects", []).size(), 1, "one object passed through")
+
+
+func test_resolve_path_reaches_one_component_of_a_vector() -> void:
+	var node := Node3D.new()
+	var resolved: Dictionary = _json.resolve_path(node, "position:x", true)
+	var holder_is_node: bool = resolved.get("holder") == node
+	node.free()
+	assert_true(holder_is_node, "the node holds the vector")
+	assert_eq(resolved.get("property"), "position:x", "the component, named on its holder")
+	assert_eq(int(resolved.get("info", {}).get("type", TYPE_NIL)), TYPE_FLOAT, "a float component")
+
+
+func test_resolve_path_reads_a_listed_head_as_the_engine_holds_it() -> void:
+	var node := Node2D.new()
+	var script := GDScript.new()
+	# A script's _get answers before the engine class (core/object/object.cpp L460 in 4.7.2), as a
+	# C# field of the same name does.
+	script.source_code = (
+		"extends Node2D\nfunc _get(property: StringName) -> Variant:\n"
+		+ '\treturn 1.0 if property == &"scale" else null\n'
+	)
+	script.reload()
+	node.set_script(script)
+	var resolved: Dictionary = _json.resolve_path(node, "scale:x", true)
+	node.free()
+	assert_eq(resolved.get("property"), "scale:x", "the engine vector's component")
+	assert_eq(int(resolved.get("info", {}).get("type", TYPE_NIL)), TYPE_FLOAT, "a float component")
+
+
+func test_resolve_path_says_an_empty_object_head_holds_nothing() -> void:
+	var mesh := MeshInstance3D.new()
+	var listed: Dictionary = _json.resolve_path(mesh, "mesh:material", true)
+	var any: Dictionary = _json.resolve_path(mesh, "mesh:material", false)
+	mesh.free()
+	var refusal := "mesh holds no object, so it has no property material"
+	assert_eq(listed.get("error"), refusal, "read through ClassDB")
+	assert_eq(any.get("error"), refusal, "read through get")
+
+
+func test_resolve_path_names_the_first_segment_that_names_nothing() -> void:
+	var mesh := MeshInstance3D.new()
+	mesh.material_override = StandardMaterial3D.new()
+	var resolved: Dictionary = _json.resolve_path(mesh, "material_override:nope:more", true)
+	mesh.free()
+	assert_eq(resolved.get("missing"), "material_override:nope", "the path up to the missing one")
+
+
+func test_resolve_path_refuses_a_dictionary_key() -> void:
+	var json := JSON.new()
+	json.data = {"a": 1}
+	var resolved: Dictionary = _json.resolve_path(json, "data:a", true)
+	assert_eq(
+		resolved.get("error"),
+		"property paths reach Object properties and one value component; a indexes a Dictionary",
+		"a key into a dictionary"
+	)
+
+
 func test_same_set_compares_colors_rects_and_packed_arrays_within_tolerance() -> void:
 	assert_true(_json.same_set(Color(1.0000001, 0, 0), Color(1, 0, 0)), "a colour 1e-7 out")
 	assert_true(_json.same_set(Rect2(1.000001, 2, 30, 40), Rect2(1, 2, 30, 40)), "a rect 1e-6 out")

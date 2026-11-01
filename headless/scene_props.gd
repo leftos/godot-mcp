@@ -31,9 +31,19 @@ const CONTAINER_PLACED_PROPERTIES: PackedStringArray = [
 	"grow_vertical",
 	"anchors_preset",
 ]
-
-## The engine property names of each class _is_engine_property has looked at, by class name.
-static var _engine_names: Dictionary = {}
+## Why a property path through a resource file is refused (_not_owned): the path that reaches it,
+## its file, the path's first name, its class and its file again.
+const EXTERNAL_RESOURCE := (
+	"%s is %s, a resource file this scene only references; set %s to a "
+	+ '{type: "%s", ...} value to give the node its own, or edit %s'
+)
+## Why a property path through a base or instanced scene's built-in resource is refused: the path
+## that reaches it, that scene's file and the path's first name.
+const BASE_RESOURCE := "%s belongs to the base scene %s; set %s whole to override it"
+## Why a property path ending in a resource's resource_path is refused: the path.
+const RESOURCE_PATH_LEAF := "%s names a resource's file path, which a scene edit cannot change"
+## Why a property path through a node is refused: the path that reaches the node.
+const NODE_IN_PATH := "%s holds a node; set the property on that node's own path"
 
 
 ## Adds a node of params.nodeType named params.nodeName under params.parent, at params.position
@@ -95,23 +105,71 @@ static func _added_result(root: Node, node: Node, made: Dictionary) -> Dictionar
 
 
 ## Sets each of params.updates ({nodePath, property, value}) and reads it back:
-## {result: {results: [{nodePath, property, before, after}]}}, or {error} naming every failing
-## entry. Every entry is found and converted before any is set.
+## {result: {results: [{nodePath, property, before, after}]}}, in the updates' order, or {error}
+## naming every failing entry of the first phase that fails (nothing is saved then). The updates
+## run in phases (_phases): every entry of a phase is found and converted before any is set, so a
+## path is planned only once the updates that set its head or another prefix of it have been set.
 static func apply_set_node_properties(
 	root: Node, params: Dictionary, context: Dictionary
 ) -> Dictionary:
-	var scene: String = context["scene"]
+	var updates: Array = params.get("updates", [])
+	var results: Array = []
+	results.resize(updates.size())
+	for phase: Array in _phases(updates):
+		var failures: PackedStringArray = _apply_phase(root, updates, phase, context, results)
+		if not failures.is_empty():
+			return {"error": " ".join(failures)}
+	return {"result": {"results": results}}
+
+
+## The indices of updates in the order of the phases they run in: first every update no other
+## update of the same node sets a prefix of (its head, or more of its path), then the rest by how
+## many names their paths hold, fewest first, each count a phase of its own.
+static func _phases(updates: Array) -> Array:
+	var by_depth: Dictionary = {}
+	for index in updates.size():
+		var depth: int = 1 if _is_independent(updates, index) else _depth(updates[index])
+		if not by_depth.has(depth):
+			by_depth[depth] = []
+		(by_depth[depth] as Array).append(index)
+	var depths: Array = by_depth.keys()
+	depths.sort()
+	return depths.map(func(depth: int) -> Array: return by_depth[depth])
+
+
+## Whether no other update of updates[index]'s node sets a strict prefix of its property path.
+static func _is_independent(updates: Array, index: int) -> bool:
+	var update: Dictionary = updates[index]
+	var property: String = str(update.get("property", ""))
+	for other: Dictionary in updates:
+		var same_node: bool = str(other.get("nodePath", "")) == str(update.get("nodePath", ""))
+		if same_node and property.begins_with(str(other.get("property", "")) + ":"):
+			return false
+	return true
+
+
+## How many names update's property path holds, counted from 2, since an update that depends on
+## another has a path of two names at least.
+static func _depth(update: Dictionary) -> int:
+	return maxi(2, str(update.get("property", "")).get_slice_count(":"))
+
+
+## Plans the updates at phase's indices, then, when all plan, sets each and puts its result at its
+## index of results: the failures, empty when every one took.
+static func _apply_phase(
+	root: Node, updates: Array, phase: Array, context: Dictionary, results: Array
+) -> PackedStringArray:
 	var planned: Array = []
 	var failures: PackedStringArray = []
-	for update: Dictionary in params.get("updates", []):
-		var plan: Dictionary = _plan_update(root, update, scene)
+	for index: int in phase:
+		var plan: Dictionary = _plan_update(root, updates[index], context["scene"])
 		if plan.has("error"):
 			failures.append(plan.error)
 		else:
+			plan["index"] = index
 			planned.append(plan)
 	if not failures.is_empty():
-		return {"error": " ".join(failures)}
-	var results: Array = []
+		return failures
 	for plan: Dictionary in planned:
 		var done: Dictionary = _set_checked(
 			plan.node, plan.nodePath, plan.property, plan.value, root
@@ -119,20 +177,13 @@ static func apply_set_node_properties(
 		if done.has("error"):
 			failures.append(done.error)
 			continue
-		(
-			results
-			. append(
-				{
-					"nodePath": plan.nodePath,
-					"property": plan.property,
-					"before": done.before,
-					"after": done.after,
-				}
-			)
-		)
-	if not failures.is_empty():
-		return {"error": " ".join(failures)}
-	return {"result": {"results": results}}
+		results[plan.index] = {
+			"nodePath": plan.nodePath,
+			"property": plan.property,
+			"before": done.before,
+			"after": done.after,
+		}
+	return failures
 
 
 ## Reads each of params.nodes ({nodePath, properties?, changedOnly?}):
@@ -312,9 +363,10 @@ static func _plan_update(root: Node, update: Dictionary, scene: String) -> Dicti
 static func _converted(
 	node: Node, path: String, property: String, value: Variant, root: Node
 ) -> Dictionary:
-	var info: Dictionary = Json.property_info(node, property)
-	if info.is_empty():
-		return {"error": "%s has no property %s." % [path, property]}
+	var resolved: Dictionary = _resolved(node, path, property, root)
+	if resolved.has("error"):
+		return resolved
+	var info: Dictionary = resolved.info
 	var held: Variant = _get_prop(node, property)
 	if info.type == TYPE_NIL and held != null:
 		info = {"type": typeof(held)}
@@ -330,6 +382,59 @@ static func _converted(
 			)
 		}
 	return {"value": converted[1]}
+
+
+## What property, a name or a path (Json.resolve_path), reaches on node: resolve_path's
+## {holder, property, info, objects}, or {error} for a name that names nothing, a path into a
+## value no path reaches into, or a path through an object this scene does not own
+## (_foreign_object).
+static func _resolved(node: Node, path: String, property: String, root: Node) -> Dictionary:
+	var resolved: Dictionary = Json.resolve_path(node, property, true)
+	if resolved.has("missing"):
+		return {"error": "%s has no property %s." % [path, resolved.missing]}
+	var refusal: String = resolved.get("error", "")
+	if refusal.is_empty() and resolved.holder is Resource and resolved.property == "resource_path":
+		refusal = RESOURCE_PATH_LEAF % property
+	if refusal.is_empty():
+		refusal = _foreign_object(root, property, resolved.objects)
+	if not refusal.is_empty():
+		return {"error": "Property '%s' on '%s': %s." % [property, path, refusal]}
+	return resolved
+
+
+## Why a set through objects ([{path, object}], the Objects a property path passes through) would
+## not be saved with the scene, the first object's reason: "" when the scene owns every one.
+static func _foreign_object(root: Node, property: String, objects: Array) -> String:
+	var first: String = property.get_slice(":", 0)
+	for passed: Dictionary in objects:
+		var refusal: String = _not_owned(root, first, passed.path, passed.object)
+		if not refusal.is_empty():
+			return refusal
+	return ""
+
+
+## Why object, reached by the path reached whose first name is first, is not this scene's to change:
+## a node (its own path sets it, where the instance rules apply); a resource saved in its own
+## file, which the scene saver writes as an ExtResource and never saves (4.7.2
+## scene/resources/resource_format_text.cpp L1661-1672); or a built-in resource of another scene
+## (its resource_path is that scene's path, "::" and its id: resource_format_text.cpp L569,
+## L631-636), which this scene's node holds from its base or instanced scene and whose change
+## pack would not store, the node holding the base's own object (packed_scene.cpp L980-996). A
+## resource with no path (one made in this edit, or a local-to-scene copy of a base or instanced
+## scene's resource, which saves as an override of the whole resource) and a built-in one of the
+## scene at root's scene_file_path (packed_scene.cpp L2521-2522) are the scene's: "".
+static func _not_owned(root: Node, first: String, reached: String, object: Object) -> String:
+	if object is Node:
+		return NODE_IN_PATH % reached
+	var resource := object as Resource
+	if resource == null or resource.resource_path.is_empty():
+		return ""
+	var file: String = resource.resource_path.get_slice(Json.SUB_RESOURCE_SEPARATOR, 0)
+	if not resource.resource_path.contains(Json.SUB_RESOURCE_SEPARATOR):
+		return EXTERNAL_RESOURCE % [reached, file, reached, resource.get_class(), file]
+	if _same_file(file, root.scene_file_path):
+		return ""
+	return BASE_RESOURCE % [reached, file, first]
 
 
 ## Sets value and reads it back: {before, after} as JSON, or {error} when the read-back differs by
@@ -353,35 +458,59 @@ static func _set_checked(
 	return {"before": SceneValues.to_json(before, root), "after": SceneValues.to_json(after, root)}
 
 
-## The value of property on node: an engine property of the node's class through ClassDB, so a
-## script member of the same name (a C# field) does not hide it and the read agrees with what a
-## save stores (SceneEdit.pack_native); any other property through node.get.
+## The value of property on node: a property path (Json.resolve_path) as _get_path reads it; an
+## engine property of the node's class through ClassDB, so a script member of the same name (a C#
+## field) does not hide it and the read agrees with what a save stores (SceneEdit.pack_native);
+## any other property through node.get.
 static func _get_prop(node: Node, property: String) -> Variant:
+	if property.contains(":"):
+		return _get_path(node, property)
 	if _is_engine_property(node, property):
 		return ClassDB.class_get_property(node, property)
 	return node.get(property)
 
 
-## Sets property on node to value, an engine property of the node's class through ClassDB and any
-## other through node.set, as _get_prop reads it.
+## Sets property on node to value, a property path as _set_path sets it, an engine property of the
+## node's class through ClassDB and any other through node.set, as _get_prop reads it.
 static func _set_prop(node: Node, property: String, value: Variant) -> void:
-	if _is_engine_property(node, property):
+	if property.contains(":"):
+		_set_path(node, property, value)
+	elif _is_engine_property(node, property):
 		ClassDB.class_set_property(node, property, value)
 	else:
 		node.set(property, value)
 
 
+## A property path's value on node: its head read as _get_prop reads a name, so a script member
+## of the same name does not hide an engine property (get_indexed asks the script instance first:
+## core/object/object.cpp L460 in 4.7.2), then the rest read on the Object the head holds, or the
+## one component of the value it holds.
+static func _get_path(node: Node, property: String) -> Variant:
+	var head: String = property.get_slice(":", 0)
+	var rest: String = property.substr(head.length() + 1)
+	var held: Variant = _get_prop(node, head)
+	if held is Object:
+		return (held as Object).get_indexed(NodePath(rest))
+	return Json.value_member(held, rest)[1]
+
+
+## Sets a property path on node to value, as _get_path reads it: the rest set on the Object the
+## head holds, or the component changed on a copy of the value it holds and the copy set back.
+static func _set_path(node: Node, property: String, value: Variant) -> void:
+	var head: String = property.get_slice(":", 0)
+	var rest: String = property.substr(head.length() + 1)
+	var held: Variant = _get_prop(node, head)
+	if held is Object:
+		(held as Object).set_indexed(NodePath(rest), value)
+		return
+	var changed: Variant = held
+	changed[rest] = value
+	_set_prop(node, head, changed)
+
+
 ## Whether property is one of the properties node's native class declares, other than script.
 static func _is_engine_property(node: Node, property: String) -> bool:
-	if property == "script":
-		return false
-	var type: String = node.get_class()
-	if not _engine_names.has(type):
-		var names: Dictionary = {}
-		for info: Dictionary in ClassDB.class_get_property_list(type):
-			names[info["name"]] = true
-		_engine_names[type] = names
-	return (_engine_names[type] as Dictionary).has(property)
+	return Json.is_native_property(node, property)
 
 
 ## Why a Control's layout_mode or anchors_preset did not take, appended to the read-back failure:
@@ -474,13 +603,20 @@ static func _names_to_read(
 ) -> Variant:
 	var wanted: Array = []
 	for property: Variant in query.get("properties", []):
-		if Json.property_info(node, str(property)).is_empty():
-			return "%s has no property %s." % [path, property]
+		var resolved: Dictionary = Json.resolve_path(node, str(property), true)
+		if resolved.has("missing"):
+			return "%s has no property %s." % [path, resolved.missing]
+		if resolved.has("error"):
+			return "Property '%s' on '%s': %s." % [property, path, resolved.error]
 		wanted.append(str(property))
 	var names: Array = wanted if not wanted.is_empty() else _shown_names(node)
 	if query.get("changedOnly", false) == true:
 		var stored: Array = stored_names(scene, String(root.get_path_to(node)))
-		names = stored if wanted.is_empty() else wanted.filter(func(n: String): return n in stored)
+		names = (
+			stored
+			if wanted.is_empty()
+			else wanted.filter(func(n: String): return n.get_slice(":", 0) in stored)
+		)
 	return names
 
 

@@ -37,6 +37,24 @@ const PACKED_ELEMENTS := {
 	TYPE_PACKED_COLOR_ARRAY: TYPE_COLOR,
 	TYPE_PACKED_VECTOR4_ARRAY: TYPE_VECTOR4,
 }
+## The value types a property path may name one component of (resolve_path).
+const COMPONENT_TYPES: Array[int] = [
+	TYPE_VECTOR2,
+	TYPE_VECTOR2I,
+	TYPE_VECTOR3,
+	TYPE_VECTOR3I,
+	TYPE_VECTOR4,
+	TYPE_VECTOR4I,
+	TYPE_RECT2,
+	TYPE_RECT2I,
+	TYPE_COLOR,
+	TYPE_QUATERNION,
+]
+## Why a property path is refused where a name indexes a value it does not reach into, with the
+## name and the value's type in place of the two %s.
+const PATH_INDEX_REFUSAL := (
+	"property paths reach Object properties and one value component; " + "%s indexes a %s"
+)
 const NOT_CONVERTED: Array = [false, null]
 ## Why an array of an Object type is refused, with the element class in place of %s.
 const OBJECT_ARRAY_REFUSAL := "arrays of Object types (here Array[%s]) cannot be set from JSON"
@@ -65,6 +83,8 @@ const SECTION_USAGE := PROPERTY_USAGE_CATEGORY | PROPERTY_USAGE_GROUP | PROPERTY
 ## scene it edits, whose nodes are in no scene tree; null in the running game, where a node reads
 ## as its path in the tree.
 static var node_root: Node = null
+## The native property names of each class is_native_property has looked at, by class name.
+static var _native_names: Dictionary = {}
 
 
 ## A JSON-safe copy of value: vectors, colours and rects become objects, containers are copied
@@ -646,6 +666,105 @@ static func has_property(object: Object, property_name: String) -> bool:
 		or ClassDB.class_has_integer_constant(object.get_class(), property_name)
 	)
 	return not member
+
+
+## What a property path reaches from object: a property name, or names joined by ":" where each
+## name before the last is a property of the Object the one before holds (a Resource, or a Node
+## property holding one), and the last a property of the last Object or one component of a value
+## (position:x, albedo_color:a), as Object.set_indexed and get_indexed walk it. listed_only finds
+## a name in the property list alone; otherwise has_property's members count too. Returns
+## {holder, property, info, objects}: the Object the leaf belongs to, the leaf as named on it
+## ("albedo_color", or "position:x" for a component), the leaf's property-list entry ({type} of
+## the component for a component, {type: TYPE_NIL} for an unlisted member) and the Objects passed
+## through as [{path, object}], each with the path that reaches it. Or {missing} with the path up
+## to the first name that names nothing, or {error} when a name indexes a value no path reaches
+## into.
+static func resolve_path(object: Object, path: String, listed_only: bool) -> Dictionary:
+	var parts: PackedStringArray = path.split(":")
+	var holder: Object = object
+	var objects: Array = []
+	for index in parts.size():
+		if not _names_property(holder, parts[index], listed_only):
+			return {"missing": ":".join(parts.slice(0, index + 1))}
+		if index == parts.size() - 1:
+			return _object_leaf(holder, parts[index], objects)
+		var value: Variant = held_value(holder, parts[index], listed_only and index == 0)
+		if not (value is Object):
+			return _component_leaf(holder, parts, index, value, objects)
+		objects.append({"path": ":".join(parts.slice(0, index + 1)), "object": value})
+		holder = value
+	return {"missing": path}
+
+
+## holder's property: with engine_first, the value its native class holds when that class declares
+## the property (other than script), through ClassDB, since Object.get asks the script instance
+## first (core/object/object.cpp L411, L460 in 4.7.2) and a script member of the same name (a C#
+## field) would hide it; holder.get otherwise.
+static func held_value(holder: Object, property_name: String, engine_first: bool) -> Variant:
+	if engine_first and is_native_property(holder, property_name):
+		return ClassDB.class_get_property(holder, property_name)
+	return holder.get(property_name)
+
+
+## Whether property_name is one of the properties holder's native class declares, other than
+## script.
+static func is_native_property(holder: Object, property_name: String) -> bool:
+	if property_name == "script":
+		return false
+	var type: String = holder.get_class()
+	if not _native_names.has(type):
+		var names: Dictionary = {}
+		for info: Dictionary in ClassDB.class_get_property_list(type):
+			names[info["name"]] = true
+		_native_names[type] = names
+	return (_native_names[type] as Dictionary).has(property_name)
+
+
+## [true, value[member_name]] when value has that member (a vector's x, a colour's a), else
+## [false, null]. Expression's indexing reads a named member as get_indexed does
+## (core/variant/variant_setget.cpp L1235-1268), and fails without an error where there is none.
+static func value_member(value: Variant, member_name: String) -> Array:
+	var member := Expression.new()
+	member.parse("base[key]", ["base", "key"])
+	var read: Variant = member.execute([value, member_name], null, false)
+	if member.has_execute_failed():
+		return NOT_CONVERTED
+	return [true, read]
+
+
+static func _names_property(holder: Object, property_name: String, listed_only: bool) -> bool:
+	if not property_info(holder, property_name).is_empty():
+		return true
+	return not listed_only and has_property(holder, property_name)
+
+
+static func _object_leaf(holder: Object, property_name: String, objects: Array) -> Dictionary:
+	var info: Dictionary = property_info(holder, property_name)
+	if info.is_empty():
+		info = {"type": TYPE_NIL}
+	return {"holder": holder, "property": property_name, "info": info, "objects": objects}
+
+
+## The leaf of a path whose name at index holds value, not an Object: one component of it when
+## the next name is the last and the value has components, else {missing} or {error}.
+static func _component_leaf(
+	holder: Object, parts: PackedStringArray, index: int, value: Variant, objects: Array
+) -> Dictionary:
+	# ClassDB reads an empty Object property as a null of TYPE_OBJECT, Object.get as TYPE_NIL.
+	if value == null:
+		var message: String = "%s holds no object, so it has no property %s"
+		return {"error": message % [":".join(parts.slice(0, index + 1)), parts[index + 1]]}
+	if not typeof(value) in COMPONENT_TYPES:
+		return {"error": PATH_INDEX_REFUSAL % [parts[index + 1], type_string(typeof(value))]}
+	var subpath: String = "%s:%s" % [parts[index], parts[index + 1]]
+	var member: Array = value_member(value, parts[index + 1])
+	if not member[0]:
+		return {"missing": ":".join(parts.slice(0, index + 2))}
+	var component: Variant = member[1]
+	if index + 2 < parts.size():
+		return {"error": PATH_INDEX_REFUSAL % [parts[index + 2], type_string(typeof(component))]}
+	var info: Dictionary = {"type": typeof(component)}
+	return {"holder": holder, "property": subpath, "info": info, "objects": objects}
 
 
 ## Whether a property-list entry is one the inspector shows: a script variable or an editor

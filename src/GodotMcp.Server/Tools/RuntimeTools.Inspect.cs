@@ -106,7 +106,10 @@ internal sealed partial class RuntimeTools
 
     [McpServerTool(Name = "set_property", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
-        "Sets one property of a node in the running game and reads it back: {path, property, before, after}. The JSON "
+        "Sets one property of a node in the running game and reads it back: {path, property, before, after, resource?}. The "
+            + "property may be a `:` path to a sub-resource's property or a value's component (material_override:albedo_color, "
+            + "position:x); a sub-resource is changed in place even when other nodes share it, and resource is that Resource's "
+            + "path when it has one (a file, or scene.tscn::id for a built-in). The JSON "
             + "value is converted by the property's declared type: an int from a whole number, Vector2/Vector2i {x, y}, "
             + "Vector3 {x, y, z}, Rect2 {x, y, width, height}, Color {r, g, b, a?} or \"#rrggbb[aa]\", NodePath and "
             + "StringName from a string, a typed Array or Dictionary (Array[int]) element by element, a packed array "
@@ -119,7 +122,8 @@ internal sealed partial class RuntimeTools
     )]
     public async Task<string> SetPropertyAsync(
         [Description(NodeDescription)] string node,
-        [Description("The property's name, as inspect_node lists it.")] string property,
+        [Description("The property's name, as inspect_node lists it, or a `:` path to a sub-resource's property or a value's component.")]
+            string property,
         [Description(NewValueDescription)] JsonElement value,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default

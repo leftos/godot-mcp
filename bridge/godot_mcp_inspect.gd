@@ -252,31 +252,47 @@ func _shown_properties(node: Node) -> Dictionary:
 	return properties
 
 
-## {path, property, before, after}: params.value converted by the property's declared type (an
-## untyped property's by the type of the value it holds, unless that is null), set, and read
-## back; a read-back that differs from the converted value puts the old value back and fails.
+## {path, property, before, after, resource?}: params.value converted by the property's declared
+## type (an untyped property's by the type of the value it holds, unless that is null), set, and
+## read back; a read-back that differs from the converted value puts the old value back and fails.
+## The property may be a path (godot_mcp_json.gd's resolve_path), set with set_indexed through
+## whatever resource it passes, shared or not: resource names the changed Resource's path when it
+## has one, since every user of that resource sees the change.
 func set_property(params: Dictionary) -> Variant:
 	var found: Variant = _resolve(str(params.get("node", "")))
 	if found is String:
 		return found
 	var node: Node = found
 	var property_name: String = str(params.get("property", ""))
-	var info: Dictionary = _bridge._json.property_info(node, property_name)
-	if info.is_empty():
-		if not _bridge._json.has_property(node, property_name):
-			return _no_property(node, property_name)
-		info = {"type": TYPE_NIL}
-	var before: Variant = node.get(property_name)
+	var resolved: Dictionary = _bridge._json.resolve_path(node, property_name, false)
+	if resolved.has("missing"):
+		return _no_property(node, resolved["missing"])
+	if resolved.has("error"):
+		return "Property '%s' on '%s': %s." % [property_name, node.get_path(), resolved["error"]]
+	var refusal: String = _path_refusal(resolved["objects"])
+	if not refusal.is_empty():
+		return refusal
+	var info: Dictionary = resolved["info"]
+	var before: Variant = _read(node, property_name)
 	if info["type"] == TYPE_NIL and before != null:
 		info = {"type": typeof(before)}
 	var raw: Variant = params.get("value")
 	var converted: Array = _bridge._json.from_json(raw, info)
 	if not converted[0]:
 		return _not_converted(node, property_name, info, raw, converted)
-	node.set(property_name, converted[1])
-	var after: Variant = node.get(property_name)
-	if not _bridge._json.same_set(after, converted[1]):
-		node.set(property_name, before)
+	return _set_checked(node, property_name, before, converted[1], resolved["holder"])
+
+
+## Sets property_name on node to value and reads it back: set_property's result, naming holder's
+## path as resource when holder is a Resource saved with one, or why the read-back differs, with
+## before put back.
+func _set_checked(
+	node: Node, property_name: String, before: Variant, value: Variant, holder: Object
+) -> Variant:
+	_write(node, property_name, value)
+	var after: Variant = _read(node, property_name)
+	if not _bridge._json.same_set(after, value):
+		_write(node, property_name, before)
 		return (
 			(
 				"Property '%s' on '%s' did not take the value: it read %s after the set, "
@@ -284,12 +300,30 @@ func set_property(params: Dictionary) -> Variant:
 			)
 			% [property_name, node.get_path(), _json_text(after), _json_text(before)]
 		)
-	return {
+	var result: Dictionary = {
 		"path": str(node.get_path()),
 		"property": property_name,
 		"before": _bridge._json.to_json(before),
 		"after": _bridge._json.to_json(after),
 	}
+	if holder is Resource and not (holder as Resource).resource_path.is_empty():
+		result["resource"] = (holder as Resource).resource_path
+	return result
+
+
+## node's property_name, a path read with get_indexed.
+static func _read(node: Node, property_name: String) -> Variant:
+	if property_name.contains(":"):
+		return node.get_indexed(NodePath(property_name))
+	return node.get(property_name)
+
+
+## Sets node's property_name to value, a path with set_indexed.
+static func _write(node: Node, property_name: String, value: Variant) -> void:
+	if property_name.contains(":"):
+		node.set_indexed(NodePath(property_name), value)
+	else:
+		node.set(property_name, value)
 
 
 ## Why set_property's value did not convert: from_json's reason when converted carries one, else
@@ -538,12 +572,29 @@ func _resolve(node_name: String) -> Variant:
 	var node: Node = _bridge._find_node(node_name)
 	if node == null:
 		return not_found(node_name, "get_scene_tree lists the nodes' paths")
+	var refusal: String = _bridge_refusal(node)
+	return node if refusal.is_empty() else refusal
+
+
+## Why node is out of the inspection tools' reach: the bridge or a node inside it; "" otherwise.
+func _bridge_refusal(node: Node) -> String:
 	if node == _bridge or _bridge.is_ancestor_of(node):
 		return (
 			"'%s' is part of the godot-mcp bridge, which the inspection tools do not reach."
 			% node.get_path()
 		)
-	return node
+	return ""
+
+
+## The refusal of the first node in objects ([{path, object}], the Objects a property path passes
+## through) that _bridge_refusal refuses; "" when none.
+func _path_refusal(objects: Array) -> String:
+	for passed: Dictionary in objects:
+		if passed["object"] is Node:
+			var refusal: String = _bridge_refusal(passed["object"])
+			if not refusal.is_empty():
+				return refusal
+	return ""
 
 
 ## The refusal for a path or bare name that names no node: a bare name was searched for

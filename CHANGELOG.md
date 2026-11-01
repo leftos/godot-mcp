@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - `crop_screenshot` cuts a rectangle out of a screenshot already captured and enlarges it up to 8 times, with no game running.
+- `set_node_properties`, `add_node`, `get_node_properties` and `set_property` take a `:` path to a sub-resource's property or a value's component, like `material_override:albedo_color`.
 
 ### Changed
 
