@@ -10,6 +10,7 @@ const SCENE_EDIT_SCRIPT := "../../headless/scene_edit.gd"
 const SCENE_NODES_SCRIPT := "../../headless/scene_nodes.gd"
 const SCENE_PATHS_SCRIPT := "../../headless/scene_paths.gd"
 const SCENE_FILES_SCRIPT := "../../headless/scene_files.gd"
+const RunDir := preload("res://run_dir.gd")
 
 var _ops: GDScript = load(
 	ProjectSettings.globalize_path("res://").path_join(HEADLESS_SCRIPT).simplify_path()
@@ -228,17 +229,23 @@ func test_ext_resources_get_their_uids_back() -> void:
 
 
 func test_a_file_s_own_uid_is_read_from_it_or_its_sidecar() -> void:
-	_write("user://uid_probe.gd.uid", "uid://cscript\n")
+	_write(RunDir.path("uid_probe.gd.uid"), "uid://cscript\n")
 	_write(
-		"user://uid_probe.png.import",
+		RunDir.path("uid_probe.png.import"),
 		'[remap]\n\nimporter="texture"\nuid="uid://cimport"\npath="res://.godot/p.ctex"\n'
 	)
-	_write("user://uid_probe.tscn", '[gd_scene format=3 uid="uid://cscene"]\n\n[node name="A"]\n')
-	assert_eq(_files._uid_text_of("user://uid_probe.gd"), "uid://cscript", "a script's .uid file")
-	assert_eq(_files._uid_text_of("user://uid_probe.png"), "uid://cimport", "an .import uid line")
-	assert_eq(_files._uid_text_of("user://uid_probe.tscn"), "uid://cscene", "a text scene's header")
-	assert_eq(_files._uid_text_of("user://uid_missing.gd"), "", "no file and no sidecar")
-	assert_eq(_files._sidecar_uid("user://uid_missing.gd.uid"), "", "a missing sidecar")
+	_write(
+		RunDir.path("uid_probe.tscn"), '[gd_scene format=3 uid="uid://cscene"]\n\n[node name="A"]\n'
+	)
+	var script: String = RunDir.path("uid_probe.gd")
+	var image: String = RunDir.path("uid_probe.png")
+	var scene: String = RunDir.path("uid_probe.tscn")
+	assert_eq(_files._uid_text_of(script), "uid://cscript", "a script's .uid file")
+	assert_eq(_files._uid_text_of(image), "uid://cimport", "an .import uid line")
+	assert_eq(_files._uid_text_of(scene), "uid://cscene", "a text scene's header")
+	var missing: String = RunDir.path("uid_missing.gd")
+	assert_eq(_files._uid_text_of(missing), "", "no file and no sidecar")
+	assert_eq(_files._sidecar_uid(missing + ".uid"), "", "a missing sidecar")
 
 
 func test_the_source_s_ext_resource_uids_are_read_by_path() -> void:

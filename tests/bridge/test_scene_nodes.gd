@@ -10,9 +10,7 @@ extends "res://gd_test.gd"
 
 const SCENE_NODES_SCRIPT := "../../headless/scene_nodes.gd"
 const SCENE_OPS_SCRIPT := "../../headless/scene_ops.gd"
-const MOVED_SCENE := "user://move_keeps_layout.tscn"
-const PATHS_SCENE := "user://move_rewrites_paths.tscn"
-const PATHS_SCRIPT := "user://move_paths_holder.gd"
+const RunDir := preload("res://run_dir.gd")
 const PATHS_SCRIPT_TEXT := (
 	"extends Node\n\n@export var target: NodePath\n" + "@export var targets: Array[NodePath] = []\n"
 )
@@ -28,14 +26,11 @@ const PATHS_SCENE_TEXT := (
 	+ 'target = NodePath("../../Outside:process_mode")\n'
 )
 
-## The scene each edge case of a move writes and removes.
-const EDGE_SCENE := "user://move_edge.tscn"
-const PART_SCENE := "user://move_part.tscn"
 const PART_TEXT := (
 	'[gd_scene format=3]\n\n[node name="Part" type="Node2D"]\n\n'
 	+ '[node name="Holder" type="RemoteTransform2D" parent="."]\n'
 )
-## Root holding Target, Box and an instance of PART_SCENE with editable children, whose Holder
+## Root holding Target, Box and an instance of part_scene with editable children, whose Holder
 ## points at Target.
 const INSTANCE_TEXT := (
 	'[gd_scene load_steps=2 format=3]\n\n[ext_resource type="PackedScene" path="%s" id="1"]\n\n'
@@ -67,6 +62,12 @@ const LABEL_PANEL := '[node name="Panel" type="Control" parent="."]\nanchors_pre
 ## A Node2D root's section, with the blank line after it.
 const ROOT_2D := '[node name="Root" type="Node2D"]\n\n'
 
+var moved_scene: String = RunDir.path("move_keeps_layout.tscn")
+var paths_scene: String = RunDir.path("move_rewrites_paths.tscn")
+var paths_script: String = RunDir.path("move_paths_holder.gd")
+## The scene each edge case of a move writes and removes, and the part it instances.
+var edge_scene: String = RunDir.path("move_edge.tscn")
+var part_scene: String = RunDir.path("move_part.tscn")
 var _nodes: GDScript = load(
 	ProjectSettings.globalize_path("res://").path_join(SCENE_NODES_SCRIPT).simplify_path()
 )
@@ -226,9 +227,9 @@ func test_a_copy_gets_fresh_unique_ids() -> void:
 
 func test_a_move_keeps_the_lines_of_the_nodes_it_carries() -> void:
 	var original: String = _moved_scene_text('parent="."', 'parent="Sub"')
-	_write(MOVED_SCENE, original)
+	_write(moved_scene, original)
 	var params: Dictionary = {
-		"scene": MOVED_SCENE, "nodePath": "Sub", "parent": "Dest", "keepGlobalTransform": true
+		"scene": moved_scene, "nodePath": "Sub", "parent": "Dest", "keepGlobalTransform": true
 	}
 
 	var moved: Dictionary = _ops.edit_scene("move_node", params)
@@ -236,18 +237,18 @@ func test_a_move_keeps_the_lines_of_the_nodes_it_carries() -> void:
 	assert_eq(moved.get("ok"), true, "the move is saved: %s" % moved)
 	assert_true(not moved.get("result", {}).has("warning"), "the save keeps the layout")
 	assert_eq(
-		FileAccess.get_file_as_string(MOVED_SCENE),
+		FileAccess.get_file_as_string(moved_scene),
 		_moved_scene_text('parent="Dest"', 'parent="Dest/Sub"'),
 		"only the parent= of Sub and of each node under it changes"
 	)
-	DirAccess.remove_absolute(MOVED_SCENE)
-	DirAccess.remove_absolute(MOVED_SCENE + ".uidren")
+	DirAccess.remove_absolute(moved_scene)
+	DirAccess.remove_absolute(moved_scene + ".uidren")
 
 
 func test_a_move_rewrites_the_node_paths_into_and_out_of_what_it_carries() -> void:
-	_write(PATHS_SCRIPT, PATHS_SCRIPT_TEXT)
-	_write(PATHS_SCENE, PATHS_SCENE_TEXT % PATHS_SCRIPT)
-	var params: Dictionary = {"scene": PATHS_SCENE, "nodePath": "Sub", "parent": "Dest"}
+	_write(paths_script, PATHS_SCRIPT_TEXT)
+	_write(paths_scene, PATHS_SCENE_TEXT % paths_script)
+	var params: Dictionary = {"scene": paths_scene, "nodePath": "Sub", "parent": "Dest"}
 
 	var moved: Dictionary = _ops.edit_scene("move_node", params)
 
@@ -272,7 +273,7 @@ func test_a_move_rewrites_the_node_paths_into_and_out_of_what_it_carries() -> vo
 		"each rewritten NodePath is listed, subnames kept"
 	)
 	var scene := (
-		ResourceLoader.load(PATHS_SCENE, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
+		ResourceLoader.load(paths_scene, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
 	)
 	var root: Node = scene.instantiate()
 	var outside: Node = root.get_node("Outside")
@@ -285,19 +286,19 @@ func test_a_move_rewrites_the_node_paths_into_and_out_of_what_it_carries() -> vo
 		"an Array's path into the moved subtree"
 	)
 	root.free()
-	for path: String in [PATHS_SCENE, PATHS_SCENE + ".uidren", PATHS_SCRIPT]:
+	for path: String in [paths_scene, paths_scene + ".uidren", paths_script]:
 		DirAccess.remove_absolute(path)
 
 
 func test_a_move_with_no_node_paths_rewrites_none() -> void:
-	_write(MOVED_SCENE, _moved_scene_text('parent="."', 'parent="Sub"'))
-	var params: Dictionary = {"scene": MOVED_SCENE, "nodePath": "Sub", "parent": "Dest"}
+	_write(moved_scene, _moved_scene_text('parent="."', 'parent="Sub"'))
+	var params: Dictionary = {"scene": moved_scene, "nodePath": "Sub", "parent": "Dest"}
 
 	var moved: Dictionary = _ops.edit_scene("move_node", params)
 
 	assert_eq(moved.get("result", {}).get("rewrittenPaths"), [], "no NodePath to rewrite")
-	DirAccess.remove_absolute(MOVED_SCENE)
-	DirAccess.remove_absolute(MOVED_SCENE + ".uidren")
+	DirAccess.remove_absolute(moved_scene)
+	DirAccess.remove_absolute(moved_scene + ".uidren")
 
 
 func test_a_node_added_where_a_moved_one_was_is_new() -> void:
@@ -314,22 +315,22 @@ func test_a_node_added_where_a_moved_one_was_is_new() -> void:
 			"position = Vector2(1, 2)",
 		]
 	)
-	_write(EDGE_SCENE, original)
+	_write(edge_scene, original)
 	var move: Dictionary = {"op": "move_node", "params": {"nodePath": "A", "parent": "Q"}}
 	var add: Dictionary = {"op": "add_node", "params": {"nodeType": "Node2D", "nodeName": "A"}}
 
-	var batch: Dictionary = _ops.batch_scene({"scene": EDGE_SCENE, "steps": [move, add]})
+	var batch: Dictionary = _ops.batch_scene({"scene": edge_scene, "steps": [move, add]})
 
 	assert_eq(batch.get("result", {}).get("passed"), true, "the batch passes: %s" % batch)
 	assert_true(not batch.get("result", {}).has("warning"), "the save keeps the layout")
-	var saved: String = FileAccess.get_file_as_string(EDGE_SCENE)
+	var saved: String = FileAccess.get_file_as_string(edge_scene)
 	var kept: String = original.replace('parent="."]\nz_index', 'parent="Q"]\nz_index')
 	assert_true(saved.begins_with(kept), "the moved A keeps its lines: %s" % saved)
 	var fresh := RegEx.create_from_string(
 		'^\\n\\[node name="A" type="Node2D" parent="\\." unique_id=-?\\d+\\]\\n$'
 	)
 	assert_true(fresh.search(saved.substr(kept.length())) != null, "the new A as Godot writes it")
-	_remove_scene(EDGE_SCENE)
+	_remove_scene(edge_scene)
 
 
 func test_a_node_moved_onto_a_deleted_nodes_path_keeps_its_lines_and_drops_the_deleted() -> void:
@@ -352,22 +353,22 @@ func test_a_node_moved_onto_a_deleted_nodes_path_keeps_its_lines_and_drops_the_d
 		+ '\n[node name="A" type="Node2D" parent="B"]\nvisible = false\n'
 		+ '\n[connection signal="ready" from="B/A" to="." method="hide"]\n'
 	)
-	_write(EDGE_SCENE, original)
+	_write(edge_scene, original)
 	var delete: Dictionary = {"op": "delete_nodes", "params": {"nodePaths": ["B/A"]}}
 	var move: Dictionary = {"op": "move_node", "params": {"nodePath": "A", "parent": "B"}}
 
-	var batch: Dictionary = _ops.batch_scene({"scene": EDGE_SCENE, "steps": [delete, move]})
+	var batch: Dictionary = _ops.batch_scene({"scene": edge_scene, "steps": [delete, move]})
 
 	assert_eq(batch.get("result", {}).get("passed"), true, "the batch passes: %s" % batch)
 	assert_true(
 		not batch.get("result", {}).has("warning"), "the splice keeps the layout: %s" % batch
 	)
 	assert_eq(
-		FileAccess.get_file_as_string(EDGE_SCENE),
+		FileAccess.get_file_as_string(edge_scene),
 		head + b_section + '\n[node name="A" type="Node2D" parent="B"]\n' + a_lines,
 		"the carried A keeps its lines; the deleted B/A and its connection are gone"
 	)
-	_remove_scene(EDGE_SCENE)
+	_remove_scene(edge_scene)
 
 
 func test_a_node_added_where_a_deleted_one_was_then_moved_is_new() -> void:
@@ -384,23 +385,23 @@ func test_a_node_added_where_a_deleted_one_was_then_moved_is_new() -> void:
 			'[node name="B" type="Node2D" parent="."]',
 		]
 	)
-	_write(EDGE_SCENE, original)
+	_write(edge_scene, original)
 	var steps: Array = [
 		{"op": "delete_nodes", "params": {"nodePaths": ["A"]}},
 		{"op": "add_node", "params": {"nodeType": "Node2D", "nodeName": "A"}},
 		{"op": "move_node", "params": {"nodePath": "A", "parent": "B"}},
 	]
 
-	var batch: Dictionary = _ops.batch_scene({"scene": EDGE_SCENE, "steps": steps})
+	var batch: Dictionary = _ops.batch_scene({"scene": edge_scene, "steps": steps})
 
 	assert_eq(batch.get("result", {}).get("passed"), true, "the batch passes: %s" % batch)
-	var saved: String = FileAccess.get_file_as_string(EDGE_SCENE)
+	var saved: String = FileAccess.get_file_as_string(edge_scene)
 	var fresh := RegEx.create_from_string(
 		'\\n\\[node name="A" type="Node2D" parent="B" unique_id=-?\\d+\\]\\n$'
 	)
 	assert_true(fresh.search(saved) != null, "the new A as Godot writes it: %s" % saved)
 	assert_true(not saved.contains("z_index"), "the deleted A's lines are gone: %s" % saved)
-	_remove_scene(EDGE_SCENE)
+	_remove_scene(edge_scene)
 
 
 func test_a_copy_moved_elsewhere_is_new_and_its_original_keeps_its_lines() -> void:
@@ -410,16 +411,16 @@ func test_a_copy_moved_elsewhere_is_new_and_its_original_keeps_its_lines() -> vo
 	)
 	var head: String = '[gd_scene format=3 uid="uid://b174copied00"]\n\n' + ROOT_2D
 	var b_section: String = '[node name="B" type="Node2D" parent="."]\n'
-	_write(EDGE_SCENE, head + a_section + "\n" + b_section)
+	_write(edge_scene, head + a_section + "\n" + b_section)
 	var steps: Array = [
 		{"op": "duplicate_node", "params": {"nodePath": "A", "newName": "A2"}},
 		{"op": "move_node", "params": {"nodePath": "A2", "parent": "B"}},
 	]
 
-	var batch: Dictionary = _ops.batch_scene({"scene": EDGE_SCENE, "steps": steps})
+	var batch: Dictionary = _ops.batch_scene({"scene": edge_scene, "steps": steps})
 
 	assert_eq(batch.get("result", {}).get("passed"), true, "the batch passes: %s" % batch)
-	var saved: String = FileAccess.get_file_as_string(EDGE_SCENE)
+	var saved: String = FileAccess.get_file_as_string(edge_scene)
 	assert_true(saved.begins_with(head + a_section), "A and K keep their lines: %s" % saved)
 	var copies: Array = [
 		'name="A2" type="Node2D" parent="B"', 'name="K" type="Node2D" parent="B/A2"'
@@ -427,7 +428,7 @@ func test_a_copy_moved_elsewhere_is_new_and_its_original_keeps_its_lines() -> vo
 	for tag: String in copies:
 		var fresh := RegEx.create_from_string("\\n\\[node %s unique_id=-?\\d+\\]\\n" % tag)
 		assert_true(fresh.search(saved) != null, "the copy's %s is new: %s" % [tag, saved])
-	_remove_scene(EDGE_SCENE)
+	_remove_scene(edge_scene)
 
 
 func test_a_copy_named_as_a_deleted_node_then_moved_is_new() -> void:
@@ -441,17 +442,17 @@ func test_a_copy_named_as_a_deleted_node_then_moved_is_new() -> void:
 		+ '[node name="K" type="Node2D" parent="X"]\nz_index = 5\n'
 	)
 	var b_section: String = '[node name="B" type="Node2D" parent="."]\n'
-	_write(EDGE_SCENE, head + a_section + "\n" + x_section + "\n" + b_section)
+	_write(edge_scene, head + a_section + "\n" + x_section + "\n" + b_section)
 	var steps: Array = [
 		{"op": "delete_nodes", "params": {"nodePaths": ["X"]}},
 		{"op": "duplicate_node", "params": {"nodePath": "A", "newName": "X"}},
 		{"op": "move_node", "params": {"nodePath": "X", "parent": "B"}},
 	]
 
-	var batch: Dictionary = _ops.batch_scene({"scene": EDGE_SCENE, "steps": steps})
+	var batch: Dictionary = _ops.batch_scene({"scene": edge_scene, "steps": steps})
 
 	assert_eq(batch.get("result", {}).get("passed"), true, "the batch passes: %s" % batch)
-	var saved: String = FileAccess.get_file_as_string(EDGE_SCENE)
+	var saved: String = FileAccess.get_file_as_string(edge_scene)
 	assert_true(saved.begins_with(head + a_section), "A and K keep their lines: %s" % saved)
 	assert_true(not saved.contains("visible = false"), "the deleted X is gone: %s" % saved)
 	assert_true(not saved.contains("z_index = 5"), "the deleted X/K is gone: %s" % saved)
@@ -459,7 +460,7 @@ func test_a_copy_named_as_a_deleted_node_then_moved_is_new() -> void:
 	for tag: String in copies:
 		var fresh := RegEx.create_from_string("\\n\\[node %s unique_id=-?\\d+\\]\\n" % tag)
 		assert_true(fresh.search(saved) != null, "the copy's %s is new: %s" % [tag, saved])
-	_remove_scene(EDGE_SCENE)
+	_remove_scene(edge_scene)
 
 
 func test_a_node_moved_back_to_its_own_path_under_a_carried_node_keeps_its_lines() -> void:
@@ -478,21 +479,21 @@ func test_a_node_moved_back_to_its_own_path_under_a_carried_node_keeps_its_lines
 		+ c_section
 		+ '\n[node name="A" type="Node2D" parent="C"]\nvisible = false\n'
 	)
-	_write(EDGE_SCENE, original)
+	_write(edge_scene, original)
 	var steps: Array = [
 		{"op": "move_node", "params": {"nodePath": "A", "parent": "B"}},
 		{"op": "move_node", "params": {"nodePath": "C/A", "parent": "."}},
 		{"op": "move_node", "params": {"nodePath": "B/A/x", "parent": "A"}},
 	]
 
-	var batch: Dictionary = _ops.batch_scene({"scene": EDGE_SCENE, "steps": steps})
+	var batch: Dictionary = _ops.batch_scene({"scene": edge_scene, "steps": steps})
 
 	assert_eq(batch.get("result", {}).get("passed"), true, "the batch passes: %s" % batch)
 	assert_true(
 		not batch.get("result", {}).has("warning"), "the splice keeps the layout: %s" % batch
 	)
 	assert_eq(
-		FileAccess.get_file_as_string(EDGE_SCENE),
+		FileAccess.get_file_as_string(edge_scene),
 		(
 			head
 			+ b_section
@@ -503,7 +504,7 @@ func test_a_node_moved_back_to_its_own_path_under_a_carried_node_keeps_its_lines
 		),
 		"x, back at A/x under the A that took that path, keeps its source lines"
 	)
-	_remove_scene(EDGE_SCENE)
+	_remove_scene(edge_scene)
 
 
 func test_connections_of_a_displaced_node_drop_without_sharing_a_key() -> void:
@@ -521,16 +522,16 @@ func test_connections_of_a_displaced_node_drop_without_sharing_a_key() -> void:
 		+ '\n[connection signal="ready" from="B/A" to="B/A" method="hide"]\n'
 		+ '\n[connection signal="ready" from="A" to="B" method="hide"]\n'
 	)
-	_write(EDGE_SCENE, original)
+	_write(edge_scene, original)
 
-	var batch: Dictionary = _ops.batch_scene({"scene": EDGE_SCENE, "steps": _displacing_steps()})
+	var batch: Dictionary = _ops.batch_scene({"scene": edge_scene, "steps": _displacing_steps()})
 
 	assert_eq(batch.get("result", {}).get("passed"), true, "the batch passes: %s" % batch)
 	assert_true(
 		not batch.get("result", {}).has("warning"), "the splice keeps the layout: %s" % batch
 	)
 	assert_eq(
-		FileAccess.get_file_as_string(EDGE_SCENE),
+		FileAccess.get_file_as_string(edge_scene),
 		(
 			head
 			+ b_section
@@ -540,7 +541,7 @@ func test_connections_of_a_displaced_node_drop_without_sharing_a_key() -> void:
 		),
 		"both connections to the deleted B/A are gone; the carried A's own stays"
 	)
-	_remove_scene(EDGE_SCENE)
+	_remove_scene(edge_scene)
 
 
 func test_a_deleted_nodes_child_drops_where_a_carried_nodes_child_takes_its_path() -> void:
@@ -559,16 +560,16 @@ func test_a_deleted_nodes_child_drops_where_a_carried_nodes_child_takes_its_path
 		+ '\n[node name="A" type="Node2D" parent="B"]\nvisible = false\n'
 		+ '\n[node name="K" type="Node2D" parent="B/A"]\nvisible = false\n'
 	)
-	_write(EDGE_SCENE, original)
+	_write(edge_scene, original)
 
-	var batch: Dictionary = _ops.batch_scene({"scene": EDGE_SCENE, "steps": _displacing_steps()})
+	var batch: Dictionary = _ops.batch_scene({"scene": edge_scene, "steps": _displacing_steps()})
 
 	assert_eq(batch.get("result", {}).get("passed"), true, "the batch passes: %s" % batch)
 	assert_true(
 		not batch.get("result", {}).has("warning"), "the splice keeps the layout: %s" % batch
 	)
 	assert_eq(
-		FileAccess.get_file_as_string(EDGE_SCENE),
+		FileAccess.get_file_as_string(edge_scene),
 		(
 			head
 			+ b_section
@@ -579,7 +580,7 @@ func test_a_deleted_nodes_child_drops_where_a_carried_nodes_child_takes_its_path
 		),
 		"the carried K keeps its lines; the deleted B/A/K is gone"
 	)
-	_remove_scene(EDGE_SCENE)
+	_remove_scene(edge_scene)
 
 
 func test_a_displaced_nodes_connection_drops_beside_the_carried_ones_like_it() -> void:
@@ -596,16 +597,16 @@ func test_a_displaced_nodes_connection_drops_beside_the_carried_ones_like_it() -
 		+ '\n[connection signal="ready" from="A" to="." method="hide"]\n'
 		+ '\n[connection signal="ready" from="B/A" to="." method="hide"]\n'
 	)
-	_write(EDGE_SCENE, original)
+	_write(edge_scene, original)
 
-	var batch: Dictionary = _ops.batch_scene({"scene": EDGE_SCENE, "steps": _displacing_steps()})
+	var batch: Dictionary = _ops.batch_scene({"scene": edge_scene, "steps": _displacing_steps()})
 
 	assert_eq(batch.get("result", {}).get("passed"), true, "the batch passes: %s" % batch)
 	assert_true(
 		not batch.get("result", {}).has("warning"), "the splice keeps the layout: %s" % batch
 	)
 	assert_eq(
-		FileAccess.get_file_as_string(EDGE_SCENE),
+		FileAccess.get_file_as_string(edge_scene),
 		(
 			head
 			+ b_section
@@ -615,37 +616,37 @@ func test_a_displaced_nodes_connection_drops_beside_the_carried_ones_like_it() -
 		),
 		"the carried A's connection stays; the deleted B/A's is gone"
 	)
-	_remove_scene(EDGE_SCENE)
+	_remove_scene(edge_scene)
 
 
 func test_a_displaced_editable_instance_drops_beside_the_carried_one() -> void:
-	_write(PART_SCENE, PART_TEXT)
+	_write(part_scene, PART_TEXT)
 	var original: String = (
 		'[gd_scene format=3 uid="uid://b174editab00"]\n\n'
-		+ ('[ext_resource type="PackedScene" path="%s" id="1"]\n\n' % PART_SCENE)
+		+ ('[ext_resource type="PackedScene" path="%s" id="1"]\n\n' % part_scene)
 		+ ROOT_2D
 		+ '[node name="A" parent="." instance=ExtResource("1")]\n\n'
 		+ '[node name="B" type="Node2D" parent="."]\n\n'
 		+ '[node name="A" parent="B" instance=ExtResource("1")]\n\n'
 		+ '[editable path="A"]\n\n[editable path="B/A"]\n'
 	)
-	_write(EDGE_SCENE, original)
+	_write(edge_scene, original)
 
-	var batch: Dictionary = _ops.batch_scene({"scene": EDGE_SCENE, "steps": _displacing_steps()})
+	var batch: Dictionary = _ops.batch_scene({"scene": edge_scene, "steps": _displacing_steps()})
 
 	assert_eq(batch.get("result", {}).get("passed"), true, "the batch passes: %s" % batch)
 	assert_true(
 		not batch.get("result", {}).has("warning"), "the splice keeps the layout: %s" % batch
 	)
-	var saved: String = FileAccess.get_file_as_string(EDGE_SCENE)
+	var saved: String = FileAccess.get_file_as_string(edge_scene)
 	assert_true(
 		saved.contains('\n[node name="A" parent="B" instance=ExtResource("1")]\n'),
 		"the carried A keeps its tag line: %s" % saved
 	)
 	assert_eq(saved.count("[editable "), 1, "one editable section: %s" % saved)
 	assert_true(saved.ends_with('\n[editable path="B/A"]\n'), "the carried A's: %s" % saved)
-	_remove_scene(EDGE_SCENE)
-	DirAccess.remove_absolute(PART_SCENE)
+	_remove_scene(edge_scene)
+	DirAccess.remove_absolute(part_scene)
 
 
 func test_a_node_added_where_a_displaced_nodes_child_was_takes_none_of_its_lines() -> void:
@@ -659,26 +660,26 @@ func test_a_node_added_where_a_displaced_nodes_child_was_takes_none_of_its_lines
 		+ '\n[node name="A" type="Node2D" parent="B"]\n'
 		+ '\n[node name="k" type="Node2D" parent="B/A"]\nvisible = true\n'
 	)
-	_write(EDGE_SCENE, original)
+	_write(edge_scene, original)
 	var add: Dictionary = {
 		"op": "add_node", "params": {"nodeType": "Node2D", "nodeName": "k", "parent": "B/A"}
 	}
 
 	var batch: Dictionary = _ops.batch_scene(
-		{"scene": EDGE_SCENE, "steps": _displacing_steps() + [add]}
+		{"scene": edge_scene, "steps": _displacing_steps() + [add]}
 	)
 
 	assert_eq(batch.get("result", {}).get("passed"), true, "the batch passes: %s" % batch)
 	assert_true(
 		not batch.get("result", {}).has("warning"), "the splice keeps the layout: %s" % batch
 	)
-	var saved: String = FileAccess.get_file_as_string(EDGE_SCENE)
+	var saved: String = FileAccess.get_file_as_string(edge_scene)
 	var fresh := RegEx.create_from_string(
 		'\\n\\[node name="k" type="Node2D" parent="B/A" unique_id=-?\\d+\\]\\n$'
 	)
 	assert_true(fresh.search(saved) != null, "the new k as Godot writes it: %s" % saved)
 	assert_true(not saved.contains("visible"), "no line of the deleted B/A/k: %s" % saved)
-	_remove_scene(EDGE_SCENE)
+	_remove_scene(edge_scene)
 
 
 ## A node the edit made has no source (moved_paths leaves out its ""), so moved onto a deleted
@@ -695,23 +696,23 @@ func test_a_node_added_and_moved_onto_a_deleted_nodes_path_matches_its_section()
 			'[node name="A" type="Node2D" parent="B"]',
 		]
 	)
-	_write(EDGE_SCENE, original)
+	_write(edge_scene, original)
 	var steps: Array = [
 		{"op": "delete_nodes", "params": {"nodePaths": ["B/A"]}},
 		{"op": "add_node", "params": {"nodeType": "Node2D", "nodeName": "A"}},
 		{"op": "move_node", "params": {"nodePath": "A", "parent": "B"}},
 	]
 
-	var batch: Dictionary = _ops.batch_scene({"scene": EDGE_SCENE, "steps": steps})
+	var batch: Dictionary = _ops.batch_scene({"scene": edge_scene, "steps": steps})
 
 	assert_eq(batch.get("result", {}).get("passed"), true, "the batch passes: %s" % batch)
 	assert_true(
 		not batch.get("result", {}).has("warning"), "the splice keeps the layout: %s" % batch
 	)
 	assert_eq(
-		FileAccess.get_file_as_string(EDGE_SCENE), original, "the new A takes the deleted A's lines"
+		FileAccess.get_file_as_string(edge_scene), original, "the new A takes the deleted A's lines"
 	)
-	_remove_scene(EDGE_SCENE)
+	_remove_scene(edge_scene)
 
 
 func test_a_moved_nodes_internal_child_is_walked() -> void:
@@ -738,9 +739,9 @@ func test_a_moved_nodes_internal_child_is_walked() -> void:
 
 
 func test_a_move_rewrites_a_path_an_editable_instance_child_holds() -> void:
-	_write(PART_SCENE, PART_TEXT)
-	_write(EDGE_SCENE, INSTANCE_TEXT % PART_SCENE)
-	var params: Dictionary = {"scene": EDGE_SCENE, "nodePath": "Part", "parent": "Box"}
+	_write(part_scene, PART_TEXT)
+	_write(edge_scene, INSTANCE_TEXT % part_scene)
+	var params: Dictionary = {"scene": edge_scene, "nodePath": "Part", "parent": "Box"}
 
 	var moved: Dictionary = _ops.edit_scene("move_node", params)
 
@@ -752,20 +753,20 @@ func test_a_move_rewrites_a_path_an_editable_instance_child_holds() -> void:
 	}
 	assert_eq(moved.get("result", {}).get("rewrittenPaths"), [rewritten], "the override is listed")
 	var scene := (
-		ResourceLoader.load(EDGE_SCENE, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
+		ResourceLoader.load(edge_scene, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
 	)
 	var root: Node = scene.instantiate()
 	var holder: Node = root.get_node("Box/Part/Holder")
 	assert_eq(holder.get_node(holder.get("remote_path")), root.get_node("Target"), "it resolves")
 	root.free()
-	_remove_scene(EDGE_SCENE)
-	DirAccess.remove_absolute(PART_SCENE)
+	_remove_scene(edge_scene)
+	DirAccess.remove_absolute(part_scene)
 
 
 ## Covers both a carried section's changed line in place and its connection keeping its place.
 func test_a_move_changes_only_the_tag_the_rewritten_path_and_the_connection() -> void:
-	_write(EDGE_SCENE, RIG_TEXT)
-	var params: Dictionary = {"scene": EDGE_SCENE, "nodePath": "From/Arm", "parent": "."}
+	_write(edge_scene, RIG_TEXT)
+	var params: Dictionary = {"scene": edge_scene, "nodePath": "From/Arm", "parent": "."}
 
 	var moved: Dictionary = _ops.edit_scene("move_node", params)
 
@@ -776,18 +777,18 @@ func test_a_move_changes_only_the_tag_the_rewritten_path_and_the_connection() ->
 		. replace('NodePath("../../Hand")', 'NodePath("../Hand")')
 		. replace('from="From/Arm"', 'from="Arm"')
 	)
-	assert_eq(FileAccess.get_file_as_string(EDGE_SCENE), expected, "only those three lines change")
-	_remove_scene(EDGE_SCENE)
+	assert_eq(FileAccess.get_file_as_string(edge_scene), expected, "only those three lines change")
+	_remove_scene(edge_scene)
 
 
 func test_a_control_moved_out_of_a_container_keeps_its_lines() -> void:
-	_write(EDGE_SCENE, LABEL_HEAD + LABEL_NAME + "\n" + LABEL_PANEL)
-	var params: Dictionary = {"scene": EDGE_SCENE, "nodePath": "Box/Name", "parent": "Panel"}
+	_write(edge_scene, LABEL_HEAD + LABEL_NAME + "\n" + LABEL_PANEL)
+	var params: Dictionary = {"scene": edge_scene, "nodePath": "Box/Name", "parent": "Panel"}
 
 	var moved: Dictionary = _ops.edit_scene("move_node", params)
 
 	assert_true(not moved.get("result", {}).has("warning"), "the save keeps the layout: %s" % moved)
-	var saved: String = FileAccess.get_file_as_string(EDGE_SCENE)
+	var saved: String = FileAccess.get_file_as_string(edge_scene)
 	assert_true(
 		saved.begins_with(LABEL_HEAD + LABEL_PANEL + "\n"), "the other nodes stay: %s" % saved
 	)
@@ -797,12 +798,12 @@ func test_a_control_moved_out_of_a_container_keeps_its_lines() -> void:
 	assert_eq(name_lines[1], '[node name="Name" type="Label" parent="Panel"]', "its tag line")
 	assert_true(name_lines.has('text = "a"'), "its own line stays: %s" % saved)
 	var scene := (
-		ResourceLoader.load(EDGE_SCENE, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
+		ResourceLoader.load(edge_scene, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
 	)
 	var root: Node = scene.instantiate()
 	assert_eq(root.get_node("Panel/Name").get("layout_mode"), 0, "position mode at its new place")
 	root.free()
-	_remove_scene(EDGE_SCENE)
+	_remove_scene(edge_scene)
 
 
 ## A batch's steps that delete B/A, then move A under B onto the deleted node's path.

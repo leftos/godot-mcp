@@ -3,29 +3,30 @@ extends "res://gd_test.gd"
 ## every dependency followed once, a cycle ending, a missing file left out, visited shared.
 
 const SCENE_FILES_SCRIPT := "../../headless/scene_files.gd"
-const FIRST := "user://closure_first.tres"
-const SECOND := "user://closure_second.tres"
-const THIRD := "user://closure_third.tres"
-const MISSING := "user://closure_missing.tres"
+const RunDir := preload("res://run_dir.gd")
 const THIRD_UID := "uid://bqclosure3rda"
 
+var first: String = RunDir.path("closure_first.tres")
+var second: String = RunDir.path("closure_second.tres")
+var third: String = RunDir.path("closure_third.tres")
+var missing: String = RunDir.path("closure_missing.tres")
 var _files: GDScript = load(
 	ProjectSettings.globalize_path("res://").path_join(SCENE_FILES_SCRIPT).simplify_path()
 )
 
 
 func test_closure_follows_every_dependency_once_through_a_cycle() -> void:
-	_write(FIRST, _resource([_ext(SECOND, ""), _ext(MISSING, "")]))
-	_write(SECOND, _resource([_ext(THIRD, THIRD_UID)]))
-	_write(THIRD, _resource([_ext(FIRST, "")]))
-	_remove(MISSING)
+	_write(first, _resource([_ext(second, ""), _ext(missing, "")]))
+	_write(second, _resource([_ext(third, THIRD_UID)]))
+	_write(third, _resource([_ext(first, "")]))
+	_remove(missing)
 	var visited: Dictionary = {}
 
-	var closure: PackedStringArray = _files.dependency_closure(FIRST, visited)
+	var closure: PackedStringArray = _files.dependency_closure(first, visited)
 
 	assert_eq(
 		closure,
-		PackedStringArray([FIRST, SECOND, THIRD]),
+		PackedStringArray([first, second, third]),
 		"the start, each file once, a uid entry by its fallback path, no missing file"
 	)
 	assert_eq(visited.size(), 3, "each listed file is marked visited, the missing one is not")
@@ -33,21 +34,21 @@ func test_closure_follows_every_dependency_once_through_a_cycle() -> void:
 
 
 func test_a_visited_file_is_neither_listed_nor_followed() -> void:
-	_write(FIRST, _resource([_ext(SECOND, "")]))
-	_write(SECOND, _resource([_ext(THIRD, "")]))
-	_write(THIRD, _resource([]))
-	var visited: Dictionary = {SECOND: true}
+	_write(first, _resource([_ext(second, "")]))
+	_write(second, _resource([_ext(third, "")]))
+	_write(third, _resource([]))
+	var visited: Dictionary = {second: true}
 
-	var closure: PackedStringArray = _files.dependency_closure(FIRST, visited)
+	var closure: PackedStringArray = _files.dependency_closure(first, visited)
 
-	assert_eq(closure, PackedStringArray([FIRST]), "a visited file stops the walk there")
+	assert_eq(closure, PackedStringArray([first]), "a visited file stops the walk there")
 	_remove_all()
 
 
 func test_a_missing_start_lists_nothing() -> void:
-	_remove(MISSING)
+	_remove(missing)
 
-	var closure: PackedStringArray = _files.dependency_closure(MISSING, {})
+	var closure: PackedStringArray = _files.dependency_closure(missing, {})
 
 	assert_eq(closure, PackedStringArray(), "a start that does not exist reaches nothing")
 
@@ -77,5 +78,5 @@ func _remove(path: String) -> void:
 
 
 func _remove_all() -> void:
-	for path: String in [FIRST, SECOND, THIRD, MISSING]:
+	for path: String in [first, second, third, missing]:
 		_remove(path)

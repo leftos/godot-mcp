@@ -7,8 +7,12 @@ extends SceneTree
 ## the engine logs an error while it runs (a script error ends the test's function early without
 ## stopping the run). Each failure prints as "FAIL <file>::<test>: <message>", then a summary
 ## "gdtest: <passed> passed, <failed> failed", and the run quits with 1 when any test failed.
+##
+## A run's fixtures go in a folder of the run's own (run_dir.gd), made before the first test file
+## runs and removed after the last, so two runs at once never read or remove each other's files.
 
 const GdTest := preload("res://gd_test.gd")
+const RunDir := preload("res://run_dir.gd")
 const TEST_PREFIX := "test_"
 
 
@@ -52,13 +56,22 @@ var _failed: int = 0
 
 func _initialize() -> void:
 	OS.add_logger(_recorder)
+	_make_run_dir()
 	var files: PackedStringArray = _test_files()
 	if files.is_empty():
 		_report_failure("run_tests.gd", "no res://test_*.gd files found")
 	for file_name in files:
 		_run_file(file_name)
+	RunDir.remove_root()
 	print("gdtest: %d passed, %d failed" % [_passed, _failed])
 	quit(1 if _failed > 0 else 0)
+
+
+## The folder this run's tests write their fixtures under, made before the first one writes.
+func _make_run_dir() -> void:
+	var error: Error = DirAccess.make_dir_recursive_absolute(RunDir.root())
+	if error != OK:
+		_report_failure("run_tests.gd", "could not create %s: error %d" % [RunDir.root(), error])
 
 
 func _test_files() -> PackedStringArray:
