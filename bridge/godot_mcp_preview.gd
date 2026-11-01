@@ -47,7 +47,9 @@ static func visible_bounds(scene: Node) -> Variant:
 
 ## Frames the current scene when it needs a camera, waits DRAWN_FRAMES drawn frames and saves
 ## the root viewport as the screenshot command does. Returns the screenshot's {path, width,
-## height, previewPath?, …} plus {scene, cameraAdded}, or a String saying why it could not.
+## height, previewPath?, …}, the window's and the viewport's size as {width, height} (the
+## capture is the window less its letterbox bars under stretch aspect keep), plus {scene,
+## cameraAdded}, or a String saying why it could not.
 func capture(params: Dictionary) -> Variant:
 	var scene: Node = get_tree().current_scene
 	if scene == null:
@@ -60,6 +62,10 @@ func capture(params: Dictionary) -> Variant:
 		return saved
 	saved["scene"] = scene.scene_file_path
 	saved["cameraAdded"] = _camera != null
+	var window: Vector2i = DisplayServer.window_get_size()
+	saved["window"] = {"width": roundi(window.x), "height": roundi(window.y)}
+	var viewport: Vector2 = get_viewport().get_visible_rect().size
+	saved["viewport"] = {"width": roundi(viewport.x), "height": roundi(viewport.y)}
 	return saved
 
 

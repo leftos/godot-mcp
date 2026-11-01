@@ -37,8 +37,8 @@ internal sealed class PreviewTools(SessionRegistry sessions)
             + "window, pauses it before the scene's first frame, waits two drawn frames and returns a screenshot, then stops. Use "
             + "it after editing a scene headless. The scene's _ready and the project's autoloads still run; if one of them changes "
             + "scenes, the result's scene says which was shown. A 3D scene with no current camera gets a temporary one framing its "
-            + "visible geometry (cameraAdded). Returns {scene, path, width, height, previewPath?, cameraAdded, prep, errors?} and "
-            + "the image, as take_screenshot does."
+            + "visible geometry (cameraAdded). Returns {scene, path, width, height, window, viewport, warning?, previewPath?, "
+            + "cameraAdded, prep, errors?} and the image, as take_screenshot does."
     )]
     public async Task<IEnumerable<ContentBlock>> PreviewSceneAsync(
         [Description("The folder that holds the project's project.godot.")] string projectPath,
@@ -114,6 +114,17 @@ internal sealed class PreviewTools(SessionRegistry sessions)
                 $"options.resolution is \"{resolution}\"; it must be WIDTHxHEIGHT in pixels, with a lowercase x and no spaces, e.g. \"1280x720\"."
             );
 
+    /// <summary>
+    /// The warning for a capture that is not the size of the window it was asked for, which the project's or the scene's stretch
+    /// settings draw; null when the two sizes match, which is what a capture of the whole window leaves.
+    /// </summary>
+    internal static string? DescribeLetterbox(int captureWidth, int captureHeight, int windowWidth, int windowHeight) =>
+        captureWidth == windowWidth && captureHeight == windowHeight
+            ? null
+            : $"the capture is {captureWidth}x{captureHeight}, the window {windowWidth}x{windowHeight}: "
+                + "the project's or the scene's stretch settings draw the game at another size (letterbox bars under aspect keep, "
+                + "the base size under stretch mode viewport), so coordinates read off the capture are the capture's";
+
     /// <summary>take_screenshot's result from the bridge's preview command, plus the scene shown, cameraAdded and the prep.</summary>
     private static Task<IEnumerable<ContentBlock>> CaptureAsync(GodotSession session, PreviewPlan plan, PrepResult prep, CancellationToken limit)
     {
@@ -127,10 +138,36 @@ internal sealed class PreviewTools(SessionRegistry sessions)
                 text["scene"] = reply?["scene"]?.DeepClone();
                 text["cameraAdded"] = reply?["cameraAdded"]?.DeepClone();
                 text["prep"] = JsonSerializer.SerializeToNode(prep, Json);
+                AddSizes(text, reply);
             },
             limit
         );
     }
+
+    /// <summary>The window's and the viewport's size, and the warning when the capture differs, copied from the reply into the result.</summary>
+    private static void AddSizes(JsonObject text, JsonNode? reply)
+    {
+        if (reply is not JsonObject result)
+        {
+            return;
+        }
+
+        text["window"] = result["window"]?.DeepClone();
+        text["viewport"] = result["viewport"]?.DeepClone();
+        if (LetterboxWarning(result) is { } warning)
+        {
+            text["warning"] = warning;
+        }
+    }
+
+    /// <summary>The result's letterbox warning, from its capture's size and the window's; null when the reply names no window.</summary>
+    private static string? LetterboxWarning(JsonObject reply) =>
+        reply["window"] is JsonObject window
+            ? DescribeLetterbox(Pixels(reply["width"]), Pixels(reply["height"]), Pixels(window["width"]), Pixels(window["height"]))
+            : null;
+
+    /// <summary>A reply's pixel count, 0 when the field is missing: a size a reply leaves out cannot match another, so it warns.</summary>
+    private static int Pixels(JsonNode? node) => node?.GetValue<int>() ?? 0;
 
     /// <exception cref="McpException">The path is empty or holds no project.godot.</exception>
     private static string ProjectDir(string projectPath)
@@ -149,7 +186,9 @@ internal sealed class PreviewTools(SessionRegistry sessions)
 /// <summary>preview_scene's window size and whether the project is prepared first.</summary>
 internal sealed record PreviewOptions(
     [property: Description(
-        "The window's size, WIDTHxHEIGHT in pixels (e.g. 1280x720), passed to Godot as --resolution; the project's own size when left out."
+        "The window's size, WIDTHxHEIGHT in pixels (e.g. 1280x720), passed to Godot as --resolution; the project's own size when "
+            + "left out. The capture can differ from the window under the project's or the scene's stretch settings; the result's "
+            + "window and viewport give both sizes."
     )]
         string? Resolution = null,
     [property: Description(RunOptions.PrepareDescription)] string? Prepare = null

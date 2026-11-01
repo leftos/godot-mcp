@@ -77,6 +77,30 @@ public sealed class PreviewTests : IAsyncDisposable
         Assert.NotEqual((0, 255, 255), png.At(20, 20));
         Assert.Equal("no-csproj", reply["prep"]!["build"]!.GetValue<string>());
         Assert.Equal("not-needed", reply["prep"]!["import"]!.GetValue<string>());
+        Assert.Null(reply["warning"]);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ALetterboxedPreviewReportsTheWindowAskedForBesideItsSmallerCapture()
+    {
+        // InputProbe keeps its 640 x 360 aspect: a 1000 x 900 window draws a 1000 x 562 frame between bars
+        // (4.7.2 window.cpp L1369-1377, L1408), and the capture is that frame.
+        List<ContentBlock> blocks =
+        [
+            .. await _preview.PreviewSceneAsync(
+                _probe.Directory,
+                "res://preview_2d.tscn",
+                new PreviewOptions(Resolution: "1000x900"),
+                "path_only",
+                cancellationToken: TestContext.Current.CancellationToken
+            ),
+        ];
+
+        JsonNode reply = JsonNode.Parse(Text(blocks))!;
+        Assert.Equal((1000, 562), (reply["width"]!.GetValue<int>(), reply["height"]!.GetValue<int>()));
+        Assert.Equal<(int?, int?)>((1000, 900), Size(reply["window"]));
+        Assert.Equal<(int?, int?)>((640, 360), Size(reply["viewport"]));
+        Assert.Contains("letterbox", reply["warning"]?.GetValue<string>() ?? string.Empty);
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
@@ -158,6 +182,9 @@ public sealed class PreviewTests : IAsyncDisposable
         [.. await _preview.PreviewSceneAsync(_probe.Directory, scene, null, responseMode, cancellationToken: cancellation)];
 
     private static string Text(IEnumerable<ContentBlock> blocks) => string.Concat(blocks.OfType<TextContentBlock>().Select(block => block.Text));
+
+    /// <summary>A result's {width, height}, as a null pair when the result has no such object.</summary>
+    private static (int? Width, int? Height) Size(JsonNode? node) => (node?["width"]?.GetValue<int>(), node?["height"]?.GetValue<int>());
 
     private static byte[] Image(IEnumerable<ContentBlock> blocks)
     {

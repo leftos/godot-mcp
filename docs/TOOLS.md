@@ -378,11 +378,15 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `preview_scene`
 
-- **Does:** starts the project quiet on one scene in its own short-lived session, pauses it before the scene's first frame, waits two drawn frames, screenshots it and stops: `{scene, path, width, height, previewPath?, cameraAdded, prep, errors?}` and the image.
+- **Does:** starts the project quiet on one scene in its own short-lived session, pauses it before the scene's first frame, waits two drawn frames, screenshots it and stops: `{scene, path, width, height, window, viewport, warning?, previewPath?, cameraAdded, prep, errors?}` and the image. `window` is the window's client area and `viewport` the root viewport's visible size, each `{width, height}`, in every response mode.
 - **Use:** after a headless scene edit, to see the result. `projectPath`, `scene` (ending `.tscn`, `.scn`, `.escn`, `.res` or `.tres`), `options {resolution, prepare}` (`resolution` as `WIDTHxHEIGHT`, given exactly as `run_project`'s `--resolution` is), `responseMode`, `previewMaxWidth`.
 - **Edges:** the quiet and pad settings come from the folder's non-scratch sessions, else its arm, else quiet with live pads, never from a `run_scratches` session. The scene's `_ready` and the project's autoloads still run; when one changes scenes, the result's `scene` says what was shown.
 
-  A 3D scene with no current camera gets a temporary one framing its visible geometry (`cameraAdded: true`). The scene's ending is checked case-sensitively. Prep, launch and capture share 60 s of load-adjusted time. It cannot run inside `batch_drive`.
+  A 3D scene with no current camera gets a temporary one framing its visible geometry (`cameraAdded: true`).
+
+  `warning` appears when the capture's size differs from the window's: the project's or the scene's stretch settings draw the game at another size (letterbox bars under aspect `keep`, the base size under stretch mode `viewport`), so coordinates read off the capture are the capture's. `options.resolution` still sizes the window as asked, sizes larger than the screen included; a scene can set `content_scale_aspect` at runtime, so `project.godot` alone does not say what the capture will be.
+
+  The scene's ending is checked case-sensitively. Prep, launch and capture share 60 s of load-adjusted time. It cannot run inside `batch_drive`.
 
 ### See why something is not drawn
 
