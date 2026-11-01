@@ -492,17 +492,85 @@ public sealed class ProjectProfileTests : IDisposable
         Write("""{ "scratch": { "folder": "res://Scratch" } }""");
         ScratchProfile unset = ProjectProfile.Load(_temp.Path).Scratch!;
 
-        Assert.Equal(["0", "build", "2"], set.Setup["Combat"]);
-        Assert.Equal(["open"], set.Setup["Tray"]);
+        Assert.Equal(["0", "build", "2"], set.Setup["Combat"].Always);
+        Assert.Empty(set.Setup["Combat"].Steps);
+        Assert.Equal(["open"], set.Setup["Tray"].Always);
         Assert.Empty(unset.Setup);
         Assert.Empty(ScratchProfile.None.Setup);
+    }
+
+    [Fact]
+    public void ScratchSetupReadsAnObjectOfTheSceneWideListAndEachStepsOwn()
+    {
+        Write(
+            """
+            {
+              "scratch": {
+                "setup": {
+                  "Always": { "always": ["build", 1] },
+                  "Steps": { "steps": { "3": ["open"], "Fight": [0, "build"] } },
+                  "Both": { "always": ["build"], "steps": { "Fight": ["open"] } }
+                }
+              }
+            }
+            """
+        );
+
+        ScratchProfile scratch = ProjectProfile.Load(_temp.Path).Scratch!;
+
+        Assert.Equal(["build", "1"], scratch.Setup["Always"].Always);
+        Assert.Empty(scratch.Setup["Always"].Steps);
+        Assert.Empty(scratch.Setup["Steps"].Always);
+        Assert.Equal(["open"], scratch.Setup["Steps"].Steps["3"]);
+        Assert.Equal(["0", "build"], scratch.Setup["Steps"].Steps["Fight"]);
+        Assert.Equal(["build"], scratch.Setup["Both"].Always);
+        Assert.Equal(["open"], scratch.Setup["Both"].Steps["Fight"]);
     }
 
     [Theory]
     [InlineData(
         """{ "scratch": { "setup": { "Combat": "build" } } }""",
-        "(scratch): scratch.setup.Combat must be an array of setup steps, not a string; a setup step is a whole number from 0 up, "
-            + "or a non-empty string naming it."
+        "(scratch): scratch.setup.Combat must be an array of setup steps or an object {always?, steps?}, not a string; "
+            + "a setup step is a whole number from 0 up, or a non-empty string naming it."
+    )]
+    [InlineData(
+        """{ "scratch": { "setup": { "Combat": { "always": "build" } } } }""",
+        "(scratch): scratch.setup.Combat.always must be an array of setup steps, not a string; a setup step is a whole number "
+            + "from 0 up, or a non-empty string naming it."
+    )]
+    [InlineData(
+        """{ "scratch": { "setup": { "Combat": { "steps": { "fight": "build" } } } } }""",
+        "(scratch): scratch.setup.Combat.steps.fight must be an array of setup steps, not a string; a setup step is a whole "
+            + "number from 0 up, or a non-empty string naming it."
+    )]
+    [InlineData(
+        """{ "scratch": { "setup": { "Combat": { "steps": [] } } } }""",
+        "(scratch): scratch.setup.Combat.steps must be an object of step keys to setup steps, not an array."
+    )]
+    [InlineData("""{ "scratch": { "setup": { "Combat": {} } } }""", "(scratch): scratch.setup.Combat must name always or steps; it names neither.")]
+    [InlineData(
+        """{ "scratch": { "setup": { "Combat": { "allways": ["build"] } } } }""",
+        "(scratch, setup of \"Combat\"): unknown key \"allways\"; the allowed keys are always, steps. Remove or rename it."
+    )]
+    [InlineData(
+        """{ "scratch": { "setup": { "Combat": { "steps": { "fight": ["a"], "fight": ["b"] } } } } }""",
+        "(scratch): scratch.setup.Combat.steps names the step key \"fight\" twice; keep one."
+    )]
+    [InlineData(
+        """{ "scratch": { "setup": { "Combat": { "always": [-1] } } } }""",
+        "(scratch): scratch.setup.Combat.always item 1 is -1; a setup step is a whole number from 0 up, or a non-empty string " + "naming it."
+    )]
+    [InlineData(
+        """{ "scratch": { "setup": { "Combat": { "always": [] } } } }""",
+        "(scratch): scratch.setup.Combat.always must name at least one step; it is empty."
+    )]
+    [InlineData(
+        """{ "scratch": { "setup": { "Combat": { "steps": {} } } } }""",
+        "(scratch): scratch.setup.Combat.steps must name at least one step; it is empty."
+    )]
+    [InlineData(
+        """{ "scratch": { "setup": { "Combat": { "steps": { "fight": [] } } } } }""",
+        "(scratch): scratch.setup.Combat.steps.fight must name at least one step; it is empty."
     )]
     [InlineData("""{ "scratch": { "setup": { "Combat": [] } } }""", "(scratch): scratch.setup.Combat must name at least one step; it is empty.")]
     [InlineData(

@@ -51,10 +51,11 @@ internal sealed record ScratchScenePlan(string Name, string ResPath, double Pace
     public double? ExitHold { get; init; }
 
     /// <summary>
-    /// The setup steps the profile declares for the scene, keyed by a step's index written plainly or its exact name: the steps a
-    /// partial run adds to the ones options.steps selects, resolved only then; empty when the profile declares none.
+    /// The setup steps the profile declares for the scene: its scene-wide list, which a partial run adds to the ones options.steps
+    /// selects, and each step's own list, added only when the run selects it; both resolved only then, and none when the profile
+    /// declares none.
     /// </summary>
-    public IReadOnlyList<string> Setup { get; init; } = [];
+    public ScratchSetup Setup { get; init; } = ScratchSetup.None;
 
     /// <summary>
     /// The patterns the scene's output must each match a line of: the profile's scratch.expect, then its scratch.expectFor entry
@@ -345,6 +346,7 @@ internal sealed class ScratchRun
 
     private const string PaceKeyLabel = "pace.steps key";
     private const string SetupLabel = "setup";
+    private const string SetupStepLabel = "setup for step";
     private const string StepsTokenLabel = "options.steps token";
     private const string CaptureTokenLabel = "options.capture.steps token";
     private const int MaxShotNameChars = 64;
@@ -1109,10 +1111,7 @@ internal sealed class ScratchRun
         if (final?["timeline"] is not JsonObject timeline)
         {
             warnings.Add(WatchNotFinal);
-            if (peeked is not null)
-            {
-                peeked["stopped"] = StoppedAtShutdown;
-            }
+            peeked?["stopped"] = StoppedAtShutdown;
 
             return peeked;
         }
@@ -1442,38 +1441,52 @@ internal sealed class ScratchRun
         ScratchStepNames names
     )
     {
-        (int[] setup, string? setupError) = SetupSteps(scene, names);
-        if (setupError is not null)
-        {
-            return (new ScratchSelection(null, [], []), setupError);
-        }
-
         (int[] played, string? stepsError) = ResolveSteps(tokens, scene.Name, names);
-        return stepsError is not null
-            ? (new ScratchSelection(null, [], []), stepsError)
+        (int[] setup, string? setupError) = SetupSteps(scene, played, names);
+        string? error = setupError ?? stepsError;
+        return error is not null
+            ? (new ScratchSelection(null, [], []), error)
             : (new ScratchSelection(played, [.. setup.Except(played)], [.. played.Union(setup).Order()]), null);
     }
 
     /// <summary>
-    /// The steps the setup keys <paramref name="scene"/> declares name, ascending, each once; or why a key names no single step,
-    /// or two steps. Resolved only on a partial run, so a key naming no step of the scene turns it red only when the call gives
-    /// options.steps.
+    /// The steps <paramref name="scene"/>'s setup keys name, ascending, each once: its scene-wide list, and the list of each step
+    /// of <paramref name="selected"/> that has one, a step of a list bringing no list of its own; or why a key names no single
+    /// step, or two steps. Every key is resolved on every partial run, so one naming no step of the scene turns it red then,
+    /// selected or not; a full run resolves none of them.
     /// </summary>
-    internal static (int[] Steps, string? Error) SetupSteps(ScratchScenePlan scene, ScratchStepNames names)
+    internal static (int[] Steps, string? Error) SetupSteps(ScratchScenePlan scene, int[] selected, ScratchStepNames names)
     {
         SortedSet<int> steps = [];
-        foreach (string key in scene.Setup)
+        string? error = AddSetupKeys(scene.Setup.Always, SetupLabel, scene.Name, steps, names);
+        foreach ((string key, IReadOnlyList<string> list) in scene.Setup.Steps)
         {
-            (int step, string? error) = StepOf(key, SetupLabel, scene.Name, names);
-            if (error is not null)
-            {
-                return ([], error);
-            }
-
-            steps.Add(step);
+            (int step, string? keyError) = StepOf(key, SetupStepLabel, scene.Name, names);
+            SortedSet<int>? added = selected.Contains(step) ? steps : null;
+            error ??= keyError ?? AddSetupKeys(list, $"{SetupStepLabel} \"{key}\"", scene.Name, added, names);
         }
 
-        return ([.. steps], null);
+        return error is not null ? ([], error) : ([.. steps], null);
+    }
+
+    /// <summary>
+    /// The steps <paramref name="keys"/> name, added to <paramref name="steps"/>, or with it null resolved alone so a typo is
+    /// refused whether or not the step whose list holds it is selected; null, or why a key names no single step, or two steps.
+    /// </summary>
+    private static string? AddSetupKeys(IReadOnlyList<string> keys, string label, string scene, SortedSet<int>? steps, ScratchStepNames names)
+    {
+        foreach (string key in keys)
+        {
+            (int step, string? error) = StepOf(key, label, scene, names);
+            if (error is not null)
+            {
+                return error;
+            }
+
+            steps?.Add(step);
+        }
+
+        return null;
     }
 
     private static string StepName(JsonNode? name) =>

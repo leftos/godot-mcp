@@ -529,7 +529,13 @@ There is no tool for it: Godot's own debug drawing answers, through tools that e
 
   `ceilings {<Scene>: seconds}` (the same map as `options.ceilings`: above 0, at most 3600; a key naming a scene outside the run is ignored, and `options.ceilings` wins for the same scene),
 
-  `setup {<Scene>: [step, ...]}` (the steps a scene's partial run needs for the state the selected steps build on; each step is an index written plainly or a step's exact name, resolved as a `pace.steps` key is; with `options.steps` they play with the selected steps, ascending, and a setup step is judged like any other, `keepGoing` included; without `options.steps` every step plays and `setup` changes nothing; a duplicate entry is deduped),
+  `setup {<Scene>: [step, ...]}` (the steps a scene's partial run needs for the state the selected steps build on; each step is an index written plainly or a step's exact name, resolved as a `pace.steps` key is; with `options.steps` they play with the selected steps, ascending, and a setup step is judged like any other, `keepGoing` included; without `options.steps` every step plays and `setup` changes nothing; a duplicate entry is deduped).
+
+  The value can instead be an object `{"always": [step, ...], "steps": {"<step>": [step, ...]}}` that keys setup per selected step: `always` is the scene-wide list (the array form's meaning), and each `steps` key, an index written plainly or a step's exact name, lists the setup steps that step needs; `always` and `steps` are each optional but one must be present, each list is non-empty, and an unknown key is refused.
+
+  A partial run plays the scene-wide list plus the list of every selected step that has one, unioned, ascending and deduped into the same `setup` result; a range token applies the list of each step it covers, a setup step the call also selected stays out of `setup`, a step pulled in as setup brings no list of its own, and a list naming its own step is ignored. A full run ignores both forms; a `steps` key naming no step turns the scene red on a partial run only, and a name shared by two steps is refused with "key it by index".
+
+  A value that is neither an array nor an object is refused at load with `scratch.setup.<Scene> must be an array of setup steps or an object {always?, steps?}, not <kind>`; an object naming neither key, an empty list, a `steps` that is not an object and a duplicate step key in `steps` are refused too.
 
   `known {<Scene>: reason}`, `patterns` (case-sensitive regexes, each a string or `{pattern, reason}` with both keys; a step failed by a matching line names the first matching entry as `failedAt.pattern`, with its reason; default `^SCRIPT ERROR|^ERROR:|ObjectDB instances? (was|were) leaked`; `[]` turns line matching off),
 

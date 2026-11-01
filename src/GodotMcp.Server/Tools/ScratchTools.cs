@@ -77,8 +77,10 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "Settings live in godot-mcp.json's scratch section "
             + "{folder, userArgs, engineArgs, pace, ceilings, setup, known, patterns, expect, expectFor, parallel}, where setup "
             + "{<scene>: [step, ...]} "
-            + "names a scene's declared setup steps, which a run given options.steps adds to the selection; a key is resolved only "
-            + "then, so one naming no step of its scene turns that scene red only on a partial run. expect [pattern, ...] and "
+            + "names a scene's declared setup steps, which a run given options.steps adds to the selection; an entry may instead be "
+            + "{always?: [step, ...], steps?: {\"<step>\": [step, ...]}}: every partial run adds the always list, and a step's own list "
+            + "only when options.steps selects that step (a setup step brings no list of its own). A key is resolved only on a partial "
+            + "run, so one naming no step of its scene turns that scene red only then. expect [pattern, ...] and "
             + "expectFor {<scene>: [pattern, ...]}, each item a regex string or {pattern, reason} as in patterns, name lines a "
             + "scene's output (launch, steps and exit) must print: a scene with steps that lacks one is red, its exit.missing "
             + "naming each pattern never matched and its reason, a red step keeping its failedAt; a killed, refused or no-steps "
@@ -672,9 +674,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     /// <summary>The scene's time scale: 1 when its profile pace has "timeScale": 1, else options.timeScale, else 1.</summary>
     private static double TimeScaleFor(ScratchPace? entry, ScratchOptions options) => entry is { NormalSpeed: true } ? 1 : options.TimeScale ?? 1;
 
-    /// <summary>The setup steps the profile's scratch.setup declares for the scene; empty when it declares none.</summary>
-    private static IReadOnlyList<string> SetupFor(string name, ScratchProfile scratch) =>
-        scratch.Setup.TryGetValue(name, out IReadOnlyList<string>? setup) ? setup : [];
+    /// <summary>The setup steps the profile's scratch.setup declares for the scene; none when it declares none.</summary>
+    private static ScratchSetup SetupFor(string name, ScratchProfile scratch) =>
+        scratch.Setup.TryGetValue(name, out ScratchSetup? setup) ? setup : ScratchSetup.None;
 
     /// <summary>
     /// The patterns the scene's output must match a line of: the profile's scratch.expect, then its scratch.expectFor entry for
@@ -1105,8 +1107,8 @@ internal sealed record ScratchOptions(
             + "scene turns that scene red before any step plays. A later step that depends on a skipped one is the caller's choice. "
             + "An object {\"<Scene>\": [...]} in place of the list gives each scene it names its own list, a scene it leaves out "
             + "playing every step; a step its scene's GetStepHidden(i) marks hidden keeps its index and plays as any other. "
-            + "Each scene adds the steps its profile's scratch.setup declares for it to this selection, ascending with them; its "
-            + "result lists the selected indices as selected and the added setup steps as setup."
+            + "Each scene adds the steps its profile's scratch.setup declares for it and for each selected step to this selection, "
+            + "ascending with them; its result lists the selected indices as selected and the added setup steps as setup."
     )]
         JsonElement? Steps = null,
     [property: Description(

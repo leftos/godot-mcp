@@ -81,6 +81,8 @@ internal sealed partial class ProjectProfile
     private const string ExitHoldKey = "exitHold";
     private static readonly string[] PaceKeys = [.. StepPaceKeys, StepsKey, TimeScaleKey, ExitHoldKey];
     private static readonly string[] PatternKeys = ["pattern", "reason"];
+    private const string AlwaysKey = "always";
+    private static readonly string[] SetupObjectKeys = [AlwaysKey, StepsKey];
 
     /// <summary>What a <c>scratch.setup</c> entry may be, for the refusals that say what one is.</summary>
     private const string SetupStepShape = "a setup step is a whole number from 0 up, or a non-empty string naming it";
@@ -404,7 +406,7 @@ internal sealed partial class ProjectProfile
         )
         {
             Parallel = ReadParallel(scratch, place),
-            Setup = ReadMap<IReadOnlyList<string>>(scratch, "setup", place, (scene, steps) => ReadSetup(scene, steps, place)),
+            Setup = ReadMap<ScratchSetup>(scratch, "setup", place, (scene, steps) => ReadSetup(scene, steps, place)),
             Expect = scratch.TryGetValue(ExpectKey, out JsonElement expect) ? ReadPatterns(expect, PatternList.Expect, place) : [],
             ExpectFor = ReadMap<IReadOnlyList<ScratchPattern>>(
                 scratch,
@@ -773,11 +775,63 @@ internal sealed partial class ProjectProfile
 
     /// <summary>
     /// One scene's declared setup steps: a non-empty array of step keys, each an index written plainly or a step's exact name,
-    /// which step each names only known once the scene has started.
+    /// which step each names only known once the scene has started; or an object of the scene-wide "always" list and the "steps"
+    /// map, each step key to the setup steps of its own, a partial run adding a step's list only when it selects that step.
     /// </summary>
-    private static List<string> ReadSetup(string scene, JsonElement value, Place place)
+    private static ScratchSetup ReadSetup(string scene, JsonElement value, Place place)
     {
         string label = $"scratch.setup.{scene}";
+        Place objectPlace = new(place.Path, $"scratch, setup of \"{scene}\"");
+        return value.ValueKind switch
+        {
+            JsonValueKind.Array => new ScratchSetup(ReadSetupKeys(value, label, place)),
+            JsonValueKind.Object => ReadSetupParts(Keys(value, SetupObjectKeys, objectPlace), label, place),
+            _ => throw Refused(
+                place,
+                $"{label} must be an array of setup steps or an object {{always?, steps?}}, not {Describe(value.ValueKind)}; {SetupStepShape}"
+            ),
+        };
+    }
+
+    /// <summary>One scene's setup written as an object: the scene-wide "always" list and the "steps" map, at least one of them.</summary>
+    private static ScratchSetup ReadSetupParts(Dictionary<string, JsonElement> keys, string label, Place place)
+    {
+        if (!keys.ContainsKey(AlwaysKey) && !keys.ContainsKey(StepsKey))
+        {
+            throw Refused(place, $"{label} must name always or steps; it names neither");
+        }
+
+        IReadOnlyList<string> always = keys.TryGetValue(AlwaysKey, out JsonElement list) ? ReadSetupKeys(list, $"{label}.{AlwaysKey}", place) : [];
+        IReadOnlyDictionary<string, IReadOnlyList<string>> steps = keys.TryGetValue(StepsKey, out JsonElement map)
+            ? ReadSetupMap(map, label, place)
+            : ReadOnlyDictionary<string, IReadOnlyList<string>>.Empty;
+        return new ScratchSetup(always, steps);
+    }
+
+    /// <summary>A scene's "steps": step keys, each a step's index or its name, to the setup steps that step needs.</summary>
+    private static Dictionary<string, IReadOnlyList<string>> ReadSetupMap(JsonElement value, string label, Place place)
+    {
+        string stepsLabel = $"{label}.{StepsKey}";
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            throw Refused(place, $"{stepsLabel} must be an object of step keys to setup steps, not {Describe(value.ValueKind)}");
+        }
+
+        Dictionary<string, IReadOnlyList<string>> steps = new(StringComparer.Ordinal);
+        foreach (JsonProperty entry in value.EnumerateObject())
+        {
+            if (!steps.TryAdd(entry.Name, ReadSetupKeys(entry.Value, $"{stepsLabel}.{entry.Name}", place)))
+            {
+                throw Refused(place, $"{stepsLabel} names the step key \"{entry.Name}\" twice; keep one");
+            }
+        }
+
+        return steps.Count > 0 ? steps : throw Refused(place, $"{stepsLabel} must name at least one step; it is empty");
+    }
+
+    /// <summary>One setup list: a non-empty array of step keys, each an index written plainly or a step's exact name.</summary>
+    private static List<string> ReadSetupKeys(JsonElement value, string label, Place place)
+    {
         if (value.ValueKind != JsonValueKind.Array)
         {
             throw Refused(place, $"{label} must be an array of setup steps, not {Describe(value.ValueKind)}; {SetupStepShape}");
@@ -956,6 +1010,21 @@ internal sealed partial class ProjectProfile
 }
 
 /// <summary>
+/// A scene's declared setup steps: the scene-wide list every partial run adds, and the per-step lists, each added when the run
+/// selects that step. Each key is a step's index written plainly or its exact name, which step it names only known once the
+/// scene has started.
+/// </summary>
+internal sealed record ScratchSetup(IReadOnlyList<string> Always, IReadOnlyDictionary<string, IReadOnlyList<string>> Steps)
+{
+    /// <summary>No setup steps: no scene-wide list and no step with a list of its own.</summary>
+    public static readonly ScratchSetup None = new([], ReadOnlyDictionary<string, IReadOnlyList<string>>.Empty);
+
+    /// <summary>A scene's setup written as one scene-wide list, no step having a list of its own.</summary>
+    public ScratchSetup(IReadOnlyList<string> always)
+        : this(always, ReadOnlyDictionary<string, IReadOnlyList<string>>.Empty) { }
+}
+
+/// <summary>
 /// godot-mcp.json's <c>scratch</c> section: the folder whose scenes run_scratches plays when given none, the user arguments a
 /// scratch run starts with in place of the top-level ones (null when the section sets none), the engine arguments each scene's
 /// game launches with before --, after the runner's own --headless and --time-scale (null when the section sets none), each
@@ -989,11 +1058,11 @@ internal sealed record ScratchProfile(
     public int Parallel { get; init; } = DefaultParallel;
 
     /// <summary>
-    /// Each scene's declared setup steps, by scene name, keyed by a step's index written plainly or its exact name: the steps a
-    /// partial run adds to the ones options.steps selects. Which step a key names is resolved only on a partial run, so a key
-    /// naming no step of its scene turns that scene red only then; empty when the section declares none.
+    /// Each scene's declared setup steps, by scene name: the scene-wide list a partial run adds to the ones options.steps
+    /// selects, and each step's own list, added only when the run selects that step. Which step a key names is resolved only on a
+    /// partial run, so a key naming no step of its scene turns that scene red only then; empty when the section declares none.
     /// </summary>
-    public IReadOnlyDictionary<string, IReadOnlyList<string>> Setup { get; init; } = ReadOnlyDictionary<string, IReadOnlyList<string>>.Empty;
+    public IReadOnlyDictionary<string, ScratchSetup> Setup { get; init; } = ReadOnlyDictionary<string, ScratchSetup>.Empty;
 
     /// <summary>The patterns every scene's output must match a line of before it counts green; empty when the section sets none.</summary>
     public IReadOnlyList<ScratchPattern> Expect { get; init; } = [];

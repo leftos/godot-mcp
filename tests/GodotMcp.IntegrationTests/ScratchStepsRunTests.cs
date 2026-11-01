@@ -203,6 +203,41 @@ public sealed class ScratchStepsRunTests : ScratchRunBase
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task APerStepSetupListPlaysOnlyWhenItsStepIsSelected()
+    {
+        CopyFolder(Path.Combine(RepoPaths.InputProbe, "scratch_setup"), Path.Combine(_probe.Directory, "scratch"));
+        await File.WriteAllTextAsync(
+            Path.Combine(_probe.Directory, ProjectProfile.FileName),
+            """{ "scratch": { "folder": "scratch", "setup": { "ScratchSetupNeeded": { "steps": { "use": ["build"] } } } } }""",
+            TestContext.Current.CancellationToken
+        );
+
+        JsonObject withItsStep = Single(
+            await RunAsync(
+                _probe.Directory,
+                ["ScratchSetupNeeded"],
+                new ScratchOptions(Details: FullDetails, Steps: Tokens("""["use"]""")),
+                TestContext.Current.CancellationToken
+            )
+        );
+        JsonObject withoutItsStep = Single(
+            await RunAsync(
+                _probe.Directory,
+                ["ScratchSetupNeeded"],
+                new ScratchOptions(Details: FullDetails, Steps: Tokens("""["note"]""")),
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.True(withItsStep["verdict"]!.GetValue<string>() == "green", withItsStep.ToJsonString());
+        Assert.Equal([0], Indices(withItsStep["setup"]!));
+        Assert.Equal(["build", "use"], withItsStep["details"]!.AsArray().Select(step => step!["name"]!.GetValue<string>()));
+        Assert.True(withoutItsStep["verdict"]!.GetValue<string>() == "green", withoutItsStep.ToJsonString());
+        Assert.False(withoutItsStep.ContainsKey("setup"), withoutItsStep.ToJsonString());
+        Assert.Equal(["note"], withoutItsStep["details"]!.AsArray().Select(step => step!["name"]!.GetValue<string>()));
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task StepsPlaysOnlyTheSelectedStepsAndTheOthersNeverRun()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

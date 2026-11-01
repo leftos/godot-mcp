@@ -336,6 +336,8 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
       A scene played in part reports `selected`, and a `known` scene whose played steps are all green stays `known` and passes: `known-now-green` needs every step played, since a partial run cannot show that the whole scene is fixed. Ruled out: running the unnamed steps anyway and skipping a step's dependents for the caller (whether a step needs an earlier one is the caller's call).
     - **A scene's setup is declared in the profile (`scratch.setup {<Scene>: [step, ...]}`), not inferred and not a protocol method**: a partial run plays those steps beside the selected ones, ascending, and reports the unselected ones as `setup`, leaving `selected` the call's own choice (a `known` scene's "played in part" rule reads `selected` alone).
 
+      The value may also be `{always, steps}`: `steps` keys a step's own setup list by the step that needs it, applied only when that step is selected on a partial run, unioned with the scene-wide `always` list.
+
       This amends the ruling above: a later step that depends on a skipped one is still the caller's choice for steps not declared as setup. A setup step is judged like any other (`keepGoing` applies), a key naming no step or a shared name makes the scene red before a step plays, and a malformed value is refused at load. Ruled out: inferring dependencies and a scratch protocol method that names a step's prerequisites.
     - **`options.steps` also takes a map `{"<Scene>": [...]}`, and a scene's hidden steps are marked by its own optional `GetStepHidden(int)`**: a scene the map names plays its own list, a scene it leaves out plays every step, and a key naming no scene of the plan is refused.
 
