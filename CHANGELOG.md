@@ -11,6 +11,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Changed
 
 - An output path starting `.tmp/` is taken from the project's git checkout, not the project folder, so a project in a subfolder can use it.
+- `wait_for` text conditions also match a visible `Label3D`, its value carrying the label's projected `point`.
 
 ### Fixed
 

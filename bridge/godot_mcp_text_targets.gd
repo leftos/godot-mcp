@@ -1,8 +1,10 @@
 extends RefCounted
-## Text targets for the target resolver (godot_mcp_targets.gd): the one visible Control at or
-## under a node that shows a text, or a refusal listing the near misses, the nodes of that name, or
-## the several Controls showing it. Static functions called on the script itself; all but find
-## work on entries, {control, path, name, shown}, one per visible Control that shows a text.
+## Text targets for the target resolver (godot_mcp_targets.gd) and a wait's text condition
+## (godot_mcp_conditions.gd): the one visible Control at or under a node that shows a text, or a
+## refusal listing the near misses, the nodes of that name, or the several showing it. Static
+## functions called on the script itself; all but find work on entries, one per visible Control
+## that shows a text, {control, path, name, shown}, or per visible Label3D, {label3d, path, name,
+## shown}: a wait's text condition scans both, while find, a click's {text} target, scans Controls.
 
 const ShownText := preload("godot_mcp_shown_text.gd")
 
@@ -20,6 +22,8 @@ const NEAR_MISS := "%s shows '%s'"
 const NAME_HINT := "; %s is named '%s' and shows '%s'"
 ## Several Controls show the text: the text, the count, then each MATCH_AT, joined with ", ".
 const AMBIGUOUS_TEXT := "'%s' is shown by %d Controls: %s; narrow it with under."
+## Several show the text of them a Label3D: the same, naming the Controls and Label3Ds together.
+const AMBIGUOUS_TEXT_3D := "'%s' is shown by %d Controls and Label3Ds: %s; narrow it with under."
 const MATCH_AT := "%s at %s"
 const MAX_NEAR_MISSES := 5
 const MAX_NAME_HINTS := 5
@@ -45,12 +49,39 @@ static func find(targets: Node, under: Node, text: String, mode: String) -> Vari
 	return ambiguity_refusal(wanted, placed(targets, matches))
 
 
-## matches, the first MAX_LISTED_MATCHES each given the rect ambiguity_refusal lists it at: its
-## rect in the root's viewport coordinates as targets, the resolver, places and writes it.
+## matches, the first MAX_LISTED_MATCHES each given what ambiguity_refusal lists it at: a Control's
+## rect in the root's viewport coordinates as targets, the resolver, places and writes it, and a
+## Label3D's "(x, y)" at the point a camera projects it to.
 static func placed(targets: Node, matches: Array[Dictionary]) -> Array[Dictionary]:
 	for entry: Dictionary in matches.slice(0, MAX_LISTED_MATCHES):
+		if entry.has("label3d"):
+			var point: Variant = projected_point(targets, entry["label3d"])
+			if point != null:
+				entry["at"] = "(%s)" % targets.point_text(point)
+			continue
 		entry["rect"] = targets.rect_text(targets.viewport_rect(entry["control"]))
 	return matches
+
+
+## The value a met text check carries for the one entry showing the text: a Control's {path, shown,
+## rect}, rect its viewport rect as get_ui_elements writes a rect; a Label3D's {path, shown}, and
+## point, {x, y}, when a camera sees it.
+static func shown_value(targets: Node, entry: Dictionary) -> Dictionary:
+	if not entry.has("label3d"):
+		var rect: Variant = targets.bridge._json.to_json(targets.viewport_rect(entry["control"]))
+		return {"path": entry["path"], "shown": entry["shown"], "rect": rect}
+	var value: Dictionary = {"path": entry["path"], "shown": entry["shown"]}
+	var point: Variant = projected_point(targets, entry["label3d"])
+	if point is Vector2:
+		value["point"] = targets.bridge._json.to_json(point)
+	return value
+
+
+## The point a Label3D projects to through its viewport's current camera, or null when it has none
+## or the label is behind it: targets' _projected says which as a String.
+static func projected_point(targets: Node, label: Label3D) -> Variant:
+	var projected: Variant = targets._projected(label, Vector3.ZERO)
+	return projected if projected is Vector2 else null
 
 
 ## An entry for each visible Control at or under under that shows a text, in tree order, leaving
@@ -77,6 +108,44 @@ static func entries_under(bridge: Node, under: Node) -> Array[Dictionary]:
 			)
 		)
 	return entries
+
+
+## An entry for each visible Label3D at or under under that shows a text, in tree order, leaving out
+## every subtree pruned says so.
+static func label3d_entries_under(bridge: Node, under: Node) -> Array[Dictionary]:
+	var snapshot: GDScript = bridge._ui_snapshot
+	var skip := func(node: Node) -> bool: return pruned(node, bridge, snapshot)
+	var labels: Array[Label3D] = []
+	_gather_label3d(under, true, skip, labels)
+	var entries: Array[Dictionary] = []
+	for label: Label3D in labels:
+		(
+			entries
+			. append(
+				{
+					"label3d": label,
+					"path": str(label.get_path()),
+					"name": str(label.name),
+					"shown": ShownText.label3d_text(label),
+				}
+			)
+		)
+	return entries
+
+
+## Appends every visible Label3D under node, depth first; an invisible one hides its subtree.
+static func _gather_label3d(
+	node: Node, visible_only: bool, skip: Callable, into: Array[Label3D]
+) -> void:
+	if skip.is_valid() and skip.call(node):
+		return
+	var label := node as Label3D
+	if label != null:
+		if visible_only and not label.is_visible_in_tree():
+			return
+		into.append(label)
+	for child in node.get_children():
+		_gather_label3d(child, visible_only, skip, into)
 
 
 ## Whether the scan leaves out node and everything under it: the bridge itself, a node being
@@ -152,12 +221,28 @@ static func name_hints(entries: Array[Dictionary], wanted: String) -> Array[Dict
 	return named.slice(0, MAX_NAME_HINTS)
 
 
-## AMBIGUOUS_TEXT for wanted, listing at most MAX_LISTED_MATCHES matches with their rects, and …
-## when there are more.
+## AMBIGUOUS_TEXT for wanted, listing at most MAX_LISTED_MATCHES matches, each as listed_match
+## frames it, and … when there are more; AMBIGUOUS_TEXT_3D when any match is a Label3D.
 static func ambiguity_refusal(wanted: String, matches: Array[Dictionary]) -> String:
 	var listed := PackedStringArray()
 	for entry: Dictionary in matches.slice(0, MAX_LISTED_MATCHES):
-		listed.append(MATCH_AT % [entry["path"], entry["rect"]])
+		listed.append(listed_match(entry))
 	if matches.size() > MAX_LISTED_MATCHES:
 		listed.append("…")
-	return AMBIGUOUS_TEXT % [wanted, matches.size(), ", ".join(listed)]
+	var refusal: String = AMBIGUOUS_TEXT_3D if has_label3d(matches) else AMBIGUOUS_TEXT
+	return refusal % [wanted, matches.size(), ", ".join(listed)]
+
+
+## Whether any of matches is a Label3D's entry.
+static func has_label3d(matches: Array[Dictionary]) -> bool:
+	for entry: Dictionary in matches:
+		if entry.has("label3d"):
+			return true
+	return false
+
+
+## A match in the ambiguity listing: its path at its rect (a Control, placed writes it) or at its
+## "(x, y)" (a Label3D a camera sees), and its path alone for a Label3D none sees.
+static func listed_match(entry: Dictionary) -> String:
+	var place: Variant = entry.get("at", entry.get("rect"))
+	return str(entry["path"]) if place == null else MATCH_AT % [entry["path"], place]

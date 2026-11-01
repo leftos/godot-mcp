@@ -300,7 +300,7 @@ public sealed class TimeValidationTests : IDisposable
     {
         McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildWaitParameters(new WaitCondition(Text: text), 1000));
 
-        Assert.Equal("condition.text is blank; give the text a visible Control shows.", refused.Message);
+        Assert.Equal("condition.text is blank; give the text a visible Control or Label3D shows.", refused.Message);
     }
 
     [Fact]

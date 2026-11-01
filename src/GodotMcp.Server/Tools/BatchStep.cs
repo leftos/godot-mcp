@@ -20,8 +20,8 @@ internal sealed record BatchStep(
     )]
         string? Node = null,
     [property: Description(
-        "wait: with node or text, the node present or a visible Control showing the text (true), or the node absent or none "
-            + "showing it (false), as wait_for's exists."
+        "wait: with node or text, the node present or a visible Control or Label3D showing the text (true), or the node absent "
+            + "or none showing it (false), as wait_for's exists."
     )]
         bool? Exists = null,
     [property: Description("property, wait: the property to compare; a subproperty path such as position:x works too.")] string? Property = null,
@@ -60,10 +60,12 @@ internal sealed record BatchStep(
         double? MaxChangedRatio = null,
     [property: Description("The session this step addresses; the batch's session when left out.")] string? Session = null,
     [property: Description(
-        "wait: without node, the text exactly one visible Control must show, as wait_for's condition.text. " + MatchMode.DescriptionSentence
+        "wait: without node, the text exactly one visible Control or Label3D must show, as wait_for's condition.text. "
+            + MatchMode.DescriptionSentence
     )]
         string? Text = null,
-    [property: Description("wait: with text, the node whose visible Controls are scanned, as wait_for's condition.under.")] string? Under = null,
+    [property: Description("wait: with text, the node whose visible Controls and Label3Ds are scanned, as wait_for's condition.under.")]
+        string? Under = null,
     [property: Description(
         "property, state, wait: \"exact\" (the default), \"prefix\" or \"contains\", as wait_for's condition.match: on a wait with "
             + "text it compares the shown text; on a property or state with a string equals it compares the value as stored, "

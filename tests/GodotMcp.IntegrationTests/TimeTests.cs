@@ -720,6 +720,93 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AWaitForTextIsMetByALabel3D()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string world = await AddWorldCaptionAsync(cancellation);
+
+        JsonObject waited = await WaitAsync(new WaitCondition(Text: "Gate open"));
+
+        Assert.True(waited["met"]!.GetValue<bool>(), waited.ToJsonString());
+        JsonObject value = waited["value"]!.AsObject();
+        Assert.Equal($"{world}/WorldCaption", value["path"]!.GetValue<string>());
+        Assert.Equal("Gate open", value["shown"]!.GetValue<string>());
+        Assert.Null(value["rect"]);
+        Assert.NotNull(value["point"]);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATextWaitSkipsAHiddenLabel3D()
+    {
+        await AddWorldCaptionAsync(TestContext.Current.CancellationToken);
+
+        JsonObject hidden = await WaitAsync(new WaitCondition(Text: "Gate shut"), 0);
+
+        Assert.False(hidden["met"]!.GetValue<bool>(), hidden.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ATextWaitMatchesALabel3DsUpperCasedText()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string world = await AddWorldCaptionAsync(cancellation);
+
+        JsonObject shouted = await WaitAsync(new WaitCondition(Text: "GATE OPEN"));
+        JsonObject written = await WaitAsync(new WaitCondition(Text: "gate open"), 0);
+
+        Assert.True(shouted["met"]!.GetValue<bool>(), shouted.ToJsonString());
+        Assert.Equal($"{world}/ShoutedCaption", shouted["value"]!["path"]!.GetValue<string>());
+        Assert.Equal("GATE OPEN", shouted["value"]!["shown"]!.GetValue<string>());
+        Assert.False(written["met"]!.GetValue<bool>(), written.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ALabelAndALabel3DShowingATextEndTheWaitWithTheirList()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string world = await AddWorldCaptionAsync(cancellation);
+        string control = await AddCaptionAsync("scene_tree.root", "Gate open", (20, 300), hidden: false, cancellation);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() => WaitAsync(new WaitCondition(Text: "Gate open")));
+
+        Assert.StartsWith("wait_for failed: ", refused.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            $"'Gate open' is shown by 2 Controls and Label3Ds: {control} at 20,300,120,40, {world}/WorldCaption at (",
+            refused.Message,
+            StringComparison.Ordinal
+        );
+        Assert.EndsWith("; narrow it with under.", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task UnderScopesATextWaitToItsLabel3Ds()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string world = await AddWorldCaptionAsync(cancellation);
+
+        JsonObject scoped = await WaitAsync(new WaitCondition(Text: "Standby", Under: "DoorA"));
+        McpException both = await Assert.ThrowsAsync<McpException>(() => WaitAsync(new WaitCondition(Text: "Standby")));
+
+        Assert.True(scoped["met"]!.GetValue<bool>(), scoped.ToJsonString());
+        Assert.Equal($"{world}/DoorA/DoorSign", scoped["value"]!["path"]!.GetValue<string>());
+        Assert.Contains($"'Standby' is shown by 2 Controls and Label3Ds: {world}/DoorA/DoorSign at (", both.Message, StringComparison.Ordinal);
+        Assert.Contains($"{world}/DoorB/DoorSign at (", both.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AClickByTextIgnoresALabel3D()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await AddWorldCaptionAsync(cancellation);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _tools.ClickAsync(new InputTarget(Text: "Gate open"), "left", false, cancellationToken: cancellation)
+        );
+
+        Assert.Contains("no visible Control shows 'Gate open'.", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task APrefixTextWaitIsMetByATwoLineLabelsFirstWords()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -2619,6 +2706,17 @@ public sealed class TimeTests(SharedProbeSession shared) : IAsyncLifetime, IClas
         Assert.True(bytes.AsSpan(0, signature.Length).SequenceEqual(signature), $"{path} does not start as a PNG: {context}");
         Assert.True(bytes.AsSpan(bytes.Length - iend.Length).SequenceEqual(iend), $"{path} does not end with IEND: {context}");
     }
+
+    /// <summary>Adds world_caption.tscn, a Node3D named World holding a Camera3D and its Label3Ds, under the shared run's
+    /// root; returns World's path.</summary>
+    private async Task<string> AddWorldCaptionAsync(CancellationToken cancellationToken) =>
+        (
+            await RunBodyAsync(
+                "var scene: Node = load(\"res://world_caption.tscn\").instantiate()\n\t"
+                    + "scene_tree.root.add_child(scene)\n\treturn str(scene.get_path())",
+                cancellationToken
+            )
+        ).GetValue<string>();
 
     /// <summary>Adds time_probe.tscn under the shared run's root as TimeProbe; InitializeAsync has already reset the run.</summary>
     private Task<string> AddTimeProbeAsync(CancellationToken cancellationToken) =>

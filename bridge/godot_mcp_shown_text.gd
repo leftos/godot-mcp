@@ -1,6 +1,7 @@
 extends RefCounted
-## The text a Control shows, as get_ui_elements reports it and a {text} input target matches it.
-## Static functions called on the script itself.
+## The text a Control or a Label3D shows: as get_ui_elements reports a Control's, a {text} input
+## target matches it, and a wait's text condition matches a Label3D's too. Static functions called
+## on the script itself.
 
 ## The character a secret LineEdit draws when its secret_character is empty
 ## (scene/gui/line_edit.cpp L3109 in 4.7.2).
@@ -28,6 +29,15 @@ static func shown_text(control: Control) -> Variant:
 ## A Label draws its translated text in upper case, as its language's text server rules say, when
 ## uppercase is on (scene/gui/label.cpp L170 in 4.7.2).
 static func _label_text(label: Label) -> String:
+	var shown: String = label.atr(label.text)
+	if not label.uppercase:
+		return shown
+	return TextServerManager.get_primary_interface().string_to_upper(shown, label.language)
+
+
+## A Label3D draws its translated text in upper case, as its language's text server rules say, when
+## uppercase is on (scene/3d/label_3d.cpp L486 in 4.7.2).
+static func label3d_text(label: Label3D) -> String:
 	var shown: String = label.atr(label.text)
 	if not label.uppercase:
 		return shown

@@ -17,8 +17,8 @@ internal sealed record WaitCondition(
     )]
         string? Node = null,
     [property: Description(
-        "With node or text: wait until the node is present, or a visible Control shows the text (true), or until the node is "
-            + "absent, or no visible Control shows the text (false); with text, true when left out."
+        "With node or text: wait until the node is present, or a visible Control or Label3D shows the text (true), or until "
+            + "the node is absent, or no visible Control or Label3D shows the text (false); with text, true when left out."
     )]
         bool? Exists = null,
     [property: Description(
@@ -58,16 +58,17 @@ internal sealed record WaitCondition(
     )]
         int? Frames = null,
     [property: Description(
-        "Without node: wait until exactly one visible Control shows this text, matched as a click's {text} target matches it: "
-            + "the shown text trimmed equals this text trimmed, case kept. Met, value is {path, shown, rect}, rect in viewport "
-            + "coordinates, as get_ui_elements gives it. Several Controls showing it fail the wait with their list; narrow it with "
-            + "under. With exists: false, wait until no visible Control shows it. "
+        "Without node: wait until exactly one visible Control or Label3D shows this text, matched as a click's {text} target "
+            + "matches it: the shown text trimmed equals this text trimmed, case kept. Met, value is {path, shown, rect}, rect in "
+            + "viewport coordinates, as get_ui_elements gives it. A Label3D's value is {path, shown, point?}, point its position "
+            + "projected through the current camera. Several showing it fail the wait with their list; narrow it with under. "
+            + "With exists: false, wait until no visible Control or Label3D shows it. "
             + MatchMode.DescriptionSentence
     )]
         string? Text = null,
     [property: Description(
-        "With text: the node whose visible Controls are scanned, named as node is; the whole tree when left out. While it is "
-            + "missing, hidden or being freed, no Control under it shows the text."
+        "With text: the node whose visible Controls and Label3Ds are scanned, named as node is; the whole tree when left out. "
+            + "While it is missing, hidden or being freed, no Control or Label3D under it shows the text."
     )]
         string? Under = null,
     [property: Description(

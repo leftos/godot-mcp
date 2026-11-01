@@ -333,11 +333,10 @@ func _settled_reading(node: Node, node_name: String, property: String) -> Array:
 	return [true, bridge._json.to_json(placement)]
 
 
-## Whether text (trimmed) shows on the visible Controls at or under under, the root when empty,
-## matched as mode says, as a {text} target is (TextTargets.matching), answered by
-## text_answer. Nothing shows
-## under an under no node has, or one hidden or being freed; one that several nodes have fails the
-## check. Each check walks the Controls afresh.
+## Whether text (trimmed) shows on the visible Controls and Label3Ds at or under under, the root
+## when empty, matched as mode says, as a {text} target matches a Control (TextTargets.matching),
+## answered by text_answer. Nothing shows under an under no node has, or one hidden or being freed;
+## one that several nodes have fails the check. Each check walks the tree afresh.
 func _check_text(text: String, under: String, mode: String, wanted: bool) -> Array:
 	var targets: Node = bridge._gestures._targets
 	var scope: Variant = _text_scope(targets, under)
@@ -346,14 +345,15 @@ func _check_text(text: String, under: String, mode: String, wanted: bool) -> Arr
 	var entries: Array[Dictionary] = []
 	if scope != null:
 		entries = TextTargets.entries_under(bridge, scope)
+		entries.append_array(TextTargets.label3d_entries_under(bridge, scope))
 	return text_answer(text, TextTargets.matching(entries, text, mode), wanted, targets)
 
 
 ## A text check's answer from the entries showing text, placing through targets, the resolver,
-## only the entries it reports. An appear (wanted true) is met by exactly one, its value {path,
-## shown, rect}, rect its viewport rect as get_ui_elements writes a rect; several showing it fail
-## the check with TextTargets' ambiguity listing, the listed ones placed. A leave (wanted false)
-## is met when none does and holds while any does, the first one's value as its value.
+## only the entries it reports. An appear (wanted true) is met by exactly one, its value
+## TextTargets.shown_value's for the kind of entry it is; several showing it fail the check with
+## TextTargets' ambiguity listing, the listed ones placed. A leave (wanted false) is met when none
+## does and holds while any does, the first one's value as its value.
 static func text_answer(
 	text: String, matches: Array[Dictionary], wanted: bool, targets: Node
 ) -> Array:
@@ -362,9 +362,7 @@ static func text_answer(
 	if wanted and matches.size() > 1:
 		var listed: Array[Dictionary] = TextTargets.placed(targets, matches)
 		return [false, null, TextTargets.ambiguity_refusal(text, listed)]
-	var entry: Dictionary = matches[0]
-	var rect: Variant = targets.bridge._json.to_json(targets.viewport_rect(entry["control"]))
-	return [wanted, {"path": entry["path"], "shown": entry["shown"], "rect": rect}]
+	return [wanted, TextTargets.shown_value(targets, matches[0])]
 
 
 ## The node a text check scans: the root when under is empty, else the one node under names as an

@@ -1,0 +1,33 @@
+[gd_scene format=3]
+
+[node name="World" type="Node3D"]
+
+[node name="Camera" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 5)
+current = true
+
+[node name="WorldCaption" type="Label3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+text = "Gate open"
+
+[node name="ShutCaption" type="Label3D" parent="."]
+visible = false
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 1, 0)
+text = "Gate shut"
+
+[node name="ShoutedCaption" type="Label3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, -1, 0)
+uppercase = true
+text = "gate open"
+
+[node name="DoorA" type="Node3D" parent="."]
+
+[node name="DoorSign" type="Label3D" parent="DoorA"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 1, 0)
+text = "Standby"
+
+[node name="DoorB" type="Node3D" parent="."]
+
+[node name="DoorSign" type="Label3D" parent="DoorB"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, -1, 0)
+text = "Standby"

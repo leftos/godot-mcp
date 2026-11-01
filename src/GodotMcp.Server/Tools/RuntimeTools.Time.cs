@@ -144,8 +144,8 @@ internal sealed partial class RuntimeTools
         "Waits in the running game until a condition holds, checking it each frame: a node present or absent, a property "
             + "equal to a value, a signal's next emission, a Godot Expression returning true, gameMs milliseconds of game time "
             + "(process delta over unpaused frames, so it follows Engine.time_scale), frames unpaused process frames, or a "
-            + "visible Control showing a text, matched as a click's {text} target is, or none showing it (exists: false); a text "
-            + "shown by several Controls fails the wait with their list, so narrow it with under. {node, stable: N} waits "
+            + "visible Control or Label3D showing a text, matched as a click's {text} target is, or none showing it (exists: "
+            + "false); a text shown by several fails the wait with their list, so narrow it with under. {node, stable: N} waits "
             + "until the node's global rect (a Control), global_transform (a Node2D or Node3D) or the property named holds "
             + "unchanged for N process frames, so a press can wait for a layout to settle; met, its value is {frames, value}. "
             + "{node, state, equals} reads the node's state as get_game_state does each frame (the node must be in the mcp_state "
@@ -1083,7 +1083,7 @@ internal sealed partial class RuntimeTools
         string? refusal = condition switch
         {
             { Text: null, Under: not null } => "condition.under scopes a text condition; give text with it.",
-            { Text: { } text } when string.IsNullOrWhiteSpace(text) => "condition.text is blank; give the text a visible Control shows.",
+            { Text: { } text } when string.IsNullOrWhiteSpace(text) => "condition.text is blank; give the text a visible Control or Label3D shows.",
             { Under: { } under } when string.IsNullOrWhiteSpace(under) =>
                 "condition.under is blank; name the node to scope the text to, or leave under out.",
             { Text: not null, Node: not null } => "a text condition takes no node; scope it with under.",
