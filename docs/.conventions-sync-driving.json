@@ -48,6 +48,10 @@
       "repo": "d02388fed30bf627",
       "user": "779511c62a903798"
     },
+    "evaluate-returns-plain-values": {
+      "declined": "godot-mcp drives Godot through its own bridge, not Playwright; its JSON writer bounds every value by depth (bridge/godot_mcp_json.gd)",
+      "user": "86f56e3be3b1aa32"
+    },
     "fenced-hook-for-third-party-app": {
       "declined": "godot-mcp drives only the owner's own Godot projects through its injected bridge; no third-party app is in scope (CLAUDE.md, README)",
       "user": "b80e08d4e363fb72"
@@ -161,8 +165,8 @@
       "user": "61bf56170dd34fe5"
     },
     "record-and-replay": {
-      "repo": "5ae9cdbd093ebdd1",
-      "user": "b9ad60542633fe76"
+      "repo": "5ba168d3c5e70039",
+      "user": "12d9eb759d0c9de8"
     },
     "record-steady-never-minimize": {
       "declined": "records through the engine's own movie writer, not window capture",
@@ -185,8 +189,8 @@
       "user": "31a82a3b4c886604"
     },
     "run-server-from-copy": {
-      "repo": "fca5e1ed0066c122",
-      "user": "e1357ad6c047e437"
+      "repo": "05793cc2e9be6d4a",
+      "user": "536b0d47d02cc286"
     },
     "say-hands-off-first": {
       "repo": "b72fca643c063d7c",
@@ -249,5 +253,5 @@
       "user": "e8eee86351ab5f92"
     }
   },
-  "user_revision": 15
+  "user_revision": 17
 }
