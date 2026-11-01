@@ -308,4 +308,10 @@ internal static partial class Log
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Deleting the old scratch run log {Path} failed; it is left and the rest are pruned.")]
     public static partial void ScratchRunLogDeleteFailed(ILogger logger, Exception exception, string path);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Creating the scratch run's shot folder {Path} failed; the run goes on and each shot fails as a warning."
+    )]
+    public static partial void ScratchShotFolderFailed(ILogger logger, Exception exception, string path);
 }

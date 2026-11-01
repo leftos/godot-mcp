@@ -8,6 +8,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Tools;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
 
 namespace GodotMcp.Server.Session;
@@ -149,7 +150,13 @@ internal sealed record ScratchPlan(
 
     /// <summary>options.windowed: the scenes' games launch in a hidden, off-screen window instead of headless.</summary>
     public bool Windowed { get; init; }
+
+    /// <summary>options.capture, checked: the steps each scene takes a screenshot at; null takes none.</summary>
+    public ScratchCapture? Capture { get; init; }
 }
+
+/// <summary>options.capture as a plan holds it: the tokens naming the steps to shoot, by index or name; null shoots every played step.</summary>
+internal sealed record ScratchCapture(IReadOnlyList<ScratchStepToken>? Steps);
 
 /// <summary>
 /// A scene's step paces by index, the steps a run plays of them, ascending, the time scale its game runs at and its exit hold:
@@ -329,6 +336,7 @@ internal sealed class ScratchRun
 
     /// <summary>The until wait's parameter, sent by the runner alone, of the game milliseconds the bridge ends it at, not met.</summary>
     private const string LimitGameMsField = "limitGameMs";
+    private const string PreviewMaxWidthField = "previewMaxWidth";
 
     /// <summary>The start of every marker line the runner has the game print; such lines are never judged or listed.</summary>
     internal const string MarkerPrefix = "[godot-mcp] scratch ";
@@ -338,6 +346,8 @@ internal sealed class ScratchRun
     private const string PaceKeyLabel = "pace.steps key";
     private const string SetupLabel = "setup";
     private const string StepsTokenLabel = "options.steps token";
+    private const string CaptureTokenLabel = "options.capture.steps token";
+    private const int MaxShotNameChars = 64;
 
     private const string CurrentSceneScript =
         "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\tvar scene: Node = scene_tree.current_scene\n"
@@ -360,6 +370,9 @@ internal sealed class ScratchRun
     private readonly string _nonce = Guid.NewGuid().ToString("N")[..12];
     private readonly List<string> _names = [];
     private readonly HashSet<int> _hidden = [];
+    private HashSet<int> _shots = [];
+    private readonly string _shotFolder;
+    private OutputPlaces? _places;
     private readonly List<ScratchStep> _steps = [];
     private ScratchWalk _walk = ScratchWalk.None;
     private int[]? _selected;
@@ -383,7 +396,7 @@ internal sealed class ScratchRun
     private SessionClock? _watchClock;
     private JsonObject? _finalWatch;
 
-    private ScratchRun(RunContext context, int index)
+    private ScratchRun(RunContext context, int index, bool alone)
     {
         _registry = context.Registry;
         _bounds = new ScratchBounds(context.Registry.ScratchBoundFloor);
@@ -393,10 +406,21 @@ internal sealed class ScratchRun
         _observer = context.Observer;
         _index = index;
         _runId = context.RunId;
+        _shotFolder = alone ? ReplayFolder(context.ShotFolders[index]) : context.ShotFolders[index];
     }
 
-    /// <summary>What every scene of one run shares: the registry, the C# bridge, the plan, who is told as the run plays, and the run's id.</summary>
-    private sealed record RunContext(SessionRegistry Registry, CSharpBridge CSharp, ScratchPlan Plan, IScratchRunObserver? Observer, string RunId);
+    /// <summary>
+    /// What every scene of one run shares: the registry, the C# bridge, the plan, who is told as the run plays, the run's id, and
+    /// the folder each scene shoots into by its place in the plan (<see cref="ShotFolders"/>).
+    /// </summary>
+    private sealed record RunContext(
+        SessionRegistry Registry,
+        CSharpBridge CSharp,
+        ScratchPlan Plan,
+        IScratchRunObserver? Observer,
+        string RunId,
+        IReadOnlyList<string> ShotFolders
+    );
 
     /// <summary>
     /// Prepares the project once when the plan says so, then plays the scenes, starting them in <see cref="StartOrder"/> at most
@@ -418,8 +442,20 @@ internal sealed class ScratchRun
         CancellationToken cancellationToken
     )
     {
-        RunContext context = new(registry, csharp, plan, observer, runId ?? ScratchBackgroundRun.NewRunId(DateTimeOffset.UtcNow));
+        RunContext context = new(
+            registry,
+            csharp,
+            plan,
+            observer,
+            runId ?? ScratchBackgroundRun.NewRunId(DateTimeOffset.UtcNow),
+            ShotFolders(plan.Scenes)
+        );
         ScratchRunLogs.Prune(ProjectPrep.LogFolder(plan.ProjectDir), ScratchRunLogs.Kept, registry.Logger);
+        if (plan.Capture is not null)
+        {
+            CreateShotRoot(ProjectPrep.LogFolder(plan.ProjectDir), context.RunId, registry.Logger);
+        }
+
         PrepResult prep = plan.Prepare ? await registry.PrepareFolderAsync(plan.ProjectDir, cancellationToken) : PrepResult.Skipped;
         ScratchSceneResult[] scenes = await PlayBesideAsync(context, cancellationToken);
         for (int index = 0; index < scenes.Length; index++)
@@ -427,7 +463,7 @@ internal sealed class ScratchRun
             if (ScratchVerdict.PlaysAgainAlone(scenes[index], plan.Parallel))
             {
                 observer?.ReplayStarted(index);
-                ScratchSceneResult replay = await PlayOneAsync(context, index, cancellationToken);
+                ScratchSceneResult replay = await PlayOneAsync(context, index, alone: true, cancellationToken);
                 scenes[index] = ScratchVerdict.Alone(scenes[index], replay);
                 observer?.SceneEnded(index, scenes[index], playsAgain: false);
             }
@@ -467,7 +503,7 @@ internal sealed class ScratchRun
             try
             {
                 context.Observer?.SceneStarted(index);
-                results[index] = await PlayOneAsync(context, index, cancellationToken);
+                results[index] = await PlayOneAsync(context, index, alone: false, cancellationToken);
                 context.Observer?.SceneEnded(index, results[index], ScratchVerdict.PlaysAgainAlone(results[index], plan.Parallel));
             }
             finally
@@ -488,11 +524,12 @@ internal sealed class ScratchRun
         return listed ? [.. places] : [.. places.OrderByDescending(place => scenes[place].LargestPace / scenes[place].TimeScale)];
     }
 
-    private static async Task<ScratchSceneResult> PlayOneAsync(RunContext context, int index, CancellationToken cancellationToken)
+    /// <summary>Plays and judges the scene at <paramref name="index"/>; <paramref name="alone"/> for its replay alone.</summary>
+    private static async Task<ScratchSceneResult> PlayOneAsync(RunContext context, int index, bool alone, CancellationToken cancellationToken)
     {
         ScratchPlan plan = context.Plan;
         ScratchScenePlan scene = plan.Scenes[index];
-        ScratchObservation seen = await new ScratchRun(context, index).PlayAsync(cancellationToken);
+        ScratchObservation seen = await new ScratchRun(context, index, alone).PlayAsync(cancellationToken);
         ScratchRules rules = new(plan.Patterns, scene.Known, scene.PaceReason, plan.Details, plan.DetailChars) { Expect = scene.Expect };
         return ScratchVerdict.Judge(seen, rules);
     }
@@ -582,6 +619,40 @@ internal sealed class ScratchRun
         }
 
         return ([.. played], null);
+    }
+
+    /// <summary>
+    /// The steps <paramref name="capture"/> shoots among those <paramref name="names"/> lists, ascending, each once, null for every
+    /// played step; or why a token names no step, as an options.steps token naming none is refused. A number is an index; a string
+    /// is an index spelled plainly, else a step's exact name.
+    /// </summary>
+    internal static (int[]? Steps, string? Error) CaptureSteps(ScratchCapture capture, string scene, ScratchStepNames names)
+    {
+        if (capture.Steps is null)
+        {
+            return (null, null);
+        }
+
+        SortedSet<int> steps = [];
+        foreach (ScratchStepToken token in capture.Steps)
+        {
+            (int step, string? error) = token.IsNumber ? CaptureIndex(token, scene, names) : StepOf(token.Text, CaptureTokenLabel, scene, names);
+            if (error is not null)
+            {
+                return (null, error);
+            }
+
+            steps.Add(step);
+        }
+
+        return ([.. steps], null);
+    }
+
+    /// <summary>A number token of options.capture.steps as its step, or why the scene has no step of that index.</summary>
+    private static (int Step, string? Error) CaptureIndex(ScratchStepToken token, string scene, ScratchStepNames names)
+    {
+        int index = int.Parse(token.Text, NumberStyles.None, CultureInfo.InvariantCulture);
+        return index < names.Count ? (index, null) : (-1, NoStep($"{CaptureTokenLabel} {token}", scene, names));
     }
 
     private static (IEnumerable<int> Steps, string? Error) TokenSteps(ScratchStepToken token, string scene, ScratchStepNames names)
@@ -677,10 +748,11 @@ internal sealed class ScratchRun
     /// <summary>
     /// The bridge's wait_for parameters for step <paramref name="index"/>'s GetStepUntil answer: its condition checked as wait_for
     /// checks one, <paramref name="paceMs"/> its timeoutMs and its limitGameMs (the game time the bridge ends the wait at, not
-    /// met, a parameter only the runner sends), and PlayStep(index) on <paramref name="rootPath"/> its call. Neither parameters
-    /// nor an error for null or an empty dictionary, a paced step; an error for any other answer, or a condition wait_for refuses.
+    /// met, a parameter only the runner sends), PlayStep(index) on <paramref name="play"/>'s root its call, and options.screenshot
+    /// when <paramref name="play"/> captures the step, so the met frame is shot. Neither parameters nor an error for null or an
+    /// empty dictionary, a paced step; an error for any other answer, or a condition wait_for refuses.
     /// </summary>
-    internal static (JsonObject? Wait, string? Error) UntilWait(JsonNode? answer, int index, string name, int paceMs, string rootPath)
+    internal static (JsonObject? Wait, string? Error) UntilWait(JsonNode? answer, int index, string name, int paceMs, UntilPlay play)
     {
         if (answer is null || answer is JsonObject { Count: 0 })
         {
@@ -695,8 +767,10 @@ internal sealed class ScratchRun
         try
         {
             WaitCondition until = condition.Deserialize<WaitCondition>(ToolJson.Options)!;
-            MethodCall play = new(rootPath, "PlayStep", JsonSerializer.SerializeToElement(new[] { index }));
-            JsonObject wait = RuntimeTools.BuildWaitParameters(until, paceMs, new WaitOptions(Call: play));
+            MethodCall call = new(play.RootPath, "PlayStep", JsonSerializer.SerializeToElement(new[] { index }));
+            WaitOptions options = new(Screenshot: play.Screenshot ? true : null, Call: call);
+            JsonObject wait = RuntimeTools.BuildWaitParameters(until, paceMs, options);
+            wait.Remove(PreviewMaxWidthField);
             wait[LimitGameMsField] = paceMs;
             return (wait, null);
         }
@@ -704,6 +778,113 @@ internal sealed class ScratchRun
         {
             return (null, UntilRefused(index, name, e.Message));
         }
+    }
+
+    /// <summary>How a step's until plays it: PlayStep on the scene's root, and whether the met frame is shot (options.capture).</summary>
+    internal readonly record struct UntilPlay(string RootPath, bool Screenshot);
+
+    /// <summary>
+    /// Where a step's shot is kept: &lt;logFolder&gt;/scratch-&lt;runId&gt;/&lt;folder&gt;/&lt;index&gt;-&lt;step&gt;.png, the folder
+    /// the scene's run shoots into (<see cref="ShotFolders"/>) and the step name made file-safe (<see cref="FileSafe"/>).
+    /// </summary>
+    internal static string ShotPath(string logFolder, string runId, string folder, int index, string step) =>
+        Path.Combine(ShotRoot(logFolder, runId), folder, string.Create(CultureInfo.InvariantCulture, $"{index}-{FileSafe(step)}.png"));
+
+    /// <summary>The folder every scene of a run keeps its shots under: &lt;logFolder&gt;/scratch-&lt;runId&gt;.</summary>
+    internal static string ShotRoot(string logFolder, string runId) => Path.Combine(logFolder, $"scratch-{runId}");
+
+    /// <summary>
+    /// Creates the run's shot folder (<see cref="ShotRoot"/>) once before any scene starts, so no scene's failed copy owns it
+    /// and removes it under the others; a failure is logged and the run goes on, each shot then failing as a step warning.
+    /// </summary>
+    internal static void CreateShotRoot(string logFolder, string runId, ILogger logger)
+    {
+        string root = ShotRoot(logFolder, runId);
+        try
+        {
+            Directory.CreateDirectory(root);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.ScratchShotFolderFailed(logger, e, root);
+        }
+    }
+
+    /// <summary>
+    /// The folder each scene of a run's plan shoots into, by its place in the plan: its name made file-safe, with .&lt;place&gt;
+    /// added when another scene of the plan makes the same folder, compared without case as Windows compares folder names. The
+    /// '.' keeps a numbered folder apart from every plain one, as <see cref="FileSafe"/> never gives a dot.
+    /// </summary>
+    internal static string[] ShotFolders(IReadOnlyList<ScratchScenePlan> scenes)
+    {
+        string[] safe = [.. scenes.Select(scene => FileSafe(scene.Name))];
+        return
+        [
+            .. safe.Select(
+                (folder, place) =>
+                    safe.Count(other => string.Equals(other, folder, StringComparison.OrdinalIgnoreCase)) > 1
+                        ? string.Create(CultureInfo.InvariantCulture, $"{folder}.{place}")
+                        : folder
+            ),
+        ];
+    }
+
+    /// <summary>
+    /// The folder a scene's replay alone shoots into, beside its first run's, so each run's result names its own files; the '.'
+    /// keeps it apart from every scene's folder, as <see cref="FileSafe"/> never gives a dot.
+    /// </summary>
+    internal static string ReplayFolder(string folder) => folder + ".alone";
+
+    /// <summary>
+    /// A name as one safe path part: each character other than a letter, a digit, '-' or '_' becomes '_', cut to
+    /// <see cref="MaxShotNameChars"/>; "step" for an empty name; a Windows device name (CON, NUL, COM1 and the like, in any
+    /// case) gains a trailing '_'.
+    /// </summary>
+    internal static string FileSafe(string name)
+    {
+        string safe = new([.. name.Take(MaxShotNameChars).Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '_')]);
+        return safe.Length == 0 ? "step"
+            : IsDeviceName(safe) ? safe + "_"
+            : safe;
+    }
+
+    /// <summary>Whether <paramref name="name"/> is a Windows device name: CON, PRN, AUX, NUL, COM1-COM9 or LPT1-LPT9, in any case.</summary>
+    private static bool IsDeviceName(string name)
+    {
+        string upper = name.ToUpperInvariant();
+        return upper is "CON" or "PRN" or "AUX" or "NUL"
+            || (
+                upper.Length == 4
+                && (upper.StartsWith("COM", StringComparison.Ordinal) || upper.StartsWith("LPT", StringComparison.Ordinal))
+                && upper[3] is >= '1' and <= '9'
+            );
+    }
+
+    /// <summary>
+    /// The warning naming the steps options.capture names that the run does not play, by index and name, ascending; null when
+    /// it plays every one.
+    /// </summary>
+    internal static string? CaptureNotPlayed(IEnumerable<int> shots, IReadOnlyList<int> played, IReadOnlyList<string> names)
+    {
+        string[] unplayed = [.. shots.Except(played).Order().Select(step => string.Create(CultureInfo.InvariantCulture, $"{step} '{names[step]}'"))];
+        return unplayed.Length == 0 ? null : $"options.capture names steps this run did not play: {string.Join(", ", unplayed)}";
+    }
+
+    /// <summary>
+    /// The capture an until's wait_for reply names as screenshot.path, or why there is none: the bridge's warning (a frame not
+    /// drawn, a headless game), else that the reply carried no screenshot.
+    /// </summary>
+    internal static (string? Capture, string? Reason) UntilShot(JsonNode? reply)
+    {
+        if (reply?["screenshot"]?["path"] is JsonValue path && path.TryGetValue(out string? capture))
+        {
+            return (capture, null);
+        }
+
+        return (
+            null,
+            reply?["warning"] is JsonValue warning && warning.TryGetValue(out string? text) ? text : "the until's reply carried no screenshot"
+        );
     }
 
     /// <summary>Why a step failed when its until was not met within its pace.</summary>
@@ -1149,9 +1330,10 @@ internal sealed class ScratchRun
 
         (ScratchPace[] paces, string? paceError, IReadOnlyList<string> paceWarnings) = StepPaces(_scene, NamedSteps);
         _warnings.AddRange(paceWarnings);
-        if (paceError is not null)
+        string? captureError = paceError ?? ResolveCapture();
+        if (captureError is not null)
         {
-            return paceError;
+            return captureError;
         }
 
         IReadOnlyList<ScratchStepToken>? tokens = _plan.StepsFor(_scene.Name);
@@ -1175,11 +1357,38 @@ internal sealed class ScratchRun
             ExitHold = _scene.ExitHold,
             Floor = _bounds.Floor,
         };
+        if (selectError is null)
+        {
+            WarnOfUnplayedShots();
+        }
+
         return selectError;
+    }
+
+    /// <summary>Adds the scene warning naming the steps options.capture.steps names that the run does not play, if any.</summary>
+    private void WarnOfUnplayedShots()
+    {
+        if (_plan.Capture?.Steps is not null && CaptureNotPlayed(_shots, _walk.Played, _names) is { } unplayed)
+        {
+            _warnings.Add(unplayed);
+        }
     }
 
     /// <summary>The scene's step names and the steps its root marks hidden, as read so far.</summary>
     private ScratchStepNames NamedSteps => new(_names, _hidden);
+
+    /// <summary>Resolves options.capture's steps against the scene's names into the steps to shoot; null, or why a token names no step.</summary>
+    private string? ResolveCapture()
+    {
+        if (_plan.Capture is not { } capture)
+        {
+            return null;
+        }
+
+        (int[]? steps, string? error) = CaptureSteps(capture, _scene.Name, NamedSteps);
+        _shots = [.. steps ?? Enumerable.Range(0, _names.Count)];
+        return error;
+    }
 
     /// <summary>
     /// Reads every step's name and, for a root that has GetStepHidden, whether it marks the step hidden; null, or why a call
@@ -1305,6 +1514,7 @@ internal sealed class ScratchRun
             untilError is not null ? new StepPlay(untilError, null, null)
             : wait is null ? new StepPlay(await PlayPacedAsync(session, index, gameMs, limit), null, null)
             : await PlayInsideUntilAsync(session, index, wait, gameMs, limit);
+        (string? screenshot, string? shotWarning) = await ShotAsync(session, index, played, limit);
         (JsonNode? status, string? statusError) = await CallAsync(session, "GetStatus", [], limit);
         (List<string> lines, long dropped, string? markerError) = await CloseWindowAsync(session, $"step {index}", limit);
         IReadOnlyList<ErrorEntry> errors = TakeErrors(session.Errors, ref _feedMark);
@@ -1320,7 +1530,57 @@ internal sealed class ScratchRun
             Errors = errors,
             Lines = lines,
             Dropped = dropped,
+            Screenshot = screenshot,
+            Warning = shotWarning,
         };
+    }
+
+    /// <summary>
+    /// The shot of a step options.capture names whose play went through: an until's met frame, which its wait_for captured, or
+    /// for a paced step the frame after its pace, taken as take_screenshot takes one; copied to the run's folder
+    /// (<see cref="ShotPath"/>). Its path, or the step's warning when it failed; neither for a step not shot.
+    /// </summary>
+    private async Task<(string? Path, string? Warning)> ShotAsync(GodotSession session, int index, StepPlay played, CancellationToken limit)
+    {
+        if (!_shots.Contains(index) || played.Error is not null || played.BridgeError is not null)
+        {
+            return (null, null);
+        }
+
+        (string? capture, string? reason) = played.Until is null ? await PacedShotAsync(session, limit) : UntilShot(played.Reply);
+        if (capture is null)
+        {
+            return (null, ScratchVerdict.ShotFailed(index, _names[index], reason!));
+        }
+
+        string destination = ShotPath(ProjectPrep.LogFolder(_plan.ProjectDir), _runId, _shotFolder, index, _names[index]);
+        try
+        {
+            _places ??= OutputPlaces.Find(_plan.ProjectDir, _registry.Logger);
+            ScreenshotTarget.SaveToRunFolder(capture, destination, _places);
+            return (destination, null);
+        }
+        catch (McpException e)
+        {
+            return (null, ScratchVerdict.ShotFailed(index, _names[index], ScreenshotTarget.ReasonOf(e)));
+        }
+    }
+
+    /// <summary>The bridge's screenshot of the next drawn frame, as take_screenshot asks for it: the capture's path, or why it failed.</summary>
+    private async Task<(string? Capture, string? Reason)> PacedShotAsync(GodotSession session, CancellationToken limit)
+    {
+        JsonObject parameters = RuntimeTools.BuildScreenshotParameters(ScreenshotMode.PathOnly, null, 0);
+        try
+        {
+            JsonNode? reply = await session.SendAsync("screenshot", parameters, _bounds.Call + ReplyAllowance, limit, _bounds.Call);
+            return reply?["path"] is JsonValue path && path.TryGetValue(out string? capture)
+                ? (capture, null)
+                : (null, $"the screenshot reply names no file: {reply?.ToJsonString() ?? "null"}");
+        }
+        catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
+        {
+            return (null, e.Message);
+        }
     }
 
     /// <summary>PlayStep, then a wait of the step's pace in game time: null, or why the call or the wait failed.</summary>
@@ -1342,7 +1602,7 @@ internal sealed class ScratchRun
             return (null, error);
         }
 
-        (JsonObject? wait, string? untilError) = UntilWait(answer, index, _names[index], gameMs, _rootPath);
+        (JsonObject? wait, string? untilError) = UntilWait(answer, index, _names[index], gameMs, new UntilPlay(_rootPath, _shots.Contains(index)));
         RuntimeTools.AddConditionStateHelper(wait, _csharp, session.ProjectDir);
         return (wait, untilError);
     }
@@ -1357,9 +1617,10 @@ internal sealed class ScratchRun
         TimeSpan release = _bounds.Release(gameMs, _scene.TimeScale);
         try
         {
-            ScratchUntil until = UntilFigures(await session.SendAsync("wait_for", wait, release + ReplyAllowance, limit, release));
+            JsonNode? reply = await session.SendAsync("wait_for", wait, release + ReplyAllowance, limit, release);
+            ScratchUntil until = UntilFigures(reply);
             string? notMet = until.Met ? null : UntilMissed(index, _names[index], until, _walk.Paces[index].Seconds, release.TotalSeconds);
-            return new StepPlay(notMet, null, until);
+            return new StepPlay(notMet, null, until) { Reply = reply };
         }
         catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
         {
@@ -1368,8 +1629,14 @@ internal sealed class ScratchRun
         }
     }
 
-    /// <summary>How a step's play went: why it failed, or the bridge's refusal of its until's wait, and the until's figures.</summary>
-    private readonly record struct StepPlay(string? Error, string? BridgeError, ScratchUntil? Until);
+    /// <summary>
+    /// How a step's play went: why it failed, or the bridge's refusal of its until's wait, the until's figures, and its wait_for
+    /// reply, which holds the met frame's screenshot for a captured step.
+    /// </summary>
+    private readonly record struct StepPlay(string? Error, string? BridgeError, ScratchUntil? Until)
+    {
+        public JsonNode? Reply { get; init; }
+    }
 
     /// <summary>
     /// The wait after the last step, the exit hold else that step's pace, the longer of its game time and its wall time: an

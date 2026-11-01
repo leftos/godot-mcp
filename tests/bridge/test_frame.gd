@@ -25,6 +25,7 @@ const SCALE_WINDOW_REFUSAL := (
 const SCALE_RECORDING_REFUSAL := (
 	"scale is refused while the run records: " + "the resize would be in the clip"
 )
+const SAVE_FAILURE := "saving the screenshot failed: the disk is full"
 
 var _frame_script: GDScript = load_bridge_script("godot_mcp_frame.gd")
 var _time_script: GDScript = load_bridge_script("godot_mcp_time.gd")
@@ -74,6 +75,28 @@ func test_a_waits_screenshot_on_a_headless_game_is_a_warning() -> void:
 	var rig: Dictionary = _clock_rig()
 	var reply: Dictionary = rig["time"]._with_capture(null, {}, {"met": true})
 	assert_eq(reply, {"result": {"met": true, "warning": HEADLESS_WARNING}}, "the wait's result")
+	_free_clock_rig(rig)
+
+
+func test_a_scratch_untils_failed_save_is_a_warning_on_the_met_result() -> void:
+	var rig: Dictionary = _clock_rig()
+	rig["bridge"]._frame.free()
+	rig["bridge"]._frame = _failing_save_frame()
+	var image := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+	var params: Dictionary = {"limitGameMs": 500}
+	var reply: Dictionary = await rig["time"]._with_capture(image, params, {"met": true})
+	assert_true(not reply.has("error"), "a met until stays met: %s" % reply)
+	assert_eq(reply, {"result": {"met": true, "warning": SAVE_FAILURE}}, "the until's result")
+	_free_clock_rig(rig)
+
+
+func test_a_wait_fors_failed_save_stays_its_error() -> void:
+	var rig: Dictionary = _clock_rig()
+	rig["bridge"]._frame.free()
+	rig["bridge"]._frame = _failing_save_frame()
+	var image := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+	var reply: Dictionary = await rig["time"]._with_capture(image, {}, {"met": true})
+	assert_eq(reply, {"error": SAVE_FAILURE}, "wait_for's reply")
 	_free_clock_rig(rig)
 
 
@@ -206,6 +229,27 @@ func _waiting_frame() -> Node:
 				"func wait_for_drawn_frame() -> void:",
 				"\twaited = true",
 				"\tawait never",
+			]
+		)
+	)
+	return _compile(source)
+
+
+## A frame module on a game that draws, whose every save fails with SAVE_FAILURE.
+func _failing_save_frame() -> Node:
+	var source: String = (
+		"\n"
+		. join(
+			[
+				"extends Node",
+				"",
+				"",
+				"func headless_warning() -> String:",
+				'\treturn ""',
+				"",
+				"",
+				"func save_screenshot(_image: Image, _params: Dictionary) -> Variant:",
+				'\treturn "%s"' % SAVE_FAILURE,
 			]
 		)
 	)

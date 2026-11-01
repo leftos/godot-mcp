@@ -12,6 +12,7 @@ namespace GodotMcp.Tests.Session;
 public sealed class ScratchUntilTests
 {
     private const string Root = "/root/ScratchScene";
+    private static readonly ScratchRun.UntilPlay Play = new(Root, Screenshot: false);
 
     [Theory]
     [InlineData("true", true)]
@@ -30,7 +31,7 @@ public sealed class ScratchUntilTests
     [InlineData("null")]
     [InlineData("{}")]
     public void NullOrAnEmptyDictionaryIsAPacedStep(string answer) =>
-        Assert.Equal(((JsonObject?)null, (string?)null), ScratchRun.UntilWait(JsonNode.Parse(answer), 0, "roll", 500, Root));
+        Assert.Equal(((JsonObject?)null, (string?)null), ScratchRun.UntilWait(JsonNode.Parse(answer), 0, "roll", 500, Play));
 
     [Theory]
     [InlineData("\"soon\"", "GetStepUntil(2) returned \"soon\", not a wait_for condition")]
@@ -38,7 +39,7 @@ public sealed class ScratchUntilTests
     [InlineData("true", "GetStepUntil(2) returned true, not a wait_for condition")]
     public void AnAnswerNeitherADictionaryNorNullIsTheStepsError(string answer, string error)
     {
-        (JsonObject? wait, string? refusal) = ScratchRun.UntilWait(JsonNode.Parse(answer), 2, "roll", 500, Root);
+        (JsonObject? wait, string? refusal) = ScratchRun.UntilWait(JsonNode.Parse(answer), 2, "roll", 500, Play);
 
         Assert.Null(wait);
         Assert.Equal(error, refusal);
@@ -52,7 +53,7 @@ public sealed class ScratchUntilTests
             2,
             "roll",
             5000,
-            Root
+            Play
         );
 
         Assert.Null(error);
@@ -61,6 +62,19 @@ public sealed class ScratchUntilTests
         Assert.Equal(5000, wait["timeoutMs"]!.GetValue<int>());
         Assert.Equal(5000, wait["limitGameMs"]!.GetValue<int>());
         Assert.Equal("{\"node\":\"/root/ScratchScene\",\"method\":\"PlayStep\",\"args\":[2]}", wait["call"]!.ToJsonString());
+    }
+
+    [Fact]
+    public void TheUntilsWaitAsksForAScreenshotOnlyForACapturedStep()
+    {
+        JsonNode condition = JsonNode.Parse("{\"node\": \"Dice\", \"signal\": \"Settled\"}")!;
+
+        (JsonObject? captured, _) = ScratchRun.UntilWait(condition, 2, "roll", 5000, new ScratchRun.UntilPlay(Root, Screenshot: true));
+        (JsonObject? plain, _) = ScratchRun.UntilWait(condition, 2, "roll", 5000, Play);
+
+        Assert.True(captured!["screenshot"]!.GetValue<bool>());
+        Assert.False(captured.ContainsKey("previewMaxWidth"), captured.ToJsonString());
+        Assert.False(plain!.ContainsKey("screenshot"), plain.ToJsonString());
     }
 
     [Theory]
@@ -73,7 +87,7 @@ public sealed class ScratchUntilTests
     [InlineData("{\"nope\": 1}", "")]
     public void AConditionWaitForRefusesIsTheStepsRefusal(string answer, string refusal)
     {
-        (JsonObject? wait, string? error) = ScratchRun.UntilWait(JsonNode.Parse(answer), 1, "roll", 500, Root);
+        (JsonObject? wait, string? error) = ScratchRun.UntilWait(JsonNode.Parse(answer), 1, "roll", 500, Play);
 
         Assert.Null(wait);
         Assert.StartsWith("step 1 'roll': its until was refused: " + refusal, error, StringComparison.Ordinal);

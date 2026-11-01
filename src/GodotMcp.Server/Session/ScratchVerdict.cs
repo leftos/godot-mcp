@@ -34,6 +34,12 @@ internal sealed record ScratchStep(int Index, string Name, int GameMs)
 
     /// <summary>How many of the window's lines the output buffer no longer held when the window closed.</summary>
     public long Dropped { get; init; }
+
+    /// <summary>The absolute path of the step's shot in the run's folder, for a step options.capture names; else null.</summary>
+    public string? Screenshot { get; init; }
+
+    /// <summary>What went wrong with the step that did not fail it (its shot, <see cref="ScratchVerdict.ShotFailed"/>); else null.</summary>
+    public string? Warning { get; init; }
 }
 
 /// <summary>
@@ -205,6 +211,10 @@ internal sealed record ScratchStepResult(
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Error { get; init; }
+
+    /// <summary>The absolute path of the step's shot (options.capture); null when it took none.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Screenshot { get; init; }
 
     /// <summary>Why the detail lost lines or errors from its end, and where the full log is; null when it fit.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -499,13 +509,27 @@ internal static partial class ScratchVerdict
             PaceReason = shown is Red or Killed ? PaceReasonAt(seen, failedAt, rules.PaceReason) : null,
             FailedAt = failedAt,
             Failures = Failures(seen, rules.Patterns, rules.Details == ScratchDetails.Full ? MaxCopyChars : MaxFailureIndexChars),
-            Details = ListsSteps(rules.Details, verdict, failedAt) ? [.. seen.Steps.Select(step => StepResult(step, rules, seen.Session))] : null,
+            Details =
+                ListsSteps(rules.Details, verdict, failedAt) || seen.Steps.Any(step => step.Screenshot is not null)
+                    ? [.. seen.Steps.Select(step => StepResult(step, rules, seen.Session))]
+                    : null,
             Exit = ExitOf(seen, rules.Patterns, missing),
             Known = shown is KnownRed or KnownNowGreen ? rules.Known : null,
-            Warnings = seen.Warnings.Count > 0 ? seen.Warnings : null,
+            Warnings = SceneWarnings(seen),
             Watch = seen.Watch,
         };
     }
+
+    /// <summary>The scene's own warnings, then each step's in the order played; null when there are none.</summary>
+    private static List<string>? SceneWarnings(ScratchObservation seen)
+    {
+        List<string> warnings = [.. seen.Warnings, .. seen.Steps.Select(step => step.Warning).OfType<string>()];
+        return warnings.Count > 0 ? warnings : null;
+    }
+
+    /// <summary>The warning of a step whose shot failed: the step's index and name, and why.</summary>
+    internal static string ShotFailed(int index, string step, string reason) =>
+        string.Create(CultureInfo.InvariantCulture, $"the screenshot at step {index} '{step}' failed: {reason}");
 
     /// <summary>
     /// Every step that failed, in the order played, with why cut to <paramref name="max"/> characters, then the step a kill cut
@@ -807,10 +831,18 @@ internal static partial class ScratchVerdict
             step.Until is null ? step.GameMs : null,
             step.Until,
             OutputBuffer.Cut(step.Status, rules.DetailChars)
-        );
+        )
+        {
+            Screenshot = step.Screenshot,
+        };
         if (error is null && rules.Details != ScratchDetails.Full)
         {
-            return rules.Details == ScratchDetails.Compact ? listed with { CompactLine = CompactLine(step, listed, rules.DetailChars) } : listed;
+            return rules.Details == ScratchDetails.Compact && step.Screenshot is null
+                ? listed with
+                {
+                    CompactLine = CompactLine(step, listed, rules.DetailChars),
+                }
+                : listed;
         }
 
         DetailLimits chosen = rules.Details == ScratchDetails.Full ? Full : Compact;

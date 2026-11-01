@@ -9,6 +9,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `crop_screenshot` cuts a rectangle out of a screenshot already captured and enlarges it up to 8 times, with no game running.
 - `set_node_properties`, `add_node`, `get_node_properties` and `set_property` take a `:` path to a sub-resource's property or a value's component, like `material_override:albedo_color`.
 - A prep run through a `prepWrapper` reports the gate's verdict line as `buildGate`, `importGate` or `gate`, and headless tools report a prep that built.
+- `run_scratches` `options.capture` screenshots chosen steps of a windowed run at their met until or pace end, listing each file in the step's `details`.
 
 ### Changed
 

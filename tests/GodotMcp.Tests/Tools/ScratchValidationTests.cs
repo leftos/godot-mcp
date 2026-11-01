@@ -827,6 +827,89 @@ public sealed class ScratchValidationTests : IDisposable
         Assert.False(Plan(["res://Other.tscn"]).Windowed);
     }
 
+    [Fact]
+    public void ACaptureWithoutWindowedIsRefused() =>
+        Assert.Equal(
+            "options.capture needs options.windowed: true, since a headless scene draws no frames",
+            Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Capture: new ScratchCaptureOptions(Screenshot: true))))
+        );
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)]
+    public void ACaptureWhoseScreenshotIsNotTrueIsRefused(bool? screenshot) =>
+        Assert.Equal(
+            "options.capture.screenshot must be true",
+            Refused(() => Plan(["res://Other.tscn"], new ScratchOptions(Windowed: true, Capture: new ScratchCaptureOptions(Screenshot: screenshot))))
+        );
+
+    [Fact]
+    public void ACaptureKeyOtherThanStepsOrScreenshotIsRefused() =>
+        Assert.Throws<JsonException>(() =>
+            JsonSerializer.Deserialize<ScratchOptions>("""{"windowed": true, "capture": {"screenshot": true, "frames": 3}}""", ToolJson.Options)
+        );
+
+    [Fact]
+    public void ACaptureStepTheSceneLacksIsRefusedAsAnUnknownStepIs()
+    {
+        ScratchStepNames names = new(["open", "fight"], new HashSet<int>());
+
+        ScratchPlan named = Plan(["res://Other.tscn"], CaptureOf("""["nope"]"""));
+        ScratchPlan indexed = Plan(["res://Other.tscn"], CaptureOf("[2]"));
+
+        Assert.StartsWith(
+            "options.capture.steps token \"nope\" of Other matches no step; its steps are ",
+            ScratchRun.CaptureSteps(named.Capture!, "Other", names).Error,
+            StringComparison.Ordinal
+        );
+        Assert.StartsWith(
+            "options.capture.steps token 2 of Other matches no step; its steps are ",
+            ScratchRun.CaptureSteps(indexed.Capture!, "Other", names).Error,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
+    public void CaptureStepsTakeIndexesAndNamesAndLeftOutCaptureEveryPlayedStep()
+    {
+        ScratchStepNames names = new(["open", "fight", "close"], new HashSet<int>());
+
+        ScratchPlan given = Plan(["res://Other.tscn"], CaptureOf("""[2, "open"]"""));
+        ScratchPlan every = Plan(["res://Other.tscn"], new ScratchOptions(Windowed: true, Capture: new ScratchCaptureOptions(Screenshot: true)));
+
+        (int[]? steps, string? error) = ScratchRun.CaptureSteps(given.Capture!, "Other", names);
+        Assert.Null(error);
+        Assert.Equal([0, 2], steps!);
+        Assert.Equal(((int[]?)null, (string?)null), ScratchRun.CaptureSteps(every.Capture!, "Other", names));
+        Assert.Null(Plan(["res://Other.tscn"], new ScratchOptions(Windowed: true)).Capture);
+    }
+
+    [Theory]
+    [InlineData("\"x\"", "options.capture.steps is a string; it must be an array of step indices or names.")]
+    [InlineData("[]", "options.capture.steps is empty; list the steps to shoot by index or name, or leave it out to shoot every played step.")]
+    [InlineData("[-1]", "options.capture.steps token -1 is not a step; a token is a step index, a whole number from 0 up, or a step's exact name.")]
+    [InlineData("[1.5]", "options.capture.steps token 1.5 is not a step; a token is a step index, a whole number from 0 up, or a step's exact name.")]
+    [InlineData(
+        "[true]",
+        "options.capture.steps token true is not a step; a token is a step index, a whole number from 0 up, or a step's exact name."
+    )]
+    public void CaptureStepsThatAreNoListOfStepsAreRefused(string steps, string refusal) =>
+        Assert.Equal(refusal, Refused(() => Plan(["res://Other.tscn"], CaptureOf(steps))));
+
+    [Fact]
+    public void ACaptureStepGivenAsANumberAndAsItsTextIsShotOnce()
+    {
+        ScratchStepNames names = new(["open", "fight"], new HashSet<int>());
+
+        (int[]? steps, string? error) = ScratchRun.CaptureSteps(Plan(["res://Other.tscn"], CaptureOf("""[0, "0", 0]""")).Capture!, "Other", names);
+
+        Assert.Null(error);
+        Assert.Equal([0], steps!);
+    }
+
+    private static ScratchOptions CaptureOf(string steps) =>
+        new(Windowed: true, Capture: new ScratchCaptureOptions(Steps: Tokens(steps), Screenshot: true));
+
     private string ProfilePath => Path.Combine(_project, ProjectProfile.FileName);
 
     private ScratchPlan Plan(string[]? scenes, ScratchOptions? options = null) =>
