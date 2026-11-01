@@ -660,6 +660,22 @@ public sealed class RuntimeReadTests(SharedProbeSession shared) : IAsyncLifetime
         + "found.append([c.r8, c.g8, c.b8])\n\t"
         + "return found";
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACropOfARealScreenshotReturnsItsPixels()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonNode shot = JsonNode.Parse(Text(await _tools.TakeScreenshotAsync("path_only", null, cancellationToken: cancellation)))!;
+        string capture = shot["path"]!.GetValue<string>();
+
+        List<ContentBlock> blocks = [.. ScreenshotCropTool.CropScreenshot(_shared.ProbeDirectory, capture, new CropRect(0, 0, 8, 8), 2)];
+        JsonNode crop = JsonNode.Parse(Text(blocks))!;
+        string written = crop["path"]!.GetValue<string>();
+
+        Assert.Equal((16.0, 16.0), Size(crop));
+        Assert.Equal((16.0, 16.0), PngSize(Image(blocks)));
+        Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(capture)!, Path.GetFileName(written))), written);
+    }
+
     private static string MagentaBoundsScript(string path) =>
         $"var image := Image.load_from_file(\"{path.Replace('\\', '/')}\")\n\t"
         + "var low := Vector2i(image.get_width(), image.get_height())\n\t"

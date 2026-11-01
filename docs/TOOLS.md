@@ -26,6 +26,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | Find the frame that hitched, and what the game was doing then | `watch` with `tracks.monitors: ["frame_ms"]` beside the signals or values of the moment | a `run_script` timing `process_frame` gaps by hand; Godot's `time/process`, which holds the last second's longest frame |
 | Check that a sound played (which player, which stream, when it started and ended) | `watch` with `tracks.audio.players` (`start`, then the click or step, then `stop`), or `run` with a one-frame window for what plays now; `tracks.audio.buses` for whether it reached a bus | a `run_script` reading `playing` after the call, which misses any sound shorter than the gap between calls |
 | Frames at set moments of an animation or a timed sequence | `capture_frames` | a `take_screenshot` per moment, whose timing drifts |
+| Read small text or a detail in a screenshot already taken | `crop_screenshot` with a `rect` and a `scale` | taking another capture, or guessing from the 480 px preview |
 | Press an InputMap action | `simulate_action` | `key` on a key bound to it |
 | Find the input a game cannot survive | `stress_input` | a hand-written loop of random `simulate_input` calls |
 | Wait for something to happen | `wait_for` | polling `inspect_node`, `run_script` or `get_debug_output` |
@@ -346,6 +347,20 @@ For an agent driving a Godot project through this server: which tool fits a job,
   A capture that is not the copy of the session's own is refused too: "the capture <capture> resolves to <final>, not under the session's screenshots folder <folder>; it is not copied" (a link took it elsewhere) and "the capture <capture> has <n> names (hard links); it is not copied".
 
   It is in the `drive` class beside `save_screenshot_baseline`, not `read`, so an agent that only reads does not gain this power, and `batch_drive` refuses it as a step.
+
+### `crop_screenshot`
+
+- **Does:** cuts a rectangle out of a PNG already captured and enlarges it, to read small text or a detail without another capture. Needs no game, no session and no Godot launch. Returns a text block `{path, width, height, rect}` (`rect` the source rectangle after clipping) then an image/png block of the crop.
+- **Use:** `projectPath`; `image`, a PNG (absolute or project-relative) anywhere under `<project>/.godot/godot-mcp/screenshots/`; `rect {x, y, width, height}` in the PNG's own pixels, not viewport coordinates (a capture can be a pixel short of the window); `scale`, an integer 1 to 8 (1 by default), enlarged nearest-neighbour so pixels stay sharp.
+- **Edges:** the crop is written as `<stem>-crop-<n>.png` beside the file the image finally reaches, `n` the first free number from 1; it never replaces a file, and a writer that takes that `n` meanwhile moves this one to the next, up to 100 tries.
+
+  A `rect` partly outside the image is clipped to it. One wholly outside is refused: "rect <x>,<y> <width>x<height> lies wholly outside <path>, which is <w>x<h>". An output edge over 4096 px is refused: "the crop would be <W>x<H>; crop_screenshot writes at most 4096 px on an edge, so use a smaller rect or scale".
+
+  Links are followed and checked: the image's final file must lie under the project's screenshots folder and have one name, else "<full> is not under the project's screenshots folder <folder>; crop_screenshot reads only the captures there". A folder reads "<full> is a folder, not a PNG", a missing file "<full> does not exist", and a file over 1074790400 bytes is refused.
+
+  It reads only 8-bit RGB or RGBA PNGs that are not interlaced, as Godot saves them; any other (16-bit, palette colour type 3, interlaced, wider or taller than Godot's 16384 px edge, damaged) is refused with "crop_screenshot reads only 8-bit RGB or RGBA PNGs that are not interlaced, as Godot saves them; <path> is <what it is>".
+
+  Other refusals: "scale must be 1 to 8; got <scale>" and "rect width and height must be at least 1; got <w>x<h>". It is in the `read` class and `readOnly`: it writes only its crop, in the screenshots folder.
 
 ### `get_ui_elements`
 

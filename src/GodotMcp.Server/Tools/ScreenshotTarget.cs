@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Runtime.Versioning;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
+using Microsoft.Win32.SafeHandles;
 using ModelContextProtocol;
 
 namespace GodotMcp.Server.Tools;
@@ -209,22 +210,43 @@ internal static class ScreenshotTarget
     [SupportedOSPlatform("windows")]
     private static void CheckCaptureIsOurs(FileStream capture, string capturePath, OutputPlaces places)
     {
-        string final = FinalPath.Of(capture.SafeFileHandle);
-        if (HeadlessTools.IsOutside(Path.GetRelativePath(CaptureFolder(places.FinalProject), final)))
+        CaptureIdentity identity = IdentifyCapture(capture.SafeFileHandle, places.FinalProject);
+        if (!identity.UnderFolder)
         {
             throw new McpException(
-                $"the capture {capturePath} resolves to {final}, not under the session's screenshots folder "
+                $"the capture {capturePath} resolves to {identity.Final}, not under the session's screenshots folder "
                     + $"{CaptureFolder(places.Project)}; it is not copied"
             );
         }
 
-        uint names = FinalPath.LinkCount(capture.SafeFileHandle);
-        if (names != 1)
+        if (identity.Names != 1)
         {
-            throw new McpException($"the capture {capturePath} has {names} names (hard links); it is not copied");
+            throw new McpException($"the capture {capturePath} has {identity.Names} names (hard links); it is not copied");
         }
     }
+
+    /// <summary>
+    /// Where an open file finally lies, whether that is under the screenshots folder of <paramref name="finalProject"/>
+    /// taken literally (a linked .godot or screenshots folder leads elsewhere), and how many names the file has; a capture is
+    /// a file under the folder with one name, so neither a link leading out nor a hard link to a file elsewhere passes.
+    /// </summary>
+    /// <param name="handle">The open file.</param>
+    /// <param name="finalProject">The project folder's final path.</param>
+    /// <exception cref="IOException">Windows cannot give the file's final path or its link count.</exception>
+    [SupportedOSPlatform("windows")]
+    internal static CaptureIdentity IdentifyCapture(SafeFileHandle handle, string finalProject)
+    {
+        string final = FinalPath.Of(handle);
+        bool underFolder = !HeadlessTools.IsOutside(Path.GetRelativePath(CaptureFolder(finalProject), final));
+        return new CaptureIdentity(final, underFolder, FinalPath.LinkCount(handle));
+    }
 }
+
+/// <summary>What <see cref="ScreenshotTarget.IdentifyCapture"/> found of an open file.</summary>
+/// <param name="Final">The file's final path, every link followed.</param>
+/// <param name="UnderFolder">Whether the final path lies under the project's screenshots folder.</param>
+/// <param name="Names">How many names (hard links) the file has.</param>
+internal sealed record CaptureIdentity(string Final, bool UnderFolder, uint Names);
 
 /// <summary>
 /// capture_frames' destination: a .png stem in a .tmp place, whose frame k of the n distinct files lands at

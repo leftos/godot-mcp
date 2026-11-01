@@ -28,6 +28,7 @@ public sealed class ToolClassesTests
     [InlineData("get_scene_tree", ToolClasses.Read)]
     [InlineData("take_screenshot", ToolClasses.Read)]
     [InlineData("capture_frames", ToolClasses.Read)]
+    [InlineData("crop_screenshot", ToolClasses.Read)]
     [InlineData("validate", ToolClasses.Read)]
     [InlineData("add_node", ToolClasses.EditScene)]
     [InlineData("delete_nodes", ToolClasses.EditScene)]

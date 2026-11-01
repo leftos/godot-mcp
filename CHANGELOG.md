@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `crop_screenshot` cuts a rectangle out of a screenshot already captured and enlarges it up to 8 times, with no game running.
+
 ### Changed
 
 - An output path starting `.tmp/` is taken from the project's git checkout, not the project folder, so a project in a subfolder can use it.
