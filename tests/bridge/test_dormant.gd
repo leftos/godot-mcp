@@ -2,8 +2,10 @@
 extends "res://gd_test.gd"
 ## The dormant mode (bridge/godot_mcp_dormant.gd): how the bridge decides to run, the attach and
 ## join file parse, the dormant file, when an ended connection goes dormant again, and one poll's
-## outcome. Every file lives in a folder under the OS temp folder, never this project's own
+## outcome. Every file lives in this run's own folder (run_dir.gd), never this project's own
 ## .godot/godot-mcp/, where the other tests' bridges must still find no endpoint.
+
+const RunDir := preload("res://run_dir.gd")
 
 var _dormant_script: GDScript = load_bridge_script("godot_mcp_dormant.gd")
 var _raw_events_script: GDScript = load_bridge_script("godot_mcp_raw_events.gd")
@@ -417,9 +419,11 @@ func _waiter(dir: String) -> Node:
 	return waiter
 
 
-## An empty folder under the OS temp folder for one test.
+## An empty folder under this run's folder (run_dir.gd) for one test.
 func _fresh_dir(test_name: String) -> String:
-	var dir: String = OS.get_temp_dir().path_join("godot_mcp_dormant_test").path_join(test_name)
+	var dir: String = ProjectSettings.globalize_path(
+		RunDir.path("godot_mcp_dormant_test").path_join(test_name)
+	)
 	_remove_tree(dir)
 	DirAccess.make_dir_recursive_absolute(dir)
 	return dir

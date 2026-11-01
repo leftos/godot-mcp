@@ -17,8 +17,8 @@ func test_run_dir_is_this_process() -> void:
 	)
 
 
-func test_no_test_names_a_shared_user_path() -> void:
-	var needle: String = char(QUOTE) + "user" + "://"
+func test_no_test_names_a_shared_path() -> void:
+	var needles: PackedStringArray = [char(QUOTE) + "user" + "://", "OS." + "get_temp_dir()"]
 	var offenders: PackedStringArray = []
 	for file_name: String in DirAccess.get_files_at("res://"):
 		if not file_name.begins_with("test_") or not file_name.ends_with(".gd"):
@@ -27,6 +27,7 @@ func test_no_test_names_a_shared_user_path() -> void:
 			"\n"
 		)
 		for index in lines.size():
-			if lines[index].contains(needle):
-				offenders.append("%s:%d" % [file_name, index + 1])
-	assert_eq(offenders, PackedStringArray(), "test files naming a shared user path")
+			for needle: String in needles:
+				if lines[index].contains(needle):
+					offenders.append("%s:%d" % [file_name, index + 1])
+	assert_eq(offenders, PackedStringArray(), "test files naming a shared path")

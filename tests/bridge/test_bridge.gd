@@ -13,6 +13,8 @@ const SCRIPT_STOPPED := (
 	+ "object, such as a node's own method, keeps running; restart_project stops everything."
 )
 
+const RunDir := preload("res://run_dir.gd")
+
 var _bridge_script: GDScript = load_bridge_script("godot_mcp_bridge.gd")
 var _time_script: GDScript = load_bridge_script("godot_mcp_time.gd")
 var _watch_script: GDScript = load_bridge_script("godot_mcp_watch.gd")
@@ -60,7 +62,7 @@ func test_a_lost_connection_cancels_and_forgets_the_running_requests() -> void:
 func test_save_preview_leaves_a_narrow_image_alone() -> void:
 	var bridge: Node = _bridge_script.new()
 	bridge._frame = _frame_script.new()
-	var path: String = OS.get_temp_dir().path_join("godot_mcp_narrow_preview.png")
+	var path: String = ProjectSettings.globalize_path(RunDir.path("godot_mcp_narrow_preview.png"))
 	if FileAccess.file_exists(path):
 		DirAccess.remove_absolute(path)
 	var result: Dictionary = {}
@@ -77,7 +79,7 @@ func test_save_preview_leaves_a_narrow_image_alone() -> void:
 func test_save_preview_scales_a_wide_image_down() -> void:
 	var bridge: Node = _bridge_script.new()
 	bridge._frame = _frame_script.new()
-	var path: String = OS.get_temp_dir().path_join("godot_mcp_wide_preview.png")
+	var path: String = ProjectSettings.globalize_path(RunDir.path("godot_mcp_wide_preview.png"))
 	var result: Dictionary = {}
 	var image: Image = Image.create_empty(32, 16, false, Image.FORMAT_RGBA8)
 	assert_eq(
