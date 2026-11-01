@@ -1519,9 +1519,16 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
         WriteScenes(probe.Directory);
         File.WriteAllText(Path.Combine(probe.Directory, "marker_node.gd"), MarkerScript);
 
-        string added = await _tools.AddNodeAsync(probe.Directory, "level.tscn", "MarkerNode", "Marker", cancellationToken: cancellation);
+        JsonNode added = JsonNode.Parse(
+            await _tools.AddNodeAsync(probe.Directory, "level.tscn", "MarkerNode", "Marker", cancellationToken: cancellation)
+        )!;
+        // The new script makes the prep import, so the result carries the prep after the node's own fields.
+        JsonNode prep = added["prep"]!.DeepClone();
+        added.AsObject().Remove("prep");
 
-        Assert.Equal("""{"path":"Marker","type":"MarkerNode","index":4}""", added);
+        Assert.Equal("""{"path":"Marker","type":"MarkerNode","index":4}""", added.ToJsonString());
+        Assert.Equal("no-csproj", prep["build"]!.GetValue<string>());
+        Assert.Equal("done", prep["import"]!.GetValue<string>());
         (string header, string[] body) = Section(probe.Directory, "level.tscn", "Marker");
         Assert.Contains("type=\"Sprite2D\"", header, StringComparison.Ordinal);
         Assert.StartsWith("script = ExtResource(", Assert.Single(body), StringComparison.Ordinal);

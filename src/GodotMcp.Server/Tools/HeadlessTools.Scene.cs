@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
 using ModelContextProtocol;
@@ -524,8 +525,19 @@ internal sealed partial class HeadlessTools
             result["errors"] = errors;
         }
 
+        if (PrepRanAStep(run.Prep))
+        {
+            result["prep"] = JsonSerializer.SerializeToNode(run.Prep, Json);
+        }
+
         return result;
     }
+
+    /// <summary>
+    /// Whether the prep ran a build to its end (built, failed or stopped) or an import, so the result says what it cost, as
+    /// validate's does; a call whose prep found nothing to do carries no <c>prep</c>.
+    /// </summary>
+    private static bool PrepRanAStep(PrepResult prep) => prep.Import == "done" || prep.Build is "built" or "failed" or "stopped";
 }
 
 /// <summary>Where duplicate_node puts the copy.</summary>

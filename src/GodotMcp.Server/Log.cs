@@ -200,6 +200,9 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Information, Message = "Preparing {Project} was cancelled; the game is not started.")]
     public static partial void PrepCancelled(ILogger logger, Exception exception, string project);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Reading the prep wrapper's log {Path} failed; its gate verdict is left out.")]
+    public static partial void PrepVerdictReadFailed(ILogger logger, Exception exception, string path);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Deleting the headless run's file {Path} failed; it is left behind.")]
     public static partial void HeadlessFileDeleteFailed(ILogger logger, Exception exception, string path);
 

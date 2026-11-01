@@ -78,9 +78,11 @@ internal static class ProjectPrep
                 Build = build.State,
                 BuildMs = build.Milliseconds,
                 BuildLog = build.Log,
+                BuildGate = build.Gate,
                 Import = import.State,
                 ImportMs = import.Milliseconds,
                 ImportLog = import.Log,
+                ImportGate = import.Gate,
                 Note = notes.Length == 0 ? null : string.Join(' ', notes),
             };
             Log.PrepFinished(context.Logger, context.ProjectDir, result.Build, result.Import);
@@ -135,15 +137,21 @@ internal static class ProjectPrep
         );
         IReadOnlyList<BuildDiagnostic> diagnostics = SaveDiagnostics(projectDir, built, log, diagnosticsLog, wrap);
         long milliseconds = (long)built.Elapsed.TotalMilliseconds;
+        string? gate = GateVerdictOf(wrap, log, context.Logger);
         if (reportRedBuild && StateOf(built, wrap) == "failed")
         {
             string note = $"The C# build of {csproj} failed (dotnet exited {built.ExitCode}); its log: {log}";
-            return new PrepStep("failed", milliseconds, note) { Errors = CompilerErrors.Errors(diagnostics), Log = log };
+            return new PrepStep("failed", milliseconds, note)
+            {
+                Errors = CompilerErrors.Errors(diagnostics),
+                Log = log,
+                Gate = gate,
+            };
         }
 
         CheckBuild(built, csproj, log, diagnostics, wrap);
         File.WriteAllText(PrepScan.StampPath(projectDir), string.Empty);
-        return new PrepStep("built", milliseconds, null) { Log = log };
+        return new PrepStep("built", milliseconds, null) { Log = log, Gate = gate };
     }
 
     /// <summary>
@@ -200,6 +208,38 @@ internal static class ProjectPrep
 
     /// <summary>A log's text; empty when a wrapper that owns the log never wrote it.</summary>
     private static string ReadLog(string log) => File.Exists(log) ? File.ReadAllText(log) : string.Empty;
+
+    /// <summary>
+    /// The prep wrapper's verdict from a step's capture log (<see cref="PrepWrapper.CaptureLog"/>): its last <c>gate: </c>
+    /// line, which follows the lines it prints as it starts and so is the one the step ended with. Null when the step ran
+    /// through no wrapper, the wrapper left no capture log, or the log holds no verdict. The log is read while another process
+    /// may still hold it, and one that cannot be read is logged and left out.
+    /// </summary>
+    private static string? GateVerdictOf(PrepWrapper? wrapper, string stepLog, ILogger logger)
+    {
+        if (wrapper is null)
+        {
+            return null;
+        }
+
+        string captureLog = wrapper.CaptureLog(stepLog);
+        if (!File.Exists(captureLog))
+        {
+            return null;
+        }
+
+        try
+        {
+            using FileStream stream = new(captureLog, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using StreamReader reader = new(stream);
+            return PrepWrapper.GateVerdict(reader.ReadToEnd());
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.PrepVerdictReadFailed(logger, e, captureLog);
+            return null;
+        }
+    }
 
     private static string StateOf(ToolProcessResult built, PrepWrapper? wrapper)
     {
@@ -430,7 +470,7 @@ internal static class ProjectPrep
         );
         if (!File.Exists(log) || !File.ReadLines(log).Any(line => line.StartsWith("ERROR:", StringComparison.Ordinal)))
         {
-            return new PrepStep("done", (long)first.Elapsed.TotalMilliseconds, null) { Log = log };
+            return new PrepStep("done", (long)first.Elapsed.TotalMilliseconds, null) { Log = log, Gate = GateVerdictOf(wrap, log, context.Logger) };
         }
 
         return await SecondImportAsync(godot, context, wrap, first, cancellationToken);
@@ -465,7 +505,12 @@ internal static class ProjectPrep
         long secondMs = (long)second.Elapsed.TotalMilliseconds;
         string where = ownLog ? $"their logs are {log} and {secondLog}" : $"both are in {log}";
         string note = $"The import ran twice, because its first pass logged errors: {firstMs} ms, then {secondMs} ms; {where}.";
-        return new PrepStep("done", firstMs + secondMs, note) { Log = log };
+        return new PrepStep("done", firstMs + secondMs, note)
+        {
+            Log = log,
+            // The second pass is the one the import ended with, so its verdict is the import's.
+            Gate = GateVerdictOf(wrapper, secondLog, context.Logger),
+        };
     }
 
     // --import opens the editor headless, waits for its first scan and quits; it never reads override.cfg.
@@ -548,9 +593,12 @@ internal static class ProjectPrep
             throw new SessionException(wrapper.StoppedNote($"the prep of process {session}", log));
         }
 
-        return ran.ExitCode == 0
-            ? new ProcessPrepResult(argv, ran.ExitCode, (long)ran.Elapsed.TotalMilliseconds, log)
-            : throw new SessionException($"The prep of process {session} exited {ran.ExitCode}, so it was not started. Its log: {log}");
+        if (ran.ExitCode != 0)
+        {
+            throw new SessionException($"The prep of process {session} exited {ran.ExitCode}, so it was not started. Its log: {log}");
+        }
+
+        return new ProcessPrepResult(argv, ran.ExitCode, (long)ran.Elapsed.TotalMilliseconds, log) { Gate = GateVerdictOf(wrapper, log, logger) };
     }
 
     /// <summary>Runs a prep process, through the prep wrapper when the project names one.</summary>
@@ -594,7 +642,7 @@ internal static class ProjectPrep
 
     /// <summary>
     /// One prep step's outcome: its state for the result, how long it ran when it ran, the log the process it ran wrote, a
-    /// note, and a failed build's errors.
+    /// note, a failed build's errors, and the prep wrapper's verdict when it ran through one.
     /// </summary>
     private sealed record PrepStep(string State, long? Milliseconds, string? Note)
     {
@@ -602,6 +650,9 @@ internal static class ProjectPrep
 
         /// <summary>The step's log file; left out when the step ran no process.</summary>
         public string? Log { get; init; }
+
+        /// <summary>The wrapper's verdict from the step's capture log; null when it ran through no wrapper or left none.</summary>
+        public string? Gate { get; init; }
     }
 }
 

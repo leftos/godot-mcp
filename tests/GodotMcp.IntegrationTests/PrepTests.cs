@@ -25,13 +25,14 @@ public sealed partial class PrepTests : IAsyncDisposable
     private const string RedPixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
     // A prep wrapper taking {log}, then "--", then the command: it notes the command's program, runs the command with its
-    // output in {log}, and exits with its code.
+    // output in {log}, prints the verdict a gate prints to its own output once the command ends, and exits with its code.
     private const string RunningWrapper =
         "$log = $args[0]\n"
         + "$command = @($args | Select-Object -Skip 1)\n"
         + "if ($command.Count -gt 0 -and $command[0] -eq '--') { $command = @($command | Select-Object -Skip 1) }\n"
         + "Add-Content -LiteralPath (Join-Path $PSScriptRoot 'prep-wrapper-ran.txt') -Value ([IO.Path]::GetFileName($command[0]))\n"
         + "& $command[0] @($command | Select-Object -Skip 1) *> $log\n"
+        + "Write-Output 'gate: passed in 1 s (load-adjusted 1 s, ceiling 300 s)'\n"
         + "exit $LASTEXITCODE\n";
 
     // A prep wrapper like RunningWrapper whose log prefixes every line of the command's output with a timestamp and "out", as
@@ -261,6 +262,8 @@ public sealed partial class PrepTests : IAsyncDisposable
         Assert.True(File.Exists(Path.Combine(logFolder, "build.wrapper.log")), "build.wrapper.log does not exist");
         Assert.True(File.Exists(Path.Combine(logFolder, "import.wrapper.log")), "import.wrapper.log does not exist");
         Assert.Contains("ran through prepWrapper (pwsh)", launched.Prep.Note, StringComparison.Ordinal);
+        Assert.Equal("gate: passed in 1 s (load-adjusted 1 s, ceiling 300 s)", launched.Prep.BuildGate);
+        Assert.Equal("gate: passed in 1 s (load-adjusted 1 s, ceiling 300 s)", launched.Prep.ImportGate);
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

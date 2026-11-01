@@ -19,6 +19,12 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
 
     public const string CeilingToken = "{ceiling}";
 
+    /// <summary>The prefix of a verdict line, as the gate prints it at the end of its own output.</summary>
+    public const string VerdictPrefix = "gate: ";
+
+    /// <summary>How much of a verdict line a result carries.</summary>
+    public const int VerdictLength = 200;
+
     /// <summary>The exit code with which a wrapper says it killed the command it ran.</summary>
     public const int StoppedExitCode = 124;
 
@@ -55,6 +61,21 @@ internal sealed record PrepWrapper(IReadOnlyList<string> Command, string Project
 
     /// <summary>Where the server writes the wrapper's own output: <see cref="WrapperLog"/> when it owns the step's log, else that log.</summary>
     public string CaptureLog(string stepLog) => OwnsLog ? WrapperLog(stepLog) : stepLog;
+
+    /// <summary>
+    /// The last line of a wrapper's capture log that starts with <see cref="VerdictPrefix"/>: a gate's closing verdict
+    /// (<c>gate: passed in …</c>, <c>gate: FAILED …</c>, <c>gate: TIMED OUT</c>), which comes after the lines it prints as it
+    /// starts, so the last is the one the step ended with. Null when the log holds none, which is what a wrapper that is not
+    /// a gate leaves. A line loses a trailing carriage return and is cut to <see cref="VerdictLength"/> characters.
+    /// </summary>
+    public static string? GateVerdict(string logText)
+    {
+        string? verdict = logText
+            .Split('\n')
+            .Select(line => line.TrimEnd('\r'))
+            .LastOrDefault(line => line.StartsWith(VerdictPrefix, StringComparison.Ordinal));
+        return verdict is null || verdict.Length <= VerdictLength ? verdict : verdict[..VerdictLength];
+    }
 
     /// <summary>
     /// <paramref name="request"/> run through the wrapper, from the project folder, with its output captured into

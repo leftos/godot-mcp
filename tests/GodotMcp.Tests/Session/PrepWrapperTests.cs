@@ -91,6 +91,49 @@ public sealed class PrepWrapperTests : IDisposable
         Assert.Equal(Path.Combine(folder, wrapperLog), PrepWrapper.WrapperLog(Path.Combine(folder, stepLog)));
     }
 
+    [Fact]
+    public void TheGateVerdictIsTheLastGateLineOfTheLog()
+    {
+        const string log =
+            "gate: waiting for a heavy slot\n"
+            + "gate: routed to the builder\n"
+            + "Build succeeded.\n"
+            + "0 Warning(s)\n"
+            + "gate: passed in 20 s (load-adjusted 2 s, ceiling 300 s)\n";
+
+        Assert.Equal("gate: passed in 20 s (load-adjusted 2 s, ceiling 300 s)", PrepWrapper.GateVerdict(log));
+    }
+
+    [Fact]
+    public void TheGateVerdictDropsTheCarriageReturnOfACRLFLog()
+    {
+        const string verdict = "gate: passed in 1 s (load-adjusted 1 s, ceiling 300 s)";
+
+        Assert.Equal(verdict, PrepWrapper.GateVerdict("building\r\n" + verdict + "\r\n"));
+    }
+
+    [Fact]
+    public void ALogWithoutAGateLineHasNoVerdict()
+    {
+        Assert.Null(PrepWrapper.GateVerdict("Build succeeded.\n0 Warning(s)\n0 Error(s)\n"));
+        Assert.Null(PrepWrapper.GateVerdict(string.Empty));
+    }
+
+    [Fact]
+    public void AVerdictIsCutToTwoHundredCharacters()
+    {
+        string verdict = "gate: " + new string('x', 300);
+
+        string? cut = PrepWrapper.GateVerdict(verdict);
+
+        Assert.Equal(200, cut!.Length);
+        Assert.Equal(verdict[..200], cut);
+    }
+
+    [Fact]
+    public void AGatePrefixInsideALineIsNoVerdict() =>
+        Assert.Null(PrepWrapper.GateVerdict("2026-01-01 out gate: passed in 1 s\nout gate: FAILED (status 1)\n"));
+
     [Theory]
     [InlineData("tools/gate.cmd")]
     [InlineData("./gate.cmd")]

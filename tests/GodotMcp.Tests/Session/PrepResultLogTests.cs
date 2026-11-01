@@ -62,5 +62,25 @@ public sealed class PrepResultLogTests
         Assert.False(json.ContainsKey("importLog"), json.ToJsonString());
     }
 
+    [Fact]
+    public void AStepsGateVerdictIsCarriedAndLeftOutWithoutOne()
+    {
+        PrepResult withGates = new()
+        {
+            Build = "built",
+            Import = "done",
+            BuildGate = "gate: passed in 20 s (load-adjusted 2 s, ceiling 300 s)",
+            ImportGate = "gate: FAILED (status 1)",
+        };
+
+        JsonObject carried = Write(withGates);
+        JsonObject none = Write(new() { Build = "up-to-date", Import = "not-needed" });
+
+        Assert.Equal("gate: passed in 20 s (load-adjusted 2 s, ceiling 300 s)", carried["buildGate"]!.GetValue<string>());
+        Assert.Equal("gate: FAILED (status 1)", carried["importGate"]!.GetValue<string>());
+        Assert.False(none.ContainsKey("buildGate"), none.ToJsonString());
+        Assert.False(none.ContainsKey("importGate"), none.ToJsonString());
+    }
+
     private static JsonObject Write(PrepResult result) => JsonNode.Parse(JsonSerializer.Serialize(result, Json))!.AsObject();
 }

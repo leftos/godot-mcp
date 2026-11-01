@@ -308,6 +308,24 @@ public sealed class HeadlessTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AHeadlessWriteThatBuiltCarriesItsPrep()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        CsProbeProject csProbe = Track(CsProbeProject.Unbuilt());
+
+        JsonNode added = JsonNode.Parse(
+            await _tools.AddNodeAsync(csProbe.Directory, "main.tscn", "Node2D", "Probe", cancellationToken: cancellation)
+        )!;
+        // The write's own Godot run leaves the project's import due, so one call settles it before the quiet one.
+        await TreeAsync(csProbe.Directory, "main.tscn", null, cancellation);
+        JsonNode quiet = await TreeAsync(csProbe.Directory, "main.tscn", null, cancellation);
+
+        Assert.Equal("built", added["prep"]!["build"]!.GetValue<string>());
+        Assert.True(added["prep"]!["buildMs"]!.GetValue<long>() > 0, added.ToJsonString());
+        Assert.False(quiet.AsObject().ContainsKey("prep"), quiet.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task ANewClassNameIsKnownAfterTheImport()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

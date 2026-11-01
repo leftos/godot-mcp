@@ -88,6 +88,13 @@ internal sealed record PrepResult
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? BuildLog { get; init; }
 
+    /// <summary>
+    /// The last <c>gate: </c> line of the prep wrapper's log for the build, verbatim: whether it passed, failed or was
+    /// stopped, and under which ceiling; left out when the build ran through no prepWrapper, or the wrapper left none.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? BuildGate { get; init; }
+
     public required string Import { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -99,6 +106,13 @@ internal sealed record PrepResult
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ImportLog { get; init; }
+
+    /// <summary>
+    /// The last <c>gate: </c> line of the prep wrapper's log for the import, verbatim, and the second pass's when the import
+    /// ran twice; left out when the import ran through no prepWrapper, or the wrapper left none.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ImportGate { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Note { get; init; }
@@ -257,8 +271,19 @@ internal sealed record ProcessRestartResult(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProcessPrepResult? Prep = null
 );
 
-/// <summary>A process's prep: the command it ran, its exit code, how long it took in milliseconds, and the log its output went to.</summary>
-internal sealed record ProcessPrepResult(IReadOnlyList<string> Command, int Exit, long Ms, string Log);
+/// <summary>
+/// A process's prep: the command it ran, its exit code, how long it took in milliseconds, the log its output went to, and the
+/// prep wrapper's verdict when it ran through one.
+/// </summary>
+internal sealed record ProcessPrepResult(IReadOnlyList<string> Command, int Exit, long Ms, string Log)
+{
+    /// <summary>
+    /// The last <c>gate: </c> line of the prep wrapper's log for this prep, verbatim; left out when it ran through no
+    /// prepWrapper, or the wrapper left none.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Gate { get; init; }
+}
 
 /// <summary>
 /// What stop_project returns when its projectPath had no session running there: whether it stopped a warm headless host, and
