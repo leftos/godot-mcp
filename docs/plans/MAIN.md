@@ -4,14 +4,14 @@
 
 ## Ideas from the survey and the projects
 
-- [ ] GMCP-68 Adopt driving lessons from the sibling projects
-  - [ ] GMCP-69 Probe h264_nvenc with a real 256x256 encode before cutting clips
-  - [ ] GMCP-70 Give each launch a scratch user:// folder so drives never touch real saves
-  - [ ] GMCP-71 Tell agents to say "hands off" before driving a game on the user's desktop
-  - [ ] GMCP-72 Answer native file dialogs from a queue instead of showing them
-  - [ ] GMCP-73 Name native file dialogs as out of reach in TOOLS.md and the skill
-  - [ ] GMCP-74 Report frame-rate drops below a floor in the game's output
-  - [ ] GMCP-75 Give bridge replies stable error codes and answer malformed frames
+- [ ] GMCP-68 Adopt driving lessons from the sibling projects · release vNext
+  - [ ] GMCP-69 Probe h264_nvenc with a real 256x256 encode before cutting clips · release vNext
+  - [ ] GMCP-70 Give each launch a scratch user:// folder so drives never touch real saves · release vNext
+  - [ ] GMCP-71 Tell agents to say "hands off" before driving a game on the user's desktop · release vNext
+  - [ ] GMCP-72 Answer native file dialogs from a queue instead of showing them · release vNext
+  - [ ] GMCP-73 Name native file dialogs as out of reach in TOOLS.md and the skill · release vNext
+  - [ ] GMCP-74 Report frame-rate drops below a floor in the game's output · release vNext
+  - [ ] GMCP-75 Give bridge replies stable error codes and answer malformed frames · release vNext
 - [ ] GMCP-115 fired: a point click over a SubViewport listens on the container, not the inner Control
 - [ ] GMCP-202 Prove WriteWatch.Unwatch: a unit test, the real run_csharp path, a scoped suspend
 - [ ] GMCP-207 Test a failing GetStepUntil call and rule a step that pauses the tree
@@ -124,14 +124,14 @@
 - [ ] GMCP-373 Bridge: a late reply from a lost connection can answer a reused id on the re-attached one
 - [ ] GMCP-375 dropIdle: a call the server stopped waiting for leaves the clip though the game still runs it
 - [ ] GMCP-376 wait_for then.record: its mark does not close the other calls open at its frame
-- [ ] GMCP-388 run.ps1 gdtest: the import stamp never moves, so every run re-imports · release vNext+1
-- [ ] GMCP-391 Property paths: take the ClassDB route on every segment a script member could hide · release vNext+1
-- [ ] GMCP-392 Declare the hidden-desktop itest forms under .gate/desktop.toml's session key · release vNext+1
-- [ ] GMCP-393 run_scratches: a voice still playing at the game's exit can be judged a leak · release vNext+1
-- [ ] GMCP-394 run_scratches: prune old scratch shot folders beside the run logs · release vNext+1
-- [ ] GMCP-395 A met wait whose screenshot fails is a warning, not a refused until · release vNext+1
-- [ ] GMCP-397 Report window and viewport sizes beside take_screenshot, wait_for, frame_control and capture_frames captures · release vNext+1
-- [ ] GMCP-399 run_process: a ready wait ended by its backstop still says 'within N s of load-adjusted time' · release vNext+1
+- [ ] GMCP-388 run.ps1 gdtest: the import stamp never moves, so every run re-imports · release vNext
+- [ ] GMCP-391 Property paths: take the ClassDB route on every segment a script member could hide · release vNext
+- [ ] GMCP-392 Declare the hidden-desktop itest forms under .gate/desktop.toml's session key · release vNext
+- [ ] GMCP-393 run_scratches: a voice still playing at the game's exit can be judged a leak · release vNext
+- [ ] GMCP-394 run_scratches: prune old scratch shot folders beside the run logs · release vNext
+- [ ] GMCP-395 A met wait whose screenshot fails is a warning, not a refused until · release vNext
+- [ ] GMCP-397 Report window and viewport sizes beside take_screenshot, wait_for, frame_control and capture_frames captures · release vNext
+- [ ] GMCP-399 run_process: a ready wait ended by its backstop still says 'within N s of load-adjusted time' · release vNext
 
 ## Docs
 
