@@ -231,18 +231,19 @@ public sealed class ProcessSessionTests : IAsyncDisposable
             _process.RunProcessAsync(_probe.Directory, "unready", cancellationToken: cancellation)
         );
 
-        Assert.StartsWith(
-            "The process 'unready' printed no line matching 'Now listening on' within 2 s of load-adjusted time, so it was stopped; "
-                + "its last output lines:\nstdout:\nticker ",
-            refused.Message,
-            StringComparison.Ordinal
+        // A starved ticker may print nothing before its deadline, so the stdout section is its lines or "(none)".
+        Assert.Matches(
+            @"\AThe process 'unready' printed no line matching 'Now listening on' within 2 s of load-adjusted time, so it was stopped; "
+                + @"its last output lines:\nstdout:\n(\(none\)|ticker \d+(\nticker \d+)*)\nstderr:\n\(none\)\z",
+            refused.Message
         );
-        Assert.EndsWith("\nstderr:\n(none)", refused.Message, StringComparison.Ordinal);
         Assert.Empty(JsonNode.Parse(_project.ListSessions(includeStopped: true))!["sessions"]!.AsArray());
 
-        // The refused session is no longer listed, so there is no session whose stop could end the wait early.
-        int childPid = await WaitForChildPidAsync(null, null);
-        await WaitForGoneAsync(childPid);
+        // The ticker starts its child before its first line, so a ticker stopped earlier has no child; one that started it is ended.
+        if (ReadPid(Path.Combine(_probe.Directory, "ticker-child.pid")) is int childPid)
+        {
+            await WaitForGoneAsync(childPid);
+        }
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
