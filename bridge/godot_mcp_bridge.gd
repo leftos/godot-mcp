@@ -304,6 +304,9 @@ func _join(endpoint: Dictionary, source: String) -> void:
 		if Engine.max_fps == 0:
 			Engine.max_fps = _window.QUIET_MAX_FPS
 	_audio.set_muted(endpoint["mute"])
+	var root: Window = get_tree().root
+	if not root.tree_exiting.is_connected(_on_root_exiting):
+		root.tree_exiting.connect(_on_root_exiting)
 	_gestures.repick_hover = endpoint.get("repickHover", true)
 	if endpoint["shutOutRealGamepads"]:
 		_pads.shut_out_real_pads()
@@ -429,6 +432,20 @@ func _end_connection() -> void:
 		var tree: SceneTree = Engine.get_main_loop() as SceneTree
 		await tree.process_frame
 		_quit(tree)
+
+
+## Sends the watch's timeline as a {type: "watchFinal", timeline} frame without an id as the game
+## quits, the errors logged first: the root's tree_exiting fires after every node, the game's own
+## autoloads too, has exited (scene/main/node.cpp L421-429 in 4.7.2), and the watch takes its last
+## sample there (final_stop). Nothing without a watch or a connection.
+func _on_root_exiting() -> void:
+	if _stream == null or not _hello_sent or _connection_lost:
+		return
+	var timeline: Variant = _watch.final_stop()
+	if timeline == null:
+		return
+	_flush_errors()
+	_send({"type": "watchFinal", "timeline": timeline})
 
 
 ## Ends the game as its own quit does, running its exit work, once every frame save still
@@ -717,7 +734,8 @@ func _handle_capture(id: int, params: Dictionary) -> void:
 	_reply_ok(id, outcome["result"])
 
 
-## Runs a watch request (start, run or stop) on the Watch child, which answers {result} or {error}.
+## Runs a watch request (start, run, stop or peek) on the Watch child, which answers {result} or
+## {error}.
 func _handle_watch(id: int, params: Dictionary) -> void:
 	var outcome: Dictionary = await _watch.handle(params)
 	if outcome.has("error"):

@@ -39,6 +39,18 @@ internal static partial class Log
     [LoggerMessage(Level = LogLevel.Warning, Message = "Dropped a bridge captured frame: handling it failed.")]
     public static partial void CapturedFrameDropped(ILogger logger, Exception exception);
 
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Dropped a {Length}-byte bridge watchFinal frame: no scene's watch awaits one.")]
+    public static partial void DroppedWatchFinalFrame(ILogger logger, int length);
+
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "The game in {ProjectDir} quit but its bridge connection was still open after {GraceMs} ms; closing it."
+    )]
+    public static partial void BridgeCloseGraceExpired(ILogger logger, string projectDir, double graceMs);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Dropped a bridge watchFinal frame: handling it failed.")]
+    public static partial void WatchFinalFrameFailed(ILogger logger, Exception exception);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Dropped a bridge reply's frames {Read} to {Replied}: handling them failed.")]
     public static partial void ReplyFramesDropped(ILogger logger, long read, long replied, Exception exception);
 

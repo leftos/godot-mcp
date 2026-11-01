@@ -15,6 +15,7 @@ public sealed class ScratchLookRunTests : ScratchRunBase
 {
     private const string Green = "ScratchGreen";
     private const string Released = "ScratchUntilReleased";
+    private const string QuitSound = "res://quit_sound/ScratchQuitSound.tscn";
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AWatchArmedBeforeTheFirstStepSeesTheNoteBeforeItAndEveryStepsNote()
@@ -37,6 +38,33 @@ public sealed class ScratchLookRunTests : ScratchRunBase
         int[] frames = [.. points.Select(point => point![0]!.GetValue<int>())];
         Assert.Equal(frames.Order(), frames);
         Assert.Equal(frames.Length, frames.Distinct().Count());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AWatchSeesAVoiceTheGameStartsInItsQuitWork()
+    {
+        // The window ends long before the quit, so the watch is held there and only the bridge's last sample at the exit sees
+        // the voice the scene's _exit_tree starts. The verdict is not asserted: a voice held at exit may be reported leaked
+        // (the fixture script says why). The Node3D's global_position track is out of the tree by the last sample, which must
+        // not read it: a read there logs an ERROR line at the exit.
+        WatchTracks tracks = new(
+            Properties: [new WatchPropertyTrack("Spot", "global_position")],
+            Audio: new WatchAudioTrack(Players: new WatchAudioPlayers())
+        );
+        ScratchWatchOptions watch = new(tracks, new WatchWindow(GameMs: 200));
+        ScratchRunnerTests.CopyFolder(Path.Combine(RepoPaths.InputProbe, "quit_sound"), Path.Combine(_probe.Directory, "quit_sound"));
+
+        JsonObject scene = ScratchRunnerTests.Single(
+            await RunAsync(_probe.Directory, [QuitSound], new ScratchOptions(Watch: watch, Windowed: true), TestContext.Current.CancellationToken)
+        );
+
+        string[] warnings = [.. (scene["warnings"]?.AsArray() ?? []).Select(warning => warning!.GetValue<string>())];
+        Assert.DoesNotContain(warnings, warning => warning.Contains("could not be collected at the game's exit", StringComparison.Ordinal));
+        JsonArray voices = scene["watch"]!["audio"]!["voices"]!.AsArray();
+        Assert.Contains(voices, voice => voice![2]!.GetValue<string>() == "start" && voice[3]!.GetValue<string>() == "/root/QuitSound");
+        Assert.Null(scene["watch"]!["stopped"]);
+        string[] exitLines = [.. (scene["exit"]?["lines"]?.AsArray() ?? []).Select(line => line!.GetValue<string>())];
+        Assert.DoesNotContain(exitLines, line => line.StartsWith("ERROR:", StringComparison.Ordinal));
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

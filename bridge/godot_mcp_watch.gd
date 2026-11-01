@@ -146,11 +146,12 @@ func _tree_group(group: String) -> Array:
 	return (Engine.get_main_loop() as SceneTree).get_nodes_in_group(group)
 
 
-## Runs a watch request, {action: "start" | "run" | "stop", properties, expressions, signals,
-## monitors, audio, frames | gameMs, unit, call, budgetMs, deadlineMs[, backstopMs]}; answers
-## {result} or {error}. start answers after the watch's first frame with {startFrame, tracks[,
-## signals, skipped, monitors, audio, call]}; run answers the timeline when the window ends; stop
-## ends the watch and answers its timeline (_collect).
+## Runs a watch request, {action: "start" | "run" | "stop" | "peek", properties, expressions,
+## signals, monitors, audio, frames | gameMs, unit, call, budgetMs, deadlineMs[, backstopMs]};
+## answers {result} or {error}. start answers after the watch's first frame with {startFrame,
+## tracks[, signals, skipped, monitors, audio, call]}; run answers the timeline when the window
+## ends; stop ends the watch and answers its timeline (_collect); peek answers the timeline so far
+## and leaves the watch as it was (peek).
 func handle(params: Dictionary) -> Dictionary:
 	var action: String = str(params.get("action", ""))
 	match action:
@@ -158,7 +159,9 @@ func handle(params: Dictionary) -> Dictionary:
 			return await _start(params, action == "run", frame_source(params))
 		"stop":
 			return stop()
-	return {"error": "unknown watch action '%s'; use start, stop or run" % action}
+		"peek":
+			return peek()
+	return {"error": "unknown watch action '%s'; use start, stop, peek or run" % action}
 
 
 ## The tree's process_frame, or its physics_frame with unit physics: the signal a watch samples on.
@@ -711,6 +714,38 @@ func stop() -> Dictionary:
 	return {"result": _collect(watch)}
 
 
+## Answers the timeline of the watch that runs or is held so far, keeping it running or held, so a
+## later stop or final_stop still collects it; refused as stop is. A running watch's monitors are
+## summarised only when it ends, so its timeline so far lists none.
+func peek() -> Dictionary:
+	if _watch.is_empty():
+		return {"error": _idle_reason}
+	if _watch["run"]:
+		return {"error": RUN_REFUSAL}
+	return {"result": _timeline(_watch)}
+
+
+## Ends the watch at the game's quit and answers its timeline, letting it go; null when none runs or
+## is held. No frame runs after a quit (the iteration that saw it ends the main loop, main/main.cpp
+## L5062-5063, and SceneTree::finalize takes the root out, scene/main/scene_tree.cpp L855-863, in
+## 4.7.2), so it reads the audio players' voices once more first, at the engine's frame now and the
+## game clock as it stands: a running watch then ends with stopped "quit"; a held one keeps its
+## window and why it ended. Tracks, monitors and bus levels are not read: by the root's
+## tree_exiting every node has left the tree (scene/main/node.cpp L421-455), where a read such as
+## a Node3D's global_position logs an error and gives no true value.
+func final_stop() -> Variant:
+	if _watch.is_empty():
+		return null
+	var watch: Dictionary = _watch
+	if int(watch["start_frame"]) >= 0:
+		var frame: int = int(frame_counter.call(watch["physics"])) - int(watch["start_frame"])
+		var game_ms: int = floori(float(watch["clock"]["seconds"]) * 1000.0)
+		_audio_script.sample(watch["audio"], frame, game_ms, usec_clock.call())
+	if watch["state"] == "running":
+		finish(watch, "quit", Time.get_ticks_msec())
+	return _collect(watch)
+
+
 ## Ends a running watch run as its deadline would, when params is the very Dictionary its request
 ## holds; its run then answers the timeline so far with stopped "deadline". Returns whether it did.
 func cancel(params: Dictionary) -> bool:
@@ -793,12 +828,20 @@ static func _add_events(result: Dictionary, watch: Dictionary) -> void:
 	_add_skipped(result, signals)
 
 
-## The timeline, letting the watch go: {startFrame, frames, gameMs, wallMs, tracks[, events,
-## eventCounts, eventTracks, skipped, skippedTotal, monitors, warning, audio, paused, stopped,
-## call]}; frames and gameMs count the unpaused frames sampled and their game time; the events keys
-## only with signal tracks, monitors only with monitors, audio only with an audio track, warning
-## only when one of the monitors' or the audio's applies.
+## The timeline (_timeline), letting the watch go.
 func _collect(watch: Dictionary) -> Dictionary:
+	var result: Dictionary = _timeline(watch)
+	_release(watch)
+	_idle_reason = COLLECTED
+	return result
+
+
+## The timeline: {startFrame, frames, gameMs, wallMs, tracks[, events, eventCounts, eventTracks,
+## skipped, skippedTotal, monitors, warning, audio, paused, stopped, call]}; frames and gameMs count
+## the unpaused frames sampled and their game time; the events keys only with signal tracks,
+## monitors only with monitors, audio only with an audio track, warning only when one of the
+## monitors' or the audio's applies.
+func _timeline(watch: Dictionary) -> Dictionary:
 	var clock: Dictionary = watch["clock"]
 	var result: Dictionary = {
 		"startFrame": watch["start_frame"],
@@ -819,8 +862,6 @@ func _collect(watch: Dictionary) -> Dictionary:
 		result["stopped"] = watch["stopped"]
 	if watch["run"] and not (watch["call"] as Dictionary).is_empty():
 		result["call"] = watch["call"]
-	_release(watch)
-	_idle_reason = COLLECTED
 	return result
 
 

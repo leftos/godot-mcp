@@ -270,6 +270,78 @@ func test_a_detach_drops_the_watch() -> void:
 	_free(rig)
 
 
+func test_a_peek_answers_the_timeline_so_far_and_leaves_the_watch_running() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	assert_eq(watch.peek()["error"], _watch_script.NONE_STARTED, "none started")
+	watch.begin(_rotation(5), test_frame)
+	var running: Dictionary = watch._watch
+	watch.advance(running, false, 0, 0.25, 0)
+	var peeked: Dictionary = watch.peek()["result"]
+	assert_eq(peeked["frames"], 1, "the frames sampled so far")
+	assert_true(not peeked.has("stopped"), "a peek does not end it")
+	assert_eq(running["state"], "running", "it still runs")
+	assert_true(is_same(watch._watch, running), "it is still the watch")
+	assert_eq(test_frame.get_connections().size(), 1, "it still samples")
+	watch.advance(running, false, 1, 0.25, 10)
+	assert_eq(watch.stop()["result"]["frames"], 2, "a stop collects it after")
+	_free(rig)
+
+
+func test_a_final_stop_ends_a_running_watch_with_quit_reading_no_track_or_monitor() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var count: Array = _count_frames(watch, 10)
+	var params: Dictionary = _rotation(5)
+	params["monitors"] = ["frame_ms"]
+	watch.begin(params, test_frame)
+	var running: Dictionary = watch._watch
+	watch.advance(running, false, 10, 0.25, 0)
+	watch.advance(running, false, 11, 0.25, 10)
+	rig["mover"].rotation = 1.0
+	count[0] = 12
+	var result: Variant = watch.final_stop()
+	assert_true(result is Dictionary, "the timeline")
+	assert_eq(result["stopped"], "quit", "it ended at the quit")
+	assert_eq(result["frames"], 2, "the last sample advances no clock")
+	assert_eq(result["tracks"][0]["points"], [[0, 0, 0.0, 0]], "the last sample reads no track")
+	# frame_ms measures between two frames, so two frames give one sample.
+	assert_eq(result["monitors"][0]["samples"], 1, "nor any monitor")
+	assert_eq(test_frame.get_connections().size(), 0, "its frames are let go")
+	assert_eq(watch.stop()["error"], _watch_script.COLLECTED, "the watch is let go")
+	_free(rig)
+
+
+func test_a_final_stop_keeps_a_held_watchs_window_reading_no_track_or_monitor() -> void:
+	var rig: Dictionary = _rig()
+	var watch: Node = rig["watch"]
+	var count: Array = _count_frames(watch, 10)
+	var params: Dictionary = _rotation(2)
+	params["monitors"] = ["frame_ms"]
+	watch.begin(params, test_frame)
+	var running: Dictionary = watch._watch
+	watch.advance(running, false, 10, 0.25, 0)
+	watch.advance(running, false, 11, 0.25, 10)
+	assert_eq(running["state"], "held", "its window ended")
+	var monitors: Array = watch.peek()["result"]["monitors"].duplicate(true)
+	rig["mover"].rotation = 1.0
+	count[0] = 20
+	var result: Variant = watch.final_stop()
+	assert_true(result is Dictionary, "the timeline")
+	assert_true(not result.has("stopped"), "it still ended at its window's end")
+	assert_eq(result["frames"], 2, "its window's frames")
+	assert_eq(result["gameMs"], 500, "its window's game time")
+	assert_eq(result["tracks"][0]["points"], [[0, 0, 0.0, 0]], "the last sample reads no track")
+	assert_eq(result["monitors"], monitors, "nor any monitor")
+	_free(rig)
+
+
+func test_a_final_stop_with_no_watch_answers_null() -> void:
+	var rig: Dictionary = _rig()
+	assert_eq(rig["watch"].final_stop(), null, "no watch")
+	_free(rig)
+
+
 func test_last_keeps_a_containers_contents_as_sampled() -> void:
 	var rig: Dictionary = _rig()
 	var watch: Node = rig["watch"]

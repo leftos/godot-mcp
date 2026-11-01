@@ -13,12 +13,14 @@ namespace GodotMcp.Server.Wire;
 /// <c>frames: [read, replied]</c> goes first to the handler <see cref="OnReplyFrames"/> sets. Frames without an id whose
 /// type is "errors" carry the game's logged errors and go to the handler <see cref="OnErrors"/> sets, in arrival order,
 /// before any reply read after them; those whose type is "captured" carry a running input capture's events and go to the
-/// handler <see cref="OnCaptured"/> sets. Any other frame without an id is dropped.
+/// handler <see cref="OnCaptured"/> sets; the first whose type is "watchFinal" carries the watch's timeline the bridge sent as
+/// the game quit and goes to the handler <see cref="OnWatchFinal"/> sets. Any other frame without an id is dropped.
 /// </summary>
 internal sealed class BridgeConnection : IAsyncDisposable
 {
     private const string ErrorsFrameType = "errors";
     private const string CapturedFrameType = "captured";
+    private const string WatchFinalFrameType = "watchFinal";
     private static readonly TimeSpan CancelReplyTimeout = TimeSpan.FromSeconds(2);
     private readonly TcpClient _client;
     private readonly NetworkStream _stream;
@@ -33,6 +35,7 @@ internal sealed class BridgeConnection : IAsyncDisposable
     private readonly Task _readLoop;
     private Action<JsonObject>? _errorsHandler;
     private volatile Action<JsonObject>? _capturedHandler;
+    private Action<JsonObject>? _watchFinalHandler;
     private volatile Action<long, long>? _replyFramesHandler;
     private volatile Action? _endedWithCallsInFlightHandler;
     private long _nextId;
@@ -395,6 +398,16 @@ internal sealed class BridgeConnection : IAsyncDisposable
     public void OnCaptured(Action<JsonObject> handler) => _capturedHandler = handler;
 
     /// <summary>
+    /// Sets the handler for the next watchFinal frame, the watch's timeline the bridge sends as the game quits; it is called
+    /// once, on the read loop, and let go. A watchFinal frame with no handler set (none was, or the one set was already called)
+    /// is dropped with a debug log; a handler that throws is logged and loses the frame, never the read loop.
+    /// </summary>
+    public void OnWatchFinal(Action<JsonObject> handler) => Volatile.Write(ref _watchFinalHandler, handler);
+
+    /// <summary>Whether a handler <see cref="OnWatchFinal"/> set still awaits its watchFinal frame.</summary>
+    public bool AwaitsWatchFinal => Volatile.Read(ref _watchFinalHandler) is not null;
+
+    /// <summary>
     /// Sets the handler for each reply's <c>frames: [read, replied]</c>, the process frames its request was read and answered
     /// in, called on the read loop before the reply completes its call, late replies included. A reply without the field (a
     /// bridge older than it), or with one that is not two whole numbers from 0 with read no later than replied, calls nothing;
@@ -545,6 +558,9 @@ internal sealed class BridgeConnection : IAsyncDisposable
             case CapturedFrameType:
                 DeliverCaptured(frame, length);
                 break;
+            case WatchFinalFrameType:
+                DeliverWatchFinal(frame, length);
+                break;
             default:
                 Log.DroppedFrameWithoutId(_logger, length);
                 break;
@@ -567,6 +583,25 @@ internal sealed class BridgeConnection : IAsyncDisposable
         catch (Exception e)
         {
             Log.CapturedFrameDropped(_logger, e);
+        }
+    }
+
+    /// <summary>Hands one watchFinal frame to the handler set for it and lets the handler go; with none set, it is dropped.</summary>
+    private void DeliverWatchFinal(JsonObject frame, int length)
+    {
+        if (Interlocked.Exchange(ref _watchFinalHandler, null) is not { } handler)
+        {
+            Log.DroppedWatchFinalFrame(_logger, length);
+            return;
+        }
+
+        try
+        {
+            handler(frame);
+        }
+        catch (Exception e)
+        {
+            Log.WatchFinalFrameFailed(_logger, e);
         }
     }
 

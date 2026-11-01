@@ -589,6 +589,50 @@ public sealed class BridgeConnectionTests : IDisposable
     }
 
     [Fact]
+    public async Task AWatchFinalFrameAfterAReplyReachesItsHandlerOnceAndALaterOneIsDropped()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        Task<BridgeConnection> accept = AcceptAsync(cancellation);
+        using FakeBridge bridge = await FakeBridge.DialAsync(_listener.Port, Token, ProjectDir, cancellation, answerPings: false);
+        await using BridgeConnection connection = await accept;
+        List<string> finals = [];
+        TaskCompletionSource<string> errorsSeen = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool awaitedBefore = connection.AwaitsWatchFinal;
+        connection.OnWatchFinal(frame => finals.Add(frame["timeline"]!["stopped"]!.GetValue<string>()));
+        bool awaitedOnceSet = connection.AwaitsWatchFinal;
+        connection.OnErrors(frame => errorsSeen.TrySetResult(MessageIn(frame)));
+
+        Task answer = bridge.AnswerOneAsync("pong", cancellation);
+        JsonNode? reply = await connection.SendAsync("ping", null, Wait, cancellation);
+        await answer;
+        await bridge.WriteAsync(
+            new JsonObject
+            {
+                ["type"] = "watchFinal",
+                ["timeline"] = new JsonObject { ["stopped"] = "quit" },
+            },
+            cancellation
+        );
+        await bridge.WriteAsync(
+            new JsonObject
+            {
+                ["type"] = "watchFinal",
+                ["timeline"] = new JsonObject { ["stopped"] = "late" },
+            },
+            cancellation
+        );
+        await bridge.WriteAsync(ErrorsFrame("after"), cancellation);
+        string afterFinals = await errorsSeen.Task.WaitAsync(Wait, cancellation);
+
+        Assert.Equal("pong", reply?["name"]?.GetValue<string>());
+        Assert.Equal(["quit"], finals);
+        Assert.Equal("after", afterFinals);
+        Assert.False(awaitedBefore, "a frame was awaited before a handler was set");
+        Assert.True(awaitedOnceSet, "the handler set awaits no frame");
+        Assert.False(connection.AwaitsWatchFinal, "a frame is still awaited after the handler was called");
+    }
+
+    [Fact]
     public async Task AReplysFramesReachTheirObserverBeforeTheCallReturns()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

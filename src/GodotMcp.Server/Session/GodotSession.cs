@@ -49,6 +49,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     public const string NoneRunning = "No Godot session is running; start one with run_project or attach_project.";
 
     private static readonly TimeSpan ShutdownReplyTimeout = TimeSpan.FromSeconds(2);
+
+    /// <summary>The most a game that quit is given for its bridge connection to close before it is disposed.</summary>
+    private static readonly TimeSpan BridgeCloseGrace = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan KillWait = TimeSpan.FromSeconds(5);
 
     /// <summary>How long a stop waits for the console wrapper to follow a game that quit before ending it.</summary>
@@ -1324,6 +1327,46 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         return await ProcessExit.WaitUntilGoneAsync(watched, teardown) ? null : spent.Plus(GraceSpent.Of(teardown));
     }
 
+    /// <summary>
+    /// Gives a game that quit (<paramref name="quit"/>: it ran and was not killed), while a watchFinal frame is awaited from it
+    /// (<see cref="BridgeConnection.AwaitsWatchFinal"/>), up to <see cref="BridgeCloseGrace"/> on <paramref name="clock"/>,
+    /// load-adjusted, for its bridge connection to close, so the read loop hands on the frame the bridge sent in its exit work
+    /// before the connection is disposed; returns at once otherwise. The system closes a gone game's socket, so a wait normally
+    /// returns at once too.
+    /// </summary>
+    internal static async Task AwaitBridgeCloseAsync(BridgeConnection connection, bool quit, LoadClock clock, ILogger logger, string projectDir)
+    {
+        if (!quit || !connection.AwaitsWatchFinal)
+        {
+            return;
+        }
+
+        using LoadDeadline grace = clock.Start(BridgeCloseGrace);
+        try
+        {
+            await connection.Closed.WaitAsync(grace.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            Log.BridgeCloseGraceExpired(logger, projectDir, BridgeCloseGrace.TotalMilliseconds);
+        }
+    }
+
+    /// <summary>
+    /// Sets the handler for the live run's next watchFinal frame (<see cref="BridgeConnection.OnWatchFinal"/>), the watch's
+    /// timeline the bridge sends as the game quits; false when the run has no open connection.
+    /// </summary>
+    internal bool OnWatchFinal(Action<JsonObject> handler)
+    {
+        if (_run is not { IsRunning: true, Connection: { IsOpen: true } live })
+        {
+            return false;
+        }
+
+        live.OnWatchFinal(handler);
+        return true;
+    }
+
     /// <summary>The attached game's bridge connection's read loop, which completes when the connection closes; null without one.</summary>
     internal Task? AttachedBridgeClosed => _attached?.Closed;
 
@@ -1391,12 +1434,14 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// </returns>
     private async Task<RunEnd> EndRunAsync(GodotRun run)
     {
-        string? warning = WarnIfDebugged(run.IsRunning);
-        RunEnd ended = run.IsRunning
+        bool wasRunning = run.IsRunning;
+        string? warning = WarnIfDebugged(wasRunning);
+        RunEnd ended = wasRunning
             ? await StopRunningAsync(run)
             : new RunEnd(Killed: false, Warning: null, KillReason: null, LeftRunning: [], QuitMs: null);
         if (run.Connection is not null)
         {
+            await AwaitBridgeCloseAsync(run.Connection, quit: wasRunning && !ended.Killed, registry.Clock, _logger, ProjectDir);
             await run.Connection.DisposeAsync();
             run.Connection = null;
         }

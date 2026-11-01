@@ -19,6 +19,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - A set no longer fails on float rounding: `set_node_properties`, `add_node`, `set_property` and `cs_set` take `rotation_degrees` and other 32-bit values.
 - Repeated `run_scratches` runs of one scene keep each game log, named per run and given as the scene's `log`.
+- A `run_scratches` scene's `options.watch` now runs through the game's quit, so a sound played in its exit work is listed.
 
 ## 0.24.0 - 2026-10-30
 

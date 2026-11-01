@@ -321,6 +321,12 @@ internal sealed class ScratchRun
 
     private const string BridgeRefusalPrefix = "The bridge refused 'wait_for': ";
 
+    /// <summary>The warning of a scene whose watch timeline ends at the shutdown, the bridge's final one not having come.</summary>
+    internal const string WatchNotFinal = "options.watch could not be collected at the game's exit; the timeline ends at the shutdown";
+
+    /// <summary>The stopped of a scene's watch timeline that ends at the shutdown (<see cref="WatchNotFinal"/>).</summary>
+    private const string StoppedAtShutdown = "shutdown";
+
     /// <summary>The until wait's parameter, sent by the runner alone, of the game milliseconds the bridge ends it at, not met.</summary>
     private const string LimitGameMsField = "limitGameMs";
 
@@ -374,6 +380,8 @@ internal sealed class ScratchRun
     private bool _hasHidden;
     private bool _watching;
     private JsonObject? _watch;
+    private SessionClock? _watchClock;
+    private JsonObject? _finalWatch;
 
     private ScratchRun(RunContext context, int index)
     {
@@ -878,7 +886,7 @@ internal sealed class ScratchRun
         }
 
         ScratchObservation seen = await WalkAsync(session, cancellationToken);
-        var stopped = (StopResult)await session.StopAsync(CancellationToken.None);
+        StopResult stopped = await StopTakingWatchAsync(session);
         (OutputPage stdout, OutputPage stderr, _) = Output(session);
         return seen with
         {
@@ -886,7 +894,51 @@ internal sealed class ScratchRun
             StopKillReason = stopped.Killed ? stopped.KillReason ?? "the stop had to kill the game" : null,
             StopWarning = stopped.Warning,
             ExitLines = [.. _paceLines, .. Window(stdout, stderr, _mark, EveryLine, _nonce)],
+            Warnings = [.. _warnings],
+            Watch = _watch,
         };
+    }
+
+    /// <summary>
+    /// Stops the scene's game; with a watch peeked at (<see cref="CollectWatchAsync"/>, which set the handler for the bridge's
+    /// watchFinal frame), keeps the watch <see cref="FinalWatch"/> gives once the stop returns.
+    /// </summary>
+    private async Task<StopResult> StopTakingWatchAsync(GodotSession session)
+    {
+        var stopped = (StopResult)await session.StopAsync(CancellationToken.None);
+        if (_watchClock is { } clock)
+        {
+            // The stop disposed the connection, awaiting its read loop, so a frame the bridge sent has been handed on by now; with
+            // no handler set (the game ended before the peek's handler could be), none was.
+            _watch = FinalWatch(_watch, Volatile.Read(ref _finalWatch), clock, _warnings);
+        }
+
+        return stopped;
+    }
+
+    /// <summary>
+    /// The scene's watch once its game has stopped: the timeline of <paramref name="final"/>, the watchFinal frame the bridge
+    /// sent as the game quit, stamped with <paramref name="clock"/> (the game clock read at the shutdown's peek) and shaped as
+    /// the watch tool's stop returns it; without that frame (a game that hung in its quit, a closed connection, a kill, a
+    /// handler that could not be set) the timeline peeked at the shutdown, <paramref name="peeked"/>, its stopped set to
+    /// "shutdown", and <see cref="WatchNotFinal"/> in <paramref name="warnings"/>.
+    /// </summary>
+    internal static JsonObject? FinalWatch(JsonObject? peeked, JsonObject? final, SessionClock clock, ICollection<string> warnings)
+    {
+        if (final?["timeline"] is not JsonObject timeline)
+        {
+            warnings.Add(WatchNotFinal);
+            if (peeked is not null)
+            {
+                peeked["stopped"] = StoppedAtShutdown;
+            }
+
+            return peeked;
+        }
+
+        var copy = (JsonObject)timeline.DeepClone();
+        WatchStamps.Stamp(copy, clock);
+        return WatchTimeline.Shape(copy, WatchTimeline.MaxResultLength);
     }
 
     /// <summary>The request a scene's game launches with: its engine arguments, then its user arguments after --.</summary>
@@ -966,8 +1018,10 @@ internal sealed class ScratchRun
     }
 
     /// <summary>
-    /// Stops the watch the walk started and keeps its timeline, stamped and shaped as the watch tool's stop returns it, within
-    /// <paramref name="timeout"/>; a stop that fails or times out is named in the scene's warnings. Nothing when no watch runs.
+    /// Peeks at the watch the walk started, leaving it running or held for the bridge to finish as the game quits, and keeps
+    /// its timeline so far, stamped and shaped as the watch tool's stop returns it, within <paramref name="timeout"/>, and the
+    /// clock it was stamped with, which the final timeline is stamped with too (<see cref="FinalWatch"/>); a peek that fails or
+    /// times out is named in the scene's warnings. Nothing when no watch runs.
     /// </summary>
     private async Task CollectWatchAsync(GodotSession session, TimeSpan timeout, CancellationToken cancellationToken)
     {
@@ -979,12 +1033,17 @@ internal sealed class ScratchRun
         _watching = false;
         try
         {
-            JsonNode? reply = await session.SendAsync(WatchCommand, new JsonObject { ["action"] = "stop" }, timeout, cancellationToken);
+            JsonNode? reply = await session.SendAsync(WatchCommand, new JsonObject { ["action"] = "peek" }, timeout, cancellationToken);
             JsonObject timeline =
                 reply?.DeepClone() as JsonObject
                 ?? throw new InvalidOperationException($"the bridge's watch reply is not an object: {reply?.ToJsonString() ?? "null"}");
-            WatchStamps.Stamp(timeline, await session.RefreshClockAsync(cancellationToken));
+            SessionClock clock = await session.RefreshClockAsync(cancellationToken);
+            WatchStamps.Stamp(timeline, clock);
             _watch = WatchTimeline.Shape(timeline, WatchTimeline.MaxResultLength);
+            _watchClock = clock;
+            // Set before the shutdown is sent: the bridge sends the frame in its exit work, and the read loop hands it on at once.
+            // A game that ended since the peek takes no handler, and FinalWatch then keeps the peeked timeline with its warning.
+            _ = session.OnWatchFinal(frame => Volatile.Write(ref _finalWatch, frame));
         }
         catch (Exception e)
             when (e is InvalidOperationException or IOException or SessionException or TimeoutException

@@ -1062,7 +1062,8 @@ internal sealed record ScratchOptions(
         string? Only = null,
     [property: Description(
         "{tracks, window?, options?}, as the watch tool takes them, armed on every scene's session after its steps are read and "
-            + "before its first step plays, and collected after the wait after its last step: the scene's result gains watch, the "
+            + "before its first step plays, and collected through the game's quit (its exit work's audio voices included; stopped "
+            + "is quit, or shutdown with a warning when the final timeline does not come): the scene's result gains watch, the "
             + "timeline watch stop returns. window left out is {gameMs}: the played steps' paces and the wait after the last, in "
             + "game ms, at most 120000; a walk that outlasts the window ends the timeline early, as its stopped says. "
             + "options.call is refused: the runner plays the steps. A watch that does not start, as on a track naming a node the "

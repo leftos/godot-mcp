@@ -1,9 +1,13 @@
+# gdlint: disable=max-public-methods
 extends "res://gd_test.gd"
 ## The bridge's pure helpers (bridge/godot_mcp_bridge.gd), on an instance never added to the
 ## tree. Constructing it runs _init, whose endpoint lookup finds no GODOT_MCP_* variables and no
 ## attach file here, so it registers no logger; _ready, which frees a bridge that is off, never
 ## runs outside the tree.
 # gdlint: disable=private-method-call
+
+## Stands in for the tree's process_frame as a watch's frame signal, so no frame samples it.
+signal test_frame
 
 ## The root meta a counting script (_counting_script) counts its frames in.
 const COUNTER := "godot_mcp_test_counter"
@@ -322,6 +326,33 @@ func test_an_attached_or_joined_game_never_quits_on_a_lost_connection() -> void:
 		_free_bridge(bridge)
 
 
+func test_the_root_exiting_sends_the_watch_timeline_as_one_watch_final_frame() -> void:
+	var bridge: Node = _recording_bridge()
+	bridge._stream = StreamPeerTCP.new()
+	bridge._hello_sent = true
+	bridge.records_flushes = true
+	bridge._on_root_exiting()
+	assert_eq(bridge.sent.size(), 0, "nothing without a watch")
+	assert_eq(bridge._watch.begin({"frames": 5}, test_frame), "", "a watch begins")
+	bridge._connection_lost = true
+	bridge._on_root_exiting()
+	assert_eq(bridge.sent.size(), 0, "nothing once the connection is lost")
+	bridge._connection_lost = false
+	bridge._on_root_exiting()
+	var types: Array = bridge.sent.map(func(message: Dictionary) -> Variant: return message["type"])
+	assert_eq(types, ["errors", "watchFinal"], "the errors flushed, then one watchFinal frame")
+	var frame: Dictionary = bridge.sent[-1] if not bridge.sent.is_empty() else {}
+	assert_eq(frame.get("type"), "watchFinal", "a watchFinal frame")
+	assert_true(not frame.has("id"), "without an id")
+	var timeline: Variant = frame.get("timeline")
+	assert_true(timeline is Dictionary, "carrying the timeline: %s" % [frame])
+	if timeline is Dictionary:
+		assert_eq(timeline.get("stopped"), "quit", "ended at the quit")
+	bridge._on_root_exiting()
+	assert_eq(bridge.sent.size(), 2, "the watch went with the frame")
+	_free_bridge(bridge)
+
+
 func test_a_cancelled_call_method_restores_and_never_replies() -> void:
 	var bridge: Node = _recording_bridge()
 	# An Inspect child whose call_method runs a method that speeds time up and awaits release.
@@ -404,6 +435,14 @@ func _recording_bridge() -> Node:
 					"var sent: Array = []",
 					"var quits: int = 0",
 					"var frame_count: int = 0",
+					"var records_flushes: bool = false",
+					"",
+					"",
+					"func _flush_errors() -> void:",
+					"\tif records_flushes:",
+					"\t\tsent.append({'type': 'errors'})",
+					"\t\treturn",
+					"\tsuper()",
 					"",
 					"",
 					"func _ready() -> void:",
