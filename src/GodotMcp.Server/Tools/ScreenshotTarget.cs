@@ -179,19 +179,54 @@ internal static class ScreenshotTarget
     /// </exception>
     internal static void Save(string capturePath, OutputTarget target, bool overwrite)
     {
-        string folder = CaptureFolder(target.Places.Project);
+        CheckInCaptureFolder(capturePath, target.Places.Project);
+        string destination = OutputDestination.Check(target.Places, target.Requested, Extension).FullPath;
+        CopyCapture(capturePath, target.Places, destination, overwrite);
+    }
+
+    /// <summary>
+    /// Copies the capture, checked as <see cref="Save"/> checks it, to <paramref name="destination"/>, a file the server names
+    /// under the project's .godot/godot-mcp folder (a scratch run's shot), creating its folders and replacing a file there.
+    /// </summary>
+    /// <exception cref="McpException">
+    /// The capture is not under the session's screenshots folder, by its name or by the file its open handle reaches, or it
+    /// has more than one name; or the folder or the copy failed.
+    /// </exception>
+    internal static void SaveToRunFolder(string capturePath, string destination, string projectDir, ILogger logger)
+    {
+        CheckInCaptureFolder(capturePath, projectDir);
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new McpException($"saving the screenshot to {destination} failed: {e.Message}", e);
+        }
+
+        CopyCapture(capturePath, OutputPlaces.Find(projectDir, logger), destination, overwrite: true);
+    }
+
+    /// <exception cref="McpException">The capture is not under the project's screenshots folder by its name.</exception>
+    private static void CheckInCaptureFolder(string capturePath, string projectDir)
+    {
+        string folder = CaptureFolder(projectDir);
         if (HeadlessTools.IsOutside(Path.GetRelativePath(folder, Path.GetFullPath(capturePath))))
         {
             throw new McpException($"the capture {capturePath} is not under the session's screenshots folder {folder}; it is not copied");
         }
+    }
 
-        string destination = OutputDestination.Check(target.Places, target.Requested, Extension).FullPath;
+    /// <summary>Copies the capture to <paramref name="destination"/>, once its open handle is seen to be the session's own.</summary>
+    /// <exception cref="McpException">The capture is not the session's own, or the copy failed.</exception>
+    private static void CopyCapture(string capturePath, OutputPlaces places, string destination, bool overwrite)
+    {
         try
         {
             using FileStream capture = new(capturePath, FileMode.Open, FileAccess.Read, FileShare.Read);
             if (OperatingSystem.IsWindows())
             {
-                CheckCaptureIsOurs(capture, capturePath, target.Places);
+                CheckCaptureIsOurs(capture, capturePath, places);
             }
 
             OutputDestination.CopyReplacing(capture, destination, overwrite);

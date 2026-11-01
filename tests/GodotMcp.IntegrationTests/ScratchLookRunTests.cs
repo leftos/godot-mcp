@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Tools;
@@ -111,6 +112,38 @@ public sealed class ScratchLookRunTests : ScratchRunBase
         Assert.NotEmpty(shot);
         Assert.Equal("done", done["state"]!.GetValue<string>());
         Assert.True(done["result"]!["passed"]!.GetValue<bool>(), done.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AWindowedRunTakesAShotAtEachCapturedStep()
+    {
+        // ScratchUntilReleased's first step has an until, met at once since its release file is written first; its second is paced.
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        foreach (string file in new[] { "scratch_until_released.gd", $"{Released}.tscn" })
+        {
+            File.Copy(Path.Combine(RepoPaths.InputProbe, "scratch_until", file), Path.Combine(_probe.Directory, "scratch", file));
+        }
+
+        Directory.CreateDirectory(Path.Combine(_probe.Directory, ".godot"));
+        await File.WriteAllTextAsync(Path.Combine(_probe.Directory, ".godot", "scratch_released.marker"), "released", cancellation);
+        ScratchCaptureOptions capture = new(Steps: JsonSerializer.SerializeToElement(new object[] { 0, "done" }), Screenshot: true);
+
+        JsonObject scene = ScratchRunnerTests.Single(
+            await RunAsync(_probe.Directory, [Released], new ScratchOptions(Windowed: true, Capture: capture), cancellation)
+        );
+
+        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
+        Assert.Null(scene["warnings"]);
+        string runId = Path.GetFileNameWithoutExtension(scene["log"]!.GetValue<string>())[^"yyyyMMddTHHmmss-xxxx".Length..];
+        string folder = Path.Combine(_probe.Directory, ".godot", "godot-mcp", $"scratch-{runId}", Released);
+        JsonArray details = scene["details"]!.AsArray();
+        Assert.Equal(2, details.Count);
+        foreach ((JsonNode? step, string name) in details.Zip(["0-hold.png", "1-done.png"]))
+        {
+            string shot = step!["screenshot"]!.GetValue<string>();
+            Assert.Equal(Path.GetFullPath(Path.Combine(folder, name)), Path.GetFullPath(shot));
+            Assert.True(File.Exists(shot), shot);
+        }
     }
 
     /// <summary>Reads the run's status until <paramref name="holds"/>, failing once the run ends without it.</summary>

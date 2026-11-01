@@ -343,6 +343,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         CheckParallel(options.Parallel);
         CheckOnly(options);
         CheckWatch(options.Watch);
+        ScratchCapture? capture = PlanCapture(options);
         ScratchDetails details = ParseDetails(options.Details);
         bool prepare = RunOptions.ParsePrepare(options.Prepare);
         string prefix = SessionPrefix(options.Session, projectDir);
@@ -372,8 +373,71 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             TimeScale = options.TimeScale ?? 1,
             Watch = options.Watch,
             Windowed = options.Windowed ?? false,
+            Capture = capture,
         };
     }
+
+    /// <summary>options.capture as the plan holds it: the steps to shoot, null for every played step; null when left out.</summary>
+    /// <exception cref="McpException">
+    /// options.capture is given without options.windowed true, its screenshot is not true, or its steps are not a list of step
+    /// indices and names.
+    /// </exception>
+    private static ScratchCapture? PlanCapture(ScratchOptions options)
+    {
+        if (options.Capture is not { } capture)
+        {
+            return null;
+        }
+
+        if (options.Windowed is not true)
+        {
+            throw new McpException("options.capture needs options.windowed: true, since a headless scene draws no frames");
+        }
+
+        if (capture.Screenshot is not true)
+        {
+            throw new McpException("options.capture.screenshot must be true");
+        }
+
+        return new ScratchCapture(CaptureTokens(capture.Steps));
+    }
+
+    /// <summary>options.capture.steps as tokens, each step once; null when left out.</summary>
+    /// <exception cref="McpException">The steps are not an array, the array is empty, or a token is no step index or name.</exception>
+    private static ScratchStepToken[]? CaptureTokens(JsonElement? steps)
+    {
+        if (steps is not { ValueKind: not (JsonValueKind.Null or JsonValueKind.Undefined) } given)
+        {
+            return null;
+        }
+
+        if (given.ValueKind != JsonValueKind.Array)
+        {
+            throw new McpException($"options.capture.steps is a {Kind(given)}; it must be an array of step indices or names.");
+        }
+
+        ScratchStepToken[] tokens = [.. given.EnumerateArray().Select(CaptureToken).Distinct()];
+        return tokens.Length > 0
+            ? tokens
+            : throw new McpException(
+                "options.capture.steps is empty; list the steps to shoot by index or name, or leave it out to shoot every played step."
+            );
+    }
+
+    /// <exception cref="McpException">The token is neither a whole number from 0 up nor a string.</exception>
+    private static ScratchStepToken CaptureToken(JsonElement element) =>
+        element.ValueKind switch
+        {
+            JsonValueKind.Number when element.TryGetInt32(out int index) && index >= 0 => new ScratchStepToken(
+                index.ToString(CultureInfo.InvariantCulture),
+                IsNumber: true
+            ),
+            JsonValueKind.String => new ScratchStepToken(element.GetString()!, IsNumber: false),
+            _ => throw new McpException(
+                $"options.capture.steps token {element.GetRawText()} is not a step; a token is a step index, a whole number from 0 up, "
+                    + "or a step's exact name."
+            ),
+        };
 
     /// <summary>Checks options.watch as the watch tool's start checks its arguments, a window left out standing for any.</summary>
     /// <exception cref="McpException">
@@ -1075,7 +1139,24 @@ internal sealed record ScratchOptions(
         "true plays each scene in a hidden, off-screen window instead of headless, so screenshots, capture_frames and watch work "
             + "on its session (name it in a background run); paces, untils and verdicts are the same."
     )]
-        bool? Windowed = null
+        bool? Windowed = null,
+    [property: Description(
+        "{steps?, screenshot: true}: a screenshot at each named step's moment, for a windowed run only (refused without "
+            + "options.windowed: true, since a headless scene draws no frames). steps lists step indices or exact names, every "
+            + "played step when left out; a step its scene lacks turns the scene red before any step plays. A step with a "
+            + "GetStepUntil condition is shot on the frame its until is met, a paced step at the end of its pace; the run goes "
+            + "on after each shot. Each shot is <project>/.godot/godot-mcp/scratch-<runId>/<scene>/<index>-<step>.png (the step "
+            + "name made file-safe), listed as screenshot, its absolute path, in the step's details entry, which a scene with a "
+            + "shot always lists; no preview image. A shot that fails is a warning, never a red step."
+    )]
+        ScratchCaptureOptions? Capture = null
+);
+
+/// <summary>run_scratches' options.capture: the steps a windowed run takes a screenshot at.</summary>
+internal sealed record ScratchCaptureOptions(
+    [property: Description("Step indices or exact names to shoot, each a whole number from 0 up or a string; every played step when left out.")]
+        JsonElement? Steps = null,
+    [property: Description("Must be true: a screenshot at each step's moment.")] bool? Screenshot = null
 );
 
 /// <summary>run_scratches' options.watch: the watch every scene's session runs over its steps, as the watch tool's start takes it.</summary>

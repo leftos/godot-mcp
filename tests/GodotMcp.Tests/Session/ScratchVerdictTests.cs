@@ -2060,6 +2060,37 @@ public sealed class ScratchVerdictTests
         Assert.Equal(2, run["scenes"]![1]!["details"]!.AsArray().Count);
     }
 
+    [Fact]
+    public void AStepsScreenshotIsListedInItsDetailsWhichAGreenSceneWithAShotAlwaysLists()
+    {
+        const string Shot = @"C:\game\.godot\godot-mcp\scratch-20261101T000000-abcd\Scene\1-step1.png";
+        ScratchObservation seen = Seen(Step(0), Step(1) with { Screenshot = Shot });
+
+        ScratchSceneResult result = ScratchVerdict.Judge(seen, Plain);
+        JsonArray compact = Json(ScratchVerdict.Judge(seen, Plain with { Details = ScratchDetails.Compact }))["details"]!.AsArray();
+
+        Assert.Equal(ScratchVerdict.Green, result.Verdict);
+        JsonArray details = Json(result)["details"]!.AsArray();
+        Assert.False(details[0]!.AsObject().ContainsKey("screenshot"), details[0]!.ToJsonString());
+        Assert.Equal(Shot, details[1]!["screenshot"]!.GetValue<string>());
+        Assert.Equal(Shot, compact[1]!["screenshot"]!.GetValue<string>());
+        Assert.False(Json(ScratchVerdict.Judge(Seen(Step(0), Step(1)), Plain)).ContainsKey("details"));
+    }
+
+    [Fact]
+    public void AShotThatFailedIsAWarningOnTheSceneAndTheStepStaysGreen()
+    {
+        ScratchStep warned = Step(1) with { Warning = ScratchVerdict.ShotFailed("step1", "the frame was not drawn") };
+
+        ScratchSceneResult result = ScratchVerdict.Judge(Seen(Step(0), warned) with { Warnings = ["a stale key"] }, Plain);
+
+        Assert.Equal(ScratchVerdict.Green, result.Verdict);
+        Assert.Equal(
+            ["a stale key", "the screenshot at step step1 failed: the frame was not drawn"],
+            Json(result)["warnings"]!.AsArray().Select(item => item!.GetValue<string>())
+        );
+    }
+
     private static JsonObject RunJson(params ScratchSceneResult[] scenes) =>
         JsonSerializer.SerializeToNode(ScratchVerdict.Summarise(scenes, PrepResult.Skipped, timeScale: 1), ToolJson.Options)!.AsObject();
 

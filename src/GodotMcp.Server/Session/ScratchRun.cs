@@ -149,7 +149,13 @@ internal sealed record ScratchPlan(
 
     /// <summary>options.windowed: the scenes' games launch in a hidden, off-screen window instead of headless.</summary>
     public bool Windowed { get; init; }
+
+    /// <summary>options.capture, checked: the steps each scene takes a screenshot at; null takes none.</summary>
+    public ScratchCapture? Capture { get; init; }
 }
+
+/// <summary>options.capture as a plan holds it: the tokens naming the steps to shoot, by index or name; null shoots every played step.</summary>
+internal sealed record ScratchCapture(IReadOnlyList<ScratchStepToken>? Steps);
 
 /// <summary>
 /// A scene's step paces by index, the steps a run plays of them, ascending, the time scale its game runs at and its exit hold:
@@ -338,6 +344,8 @@ internal sealed class ScratchRun
     private const string PaceKeyLabel = "pace.steps key";
     private const string SetupLabel = "setup";
     private const string StepsTokenLabel = "options.steps token";
+    private const string CaptureTokenLabel = "options.capture.steps token";
+    private const int MaxShotNameChars = 64;
 
     private const string CurrentSceneScript =
         "extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\tvar scene: Node = scene_tree.current_scene\n"
@@ -360,6 +368,7 @@ internal sealed class ScratchRun
     private readonly string _nonce = Guid.NewGuid().ToString("N")[..12];
     private readonly List<string> _names = [];
     private readonly HashSet<int> _hidden = [];
+    private HashSet<int> _shots = [];
     private readonly List<ScratchStep> _steps = [];
     private ScratchWalk _walk = ScratchWalk.None;
     private int[]? _selected;
@@ -584,6 +593,40 @@ internal sealed class ScratchRun
         return ([.. played], null);
     }
 
+    /// <summary>
+    /// The steps <paramref name="capture"/> shoots among those <paramref name="names"/> lists, ascending, each once, null for every
+    /// played step; or why a token names no step, as an options.steps token naming none is refused. A number is an index; a string
+    /// is an index spelled plainly, else a step's exact name.
+    /// </summary>
+    internal static (int[]? Steps, string? Error) CaptureSteps(ScratchCapture capture, string scene, ScratchStepNames names)
+    {
+        if (capture.Steps is null)
+        {
+            return (null, null);
+        }
+
+        SortedSet<int> steps = [];
+        foreach (ScratchStepToken token in capture.Steps)
+        {
+            (int step, string? error) = token.IsNumber ? CaptureIndex(token, scene, names) : StepOf(token.Text, CaptureTokenLabel, scene, names);
+            if (error is not null)
+            {
+                return (null, error);
+            }
+
+            steps.Add(step);
+        }
+
+        return ([.. steps], null);
+    }
+
+    /// <summary>A number token of options.capture.steps as its step, or why the scene has no step of that index.</summary>
+    private static (int Step, string? Error) CaptureIndex(ScratchStepToken token, string scene, ScratchStepNames names)
+    {
+        int index = int.Parse(token.Text, NumberStyles.None, CultureInfo.InvariantCulture);
+        return index < names.Count ? (index, null) : (-1, NoStep($"{CaptureTokenLabel} {token}", scene, names));
+    }
+
     private static (IEnumerable<int> Steps, string? Error) TokenSteps(ScratchStepToken token, string scene, ScratchStepNames names)
     {
         if (token.IsNumber)
@@ -677,10 +720,11 @@ internal sealed class ScratchRun
     /// <summary>
     /// The bridge's wait_for parameters for step <paramref name="index"/>'s GetStepUntil answer: its condition checked as wait_for
     /// checks one, <paramref name="paceMs"/> its timeoutMs and its limitGameMs (the game time the bridge ends the wait at, not
-    /// met, a parameter only the runner sends), and PlayStep(index) on <paramref name="rootPath"/> its call. Neither parameters
-    /// nor an error for null or an empty dictionary, a paced step; an error for any other answer, or a condition wait_for refuses.
+    /// met, a parameter only the runner sends), PlayStep(index) on <paramref name="play"/>'s root its call, and options.screenshot
+    /// when <paramref name="play"/> captures the step, so the met frame is shot. Neither parameters nor an error for null or an
+    /// empty dictionary, a paced step; an error for any other answer, or a condition wait_for refuses.
     /// </summary>
-    internal static (JsonObject? Wait, string? Error) UntilWait(JsonNode? answer, int index, string name, int paceMs, string rootPath)
+    internal static (JsonObject? Wait, string? Error) UntilWait(JsonNode? answer, int index, string name, int paceMs, UntilPlay play)
     {
         if (answer is null || answer is JsonObject { Count: 0 })
         {
@@ -695,8 +739,9 @@ internal sealed class ScratchRun
         try
         {
             WaitCondition until = condition.Deserialize<WaitCondition>(ToolJson.Options)!;
-            MethodCall play = new(rootPath, "PlayStep", JsonSerializer.SerializeToElement(new[] { index }));
-            JsonObject wait = RuntimeTools.BuildWaitParameters(until, paceMs, new WaitOptions(Call: play));
+            MethodCall call = new(play.RootPath, "PlayStep", JsonSerializer.SerializeToElement(new[] { index }));
+            WaitOptions options = new(Screenshot: play.Screenshot ? true : null, Call: call);
+            JsonObject wait = RuntimeTools.BuildWaitParameters(until, paceMs, options);
             wait[LimitGameMsField] = paceMs;
             return (wait, null);
         }
@@ -704,6 +749,43 @@ internal sealed class ScratchRun
         {
             return (null, UntilRefused(index, name, e.Message));
         }
+    }
+
+    /// <summary>How a step's until plays it: PlayStep on the scene's root, and whether the met frame is shot (options.capture).</summary>
+    internal readonly record struct UntilPlay(string RootPath, bool Screenshot);
+
+    /// <summary>
+    /// Where a step's shot is kept: &lt;logFolder&gt;/scratch-&lt;runId&gt;/&lt;scene&gt;/&lt;index&gt;-&lt;step&gt;.png, the scene and
+    /// step names made file-safe (<see cref="FileSafe"/>).
+    /// </summary>
+    internal static string ShotPath(string logFolder, string runId, string scene, int index, string step) =>
+        Path.Combine(logFolder, $"scratch-{runId}", FileSafe(scene), string.Create(CultureInfo.InvariantCulture, $"{index}-{FileSafe(step)}.png"));
+
+    /// <summary>
+    /// A name as one safe path part: each character other than a letter, a digit, '-' or '_' becomes '_', cut to
+    /// <see cref="MaxShotNameChars"/>; "step" for an empty name.
+    /// </summary>
+    internal static string FileSafe(string name)
+    {
+        string safe = new([.. name.Take(MaxShotNameChars).Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '_')]);
+        return safe.Length == 0 ? "step" : safe;
+    }
+
+    /// <summary>
+    /// The capture an until's wait_for reply names as screenshot.path, or why there is none: the bridge's warning (a frame not
+    /// drawn, a headless game), else that the reply carried no screenshot.
+    /// </summary>
+    internal static (string? Capture, string? Reason) UntilShot(JsonNode? reply)
+    {
+        if (reply?["screenshot"]?["path"] is JsonValue path && path.TryGetValue(out string? capture))
+        {
+            return (capture, null);
+        }
+
+        return (
+            null,
+            reply?["warning"] is JsonValue warning && warning.TryGetValue(out string? text) ? text : "the until's reply carried no screenshot"
+        );
     }
 
     /// <summary>Why a step failed when its until was not met within its pace.</summary>
@@ -1149,9 +1231,10 @@ internal sealed class ScratchRun
 
         (ScratchPace[] paces, string? paceError, IReadOnlyList<string> paceWarnings) = StepPaces(_scene, NamedSteps);
         _warnings.AddRange(paceWarnings);
-        if (paceError is not null)
+        string? captureError = paceError ?? ResolveCapture();
+        if (captureError is not null)
         {
-            return paceError;
+            return captureError;
         }
 
         IReadOnlyList<ScratchStepToken>? tokens = _plan.StepsFor(_scene.Name);
@@ -1180,6 +1263,19 @@ internal sealed class ScratchRun
 
     /// <summary>The scene's step names and the steps its root marks hidden, as read so far.</summary>
     private ScratchStepNames NamedSteps => new(_names, _hidden);
+
+    /// <summary>Resolves options.capture's steps against the scene's names into the steps to shoot; null, or why a token names no step.</summary>
+    private string? ResolveCapture()
+    {
+        if (_plan.Capture is not { } capture)
+        {
+            return null;
+        }
+
+        (int[]? steps, string? error) = CaptureSteps(capture, _scene.Name, NamedSteps);
+        _shots = [.. steps ?? Enumerable.Range(0, _names.Count)];
+        return error;
+    }
 
     /// <summary>
     /// Reads every step's name and, for a root that has GetStepHidden, whether it marks the step hidden; null, or why a call
@@ -1305,6 +1401,7 @@ internal sealed class ScratchRun
             untilError is not null ? new StepPlay(untilError, null, null)
             : wait is null ? new StepPlay(await PlayPacedAsync(session, index, gameMs, limit), null, null)
             : await PlayInsideUntilAsync(session, index, wait, gameMs, limit);
+        (string? screenshot, string? shotWarning) = await ShotAsync(session, index, played, limit);
         (JsonNode? status, string? statusError) = await CallAsync(session, "GetStatus", [], limit);
         (List<string> lines, long dropped, string? markerError) = await CloseWindowAsync(session, $"step {index}", limit);
         IReadOnlyList<ErrorEntry> errors = TakeErrors(session.Errors, ref _feedMark);
@@ -1320,7 +1417,56 @@ internal sealed class ScratchRun
             Errors = errors,
             Lines = lines,
             Dropped = dropped,
+            Screenshot = screenshot,
+            Warning = shotWarning,
         };
+    }
+
+    /// <summary>
+    /// The shot of a step options.capture names whose play went through: an until's met frame, which its wait_for captured, or
+    /// for a paced step the frame after its pace, taken as take_screenshot takes one; copied to the run's folder
+    /// (<see cref="ShotPath"/>). Its path, or the step's warning when it failed; neither for a step not shot.
+    /// </summary>
+    private async Task<(string? Path, string? Warning)> ShotAsync(GodotSession session, int index, StepPlay played, CancellationToken limit)
+    {
+        if (!_shots.Contains(index) || played.Error is not null || played.BridgeError is not null)
+        {
+            return (null, null);
+        }
+
+        (string? capture, string? reason) = played.Until is null ? await PacedShotAsync(session, limit) : UntilShot(played.Reply);
+        if (capture is null)
+        {
+            return (null, ScratchVerdict.ShotFailed(_names[index], reason!));
+        }
+
+        string destination = ShotPath(ProjectPrep.LogFolder(_plan.ProjectDir), _runId, _scene.Name, index, _names[index]);
+        try
+        {
+            ScreenshotTarget.SaveToRunFolder(capture, destination, _plan.ProjectDir, _registry.Logger);
+            return (destination, null);
+        }
+        catch (McpException e)
+        {
+            return (null, ScratchVerdict.ShotFailed(_names[index], ScreenshotTarget.ReasonOf(e)));
+        }
+    }
+
+    /// <summary>The bridge's screenshot of the next drawn frame, as take_screenshot asks for it: the capture's path, or why it failed.</summary>
+    private async Task<(string? Capture, string? Reason)> PacedShotAsync(GodotSession session, CancellationToken limit)
+    {
+        JsonObject parameters = RuntimeTools.BuildScreenshotParameters(ScreenshotMode.PathOnly, null, 0);
+        try
+        {
+            JsonNode? reply = await session.SendAsync("screenshot", parameters, _bounds.Call + ReplyAllowance, limit, _bounds.Call);
+            return reply?["path"] is JsonValue path && path.TryGetValue(out string? capture)
+                ? (capture, null)
+                : (null, $"the screenshot reply names no file: {reply?.ToJsonString() ?? "null"}");
+        }
+        catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
+        {
+            return (null, e.Message);
+        }
     }
 
     /// <summary>PlayStep, then a wait of the step's pace in game time: null, or why the call or the wait failed.</summary>
@@ -1342,7 +1488,7 @@ internal sealed class ScratchRun
             return (null, error);
         }
 
-        (JsonObject? wait, string? untilError) = UntilWait(answer, index, _names[index], gameMs, _rootPath);
+        (JsonObject? wait, string? untilError) = UntilWait(answer, index, _names[index], gameMs, new UntilPlay(_rootPath, _shots.Contains(index)));
         RuntimeTools.AddConditionStateHelper(wait, _csharp, session.ProjectDir);
         return (wait, untilError);
     }
@@ -1357,9 +1503,10 @@ internal sealed class ScratchRun
         TimeSpan release = _bounds.Release(gameMs, _scene.TimeScale);
         try
         {
-            ScratchUntil until = UntilFigures(await session.SendAsync("wait_for", wait, release + ReplyAllowance, limit, release));
+            JsonNode? reply = await session.SendAsync("wait_for", wait, release + ReplyAllowance, limit, release);
+            ScratchUntil until = UntilFigures(reply);
             string? notMet = until.Met ? null : UntilMissed(index, _names[index], until, _walk.Paces[index].Seconds, release.TotalSeconds);
-            return new StepPlay(notMet, null, until);
+            return new StepPlay(notMet, null, until) { Reply = reply };
         }
         catch (Exception e) when (e is InvalidOperationException or IOException or SessionException)
         {
@@ -1368,8 +1515,14 @@ internal sealed class ScratchRun
         }
     }
 
-    /// <summary>How a step's play went: why it failed, or the bridge's refusal of its until's wait, and the until's figures.</summary>
-    private readonly record struct StepPlay(string? Error, string? BridgeError, ScratchUntil? Until);
+    /// <summary>
+    /// How a step's play went: why it failed, or the bridge's refusal of its until's wait, the until's figures, and its wait_for
+    /// reply, which holds the met frame's screenshot for a captured step.
+    /// </summary>
+    private readonly record struct StepPlay(string? Error, string? BridgeError, ScratchUntil? Until)
+    {
+        public JsonNode? Reply { get; init; }
+    }
 
     /// <summary>
     /// The wait after the last step, the exit hold else that step's pace, the longer of its game time and its wall time: an
