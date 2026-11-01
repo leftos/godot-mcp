@@ -87,6 +87,10 @@ internal sealed record ScratchSceneStatus(string Scene, string State)
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Verdict { get; init; }
 
+    /// <summary>The file holding the scene's game output, as its verdict reports it; absent until the scene has done one.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Log { get; init; }
+
     /// <summary>The time scale the scene's game runs at when it differs from the run's (its profile pace has "timeScale": 1); else null.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public double? TimeScale { get; init; }
@@ -376,7 +380,7 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
     {
         try
         {
-            Finish(await ScratchRun.RunAsync(registry, csharp, plan, this, Token));
+            Finish(await ScratchRun.RunAsync(registry, csharp, plan, this, RunId, Token));
         }
         catch (Exception e)
         {
@@ -523,6 +527,7 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
 
                 state.State = SceneDone;
                 state.Verdict = result.Verdict;
+                state.Log = result.Log;
                 state.Elapsed = result.Seconds;
                 return $"scene {Clean(state.Name)} {result.Verdict} in {result.Seconds.ToString("0.#", CultureInfo.InvariantCulture)} s";
             }
@@ -844,6 +849,9 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
 
         public string? Verdict { get; set; }
 
+        /// <summary>The file holding the scene's game output, once its verdict reports one; else null.</summary>
+        public string? Log { get; set; }
+
         public void Play(DateTimeOffset now)
         {
             Clear();
@@ -862,6 +870,7 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
             Elapsed = null;
             Remaining = null;
             Verdict = null;
+            Log = null;
         }
 
         public double? ElapsedAt(DateTimeOffset now) => Started is { } started ? Math.Round((now - started).TotalSeconds, 1) : Elapsed;
@@ -875,6 +884,7 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
                 ElapsedSeconds = State == Playing ? ElapsedAt(now) : Elapsed,
                 RemainingSecondsAtMost = Remaining,
                 Verdict = Verdict,
+                Log = Log,
                 TimeScale = TimeScale,
             };
     }

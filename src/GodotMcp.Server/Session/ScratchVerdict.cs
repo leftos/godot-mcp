@@ -46,6 +46,8 @@ internal sealed record ScratchStep(int Index, string Name, int GameMs)
 /// </summary>
 internal sealed record ScratchObservation(string Scene, string Session, double Pace, int Total)
 {
+    public string? Log { get; init; }
+
     public IReadOnlyList<string> LaunchLines { get; init; } = [];
 
     /// <summary>The error feed's entries from the launch to the first step; an error among them fails the scene at the boot.</summary>
@@ -288,6 +290,10 @@ internal sealed record ScratchExit(int? Code)
 /// <summary>One scene's verdict and what it rests on.</summary>
 internal sealed record ScratchSceneResult(string Scene, string Verdict, ScratchStepCount Steps, double Pace, double Seconds, string Session)
 {
+    /// <summary>The file holding the scene's game output, both streams interleaved; absent when no log file could be opened.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Log { get; init; }
+
     /// <summary>
     /// The indices options.steps selected and the scene played from, ascending; null when the call gave no steps or the scene
     /// was refused before its steps were resolved (a pace.steps key naming two steps or an options.steps token naming none included).
@@ -489,6 +495,7 @@ internal static partial class ScratchVerdict
             StepList = StepList(seen),
             TimeScale = seen.TimeScale,
             ExitHold = seen.ExitHold,
+            Log = seen.Log,
             PaceReason = shown is Red or Killed ? PaceReasonAt(seen, failedAt, rules.PaceReason) : null,
             FailedAt = failedAt,
             Failures = Failures(seen, rules.Patterns, rules.Details == ScratchDetails.Full ? MaxCopyChars : MaxFailureIndexChars),

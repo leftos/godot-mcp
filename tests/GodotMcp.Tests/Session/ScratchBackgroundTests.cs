@@ -75,6 +75,17 @@ public sealed partial class ScratchBackgroundTests : IDisposable
     }
 
     [Fact]
+    public void ADoneScenesStatusCarriesTheLogItsGameWrote()
+    {
+        ScratchBackgroundRun run = Started(new ScratchRuns(), "logs", "A");
+
+        run.SceneEnded(0, Green("A") with { Log = "C:/p/.godot/godot-mcp/run-p.scratch-A-20261031T231358-3f2a.log" }, playsAgain: false);
+
+        Assert.Equal("C:/p/.godot/godot-mcp/run-p.scratch-A-20261031T231358-3f2a.log", StatusFile(run)["scenes"]![0]!["log"]!.GetValue<string>());
+        Assert.Null(StatusFile(Started(new ScratchRuns(), "scene", "A"))["scenes"]![0]!["log"]);
+    }
+
+    [Fact]
     public void NothingIsRunningOrPlayingAfterTheCompletionLine()
     {
         ScratchBackgroundRun run = Started(new ScratchRuns(), "after", "A", "B");

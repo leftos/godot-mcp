@@ -173,6 +173,20 @@ public sealed class ScratchRunnerTests : ScratchRunBase
         Assert.False(output.Running);
     }
 
+    /// A scene played twice keeps both games' output: each run's log is named for the run, and the first survives the second.
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task TwoRunsOfOneSceneKeepTwoLogs()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string first = GreenLog(await RunAsync(_probe.Directory, ["ScratchGreen"], options: null, cancellation));
+        string second = GreenLog(await RunAsync(_probe.Directory, ["ScratchGreen"], options: null, cancellation));
+
+        Assert.True(File.Exists(first), first);
+        Assert.True(File.Exists(second), second);
+        Assert.NotEqual(first, second);
+        Assert.Contains("[scratch] closed", File.ReadAllLines(first));
+    }
+
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStepThatPushesAnErrorIsTheFailedStepAndTheRestNeverPlay()
     {
@@ -263,6 +277,14 @@ public sealed class ScratchRunnerTests : ScratchRunBase
     internal static JsonObject Single(JsonObject result) => Assert.Single(result["scenes"]!.AsArray())!.AsObject();
 
     internal static string Status(JsonNode step) => step["status"]!.GetValue<string>();
+
+    /// <summary>The log a green scene's result names, which every scene's log must exist as.</summary>
+    private static string GreenLog(JsonObject result)
+    {
+        JsonObject scene = Single(result);
+        Assert.Equal("green", scene["verdict"]!.GetValue<string>());
+        return scene["log"]!.GetValue<string>();
+    }
 
     // The proof a step ended at its until and not its pace: met, with the game time the bridge counted under the pace's
     // milliseconds (each fixture's until holds 0.6 s of game time or less into a pace of 1 s or 2 s); game time, so load-proof.

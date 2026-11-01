@@ -46,6 +46,12 @@ internal sealed record LaunchRequest(
     /// that has no current camera.
     /// </summary>
     public bool Preview { get; init; }
+
+    /// <summary>
+    /// The file the run's whole output goes to, in place of the session's own <c>run-&lt;name&gt;.log</c>; null for the session's.
+    /// A caller that sets it gives each launch a file of its own, as a scratch run does for every run of a scene.
+    /// </summary>
+    public string? OutputLogPath { get; init; }
 }
 
 /// <summary>Where the bridge dials and the token it proves itself with.</summary>

@@ -284,4 +284,13 @@ internal static partial class Log
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Deleting the old scratch result {Path} failed; it is left and the rest are pruned.")]
     public static partial void ScratchSpillPruneFailed(ILogger logger, Exception exception, string path);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Listing the scratch run logs in {Path} failed; the folder is left as it was and the run goes on."
+    )]
+    public static partial void ScratchRunLogPruneFailed(ILogger logger, Exception exception, string path);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Deleting the old scratch run log {Path} failed; it is left and the rest are pruned.")]
+    public static partial void ScratchRunLogDeleteFailed(ILogger logger, Exception exception, string path);
 }

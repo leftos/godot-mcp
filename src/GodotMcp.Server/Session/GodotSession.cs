@@ -740,6 +740,11 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         BridgeEndpoint bridge = new(registry.Listener.Port, token);
         ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo(godotPath, request, bridge, moviePath);
         GodotRun run = new(ProjectDir, CreateRunProcess(startInfo, request.Quiet), carried);
+        if (request.OutputLogPath is { } logPath)
+        {
+            run.OutputLogPath = logPath;
+        }
+
         StartProcess(run, marker);
         MarkGameStarted();
         _exitHandled = NewExitHandled();

@@ -91,8 +91,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "green; else the first entry with alone: false and the replay's failure as aloneFailedAt. Returns "
             + "{passed, green, red, known, noSteps, killed, prep: {build, buildMs?, buildLog?, import, importMs?, importLog?, note?}, "
             + "scenes: [{scene, verdict, steps: {played, total}, selected?, setup?, stepList?, timeScale?, pace, paceReason?, exitHold?, seconds, "
-            + "session, failedAt?, failures?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?, missing?}, known?, "
-            + "warnings?, alone?, "
+            + "session, log?, failedAt?, failures?, details?, exit: {code, leaked?, lines?, error?, killed?, killReason?, warning?, missing?}, "
+            + "known?, warnings?, alone?, "
             + "aloneFailedAt?}], timeScale?}, scenes in the order given; selected lists the indices options.steps selected, setup the "
             + "setup steps the run added to them, both fixed when the steps resolve, so a scene stopped at a step, at the boot or by "
             + "a kill still lists them; "
@@ -171,7 +171,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             }
 
             sessions.ScratchRuns.RefuseLive(plan.ProjectDir);
-            ScratchRunResult result = await ScratchRun.RunAsync(sessions, csharp, plan, observer: null, cancellationToken);
+            ScratchRunResult result = await ScratchRun.RunAsync(sessions, csharp, plan, observer: null, runId: null, cancellationToken);
             JsonObject built = JsonSerializer.SerializeToNode(result, ToolJson.Options)!.AsObject();
             JsonObject shown = ScratchView.Result(built, RedOnly(given.Only));
             return ScratchView.CappedResult(shown, built, SpillPlace(plan.ProjectDir)).ToJsonString(ToolJson.Options);
@@ -190,7 +190,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     [Description(
         "Reads a background scratch run (run_scratches with options.background), or ends it with stop: true. Returns its status "
             + "{runId, state, serverPid, startedAt, updatedAt, scenes: [{scene, state, step?, stepName?, total?, elapsedSeconds?, "
-            + "remainingSecondsAtMost?, verdict?, timeScale?}], timeScale?, result?, error?, live}: state is running, done, stopped, "
+            + "remainingSecondsAtMost?, verdict?, log?, timeScale?}], timeScale?, result?, error?, live}: state is running, done, stopped, "
             + "interrupted (the server exited) or failed (with error); scenes in play order, each queued, playing (its step index, "
             + "name and the scene's step count, remainingSecondsAtMost the wall seconds the paces still to come take at the scene's "
             + "time scale, launch left out) or done (its verdict), or the run's own final word for a scene it ended mid-step; "

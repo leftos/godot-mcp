@@ -350,6 +350,7 @@ internal sealed class ScratchRun
     private readonly ScratchScenePlan _scene;
     private readonly IScratchRunObserver? _observer;
     private readonly int _index;
+    private readonly string _runId;
     private readonly string _nonce = Guid.NewGuid().ToString("N")[..12];
     private readonly List<string> _names = [];
     private readonly HashSet<int> _hidden = [];
@@ -362,6 +363,7 @@ internal sealed class ScratchRun
     private LineMark _mark;
     private int _inFlight = -1;
     private string _rootPath = string.Empty;
+    private string? _logPath;
     private List<string> _launchLines = [];
     private IReadOnlyList<ErrorEntry> _bootErrors = [];
     private readonly List<string> _warnings = [];
@@ -382,10 +384,11 @@ internal sealed class ScratchRun
         _scene = context.Plan.Scenes[index];
         _observer = context.Observer;
         _index = index;
+        _runId = context.RunId;
     }
 
-    /// <summary>What every scene of one run shares: the registry, the C# bridge, the plan, and who is told as the run plays.</summary>
-    private sealed record RunContext(SessionRegistry Registry, CSharpBridge CSharp, ScratchPlan Plan, IScratchRunObserver? Observer);
+    /// <summary>What every scene of one run shares: the registry, the C# bridge, the plan, who is told as the run plays, and the run's id.</summary>
+    private sealed record RunContext(SessionRegistry Registry, CSharpBridge CSharp, ScratchPlan Plan, IScratchRunObserver? Observer, string RunId);
 
     /// <summary>
     /// Prepares the project once when the plan says so, then plays the scenes, starting them in <see cref="StartOrder"/> at most
@@ -393,7 +396,9 @@ internal sealed class ScratchRun
     /// order. The result lists the scenes in the plan's order, whatever finished first, with what the prep did.
     /// <paramref name="csharp"/> readies the C# helper a state until reads a C# node's state with. <paramref name="observer"/>,
     /// a background run's, is told each scene's start, session, steps and verdict, and each replay's start; a synchronous run
-    /// passes null.
+    /// passes null. <paramref name="runId"/> is the run's id, which names each scene's game log, and is the background run's own;
+    /// null mints one. The log folder keeps the newest <see cref="ScratchRunLogs.Kept"/> scratch run logs, the rest pruned before
+    /// the first scene launches.
     /// </summary>
     /// <exception cref="SessionException">The prep failed.</exception>
     public static async Task<ScratchRunResult> RunAsync(
@@ -401,10 +406,12 @@ internal sealed class ScratchRun
         CSharpBridge csharp,
         ScratchPlan plan,
         IScratchRunObserver? observer,
+        string? runId,
         CancellationToken cancellationToken
     )
     {
-        RunContext context = new(registry, csharp, plan, observer);
+        RunContext context = new(registry, csharp, plan, observer, runId ?? ScratchBackgroundRun.NewRunId(DateTimeOffset.UtcNow));
+        ScratchRunLogs.Prune(ProjectPrep.LogFolder(plan.ProjectDir), ScratchRunLogs.Kept, registry.Logger);
         PrepResult prep = plan.Prepare ? await registry.PrepareFolderAsync(plan.ProjectDir, cancellationToken) : PrepResult.Skipped;
         ScratchSceneResult[] scenes = await PlayBesideAsync(context, cancellationToken);
         for (int index = 0; index < scenes.Length; index++)
@@ -857,7 +864,12 @@ internal sealed class ScratchRun
             );
             _session = session;
             _observer?.SessionHeld(_index, session);
-            await session.LaunchAsync(LaunchRequestFor(_plan, _scene, session.Quiet, session.ShutOutRealGamepads, session.Mute), cancellationToken);
+            LaunchRequest request = LaunchRequestFor(_plan, _scene, session.Quiet, session.ShutOutRealGamepads, session.Mute) with
+            {
+                OutputLogPath = ScratchRunLogs.PathFor(ProjectPrep.LogFolder(_plan.ProjectDir), session.Name, _runId),
+            };
+            LaunchResult launched = await session.LaunchAsync(request, cancellationToken);
+            _logPath = launched.Log;
         }
         catch (SessionException e)
         {
@@ -1455,6 +1467,7 @@ internal sealed class ScratchRun
     private ScratchObservation Seen(string session) =>
         new(_scene.Name, session, _scene.Pace, _names.Count)
         {
+            Log = _logPath,
             LaunchLines = _launchLines,
             BootErrors = _bootErrors,
             Steps = _steps,

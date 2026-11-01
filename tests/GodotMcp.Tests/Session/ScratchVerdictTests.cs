@@ -31,6 +31,15 @@ public sealed class ScratchVerdictTests
     }
 
     [Fact]
+    public void TheSceneCarriesTheLogItsGameWrote()
+    {
+        ScratchSceneResult logged = ScratchVerdict.Judge(Seen(Step(0)) with { Log = "C:/x/run-probe.scratch-Scene-20261031T231358-3f2a.log" }, Plain);
+
+        Assert.Equal("C:/x/run-probe.scratch-Scene-20261031T231358-3f2a.log", logged.Log);
+        Assert.Null(ScratchVerdict.Judge(Seen(Step(0)), Plain).Log);
+    }
+
+    [Fact]
     public void DetailsListAGreenScenesStepsWithTheirNotes()
     {
         ScratchSceneResult result = ScratchVerdict.Judge(
