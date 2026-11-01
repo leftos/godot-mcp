@@ -20,6 +20,8 @@ public sealed class OutputDestinationTests : IDisposable
 
     private string Worktree => _temp.Combine("wt");
 
+    private string Checkout => _temp.Combine("checkout");
+
     public void Dispose() => _temp.Dispose();
 
     [Fact]
@@ -90,7 +92,8 @@ public sealed class OutputDestinationTests : IDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), "only Windows has drive-relative and root-relative paths");
 
         Assert.Equal(
-            $"path {path} is relative to a drive's current folder or the current drive's root; give a full path or one relative to the project",
+            $"path {path} is relative to a drive's current folder or the current drive's root; give a full path, one relative to the "
+                + "project folder, or one starting .tmp/ for the checkout's .tmp folder",
             Refused(_temp.Path, path).Message
         );
     }
@@ -822,6 +825,51 @@ public sealed class OutputDestinationTests : IDisposable
     }
 
     [Fact]
+    public void ARelativeTmpPathResolvesAgainstTheCheckoutRoot()
+    {
+        string project = GameInASubfolder();
+
+        Assert.Equal(Path.Combine(Checkout, ".tmp", "shot.png"), Resolve(project, ".tmp/shot.png"));
+    }
+
+    [Fact]
+    public void ABackslashOrUpperCaseTmpSegmentResolvesTheSame()
+    {
+        string project = GameInASubfolder();
+        string expected = Path.Combine(Checkout, ".TMP", "a", "shot.png");
+
+        Assert.Equal(
+            expected,
+            Resolve(project, @".TMP\a\shot.png"),
+            OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal
+        );
+    }
+
+    [Fact]
+    public void ARelativePathOutsideTmpStaysProjectRelative()
+    {
+        string project = GameInASubfolder();
+
+        Assert.Equal(Path.Combine(project, "shots", "x.png"), Resolve(project, "shots/x.png"));
+    }
+
+    [Fact]
+    public void ARelativeTmpPathOfAProjectOutsideGitStaysProjectRelative()
+    {
+        string project = Directory.CreateDirectory(_temp.Combine("game")).FullName;
+
+        Assert.Equal(Path.Combine(project, ".tmp", "x.png"), Resolve(project, ".tmp/x.png"));
+    }
+
+    [Fact]
+    public void AResPathStaysInTheProject()
+    {
+        string project = GameInASubfolder();
+
+        Assert.Equal(Path.Combine(project, ".tmp", "x.png"), Resolve(project, "res://.tmp/x.png"));
+    }
+
+    [Fact]
     public void SavingACaptureFromOutsideTheScreenshotsFolderIsRefused()
     {
         string project = _temp.Path;
@@ -847,6 +895,16 @@ public sealed class OutputDestinationTests : IDisposable
         Git.InitAndCommitAll(Main);
         Git.Run(Main, "worktree", "add", "--quiet", Worktree);
         return Path.Combine(Worktree, "game");
+    }
+
+    /// <summary>A git checkout at &lt;temp&gt;/checkout tracking nothing, with the project at its src/Game.</summary>
+    private string GameInASubfolder()
+    {
+        Directory.CreateDirectory(Checkout);
+        Git.Run(Checkout, "init", "--quiet", "--initial-branch=main");
+        string project = Directory.CreateDirectory(Path.Combine(Checkout, "src", "Game")).FullName;
+        File.WriteAllText(Path.Combine(project, "project.godot"), "config_version=5\n");
+        return project;
     }
 
     private string WorktreePlaces(string project) =>

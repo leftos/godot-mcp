@@ -17,10 +17,11 @@ namespace GodotMcp.Server.Tools;
 internal sealed record OutputTarget(OutputPlaces Places, string Requested, string FullPath, string FinalPath);
 
 /// <summary>
-/// The rule for a file the caller names for a still or a clip: it ends in the output's extension, is project-relative,
-/// res:// or fully qualified on a local drive, lies in one of <see cref="OutputPlaces"/> after every link on the way is
-/// followed, never inside a .git folder, under a .godot folder outside a .tmp, or on a Windows device name; and the write
-/// that replaces the destination's folder entry rather than writing through a link.
+/// The rule for a file the caller names for a still or a clip: it ends in the output's extension, is relative (a path whose
+/// first folder is .tmp resolves against the project's git checkout, any other against the project folder), res:// or fully
+/// qualified on a local drive, lies in one of <see cref="OutputPlaces"/> after every link on the way is followed, never
+/// inside a .git folder, under a .godot folder outside a .tmp, or on a Windows device name; and the write that replaces the
+/// destination's folder entry rather than writing through a link.
 /// </summary>
 internal static partial class OutputDestination
 {
@@ -49,7 +50,10 @@ internal static partial class OutputDestination
 
     /// <summary>The destination <paramref name="path"/> names, checked, and refused when it exists without <paramref name="overwrite"/>.</summary>
     /// <param name="places">Where the output may lie.</param>
-    /// <param name="path">Project-relative, res:// or fully qualified.</param>
+    /// <param name="path">
+    /// Relative, res:// or fully qualified; a relative path whose first folder is .tmp resolves against the project's git
+    /// checkout, any other against the project folder.
+    /// </param>
     /// <param name="extension">The extension the path must end in, such as ".png".</param>
     /// <param name="overwrite">Whether an existing file there may be replaced.</param>
     /// <exception cref="McpException">The path breaks the rule, or names an existing file without <paramref name="overwrite"/>.</exception>
@@ -79,14 +83,33 @@ internal static partial class OutputDestination
         if (Path.IsPathRooted(relative) && !Path.IsPathFullyQualified(relative))
         {
             throw new McpException(
-                $"path {path} is relative to a drive's current folder or the current drive's root; give a full path or one relative to the project"
+                $"path {path} is relative to a drive's current folder or the current drive's root; give a full path, one relative to the "
+                    + "project folder, or one starting .tmp/ for the checkout's .tmp folder"
             );
         }
 
-        string full = Path.GetFullPath(Path.IsPathRooted(relative) ? relative : Path.Combine(places.Project, relative));
+        string full = Path.IsPathRooted(relative)
+            ? Path.GetFullPath(relative)
+            : Path.GetFullPath(Path.Combine(BaseFolderOf(places, relative, isRes), relative));
         CheckLocalDrive(path, full);
         string final = new DestinationCheck(places, path, isRes).Run(full, relative);
         return new OutputTarget(places, path, full, final);
+    }
+
+    /// <summary>
+    /// The folder a relative path is taken from: a path whose first folder is .tmp names the project's checkout's, as agents
+    /// write it, while every other relative path, and any res:// path, stays the project's; a project outside git has no
+    /// checkout, so its .tmp folder is the project's own.
+    /// </summary>
+    private static string BaseFolderOf(OutputPlaces places, string relative, bool isRes) =>
+        !isRes && places.Checkout is not null && StartsInTmp(relative) ? places.Checkout : places.Project;
+
+    /// <summary>Whether <paramref name="relative"/>'s first folder is .tmp, however it is spelled.</summary>
+    private static bool StartsInTmp(string relative)
+    {
+        int separator = relative.IndexOfAny(['/', '\\']);
+        string first = separator < 0 ? relative : relative[..separator];
+        return string.Equals(first, ".tmp", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

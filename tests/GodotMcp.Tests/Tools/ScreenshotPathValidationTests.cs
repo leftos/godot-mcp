@@ -466,6 +466,14 @@ public sealed class ScreenshotPathValidationTests : IDisposable
     }
 
     [Fact]
+    public void TakeScreenshotTakesARelativeTmpPathInASubfolderProject()
+    {
+        string project = ProjectUnderACheckout(dotGitIsFile: true);
+
+        Assert.Equal(Path.Combine(CheckoutTmp, "x.png"), InTmp(project, ".tmp/x.png", overwrite: false, "take_screenshot"));
+    }
+
+    [Fact]
     public void AFrameToolsPathInTheMainCheckoutsTmpFolderIsAccepted()
     {
         string project = ProjectUnderACheckout(dotGitIsFile: true);

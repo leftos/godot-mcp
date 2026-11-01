@@ -27,7 +27,8 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     internal const string TakeScreenshotToolName = "take_screenshot";
     internal const string WaitForToolName = "wait_for";
     internal const string TmpPathDescription =
-        "A PNG to copy the capture to, ending in .png: project-relative, res:// or absolute, in the checkout's .tmp folder or "
+        "A PNG to copy the capture to, ending in .png: relative (a path whose first folder is .tmp resolves against the "
+        + "project's git checkout, any other against the project folder), res:// or absolute, in the checkout's .tmp folder or "
         + "the main checkout's .tmp folder only, checked as save_screenshot checks its path (a res:// path stays in the project, "
         + "so it fits only a project inside a .tmp folder; missing folders are created; never through a link that leads out of "
         + "a .tmp folder).";
@@ -157,7 +158,8 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     [McpServerTool(Name = SaveScreenshotToolName, ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Captures the running game's next drawn frame as take_screenshot does and writes the PNG straight to path in one call; "
-            + "take_screenshot writes only under .godot/ and, given a path, into a .tmp folder. path is project-relative, res:// or absolute and "
+            + "take_screenshot writes only under .godot/ and, given a path, into a .tmp folder. path is relative (a path whose first folder "
+            + "is .tmp resolves against the project's git checkout, any other against the project folder), res:// or absolute and "
             + "must end in .png. It may lie in the project; in the git checkout holding it, as a whole tree when the checkout "
             + "tracks the project's project.godot, else only in its .tmp folder; or in the main checkout's .tmp folder when that "
             + "checkout is a git worktree. Never inside a .git folder or under a .godot folder outside a .tmp; a res:// path stays "
@@ -169,7 +171,8 @@ internal sealed partial class RuntimeTools(SessionRegistry sessions, CSharpBridg
     )]
     public async Task<IEnumerable<ContentBlock>> SaveScreenshotAsync(
         [Description(
-            "The PNG to write: project-relative, res:// or absolute, ending in .png; in the project, its git checkout (the whole "
+            "The PNG to write: relative (a path whose first folder is .tmp resolves against the project's git checkout, any other "
+                + "against the project folder), res:// or absolute, ending in .png; in the project, its git checkout (the whole "
                 + "tree when the checkout tracks the project, else its .tmp folder) or the main checkout's .tmp folder; never in "
                 + ".git or under a .godot outside a .tmp."
         )]

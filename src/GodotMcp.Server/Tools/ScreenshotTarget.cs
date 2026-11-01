@@ -34,7 +34,10 @@ internal static class ScreenshotTarget
 
     /// <summary>The file <paramref name="path"/> names, checked before any capture is taken.</summary>
     /// <param name="projectDir">The session's project folder.</param>
-    /// <param name="path">Project-relative, res:// or fully qualified.</param>
+    /// <param name="path">
+    /// Relative, res:// or fully qualified; a relative path whose first folder is .tmp resolves against the project's git
+    /// checkout, any other against the project folder.
+    /// </param>
     /// <param name="overwrite">Whether an existing file there may be replaced.</param>
     /// <param name="logger">Where a missing or stopped git is reported.</param>
     /// <exception cref="McpException">The path breaks the rule, or names an existing file without <paramref name="overwrite"/>.</exception>

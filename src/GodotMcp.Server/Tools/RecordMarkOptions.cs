@@ -19,7 +19,8 @@ internal sealed record RecordMarkOptions(
     [property: Description("Record the game's own sound as the clip's audio track, default true; none when the session is muted or quiet.")]
         bool? Audio = null,
     [property: Description(
-        "Where the finished clip is moved: a project-relative, res:// or absolute .mp4 path in the project, its checkout when it "
+        "Where the finished clip is moved: a relative (a path whose first folder is .tmp resolves against the project's git "
+            + "checkout, any other against the project folder), res:// or absolute .mp4 path in the project, its checkout when it "
             + "tracks the project, or from a linked worktree the main checkout's .tmp; it is checked now and again when the clip is "
             + "delivered. Without it the clip stays under .godot/godot-mcp/recordings/."
     )]

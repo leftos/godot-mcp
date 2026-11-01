@@ -104,7 +104,8 @@ internal sealed record WaitThen(
 internal sealed record ThenRecord(
     [property: Description("start or stop.")] string Mark,
     [property: Description(
-        "On start only, where the finished clip is moved: a project-relative, res:// or absolute .mp4 path in the project, its "
+        "On start only, where the finished clip is moved: a relative (a path whose first folder is .tmp resolves against the "
+            + "project's git checkout, any other against the project folder), res:// or absolute .mp4 path in the project, its "
             + "checkout when it tracks the project, or from a linked worktree the main checkout's .tmp, as record_mark start's "
             + "options.path. Without it the clip stays under .godot/godot-mcp/recordings/."
     )]
