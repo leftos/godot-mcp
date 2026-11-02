@@ -17,7 +17,6 @@
 ## Do first
 
 - [ ] GMCP-407 Editor-driving tools: open, save and run a scene in the Godot editor, read its output, build C# · release vNext — High · Ideas from the survey and the projects
-- [ ] GMCP-421 Editor actions: open, save, play, stop and select a file through the editor tool · release vNext — High · Ideas from the survey and the projects
 - [ ] GMCP-419 Editor C# build and the F5 game joining as an attached session · release vNext — High · Ideas from the survey and the projects
 - [ ] GMCP-420 Headless edits refuse a folder an editor session holds; decision 17 replaced · release vNext — High · Ideas from the survey and the projects
 
@@ -167,4 +166,4 @@
 
 ## Design files
 
-- [editor-tools.md](editor-tools.md) — GMCP-407, GMCP-419, GMCP-420, GMCP-421
+- [editor-tools.md](editor-tools.md) — GMCP-407, GMCP-419, GMCP-420
