@@ -314,6 +314,7 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
 ## Footguns
 
+- **The hovered Control follows injected motion only while the root window embeds its subwindows.** A root that does not embed updates `gui_get_hovered_control()` only after the OS reports the real pointer entering the window (4.7.2 `scene/main/viewport.cpp` `_update_mouse_over`), and otherwise keeps a stale one, so `hover`, `pressedOn` and the aimed tools' cover check all fail there while a press still lands. A game embeds by default; the editor embeds only single-window, which is why `run_editor` passes `--single-window`.
 - **Every itest group but `scene` and `nodes` needs a Compatibility-renderer (OpenGL) window that draws.** InputProbe and CsProbe are `gl_compatibility` (`tests/fixtures/InputProbe/project.godot`, `tests/fixtures/CsProbe/project.godot`), and a quiet run on a hidden desktop still makes a real GL window, so `prep`, `csharp`, `headless` (whose `HeadlessTests` launch quiet games) and the rest fail without GL; they do not skip.
 
   On a machine with no GPU, Godot falls back to ANGLE on Direct3D 11 WARP, which makes a window only in a logged-on console session: in an ssh session 0 it logs `Failed to create ANGLE OpenGL window.` and the bridge never connects; a launch watches for that line and fails at once, naming it, instead of after the handshake wait. The itests still fail there, so the footgun stands.

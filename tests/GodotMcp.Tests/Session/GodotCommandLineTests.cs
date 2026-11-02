@@ -52,7 +52,19 @@ public sealed class GodotCommandLineTests : IDisposable
         List<string> arguments = GodotCommandLine.BuildArguments(request, moviePath: null);
 
         Assert.Equal(
-            ["--path", Project, "--editor", "--windowed", "--script", host, "--scene", "res://main.tscn", "--audio-driver", "Dummy"],
+            [
+                "--path",
+                Project,
+                "--editor",
+                "--windowed",
+                "--single-window",
+                "--script",
+                host,
+                "--scene",
+                "res://main.tscn",
+                "--audio-driver",
+                "Dummy",
+            ],
             arguments
         );
     }
@@ -65,7 +77,7 @@ public sealed class GodotCommandLineTests : IDisposable
 
         List<string> arguments = GodotCommandLine.BuildArguments(request, moviePath: null);
 
-        Assert.Equal(["--path", Project, "--editor", "--windowed", "--script", host], arguments);
+        Assert.Equal(["--path", Project, "--editor", "--windowed", "--single-window", "--script", host], arguments);
     }
 
     [Theory]

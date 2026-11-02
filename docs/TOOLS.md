@@ -148,7 +148,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   The editor's own environment carries no `GODOT_MCP_*` variables, so a game it starts (F5) never dials with the editor's token; reach that game with `attach_project`.
 
-  An aimed click (`{element}` or an `item` target) is refused by the cover check (`lands on <nothing>`) in an editor session; click a point `{x, y}` meanwhile. `get_scene_tree` without `node` refuses (the editor has no current scene): pass `node`. `preview_scene` and `frame_control` are refused (`preview_scene does not run in an editor session.`, `frame_control does not pause or step an editor session.`).
+  The editor runs single-window (`--single-window`), so its dialogs and popups are embedded in its window and aimed clicks (`{element}`, `{text}`, an `item` on a dock's Tree) work as in a game; a game it starts with F5 or F6 runs in its own window, not the editor's Game tab. `get_scene_tree` without `node` refuses (the editor has no current scene): pass `node`. `preview_scene` and `frame_control` are refused (`preview_scene does not run in an editor session.`, `frame_control does not pause or step an editor session.`).
 
   The editor's `progress_dialog.cpp:183 Parameter "current_window" is null` error and its exit leak report are left out of `get_debug_output`, the run log and `get_errors`.
 - **Stop:** `stop_project` closes the editor through its own close request (10 s of load-adjusted time before a kill), and refuses while it has unsaved scenes (see `stop_project`). `restart_project` refuses an editor: stop it and run `run_editor` again.
@@ -706,7 +706,7 @@ A Control whose centre lies outside the viewport is refused, nothing pressed, wi
 
 A world node is refused, nothing pressed, when it projects outside its viewport's visible rect or its embedded window, sits behind its camera, has no current Camera3D, lives in a SubViewport shown without a `SubViewportContainer` (only a container forwards input) or in a native window, or when an embedded window, or a Control whose mouse filter is Stop on the hovered chain, would take the event before physics picking (a `scroll` passes a Control whose `force_pass_scroll_events` is on, the default); a press, drag, scroll or `mouse_button` press or release into a SubViewport whose `gui_disable_input` is on is refused, and `hover` or a `mouse_button` move may still aim at a world node there.
 
-Physics picking needs the node's viewport to have `physics_object_picking` on: the root takes the project setting, a SubViewport defaults to off; a project with `display/window/subwindows/embed_subwindows` off picks only once the window system has seen the pointer over the window.
+Physics picking needs the node's viewport to have `physics_object_picking` on: the root takes the project setting, a SubViewport defaults to off; a project with `display/window/subwindows/embed_subwindows` off picks, and tracks the hovered Control that `hover` and the aimed tools' cover check read, only once the window system has seen the pointer over the window.
 
 A handler that calls `accept_event()` on the way cannot be foreseen. `pressedOn` names the `SubViewportContainer` for any target inside it. An `{element}` is checked before any event is sent: a hidden node, a node being freed, or a bare name that several nodes share (listing their paths) is refused.
 

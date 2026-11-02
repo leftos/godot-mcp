@@ -56,10 +56,6 @@ public sealed class EditorTests : IClassFixture<OpenedProbeProject>, IAsyncDispo
         JsonNode dock = trees["elements"]!
             .AsArray()
             .Single(element => element!["items"] is JsonArray items && items.Any(item => item?["text"]?.GetValue<string>() == "main.tscn"))!;
-        // An aimed click, an element or an item target, is refused in an editor session: the cover
-        // check reads the root viewport's hovered Control as null after the aim's injected motion
-        // (booked as its own item). A point inside the dock's rect takes no cover check and reaches
-        // the window.
         JsonNode rect = dock["rect"]!;
         JsonNode clicked = JsonNode.Parse(
             await _runtime.ClickAsync(
@@ -77,9 +73,51 @@ public sealed class EditorTests : IClassFixture<OpenedProbeProject>, IAsyncDispo
             cancellationToken: token
         );
 
-        Assert.True(clicked.AsObject().ContainsKey("pressedOn"), clicked.ToJsonString());
+        Assert.Equal(dock["path"]!.GetValue<string>(), clicked["pressedOn"]?["path"]?.GetValue<string>());
         string text = blocks.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Single().Text;
         Assert.True(File.Exists(JsonNode.Parse(text)!["path"]!.GetValue<string>()), text);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AnItemClickOnTheFileSystemDockSelectsTheItem()
+    {
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await RunEditorAsync(token);
+        string dock = await FileSystemTreePathAsync(token);
+
+        JsonNode clicked = JsonNode.Parse(
+            await _runtime.ClickAsync(
+                new InputTarget(Element: dock, Item: new InputItem(Text: "Favorites")),
+                session: Session,
+                cancellationToken: token
+            )
+        )!;
+        JsonNode selected = await RunScriptAsync($"return scene_tree.root.get_node(\"{dock}\").get_selected().get_text(0)", token);
+
+        Assert.Equal(dock, clicked["pressedOn"]?["path"]?.GetValue<string>());
+        Assert.Equal("Favorites", selected.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ATextClickOnAnEditorButtonPressesIt()
+    {
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await RunEditorAsync(token);
+
+        JsonNode clicked = JsonNode.Parse(await _runtime.ClickAsync(new InputTarget(Text: "Script"), session: Session, cancellationToken: token))!;
+
+        Assert.EndsWith("/EditorMainScreenButtons/Script", clicked["pressedOn"]?["path"]?.GetValue<string>());
+        Assert.Contains(clicked["fired"]!.AsArray(), signal => signal?["signal"]?.GetValue<string>() == "pressed");
+    }
+
+    private async Task<string> FileSystemTreePathAsync(CancellationToken token)
+    {
+        JsonNode trees = JsonNode.Parse(await _runtime.GetUiElementsAsync(filter: "Tree", limit: 500, session: Session, cancellationToken: token))!;
+        return trees["elements"]!
+            .AsArray()
+            .Single(element => element!["items"] is JsonArray items && items.Any(item => item?["text"]?.GetValue<string>() == "main.tscn"))![
+            "path"
+        ]!.GetValue<string>();
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

@@ -172,7 +172,7 @@ Prefer it for any change of more than one edit, then `validate`, then `preview_s
 
 `run_editor {projectPath, scene?, options {quiet, session, prepare}}` opens the project in the Godot editor and returns once its first scan is done and the bridge has connected. `get_ui_elements`, `click`, `hover`, `drag`, `scroll`, `type_text`, `key`, `take_screenshot`, `wait_for`, `inspect_node`, `get_errors`, `get_debug_output`, `run_script` and `call_method` then act on the editor's own windows.
 
-- **Aim by point for now.** An aimed click (`{element}`, or an `item` target) is refused in an editor session by the cover check (`lands on <nothing>`): click a point `{x, y}` read from `get_ui_elements`' rects.
+- **Aim as in a game.** `click {target: {element, item: {text: "main.tscn"}}}` on the FileSystem dock's Tree, `{text: "Script"}` on a button: the editor runs single-window, so its dialogs and popups are in its window too. A game it starts with F5 or F6 opens in its own window.
 - **`get_scene_tree` needs `node`** in an editor, which has no current scene. `preview_scene` and `frame_control` are refused.
 - **Check `git status` after a first open.** The server writes nothing into the project, but an editor's first open of a repo that has not committed an editor-normalised `project.godot` and `.uid` files changes them; `run_editor` does not refuse.
 - **`stop_project` refuses unsaved scenes**: save them in the editor, or pass `discard: true`, which kills the editor and loses them.

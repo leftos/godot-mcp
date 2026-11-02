@@ -173,7 +173,8 @@ internal static partial class GodotCommandLine
         if (request.EditorHost is { } host)
         {
             // Without --windowed the editor opens maximized; --script makes the host the main loop the editor is built in.
-            arguments.AddRange(["--editor", "--windowed", "--script", host]);
+            // --single-window embeds the editor's subwindows in the root, so its hovered Control follows injected input.
+            arguments.AddRange(["--editor", "--windowed", "--single-window", "--script", host]);
         }
 
         if (!string.IsNullOrWhiteSpace(request.Scene))
