@@ -150,7 +150,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   The editor's own environment carries no `GODOT_MCP_*` variables, so a game it starts (F5) never dials with the editor's token; reach that game with `attach_project` (the order is in that tool's Use). After editing C# scripts, `editor {action: build}` builds them and waits for the editor's reload.
 
-  The editor runs single-window (`--single-window`), so its dialogs and popups are embedded in its window and aimed clicks (`{element}`, `{text}`, an `item` on a dock's Tree) work as in a game; a game it starts with F5 or F6 runs in its own window, not the editor's Game tab. `get_scene_tree` without `node` refuses (the editor has no current scene): pass `node`. `preview_scene` and `frame_control` are refused (`preview_scene does not run in an editor session.`, `frame_control does not pause or step an editor session.`).
+  The editor runs single-window (`--single-window`), so its dialogs and popups are embedded in its window and aimed clicks (`{element}`, `{text}`, an `item` on a dock's Tree) work as in a game, and a dialog's own buttons are `{text}` targets (the disk-changed dialog's "Reload from disk"); a game it starts with F5 or F6 runs in its own window, not the editor's Game tab. `get_scene_tree` without `node` refuses (the editor has no current scene): pass `node`. `preview_scene` and `frame_control` are refused (`preview_scene does not run in an editor session.`, `frame_control does not pause or step an editor session.`).
 
   The editor's `progress_dialog.cpp:183 Parameter "current_window" is null` error and its exit leak report are left out of `get_debug_output`, the run log and `get_errors`.
 - **Stop:** `stop_project` closes the editor through its own close request (10 s of load-adjusted time before a kill), and refuses while it has unsaved scenes (see `stop_project`). `restart_project` refuses an editor: stop it and run `run_editor` again.
@@ -425,7 +425,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   A listed path or text can still be ambiguous to an item target when a hidden or collapsed item shares it. A RichTextLabel's tooltip spans are not listed: finding them samples the label pixel by pixel, which `item` does on demand.
 - **Use:** before any click, to find a target by path or by the text it shows; `filter` keeps one engine class and its subclasses (`BaseButton`); `visibleOnly` (default true) skips hidden subtrees; `offset` and `limit` (1 to 500, default 100) page.
-- **Edges:** Controls only; `get_scene_tree` lists every node.
+- **Edges:** Controls only; `get_scene_tree` lists every node. An `AcceptDialog` (a `ConfirmationDialog` included) lists the buttons of its own button bar (OK, Cancel, and added ones such as "Reload from disk" in the editor's disk-changed dialog), so `{text}` targets and `wait_for {text}` reach them; no other Control's internal children (scroll bars, popups) are listed.
 
 ### `preview_scene`
 

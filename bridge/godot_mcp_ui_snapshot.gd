@@ -33,7 +33,9 @@ static func capture(bridge: Node, previews: Dictionary) -> Dictionary:
 
 ## Appends every Control under node, depth first: the Controls get_ui_elements lists, and the UI
 ## snapshot wait_for {uiChanged} compares. An invisible Control hides its subtree when
-## visible_only is set, and so does any node skip (when valid) returns true for.
+## visible_only is set, and so does any node skip (when valid) returns true for. An AcceptDialog
+## keeps its buttons in an internal child, so its internal children are walked and no other
+## Control's are, which would add every scroll bar and popup to the list.
 static func gather_controls(
 	node: Node, visible_only: bool, skip: Callable, into: Array[Control]
 ) -> void:
@@ -44,7 +46,7 @@ static func gather_controls(
 		if visible_only and not control.is_visible_in_tree():
 			return
 		into.append(control)
-	for child in node.get_children():
+	for child in node.get_children(node is AcceptDialog):
 		gather_controls(child, visible_only, skip, into)
 
 

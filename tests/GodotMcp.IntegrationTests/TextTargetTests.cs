@@ -48,6 +48,34 @@ public sealed class TextTargetTests(SharedProbeSession shared) : IAsyncLifetime,
     private static readonly string Menu =
         Box("menu", "TextMenu") + Button("host", "menu", "Host", "New Game", 400, 250) + Button("join", "menu", "Join", "Join Game", 400, 300);
 
+    // A ConfirmationDialog named ReloadDialog, shown centred, whose OK button reads "Reload from disk" and whose confirmed
+    // signal counts into the "confirmed" meta.
+    private static readonly string ReloadDialog =
+        "var dialog := ConfirmationDialog.new()\n\t"
+        + "dialog.name = \"ReloadDialog\"\n\t"
+        + "dialog.get_ok_button().text = \"Reload from disk\"\n\t"
+        + "dialog.set_meta(\"confirmed\", 0)\n\t"
+        + "dialog.confirmed.connect(func() -> void: dialog.set_meta(\"confirmed\", int(dialog.get_meta(\"confirmed\")) + 1))\n\t"
+        + "scene_tree.root.add_child(dialog)\n\t"
+        + "dialog.popup_centered()\n\t";
+
+    // A 100 x 100 ScrollContainer named Scroller at (10, 380) holding a 500 x 500 Control, so both its bars show.
+    private static readonly string Scroller =
+        "var scroller := ScrollContainer.new()\n\t"
+        + "scroller.name = \"Scroller\"\n\t"
+        + "scroller.position = Vector2(10, 380)\n\t"
+        + "scroller.size = Vector2(100, 100)\n\t"
+        + "scene_tree.root.add_child(scroller)\n\t"
+        + "var wide := Control.new()\n\t"
+        + "wide.custom_minimum_size = Vector2(500, 500)\n\t"
+        + "scroller.add_child(wide)\n\t";
+
+    // Frees the ReloadDialog a test raised.
+    private static readonly string FreeReloadDialog = "scene_tree.root.get_node(\"ReloadDialog\").free()\n\t";
+
+    // The ReloadDialog's "confirmed" meta, as the number the confirmed signal left there.
+    private static readonly string ConfirmedCount = "return int(scene_tree.root.get_node(\"ReloadDialog\").get_meta(\"confirmed\"))";
+
     private readonly SharedProbeSession _shared = shared;
     private readonly RuntimeTools _tools = new(shared.Sessions, TestCSharp.Unused());
 
@@ -419,6 +447,35 @@ public sealed class TextTargetTests(SharedProbeSession shared) : IAsyncLifetime,
         AssertAimed(to, "/root/Main/DropTarget/DropLabel", "Label", 480, 190);
         AssertMatched(to, "drop here");
         Assert.False(dragged["aimedAt"]!["from"]!.AsObject().ContainsKey("matched"), dragged.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AClickByTextPressesADialogsOwnButton()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(ReloadDialog + "return true", cancellation);
+
+        JsonNode clicked = await ClickAsync(new InputTarget(Text: "Reload from disk"), cancellation);
+
+        AssertMatched(clicked["aimedAt"]!, "Reload from disk");
+        JsonNode confirmed = await RunAsync(ConfirmedCount, cancellation);
+        Assert.Equal(1, confirmed.GetValue<int>());
+        await RunAsync(FreeReloadDialog + "return true", cancellation);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task GetUiElementsListsADialogsButtonsButNoScrollBars()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(ReloadDialog + Scroller + "return true", cancellation);
+
+        JsonArray elements = JsonNode.Parse(await _tools.GetUiElementsAsync(true, null, limit: 500, cancellationToken: cancellation))![
+            "elements"
+        ]!.AsArray();
+
+        Assert.Contains(elements, element => element!["text"]?.GetValue<string>() == "Reload from disk");
+        Assert.DoesNotContain(elements, element => element!["class"]!.GetValue<string>() is "HScrollBar" or "VScrollBar");
+        await RunAsync(FreeReloadDialog + "return true", cancellation);
     }
 
     // A mouse-ignoring Control named name under the root, held by the script variable named variable.

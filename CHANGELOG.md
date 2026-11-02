@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - The C# prep rebuilds a project kept in a gitignored folder after its sources change, instead of reporting it up to date.
+- `click {text}`, `wait_for {text}` and `get_ui_elements` reach a dialog's own buttons, such as "Reload from disk" in the editor's disk-changed dialog.
 
 ## 0.28.0 - 2026-11-02
 
