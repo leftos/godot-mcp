@@ -12,6 +12,9 @@ namespace GodotMcp.Tests.Session;
 /// </summary>
 public sealed class ProjectPrepChecksTests : IDisposable
 {
+    private const string GlobalLoaderSource = "[GlobalClass, Tool]\npublic partial class Loader : ResourceFormatLoader { }\n";
+    private const string GlobalLoaderCache = "list=[{\n\"class\": &\"Loader\"\n}]\n";
+
     private readonly TempDirectory _temp = new();
 
     public void Dispose() => _temp.Dispose();
@@ -24,6 +27,148 @@ public sealed class ProjectPrepChecksTests : IDisposable
         File.WriteAllText(Path.Combine(game, "main.gd.uid"), "uid://bq3lfv6wdnbx8\n");
         return game;
     }
+
+    /// <summary>A game building Solo, with its assembly written <paramref name="built"/> and one source declaring Loader.</summary>
+    private string GlobalClassGame(DateTime built, string source = GlobalLoaderSource)
+    {
+        string game = ProjectPrepFixtures.CreateGame(_temp, null, "Solo.csproj");
+        string assembly = PrepScan.AssemblyPath(game, "Solo");
+        ProjectPrepFixtures.WriteFile(assembly, "dll", built);
+        File.WriteAllText(Path.Combine(game, "Loader.cs"), source);
+        return game;
+    }
+
+    private static void WriteClassCache(string game, string text, DateTime written) =>
+        ProjectPrepFixtures.WriteFile(PrepScan.ClassCachePath(game), text, written);
+
+    private static bool IsStale(string game, params string[] extraInputs) =>
+        PrepScan.IsFormatClassStale(game, new ProjectFiles([Path.Combine(game, "Loader.cs"), .. extraInputs], [], [], [], []));
+
+    [Fact]
+    public void AGlobalClassWithNoClassCacheIsStale() => Assert.True(IsStale(GlobalClassGame(ProjectPrepFixtures.Built)));
+
+    [Fact]
+    public void AGlobalClassMissingFromAnOlderCacheIsStale()
+    {
+        string game = GlobalClassGame(ProjectPrepFixtures.Later);
+        WriteClassCache(game, "list=[]\n", ProjectPrepFixtures.Old);
+
+        Assert.True(IsStale(game));
+    }
+
+    [Fact]
+    public void AGlobalClassInAnOlderCacheIsNotStale()
+    {
+        string game = GlobalClassGame(ProjectPrepFixtures.Later);
+        WriteClassCache(game, GlobalLoaderCache, ProjectPrepFixtures.Old);
+
+        Assert.False(IsStale(game));
+    }
+
+    [Fact]
+    public void ACacheNewerThanTheAssemblyIsNotAskedAgain()
+    {
+        string game = GlobalClassGame(ProjectPrepFixtures.Old);
+        WriteClassCache(game, "list=[]\n", ProjectPrepFixtures.Later);
+
+        Assert.False(IsStale(game));
+    }
+
+    [Fact]
+    public void AMissingAssemblyMakesNoImportDue()
+    {
+        string game = GlobalClassGame(ProjectPrepFixtures.Built);
+        File.Delete(PrepScan.AssemblyPath(game, "Solo"));
+
+        Assert.False(IsStale(game));
+    }
+
+    [Fact]
+    public void NoCsprojMakesNoImportDue()
+    {
+        string game = GlobalClassGame(ProjectPrepFixtures.Built);
+        File.Delete(Path.Combine(game, "Solo.csproj"));
+
+        Assert.False(IsStale(game));
+    }
+
+    [Fact]
+    public void SeveralCsprojsMakeNoImportDue()
+    {
+        string game = GlobalClassGame(ProjectPrepFixtures.Built);
+        File.WriteAllText(Path.Combine(game, "Other.csproj"), string.Empty);
+
+        Assert.False(IsStale(game));
+    }
+
+    [Fact]
+    public void NoGlobalClassInAnySourceIsNotStale()
+    {
+        string game = GlobalClassGame(ProjectPrepFixtures.Later, "public partial class Plain : Node { }\n");
+        WriteClassCache(game, "list=[]\n", ProjectPrepFixtures.Old);
+
+        Assert.False(IsStale(game));
+    }
+
+    [Fact]
+    public void NoGlobalClassAndNoCacheIsNotStale() =>
+        Assert.False(IsStale(GlobalClassGame(ProjectPrepFixtures.Built, "public partial class Plain : Node { }\n")));
+
+    [Fact]
+    public void AGlobalClassOnlyInASiblingFolderIsNotStale()
+    {
+        string game = GlobalClassGame(ProjectPrepFixtures.Later, "public partial class Plain : Node { }\n");
+        WriteClassCache(game, "list=[]\n", ProjectPrepFixtures.Old);
+        string sibling = _temp.Combine("sibling", "Outside.cs");
+        Directory.CreateDirectory(Path.GetDirectoryName(sibling)!);
+        File.WriteAllText(sibling, GlobalLoaderSource);
+
+        Assert.False(IsStale(game, sibling));
+    }
+
+    [Fact]
+    public void AnImportThatRegistersAGlobalClassRunsTwice()
+    {
+        string game = GlobalClassGame(ProjectPrepFixtures.Later);
+        ProjectFiles files = new([Path.Combine(game, "Loader.cs")], [], [], [], []);
+        WriteClassCache(game, "list=[]\n", ProjectPrepFixtures.Old);
+        IReadOnlySet<string> before = PrepScan.CachedFormatClasses(game, files);
+        WriteClassCache(game, GlobalLoaderCache, ProjectPrepFixtures.Latest);
+        IReadOnlySet<string> after = PrepScan.CachedFormatClasses(game, files);
+
+        Assert.Empty(before);
+        Assert.Equal(["Loader"], after);
+        Assert.True(ProjectPrep.RegisteredNewClasses(before, after));
+    }
+
+    [Fact]
+    public void AnImportThatRegistersNoNewGlobalClassRunsOnce()
+    {
+        HashSet<string> loader = new(["Loader"], StringComparer.Ordinal);
+
+        Assert.False(ProjectPrep.RegisteredNewClasses(loader, loader));
+        Assert.False(ProjectPrep.RegisteredNewClasses(new HashSet<string>(), new HashSet<string>()));
+    }
+
+    [Fact]
+    public void AGlobalClassThatIsNoLoaderOrSaverMakesNoImportDue() =>
+        Assert.False(IsStale(GlobalClassGame(ProjectPrepFixtures.Built, "[GlobalClass]\npublic partial class Loader : Resource { }\n")));
+
+    [Theory]
+    [InlineData("[GlobalClass]\npublic partial class XscnLoader : ResourceFormatLoader { }", "XscnLoader")]
+    [InlineData("[Tool, GlobalClass]\n[Icon(\"x\")]\npublic sealed partial class Saver : ResourceFormatSaver { }", "Saver")]
+    public void TheMatcherFindsALoaderOrSaverNamedAfterItsFile(string source, string stem) =>
+        Assert.Equal([stem], PrepScan.FormatClassesIn(source, stem));
+
+    [Theory]
+    [InlineData("[GlobalClass]\npublic partial class Found : Resource { }", "Found")]
+    [InlineData("[GlobalClassName]\npublic partial class Found : ResourceFormatLoader { }", "Found")]
+    [InlineData("// [GlobalClass]\npublic partial class Found : ResourceFormatLoader { }", "Found")]
+    [InlineData("[GlobalClass]\npublic partial class Found : MyBase { }", "Found")]
+    [InlineData("[GlobalClass]\npublic partial class Found : ResourceFormatLoader { }", "Other")]
+    [InlineData("[GlobalClass]\npublic partial class Found : Resource { }\npublic partial class Later : ResourceFormatLoader { }", "Found")]
+    [InlineData("[GlobalClass]\npublic partial class Found : Resource { }\npublic partial class Later : ResourceFormatLoader { }", "Later")]
+    public void TheMatcherSkipsAnythingElse(string source, string stem) => Assert.Empty(PrepScan.FormatClassesIn(source, stem));
 
     [Fact]
     public void FindsTheCsprojNamedByAssemblyName()

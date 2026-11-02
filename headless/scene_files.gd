@@ -19,6 +19,15 @@ const UID_CACHE := "res://.godot/uid_cache.bin"
 ## The extensions of the text formats whose ext_resource tags are written back; a binary .res or
 ## .scn is never rewritten as text.
 const TEXT_EXTENSIONS: Array[String] = ["tscn", "tres"]
+## The extensions of the formats whose saver keeps what the file at the target path holds (comments,
+## resource keys): a save-as of one starts from a copy of its source, so they carry over.
+const SOURCE_KEEPING_EXTENSIONS: Array[String] = ["xscn", "xres"]
+## The reason a file of a format no loader recognizes cannot load, by its extension.
+const NO_LOADER := (
+	"no loader reads .%s files in this project: build the C# project first, then run "
+	+ "godot --headless --path <project> --import once so Godot registers the addon's "
+	+ "loader classes. A project without the addon cannot read this format."
+)
 ## The extensions of the files the editor's scan gives a <path>.uid: those whose loader keeps no uid
 ## of its own (4.7.2 core/io/resource_loader.cpp L1428-1440, should_create_uid_file).
 const UID_FILE_EXTENSIONS: Array[String] = ["gd", "cs", "gdshader", "gdshaderinc"]
@@ -51,9 +60,10 @@ static func save_resource_from(
 	if error != OK and error != ERR_ALREADY_EXISTS:
 		return {"error": "cannot create the folder of %s: %s" % [path, error_string(error)]}
 	var original: String = _layout_source(layout_from, path)
-	error = ResourceSaver.save(resource, path)
+	error = _save_over_source(resource, path, layout_from)
 	if error != OK:
-		return {"error": "%s could not be saved: %s" % [path, error_string(error)]}
+		var failed := "%s could not be saved: %s" % [path, error_string(error)]
+		return {"error": load_failure(path, failed)}
 	var written: PackedStringArray = []
 	error = _write_uids(path, uid, known, written)
 	if error != OK:
@@ -74,6 +84,79 @@ static func save_resource_from(
 	return saved
 
 
+## Whether path's format is one whose text a save splices (TEXT_EXTENSIONS); the one test of it,
+## so no other format is ever read as text.
+static func is_text(path: String) -> bool:
+	return path.get_extension().to_lower() in TEXT_EXTENSIONS
+
+
+## what, with the reason a file of this format cannot load when no loader recognizes it.
+static func load_failure(path: String, what: String) -> String:
+	var extension: String = path.get_extension().to_lower()
+	if extension in ResourceLoader.get_recognized_extensions_for_type(""):
+		return what
+	return "%s: %s" % [what, NO_LOADER % extension]
+
+
+## Whether a save to path of a resource read from layout_from starts from a copy of that file: a
+## save-as within one format whose saver keeps what the file at path holds.
+static func carries_source(layout_from: String, path: String) -> bool:
+	if layout_from.is_empty() or layout_from == path:
+		return false
+	var extension: String = path.get_extension().to_lower()
+	return (
+		extension == layout_from.get_extension().to_lower()
+		and extension in SOURCE_KEEPING_EXTENSIONS
+	)
+
+
+## ResourceSaver.save, over a copy of layout_from when carries_source says so; a source or an
+## existing target that cannot be read, a failed copy or a failed save leaves path as it was. An
+## error code.
+static func _save_over_source(resource: Resource, path: String, layout_from: String) -> int:
+	if not carries_source(layout_from, path):
+		return ResourceSaver.save(resource, path)
+	var source: PackedByteArray = FileAccess.get_file_as_bytes(layout_from)
+	var error: int = _read_error(source)
+	if error != OK:
+		return error
+	var existed: bool = FileAccess.file_exists(path)
+	var held: PackedByteArray = FileAccess.get_file_as_bytes(path) if existed else PackedByteArray()
+	if existed:
+		error = _read_error(held)
+		if error != OK:
+			return error
+	error = _write_bytes(path, source)
+	if error != OK:
+		return error
+	error = ResourceSaver.save(resource, path)
+	if error != OK:
+		_restore(path, existed, held)
+	return error
+
+
+## The error of the FileAccess.get_file_as_bytes that just returned bytes; OK when any came back.
+static func _read_error(bytes: PackedByteArray) -> int:
+	return FileAccess.get_open_error() if bytes.is_empty() else OK
+
+
+## Puts the file at path back as it was before a failed save: held, or no file.
+static func _restore(path: String, existed: bool, held: PackedByteArray) -> void:
+	var error: int = _write_bytes(path, held) if existed else DirAccess.remove_absolute(path)
+	if error != OK and (existed or FileAccess.file_exists(path)):
+		push_error("%s could not be put back after a failed save: %s" % [path, error_string(error)])
+
+
+## Writes bytes to the file at path; an error code.
+static func _write_bytes(path: String, bytes: PackedByteArray) -> int:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		return FileAccess.get_open_error()
+	file.store_buffer(bytes)
+	file.close()
+	return OK
+
+
 ## Adds the .uid files in written to result's uidFilesWritten; result is left alone when there are
 ## none.
 static func note_written(result: Dictionary, written: PackedStringArray) -> void:
@@ -84,24 +167,28 @@ static func note_written(result: Dictionary, written: PackedStringArray) -> void
 
 
 ## Sets the uid of the file at path, registering it (register_uid), and, in a text file, writes
-## each ext_resource's uid back, appending each .uid file written to written; an error code.
+## each ext_resource's uid back, appending each .uid file written to written, the one a saver that
+## keeps the uid beside the file wrote for it among them; an error code.
 static func _write_uids(
 	path: String, uid: int, known: Dictionary, written: PackedStringArray
 ) -> int:
+	var sidecar: String = path + ".uid"
+	var had_sidecar: bool = FileAccess.file_exists(sidecar)
 	var error: int = ResourceSaver.set_uid(path, uid)
-	if error == OK:
-		register_uid(uid, path)
-	if error == OK and path.get_extension().to_lower() in TEXT_EXTENSIONS:
-		error = _restore_ext_uids(path, known, written)
-	return error
+	if error != OK:
+		return error
+	register_uid(uid, path)
+	if not had_sidecar and FileAccess.file_exists(sidecar):
+		written.append(sidecar)
+	return _restore_ext_uids(path, known, written) if is_text(path) else OK
 
 
 ## The text of the file at layout_from before a save to path that keeps its layout; "" when
-## layout_from is "" or no file, or path is not a text file.
+## layout_from is "" or no file, or either is not a text file (is_text).
 static func _layout_source(layout_from: String, path: String) -> String:
 	if layout_from.is_empty() or not FileAccess.file_exists(layout_from):
 		return ""
-	if not path.get_extension().to_lower() in TEXT_EXTENSIONS:
+	if not is_text(path) or not is_text(layout_from):
 		return ""
 	return FileAccess.get_file_as_string(layout_from)
 

@@ -16,6 +16,18 @@ public sealed class ProjectImportTests : IDisposable
 
     public void Dispose() => _temp.Dispose();
 
+    [Theory]
+    [InlineData("box.xres")]
+    [InlineData("BOX.XRES")]
+    public void AnXresNeverNeedsAnImport(string name)
+    {
+        string game = ProjectPrepFixtures.CreateBuiltRepository(_temp);
+        string resource = Path.Combine(game, name);
+        File.WriteAllText(resource, string.Empty);
+
+        Assert.False(PrepScan.AssetNeedsImport(game, resource, ImportFingerprints.None));
+    }
+
     [Fact]
     public void ImportNeededWhenADestFileIsMissing()
     {

@@ -38,7 +38,8 @@ internal sealed partial class RuntimeTools
     [McpServerTool(Name = EditorToolName, ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Acts on the editor of an editor session (run_editor) as its menus do, through EditorInterface. action is one of: open "
-            + "(scene, a res:// .tscn or .scn that exists, becomes the edited scene); save (scene, an open scene, or the edited "
+            + "(scene, a res:// scene file that exists, of any extension a loader of the project reads as a scene, becomes the "
+            + "edited scene); save (scene, an open scene, or the edited "
             + "one when left out; done once it leaves the unsaved list and its file is written); save_all (every unsaved scene); "
             + "close (scene, an open scene, or the edited one; an unsaved scene is refused unless discard is true, which drops "
             + "its changes); play (scene left out or \"current\" plays the edited scene, \"main\" the project's main scene, a "

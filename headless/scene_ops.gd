@@ -21,6 +21,24 @@ const SceneNodes := preload("scene_nodes.gd")
 const SceneProps := preload("scene_props.gd")
 const SceneSignals := preload("scene_signals.gd")
 const SceneMesh := preload("scene_mesh.gd")
+## The refusal of a save of a scene that lost something while it loaded, by its path.
+const LOADED_WITH_ERRORS := (
+	"%s loaded with errors, so it was not saved: saving it now would drop whatever failed to "
+	+ "load, such as an instance whose file was not found. Fix what engineErrors names first."
+)
+## The refusal of a save of a scene whose own script does not load, by the scene's and the script's
+## paths. It names the script, since a script the caches hold failed logs nothing on a repeat.
+const BROKEN_SCRIPT := (
+	"%s was not saved: its script %s does not load, so saving it now would drop the script and "
+	+ "its values. Fix the script first."
+)
+## The engine file, and the mark in its message, that report a resource a load could not fetch: the
+## text loader reports each one this way, naming the file being read. Nothing else counts:
+## resource_loader.cpp's line is also what a script's own failed load() logs, a script's push_error
+## reports variant_utility.cpp, and a script's parse failure is the GDScript module's, which
+## broken_script_of judges for the scene's own scripts.
+const LOAD_LOSS_FILE := "scene/resources/resource_format_text.cpp"
+const LOAD_LOSS_MARK := " - Parse Error: "
 ## The module whose apply_<op>(root, params, context) applies each op on an open scene.
 const EDIT_MODULES := {
 	"delete_nodes": SceneNodes,
@@ -80,7 +98,7 @@ static func create_scene(params: Dictionary) -> Dictionary:
 	var named: bool = given is String and not (given as String).is_empty()
 	root.name = given if named else SceneEdit.root_name_for(scene_path)
 	var facts: Dictionary = {"name": String(root.name), "type": type}
-	var saved: Dictionary = _save_checked(root, "", scene_path, params, FULL_FORM)
+	var saved: Dictionary = _save_checked(root, "", scene_path, params, FULL_FORM, "")
 	root.free()
 	if saved.has("error"):
 		return _fail(saved["error"])
@@ -95,12 +113,14 @@ static func create_scene(params: Dictionary) -> Dictionary:
 static func save_scene(params: Dictionary) -> Dictionary:
 	var scene_path: String = params.get("scene", "")
 	var target: String = params.get("target", scene_path)
-	var opened: Dictionary = SceneEdit.open(scene_path)
+	var opened: Dictionary = _open_to_save(scene_path)
 	if opened.has("error"):
 		return _fail(opened["error"])
 	var root: Node = opened["root"]
 	var layout: Dictionary = FULL_FORM if target == scene_path else {"keep": true, "renames": {}}
-	var saved: Dictionary = _save_checked(root, scene_path, target, params, layout)
+	var saved: Dictionary = _save_checked(
+		root, scene_path, target, params, layout, _load_refusal(opened, scene_path)
+	)
 	root.free()
 	if saved.has("error"):
 		return _fail(saved["error"])
@@ -115,7 +135,7 @@ static func save_scene(params: Dictionary) -> Dictionary:
 ## carried keeps its text too (_kept_layout).
 static func edit_scene(op: String, params: Dictionary) -> Dictionary:
 	var scene_path: String = params.get("scene", "")
-	var opened: Dictionary = SceneEdit.open(scene_path)
+	var opened: Dictionary = _open_to_save(scene_path)
 	if opened.has("error"):
 		return _fail(opened["error"])
 	var root: Node = opened["root"]
@@ -123,7 +143,9 @@ static func edit_scene(op: String, params: Dictionary) -> Dictionary:
 	var applied: Dictionary = apply(op, root, params, context)
 	if not applied.has("error"):
 		var layout: Dictionary = _kept_layout(root, context)
-		var saved: Dictionary = _save_checked(root, scene_path, scene_path, params, layout)
+		var saved: Dictionary = _save_checked(
+			root, scene_path, scene_path, params, layout, _load_refusal(opened, scene_path)
+		)
 		if saved.has("error"):
 			applied = saved
 		else:
@@ -132,6 +154,57 @@ static func edit_scene(op: String, params: Dictionary) -> Dictionary:
 	if applied.has("error"):
 		return _fail(applied["error"])
 	return {"ok": true, "result": applied["result"]}
+
+
+## SceneEdit.open for an op that saves the scene: {root, loadErrors, brokenScript} or {error},
+## loadErrors true when the engine reported a lost resource while the scene loaded
+## (_load_losses_since) and brokenScript the path of a script the file names that cannot run, else
+## "" (SceneEdit.broken_script_of), so the save is refused (_load_refusal): what failed to load,
+## such as an instance whose file is missing, is not in the tree and a save would drop it. The
+## scripts are checked apart because a failed script stays in the script caches, so a later load
+## logs nothing. A scene that gives no resource is not loaded a second time, so its errors log once.
+static func _open_to_save(scene_path: String) -> Dictionary:
+	var engine: Object = SceneEdit.engine_log
+	var start: int = 0 if engine == null else engine.call("count")
+	# Held across open, so the window below is the load: no node's _init runs in it, though a
+	# Resource's may.
+	var held: Resource = ResourceLoader.load(scene_path)
+	if held == null:
+		return {"error": SceneEdit.load_failure_of(scene_path)}
+	var load_errors: bool = _load_losses_since(engine, start)
+	var opened: Dictionary = SceneEdit.open(scene_path)
+	held = null
+	if opened.has("error"):
+		return opened
+	opened["loadErrors"] = load_errors
+	opened["brokenScript"] = SceneEdit.broken_script_of(scene_path)
+	return opened
+
+
+## The whole text refusing a save of what _open_to_save opened from scene_path, or "". A broken
+## script's wins, since it names the file.
+static func _load_refusal(opened: Dictionary, scene_path: String) -> String:
+	var script_path: String = opened["brokenScript"]
+	if not script_path.is_empty():
+		return BROKEN_SCRIPT % [scene_path, script_path]
+	return LOADED_WITH_ERRORS % scene_path if opened["loadErrors"] else ""
+
+
+## Whether engine (SceneEdit.engine_log, null when unset) holds an error since start that reports
+## a lost resource (_is_load_loss).
+static func _load_losses_since(engine: Object, start: int) -> bool:
+	var entries: Array = [] if engine == null else engine.call("since", start)
+	for entry: Dictionary in entries:
+		if entry["type"] == "error" and _is_load_loss(entry):
+			return true
+	return false
+
+
+## Whether entry is LOAD_LOSS_FILE's by the end of its path, either slash, as a build may log a
+## longer path, with LOAD_LOSS_MARK in its message.
+static func _is_load_loss(entry: Dictionary) -> bool:
+	var file: String = str(entry["file"]).replace("\\", "/")
+	return file.ends_with(LOAD_LOSS_FILE) and str(entry["message"]).contains(LOAD_LOSS_MARK)
 
 
 ## Opens params.scene, applies the read op and frees the scene without saving it.
@@ -154,11 +227,12 @@ static func read_scene(op: String, params: Dictionary) -> Dictionary:
 ## error}], failedAt?: {index, tool, error}, uid?, warning?}}; a failed save or write is {ok: false,
 ## error}.
 static func batch_scene(params: Dictionary) -> Dictionary:
-	var opened: Dictionary = SceneEdit.open(params.get("scene", ""))
+	var opened: Dictionary = _open_to_save(params.get("scene", ""))
 	if opened.has("error"):
 		return _fail(opened["error"])
 	var root: Node = opened["root"]
 	var context: Dictionary = _context_of(params)
+	context["refusal"] = _load_refusal(opened, params.get("scene", ""))
 	var pending: Array = []
 	context["pending_writes"] = pending
 	var steps: Array = params.get("steps", [])
@@ -217,7 +291,8 @@ static func _save_batch(
 		if step.get("op", "") != "export_mesh_library":
 			var scene_path: String = params.get("scene", "")
 			var layout: Dictionary = _kept_layout(root, context)
-			return _save_checked(root, scene_path, scene_path, params, layout)
+			var refusal: String = context.get("refusal", "")
+			return _save_checked(root, scene_path, scene_path, params, layout, refusal)
 	return {}
 
 
@@ -229,23 +304,32 @@ static func _kept_layout(root: Node, context: Dictionary) -> Dictionary:
 
 
 ## Saves root to target with the uid target has (a new one for a new file), unless the scene uses
-## C# scripts while the build failed: {uid, warning?} or {error}. source is the file root was
+## C# scripts while the build failed, or, after that check, load_refusal is not "", the whole
+## text _load_refusal gave for source: {uid, warning?} or {error}. source is the file root was
 ## opened from, "" for a new scene; its own ext_resource uids are the ones written back first.
 ## layout is {keep, renames} (SceneEdit.save): keep splices the save into source's text
 ## (SceneFiles.save_resource_from); create_scene and an in-place save_scene pass FULL_FORM, so
 ## their file takes Godot's full form.
 static func _save_checked(
-	root: Node, source: String, target: String, params: Dictionary, layout: Dictionary
+	root: Node,
+	source: String,
+	target: String,
+	params: Dictionary,
+	layout: Dictionary,
+	load_refusal: String
 ) -> Dictionary:
 	var uses_csharp: bool = SceneEdit.tree_uses_csharp(root)
 	var known: Dictionary = {}
 	if not source.is_empty():
 		uses_csharp = uses_csharp or SceneEdit.file_uses_csharp(source)
-		known = SceneFiles.ext_uids_in(FileAccess.get_file_as_string(source))
+		if SceneFiles.is_text(source):
+			known = SceneFiles.ext_uids_in(FileAccess.get_file_as_string(source))
 	var named: String = target if source.is_empty() else source
 	var refusal: String = SceneEdit.csharp_refusal(named, uses_csharp, params)
 	if not refusal.is_empty():
 		return {"error": refusal}
+	if not load_refusal.is_empty():
+		return {"error": load_refusal}
 	return SceneEdit.save(root, source, target, known, layout)
 
 

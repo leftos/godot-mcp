@@ -31,9 +31,9 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
 
     private const string ProjectPathDescription = "The folder that holds the project's project.godot.";
 
-    private static readonly string[] ValidateExtensions = [".gd", ".cs", ".tscn", ".scn", ".tres", ".res"];
-    private static readonly string[] SweepExtensions = [".gd", ".tscn", ".tres"];
-    private static readonly string[] SceneExtensions = [".tscn", ".scn"];
+    private static readonly string[] ValidateExtensions = [".gd", ".cs", ".tscn", ".scn", ".xscn", ".tres", ".res", ".xres"];
+    private static readonly string[] SweepExtensions = [".gd", ".tscn", ".xscn", ".tres", ".xres"];
+    private static readonly string[] SceneExtensions = [".tscn", ".scn", ".xscn"];
     private static readonly string[] BuildStatesChecked = ["built", "up-to-date", "failed"];
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -56,10 +56,10 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
     public async Task<string> ValidateAsync(
         [Description(ProjectPathDescription)] string projectPath,
         [Description(
-            "1 to 50 files to check: res:// paths or paths relative to the project folder, each a .gd, .cs, .tscn, .scn, .tres or "
-                + ".res inside it. A .cs is checked through the C# build and the scenes that attach it, and must be one of the "
-                + "Compile items of the project's .csproj. Left out: every git-versioned .gd, .tscn and .tres of the project folder, "
-                + "at most 500."
+            "1 to 50 files to check: res:// paths or paths relative to the project folder, each a .gd, .cs, .tscn, .scn, .xscn, "
+                + ".tres, .res or .xres inside it. A .cs is checked through the C# build and the scenes that attach it, and must be one "
+                + "of the Compile items of the project's .csproj. Left out: every git-versioned .gd, .tscn, .xscn, .tres and .xres of "
+                + "the project folder, at most 500."
         )]
             string[]? targets = null,
         [Description("{prepare}: " + PrepareDescription)] HeadlessOptions? options = null,
@@ -96,7 +96,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
     )]
     public async Task<string> GetSceneFileTreeAsync(
         [Description(ProjectPathDescription)] string projectPath,
-        [Description("The scene: a res:// path or a path relative to the project folder, ending .tscn or .scn.")] string scenePath,
+        [Description("The scene: a res:// path or a path relative to the project folder, ending .tscn, .scn or .xscn.")] string scenePath,
         [Description(
             "The node to list from, itself included: its path relative to the scene's root (Player/Sprite); the scene's root when left out."
         )]
@@ -138,15 +138,15 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             );
         }
 
-        const string refusal = "is not a script, scene or resource: validate checks .gd, .cs, .tscn, .scn, .tres and .res files.";
+        const string refusal = "is not a script, scene or resource: validate checks .gd, .cs, .tscn, .scn, .xscn, .tres, .res and .xres files.";
         return [.. targets.Select(target => ToResPath(projectDir, target, new PathRule("targets", ValidateExtensions, refusal)))];
     }
 
-    /// <exception cref="McpException">The path is empty, outside the project, missing, or not a .tscn or .scn.</exception>
+    /// <exception cref="McpException">The path is empty, outside the project, missing, or not a .tscn, .scn or .xscn.</exception>
     internal static string CheckScenePath(string projectDir, string scenePath) => ToResPath(projectDir, scenePath, SceneRule("scenePath"));
 
     private static PathRule SceneRule(string argument) =>
-        new(argument, SceneExtensions, "is not a scene: the scene tools take .tscn and .scn files.");
+        new(argument, SceneExtensions, "is not a scene: the scene tools take .tscn, .scn and .xscn files.");
 
     /// <summary>The project folder's git-versioned scripts, scenes and resources that exist, as res:// paths in ordinal order.</summary>
     /// <exception cref="McpException">The folder is not in a git repository, or it has more than <see cref="MaxSweep"/>.</exception>

@@ -19,15 +19,18 @@ internal sealed partial class HeadlessTools
     private const string WriteNote =
         " Runs the prep first, as run_project does (a C# build when stale, an import when needed). A scene that uses C# scripts is "
         + "not saved while the project's C# build fails. A script the scene uses that has no "
-        + ".uid file gets the one the editor would write; uidFilesWritten lists those .uid files (res:// paths) to commit.";
+        + ".uid file gets the one the editor would write; uidFilesWritten lists those .uid files (res:// paths) to commit. "
+        + "A new .xscn's .uid file is listed there too.";
 
     private const string EditNote =
         " The file keeps every part the edit does not change as it was; when that cannot be done, it is saved in Godot's full "
         + "form and the result carries a warning saying why. A C# field named like an engine property (a private scale on a "
-        + "Node2D) is saved as the engine's value, and the result's warning names the field.";
+        + "Node2D) is saved as the engine's value, and the result's warning names the field. "
+        + "A .xscn is always saved whole through its addon's saver, which keeps its comments and keys.";
 
     private const string ScenePathDescription =
-        "The scene: a res:// path or a path relative to the project folder, ending .tscn (the edit tools write text scenes only).";
+        "The scene: a res:// path or a path relative to the project folder, ending .tscn or .xscn (.xscn needs the godot-xaml addon; "
+        + "a binary .scn is read-only).";
 
     private const string NodePathDescription = "The node, by its path relative to the scene's root (\".\" for the root, Boss/Sprite).";
 
@@ -39,8 +42,9 @@ internal sealed partial class HeadlessTools
 
     private static readonly PathRule TextureRule = new(
         "texturePath",
-        [".png", ".jpg", ".jpeg", ".webp", ".svg", ".bmp", ".tga", ".exr", ".hdr", ".dds", ".ktx", ".tres", ".res"],
-        "is not a texture: load_sprite takes images (.png, .jpg, .jpeg, .webp, .svg, .bmp, .tga, .exr, .hdr, .dds, .ktx) and .tres or .res textures."
+        [".png", ".jpg", ".jpeg", ".webp", ".svg", ".bmp", ".tga", ".exr", ".hdr", ".dds", ".ktx", ".tres", ".res", ".xres"],
+        "is not a texture: load_sprite takes images (.png, .jpg, .jpeg, .webp, .svg, .bmp, .tga, .exr, .hdr, .dds, .ktx) "
+            + "and .tres, .res or .xres textures."
     );
 
     [McpServerTool(Name = "create_scene", ReadOnly = false, Destructive = false, OpenWorld = false)]
@@ -54,7 +58,7 @@ internal sealed partial class HeadlessTools
     )]
     public async Task<string> CreateSceneAsync(
         [Description(ProjectPathDescription)] string projectPath,
-        [Description("The scene to write: a res:// path or a path relative to the project folder, ending .tscn.")] string scenePath,
+        [Description("The scene to write: a res:// path or a path relative to the project folder, ending .tscn or .xscn.")] string scenePath,
         [Description("The root's type: a Godot class derived from Node (Node2D, Node3D, Control...), or a script's class_name whose base is one.")]
             string rootType = "Node2D",
         [Description("The root's name; left out, the file's name in PascalCase (player_ship.tscn gives PlayerShip).")] string? rootName = null,
@@ -88,7 +92,7 @@ internal sealed partial class HeadlessTools
     public async Task<string> SaveSceneAsync(
         [Description(ProjectPathDescription)] string projectPath,
         [Description(ScenePathDescription)] string scenePath,
-        [Description("Where to save instead: a res:// path or a path relative to the project folder, ending .tscn; in place when left out.")]
+        [Description("Where to save instead: a res:// path or a path relative to the project folder, ending .tscn or .xscn; in place when left out.")]
             string? newPath = null,
         [Description("{overwrite}: replace the file when one exists at newPath; false by default.")] SceneWriteOptions? options = null,
         CancellationToken cancellationToken = default
@@ -352,7 +356,7 @@ internal sealed partial class HeadlessTools
         [Description(ScenePathDescription)] string scenePath,
         [Description(NodePathDescription)] string nodePath,
         [Description(
-            "The texture: a res:// path or a path relative to the project folder, an image (.png, .jpg, .svg...) or a .tres or .res texture."
+            "The texture: a res:// path or a path relative to the project folder, an image (.png, .jpg, .svg...) or a .tres, .res or .xres texture."
         )]
             string texturePath,
         CancellationToken cancellationToken = default
@@ -450,7 +454,9 @@ internal sealed partial class HeadlessTools
     }
 
     /// <summary>A scene path to write, as a res:// path; its folders need not exist.</summary>
-    /// <exception cref="McpException">The path is empty, outside the project, not a .tscn, or names a file and overwrite is false.</exception>
+    /// <exception cref="McpException">
+    /// The path is empty, outside the project, not a .tscn or .xscn, or names a file and overwrite is false.
+    /// </exception>
     internal static string CheckNewScenePath(string projectDir, string path, string argument, bool overwrite)
     {
         RefuseBinaryScene(path, argument);
@@ -462,7 +468,7 @@ internal sealed partial class HeadlessTools
     }
 
     /// <summary>An existing scene an edit tool opens and saves, as a res:// path.</summary>
-    /// <exception cref="McpException">The path is empty, outside the project, missing, or not a .tscn.</exception>
+    /// <exception cref="McpException">The path is empty, outside the project, missing, or not a .tscn or .xscn.</exception>
     internal static string CheckEditableScenePath(string projectDir, string scenePath)
     {
         RefuseBinaryScene(scenePath, "scenePath");
@@ -478,7 +484,7 @@ internal sealed partial class HeadlessTools
     {
         if (Path.GetExtension(path?.Trim() ?? string.Empty).Equals(".scn", StringComparison.OrdinalIgnoreCase))
         {
-            throw new McpException($"{argument} '{path}' is a binary scene; the scene edit tools write .tscn only.");
+            throw new McpException($"{argument} '{path}' is a binary scene; the scene edit tools write .tscn and .xscn only.");
         }
     }
 

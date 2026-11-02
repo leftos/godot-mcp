@@ -27,7 +27,7 @@ internal sealed partial class HeadlessTools
     [Description(
         "Adds a node to a scene file and saves it, in a headless Godot, without running the game. nodeType is a Godot class "
             + "derived from Node, a script's class_name whose base is one, a script path (res://foo.gd, res://Foo.cs), which makes "
-            + "a node of the script's base class with the script attached, or a scene (.tscn or .scn in the project), which is "
+            + "a node of the script's base class with the script attached, or a scene (.tscn, .scn or .xscn in the project), which is "
             + "added as an instance of that scene. options.properties are set on the new node once it is under its parent, as the "
             + "editor sets them: when any does "
             + "not take, nothing is added and the error names every failing property. The node goes last under its parent, or "
@@ -164,7 +164,7 @@ internal sealed partial class HeadlessTools
     )]
     public async Task<string> GetNodePropertiesAsync(
         [Description(ProjectPathDescription)] string projectPath,
-        [Description("The scene: a res:// path or a path relative to the project folder, ending .tscn or .scn.")] string scenePath,
+        [Description("The scene: a res:// path or a path relative to the project folder, ending .tscn, .scn or .xscn.")] string scenePath,
         [Description(
             "1 to 50 {nodePath, properties?, changedOnly?}: the node's path from the scene's root, the property names to read, "
                 + "each a name or a `:` path to a sub-resource's property or a value's component (all shown when left out), "
@@ -298,7 +298,7 @@ internal sealed partial class HeadlessTools
         new(
             "nodeType",
             ScriptExtensions,
-            "is not a script or a scene: nodeType takes a Node class, a script class_name, a .gd or .cs script, or a .tscn or .scn scene."
+            "is not a script or a scene: nodeType takes a Node class, a script class_name, a .gd or .cs script, or a .tscn, .scn or .xscn scene."
         );
 
     private static JsonNode? ToNode(JsonElement value) => JsonSerializer.SerializeToNode(value);

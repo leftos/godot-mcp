@@ -29,6 +29,20 @@ public sealed class HeadlessRunnerTests
         );
     }
 
+    [Theory]
+    [InlineData(
+        "Failed to add a custom resource loader, script 'res://addons/godot_xaml/XresFormatLoader.cs' does not inherit 'ResourceFormatLoader'."
+    )]
+    [InlineData("Failed to add a custom resource saver, script 'res://addons/godot_xaml/XscnFormatSaver.cs' does not inherit 'ResourceFormatSaver'.")]
+    public void ACustomFormatClassTheAssemblyLacksIsASymptom(string message) =>
+        Assert.True(MissingAssembly.IsSymptom(Entry("error", message, "core/io/resource_loader.cpp", 1)));
+
+    [Theory]
+    [InlineData("Failed to add a custom resource loader, script 'res://Loader.gd' does not inherit 'ResourceFormatLoader'.")]
+    [InlineData("res://Net.cs' does not inherit nothing.")]
+    public void ACustomFormatLineNamingNoCSharpScriptIsNoSymptom(string message) =>
+        Assert.False(MissingAssembly.IsSymptom(Entry("error", message, "core/io/resource_loader.cpp", 1)));
+
     [Fact]
     public void AFailureWithoutLoggedErrorsKeepsItsMessage()
     {

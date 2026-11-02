@@ -93,12 +93,18 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   An import that is due while another session's game runs on the folder is refused, not run under the live game: stop those sessions, or pass `options.prepare: "never"` to go on without it.
 
+  An import is also due when a built assembly declares a `[GlobalClass]` class deriving directly from `ResourceFormatLoader` or `ResourceFormatSaver`, named after its file, that the class cache lacks (an import before the first C# build leaves the cache empty, and a build does not refresh it). A class deriving through an intermediate base is not seen, and a plain `[GlobalClass]` makes no import due.
+
+  One that registers a new `[GlobalClass]` loader or saver runs twice, since only a later pass's scan uses the new loaders, and says so in `prep`: `The import ran twice, because its first pass registered the project's [GlobalClass] loaders or savers, which only a later pass's scan uses: <a> ms, then <b> ms; …`. A `.xres` never counts as needing an import.
+
   A failed build refuses a launch with its compiler errors, naming the configuration built (`The Debug C# build of …`).
 
-  The headless write tools will not save a scene that uses C# scripts while the build fails (nor `attach_script` a `.cs`, nor `connect_signal` to a C# method), and the refusal quotes up to 20 compiler errors, then `(and N more)`; its "Godot logged:" section leaves out the lines the missing assembly causes, counting them as `(and N lines a missing C# assembly causes, left out: the build failed)`.
+  The headless write tools will not save a scene that uses C# scripts while the build fails (nor `attach_script` a `.cs`, nor `connect_signal` to a C# method), and the refusal quotes up to 20 compiler errors, then `(and N more)`; its "Godot logged:" section leaves out the lines the missing assembly causes, counting them as `(and N lines a missing C# assembly causes, left out: the build failed)`; the `Failed to add a custom resource loader/saver, script '…cs' does not inherit …` lines of an addon's loader are among them.
 
   While the build fails, every headless scene tool's result carries `csharp: {build: "failed", errors, errorsOmitted?}`, and `errors` leaves out the lines a missing project assembly causes (a C# autoload that "does not inherit from 'Node'", a C# script whose class could not be found): `csharp` is their cause. A GDScript autoload's failure still reports. `options.prepare: "never"` skips the prep on the tools that take it.
 - **Scene edits keep the file's own text.** The in-place scene tools (`add_node`, `delete_nodes`, `duplicate_node`, `move_node`, `attach_script`, `load_sprite`, `set_node_properties`, `connect_signal`, `disconnect_signal`, `batch_scene_operations`) rewrite only the sections they add, change or delete; every other line of the `.tscn` stays as it was, so the diff shows the edit.
+
+  A `.xscn` is the exception: it is always saved whole by its addon (see "A `.xscn` goes through its addon" below), with no layout warning.
 
   A reparent keeps the original property lines of the moved node and of every node under it, in their order, rather than Godot's pack form of them: only the tag line's `parent=`, a rewritten `NodePath` line and a line whose value the move changed (a `keepGlobalTransform` position) differ, and a Control moved into or out of a Container is judged at its new place, so the save stays spliced.
 
@@ -110,6 +116,20 @@ For an agent driving a Godot project through this server: which tool fits a job,
 - **A script with no `.uid` gets one.** When a scene tool writes a reference to a `.gd`, `.cs`, `.gdshader` or `.gdshaderinc` file that has no `.uid` beside it, it writes the one the editor's scan would (the same id), and the result's `uidFilesWritten` lists the `.uid` files: commit them with the scene.
 
   Each uid a scene tool creates (a `.uid` file's, a new scene's own) is also added to `.godot/uid_cache.bin` when the project has one, so a Godot run started outside the server knows it; if an editor open on the project drops it again, the next `run_project` imports.
+- **A `.xscn` goes through its addon.** In a project with the godot-xaml addon, the headless tools take a `.xscn` wherever they take a `.tscn` (`get_scene_file_tree`, `get_node_properties`, `get_node_signals`, `validate`, `create_scene`, `add_node`, `delete_nodes`, `duplicate_node`, `move_node`, `set_node_properties`, `attach_script`, `connect_signal`, `disconnect_signal`, `batch_scene_operations`, `save_scene`, `load_sprite`), and `.xres` where they take a `.tres` (`validate`, and `load_sprite`'s texture).
+
+  Everything goes through Godot's `ResourceLoader` and `ResourceSaver` with the project's addon; godot-mcp never reads `.xscn` text.
+
+  A `.xscn` is always saved whole through its addon's saver, which keeps its comments and keys: no text splice, no layout warning, in either direction. `save_scene` between `.xscn` files keeps the source's comments and keys (the source is copied to the target first; a failed save restores or removes the target), and an unreadable source or existing target answers that read error and leaves the target alone. A save from `.xscn` to `.tscn` writes Godot's plain form, with no comments carried. A `.xscn` holds no uid inside: it is in a `.uid` file beside it, and `uidFilesWritten` lists one a save created.
+
+  A scene or resource of a format no loader reads fails to load with `no loader reads .xscn files in this project: build the C# project first, then run godot --headless --path <project> --import once so Godot registers the addon's loader classes. A project without the addon cannot read this format.`, on `get_scene_file_tree`, every edit tool, `validate` and a failed save.
+- **A scene that loaded with errors is not saved.** `save_scene`, every scene edit tool and `batch_scene_operations`, for any scene format, refuse with `<scene> loaded with errors, so it was not saved: saving it now would drop whatever failed to load, such as an instance whose file was not found. Fix what engineErrors names first.` when the text loader reports a resource it could not fetch while the scene loads (a missing instance or a missing texture import, a ` - Parse Error: ` line from `scene/resources/resource_format_text.cpp`).
+
+  A script the scene file itself references that does not load or cannot be instantiated, such as one with a parse error, refuses on every repeat too, with `<scene> was not saved: its script <script> does not load, so saving it now would drop the script and its values. Fix the script first.`
+
+  The scene file is not written. A script's own `push_error`, runtime error or failed `load()` never refuses a save, and neither does a scene that instances a scene whose script has a parse error, since nothing in this file is lost.
+
+  Engine warnings never trigger it, a failed C# build's refusal comes first with its own text, and the read tools are not affected.
 - **A C# field named like an engine property does not reach the file.** Headless, a C# script runs as a real instance, so a field such as `private float scale` on a `Node2D` answers for `Node2D.scale`.
 
   Every headless save (the in-place tools, `create_scene`, `save_scene`) stores the engine's value instead, as the editor does, and the result's `warning` names each field (`MoteTrail.scale (a C# field) hides Node2D.scale; the file stores the engine's value`); `get_node_properties` and `set_node_properties` read and set the engine property.
@@ -159,7 +179,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 - **Does:** acts on the editor of an editor session as its menus do, through `EditorInterface`, and returns the editor's state (as `get_editor_state`) with `action` and the action's own fields. A game session is refused: `editor works only in an editor session; session '<name>' is a run session. Start one with run_editor.`
 - **Use:** `{action, scene?, path?, discard?, session?}`; `action` is one of:
-  - `open {scene}`: a `res://` `.tscn` or `.scn` that exists becomes the edited scene; done when it is the edited scene. Replies `scene`.
+  - `open {scene}`: an existing `res://` file that a loader of the project reads as a scene (`.tscn`, `.scn`, or a format an addon registers, as `.xscn`) becomes the edited scene; done when it is the edited scene. Replies `scene`.
   - `save {scene?}`: the edited scene by default; an open scene in another tab is switched to, saved and the previous one switched back. Done when it leaves the unsaved list and its file's modified time is at or after the call. Replies `scene` and `saved: true`.
   - `save_all`: done when nothing is unsaved. Replies `saved`, the paths saved. An untitled unsaved scene opens Save As, and the action ends in the 30 s error below.
   - `close {scene?, discard?}`: an unsaved scene is refused unless `discard: true`, which drops its changes; a non-current open scene is switched to first. Replies `scene`.
@@ -169,7 +189,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
   - `build`: builds the project's C# assembly as `run_project`'s prep does (the same `dotnet build`, `build.log`, saved diagnostics and stamp, the build step only, no import) under the folder's prep lock, and skips it when the assembly is newer than its inputs. When it wrote a new assembly, the editor session answers nothing else until the editor's reload has had its time. Replies `build` (`"built"` or `"up-to-date"`), `reloadWaited: true` when built, `log` (the build log's path) and, while a scene plays, `warning: "a scene is playing; the running game keeps its old assembly until it is played again."` (the build is allowed).
 
   `editor` is batchable.
-- **Edges:** server refusals are `action must be one of open, save, save_all, close, play, stop, select_file, build; got '<action>'.`, `build needs a C# project; <projectDir> has no .csproj.`, `the C# build failed, so the editor keeps its previous assembly: <errors>; full log: <path>` (a build that reaches its 300 s ceiling is refused the same way, saying the editor keeps its previous assembly; several `.csproj` files with none chosen give prep's `The C# build was skipped: …` note), `open needs scene, the res:// path of the scene to open.` and `select_file needs path, the res:// file or folder to select.` The bridge refuses with `The scene <path> has unsaved changes; save it first or pass discard: true.`, `<path> is not open in the editor; open it first with editor {action: open}.`, `the editor has no edited scene.`, `the edited scene has no file path; save it with Save As in the editor first.`, `scene must be a res:// .tscn or .scn path; got '<scene>'.`, `<path> does not exist.`, `the project has no main scene (application/run/main_scene).` and `scene must be current, main or a res:// scene path; got '<scene>'.`
+- **Edges:** server refusals are `action must be one of open, save, save_all, close, play, stop, select_file, build; got '<action>'.`, `build needs a C# project; <projectDir> has no .csproj.`, `the C# build failed, so the editor keeps its previous assembly: <errors>; full log: <path>` (a build that reaches its 300 s ceiling is refused the same way, saying the editor keeps its previous assembly; several `.csproj` files with none chosen give prep's `The C# build was skipped: …` note), `open needs scene, the res:// path of the scene to open.` and `select_file needs path, the res:// file or folder to select.` The bridge refuses with `The scene <path> has unsaved changes; save it first or pass discard: true.`, `<path> is not open in the editor; open it first with editor {action: open}.`, `the editor has no edited scene.`, `the edited scene has no file path; save it with Save As in the editor first.`, `scene must be a res:// path; got '<p>'.`, `<p> does not exist.`, `<p> is not a scene: no loader of this project reads .<ext> as one.`, `the project has no main scene (application/run/main_scene).` and `scene must be current, main or a res:// scene path; got '<scene>'.`
 
   An effect not shown within 30 s is an error, `editor <action> did not take effect within 30 s: expected <...>; a dialog may be open, check take_screenshot` (`open` adds `; the editor may have been changing scenes`, since Godot gives a script no way to see a scene change in progress and `open` does nothing during one; `play` adds `; if the project has C# scripts, the editor's own build before play may have failed: run editor {action: build} first`, since the editor shows that failure only in its MSBuild panel). The bridge never dismisses a dialog an action opens: `take_screenshot`, then `click` it.
 
@@ -1532,7 +1552,9 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
 ## Headless scene editing
 
-These run a headless Godot on the project's files with no game started, beside any live session on the folder. Each carries `prep` in its result when the prep ran a build or an import (`validate` always). The write tools always run the prep, open the scene as the editor does and save it with its uids kept; each edit is all or nothing. The scene edit tools write `.tscn` only; a binary `.scn` can be read but not edited. A node inside an instanced scene is refused (edit that scene's own file), except where a tool below says an editable instance or an instance's root is allowed.
+These run a headless Godot on the project's files with no game started, beside any live session on the folder. Each carries `prep` in its result when the prep ran a build or an import (`validate` always). The write tools always run the prep, open the scene as the editor does and save it with its uids kept; each edit is all or nothing. The scene edit tools write `.tscn` and `.xscn` only (a `.xscn` needs the project's godot-xaml addon, see "A `.xscn` goes through its addon" under the shared rules); a binary `.scn` can be read but not edited (`is a binary scene; the scene edit tools write .tscn and .xscn only.`). Anywhere a tool takes a `.tscn` it takes a `.xscn`.
+
+A node inside an instanced scene is refused (edit that scene's own file), except where a tool below says an editable instance or an instance's root is allowed.
 
 On a GDScript-only project the headless Godot stays up between calls (a warm host, one per folder and server), so consecutive calls skip Godot's start: its first call on a folder costs a start, the next ones a few milliseconds. Any change to the folder's files the host did not make (your own edit, the editor's, another server's), an import, a crash or a ceiling restarts it on the next call, which then costs a start again; nothing is retried.
 
@@ -1553,33 +1575,33 @@ A host stops by itself after 5 minutes (wall time) with no call; at most 4 run p
 ### `validate`
 
 - **Does:** loads scripts, scenes and resources without running the game and reports errors: `{valid, checked, results, engineErrors?, csharp?, prep}`; `results` lists only files with errors.
-- **Use:** after edits, before a launch. `targets` (1 to 50 files), or none for every git-versioned `.gd`, `.tscn` and `.tres` (at most 500); `options {prepare}`.
+- **Use:** after edits, before a launch. `targets` (1 to 50 files), or none for every git-versioned `.gd`, `.tscn`, `.xscn`, `.tres` and `.xres` (at most 500); `options {prepare}`. A target is a `.gd`, `.cs`, `.tscn`, `.scn`, `.xscn`, `.tres`, `.res` or `.xres`; any other is refused (`is not a script, scene or resource: validate checks .gd, .cs, .tscn, .scn, .xscn, .tres, .res and .xres files.`).
 - **Edges:** Godot's parser reports only the first parse error in a file: fix it and validate again. A failed C# build comes back as `csharp {build: "failed", errors}` and makes `valid` false while GDScript is still checked. Autoloads' `_init` still runs. Every C# script a target reaches, through instanced scenes and resources however deep, is checked for its class.
-- **C# targets:** a `.cs` target is checked through the build and through the versioned `.tscn`/`.tres` files whose `ext_resource` names it (at most 20, checked as targets): `csharp.files` gives each `.cs` target's `{path, errors, warnings, from, scenes}`, each diagnostic `{file, line, column, code, message, severity}`, and `csharp.otherErrors` the errors in the assembly's other files (each list at most 20, the rest counted).
+- **C# targets:** a `.cs` target is checked through the build and through the versioned `.tscn`/`.tres` files whose `ext_resource` names it (at most 20, checked as targets): `csharp.files` gives each `.cs` target's `{path, errors, warnings, from, scenes}`, each diagnostic `{file, line, column, code, message, severity}`, and `csharp.otherErrors` the errors in the assembly's other files (each list at most 20, the rest counted). `scenes` never holds a `.xscn`, since that list comes from reading `.tscn`/`.tres` text and godot-mcp reads no `.xscn` text. An error an addon's loader logs is grouped under the `res://` file its message names. A file that fails to load carries `Godot could not load it` only when no error was logged, or when the no-loader hint applies.
 
   Errors make `valid` false; warnings never do. With nothing stale no build runs, so the diagnostics come from the last prep build (`from: "last build at <UTC>"`); a project with no saved build is rebuilt once (`--no-incremental`). A `.cs` target is refused in a project with no `.csproj` or several, and when it is outside the csproj's `Compile` items.
 
 ### `get_scene_file_tree`
 
 - **Does:** lists a scene file's nodes without running any code, instanced scenes expanded and an inherited scene's base merged: path (from the root, `.`), name, type, script, instance, groups, childCount.
-- **Use:** before a scene edit, to learn node paths. `scenePath`, `root`, `options {maxDepth, offset, limit, prepare}`.
+- **Use:** before a scene edit, to learn node paths. `scenePath` (a `.tscn`, `.scn` or `.xscn`; any other is refused: `is not a scene: the scene tools take .tscn, .scn and .xscn files.`), `root`, `options {maxDepth, offset, limit, prepare}`.
 
 ### `create_scene`
 
-- **Does:** writes a new `.tscn` holding one root node, with a new uid: `{scenePath, root, uid}`.
+- **Does:** writes a new `.tscn` or `.xscn` holding one root node, with a new uid: `{scenePath, root, uid}`.
 - **Use:** `scenePath`, `rootType` (default `Node2D`; a Node class or a script's `class_name`), `rootName` (default the file name in PascalCase), `options {overwrite}`.
 - **Edges:** an existing file is refused without `overwrite`; a replaced file keeps its uid.
 
 ### `save_scene`
 
-- **Does:** opens a scene and saves it again, in place or to `newPath` (save-as): `{scenePath, savedTo, uid}`. In place it writes Godot's full 4.7 form; a save-as keeps the source's text (its `ext_resource` ids, its tag lines) with the new file's own header.
-- **Use:** copying a scene to a new file; `options {overwrite}` for an existing `newPath`.
+- **Does:** opens a scene and saves it again, in place or to `newPath` (save-as): `{scenePath, savedTo, uid}`. In place it writes Godot's full 4.7 form; a save-as keeps the source's text (its `ext_resource` ids, its tag lines) with the new file's own header. A `.xscn` is saved whole through its addon in place, and a save-as between `.xscn` files keeps the source's comments and keys; a save-as from `.xscn` to `.tscn` writes Godot's plain form, with no comments.
+- **Use:** copying a scene to a new file (`newPath` ends `.tscn` or `.xscn`); `options {overwrite}` for an existing `newPath`.
 - **Edges:** a new file gets a new uid; saved over a file, the copy takes that file's uid.
 
 ### `add_node`
 
-- **Does:** adds a node named `nodeName` of `nodeType` (a Node class, a script's `class_name`, a script path, or a scene path, added as an instance) and saves: `{path, type, index, instance?, script?}`.
-- **Use:** `options {parent, properties, position}`: parent path from the root (default `.`), `{name: value}` set once the node is under its parent (a name may be a `:` path, as `set_node_properties` takes it), as the editor sets them (so a Control's `layout_mode` takes 0 or 1 under a Control, is 2 under a Container and 3 with no Control parent; `anchors_preset` and a non-zero `anchor_*` need `layout_mode` 1, which is applied first), and a position among its new siblings as `move_node` takes it (default last; in 2D, sibling order is draw order).
+- **Does:** adds a node named `nodeName` of `nodeType` (a Node class, a script's `class_name`, a script path, or a scene path, a `.tscn`, `.scn` or `.xscn`, added as an instance) and saves: `{path, type, index, instance?, script?}`.
+- **Use:** `options {parent, properties, position}`: parent path from the root (default `.`), `{name: value}` set once the node is under its parent (a name may be a `:` path, as `set_node_properties` takes it), as the editor sets them (so a Control's `layout_mode` takes 0 or 1 under a Control, is 2 under a Container and 3 with no Control parent; `anchors_preset` and a non-zero `anchor_*` need `layout_mode` 1, which is applied first), and a position among its new siblings as `move_node` takes it (default last; in 2D, sibling order is draw order). An instance of a format no loader reads ends with the no-loader hint.
 
   A script path (`res://Foo.cs`, `res://foo.gd`, no `class_name` or `[GlobalClass]` needed) makes a node of the script's base class with the script attached; `type` is that base class and `script` the path.
 - **Edges:** a sibling name clash, a parent inside an instanced scene (an instance's own root may be the parent), and a scene instancing itself are refused; a property that does not take adds nothing. A script that does not compile or does not extend a Node class is refused, and a `.cs` script while the project's C# build fails, as `attach_script` refuses it.
@@ -1619,7 +1641,7 @@ A host stops by itself after 5 minutes (wall time) with no call; at most 4 run p
 ### `load_sprite`
 
 - **Does:** sets the `texture` of `nodePath` (Sprite2D, Sprite3D, TextureRect, NinePatchRect, Polygon2D, or any node with a Texture2D `texture`) to `texturePath` and saves: `{path, texture}`.
-- **Edges:** an image never imported is imported first by the editor's full scan, which writes `.import` and `.uid` files across the project: expect those in the diff. An image in a folder Godot does not scan (a name starting with `.`, or holding `.gdignore` or a nested project's own `project.godot`) is refused.
+- **Edges:** `texturePath` is an image, a `.tres`, `.res` or `.xres` (any other is refused: `… and .tres, .res or .xres textures.`). An image never imported is imported first by the editor's full scan, which writes `.import` and `.uid` files across the project: expect those in the diff. An image in a folder Godot does not scan (a name starting with `.`, or holding `.gdignore` or a nested project's own `project.godot`) is refused.
 
 ### `set_node_properties`
 

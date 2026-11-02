@@ -11,10 +11,13 @@ internal static class MissingAssembly
     private const string CSharpClassMissing = "Cannot instantiate C# script because the associated class could not be found";
     private const string AutoloadNotInstantiated = "Failed to instantiate an autoload, script '";
     private const string CSharpAutoloadNotANode = ".cs' does not inherit from 'Node'";
+    private const string CustomResourceFormatNotAdded = "Failed to add a custom resource ";
+    private const string CSharpScriptNotInherited = ".cs' does not inherit";
 
     /// <summary>
     /// Whether Godot logged the entry because the project assembly did not load: a C# autoload that "does not inherit from
-    /// 'Node'" (Godot 4.7.2 <c>main.cpp</c>), or a C# script whose class could not be found (<c>csharp_script.cpp</c>).
+    /// 'Node'" (Godot 4.7.2 <c>main.cpp</c>), a C# resource loader or saver class that "does not inherit" its base, or a C#
+    /// script whose class could not be found (<c>csharp_script.cpp</c>).
     /// </summary>
     public static bool IsSymptom(JsonObject entry)
     {
@@ -23,6 +26,10 @@ internal static class MissingAssembly
             || (
                 message.Contains(AutoloadNotInstantiated, StringComparison.Ordinal)
                 && message.Contains(CSharpAutoloadNotANode, StringComparison.Ordinal)
+            )
+            || (
+                message.Contains(CustomResourceFormatNotAdded, StringComparison.Ordinal)
+                && message.Contains(CSharpScriptNotInherited, StringComparison.Ordinal)
             );
     }
 }

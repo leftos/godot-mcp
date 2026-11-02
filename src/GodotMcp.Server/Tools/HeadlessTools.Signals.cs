@@ -29,7 +29,7 @@ internal sealed partial class HeadlessTools
     )]
     public async Task<string> GetNodeSignalsAsync(
         [Description(ProjectPathDescription)] string projectPath,
-        [Description("The scene: a res:// path or a path relative to the project folder, ending .tscn or .scn.")] string scenePath,
+        [Description("The scene: a res:// path or a path relative to the project folder, ending .tscn, .scn or .xscn.")] string scenePath,
         [Description(NodePathDescription)] string nodePath,
         [Description("{prepare}: " + PrepareDescription)] HeadlessOptions? options = null,
         CancellationToken cancellationToken = default

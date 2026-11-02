@@ -89,9 +89,29 @@ public sealed class HeadlessPropertyValidationTests : IDisposable
 
         Assert.Equal(
             "nodeType 'res://icon.png' is not a script or a scene: nodeType takes a Node class, a script class_name, a .gd or "
-                + ".cs script, or a .tscn or .scn scene.",
+                + ".cs script, or a .tscn, .scn or .xscn scene.",
             refused.Message
         );
+    }
+
+    [Theory]
+    [InlineData("enemy.xscn", "res://enemy.xscn")]
+    [InlineData("res://boss.XSCN", "res://boss.XSCN")]
+    public void AddNodeTakesAnXscnAsAnInstance(string nodeType, string resPath)
+    {
+        File.WriteAllText(Path.Combine(_project, Path.GetFileName(resPath)), string.Empty);
+
+        Assert.Equal(resPath, HeadlessTools.CheckNodeType(_project, nodeType, "res://level.tscn"));
+    }
+
+    [Fact]
+    public void AddNodeRefusesAnXscnInstancingItself()
+    {
+        File.WriteAllText(Path.Combine(_project, "enemy.xscn"), string.Empty);
+
+        McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckNodeType(_project, "enemy.xscn", "res://enemy.xscn"));
+
+        Assert.Equal("nodeType 'enemy.xscn' is the scene being edited; a scene cannot instance itself.", refused.Message);
     }
 
     [Fact]

@@ -5,8 +5,7 @@ extends RefCounted
 ##
 ## A scene opens with GEN_EDIT_STATE_MAIN, so instanced and inherited scenes stay references when
 ## it is packed again (GEN_EDIT_STATE_DISABLED flattens an inherited scene and doubles its
-## inherited connections: 4.7.2 packed_scene.cpp L233-236, L682). Only text scenes are written:
-## outside the editor a binary scene's uid cannot be read back (see SceneFiles.uid_of).
+## inherited connections: 4.7.2 packed_scene.cpp L233-236, L682).
 
 const SceneFiles := preload("scene_files.gd")
 const SceneSplice := preload("scene_splice.gd")
@@ -33,8 +32,8 @@ const SOURCE_RESTORE_WARNING := (
 	+ "it: %s"
 )
 
-## The engine log operations.gd keeps (its ErrorLog, with count() and since(start)), so an edit
-## can quote what a load it refuses logged; null when nothing set it.
+## The engine log operations.gd keeps (its ErrorLog, with count() and since(start)), so a save can
+## tell what the load before it logged (SceneOps._open_to_save); null when nothing set it.
 static var engine_log: Object = null
 
 
@@ -42,11 +41,16 @@ static var engine_log: Object = null
 static func open(path: String) -> Dictionary:
 	var scene := ResourceLoader.load(path) as PackedScene
 	if scene == null:
-		return {"error": "%s did not load as a scene" % path}
+		return {"error": load_failure_of(path)}
 	var root: Node = instantiate_native(scene, PackedScene.GEN_EDIT_STATE_MAIN)
 	if root == null:
 		return {"error": "%s loaded but could not be instantiated" % path}
 	return {"root": root}
+
+
+## Why the scene at path did not open: its load gave no scene.
+static func load_failure_of(path: String) -> String:
+	return SceneFiles.load_failure(path, "%s did not load as a scene" % path)
 
 
 ## scene instantiated with edit_state, or null, with each engine property a script member of the
@@ -183,6 +187,21 @@ static func file_uses_csharp(path: String) -> bool:
 	return _scene_uses_csharp(path, {})
 
 
+## The res:// path of the first script the scene file at path itself names that does not load or
+## cannot be instantiated, which a save would drop along with its exported values; "" when none.
+## Only the scene file's own scripts are checked, its direct dependencies.
+## GDScript::can_instantiate is valid and more, with nothing about abstract (4.7.2 gdscript.cpp
+## L256-262); CSharpScript::can_instantiate fails on a class it cannot find (csharp_script.cpp
+## L2347-2359).
+static func broken_script_of(path: String) -> String:
+	var dependencies: PackedStringArray = ResourceLoader.get_dependencies(path)
+	for script_path in _dependency_paths(dependencies, [".gd", ".cs"]):
+		var script := ResourceLoader.load(script_path) as Script
+		if script == null or not script.can_instantiate():
+			return script_path
+	return ""
+
+
 ## Whether root or a node under it, instanced ones included, has a C# script, or is the root of an
 ## instanced scene whose file uses one: a C# script that cannot load while the build is red leaves
 ## its node with no script, so the instance's file is read instead.
@@ -219,7 +238,7 @@ static func _scene_uses_csharp(path: String, visited: Dictionary) -> bool:
 	var dependencies: PackedStringArray = ResourceLoader.get_dependencies(path)
 	if not csharp_dependencies(dependencies).is_empty():
 		return true
-	for scene in _dependency_paths(dependencies, [".tscn", ".scn"]):
+	for scene in _dependency_paths(dependencies, [".tscn", ".scn", ".xscn"]):
 		if _scene_uses_csharp(scene, visited):
 			return true
 	return false
@@ -248,8 +267,8 @@ static func _ends_with_any(text: String, suffixes: Array) -> bool:
 	return false
 
 
-## Packs root, opened from the scene file source ("" for a new scene), and saves it to the text
-## scene at path with the uid path has (a new one for a new file), as SceneFiles.save_resource_from
+## Packs root, opened from the scene file source ("" for a new scene), and saves it to the scene
+## at path with the uid path has (a new one for a new file), as SceneFiles.save_resource_from
 ## does: known holds the source's own ext_resource uids, and layout is {keep, renames}: keep keeps
 ## the text source has for every section the save left alone, and renames maps the path a node a
 ## move carried has in source to the one it has now, so its record and sections are matched with

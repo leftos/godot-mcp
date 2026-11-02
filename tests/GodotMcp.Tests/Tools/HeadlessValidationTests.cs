@@ -72,10 +72,37 @@ public sealed class HeadlessValidationTests : IDisposable
             McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckTargets(_project, [target]));
 
             Assert.Equal(
-                $"targets '{target}' is not a script, scene or resource: validate checks .gd, .cs, .tscn, .scn, .tres and .res files.",
+                $"targets '{target}' is not a script, scene or resource: validate checks .gd, .cs, .tscn, .scn, .xscn, .tres, .res and .xres files.",
                 refused.Message
             );
         }
+    }
+
+    [Theory]
+    [InlineData("b.xscn")]
+    [InlineData("c.xres")]
+    [InlineData("D.XSCN")]
+    public void AnXamlFormatTargetIsAccepted(string target)
+    {
+        File.WriteAllText(Path.Combine(_project, target), string.Empty);
+
+        Assert.Equal([$"res://{target}"], HeadlessTools.CheckTargets(_project, [target]));
+    }
+
+    [Fact]
+    public void ASweepTakesXscnAndXres()
+    {
+        string sweep = _temp.Combine("sweep-xaml");
+        Directory.CreateDirectory(sweep);
+        File.WriteAllText(Path.Combine(sweep, "project.godot"), "config_version=5\n");
+        foreach (string file in new[] { "a.xscn", "b.xres", "c.scn", "d.res" })
+        {
+            File.WriteAllText(Path.Combine(sweep, file), string.Empty);
+        }
+
+        Git.InitAndCommitAll(sweep);
+
+        Assert.Equal(["res://a.xscn", "res://b.xres"], HeadlessTools.VersionedTargets(sweep, NullLogger.Instance));
     }
 
     [Fact]
@@ -179,7 +206,7 @@ public sealed class HeadlessValidationTests : IDisposable
     {
         McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckScenePath(_project, "res://main.gd"));
 
-        Assert.Equal("scenePath 'res://main.gd' is not a scene: the scene tools take .tscn and .scn files.", refused.Message);
+        Assert.Equal("scenePath 'res://main.gd' is not a scene: the scene tools take .tscn, .scn and .xscn files.", refused.Message);
         Assert.Equal("res://levels/a.tscn", HeadlessTools.CheckScenePath(_project, "levels/a.tscn"));
     }
 

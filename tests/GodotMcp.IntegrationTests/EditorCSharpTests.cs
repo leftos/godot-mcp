@@ -10,7 +10,7 @@ namespace GodotMcp.IntegrationTests;
 /// editor build in an editor session on a C# project: the server's build of the CsProbe copy, opened once before, and the editor's
 /// reload of the new assembly, seen through the reloaded script's method list. Each test restores the source it changes.
 /// </summary>
-public sealed class EditorCSharpTests : IClassFixture<OpenedCsProbeProject>, IAsyncDisposable
+public sealed class EditorCSharpTests : IClassFixture<OpenedCsProbeProject>, IClassFixture<OpenedFakeXamlProject>, IAsyncDisposable
 {
     private const int ScriptTimeoutMs = 30_000;
     private const string Session = "editor";
@@ -21,13 +21,15 @@ public sealed class EditorCSharpTests : IClassFixture<OpenedCsProbeProject>, IAs
         "return Array(load(\"res://CsProbeNode.cs\").get_script_method_list().map(func(method: Dictionary) -> String: return method[\"name\"]))";
 
     private readonly OpenedCsProbeProject _opened;
+    private readonly OpenedFakeXamlProject _fakeXaml;
     private readonly SessionHarness _harness = new();
     private readonly ProjectTools _project;
     private readonly RuntimeTools _runtime;
 
-    public EditorCSharpTests(OpenedCsProbeProject opened)
+    public EditorCSharpTests(OpenedCsProbeProject opened, OpenedFakeXamlProject fakeXaml)
     {
         _opened = opened;
+        _fakeXaml = fakeXaml;
         _project = new ProjectTools(_harness.Sessions);
         _runtime = new RuntimeTools(_harness.Sessions, TestCSharp.Unused());
     }
@@ -85,11 +87,48 @@ public sealed class EditorCSharpTests : IClassFixture<OpenedCsProbeProject>, IAs
         }
     }
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task EditorOpensAFileALoaderReadsAsAScene()
+    {
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await RunEditorAsync(token, _fakeXaml.Directory);
+
+        JsonNode opened = await EditorAsync("open", token, scene: "res://x.xscn");
+
+        Assert.Contains(opened["openScenes"]!.AsArray(), scene => scene!.GetValue<string>() == "res://x.xscn");
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task OpenRefusesAFileNoLoaderReadsAsAScene()
+    {
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await RunEditorAsync(token);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _runtime.EditorAsync("open", scene: "res://" + Source, session: Session, cancellationToken: token)
+        );
+
+        Assert.Contains($"res://{Source} is not a scene: no loader of this project reads .cs as one.", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task OpenRefusesAPathOutsideRes()
+    {
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await RunEditorAsync(token);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _runtime.EditorAsync("open", scene: "main.tscn", session: Session, cancellationToken: token)
+        );
+
+        Assert.Contains("scene must be a res:// path; got 'main.tscn'.", refused.Message, StringComparison.Ordinal);
+    }
+
     private async Task<JsonNode> EditorAsync(string action, CancellationToken token, string? scene = null) =>
         JsonNode.Parse(await _runtime.EditorAsync(action, scene: scene, session: Session, cancellationToken: token))!;
 
-    private Task<string> RunEditorAsync(CancellationToken token) =>
-        _project.RunEditorAsync(_opened.Directory, options: new EditorOptions(Session: Session), cancellationToken: token);
+    private Task<string> RunEditorAsync(CancellationToken token, string? directory = null) =>
+        _project.RunEditorAsync(directory ?? _opened.Directory, options: new EditorOptions(Session: Session), cancellationToken: token);
 
     private async Task<JsonNode> RunScriptAsync(string body, CancellationToken token)
     {

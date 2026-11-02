@@ -500,6 +500,9 @@ internal static class ProjectPrep
         }
 
         context.BeforeImport();
+        IReadOnlySet<string>? classesBefore = PrepScan.IsFormatClassStale(context.ProjectDir, files)
+            ? PrepScan.CachedFormatClasses(context.ProjectDir, files)
+            : null;
         string godot = Installation.FindGodot();
         PrepWrapper? wrap = wrapper.Value;
         string log = Path.Combine(LogFolder(context.ProjectDir), "import.log");
@@ -509,13 +512,31 @@ internal static class ProjectPrep
             wrap,
             cancellationToken
         );
-        if (!File.Exists(log) || !File.ReadLines(log).Any(line => line.StartsWith("ERROR:", StringComparison.Ordinal)))
+        string? reason = SecondPassReason(log, classesBefore, context.ProjectDir, files);
+        return reason is null
+            ? new PrepStep("done", (long)first.Elapsed.TotalMilliseconds, null) { Log = log, Gate = GateVerdictOf(wrap, log, context.Logger) }
+            : await SecondImportAsync(godot, context, wrap, first, reason, cancellationToken);
+    }
+
+    /// <summary>
+    /// Why the import must run once more, or null: its first pass logged errors, or it registered a <c>[GlobalClass]</c> loader or saver the
+    /// class cache did not name before it (<paramref name="classesBefore"/>, null when no class was due), whose loader the
+    /// pass's own scan ran without, so the files it reads were left out of the uid cache.
+    /// </summary>
+    private static string? SecondPassReason(string log, IReadOnlySet<string>? classesBefore, string projectDir, ProjectFiles files)
+    {
+        if (File.Exists(log) && File.ReadLines(log).Any(line => line.StartsWith("ERROR:", StringComparison.Ordinal)))
         {
-            return new PrepStep("done", (long)first.Elapsed.TotalMilliseconds, null) { Log = log, Gate = GateVerdictOf(wrap, log, context.Logger) };
+            return "its first pass logged errors";
         }
 
-        return await SecondImportAsync(godot, context, wrap, first, cancellationToken);
+        return classesBefore is not null && RegisteredNewClasses(classesBefore, PrepScan.CachedFormatClasses(projectDir, files))
+            ? "its first pass registered the project's [GlobalClass] loaders or savers, which only a later pass's scan uses"
+            : null;
     }
+
+    /// <summary>Whether the class cache names a <c>[GlobalClass]</c> after an import that it did not name before it.</summary>
+    internal static bool RegisteredNewClasses(IReadOnlySet<string> before, IReadOnlySet<string> after) => !after.IsSubsetOf(before);
 
     /// <summary>
     /// The sidecars the record is written from: the scan's, or, after an import the prep ran, the project's sidecars as they
@@ -525,14 +546,17 @@ internal static class ProjectPrep
         import.State == "done" ? PrepScan.ImportFiles(context.ProjectDir, context.Logger) : files.ImportFiles;
 
     /// <summary>
-    /// A cold first pass logs errors for resources it meets before their own import, and still exits 0, so the import runs
-    /// again: into the first pass's log, or, when the prep wrapper writes the log, into <c>import.2.log</c>.
+    /// Runs the import again, for <paramref name="reason"/> (<see cref="SecondPassReason"/>): a cold first pass logs errors
+    /// for resources it meets before their own import and still exits 0, and a first pass that registers a
+    /// <c>[GlobalClass]</c> loader scanned without it. Into the first pass's log, or, when the prep wrapper writes the log,
+    /// into <c>import.2.log</c>.
     /// </summary>
     private static async Task<PrepStep> SecondImportAsync(
         string godot,
         PrepContext context,
         PrepWrapper? wrapper,
         ToolProcessResult first,
+        string reason,
         CancellationToken cancellationToken
     )
     {
@@ -545,7 +569,7 @@ internal static class ProjectPrep
         long firstMs = (long)first.Elapsed.TotalMilliseconds;
         long secondMs = (long)second.Elapsed.TotalMilliseconds;
         string where = ownLog ? $"their logs are {log} and {secondLog}" : $"both are in {log}";
-        string note = $"The import ran twice, because its first pass logged errors: {firstMs} ms, then {secondMs} ms; {where}.";
+        string note = $"The import ran twice, because {reason}: {firstMs} ms, then {secondMs} ms; {where}.";
         return new PrepStep("done", firstMs + secondMs, note)
         {
             Log = log,

@@ -4,10 +4,20 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- The headless scene tools take `.xscn` wherever they take `.tscn`, and `validate` and `load_sprite` take `.xres`, in a project with the godot-xaml addon.
+
+### Changed
+
+- `save_scene`, the scene edit tools and `batch_scene_operations` refuse to save a scene whose linked file or own script failed to load, leaving it untouched.
+- `editor {action: open}` takes any project file a loader reads as a scene, `.xscn` included.
+
 ### Fixed
 
 - The C# prep rebuilds a project kept in a gitignored folder after its sources change, instead of reporting it up to date.
 - `click {text}`, `wait_for {text}` and `get_ui_elements` reach a dialog's own buttons, such as "Reload from disk" in the editor's disk-changed dialog.
+- The prep imports when a built `[GlobalClass]` resource loader or saver is missing from the class cache, so a custom format loads after a fresh build.
 
 ## 0.28.0 - 2026-11-02
 

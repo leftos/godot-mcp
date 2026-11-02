@@ -21,6 +21,9 @@ public sealed class HeadlessSceneValidationTests : IDisposable
         File.WriteAllText(Path.Combine(_project, "project.godot"), "config_version=5\n");
         File.WriteAllText(Path.Combine(_project, "levels", "a.tscn"), string.Empty);
         File.WriteAllText(Path.Combine(_project, "levels", "c.scn"), string.Empty);
+        File.WriteAllText(Path.Combine(_project, "levels", "d.xscn"), string.Empty);
+        File.WriteAllText(Path.Combine(_project, "levels", "e.XSCN"), string.Empty);
+        File.WriteAllText(Path.Combine(_project, "levels", "f.xres"), string.Empty);
         File.WriteAllText(Path.Combine(_project, "main.gd"), string.Empty);
     }
 
@@ -100,8 +103,41 @@ public sealed class HeadlessSceneValidationTests : IDisposable
         );
         McpException existing = Assert.Throws<McpException>(() => HeadlessTools.CheckScenePath(_project, "res://main.gd"));
 
-        Assert.Equal("scenePath 'levels/b.tres' is not a scene: the scene tools take .tscn and .scn files.", newPath.Message);
-        Assert.Equal("scenePath 'res://main.gd' is not a scene: the scene tools take .tscn and .scn files.", existing.Message);
+        Assert.Equal("scenePath 'levels/b.tres' is not a scene: the scene tools take .tscn, .scn and .xscn files.", newPath.Message);
+        Assert.Equal("scenePath 'res://main.gd' is not a scene: the scene tools take .tscn, .scn and .xscn files.", existing.Message);
+    }
+
+    [Theory]
+    [InlineData("levels/d.xscn", "res://levels/d.xscn")]
+    [InlineData("res://levels/e.XSCN", "res://levels/e.XSCN")]
+    public void AnXscnPassesTheReadAndEditChecks(string path, string resPath)
+    {
+        Assert.Equal(resPath, HeadlessTools.CheckScenePath(_project, path));
+        Assert.Equal(resPath, HeadlessTools.CheckEditableScenePath(_project, path));
+    }
+
+    [Fact]
+    public void ANewXscnPathIsAccepted() =>
+        Assert.Equal("res://new/g.xscn", HeadlessTools.CheckNewScenePath(_project, "new/g.xscn", "scenePath", overwrite: false));
+
+    [Fact]
+    public void AnXresIsNotAScene()
+    {
+        McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckScenePath(_project, "levels/f.xres"));
+
+        Assert.Equal("scenePath 'levels/f.xres' is not a scene: the scene tools take .tscn, .scn and .xscn files.", refused.Message);
+    }
+
+    [Fact]
+    public void AnXresTextureIsAccepted() =>
+        Assert.EndsWith("f.xres", HeadlessTools.CheckTexturePath(_project, "levels/f.xres"), StringComparison.Ordinal);
+
+    [Fact]
+    public void ATextureRefusalNamesTheXresForm()
+    {
+        McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckTexturePath(_project, "main.gd"));
+
+        Assert.EndsWith("and .tres, .res or .xres textures.", refused.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -112,8 +148,8 @@ public sealed class HeadlessSceneValidationTests : IDisposable
         );
         McpException edited = Assert.Throws<McpException>(() => HeadlessTools.CheckEditableScenePath(_project, "res://levels/c.SCN"));
 
-        Assert.Equal("newPath 'levels/b.scn' is a binary scene; the scene edit tools write .tscn only.", created.Message);
-        Assert.Equal("scenePath 'res://levels/c.SCN' is a binary scene; the scene edit tools write .tscn only.", edited.Message);
+        Assert.Equal("newPath 'levels/b.scn' is a binary scene; the scene edit tools write .tscn and .xscn only.", created.Message);
+        Assert.Equal("scenePath 'res://levels/c.SCN' is a binary scene; the scene edit tools write .tscn and .xscn only.", edited.Message);
         Assert.Equal("res://levels/a.tscn", HeadlessTools.CheckEditableScenePath(_project, "levels/a.tscn"));
         Assert.Equal("res://levels/c.scn", HeadlessTools.CheckScenePath(_project, "levels/c.scn"));
     }

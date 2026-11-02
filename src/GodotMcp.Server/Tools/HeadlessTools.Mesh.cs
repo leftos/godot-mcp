@@ -47,7 +47,7 @@ internal sealed partial class HeadlessTools
     )]
     public async Task<string> ExportMeshLibraryAsync(
         [Description(ProjectPathDescription)] string projectPath,
-        [Description("The scene to read: a res:// path or a path relative to the project folder, ending .tscn or .scn.")] string scenePath,
+        [Description("The scene to read: a res:// path or a path relative to the project folder, ending .tscn, .scn or .xscn.")] string scenePath,
         [Description("The MeshLibrary to write: a res:// path or a path relative to the project folder, ending .tres or .res.")] string outputPath,
         [Description(
             "1 to 500 names of MeshInstance3D nodes to make items of, the rest left out; every one when left out. An empty name "

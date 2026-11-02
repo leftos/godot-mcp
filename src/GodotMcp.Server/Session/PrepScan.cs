@@ -38,9 +38,12 @@ internal static partial class PrepScan
         StringComparer.OrdinalIgnoreCase
     );
 
-    // The files a load reads without an import: Godot's own resources, and the textures modules/dds and modules/ktx register
-    // a loader for (4.7.2 register_types.cpp of each).
-    private static readonly HashSet<string> LoadsWithoutImportExtensions = new([".tres", ".res", ".dds", ".ktx"], StringComparer.OrdinalIgnoreCase);
+    // The files a load reads without an import: Godot's own resources, an addon's .xres, and the textures modules/dds and
+    // modules/ktx register a loader for (4.7.2 register_types.cpp of each).
+    private static readonly HashSet<string> LoadsWithoutImportExtensions = new(
+        [".tres", ".res", ".xres", ".dds", ".ktx"],
+        StringComparer.OrdinalIgnoreCase
+    );
 
     private const string UidPrefix = "uid://";
 
@@ -156,13 +159,15 @@ internal static partial class PrepScan
     /// Whether a Godot import is needed: a <c>.import</c> sidecar whose <c>dest_files</c> are not all present, whose source is
     /// not the one it imported or whose settings changed since the prep last saw them (<see cref="ImportOutdated"/>), or a uid
     /// <c>.godot/uid_cache.bin</c> does not hold (<see cref="IsUidCacheStale"/>), or a script declaring <c>class_name</c> that
-    /// the class cache may not hold yet. A missing <c>.godot/</c> alone is not a reason.
+    /// the class cache may not hold yet, or a <c>[GlobalClass]</c> loader or saver it lacks (<see cref="IsFormatClassStale"/>). A missing
+    /// <c>.godot/</c> alone is not a reason.
     /// </summary>
     /// <param name="fingerprints">The md5 the prep last saw for each sidecar (<see cref="ImportFingerprints"/>).</param>
     public static bool ImportNeeded(string projectDir, ProjectFiles files, IReadOnlyDictionary<string, string> fingerprints, ILogger logger) =>
         IsUidCacheStale(projectDir, files, logger)
         || files.ImportFiles.Any(sidecar => HasMissingTarget(projectDir, sidecar) || ImportOutdated(projectDir, sidecar, fingerprints))
-        || IsClassCacheStale(projectDir, files.Scripts);
+        || IsClassCacheStale(projectDir, files.Scripts)
+        || IsFormatClassStale(projectDir, files);
 
     /// <summary>
     /// Whether <c>.godot/uid_cache.bin</c> lacks a uid the project's files record: with no cache, whether any <c>.uid</c>
@@ -320,7 +325,7 @@ internal static partial class PrepScan
 
     /// <summary>
     /// Whether a file a request loads must be imported first: it is not one that loads without an import (<c>.tres</c>,
-    /// <c>.res</c>, <c>.dds</c>, <c>.ktx</c>), and it has no <c>.import</c> sidecar, or one whose <c>dest_files</c> are not
+    /// <c>.res</c>, <c>.xres</c>, <c>.dds</c>, <c>.ktx</c>), and it has no <c>.import</c> sidecar, or one whose <c>dest_files</c> are not
     /// all present or whose source is not the one it imported (<see cref="ImportOutdated"/>) (an ignored sidecar is not in
     /// <see cref="ProjectFiles.ImportFiles"/>). A never-imported image fails to load with "No loader found" (4.7.2
     /// <c>core/io/resource_loader.cpp</c> L332).
@@ -461,6 +466,73 @@ internal static partial class PrepScan
         return scripts.Where(File.Exists).Where(script => !cached || File.GetLastWriteTimeUtc(script) > written).Any(DeclaresClassName);
     }
 
+    /// <summary>
+    /// Whether a <c>[GlobalClass]</c> loader or saver the project's built assembly declares (<see cref="FormatClassesIn"/>) is
+    /// missing from the class cache, which is where a run learns of a C# resource loader. An import before the first build
+    /// writes an empty list and a build does not change it, so the import is due again once an assembly exists. Never with no
+    /// assembly to register a class from, and never for a cache written since the assembly: an import that left a class out
+    /// would leave it out again. Other global classes never make an import due: only a loader or saver changes what a headless
+    /// run can read, and an import rewrites the cache only when a global class exists (4.7.2
+    /// <c>editor/file_system/editor_file_system.cpp</c> L342, L2161-2166).
+    /// </summary>
+    public static bool IsFormatClassStale(string projectDir, ProjectFiles files)
+    {
+        CsprojLookup csproj = FindCsproj(projectDir);
+        if (csproj.Kind != CsprojKind.Found)
+        {
+            return false;
+        }
+
+        string assembly = AssemblyPath(projectDir, csproj.AssemblyName!);
+        if (!File.Exists(assembly))
+        {
+            return false;
+        }
+
+        string cache = ClassCachePath(projectDir);
+        bool cached = File.Exists(cache);
+        if (cached && File.GetLastWriteTimeUtc(cache) >= File.GetLastWriteTimeUtc(assembly))
+        {
+            return false;
+        }
+
+        string listed = cached ? File.ReadAllText(cache) : string.Empty;
+        return DeclaredFormatClasses(projectDir, files).Any(name => !Names(listed, name));
+    }
+
+    /// <summary>
+    /// The <c>[GlobalClass]</c> loaders and savers the project's C# sources declare that the class cache names now; empty with
+    /// no cache.
+    /// An import whose scan started without a class registers it in the cache but cannot use it: compared before and after
+    /// an import, a name added means the import must run once more for the scan to see the files that class loads.
+    /// </summary>
+    public static IReadOnlySet<string> CachedFormatClasses(string projectDir, ProjectFiles files)
+    {
+        string cache = ClassCachePath(projectDir);
+        string listed = File.Exists(cache) ? File.ReadAllText(cache) : string.Empty;
+        return DeclaredFormatClasses(projectDir, files).Where(name => Names(listed, name)).ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static bool Names(string classCache, string name) => classCache.Contains($"\"{name}\"", StringComparison.Ordinal);
+
+    /// <summary>The <c>[GlobalClass]</c> loaders and savers the C# build inputs under the project folder declare.</summary>
+    private static IEnumerable<string> DeclaredFormatClasses(string projectDir, ProjectFiles files)
+    {
+        string folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(projectDir)) + Path.DirectorySeparatorChar;
+        return files
+            .BuildInputs.Where(file => HasExtension(file, ".cs") && file.StartsWith(folder, StringComparison.OrdinalIgnoreCase) && File.Exists(file))
+            .SelectMany(file => FormatClassesIn(File.ReadAllText(file), Path.GetFileNameWithoutExtension(file)));
+    }
+
+    /// <summary>
+    /// The name of each class <paramref name="source"/>, a file named <paramref name="stem"/>, declares under a
+    /// <c>[GlobalClass]</c> attribute with <c>ResourceFormatLoader</c> or <c>ResourceFormatSaver</c> as a direct base. Only a
+    /// class named after its file counts: Godot gives no other a script path (GodotSharp <c>ScriptPathAttributeGenerator.cs</c>
+    /// L54-56). A class deriving through a base of its own is not seen.
+    /// </summary>
+    internal static IReadOnlyList<string> FormatClassesIn(string source, string stem) =>
+        [.. FormatClassDeclaration().Matches(source).Select(match => match.Groups[1].Value).Where(name => name == stem)];
+
     private static bool DeclaresClassName(string script) => File.ReadLines(script).Any(line => ClassNameLine().IsMatch(line));
 
     private static bool HasMissingTarget(string projectDir, string sidecar)
@@ -578,4 +650,13 @@ internal static partial class PrepScan
     // class_name at the start of a line, after any annotations (@tool, @icon("res://x.svg")) or an extends clause on the same line.
     [GeneratedRegex(@"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:extends\s+\S+\s+)?class_name\s+[A-Za-z_]")]
     private static partial Regex ClassNameLine();
+
+    // A line opening an attribute list naming GlobalClass, any attributes after it, and the class they sit on when its base
+    // list names ResourceFormatLoader or ResourceFormatSaver.
+    [GeneratedRegex(
+        @"^[ \t]*\[[^\]\r\n]*\bGlobalClass\b[^\]\r\n]*\](?:\s*\[[^\]]*\])*\s*"
+            + @"(?:(?:public|internal|sealed|partial|abstract)\s+)*class\s+(\w+)\s*:[^{]*\bResourceFormat(?:Loader|Saver)\b",
+        RegexOptions.Multiline
+    )]
+    private static partial Regex FormatClassDeclaration();
 }

@@ -133,18 +133,30 @@ static func parse_request(text: String) -> Dictionary:
 
 
 ## Adds the errors (not warnings) among entries to groups, a Dictionary of path to its errors,
-## each as {message, file, line}: under the res:// file an error names, else under checked_path.
-## An error already listed under its path is not listed again.
+## each as {message, file, line}: under the res:// file its message starts with (a C# loader's error
+## is logged from the loader's own source), else the res:// file it was logged from, else under
+## checked_path. An error already listed under its path is not listed again.
 static func group_errors(entries: Array, checked_path: String, groups: Dictionary) -> void:
 	for entry: Dictionary in entries:
 		if entry["type"] != "error":
 			continue
 		var file: String = entry["file"]
-		var key: String = file if file.begins_with(RES_PREFIX) else checked_path
+		var key: String = _path_in_message(entry["message"])
+		if key.is_empty():
+			key = file if file.begins_with(RES_PREFIX) else checked_path
 		var error: Dictionary = {"message": entry["message"], "file": file, "line": entry["line"]}
 		var listed: Array = groups.get_or_add(key, [])
 		if not listed.has(error):
 			listed.append(error)
+
+
+## The res:// path message starts with, up to the ":" after its extension, or "".
+static func _path_in_message(message: String) -> String:
+	if not message.begins_with(RES_PREFIX):
+		return ""
+	var end: int = message.find(":", RES_PREFIX.length())
+	var path: String = message.substr(0, end) if end > 0 else ""
+	return path if path.get_extension().is_valid_ascii_identifier() else ""
 
 
 ## groups as validate's results, [{path, errors}], by path.
@@ -215,14 +227,19 @@ static func _validate(targets: Array, log: ErrorLog) -> Dictionary:
 
 ## Checks the file at path and every C# script its dependency closure reaches here. checked holds
 ## the scripts loaded so far this run, so a script many targets reach is loaded and checked once.
+## A file that did not load gets an entry of its own when the load logged no error, or when
+## load_failure has a hint to give.
 static func _check_file(
 	path: String, groups: Dictionary, checked: Dictionary, visited: Dictionary, log: ErrorLog
 ) -> void:
 	var start: int = log.count()
 	var resource: Resource = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
 	var entries: Array = log.since(start)
-	if resource == null and entries.is_empty():
-		entries = [{"type": "error", "message": "Godot could not load it", "file": path, "line": 0}]
+	if resource == null:
+		var plain := "Godot could not load it"
+		var message: String = SceneFiles.load_failure(path, plain)
+		if message != plain or not _has_error(entries):
+			entries.append({"type": "error", "message": message, "file": path, "line": 0})
 	group_errors(entries, path, groups)
 	if path.ends_with(".gd"):
 		return
@@ -230,6 +247,14 @@ static func _check_file(
 		if reached.ends_with(".cs") and not checked.has(reached):
 			checked[reached] = true
 			_check_script(reached, groups, log)
+
+
+## Whether entries hold an error, not only warnings.
+static func _has_error(entries: Array) -> bool:
+	for entry: Dictionary in entries:
+		if entry["type"] == "error":
+			return true
+	return false
 
 
 ## Loads the C# script at script_path and instantiates its class, so a script whose class the
@@ -246,9 +271,8 @@ static func _scene_file_tree(params: Dictionary) -> Dictionary:
 	var scene_path: String = params.get("scene", "")
 	var scene := ResourceLoader.load(scene_path) as PackedScene
 	if scene == null:
-		return {
-			"ok": false, "error": "%s did not load as a scene; engineErrors say why" % scene_path
-		}
+		var failure: String = "%s did not load as a scene; engineErrors say why" % scene_path
+		return {"ok": false, "error": SceneFiles.load_failure(scene_path, failure)}
 	var tree: Dictionary = {"nodes": {}, "children": {}}
 	add_state(scene.get_state(), ".", tree, 0)
 	var root_path: String = ScenePaths.normalise_node_path(str(params.get("root", ".")))

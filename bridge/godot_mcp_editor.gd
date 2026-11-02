@@ -136,11 +136,14 @@ func _saved(scene: String, since: int) -> bool:
 
 func _open(params: Dictionary) -> Dictionary:
 	var scene: String = str(params.get("scene", ""))
-	var extension: String = scene.get_extension()
-	if not scene.begins_with("res://") or not extension in ["tscn", "scn"]:
-		return {"error": "scene must be a res:// .tscn or .scn path; got '%s'." % scene}
+	if not scene.begins_with("res://"):
+		return {"error": "scene must be a res:// path; got '%s'." % scene}
 	if not ResourceLoader.exists(scene):
 		return {"error": "%s does not exist." % scene}
+	var extension: String = scene.get_extension().to_lower()
+	if not extension in ResourceLoader.get_recognized_extensions_for_type("PackedScene"):
+		var refusal := "%s is not a scene: no loader of this project reads .%s as one."
+		return {"error": refusal % [scene, extension]}
 	var call: Callable = Callable(editor_interface, "open_scene_from_path").bind(scene)
 	if not await guarded(call, func() -> bool: return _current() == scene, DEADLINE_MS):
 		return {"error": LATE % ["open", "%s as the edited scene" % scene] + CHANGING}

@@ -42,10 +42,11 @@ static func apply_export_mesh_library(
 	var library := MeshLibrary.new()
 	var result: Dictionary = {"outputPath": output}
 	result.merge(_fill(library, found, wanted))
-	var source: String = FileAccess.get_file_as_string(ProjectSettings.globalize_path(scene_path))
-	var write: Dictionary = {
-		"library": library, "output": output, "ext_uids": SceneFiles.ext_uids_in(source)
-	}
+	var ext_uids: Dictionary = {}
+	if SceneFiles.is_text(scene_path):
+		var source_file: String = ProjectSettings.globalize_path(scene_path)
+		ext_uids = SceneFiles.ext_uids_in(FileAccess.get_file_as_string(source_file))
+	var write: Dictionary = {"library": library, "output": output, "ext_uids": ext_uids}
 	var pending: Variant = context.get("pending_writes")
 	if pending is Array:
 		(pending as Array).append(write)

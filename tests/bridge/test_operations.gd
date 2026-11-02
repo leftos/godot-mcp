@@ -326,6 +326,21 @@ func _messages(entries: Array) -> Array:
 	return messages
 
 
+func test_an_addon_error_lands_under_the_file_its_message_names() -> void:
+	var groups: Dictionary = {}
+	var message := "res://checks/broken.xscn:1:2: GX0104: <Control> has no Name."
+	var error: Dictionary = _entry("error", message, "res://addons/godot_xaml/XscnLoading.cs", 347)
+	_ops.group_errors([error], "res://checks/broken.xscn", groups)
+	assert_eq(groups.keys(), ["res://checks/broken.xscn"], "the file at fault")
+
+
+func test_a_message_with_no_leading_path_keeps_the_logged_file() -> void:
+	var groups: Dictionary = {}
+	var error: Dictionary = _entry("error", "Parse Error: x", "res://a.gd", 2)
+	_ops.group_errors([error], "res://checked.tscn", groups)
+	assert_eq(groups.keys(), ["res://a.gd"], "the file it was logged from")
+
+
 func _entry(type: String, message: String, file: String, line: int) -> Dictionary:
 	return {"type": type, "message": message, "file": file, "line": line}
 

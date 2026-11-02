@@ -7,6 +7,7 @@ extends RefCounted
 ## wrong type (see bridge/godot_mcp_inspect.gd's header), so every set is read back.
 
 const SceneEdit := preload("scene_edit.gd")
+const SceneFiles := preload("scene_files.gd")
 const SceneNodes := preload("scene_nodes.gd")
 const ScenePaths := preload("scene_paths.gd")
 const SceneValues := preload("scene_values.gd")
@@ -261,7 +262,7 @@ static func _script_node(path: String, context: Dictionary) -> Dictionary:
 static func _instance_of(path: String, scene: String) -> Dictionary:
 	var packed := ResourceLoader.load(path) as PackedScene
 	if packed == null:
-		return {"error": _not_a_node_type(path)}
+		return {"error": SceneFiles.load_failure(path, _not_a_node_type(path))}
 	if _contains_scene(packed, scene, 0):
 		return {"error": "%s is or instances %s, which cannot contain itself." % [path, scene]}
 	var node: Node = SceneEdit.instantiate_native(packed, PackedScene.GEN_EDIT_STATE_INSTANCE)
