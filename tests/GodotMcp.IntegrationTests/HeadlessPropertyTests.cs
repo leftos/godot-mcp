@@ -209,6 +209,23 @@ public sealed class HeadlessPropertyTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AddNodeSetsAnExactTransform3D()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        ProbeProject probe = Track(new ProbeProject());
+        WriteScenes(probe.Directory);
+        AddNodeOptions options = new("Box", new() { ["transform"] = Json("\"Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 450, 600, -210)\"") });
+
+        JsonNode added = JsonNode.Parse(await _tools.AddNodeAsync(probe.Directory, "level.tscn", "Camera3D", "Top", options, cancellation))!;
+        JsonNode read = await PropertiesAsync(probe.Directory, "level.tscn", [new NodePropertyQuery("Box/Top", ["transform"])], cancellation);
+        (string _, string[] body) = Section(probe.Directory, "level.tscn", "Top");
+
+        Assert.Equal("Box/Top", added["path"]!.GetValue<string>());
+        Assert.Equal(["transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 450, 600, -210)"], body);
+        Assert.Equal("Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 450, 600, -210)", read["results"]![0]!["properties"]!["transform"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AddNodeSetsAThemeTypeVariation()
     {
         // Godot 4.7.2 declares Control.theme_type_variation as a String and reads it back as a StringName (control.cpp L5033, L3670).

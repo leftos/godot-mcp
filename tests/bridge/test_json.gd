@@ -45,6 +45,27 @@ func test_to_json_turns_vectors_colours_and_rects_into_objects() -> void:
 	)
 
 
+func test_to_json_writes_text_types_as_their_constructor_text() -> void:
+	var transform: Transform3D = str_to_var(
+		"Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 450, 600, -210)"
+	)
+	assert_eq(
+		_json.to_json(transform),
+		"Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 450, 600, -210)",
+		"a Transform3D"
+	)
+	assert_eq(
+		_json.to_json(Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))),
+		"Basis(1, 0, 0, 0, 0, 1, 0, -1, 0)",
+		"a Basis"
+	)
+	assert_eq(
+		_json.to_json(Quaternion(0.5, 0.5, 0.5, 0.5)),
+		"Quaternion(0.5, 0.5, 0.5, 0.5)",
+		"a Quaternion"
+	)
+
+
 func test_to_json_converts_containers_recursively() -> void:
 	var value: Dictionary = {1: [Vector2i(1, 2), "a"], "packed": PackedInt32Array([5, 6])}
 	var expected: Dictionary = {"1": [{"x": 1, "y": 2}, "a"], "packed": [5, 6]}
@@ -151,6 +172,51 @@ func test_from_json_reads_text_types_from_a_string() -> void:
 	)
 	assert_eq(_json.from_json(5, {"type": TYPE_STRING}), REFUSED, "a number is no String")
 	assert_eq(_json.from_json(null, {"type": TYPE_NODE_PATH}), REFUSED, "null is no NodePath")
+
+
+func test_from_json_reads_text_types_from_their_constructor_text() -> void:
+	var values: Dictionary = {
+		TYPE_TRANSFORM2D: Transform2D(Vector2(1, 2), Vector2(3, 4), Vector2(5, 6)),
+		TYPE_TRANSFORM3D: str_to_var("Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 450, 600, -210)"),
+		TYPE_BASIS: Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0)),
+		TYPE_QUATERNION: Quaternion(0.5, 0.5, 0.5, 0.5),
+		TYPE_AABB: AABB(Vector3(0.5, 1, 2), Vector3(3, 4, 5)),
+		TYPE_PLANE: Plane(0.0, 0.0, 1.0, 4.0),
+	}
+	for type: int in values:
+		var value: Variant = values[type]
+		assert_eq(
+			_json.from_json(var_to_str(value), {"type": type}),
+			[true, value],
+			"a %s" % _json.type_name({"type": type})
+		)
+
+
+func test_from_json_refuses_other_text_for_text_types() -> void:
+	var form := "a Transform3D is written as its constructor text"
+	var wrong: Array = [
+		"[X: (1, 0, 0), Y: (0, 1, 0), Z: (0, 0, 1), O: (0, 0, 0)]",
+		"Basis(1, 0, 0, 0, 1, 0, 0, 0, 1)",
+		'Object(Node, "name": "x")',
+		{"basis": {}, "origin": {}},
+	]
+	for value: Variant in wrong:
+		var refused: Array = _json.from_json(value, {"type": TYPE_TRANSFORM3D})
+		assert_eq(refused.size(), 3, "a refusal carries a reason")
+		assert_eq(refused[0], false, "the value is refused")
+		assert_true(refused[2].begins_with(form), "the reason names the form")
+	assert_eq(
+		_json.from_json("Transform3D(1, 2)", {"type": TYPE_TRANSFORM3D}),
+		[
+			false,
+			null,
+			(
+				"a Transform3D is written as its constructor text, as a .tscn holds it, "
+				+ 'like Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0); got "Transform3D(1, 2)"'
+			),
+		],
+		"a Transform3D of the wrong number of numbers"
+	)
 
 
 func test_from_json_reads_vectors_from_their_components() -> void:
@@ -715,6 +781,16 @@ func test_same_set_compares_colors_rects_and_packed_arrays_within_tolerance() ->
 	assert_true(_json.same_set(drift, held), "a packed vector array a component 1e-6 out")
 	var longer: PackedVector3Array = PackedVector3Array([Vector3(1, 2, 3), Vector3(4, 5, 6)])
 	assert_true(not _json.same_set(longer, held), "a packed vector array of a different length")
+
+
+func test_same_set_compares_text_types_within_tolerance() -> void:
+	var held: Transform3D = str_to_var("Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 2, 3)")
+	var drifted: Transform3D = str_to_var("Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.000001, 2, 3)")
+	assert_true(_json.same_set(drifted, held), "a Transform3D 1e-6 out")
+	assert_true(
+		not _json.same_set(str_to_var("Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 2, 3)"), held),
+		"an origin 1 out"
+	)
 
 
 func test_same_set_recurses_into_arrays_and_dictionaries() -> void:

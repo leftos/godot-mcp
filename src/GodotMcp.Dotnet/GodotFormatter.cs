@@ -112,8 +112,9 @@ internal sealed class GodotFormatter(int maxDepth) : IValueFormatter
 
 /// <summary>
 /// Godot's structs in the shapes the bridge's JSON module (<c>bridge/godot_mcp_json.gd</c>) writes: vectors as
-/// <c>{x, y[, z]}</c>, a colour as <c>{r, g, b, a}</c>, a rect as <c>{x, y, width, height}</c>, and any other Godot struct
-/// as its text, as the module writes its <c>str()</c>.
+/// <c>{x, y[, z]}</c>, a colour as <c>{r, g, b, a}</c>, a rect as <c>{x, y, width, height}</c>, a transform, a basis, a
+/// quaternion, an AABB and a plane as their constructor text, as a <c>.tscn</c> holds them, and any other Godot struct as
+/// its text, as the module writes its <c>str()</c>.
 /// </summary>
 internal static class GodotStructs
 {
@@ -149,6 +150,12 @@ internal static class GodotStructs
             },
             Rect2 r => Rect(Real(r.Position.X), Real(r.Position.Y), Real(r.Size.X), Real(r.Size.Y)),
             Rect2I r => Rect(r.Position.X, r.Position.Y, r.Size.X, r.Size.Y),
+            Transform2D v => JsonValue.Create(GD.VarToStr(v)),
+            Transform3D v => JsonValue.Create(GD.VarToStr(v)),
+            Basis v => JsonValue.Create(GD.VarToStr(v)),
+            Quaternion v => JsonValue.Create(GD.VarToStr(v)),
+            Aabb v => JsonValue.Create(GD.VarToStr(v)),
+            Plane v => JsonValue.Create(GD.VarToStr(v)),
             _ when value.GetType().IsValueType && Targets.StopAtGodot(value.GetType()) => JsonValue.Create(value.ToString()),
             _ => null,
         };

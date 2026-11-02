@@ -19,10 +19,40 @@ const VECTOR_KEYS := {
 	TYPE_RECT2I: ["x", "y", "width", "height"],
 }
 const INTEGER_VECTORS: Array[int] = [TYPE_VECTOR2I, TYPE_VECTOR3I, TYPE_VECTOR4I, TYPE_RECT2I]
+## The value types read and written as their constructor text, as a .tscn holds them: the type's
+## name, then its numbers in parentheses (see _text_value_from_json).
+const TEXT_TYPES := {
+	TYPE_TRANSFORM2D: "Transform2D",
+	TYPE_TRANSFORM3D: "Transform3D",
+	TYPE_BASIS: "Basis",
+	TYPE_QUATERNION: "Quaternion",
+	TYPE_AABB: "AABB",
+	TYPE_PLANE: "Plane",
+}
+## How each text type reads at its identity, the example a refusal of malformed text gives.
+const TEXT_EXAMPLES := {
+	TYPE_TRANSFORM2D: Transform2D.IDENTITY,
+	TYPE_TRANSFORM3D: Transform3D.IDENTITY,
+	TYPE_BASIS: Basis.IDENTITY,
+	TYPE_QUATERNION: Quaternion.IDENTITY,
+	TYPE_AABB: AABB(),
+	TYPE_PLANE: Plane(),
+}
 ## The types whose is_equal_approx compares every component approximately: the ones a property may
-## store in 32 bits, or as a rotation, and so read back with drift in the last digits.
+## store in 32 bits or as a rotation, and so read back with drift in the last digits. The text
+## types compare their whole self approximately too, since their numbers are floats.
 const APPROXIMATE_TYPES: Array[int] = [
-	TYPE_VECTOR2, TYPE_VECTOR3, TYPE_VECTOR4, TYPE_RECT2, TYPE_COLOR
+	TYPE_VECTOR2,
+	TYPE_VECTOR3,
+	TYPE_VECTOR4,
+	TYPE_RECT2,
+	TYPE_COLOR,
+	TYPE_TRANSFORM2D,
+	TYPE_TRANSFORM3D,
+	TYPE_BASIS,
+	TYPE_QUATERNION,
+	TYPE_AABB,
+	TYPE_PLANE,
 ]
 ## The element type of each packed array.
 const PACKED_ELEMENTS := {
@@ -87,8 +117,9 @@ static var node_root: Node = null
 static var _native_names: Dictionary = {}
 
 
-## A JSON-safe copy of value: vectors, colours and rects become objects, containers are copied
-## recursively, and anything else not JSON becomes its str(). A Node becomes its path (see
+## A JSON-safe copy of value: vectors, colours and rects become objects, the text types (see
+## TEXT_TYPES) their constructor text, containers are copied recursively, and anything else not
+## JSON becomes its str(). A Node becomes its path (see
 ## _node_to_json), a Resource its path or its properties (see _resource_to_json), and any other
 ## Object {class, string}, its class and to_string(). A Dictionary or an Array holding itself is
 ## written as its cycle marker instead (see _dictionary_to_json), and one nested MAX_LEVEL deep as
@@ -116,11 +147,14 @@ static func _to_json(value: Variant, depth: int, level: int, path: Array) -> Var
 	return json
 
 
-## Vectors, colours and rects as objects, arrays and packed arrays as lists, anything else its
-## str().
+## Vectors, colours and rects as objects, the text types as their constructor text, arrays and
+## packed arrays as lists, anything else its str().
 static func _other_to_json(value: Variant, depth: int, level: int, path: Array) -> Variant:
+	var type: int = typeof(value)
+	if TEXT_TYPES.has(type):
+		return var_to_str(value)
 	var json: Variant
-	match typeof(value):
+	match type:
 		TYPE_VECTOR2, TYPE_VECTOR2I:
 			json = {"x": value.x, "y": value.y}
 		TYPE_VECTOR3, TYPE_VECTOR3I:
@@ -271,8 +305,9 @@ static func _changed_properties(
 ## a dictionary of an Object type as [false, null, reason] (see _array_from_json and
 ## _dictionary_from_json). TYPE_NIL
 ## (an untyped parameter, or an untyped property holding null) takes the JSON value as it is. A
-## Resource-typed entry (PROPERTY_HINT_RESOURCE_TYPE) converts as _resource_from_json says; any
-## other Object converts from nothing.
+## text type (see TEXT_TYPES) converts as _text_value_from_json says. A Resource-typed entry
+## (PROPERTY_HINT_RESOURCE_TYPE) converts as _resource_from_json says; any other Object converts
+## from nothing.
 static func from_json(value: Variant, info: Dictionary) -> Array:
 	var type: int = int(info.get("type", TYPE_NIL))
 	if type == TYPE_NIL:
@@ -283,6 +318,8 @@ static func from_json(value: Variant, info: Dictionary) -> Array:
 		return _vector_from_json(value, info)
 	if PACKED_ELEMENTS.has(type):
 		return _packed_from_json(value, info)
+	if TEXT_TYPES.has(type):
+		return _text_value_from_json(value, type)
 	return _single_from_json(value, info, type)
 
 
@@ -317,6 +354,30 @@ static func _float_from_json(value: Variant) -> Array:
 
 static func _text_from_json(value: Variant, info: Dictionary) -> Array:
 	return [true, type_convert(value, info["type"])] if value is String else NOT_CONVERTED
+
+
+## [true, value] with a text type (see TEXT_TYPES) read from its constructor text, the form a
+## .tscn holds it in ("Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 450, 600, -210)"), or
+## [false, null, reason]. The text is checked before it is parsed, since str_to_var also parses
+## "Object(...)" and instances the class it names (core/variant/variant_parser.cpp).
+static func _text_value_from_json(value: Variant, type: int) -> Array:
+	var pattern := RegEx.new()
+	pattern.compile("^\\s*%s\\s*\\(\\s*[-+0-9.eE,\\s]*\\)\\s*$" % TEXT_TYPES[type])
+	if not value is String or not pattern.search(value):
+		return [false, null, _text_refusal(type, value)]
+	var parsed: Variant = str_to_var(value)
+	if typeof(parsed) != type:
+		return [false, null, _text_refusal(type, value)]
+	return [true, parsed]
+
+
+## Why value is no text type's constructor text: the type's name in %s, its identity's text in %s,
+## and the value given in %s.
+static func _text_refusal(type: int, value: Variant) -> String:
+	return (
+		"a %s is written as its constructor text, as a .tscn holds it, like %s; got %s"
+		% [TEXT_TYPES[type], var_to_str(TEXT_EXAMPLES[type]), JSON.stringify(value)]
+	)
 
 
 static func _vector_from_json(value: Variant, info: Dictionary) -> Array:
@@ -796,7 +857,8 @@ static func same(after: Variant, value: Variant) -> bool:
 
 ## Whether a property reads back the value a set wrote: same() for everything same() compares,
 ## except that every float a value may carry compares by is_equal_approx, including each component
-## of a Vector2/3/4, a Rect2 and a Color, each element of a Packed float array, and each value of
+## of a Vector2/3/4, a Rect2 and a Color, a Transform2D, a Transform3D, a Basis, a Quaternion, an
+## AABB and a Plane as a whole, each element of a Packed float array, and each value of
 ## an Array or a Dictionary at any depth. A set is read back from the property it was just stored
 ## in, and Godot keeps many of them in 32 bits or as a rotation, so the value differs in its last
 ## digits. same() itself stays exact for those, because the save-fidelity checks judge a stored
@@ -813,8 +875,8 @@ static func same_set(after: Variant, value: Variant) -> bool:
 
 
 ## Whether two values of the same kind read back the same: a float, and every component of a
-## Vector2/3/4, a Rect2 and a Color, by is_equal_approx; a String and a StringName by their text;
-## anything else exactly.
+## Vector2/3/4, a Rect2 and a Color, or a whole Transform2D, Transform3D, Basis, Quaternion, AABB
+## or Plane, by is_equal_approx; a String and a StringName by their text; anything else exactly.
 static func _same_set_scalar(after: Variant, value: Variant) -> bool:
 	if typeof(after) == TYPE_FLOAT and typeof(value) == TYPE_FLOAT:
 		return is_equal_approx(after, value)

@@ -954,6 +954,20 @@ public sealed class CSharpToolTests(SharedCsProbeSession shared) : IClassFixture
     }
 
     [Fact(Timeout = CSharpTestTimeoutMs)]
+    public async Task RunCSharpWritesATransformAsItsConstructorText()
+    {
+        // C#'s constructor takes the basis columns; var_to_str writes the rows, as a .tscn holds them.
+        const string Code =
+            "return new Godot.Transform3D(new Godot.Vector3(1, 0, 0), new Godot.Vector3(0, 0, -1), "
+            + "new Godot.Vector3(0, 1, 0), new Godot.Vector3(450, 600, -210));";
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+
+        JsonObject result = await RunCSharpAsync(Code, null, cancellation);
+
+        Assert.Equal("Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 450, 600, -210)", result["value"]!.GetValue<string>());
+    }
+
+    [Fact(Timeout = CSharpTestTimeoutMs)]
     public async Task RunCSharpPastItsTimeoutFailsAndTheNextRunSucceeds()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
