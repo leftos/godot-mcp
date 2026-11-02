@@ -698,7 +698,9 @@ public sealed class BatchValidationTests : IDisposable
         // save_screenshot writes a project file, which batch_drive's edit-live class does not grant.
         Assert.DoesNotContain("save_screenshot", RuntimeTools.BatchableTools);
         Assert.Contains("watch", RuntimeTools.BatchableTools);
-        Assert.Equal(38, RuntimeTools.BatchableTools.Count);
+        Assert.Contains("editor", RuntimeTools.BatchableTools);
+        Assert.Contains("get_editor_state", RuntimeTools.BatchableTools);
+        Assert.Equal(40, RuntimeTools.BatchableTools.Count);
     }
 
     [Fact]

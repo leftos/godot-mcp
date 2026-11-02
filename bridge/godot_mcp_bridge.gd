@@ -38,6 +38,7 @@ const WINDOW_SCRIPT := "godot_mcp_window.gd"
 const AUDIO_SCRIPT := "godot_mcp_audio.gd"
 const WATCH_SCRIPT := "godot_mcp_watch.gd"
 const EDITOR_MODE_SCRIPT := "godot_mcp_editor_mode.gd"
+const EDITOR_SCRIPT := "godot_mcp_editor.gd"
 ## The commands a cancel request can end early, answering the request at once for a run_script it
 ## stops and a call_method it stops awaiting (_cancel); the server cancels one when its
 ## load-adjusted allowance passes before the request's backstopMs.
@@ -131,6 +132,8 @@ var _handlers: Dictionary = {}
 ## script itself; _process is running, so a frame an editor runs inside it is skipped.
 var _editor_mode: GDScript
 var _in_process: bool = false
+## The editor actions (godot_mcp_editor.gd beside this script), a child in an editor session only.
+var _editor: Node
 ## The cancellable requests still running: id -> the params Dictionary their handler holds, from
 ## the frame that read them until their reply.
 var _running_requests: Dictionary = {}
@@ -302,6 +305,12 @@ func _build_once() -> void:
 	_frame.name = "Frame"
 	add_child(_frame)
 	_handlers = _command_handlers()
+	if _mode == _dormant_script.MODE_EDITOR:
+		_editor = (load(_script_dir.path_join(EDITOR_SCRIPT)) as GDScript).new()
+		_editor.name = "Editor"
+		_editor.bridge = self
+		add_child(_editor)
+		_handlers.merge(_editor.handlers())
 
 
 ## Serves endpoint, from source (a SOURCE_*; a join drops the errors logged before it): builds the
@@ -398,9 +407,9 @@ func _go_dormant_again() -> void:
 
 ## An editor's progress dialog runs a whole frame inside the call that shows it (4.7.2
 ## editor/gui/progress_dialog.cpp L148-152), which a command handled here can make: the frame
-## inside it does nothing.
+## inside it does nothing, and none does while an editor action holds the bridge (_editor.busy).
 func _process(_delta: float) -> void:
-	if _in_process:
+	if _in_process or (_editor != null and _editor.busy):
 		return
 	_in_process = true
 	_poll_connection()
@@ -421,19 +430,9 @@ func _poll_connection() -> void:
 	if not _hello_sent:
 		_hello_sent = true
 		_stream.set_no_delay(true)
-		var window_size: Vector2i = DisplayServer.window_get_size()
-		var hello: Dictionary = {
-			"type": "hello",
-			"token": _token,
-			"projectPath": ProjectSettings.globalize_path("res://"),
-			"pid": OS.get_process_id(),
-			"window": {"width": window_size.x, "height": window_size.y},
-			"hwnd": _window.native_handle(),
-			"ticksUsec": Time.get_ticks_usec(),
-		}
-		if _mode == _dormant_script.MODE_EDITOR:
-			hello["kind"] = "editor"
-		_send(hello)
+		var editor: bool = _mode == _dormant_script.MODE_EDITOR
+		var size: Vector2i = DisplayServer.window_get_size()
+		_send(_dormant_script.hello_frame(_token, editor, size, _window.native_handle()))
 	_flush_errors()
 	_read_frames()
 
@@ -449,6 +448,8 @@ func _end_connection() -> void:
 	# A refused hello is never welcomed: a child game that inherited the run's token runs on.
 	var launched: bool = _endpoint_source == _dormant_script.SOURCE_ENV and _welcomed
 	_connection_lost = true
+	if _editor != null:
+		_editor.busy = false
 	for request: int in _running_scripts.keys():
 		_drop_script(request)
 	_running_calls.clear()
@@ -541,7 +542,7 @@ func _read_frames() -> void:
 		var chunk: Array = _stream.get_partial_data(available)
 		if chunk[0] == OK:
 			_buffer.append_array(chunk[1])
-	while _buffer.size() >= HEADER_BYTES:
+	while _buffer.size() >= HEADER_BYTES and not (_editor != null and _editor.busy):
 		var length: int = (_buffer[0] << 24) | (_buffer[1] << 16) | (_buffer[2] << 8) | _buffer[3]
 		if length > MAX_FRAME_BYTES:
 			push_error("godot-mcp bridge: a frame of %d bytes is over the limit; closing." % length)
@@ -566,12 +567,12 @@ func _handle_frame(text: String) -> void:
 	var params: Dictionary = {}
 	if request.get("params") is Dictionary:
 		params = request["params"]
-	if not _handlers.has(command):
-		_reply_error(id, "unknown command '%s'" % command)
-		return
 	var refusal: String = _editor_mode.refusal(command, _mode == _dormant_script.MODE_EDITOR)
 	if not refusal.is_empty():
 		_reply_error(id, refusal)
+		return
+	if not _handlers.has(command):
+		_reply_error(id, "unknown command '%s'" % command)
 		return
 	_track(id, command, params)
 	(_handlers[command] as Callable).call(id, params)
@@ -691,7 +692,6 @@ func _command_handlers() -> Dictionary:
 		"dotnet": _handle_dotnet,
 		"state": _handle_state,
 		"shutdown": _handle_shutdown,
-		"editor_unsaved": _handle_editor_unsaved,
 		"cancel": _handle_cancel,
 		"welcome": _handle_welcome,
 	}
@@ -843,11 +843,6 @@ func _handle_preview(id: int, params: Dictionary) -> void:
 		_reply_error(id, result)
 	else:
 		_reply_ok(id, result)
-
-
-## Replies the paths of the editor's unsaved scenes, {scenes}: stop_project refuses to lose them.
-func _handle_editor_unsaved(id: int, _params: Dictionary) -> void:
-	_reply_ok(id, {"scenes": _editor_mode.unsaved_scenes()})
 
 
 ## Compiles source, runs its execute(scene_tree) and replies {value}. An execute that returns at

@@ -10,6 +10,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | Start a server or backend the game needs beside it | `run_process`, for a process the project declares in `godot-mcp.json` | a background shell job, or launching it by hand |
 | Drive a game you (or the editor) started | `attach_project` | `run_project` |
 | Open the Godot editor and drive it (dock clicks, dialogs, the editor's own output) | `run_editor`, then the runtime tools | `run_project`, which plays the game and never shows the editor |
+| Open, save, close, play or stop a scene in the editor, or select a file in its FileSystem dock | `editor {action}` on an editor session | clicking the editor's menus and docks with `click` |
+| Know which scenes the editor has open, which are unsaved and whether it plays one | `get_editor_state` | a screenshot of the editor, or `run_script` reading `EditorInterface` |
 | Look at a game a launcher or a player already has running | `arm_project` before it starts, then `attach_project` at any time | a delayed launcher timed against `attach_project` |
 | See one scene without playing | `preview_scene` | `run_project` with `scene` plus `take_screenshot` plus `stop_project` |
 | Play a project's scratch scenes step by step and get a verdict each | `run_scratches` | a `Run-Scratches.ps1` script parsing a `--scratch-auto` log |
@@ -141,7 +143,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 ### `run_editor`
 
 - **Does:** opens the project in the Godot editor with the bridge inside it and returns once the editor has finished its first scan and the bridge has connected, with `run_project`'s result shape. `list_sessions` reports `kind: "editor"`.
-- **Use:** `projectPath`; `scene` to open beside the scenes the editor restores (passed as `--scene`); `options {quiet, session, prepare}`. The runtime tools then act on the editor's own windows: `get_ui_elements`, `click`, `hover`, `drag`, `scroll`, `type_text`, `key`, `take_screenshot`, `wait_for`, `inspect_node`, `get_errors`, `get_debug_output`, `run_script` and `call_method`.
+- **Use:** `projectPath`; `scene` to open beside the scenes the editor restores (passed as `--scene`); `options {quiet, session, prepare}`. The runtime tools then act on the editor's own windows: `get_ui_elements`, `click`, `hover`, `drag`, `scroll`, `type_text`, `key`, `take_screenshot`, `wait_for`, `inspect_node`, `get_errors`, `get_debug_output`, `run_script` and `call_method`, and the editor's own `editor` and `get_editor_state`.
 
   Quiet (the default) runs the editor on the hidden desktop with the Dummy audio driver, as for a game; `quiet: false` shows it. The C# prep build runs as for `run_project`. The handshake waits up to 60 s of load-adjusted time, since the bridge joins only after the editor's first scan.
 - **Edges:** the server writes nothing into the project: no `override.cfg`, no git exclude. The editor does, as any editor open does: a first open of a repo that has not committed an editor-normalised `project.godot` and `.uid` files changes them. `run_editor` does not refuse: it reads `git status` before the launch and once the editor is ready, and when the open changed files outside `.godot/` its `warning` says `The editor's open changed files in the project: <paths, the first 10 then "and <n> more">. Commit or revert them before committing other work.` A folder git does not answer for gets no warning.
@@ -152,6 +154,30 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   The editor's `progress_dialog.cpp:183 Parameter "current_window" is null` error and its exit leak report are left out of `get_debug_output`, the run log and `get_errors`.
 - **Stop:** `stop_project` closes the editor through its own close request (10 s of load-adjusted time before a kill), and refuses while it has unsaved scenes (see `stop_project`). `restart_project` refuses an editor: stop it and run `run_editor` again.
+
+### `editor`
+
+- **Does:** acts on the editor of an editor session as its menus do, through `EditorInterface`, and returns the editor's state (as `get_editor_state`) with `action` and the action's own fields. A game session is refused: `editor works only in an editor session; session '<name>' is a run session. Start one with run_editor.`
+- **Use:** `{action, scene?, path?, discard?, session?}`; `action` is one of:
+  - `open {scene}`: a `res://` `.tscn` or `.scn` that exists becomes the edited scene; done when it is the edited scene. Replies `scene`.
+  - `save {scene?}`: the edited scene by default; an open scene in another tab is switched to, saved and the previous one switched back. Done when it leaves the unsaved list and its file's modified time is at or after the call. Replies `scene` and `saved: true`.
+  - `save_all`: done when nothing is unsaved. Replies `saved`, the paths saved. An untitled unsaved scene opens Save As, and the action ends in the 30 s error below.
+  - `close {scene?, discard?}`: an unsaved scene is refused unless `discard: true`, which drops its changes; a non-current open scene is switched to first. Replies `scene`.
+  - `play {scene?}`: `"current"` or omitted plays the edited scene, `"main"` the project's main scene, a `res://` path that scene. Done when a scene plays; it does not wait for the game's process, and the game opens in its own window (`attach_project` it to drive it). Replies `scene`.
+  - `stop`: stops the playing scene. Replies `wasPlaying`.
+  - `select_file {path}`: selects a `res://` file or folder in the FileSystem dock. Replies `selected`.
+
+  `editor` is batchable.
+- **Edges:** server refusals are `action must be one of open, save, save_all, close, play, stop, select_file; got '<action>'.`, `open needs scene, the res:// path of the scene to open.` and `select_file needs path, the res:// file or folder to select.` The bridge refuses with `The scene <path> has unsaved changes; save it first or pass discard: true.`, `<path> is not open in the editor; open it first with editor {action: open}.`, `the editor has no edited scene.`, `the edited scene has no file path; save it with Save As in the editor first.`, `scene must be a res:// .tscn or .scn path; got '<scene>'.`, `<path> does not exist.`, `the project has no main scene (application/run/main_scene).` and `scene must be current, main or a res:// scene path; got '<scene>'.`
+
+  An effect not shown within 30 s is an error, `editor <action> did not take effect within 30 s: expected <...>; a dialog may be open, check take_screenshot` (`open` adds `; the editor may have been changing scenes`, since Godot gives a script no way to see a scene change in progress and `open` does nothing during one). The bridge never dismisses a dialog an action opens: `take_screenshot`, then `click` it.
+
+  While `open`, `save`, `save_all`, `close` or `play` runs, the editor session answers no other command (`ping` included) until the effect shows or 30 s pass, because the editor's progress dialog runs whole frames inside the call; commands that arrive meanwhile run in order afterwards. A `wait_for`, `watch`, capture or gesture already in flight still runs inside those frames. The server waits 120 s for those five actions and 10 s for `stop` and `select_file`.
+
+### `get_editor_state`
+
+- **Does:** reads the editor's state: `{openScenes, currentScene, unsavedScenes, playingScene, scanning, importing}`. `currentScene` is null with no edited scene and `""` for an untitled one; `playingScene` is `""` when none plays.
+- **Use:** `{session?}`; batchable. A game session is refused as `editor` refuses it.
 
 ### `attach_project`
 

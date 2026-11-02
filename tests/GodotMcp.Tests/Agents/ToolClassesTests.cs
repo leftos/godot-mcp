@@ -23,6 +23,8 @@ public sealed class ToolClassesTests
     [InlineData("click", ToolClasses.Drive)]
     [InlineData("run_project", ToolClasses.Drive)]
     [InlineData("run_editor", ToolClasses.Drive)]
+    [InlineData("editor", ToolClasses.Drive)]
+    [InlineData("get_editor_state", ToolClasses.Read)]
     [InlineData("run_process", ToolClasses.Drive)]
     [InlineData("run_scratches", ToolClasses.Drive)]
     [InlineData("save_screenshot", ToolClasses.Drive)]

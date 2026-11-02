@@ -81,12 +81,14 @@ public sealed class McpServerSmokeTests : IDisposable
                 "disconnect_signal",
                 "drag",
                 "duplicate_node",
+                "editor",
                 "export_mesh_library",
                 "frame_control",
                 "gamepad_axis",
                 "gamepad_button",
                 "gamepad_stick",
                 "get_debug_output",
+                "get_editor_state",
                 "get_errors",
                 "get_game_state",
                 "get_node_properties",
@@ -195,12 +197,14 @@ public sealed class McpServerSmokeTests : IDisposable
             ["disconnect_signal"] = destructive,
             ["drag"] = changesTheGame,
             ["duplicate_node"] = changesTheGame,
+            ["editor"] = changesTheGame,
             ["export_mesh_library"] = destructive,
             ["frame_control"] = changesTheGame,
             ["gamepad_axis"] = changesTheGame,
             ["gamepad_button"] = changesTheGame,
             ["gamepad_stick"] = changesTheGame,
             ["get_debug_output"] = readsTheGame,
+            ["get_editor_state"] = readsTheGame,
             ["get_errors"] = readsTheGame,
             ["get_game_state"] = destructive,
             ["get_node_properties"] = readsTheGame,
@@ -253,7 +257,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 )
         );
 
-        Assert.Equal(74, actual.Count);
+        Assert.Equal(76, actual.Count);
         Assert.Equal(expected.OrderBy(entry => entry.Key), actual.OrderBy(entry => entry.Key));
     }
 

@@ -36,15 +36,24 @@ func test_an_editor_refuses_preview_and_frame_control_and_runs_the_rest() -> voi
 		"frame_control does not pause or step an editor session.",
 		"frame_control"
 	)
-	for command: String in ["ui_elements", "input", "screenshot", "run_script", "editor_unsaved"]:
+	for command: String in [
+		"ui_elements",
+		"input",
+		"screenshot",
+		"run_script",
+		"editor_unsaved",
+		"editor",
+		"editor_state"
+	]:
 		assert_eq(_editor_mode.refusal(command, true), "", command + " runs in an editor")
 
 
-func test_a_game_refuses_only_editor_unsaved() -> void:
-	assert_eq(
-		_editor_mode.refusal("editor_unsaved", false),
-		"editor_unsaved answers only in an editor session.",
-		"editor_unsaved in a game"
-	)
+func test_a_game_refuses_only_the_editor_commands() -> void:
+	for command: String in ["editor_unsaved", "editor", "editor_state"]:
+		assert_eq(
+			_editor_mode.refusal(command, false),
+			command + " answers only in an editor session.",
+			command + " in a game"
+		)
 	for command: String in ["preview", "frame", "ui_elements"]:
 		assert_eq(_editor_mode.refusal(command, false), "", command + " runs in a game")

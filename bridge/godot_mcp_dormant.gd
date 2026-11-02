@@ -90,6 +90,25 @@ static func frees_silently(dir: String) -> bool:
 	return is_switched_off() or (is_headless() and FileAccess.file_exists(armed_path(dir)))
 
 
+## The hello the bridge sends first on a connection: its token, the project's folder, its process
+## id, its window's size and native handle and its ticks; kind "editor" in an editor session.
+static func hello_frame(
+	token: String, editor: bool, window_size: Vector2i, native_handle: int
+) -> Dictionary:
+	var hello: Dictionary = {
+		"type": "hello",
+		"token": token,
+		"projectPath": ProjectSettings.globalize_path("res://"),
+		"pid": OS.get_process_id(),
+		"window": {"width": window_size.x, "height": window_size.y},
+		"hwnd": native_handle,
+		"ticksUsec": Time.get_ticks_usec(),
+	}
+	if editor:
+		hello["kind"] = "editor"
+	return hello
+
+
 ## Whether the server switched the bridge off for a headless run (OFF_VARIABLE).
 static func is_switched_off() -> bool:
 	return OS.get_environment(OFF_VARIABLE) == "1"

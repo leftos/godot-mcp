@@ -2,11 +2,14 @@
 extends RefCounted
 ## The godot-mcp bridge in an editor session (run_editor), which the editor host adds inside the
 ## Godot editor. Static functions called on the script itself: which logged entries are the
-## editor's own noise, which commands an editor refuses, its unsaved scenes, and its close.
+## editor's own noise, which commands an editor or a game refuses, and the editor's close.
 
 const PREVIEW_REFUSAL := "preview_scene does not run in an editor session."
 const FRAME_REFUSAL := "frame_control does not pause or step an editor session."
-const UNSAVED_REFUSAL := "editor_unsaved answers only in an editor session."
+## A game's refusal of an EDITOR_COMMANDS command, the command's name filled in.
+const EDITOR_ONLY_REFUSAL := "%s answers only in an editor session."
+## The commands only an editor session answers (godot_mcp_editor.gd).
+const EDITOR_COMMANDS: PackedStringArray = ["editor", "editor_state", "editor_unsaved"]
 ## The progress dialog's line that logs the noise (is_noise).
 const PROGRESS_DIALOG_LINE := 183
 
@@ -20,21 +23,15 @@ static func is_noise(file: String, line: int) -> bool:
 
 ## Why command cannot run, or empty when it can: an editor refuses preview_scene and every
 ## frame_control action, each of which pauses, steps or scales the editor's own time; a game
-## refuses editor_unsaved.
+## refuses the EDITOR_COMMANDS.
 static func refusal(command: String, editor: bool) -> String:
 	if not editor:
-		return UNSAVED_REFUSAL if command == "editor_unsaved" else ""
+		return EDITOR_ONLY_REFUSAL % command if command in EDITOR_COMMANDS else ""
 	if command == "preview":
 		return PREVIEW_REFUSAL
 	if command == "frame":
 		return FRAME_REFUSAL
 	return ""
-
-
-## The paths of the scenes the editor holds unsaved changes in.
-static func unsaved_scenes() -> Array:
-	var scenes: PackedStringArray = _editor_interface().get_unsaved_scenes()
-	return Array(scenes)
 
 
 ## Closes the editor as its close button does: EditorNode's close request runs the editor's exit

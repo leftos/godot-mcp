@@ -41,6 +41,8 @@ Each phase lands on `main` as its own items, with tests, TOOLS.md, the skill and
 
    The editor runs with `--single-window` (GMCP-423): a root that does not embed subwindows tracks its hovered Control only after the OS reports the real pointer entering (4.7.2 `scene/main/viewport.cpp` `_update_mouse_over`), so without it every aimed click was refused as covered by nothing; the cost is that an F5 game runs in its own window, not the Game tab. Proof: itests that start the editor on a fixture project quietly, read `get_ui_elements` (the FileSystem dock is listed), click a dock item by text, take a screenshot, and stop cleanly with `git status` unchanged.
 2. **Editor actions.** `bridge/godot_mcp_editor.gd`, the `editor` tool and `get_editor_state`, with the re-entry guard (ruling 6). Proof: open, edit with `set_property` on the edited root, save, read the file headless; play and stop; a save run twice in a row with a frame callback active does not re-enter.
+
+   Landed as GMCP-421: `open`, `save`, `save_all`, `close`, `play`, `stop` and `select_file`, each judged by its effect within 30 s. Godot gives a script no way to see a scene change in progress, and `open` does nothing during one, so a timed-out `open` says the editor may have been changing scenes. `build` is phase 3.
 3. **Build and the F5 game.** `editor {action: build}` (ruling 5) and the attach-before-play flow (ruling 9). Proof: a C# fixture rebuilt with the editor open reloads its assembly, and a game started with `play` after `attach_project` answers `get_scene_tree`.
 4. **Headless refusal and docs.** Ruling 10, DECISIONS.md decision 17 replaced by the new decision (its facts and rulings), the archive of this file.
 

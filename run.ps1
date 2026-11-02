@@ -340,6 +340,7 @@ $itestRules = @(
     @('src/GodotMcp.Server/Tools/State*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.CSharp*.cs', 'csharp'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.RunCSharp*.cs', 'csharp'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Editor*.cs', 'editor'),
     @('src/GodotMcp.Server/Tools/RuntimeTools*.cs', $itestRuntimeGroups),
     @('src/GodotMcp.Server/Tools/ProjectTools*.cs', @('lifecycle', 'stopping', 'watchdog', 'sessions', 'attach', 'prep')),
     @('src/GodotMcp.Server/Tools/ScratchTools*.cs', @($itestScratchGroups + 'csharp')),

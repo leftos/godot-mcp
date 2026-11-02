@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Added
+
+- `editor` opens, saves, closes, plays and stops scenes and selects files in an editor session; `get_editor_state` reads its open, unsaved and playing scenes.
+
 ## 0.26.1 - 2026-11-02
 
 ### Added
