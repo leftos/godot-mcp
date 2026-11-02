@@ -1,5 +1,6 @@
 using GodotMcp.Server.Session;
 using GodotMcp.TestSupport;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GodotMcp.Tests.Session;
 
@@ -100,5 +101,69 @@ public sealed class ProjectStalenessTests : IDisposable
         File.SetLastWriteTimeUtc(Path.Combine(game, "Player.cs"), ProjectPrepFixtures.Later);
 
         Assert.True(PrepAssertions.IsStale(game));
+    }
+
+    [Fact]
+    public void AProjectInAnIgnoredFolderCountsItsSourcesAsBuildInputs()
+    {
+        string game = CreateRepositoryGame(".tmp", ".tmp/\n", string.Empty);
+        Assert.False(PrepAssertions.IsStale(game));
+
+        File.SetLastWriteTimeUtc(Path.Combine(game, "Player.cs"), ProjectPrepFixtures.Later);
+
+        Assert.True(PrepAssertions.IsStale(game));
+    }
+
+    [Fact]
+    public void AnIgnoredProjectSeesItsUidAndImportFiles()
+    {
+        string game = CreateRepositoryGame(".tmp", ".tmp/\n", string.Empty);
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, "Player.cs.uid"), "uid://b1", ProjectPrepFixtures.Later);
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, "icon.png.import"), "[remap]\n", ProjectPrepFixtures.Later);
+
+        ProjectFiles files = PrepScan.Scan(game, NullLogger.Instance);
+
+        Assert.Contains(files.UidFiles, file => file.EndsWith("Player.cs.uid", StringComparison.Ordinal));
+        Assert.Contains(files.ImportFiles, file => file.EndsWith("icon.png.import", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AProjectInAnUnignoredDotFolderStillListsThroughGit()
+    {
+        string game = CreateRepositoryGame(".rig", ".godot/\nbin/\nobj/\n", "generated.cs\n");
+        ProjectPrepFixtures.WriteFile(Path.Combine(game, "generated.cs"), "class Generated;", ProjectPrepFixtures.Later);
+
+        Assert.False(PrepAssertions.IsStale(game));
+
+        File.SetLastWriteTimeUtc(Path.Combine(game, "Player.cs"), ProjectPrepFixtures.Later);
+
+        Assert.True(PrepAssertions.IsStale(game));
+    }
+
+    /// <summary>
+    /// A repository whose <c>.gitignore</c> holds <paramref name="rootGitignore"/>, with a game at
+    /// <paramref name="folder"/>/game (Game.csproj, project.godot, Player.cs and a .gitignore holding
+    /// <paramref name="gameGitignore"/>), committed where git lists it, every file set to <see cref="ProjectPrepFixtures.Old"/>,
+    /// and an assembly built after them.
+    /// </summary>
+    private string CreateRepositoryGame(string folder, string rootGitignore, string gameGitignore)
+    {
+        string repo = _temp.Combine("repo");
+        Directory.CreateDirectory(repo);
+        File.WriteAllText(Path.Combine(repo, ".gitignore"), rootGitignore);
+        string game = Path.Combine(repo, folder, "game");
+        Directory.CreateDirectory(game);
+        File.WriteAllText(Path.Combine(game, "project.godot"), "config_version=5\n\n[application]\n\nconfig/name=\"Game\"\n");
+        File.WriteAllText(Path.Combine(game, "Game.csproj"), "<Project Sdk=\"Godot.NET.Sdk/4.7.2\" />");
+        File.WriteAllText(Path.Combine(game, "Player.cs"), "class Player;");
+        File.WriteAllText(Path.Combine(game, ".gitignore"), gameGitignore);
+        Git.InitAndCommitAll(repo);
+        foreach (string file in Directory.EnumerateFiles(repo, "*", SearchOption.AllDirectories))
+        {
+            File.SetLastWriteTimeUtc(file, ProjectPrepFixtures.Old);
+        }
+
+        ProjectPrepFixtures.WriteFile(PrepScan.AssemblyPath(game, "Game"), "dll", ProjectPrepFixtures.Built);
+        return game;
     }
 }

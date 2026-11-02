@@ -104,7 +104,8 @@ internal static partial class PrepScan
 
     /// <summary>
     /// The project's files: in git, the versioned and untracked-but-not-ignored files of the whole top level (a csproj
-    /// builds sibling projects); outside git, the project folder walked without its VCS, cache and build folders.
+    /// builds sibling projects), and a project folder git lists nothing under walked like one outside git; outside git, the
+    /// project folder walked without its VCS, cache and build folders.
     /// </summary>
     public static ProjectFiles Scan(string projectDir, ILogger logger)
     {
@@ -527,6 +528,14 @@ internal static partial class PrepScan
                 .Where(path => path.StartsWith(prefix, StringComparison.Ordinal))
                 .Select(path => Path.Combine(projectDir, path[prefix.Length..])),
         ];
+        if (projectOnly.Count == 0)
+        {
+            // Git lists nothing under the project folder: it is ignored, so it is walked like a project outside git.
+            List<string> walked = WalkFolder(projectDir);
+            topFiles.AddRange(walked);
+            projectOnly = walked;
+        }
+
         return (topFiles, projectOnly);
     }
 
