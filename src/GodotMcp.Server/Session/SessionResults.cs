@@ -19,7 +19,10 @@ internal sealed record LaunchResult(string Session, string ProjectPath, int Proc
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public WindowSize? Window { get; init; }
 
-    /// <summary>Set when the window's size differs from the one --resolution asked for.</summary>
+    /// <summary>
+    /// Set when the window's size differs from the one --resolution asked for, and when run_editor's open changed files in the
+    /// project.
+    /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Warning { get; init; }
 

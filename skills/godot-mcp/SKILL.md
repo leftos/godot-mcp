@@ -174,7 +174,7 @@ Prefer it for any change of more than one edit, then `validate`, then `preview_s
 
 - **Aim as in a game.** `click {target: {element, item: {text: "main.tscn"}}}` on the FileSystem dock's Tree, `{text: "Script"}` on a button: the editor runs single-window, so its dialogs and popups are in its window too. A game it starts with F5 or F6 opens in its own window.
 - **`get_scene_tree` needs `node`** in an editor, which has no current scene. `preview_scene` and `frame_control` are refused.
-- **Check `git status` after a first open.** The server writes nothing into the project, but an editor's first open of a repo that has not committed an editor-normalised `project.godot` and `.uid` files changes them; `run_editor` does not refuse.
+- **Check `git status` after a first open.** The server writes nothing into the project, but an editor's first open of a repo that has not committed an editor-normalised `project.godot` and `.uid` files changes them; `run_editor` does not refuse, and its result's `warning` names every file the open changed. Commit or revert those before committing other work.
 - **`stop_project` refuses unsaved scenes**: save them in the editor, or pass `discard: true`, which kills the editor and loses them.
 - A game the editor starts (F5) is a plain game: `attach_project` it to drive it.
 

@@ -9,13 +9,15 @@ namespace GodotMcp.IntegrationTests;
 
 /// <summary>
 /// An editor session (run_editor): the Godot editor opened on a project with the bridge inside it, read and driven through the
-/// runtime tools and closed through its own close request, leaving the project's tree as it found it. Every test opens its own
-/// quiet editor on one copy of the InputProbe fixture, opened once before.
+/// runtime tools and closed through its own close request, leaving the project's tree as it found it. Every test but one opens
+/// its own quiet editor on one copy of the InputProbe fixture, opened once before; the test of the open's changed-files warning
+/// opens a fresh copy no editor has opened.
 /// </summary>
 public sealed class EditorTests : IClassFixture<OpenedProbeProject>, IAsyncDisposable
 {
     private const int ScriptTimeoutMs = 30_000;
     private const string Session = "editor";
+    private const string FirstOpenSession = "editor-first-open";
     private readonly OpenedProbeProject _opened;
     private readonly SessionHarness _harness = new();
     private readonly ProjectTools _project;
@@ -34,7 +36,7 @@ public sealed class EditorTests : IClassFixture<OpenedProbeProject>, IAsyncDispo
     public async Task RunEditorOpensTheEditorQuietlyAndListsTheFileSystemDock()
     {
         CancellationToken token = TestContext.Current.CancellationToken;
-        await RunEditorAsync(token);
+        JsonNode launched = JsonNode.Parse(await RunEditorAsync(token))!;
 
         JsonNode listed = JsonNode.Parse(_project.ListSessions())!;
         JsonNode elements = JsonNode.Parse(await _runtime.GetUiElementsAsync(filter: "FileSystemDock", session: Session, cancellationToken: token))!;
@@ -44,6 +46,26 @@ public sealed class EditorTests : IClassFixture<OpenedProbeProject>, IAsyncDispo
         Assert.Equal("editor", session["kind"]!.GetValue<string>());
         Assert.Single(elements["elements"]!.AsArray());
         Assert.Equal("Dummy", driver.GetValue<string>());
+        // The fixture's copy was opened once and what that open wrote committed: this open changes nothing, so no warning.
+        Assert.Null(launched["warning"]);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task RunEditorWarnsWhenItsFirstOpenChangesTheProject()
+    {
+        CancellationToken token = TestContext.Current.CancellationToken;
+        using ProbeProject probe = new();
+        Git.CommitAll(probe.Directory);
+
+        JsonNode launched = JsonNode.Parse(
+            await _project.RunEditorAsync(probe.Directory, options: new EditorOptions(Session: FirstOpenSession), cancellationToken: token)
+        )!;
+        string warning = launched["warning"]?.GetValue<string>() ?? "";
+        _ = JsonNode.Parse(await _project.StopProjectAsync(FirstOpenSession, discard: true, cancellationToken: token));
+
+        Assert.StartsWith("The editor's open changed files in the project: ", warning);
+        Assert.Contains("project.godot", warning);
+        Assert.Contains(".uid", warning);
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]

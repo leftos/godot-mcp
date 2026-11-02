@@ -234,8 +234,17 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             completeUnderLock: static ready => ready,
             heldByScratchRun: false
         );
-        return await created.LaunchAsync(request with { ProjectPath = projectDir, EditorHost = host }, cancellationToken);
+        string? before = EditorStatus(projectDir);
+        LaunchResult launched = await created.LaunchAsync(request with { ProjectPath = projectDir, EditorHost = host }, cancellationToken);
+        string? changed = EditorOpenChanges.Describe(before, EditorStatus(projectDir));
+        return launched with { Warning = GodotSession.JoinWarnings(launched.Warning, changed) };
     }
+
+    /// <summary>
+    /// The project folder's git status, every untracked file listed and only the paths under it; null when git cannot answer
+    /// for the folder, which leaves the editor launch silent about what its open changed.
+    /// </summary>
+    private string? EditorStatus(string projectDir) => GitRunner.Run(projectDir, logger, "status", "--porcelain", "--untracked-files=all", "--", ".");
 
     /// <summary>What refuses restart_project on an editor session.</summary>
     internal const string EditorRestartRefusal =
