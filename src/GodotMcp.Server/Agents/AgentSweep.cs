@@ -29,6 +29,9 @@ internal sealed class AgentSweep(TextWriter output)
     /// <summary>The message of the commit a sweep makes in each repository.</summary>
     public const string CommitMessage = "chore: sync godot-mcp tools";
 
+    /// <summary>The trailer of the commit a sweep makes in each repository, which a push's provenance check reads.</summary>
+    public const string CommitTrailer = "Committed-By: godot-mcp agent-sweep";
+
     private static readonly ILogger GitLog = NullLogger.Instance;
 
     private readonly List<string> _commitLines = [];
@@ -305,7 +308,12 @@ internal sealed class AgentSweep(TextWriter output)
     // ceiling: stopping it halfway could leave that work in a hook's stash and a stale index.lock.
     private void Commit(string repository, List<string> paths)
     {
-        GitResult commit = GitRunner.RunForResult(repository, GitLog, ceiling: null, ["commit", "-m", CommitMessage, "--", .. paths]);
+        GitResult commit = GitRunner.RunForResult(
+            repository,
+            GitLog,
+            ceiling: null,
+            ["commit", "-m", CommitMessage, "-m", CommitTrailer, "--", .. paths]
+        );
         if (!commit.Succeeded)
         {
             _failedCommits++;

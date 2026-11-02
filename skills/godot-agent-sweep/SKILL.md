@@ -36,7 +36,7 @@ godot-mcp --sweep-agents --root <folder>      # also every <folder>\<repo>\.clau
 
 `godot-mcp` is the installed `%LOCALAPPDATA%\godot-mcp\godot-mcp.exe`. The sweep always covers `~/.claude/agents`; each `--root` folder and each folder in `GODOT_MCP_SWEEP_ROOTS` (`;`-separated, set for the user) adds its child repositories' `.claude/agents`.
 
-In a git repository it commits only the tracked agent files it changed, as `chore: sync godot-mcp tools` on the current branch, with hooks, and never pushes; the commit is never killed, however long its hooks run.
+In a git repository it commits only the tracked agent files it changed, as `chore: sync godot-mcp tools` with a last paragraph `Committed-By: godot-mcp agent-sweep` (the trailer a push's provenance check accepts) on the current branch, with hooks, and never pushes; the commit is never killed, however long its hooks run.
 
 A repository whose would-change agent files have uncommitted changes is left untouched and reported `repo has uncommitted agent files, skipped`: commit or discard them, then run the sweep again. Each repository is visited once and printed in git's own spelling of its folder, so a junction prints as its target.
 

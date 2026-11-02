@@ -188,6 +188,7 @@ public sealed class AgentSweepTests : IDisposable
         Assert.Equal("2", Git(repository, "rev-list", "--count", "HEAD").Trim());
         Assert.Equal(".claude/agents/player.md", Git(repository, "show", "--name-only", "--format=", "HEAD").Trim());
         Assert.Equal(AgentSweep.CommitMessage, Git(repository, "log", "-1", "--format=%s").Trim());
+        Assert.Equal("godot-mcp agent-sweep", Git(repository, "log", "-1", "--format=%(trailers:key=Committed-By,valueonly)").Trim());
         Assert.Equal(" M notes.txt", Git(repository, "status", "--porcelain").TrimEnd());
         string sha = Git(repository, "rev-parse", "--short", "HEAD").Trim();
         Assert.Contains($"{Path.GetFullPath(repository)}: committed {sha}", output, StringComparison.OrdinalIgnoreCase);
