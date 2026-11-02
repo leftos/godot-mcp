@@ -4,6 +4,9 @@
 
 ## Triage
 
+- [?] GMCP-416 watch: a signal track does not record who emitted the signal
+- [?] GMCP-415 run_project: a project.godot setting cannot be set for one run
+- [?] GMCP-414 watch: frame_ms includes the frame cap's wait, so a frame's own work time cannot be read
 - [?] GMCP-406 run_project: no way to give the game environment variables
 - [?] GMCP-405 run_project: an off-screen quiet run is always silent, and record_mark refuses it
 - [?] GMCP-404 crop_screenshot: refuses a PNG outside the screenshots folder, such as one in .tmp
@@ -14,6 +17,10 @@
 ## Do first
 
 - [ ] GMCP-407 Editor-driving tools: open, save and run a scene in the Godot editor, read its output, build C# · release vNext — High · Ideas from the survey and the projects
+- [/] GMCP-418 Editor session: run_editor starts the editor with the bridge, the input and read tools drive it · release vNext — High · Ideas from the survey and the projects
+- [ ] GMCP-421 Editor actions: open, save, play, stop and select a file through the editor tool · release vNext — High · Ideas from the survey and the projects
+- [ ] GMCP-419 Editor C# build and the F5 game joining as an attached session · release vNext — High · Ideas from the survey and the projects
+- [ ] GMCP-420 Headless edits refuse a folder an editor session holds; decision 17 replaced · release vNext — High · Ideas from the survey and the projects
 
 ## Ideas from the survey and the projects
 
@@ -145,6 +152,7 @@
 - [ ] GMCP-395 A met wait whose screenshot fails is a warning, not a refused until · release vNext
 - [ ] GMCP-397 Report window and viewport sizes beside take_screenshot, wait_for, frame_control and capture_frames captures · release vNext
 - [ ] GMCP-399 run_process: a ready wait ended by its backstop still says 'within N s of load-adjusted time' · release vNext
+- [ ] GMCP-417 C# prep never rebuilds a project inside a gitignored folder · release vNext
 
 ## Docs
 
@@ -155,4 +163,8 @@
 - [ ] GMCP-222 Re-read the implementer overlay against run.ps1's commits since 2026-10-16
 - [ ] GMCP-396 Re-read docs/csharp-runtime-tools.md against its named files' 10 commits since 2026-10-26
 - [ ] GMCP-410 Create docs/agents/orchestrator.md and move the profile's orchestration rules into it (CC-567) · release vNext
-- [ ] GMCP-411 Durable docs: drop counts and this repo's path:line references, pointing by symbol, heading or test name · release vNext+1
+- [ ] GMCP-411 Durable docs: drop counts and this repo's path:line references, pointing by symbol, heading or test name · release vNext
+
+## Design files
+
+- [editor-tools.md](editor-tools.md) — GMCP-407, GMCP-418, GMCP-419, GMCP-420, GMCP-421
