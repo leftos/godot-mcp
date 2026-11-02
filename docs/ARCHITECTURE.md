@@ -460,6 +460,8 @@ The folder holds `godot-mcp.exe`, the **launcher**; `versions\{semver}-{sha}[.n]
 
 It also holds `current`, the **current pointer**, a file naming the current version folder, `VERSION`, a copy of the current version's, `install.lock`, and any `godot-mcp.exe.old-{guid}` a replaced launcher left while it ran.
 
+Under the MCP front (`MCP_FRONT` set), `FrontBusy` tells the front whether a swap may happen now: a call-tool filter captures the server and, after each call, sends `notifications/mcp-front/busy` `{busy: true, reason}` when a session became live (before that call's response) and `{busy: false}` when none is left, re-checking every 2 s while busy so a game that exits on its own ends it.
+
 The launcher (`src/GodotMcp.Launcher`, NativeAOT, published to `bin/publish/launcher/godot-mcp.exe` and zipped as `godot-mcp-launcher.exe`) reads `current` and starts that version's `godot-mcp.exe` by its real path, suspended inside a kill-on-close job object, so a server dies with its launcher and always runs files of one version. Clients register the launcher's path, which never changes; it sets `GODOT_MCP_LAUNCHER` for the server, and the `claude mcp add` hint names it.
 
 An install holds `install.lock` throughout (a second one waits up to `GODOT_MCP_INSTALL_LOCK_WAIT_S` seconds, 60 by default, then refuses), copies the new build into a new version folder, requires its `godot-mcp.exe --list-tools` to exit 0, and replaces `current` by renaming a temporary file over it. The rename is `MoveFileEx` under Windows PowerShell 5.1 and `File.Move` with overwrite under PowerShell 7, retried 20 times, 100 ms apart. It then copies `VERSION`, and replaces the launcher (a different one is renamed aside, even while it runs).

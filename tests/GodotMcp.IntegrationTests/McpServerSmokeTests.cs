@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
 using GodotMcp.Server.Session;
 using ModelContextProtocol.Client;
@@ -20,6 +21,9 @@ public sealed class McpServerSmokeTests : IDisposable
 
     // The probe's user argument naming the file its main scene writes as it leaves the tree (tests/fixtures/InputProbe/main.gd).
     private const string ExitMarkerArg = "--exit-marker=";
+
+    // The notification the MCP front reads and never forwards to its client (Session/FrontBusy.cs).
+    private const string BusyMethod = "notifications/mcp-front/busy";
 
     // How long a game may take to quit by itself once its server is gone: one frame to notice, then its exit work.
     private static readonly TimeSpan GameQuitWait = TimeSpan.FromSeconds(10);
@@ -282,6 +286,72 @@ public sealed class McpServerSmokeTests : IDisposable
     }
 
     [Fact(Timeout = 180_000)]
+    public async Task TheFrontIsToldBusyBeforeARunAnswersAndFreeAfterTheStop()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        List<string> events = [];
+        await using McpClient client = await ConnectAsync(frontBusy: true);
+        await using IAsyncDisposable handler = client.RegisterNotificationHandler(
+            BusyMethod,
+            (notification, _) =>
+            {
+                bool busy = notification.Params is JsonObject parameters && parameters["busy"]?.GetValue<bool>() == true;
+                lock (events)
+                {
+                    events.Add(busy ? "busy:true" : "busy:false");
+                }
+
+                return ValueTask.CompletedTask;
+            }
+        );
+
+        CallToolResult run = await CallAsync(client, "run_project", new() { ["projectPath"] = _probe.Directory, ["userArgs"] = SmokeArgs });
+        lock (events)
+        {
+            events.Add("response");
+        }
+
+        Assert.True(run.IsError is not true, Text(run));
+        Assert.Equal(["busy:true", "response"], events);
+
+        CallToolResult stop = await CallAsync(client, "stop_project", []);
+
+        Assert.True(stop.IsError is not true, Text(stop));
+        Assert.True(
+            await Poll.UntilAsync(() => Snapshot(events).Contains("busy:false"), TimeSpan.FromSeconds(10), cancellation),
+            $"the front was never told the session had ended: {string.Join(", ", Snapshot(events))}"
+        );
+    }
+
+    [Fact(Timeout = 180_000)]
+    public async Task WithoutTheFrontNoBusyNotificationIsSent()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        List<string> sent = [];
+        await using McpClient client = await ConnectAsync();
+        await using IAsyncDisposable handler = client.RegisterNotificationHandler(
+            BusyMethod,
+            (_, _) =>
+            {
+                lock (sent)
+                {
+                    sent.Add(BusyMethod);
+                }
+
+                return ValueTask.CompletedTask;
+            }
+        );
+
+        CallToolResult run = await CallAsync(client, "run_project", new() { ["projectPath"] = _probe.Directory, ["userArgs"] = SmokeArgs });
+        CallToolResult stop = await CallAsync(client, "stop_project", []);
+
+        cancellation.ThrowIfCancellationRequested();
+        Assert.True(run.IsError is not true, Text(run));
+        Assert.True(stop.IsError is not true, Text(stop));
+        Assert.Empty(Snapshot(sent));
+    }
+
+    [Fact(Timeout = 180_000)]
     public async Task AGameQuitsByItselfWhenItsServerIsKilled()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -330,7 +400,7 @@ public sealed class McpServerSmokeTests : IDisposable
 
     private static string ServerPath => Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "godot-mcp.exe" : "godot-mcp");
 
-    private static Task<McpClient> ConnectAsync()
+    private static Task<McpClient> ConnectAsync(bool frontBusy = false)
     {
         StdioClientTransport transport = new(
             new StdioClientTransportOptions
@@ -338,6 +408,7 @@ public sealed class McpServerSmokeTests : IDisposable
                 Name = "godot",
                 Command = ServerPath,
                 ShutdownTimeout = TimeSpan.FromSeconds(10),
+                EnvironmentVariables = new Dictionary<string, string?> { ["MCP_FRONT"] = frontBusy ? "1" : "" },
             }
         );
         return McpClient.CreateAsync(transport, cancellationToken: TestContext.Current.CancellationToken);
@@ -407,4 +478,12 @@ public sealed class McpServerSmokeTests : IDisposable
     }
 
     private static string Text(CallToolResult result) => string.Concat(result.Content.OfType<TextContentBlock>().Select(block => block.Text));
+
+    private static List<string> Snapshot(List<string> events)
+    {
+        lock (events)
+        {
+            return [.. events];
+        }
+    }
 }

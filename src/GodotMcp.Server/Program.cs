@@ -28,6 +28,11 @@ builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogL
 
 builder.Services.AddSingleton<BridgeListener>();
 builder.Services.AddSingleton<SessionRegistry>();
+builder.Services.AddSingleton(services => new FrontBusy(
+    services.GetRequiredService<SessionRegistry>(),
+    Environment.GetEnvironmentVariable("MCP_FRONT"),
+    services.GetRequiredService<ILogger<FrontBusy>>()
+));
 
 // The C# tools' half of the bridge: the copies of the helper the game loads, and where a published server finds its build.
 builder.Services.AddSingleton(new CSharpBridge(new HelperCache(HelperCache.DefaultRoot), Installation.FindDotnetExtension));
@@ -35,7 +40,11 @@ builder
     .Services.AddMcpServer(options => options.ServerInfo = new Implementation { Name = "godot-mcp", Version = ServerVersion.Value })
     .WithStdioServerTransport()
     .WithToolsFromAssembly(serializerOptions: ToolJson.Options)
-    .WithRequestFilters(filters => filters.AddCallToolFilter(ArgumentErrors.Filter));
+    .WithRequestFilters(filters =>
+    {
+        filters.AddCallToolFilter(ArgumentErrors.Filter);
+        filters.AddCallToolFilter(FrontBusy.Filter);
+    });
 
 using IHost host = builder.Build();
 Log.Ambient = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("GodotMcp.Server.Load");

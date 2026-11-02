@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- Run through claude-config's MCP front, the server reports itself busy while a session is live, so a new install reaches open sessions without `/mcp` and never mid-drive.
+
 ### Changed
 
 - `run_editor` warns, naming the files, when the editor's first open of a project changed files in it.

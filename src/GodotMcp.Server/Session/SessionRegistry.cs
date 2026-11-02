@@ -717,6 +717,15 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
     }
 
+    /// <summary>The names of the live sessions, ordinal-sorted, for the busy state the MCP front reads.</summary>
+    internal IReadOnlyList<string> LiveSessionNames()
+    {
+        lock (_lock)
+        {
+            return [.. Ordered().Where(session => session.IsLive).Select(session => session.Name).OrderBy(name => name, StringComparer.Ordinal)];
+        }
+    }
+
     /// <summary>
     /// The cleanup for the server's own exit: every launch and restart in flight waited for, then every session's own shutdown
     /// at once (<see cref="GodotSession.ShutdownAsync"/>: the games it launched asked to quit, sharing one grace), every game
