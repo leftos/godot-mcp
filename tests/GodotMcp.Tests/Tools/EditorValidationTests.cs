@@ -1,3 +1,4 @@
+using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Tests.Session;
 using GodotMcp.Tests.Wire;
@@ -33,14 +34,42 @@ public sealed class EditorValidationTests : IAsyncDisposable
     }
 
     [Theory]
-    [InlineData("build")]
+    [InlineData("await_reload")]
     [InlineData("Open")]
     [InlineData("")]
     public async Task AnUnknownActionIsRefusedWithTheActionsListed(string action)
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() => _tools.EditorAsync(action, cancellationToken: Token));
 
-        Assert.Equal($"action must be one of open, save, save_all, close, play, stop, select_file; got '{action}'.", refused.Message);
+        Assert.Equal($"action must be one of open, save, save_all, close, play, stop, select_file, build; got '{action}'.", refused.Message);
+    }
+
+    [Fact]
+    public void BuildIsAnEditorAction() =>
+        Assert.Equal("build", RuntimeTools.BuildEditorParameters("build", null, null, false)["action"]!.GetValue<string>());
+
+    [Fact]
+    public void BuildIsRefusedForAProjectWithoutCSharp()
+    {
+        string projectDir = _harness.Project("plain");
+
+        McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildableProject(projectDir));
+
+        Assert.Equal($"build needs a C# project; {projectDir} has no .csproj.", refused.Message);
+    }
+
+    [Fact]
+    public void ARedBuildIsWordedForTheEditor()
+    {
+        CompilerErrorList errors = new(["CsProbeNode.cs(10,5): error CS0103: The name 'missing' does not exist in the current context"], 1);
+
+        string message = RuntimeTools.RedBuildMessage(errors, "C:/p/.godot/godot-mcp/build.log");
+
+        Assert.Equal(
+            "the C# build failed, so the editor keeps its previous assembly: CsProbeNode.cs(10,5): error CS0103: The name 'missing' does "
+                + "not exist in the current context; full log: C:/p/.godot/godot-mcp/build.log",
+            message
+        );
     }
 
     [Fact]

@@ -27,6 +27,9 @@ internal sealed record PrepContext(string ProjectDir, ILogger Logger, Func<IRead
     /// as a rebuild, since an up-to-date build compiles nothing and so logs no warnings. validate's .cs targets ask for it.
     /// </summary>
     public bool BuildWhenUnsaved { get; init; }
+
+    /// <summary>What a build stopped at its ceiling leaves undone, as its refusal says: run_project's by default.</summary>
+    public string KilledBuildOutcome { get; init; } = "the game was not started";
 }
 
 /// <summary>
@@ -47,6 +50,9 @@ internal static class ProjectPrep
     /// <summary>The server's own folder in a project, already git-ignored under <c>.godot/</c>.</summary>
     public static string LogFolder(string projectDir) => Path.Combine(projectDir, ".godot", "godot-mcp");
 
+    /// <summary>The C# build's log, <c>.godot/godot-mcp/build.log</c>, which each build overwrites.</summary>
+    public static string BuildLog(string projectDir) => Path.Combine(LogFolder(projectDir), "build.log");
+
     /// <exception cref="SessionException">The build failed or hit its ceiling, or an import is due and cannot run.</exception>
     public static async Task<PrepResult> RunAsync(PrepContext context, CancellationToken cancellationToken) =>
         (await RunCoreAsync(context, reportRedBuild: false, cancellationToken)).Result;
@@ -58,6 +64,35 @@ internal static class ProjectPrep
     /// <exception cref="SessionException">The build hit its ceiling, or an import is due and cannot run.</exception>
     public static Task<PrepOutcome> RunReportingBuildAsync(PrepContext context, CancellationToken cancellationToken) =>
         RunCoreAsync(context, reportRedBuild: true, cancellationToken);
+
+    /// <summary>
+    /// The build alone, for an open editor (editor build): the prep's build step, with its <c>dotnet build</c>, log, saved
+    /// diagnostics and stamp, and no import, which would refuse or disturb the editor open on the folder. A build that fails
+    /// is returned as <c>failed</c> with its compiler errors instead of thrown.
+    /// </summary>
+    /// <exception cref="SessionException">The build hit its ceiling, or the prep wrapper stopped it.</exception>
+    public static async Task<BuildOutcome> RunBuildAsync(PrepContext context, CancellationToken cancellationToken)
+    {
+        Log.PrepStarted(context.Logger, context.ProjectDir);
+        try
+        {
+            Lazy<PrepWrapper?> wrapper = new(() => PrepWrapper.Read(context.ProjectDir));
+            ProjectFiles files = PrepScan.Scan(context.ProjectDir, context.Logger);
+            PrepStep build = await BuildAsync(context, files, wrapper, reportRedBuild: true, cancellationToken);
+            Log.PrepFinished(context.Logger, context.ProjectDir, build.State, "not run");
+            return new BuildOutcome(build.State, build.Errors);
+        }
+        catch (SessionException e)
+        {
+            Log.PrepFailed(context.Logger, e, context.ProjectDir);
+            throw;
+        }
+        catch (OperationCanceledException e)
+        {
+            Log.PrepCancelled(context.Logger, e, context.ProjectDir);
+            throw;
+        }
+    }
 
     private static async Task<PrepOutcome> RunCoreAsync(PrepContext context, bool reportRedBuild, CancellationToken cancellationToken)
     {
@@ -122,7 +157,7 @@ internal static class ProjectPrep
         }
 
         string csproj = lookup.ProjectFile!;
-        string log = Path.Combine(LogFolder(projectDir), "build.log");
+        string log = BuildLog(projectDir);
         string diagnosticsLog = BuildDiagnosticsLog(projectDir);
         PrepWrapper? wrap = wrapper.Value;
         // Both are this build's own: a run whose command never ran leaves no earlier build's log or diagnostics to be read.
@@ -149,6 +184,7 @@ internal static class ProjectPrep
             };
         }
 
+        CheckFinished(built, csproj, log, context.KilledBuildOutcome);
         CheckBuild(built, csproj, log, diagnostics, wrap);
         File.WriteAllText(PrepScan.StampPath(projectDir), string.Empty);
         return new PrepStep("built", milliseconds, null) { Log = log, Gate = gate };
@@ -399,7 +435,20 @@ internal static class ProjectPrep
         return items?.OfType<JsonObject>().Select(item => item["FullPath"]?.GetValue<string>()).OfType<string>().ToList();
     }
 
-    /// <exception cref="SessionException">The build hit its ceiling, was stopped by the prep wrapper, or failed.</exception>
+    /// <summary>Refuses a build that hit its ceiling, saying what it left undone (<see cref="PrepContext.KilledBuildOutcome"/>).</summary>
+    /// <exception cref="SessionException">The build hit its ceiling.</exception>
+    private static void CheckFinished(ToolProcessResult built, string csproj, string log, string outcome)
+    {
+        if (built.WasKilled)
+        {
+            throw new SessionException(
+                $"The C# build of {csproj} did not finish {built.KillPhrase}, so it was stopped with its whole process tree "
+                    + $"and {outcome}. Its log: {log}"
+            );
+        }
+    }
+
+    /// <exception cref="SessionException">The build was stopped by the prep wrapper, or failed.</exception>
     private static void CheckBuild(
         ToolProcessResult built,
         string csproj,
@@ -408,14 +457,6 @@ internal static class ProjectPrep
         PrepWrapper? wrapper
     )
     {
-        if (built.WasKilled)
-        {
-            throw new SessionException(
-                $"The C# build of {csproj} did not finish {built.KillPhrase}, so it was stopped with its whole process tree "
-                    + $"and the game was not started. Its log: {log}"
-            );
-        }
-
         if (wrapper is not null && PrepWrapper.Stopped(built))
         {
             throw new SessionException(wrapper.StoppedNote("the build", log));
@@ -658,3 +699,9 @@ internal static class ProjectPrep
 
 /// <summary>What a headless run's prep did, and the compiler errors of a build that failed (its build is then <c>failed</c>).</summary>
 internal sealed record PrepOutcome(PrepResult Result, CompilerErrorList? BuildErrors);
+
+/// <summary>
+/// What a build alone did (<see cref="ProjectPrep.RunBuildAsync"/>): <see cref="Build"/> is up-to-date, built, failed, no-csproj
+/// or skipped, and <see cref="Errors"/> holds a failed build's compiler errors.
+/// </summary>
+internal sealed record BuildOutcome(string Build, CompilerErrorList? Errors);

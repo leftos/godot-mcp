@@ -2,7 +2,8 @@
 extends Node
 ## The editor actions of an editor session (run_editor), a child of the bridge there only: the
 ## editor command's open, save, save_all, close, play, stop and select_file through
-## EditorInterface, the editor_state read and editor_unsaved.
+## EditorInterface, its await_reload the server sends after its own C# build (editor build), the
+## editor_state read and editor_unsaved.
 ##
 ## Godot's calls report no failure (a failed one shows a dialog instead), so each action checks its
 ## input before the call and its effect after. A call that can show a progress dialog runs a whole
@@ -11,7 +12,7 @@ extends Node
 
 ## The guard's hang guard: an effect not shown this long after its call is reported as not shown.
 const DEADLINE_MS := 30000
-const ACTIONS := "open, save, save_all, close, play, stop, select_file"
+const ACTIONS := "open, save, save_all, close, play, stop, select_file, await_reload"
 const NOT_OPEN := "%s is not open in the editor; open it first with editor {action: open}."
 const UNSAVED := "The scene %s has unsaved changes; save it first or pass discard: true."
 const NO_SCENE := "the editor has no edited scene."
@@ -23,6 +24,18 @@ const LATE := (
 ## Added to an open's LATE: open_scene_from_path does nothing while the editor changes scenes
 ## (4.7.2 editor/editor_interface.cpp L699-703), which no script can read.
 const CHANGING := "; the editor may have been changing scenes"
+## Added to a play's LATE: the editor builds a C# project inside the play call and starts no scene
+## when that build fails, saying so only in its MSBuild panel.
+const PLAY_BUILD := (
+	"; if the project has C# scripts, the editor's own build before play may have failed: run "
+	+ "editor {action: build} first"
+)
+## The editor's HotReloadAssemblyWatcher checks the assembly every 0.5 s and reloads it on the main
+## thread (4.7.2 modules/mono/editor/GodotTools/GodotTools/HotReloadAssemblyWatcher.cs): a frame
+## that runs this long after the write follows any reload the write started.
+const RELOAD_SETTLE_S := 1.0
+## The frames await_reload lets run after its call, so a reload deferred to the main thread has run.
+const RELOAD_FRAMES := 2
 
 ## Set while a guarded call runs and until its effect shows: the bridge then dispatches no command
 ## and its _process returns at once.
@@ -35,6 +48,9 @@ var editor_interface: Object = (
 )
 ## The wall clock in ms: Time.get_ticks_msec, or a test's stand-in.
 var now_ms: Callable = Callable(Time, "get_ticks_msec")
+## The wall clock in Unix seconds, as file times count: Time.get_unix_time_from_system, or a test's
+## stand-in.
+var unix_now: Callable = Callable(Time, "get_unix_time_from_system")
 
 
 ## The commands this module answers, func(id, params), by name.
@@ -69,6 +85,7 @@ func handle_editor(id: int, params: Dictionary) -> void:
 		"play": _play,
 		"stop": _stop,
 		"select_file": _select_file,
+		"await_reload": _await_reload,
 	}
 	if not actions.has(action):
 		bridge._reply_error(id, "unknown editor action '%s'; it is one of %s." % [action, ACTIONS])
@@ -195,7 +212,7 @@ func _play(params: Dictionary) -> Dictionary:
 		call = Callable(editor_interface, "play_main_scene")
 	var playing: Callable = Callable(editor_interface, "is_playing_scene")
 	if not await guarded(call, playing, DEADLINE_MS):
-		return {"error": LATE % ["play", "a scene playing"]}
+		return {"error": LATE % ["play", "a scene playing"] + PLAY_BUILD}
 	return {"result": {"scene": scene}}
 
 
@@ -220,6 +237,24 @@ func _stop(_params: Dictionary) -> Dictionary:
 	var was_playing: bool = editor_interface.is_playing_scene()
 	editor_interface.stop_playing_scene()
 	return {"result": {"wasPlaying": was_playing}}
+
+
+## Waits, holding every other command, until RELOAD_SETTLE_S has passed since params.assembly was
+## written and RELOAD_FRAMES frames have run since the call. Nothing a script can read marks the
+## end of the editor's reload, so this says the reload was waited for, never that it happened.
+func _await_reload(params: Dictionary) -> Dictionary:
+	var assembly: String = str(params.get("assembly", ""))
+	if not FileAccess.file_exists(assembly):
+		return {"error": "%s does not exist." % assembly}
+	# The modified time is whole seconds: the write came before the next one.
+	var due: float = FileAccess.get_modified_time(assembly) + 1 + RELOAD_SETTLE_S
+	var checks: Dictionary = {"count": 0}
+	var settled: Callable = func() -> bool:
+		checks["count"] += 1
+		return checks["count"] > RELOAD_FRAMES and unix_now.call() >= due
+	if not await guarded(func() -> void: pass, settled, DEADLINE_MS):
+		return {"error": LATE % ["build", "the editor's assembly reload"]}
+	return {"result": {"reloadWaited": true}}
 
 
 func _select_file(params: Dictionary) -> Dictionary:

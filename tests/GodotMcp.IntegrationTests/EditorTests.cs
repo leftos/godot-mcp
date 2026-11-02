@@ -303,6 +303,49 @@ public sealed class EditorTests : IClassFixture<OpenedProbeProject>, IAsyncDispo
         Assert.Equal("get_editor_state works only in an editor session; session 'game' is a run session. Start one with run_editor.", state.Message);
     }
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task BuildIsRefusedForAProjectWithoutCSharp()
+    {
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await RunEditorAsync(token);
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            _runtime.EditorAsync("build", session: Session, cancellationToken: token)
+        );
+
+        Assert.StartsWith("build needs a C# project; ", refused.Message, StringComparison.Ordinal);
+        Assert.EndsWith(" has no .csproj.", refused.Message, StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AnAttachedSessionDrivesTheGameTheEditorPlays()
+    {
+        CancellationToken token = TestContext.Current.CancellationToken;
+        await RunEditorAsync(token);
+        _ = await _project.ArmProjectAsync(_opened.Directory, new ArmOptions(Quiet: true), token);
+
+        JsonNode played = await EditorAsync("play", token, scene: MainScene);
+        JsonNode attached = JsonNode.Parse(
+            await _project.AttachProjectAsync(
+                _opened.Directory,
+                waitSeconds: 120,
+                options: new AttachOptions(Session: GameSession),
+                cancellationToken: token
+            )
+        )!;
+        JsonNode tree = JsonNode.Parse(await _runtime.GetSceneTreeAsync(session: GameSession, cancellationToken: token))!;
+        JsonNode stopped = await EditorAsync("stop", token);
+        _ = await _project.DetachProjectAsync(GameSession, token);
+        _ = await _project.DisarmProjectAsync(_opened.Directory);
+
+        Assert.Equal(MainScene, played["playingScene"]!.GetValue<string>());
+        Assert.Equal(GameSession, attached["session"]!.GetValue<string>());
+        Assert.Contains("\"name\":\"Main\"", tree.ToJsonString(), StringComparison.Ordinal);
+        Assert.True(stopped["wasPlaying"]!.GetValue<bool>(), stopped.ToJsonString());
+        Assert.Equal(string.Empty, Git.Status(_opened.Directory));
+        Assert.False(File.Exists(Path.Combine(_opened.Directory, "override.cfg")), "the attach's override.cfg is removed");
+    }
+
     private async Task<JsonNode> EditorAsync(string action, CancellationToken token, string? scene = null) =>
         JsonNode.Parse(await _runtime.EditorAsync(action, scene: scene, session: Session, cancellationToken: token))!;
 

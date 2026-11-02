@@ -184,6 +184,78 @@ func test_close_refuses_an_unsaved_scene_without_discard() -> void:
 	_free(module, editor)
 
 
+func test_await_reload_holds_until_a_second_has_passed_since_the_assembly_write() -> void:
+	var editor: FakeEditor = FakeEditor.new()
+	var module: Node = _module(editor)
+	var bridge: Node = _recording_bridge(module)
+	var assembly: String = _written_assembly()
+	var written: int = FileAccess.get_modified_time(assembly)
+	var clock: Dictionary = {"s": float(written + 1)}
+	module.unix_now = func() -> float: return clock["s"]
+	module.now_ms = func() -> int: return 0
+	module.handle_editor(1, {"action": "await_reload", "assembly": assembly})
+	_frames(3)
+	# The modified time is whole seconds: one second past it may be under a second past the write.
+	assert_true(module.busy, "the wait holds the bridge one reported second after the write")
+	assert_eq(bridge.sent.size(), 0, "nothing is answered while it holds")
+	clock["s"] = float(written + 2)
+	_frames(1)
+	assert_true(not module.busy, "the wait ends once a whole second has passed since the write")
+	assert_eq(bridge.sent.size(), 1, "the wait is answered")
+	if bridge.sent.size() == 1:
+		var reply: Dictionary = bridge.sent[0].get("result", {})
+		var said: String = "the reply says the reload was waited for: %s" % [bridge.sent[0]]
+		assert_eq(reply.get("reloadWaited"), true, said)
+		assert_eq(reply.get("action"), "await_reload", "the reply names the action")
+	bridge.free()
+	_free(module, editor)
+
+
+func test_await_reload_holds_for_two_frames_when_the_write_is_long_past() -> void:
+	var editor: FakeEditor = FakeEditor.new()
+	var module: Node = _module(editor)
+	var bridge: Node = _recording_bridge(module)
+	var assembly: String = _written_assembly()
+	var written: int = FileAccess.get_modified_time(assembly)
+	module.unix_now = func() -> float: return float(written + 60)
+	module.now_ms = func() -> int: return 0
+	module.handle_editor(1, {"action": "await_reload", "assembly": assembly})
+	assert_true(module.busy, "the wait holds the bridge before any frame has run")
+	_frames(1)
+	assert_true(module.busy, "the wait holds after one frame")
+	assert_eq(bridge.sent.size(), 0, "nothing is answered after one frame")
+	_frames(1)
+	assert_true(not module.busy, "the wait ends after two frames")
+	assert_eq(bridge.sent.size(), 1, "the wait is answered after two frames")
+	bridge.free()
+	_free(module, editor)
+
+
+func test_await_reload_refuses_an_assembly_that_does_not_exist() -> void:
+	var editor: FakeEditor = FakeEditor.new()
+	var module: Node = _module(editor)
+	var bridge: Node = _recording_bridge(module)
+	var missing: String = ProjectSettings.globalize_path(RunDir.path("godot_mcp_no_assembly.dll"))
+	module.handle_editor(1, {"action": "await_reload", "assembly": missing})
+	assert_eq(
+		bridge.sent[0].get("error") if not bridge.sent.is_empty() else null,
+		"%s does not exist." % missing,
+		"a missing assembly is refused"
+	)
+	assert_true(not module.busy, "a refused wait never holds the bridge")
+	bridge.free()
+	_free(module, editor)
+
+
+## A file in the run's folder standing in for the built assembly, written now.
+func _written_assembly() -> String:
+	var path: String = ProjectSettings.globalize_path(RunDir.path("godot_mcp_editor_assembly.dll"))
+	var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+	file.store_string("assembly")
+	file.close()
+	return path
+
+
 ## A stand-in editor whose one open scene, current and unsaved, is a file in the run's folder.
 func _editor_with_unsaved_scene() -> FakeEditor:
 	var editor: FakeEditor = FakeEditor.new()

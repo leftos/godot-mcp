@@ -240,6 +240,7 @@ $itestGroups = [ordered]@{
     scratchuntil = @('ScratchUntilRunTests')
     scratchbackground = @('ScratchBackgroundTests')
     editor    = @('EditorTests')
+    editorcs  = @('EditorCSharpTests')
 }
 # The lanes the groups run in: each lane's groups one at a time in this order, the lanes at once. The timing lane keeps
 # the groups that assert wall-clock times apart from each other; the build and untimed lanes hold the rest, the C#
@@ -247,12 +248,12 @@ $itestGroups = [ordered]@{
 # refuses to run while one is not.
 $itestLanes = [ordered]@{
     timing  = @('lifecycle', 'stopping', 'watchdog', 'input', 'time', 'recording', 'capture', 'reads', 'scratch', 'scratchpace', 'scratchfolder', 'scratchparallel', 'scratchuntil')
-    build   = @('prep', 'scene', 'csharp')
+    build   = @('prep', 'scene', 'csharp', 'editorcs')
     untimed = @('sessions', 'attach', 'headless', 'nodes', 'scratchsteps', 'scratchbackground', 'editor')
 }
 # The groups whose tests run dotnet builds of the CsProbe project on top of their Godot runs: each takes a heavy gate
 # slot, in whichever lane it runs, and every other group a light one.
-$itestHeavyGroups = @('prep', 'headless', 'scene', 'nodes', 'csharp', 'scratchpace')
+$itestHeavyGroups = @('prep', 'headless', 'scene', 'nodes', 'csharp', 'scratchpace', 'editorcs')
 # The groups whose tests capture a Godot window through Windows.Graphics.Capture, which sees no window on a hidden
 # desktop: their runs skip tools/hidden-desktop.ps1, so their windows show on the user's desktop. Their gate takes a light
 # slot, never a heavy one: a light gate always runs on this machine, and the visible desktop the group needs exists only
@@ -340,7 +341,7 @@ $itestRules = @(
     @('src/GodotMcp.Server/Tools/State*.cs', 'reads'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.CSharp*.cs', 'csharp'),
     @('src/GodotMcp.Server/Tools/RuntimeTools.RunCSharp*.cs', 'csharp'),
-    @('src/GodotMcp.Server/Tools/RuntimeTools.Editor*.cs', 'editor'),
+    @('src/GodotMcp.Server/Tools/RuntimeTools.Editor*.cs', @('editor', 'editorcs')),
     @('src/GodotMcp.Server/Tools/RuntimeTools*.cs', $itestRuntimeGroups),
     @('src/GodotMcp.Server/Tools/ProjectTools*.cs', @('lifecycle', 'stopping', 'watchdog', 'sessions', 'attach', 'prep')),
     @('src/GodotMcp.Server/Tools/ScratchTools*.cs', @($itestScratchGroups + 'csharp')),
