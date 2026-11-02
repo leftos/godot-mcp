@@ -716,7 +716,7 @@ For a key gesture `frame` counts from the first key event, no `warning` is added
 
 Two things are missed: an emission inside the very dispatch that changed the hover, for the newly hovered nodes (for keys, the follow on `gui_focus_changed` catches the new owner's `focus_entered`), and anything off the chain (an autoload, a sibling screen), for which `watch` takes signal tracks around the call.
 
-A `warning` is added after any other when the pressed Control is a disabled `BaseButton` (`<path> is disabled, so the press set off none of its own signals`) or cannot process in a paused game (`the game is paused and <path> cannot process, so it received no input; resume, or step with frame_control`; its `fired` still lists `gui_focus_changed` and `focus_entered`).
+A `warning` is added after any other when the pressed Control was a disabled `BaseButton` as the press was sent, not one the game's own handler disabled after it (`<path> is disabled, so the press set off none of its own signals`) or cannot process in a paused game (`the game is paused and <path> cannot process, so it received no input; resume, or step with frame_control`; its `fired` still lists `gui_focus_changed` and `focus_entered`).
 
 ### `click`
 

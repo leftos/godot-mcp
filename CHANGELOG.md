@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Fixed
 
 - `run_project`, `preview_scene` and `run_scratches` run a scene of a custom loader's extension, such as `.xscn`, instead of the main scene.
+- `click` no longer warns that a button is disabled when the game's own `pressed` or `toggled` handler disabled it after the press.
 
 ## 0.25.0 - 2026-11-01
 

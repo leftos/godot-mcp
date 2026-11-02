@@ -386,7 +386,7 @@ func _send_and_record(
 		_send_drop(window_point, double_click)
 		return
 	var point: Vector2 = to_viewport(window_point)
-	_fired.before_button(pressed)
+	_fired.before_button(pressed, _hovered_control(point) if pressed else null)
 	send_button(window_point, button, pressed, double_click)
 	var hovered: Control = _hovered_control(point)
 	_fired.after_button(hovered, pressed)
@@ -400,7 +400,7 @@ func _send_and_record(
 func _send_drop(window_point: Vector2, double_click: bool) -> void:
 	var before_drop: Control = _hovered_control(to_viewport(window_point))
 	_hits["releasedOn"] = _describe(before_drop)
-	_fired.before_button(false)
+	_fired.before_button(false, null)
 	send_button(window_point, MOUSE_BUTTON_LEFT, false, double_click)
 	_fired.after_button(before_drop if is_instance_valid(before_drop) else null, false)
 

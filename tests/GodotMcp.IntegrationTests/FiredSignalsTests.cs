@@ -187,6 +187,39 @@ public sealed class FiredSignalsTests(SharedProbeSession shared) : IAsyncLifetim
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task AButtonItsOwnPressDisablesDoesNotWarn()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            Button("button", "Ready", 400, 250) + "button.pressed.connect(func() -> void: button.disabled = true)\n\t" + Drawn,
+            cancellation
+        );
+
+        JsonNode clicked = await ClickAsync(new InputTarget("Ready"), cancellation);
+
+        Assert.DoesNotContain("is disabled", Warning(clicked), StringComparison.Ordinal);
+        Assert.NotNull(Find(clicked, "/root/Ready", "pressed"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AToggleItsOwnToggleDisablesDoesNotWarn()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await RunAsync(
+            Button("toggle", "Toggle", 400, 250)
+                + "toggle.toggle_mode = true\n\t"
+                + "toggle.toggled.connect(func(_on: bool) -> void: toggle.disabled = true)\n\t"
+                + Drawn,
+            cancellation
+        );
+
+        JsonNode clicked = await ClickAsync(new InputTarget("Toggle"), cancellation);
+
+        Assert.DoesNotContain("is disabled", Warning(clicked), StringComparison.Ordinal);
+        Assert.Equal("[true]", Find(clicked, "/root/Toggle", "toggled")["args"]!.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AButtonGroupListsTheOtherButtonsToggledFalseFirst()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

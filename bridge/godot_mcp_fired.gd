@@ -90,6 +90,12 @@ var _kept_names: Dictionary = {}
 ## The Control the last press landed on (null over none), kept until the next press: a separate
 ## release listens on it.
 var _pressed: Variant = null
+## Whether the Control under the pointer was a disabled BaseButton when the press was sent: the
+## game's own handlers may disable it after, which the warning must not read.
+var _disabled_at_press: bool = false
+## The Control under the pointer when the press was sent (null over none), which _pressed is unless
+## the press landed on another one.
+var _target_at_press: Control = null
 
 
 ## Starts a gesture: lets go of anything still connected, forgets the last gesture's button
@@ -102,6 +108,8 @@ func begin(lists: bool) -> void:
 	_follows_focus = false
 	_entries = []
 	_overflow = 0
+	_disabled_at_press = false
+	_target_at_press = null
 	_listened = {}
 	_listened_on = []
 	_left = []
@@ -125,9 +133,13 @@ func physics_wait_due() -> bool:
 
 ## Before a mouse button event is sent: a release listens on the chain of the Control the last
 ## press landed on, which Godot sends it to wherever the pointer is (scene/main/viewport.cpp
-## L2015-2040 in 4.7.2).
-func before_button(pressed: bool) -> void:
-	if not pressed:
+## L2015-2040 in 4.7.2); a press keeps the Control under the pointer and whether it was a disabled
+## BaseButton, the state it had when the press was sent.
+func before_button(pressed: bool, target: Control) -> void:
+	if pressed:
+		_target_at_press = target
+		_disabled_at_press = target is BaseButton and (target as BaseButton).disabled
+	else:
 		listen(_pressed)
 
 
@@ -448,11 +460,11 @@ func _note_left(path: String) -> void:
 
 
 ## The warning a press explains its fired list with, whatever fired holds: the pressed node a
-## disabled BaseButton, which ignores all input (scene/gui/base_button.cpp L62 in 4.7.2), or, in
-## a paused tree, one that cannot process, so it was sent neither the press nor the release
-## (scene/main/viewport.cpp L2002-2003, L2015-2040), though the press still grabbed its focus
-## (focus_entered, the root's gui_focus_changed). A node that cannot process for another reason
-## (PROCESS_MODE_DISABLED, a suspended tree, scene/main/node.cpp L907-928) gets no paused
+## disabled BaseButton when the press was sent, which ignores all input (scene/gui/base_button.cpp
+## L62 in 4.7.2), or, in a paused tree, one that cannot process, so it was sent neither the press
+## nor the release (scene/main/viewport.cpp L2002-2003, L2015-2040), though the press still grabbed
+## its focus (focus_entered, the root's gui_focus_changed). A node that cannot process for another
+## reason (PROCESS_MODE_DISABLED, a suspended tree, scene/main/node.cpp L907-928) gets no paused
 ## warning. "" when neither applies.
 func _warning() -> String:
 	var pressed: Node = _pressed_node()
@@ -460,11 +472,20 @@ func _warning() -> String:
 		return ""
 	var path: String = str(pressed.get_path())
 	var parts := PackedStringArray()
-	if pressed is BaseButton and (pressed as BaseButton).disabled:
+	if pressed is BaseButton and _was_disabled(pressed as BaseButton):
 		parts.append(DISABLED_WARNING % path)
 	if pressed.get_tree().paused and not pressed.can_process():
 		parts.append(PAUSED_WARNING % path)
 	return " ".join(parts)
+
+
+## Whether the pressed button was disabled when the press was sent: the state of the Control under
+## the pointer before it, or, when the press landed on another Control than that one (a popup the
+## press opened), its state now.
+func _was_disabled(button: BaseButton) -> bool:
+	if _pressed == _target_at_press:
+		return _disabled_at_press
+	return button.disabled
 
 
 ## The node the press landed on, a PopupMenu's internal Control answering as the menu itself, when
