@@ -4,6 +4,9 @@
 
 ## Triage
 
+- [?] GMCP-429 docs: SKILL and TOOLS disagree with the code on options.call and the MCP front
+- [?] GMCP-428 drag: always releases, so nothing can be shot or read mid-drag
+- [?] GMCP-427 compare_screenshot: changed pixels cannot be counted by colour
 - [?] GMCP-416 watch: a signal track does not record who emitted the signal
 - [?] GMCP-415 run_project: a project.godot setting cannot be set for one run
 - [?] GMCP-414 watch: frame_ms includes the frame cap's wait, so a frame's own work time cannot be read
@@ -16,6 +19,7 @@
 
 ## Do first
 
+- [ ] GMCP-433 TheFrontIsToldBusyBeforeARunAnswersAndFreeAfterTheStop fails under concurrent itest lanes · release vNext — Urgent · No project
 - [ ] GMCP-407 Editor-driving tools: open, save and run a scene in the Godot editor, read its output, build C# · release vNext — High · Ideas from the survey and the projects
 - [ ] GMCP-420 Headless edits refuse a folder an editor session holds; decision 17 replaced · release vNext — High · Ideas from the survey and the projects
 
@@ -149,7 +153,6 @@
 - [ ] GMCP-395 A met wait whose screenshot fails is a warning, not a refused until · release vNext
 - [ ] GMCP-397 Report window and viewport sizes beside take_screenshot, wait_for, frame_control and capture_frames captures · release vNext
 - [ ] GMCP-399 run_process: a ready wait ended by its backstop still says 'within N s of load-adjusted time' · release vNext
-- [ ] GMCP-417 C# prep never rebuilds a project inside a gitignored folder · release vNext
 - [ ] GMCP-425 Prove the itest desktop commands on gate's hidden desktop and move them to hidden · release vNext
 
 ## Docs
@@ -162,6 +165,15 @@
 - [ ] GMCP-396 Re-read docs/csharp-runtime-tools.md against its named files' 10 commits since 2026-10-26
 - [ ] GMCP-410 Create docs/agents/orchestrator.md and move the profile's orchestration rules into it (CC-567) · release vNext
 - [ ] GMCP-411 Durable docs: drop counts and this repo's path:line references, pointing by symbol, heading or test name · release vNext
+
+## No project
+
+- [ ] GMCP-430 A scene named with an upper-case extension loses its uid on each in-place save · release vNext
+- [ ] GMCP-435 attach_script writes a script's .uid before a refusal and never reports it · release vNext
+- [ ] GMCP-436 A headless edit can lose what Godot drops with a warning · release vNext
+- [ ] GMCP-437 validate shows missing-assembly lines after a failed build · release vNext
+- [ ] GMCP-438 A headless edit loses overrides and connections that depend on a broken instance script · release vNext
+- [ ] GMCP-439 The load-error refusal misses a scene an autoload preloads · release vNext
 
 ## Design files
 
