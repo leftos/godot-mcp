@@ -1,0 +1,49 @@
+# Editor-driving tools (GMCP-407)
+
+An agent opens a project in the Godot editor and drives it the way it drives a game: it reads the editor's Control tree, clicks, drags and types into any editor window, screenshots it, reads the editor's output and errors, and opens, saves, plays and builds through `EditorInterface`. godot-xaml asked for it to check `.xscn` scenes in the editor (open from the FileSystem dock and the Open dialog, edit, save, F6, instance, move, rename, survive a C# rebuild), and the owner widened it to "click anything in a godot window".
+
+This replaces [DECISIONS.md](../DECISIONS.md) decision 17 ("No editor bridge") once the first phase lands. The Non-negotiable stands: nothing enters the project's tracked files.
+
+Evidence: the facts map (`.tmp/map-editor-tools.md` in the main checkout at the time of writing, summarised below) and the spike `.tmp/spike-editor/FINDINGS.md` (its probes and logs beside it), both against Godot 4.7.2.
+
+## Facts this design rests on
+
+- **The editor ignores `override.cfg`**: `globals->setup(..., p_ignore_override = editor)` (4.7.2 `main/main.cpp` L2107; every override load in `core/config/project_settings.cpp` is guarded by it). So neither an autoload nor an enabled plugin can reach the editor the way the game bridge reaches a game. A game the editor starts (F5, F6) is a plain game process and does read `override.cfg`.
+- **`godot --path <p> --editor --script <abs path>` works** (spike Q1): the script's `SceneTree` becomes the main loop, `EditorNode` is built inside it, and `EditorInterface` is usable from the script's first `_process`. The script lives outside the project (the installed copy), so no tracked file changes. A `@tool` node the script adds under `root` runs, stays out of the edited scene and is never saved (Q3).
+- **`EditorInterface` does open, save and play** (Q2): `open_scene_from_path` (edited root one frame later), `mark_scene_as_unsaved` + `save_scene` (on disk one frame later), `play_current_scene` / `stop_playing_scene` (the game is a child process), `is_playing_scene`, `get_open_scenes`, `get_unsaved_scenes`.
+- **`OS.add_logger` in the editor process** sees print, print_rich, printerr, push_warning, push_error and engine errors (Q3). It does not see the editor's own panel messages or the F5 game's output, which comes over the debugger.
+- **C# builds** (Q5): calling `BuildProject` on the C# editor plugin's `MSBuildPanel` works from GDScript, and an external `dotnet build` makes the editor reload the assembly 0.35 s after the dll is written, with no call.
+- **Move and rename have no script API**: only the FileSystem dock's private code rewrites dependencies (4.7.2 `editor/docks/filesystem_dock.cpp`, `_try_move_item` and `_update_dependencies_after_move`). An agent renames through the dock's UI.
+- **Two hazards** (spike): an editor save, scan, import or build opens a progress dialog that runs a whole engine frame inside the call (4.7.2 `editor/gui/progress_dialog.cpp` L148-152), so any `_process` re-enters; unguarded, a save re-entered itself until the stack overflowed. And because the editor makes a `SceneTree` before reading `--script` and never frees it (`main.cpp` L4361-4363, L4388-4389; `scene/main/scene_tree.cpp` L2050-2052), every `--script` editor logs `progress_dialog.cpp:183 Parameter "current_window" is null` (5 at start, 1 per save and build) and a leak report at exit.
+- **A never-opened checkout's first editor open rewrites `project.godot`** and adds a `.uid` beside each script, with or without the script (Q6). A checkout opened before is left clean.
+
+## Rulings
+
+Each is the recommended option, settled under CLAUDE.md's autonomy rule and reversible here.
+
+1. **Injection**: the server starts the editor as `godot --path <p> --editor --windowed --script <installed bridge/godot_mcp_editor_host.gd> [--scene <res path>]`. The **editor host** is a small `@tool extends SceneTree` script that, once `EditorNode` exists, adds the bridge node under `root` in a new editor mode. No `override.cfg`, no addon, no `project.godot` change.
+2. **One bridge**: the existing bridge modules gain `@tool` and run in the editor unchanged, so `get_ui_elements`, `click`, `drag`, `hover`, `scroll`, `type_text`, `key`, `take_screenshot`, `wait_for`, `get_scene_tree`, `inspect_node`, `get_errors` and `get_debug_output` work on the editor's own windows. `@tool` changes nothing in a game, and the bridge is never in a project's editor any other way. Editor-only commands go in a new module, `bridge/godot_mcp_editor.gd`.
+3. **Session**: a fourth session kind, **Editor**, beside Run, Attach and Process. Each place that switches on the kind (the map lists them in `GodotSession`, `GodotSession.Attach`, `GodotSession.Realtime`, `RuntimeTools.Time`, `RuntimeTools.Batch` and `SessionRegistry`) gets an explicit Editor arm. A new tool, `run_editor`, starts one; `stop_project` stops it through the editor's close request (never `quit()`, which skips the editor's exit path), with unsaved scenes refused unless `discard: true`. Quiet works as for a game (hidden desktop, `--audio-driver Dummy`), since the hidden desktop is an OS mechanism.
+4. **Editor actions**: one tool, `editor`, with `action` one of `open` (a scene path), `save` (the current scene, or `scene`), `save_all`, `close` (a scene), `play` (current, main, or `scene`), `stop`, `select_file`, `build`. And one read, `get_editor_state`: open scenes, the current one, unsaved ones, whether a scene plays and which, scanning and importing flags. One tool with actions keeps the agents' `tools:` lists short, as `frame_control` does.
+5. **The C# build** runs the server's own prep build (`ProjectPrep.BuildRequest`, the same `dotnet build` and log as `run_project`), then waits for the editor's assembly reload line in the error feed. The server gets the build's own diagnostics, and the path is the tested one. An agent that must test the Build button itself clicks it.
+6. **Re-entry guard**: while an editor call that can show progress runs (save, save_all, open, scan, build, play's autosave), the bridge dispatches no other command and its per-frame work returns at once; commands that arrive meanwhile wait in order. Every such call goes through one guarded helper.
+7. **Known noise is filtered**: the error feed drops `progress_dialog.cpp:183 Parameter "current_window" is null` and the exit leak report in an editor session only, and the upstream fix (create that `SceneTree` only without a script, or free it when replaced) is reported to Godot as a GitHub issue draft for the owner.
+8. **Never-opened checkouts are refused**: `run_editor` refuses a project with no `.godot/` folder, saying the first open rewrites `project.godot` and to open it once by hand or run `run_project` first. A project opened before is the normal case.
+9. **The F5 game joins as an attached session**: the editor host removes `GODOT_MCP_*` from its own environment once read, so the game the editor starts never dials with the editor's token. An agent that wants to drive that game calls `attach_project` before `editor {action: play}`, which works today (the game reads `override.cfg`).
+10. **Headless edits wait for the editor**: while an editor session is open on a folder, the headless write tools (`add_node`, `set_node_properties`, `batch_scene_operations` and the rest) refuse that folder, naming the editor session and `editor {action: save}`; reads stay allowed. This keeps the editor's copy and the file from racing, the open question decision 17 left; a narrower rule (only scenes the editor has open, then `update_file`) can follow if an agent needs it.
+11. **Move, rename and instancing** go through the editor's UI with the input tools, which is what godot-xaml checks anyway; no server-side move API.
+
+## Phases
+
+Each phase lands on `main` as its own items, with tests, TOOLS.md, the skill and ARCHITECTURE.md in the same commit.
+
+1. **The editor session.** `bridge/godot_mcp_editor_host.gd`; `@tool` on every bridge module; the bridge's editor mode (the hello names the kind; parking for quiet; env cleanup, ruling 9); the noise filter (ruling 7); the Editor session kind and `run_editor`; `stop_project` through the close request; the never-opened refusal (ruling 8). Proof: itests that start the editor on a fixture project quietly, read `get_ui_elements` (the FileSystem dock is listed), click a dock item by text, take a screenshot, and stop cleanly with `git status` unchanged.
+2. **Editor actions.** `bridge/godot_mcp_editor.gd`, the `editor` tool and `get_editor_state`, with the re-entry guard (ruling 6). Proof: open, edit with `set_property` on the edited root, save, read the file headless; play and stop; a save run twice in a row with a frame callback active does not re-enter.
+3. **Build and the F5 game.** `editor {action: build}` (ruling 5) and the attach-before-play flow (ruling 9). Proof: a C# fixture rebuilt with the editor open reloads its assembly, and a game started with `play` after `attach_project` answers `get_scene_tree`.
+4. **Headless refusal and docs.** Ruling 10, DECISIONS.md decision 17 replaced by the new decision (its facts and rulings), the archive of this file.
+
+## Open checks (each a step's first proof, not a guess)
+
+- Whether every bridge module behaves under `@tool` in the editor (statics, `preload`, the logger's thread use). Phase 1's first itest.
+- Whether drag-and-drop between editor controls (a FileSystem item onto the Scene dock) works from injected events: Godot's GUI drag starts from mouse motion with a button held, which the bridge already sends with `button_mask` and `relative`. Phase 1's drag itest.
+- Whether open-scene nodes and a custom resource loader survive the C# reload (spike Q5 left it). godot-xaml's own check, run with phase 3's tools.
