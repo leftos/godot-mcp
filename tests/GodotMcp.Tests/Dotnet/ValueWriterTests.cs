@@ -273,7 +273,7 @@ public sealed class ValueWriterTests
 
             public readonly int Current => _moved == 1 ? 1 : throw new InvalidOperationException("now");
 
-            object System.Collections.IEnumerator.Current => Current;
+            readonly object System.Collections.IEnumerator.Current => Current;
 
             public bool MoveNext() => ++_moved <= 2;
 
@@ -294,7 +294,7 @@ public sealed class ValueWriterTests
         {
             public readonly int Current => 1;
 
-            object System.Collections.IEnumerator.Current => Current;
+            readonly object System.Collections.IEnumerator.Current => Current;
 
             public readonly bool MoveNext() => true;
 
