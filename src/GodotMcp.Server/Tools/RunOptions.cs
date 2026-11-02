@@ -80,6 +80,22 @@ internal sealed record RunOptions(
         };
 }
 
+/// <summary>How run_editor opens the editor: quiet or visible, the session's name, and whether the project is prepared first.</summary>
+internal sealed record EditorOptions(
+    [property: Description(
+        "Opens the editor quiet: on a hidden desktop, click-through, with the Dummy audio driver, so it takes no focus, shows "
+            + "nothing and plays no sound. false opens a normal visible editor window. Default true."
+    )]
+        bool Quiet = true,
+    [property: Description(ProjectTools.NewSessionDescription)] string? Session = null,
+    [property: Description(RunOptions.PrepareDescription)] string? Prepare = null
+)
+{
+    /// <summary>Whether prepare asks for the prep: true for auto or when left out, false for never.</summary>
+    /// <exception cref="McpException">prepare is anything else.</exception>
+    internal bool ShouldPrepare() => RunOptions.ParsePrepare(Prepare);
+}
+
 /// <summary>Whether restart_project prepares the project before the relaunch.</summary>
 internal sealed record RestartOptions([property: Description(RunOptions.PrepareDescription)] string? Prepare = null)
 {

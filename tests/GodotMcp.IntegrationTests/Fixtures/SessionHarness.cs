@@ -119,7 +119,8 @@ internal sealed class SessionHarness : IAsyncDisposable
             }
             else if (session.Live)
             {
-                await Sessions.StopAsync(session.Name, CancellationToken.None);
+                // An editor a test left with unsaved scenes would refuse the stop; nothing it holds is kept.
+                await Sessions.StopAsync(session.Name, discard: session.Kind == "editor", CancellationToken.None);
             }
         }
 

@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's input capture, a child of the bridge: while capture_input runs, records
 ## input as simulate_input's event dicts and streams them to the server in id-less frames

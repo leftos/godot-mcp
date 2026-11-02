@@ -1,3 +1,4 @@
+@tool
 extends RefCounted
 ## The UI snapshot wait_for {uiChanged} compares: the visible Controls get_ui_elements lists, by
 ## path, the focus owner and the top popup, leaving out the bridge's own nodes, tooltips and drag
@@ -18,7 +19,7 @@ static func capture(bridge: Node, previews: Dictionary) -> Dictionary:
 	var skip := func(node: Node) -> bool:
 		return node == bridge or is_tooltip(node) or previews.has(node.get_instance_id())
 	var controls: Array[Control] = []
-	bridge._gather_controls(root, true, skip, controls)
+	gather_controls(root, true, skip, controls)
 	var paths: Dictionary = {}
 	for control in controls:
 		paths[str(control.get_path())] = true
@@ -28,6 +29,47 @@ static func capture(bridge: Node, previews: Dictionary) -> Dictionary:
 		"focus": _path_or_null(_focus_owner(root, popup)),
 		"popup": _path_or_null(popup),
 	}
+
+
+## Appends every Control under node, depth first: the Controls get_ui_elements lists, and the UI
+## snapshot wait_for {uiChanged} compares. An invisible Control hides its subtree when
+## visible_only is set, and so does any node skip (when valid) returns true for.
+static func gather_controls(
+	node: Node, visible_only: bool, skip: Callable, into: Array[Control]
+) -> void:
+	if skip.is_valid() and skip.call(node):
+		return
+	var control := node as Control
+	if control != null:
+		if visible_only and not control.is_visible_in_tree():
+			return
+		into.append(control)
+	for child in node.get_children():
+		gather_controls(child, visible_only, skip, into)
+
+
+## A Control as get_ui_elements lists it: {path, name, class, rect, visible[, text, items...,
+## disabled, tooltip]}, its rect in bridge's viewport coordinates.
+static func describe_control(bridge: Node, control: Control) -> Dictionary:
+	var rect: Rect2 = bridge._gestures._targets.viewport_rect(control)
+	var element: Dictionary = {
+		"path": str(control.get_path()),
+		"name": str(control.name),
+		"class": control.get_class(),
+		"rect": bridge._json.to_json(rect),
+		"visible": control.is_visible_in_tree(),
+	}
+	var shown: Variant = bridge._shown_text.shown_text(control)
+	if shown != null:
+		element["text"] = shown
+	var listed: Variant = bridge._item_targets.listed_items(control)
+	if listed != null:
+		element.merge(listed)
+	if control is BaseButton:
+		element["disabled"] = (control as BaseButton).disabled
+	if not control.tooltip_text.is_empty():
+		element["tooltip"] = control.tooltip_text
+	return element
 
 
 ## What changed from before to after, two captures: {appeared, disappeared, appearedCount,

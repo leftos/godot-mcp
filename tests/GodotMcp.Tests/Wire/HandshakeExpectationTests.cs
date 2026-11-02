@@ -18,6 +18,35 @@ public sealed class HandshakeExpectationTests
     public void AcceptsTheHelloOfThisRunInGodotsPathForm() => Assert.Null(_expected.FindMismatch(Hello(Token, BridgeProjectPath)));
 
     [Fact]
+    public void AnEditorSessionRefusesAHelloWithoutKindEditor()
+    {
+        HandshakeExpectation editor = _expected with { Editor = true };
+
+        Assert.Equal(
+            "the bridge does not report kind 'editor', so it is not running in this editor session",
+            editor.FindMismatch(Hello(Token, BridgeProjectPath))
+        );
+    }
+
+    [Fact]
+    public void AnEditorSessionAcceptsAHelloWithKindEditor()
+    {
+        JsonObject hello = Hello(Token, BridgeProjectPath);
+        hello["kind"] = "editor";
+
+        Assert.Null((_expected with { Editor = true }).FindMismatch(hello));
+    }
+
+    [Fact]
+    public void ARunIgnoresTheHellosKind()
+    {
+        JsonObject hello = Hello(Token, BridgeProjectPath);
+        hello["kind"] = "editor";
+
+        Assert.Null(_expected.FindMismatch(hello));
+    }
+
+    [Fact]
     public void RefusesAWrongToken()
     {
         string? mismatch = _expected.FindMismatch(Hello("FEDCBA9876543210", BridgeProjectPath));

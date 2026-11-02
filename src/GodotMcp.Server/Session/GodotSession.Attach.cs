@@ -425,8 +425,9 @@ internal sealed partial class GodotSession
             return "No session is attached, so there is nothing to detach. attach_project starts one.";
         }
 
+        string starter = Kind == SessionKind.Editor ? "run_editor" : "run_project";
         return _run is { IsRunning: true }
-            ? $"The session for {ProjectDir} was started by run_project; stop_project ends it."
-            : $"Session '{Name}' was started by run_project; use stop_project.";
+            ? $"The session for {ProjectDir} was started by {starter}; stop_project ends it."
+            : $"Session '{Name}' was started by {starter}; use stop_project.";
     }
 }

@@ -1,3 +1,4 @@
+@tool
 extends RefCounted
 ## The godot-mcp bridge's watch audio, a static helper of the watch (godot_mcp_watch.gd): follows
 ## the audio players (AudioStreamPlayer, 2D and 3D) at or under a node, those there at start and

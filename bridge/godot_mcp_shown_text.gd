@@ -1,3 +1,4 @@
+@tool
 extends RefCounted
 ## The text a Control or a Label3D shows: as get_ui_elements reports a Control's, a {text} input
 ## target matches it, and a wait's text condition matches a Label3D's too. Static functions called

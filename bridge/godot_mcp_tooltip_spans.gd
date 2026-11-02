@@ -1,3 +1,4 @@
+@tool
 extends RefCounted
 ## Tooltip spans: the runs of a RichTextLabel's text over which get_tooltip answers a text of its
 ## own (a [hint]'s description, a meta's tooltip, an image's tooltip, then the label's own

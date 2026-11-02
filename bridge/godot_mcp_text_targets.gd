@@ -1,3 +1,4 @@
+@tool
 extends RefCounted
 ## Text targets for the target resolver (godot_mcp_targets.gd) and a wait's text condition
 ## (godot_mcp_conditions.gd): the one visible Control at or under a node that shows a text, or a
@@ -90,7 +91,7 @@ static func entries_under(bridge: Node, under: Node) -> Array[Dictionary]:
 	var snapshot: GDScript = bridge._ui_snapshot
 	var skip := func(node: Node) -> bool: return pruned(node, bridge, snapshot)
 	var controls: Array[Control] = []
-	bridge._gather_controls(under, true, skip, controls)
+	snapshot.gather_controls(under, true, skip, controls)
 	var entries: Array[Dictionary] = []
 	for control: Control in controls:
 		var shown: Variant = ShownText.shown_text(control)

@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The tooltip reader, the input player's (godot_mcp_input.gd) child: for a hover, finds the
 ## Control whose tooltip Godot shows at the pointer, waits for its tooltip popup to show and

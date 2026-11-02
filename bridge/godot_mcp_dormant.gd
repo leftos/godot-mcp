@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's dormant mode: a game started from an armed folder's override.cfg with no
 ## server to dial waits here until attach_project joins it. Its static functions also find how the
@@ -26,6 +27,9 @@ const MODE_RUN := "run"
 const MODE_ATTACH := "attach"
 const MODE_DORMANT := "dormant"
 const MODE_OFF := "off"
+## An editor session's bridge, which the editor host adds and sets to this mode (use_editor);
+## choose never picks it.
+const MODE_EDITOR := "editor"
 ## Where the bridge's endpoint came from: the environment run_project sets, attach.json or a join
 ## file.
 const SOURCE_ENV := "env"
@@ -104,17 +108,34 @@ static func find_endpoint(dir: String) -> Dictionary:
 ## port and a token.
 ## override.cfg's joypad and window settings are written to match, but the bridge reads only these.
 static func env_endpoint() -> Dictionary:
-	var port_text: String = OS.get_environment("GODOT_MCP_PORT")
-	var token: String = OS.get_environment("GODOT_MCP_TOKEN")
+	var values: Dictionary = {}
+	for name: String in [
+		"GODOT_MCP_PORT",
+		"GODOT_MCP_TOKEN",
+		"GODOT_MCP_SHUT_OUT_REAL_GAMEPADS",
+		QUIET_VARIABLE,
+		MUTE_VARIABLE,
+		NO_REPICK_HOVER_VARIABLE
+	]:
+		values[name] = OS.get_environment(name)
+	return endpoint_from(values)
+
+
+## The endpoint values holds, a GODOT_MCP_* name to its value as env_endpoint reads them or the
+## editor host read them before removing them from the environment; empty without a port and a
+## token.
+static func endpoint_from(values: Dictionary) -> Dictionary:
+	var port_text: String = values.get("GODOT_MCP_PORT", "")
+	var token: String = values.get("GODOT_MCP_TOKEN", "")
 	if not port_text.is_valid_int() or token.is_empty():
 		return {}
 	return {
 		"port": port_text.to_int(),
 		"token": token,
-		"shutOutRealGamepads": OS.get_environment("GODOT_MCP_SHUT_OUT_REAL_GAMEPADS") == "1",
-		"quiet": OS.get_environment(QUIET_VARIABLE) == "1",
-		"mute": OS.get_environment(MUTE_VARIABLE) == "1",
-		"repickHover": OS.get_environment(NO_REPICK_HOVER_VARIABLE) != "1",
+		"shutOutRealGamepads": values.get("GODOT_MCP_SHUT_OUT_REAL_GAMEPADS", "") == "1",
+		"quiet": values.get(QUIET_VARIABLE, "") == "1",
+		"mute": values.get(MUTE_VARIABLE, "") == "1",
+		"repickHover": values.get(NO_REPICK_HOVER_VARIABLE, "") != "1",
 	}
 
 

@@ -52,6 +52,12 @@ internal sealed record LaunchRequest(
     /// A caller that sets it gives each launch a file of its own, as a scratch run does for every run of a scene.
     /// </summary>
     public string? OutputLogPath { get; init; }
+
+    /// <summary>
+    /// The editor host script an editor session's launch runs with <c>--script</c> (<see cref="Installation.FindEditorHostScript()"/>);
+    /// null for a game. With it the launch opens the project in the Godot editor, windowed, and the host adds the bridge there.
+    /// </summary>
+    public string? EditorHost { get; init; }
 }
 
 /// <summary>Where the bridge dials and the token it proves itself with.</summary>
@@ -164,6 +170,12 @@ internal static partial class GodotCommandLine
     public static List<string> BuildArguments(LaunchRequest request, string? moviePath)
     {
         List<string> arguments = ["--path", request.ProjectPath];
+        if (request.EditorHost is { } host)
+        {
+            // Without --windowed the editor opens maximized; --script makes the host the main loop the editor is built in.
+            arguments.AddRange(["--editor", "--windowed", "--script", host]);
+        }
+
         if (!string.IsNullOrWhiteSpace(request.Scene))
         {
             arguments.Add("--scene");

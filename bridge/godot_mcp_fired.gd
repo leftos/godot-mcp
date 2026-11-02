@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's fired-signal listener, the input player's Fired child: lists the signals
 ## a click, a drag, a mouse_button, a key or a type_text set off on its hit chain (a key's is the

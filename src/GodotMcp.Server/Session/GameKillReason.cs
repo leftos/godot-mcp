@@ -86,6 +86,9 @@ internal sealed record GraceKill(
 internal static class GameKillReason
 {
     /// <summary>The game left a ping unanswered, so the stop killed it without asking it to quit.</summary>
+    /// <summary>An editor session stopped with discard: true, killed without its close request, which would ask to save.</summary>
+    public const string Discarded = "discarded";
+
     public const string Silent = "the game did not answer a ping, so it was killed at once";
 
     /// <summary>Why a game that was never asked to quit, having no bridge connection, was killed when the grace ended.</summary>

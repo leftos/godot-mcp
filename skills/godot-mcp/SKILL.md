@@ -19,6 +19,8 @@ A drive is always the same five moves: **start → look → act → wait → che
 
    `scene` picks another scene; `userArgs` go after `--` (the game reads them with `OS.get_cmdline_user_args()`), `engineArgs` before it (`["--resolution", "1280x720"]`). A `godot-mcp.json` beside `project.godot` holds per-project defaults and named `presets` (`options.preset`), and `prepWrapper`, the project's gate the prep builds and imports through; `prep.buildLog` / `importLog` name the logs and `buildGate` / `importGate` the gate's closing verdict line.
 
+   To drive the Godot editor itself (its docks, dialogs and output), `run_editor {projectPath}` starts it the same way, quiet, and the runtime tools then act on the editor's windows; see "The editor" below.
+
    A server or backend the game needs beside it starts with `run_process {projectPath, process}` when the file's `processes` section declares it; note that session too. The call waits for the process's `ready` line when the file declares one (or `options.ready {output, timeoutMs}` gives one), and `wait_for {output}` reads any later line.
 2. **Look.** `get_ui_elements` lists Controls with their rects in viewport coordinates; `get_scene_tree` lists every live node; `take_screenshot` returns an image (a 480 px preview by default; `responseMode: "path_only"` when only the file matters).
 3. **Act.** Aim at a Control by path: `click {target: {element: "Main/Menu/Play"}}`. Use `{x, y}` only where no Control exists, and then in **viewport** coordinates, never pixels read off a screenshot (a stretched or letterboxed window's screenshot is not the viewport).
@@ -38,7 +40,7 @@ A drive is always the same five moves: **start → look → act → wait → che
 
    To act in the very frame a condition comes true (slow the game for a shot, call a method), add `options.then {call?, timeScale?, pause?, record?}`: it runs once in that frame and the result says which. `pause: true` holds the game on that frame for later reads; add `options.screenshot: true` when a crop must match the values, since a plain wait pauses before the frame's `_process`. `options.crop {x, y, width, height}` beside it keeps only that part of the met frame, at full size up to 480 px wide.
 5. **Check.** Every runtime result carries `errors` the game raised during the call, with file and line. The key is absent when there were none. Read them before the next step: a handler that threw still "succeeds".
-6. **Stop.** `stop_project` at the end of every `run_project` session. For a game joined with `attach_project`, `detach_project` leaves it running and `stop_project` quits it. A game `run_project` started also quits by itself when its server exits or is stopped (a crash, a killed session), running its exit work; an attached game keeps running.
+6. **Stop.** `stop_project` at the end of every `run_project` or `run_editor` session. For a game joined with `attach_project`, `detach_project` leaves it running and `stop_project` quits it. A game `run_project` started also quits by itself when its server exits or is stopped (a crash, a killed session), running its exit work; an attached game keeps running.
 
    A process session is stopped by name, never with `projectPath`: `stop_project {session}` ends the program and everything it started at once, while `stop_project {projectPath}` never stops one.
 
@@ -58,7 +60,9 @@ Every other runtime tool refuses it, except `restart_project`, which stops it an
 
 `stop_project`'s `alreadyExited` says the game had ended before the stop, and `gameExitCode` is the game's own code (`exitCode` is the console wrapper's). Several sessions can run at once, on one folder or several (a host and a headless guest of one project): name them with `options.session`, and launch a headless client with `engineArgs: ["--headless"]`: it lays out at the project's window size, as a windowed run does.
 
-Pass the `session` `run_project` returned to every call from the first one: another agent's game can start on the same server at any time, and a call without a name is then refused.
+`run_editor` opens the Godot editor with the bridge inside it as an editor session (`list_sessions` says `kind: "editor"`); `restart_project` refuses it, so stop it and start it again.
+
+Pass the `session` `run_project` (or `run_editor`) returned to every call from the first one: another agent's game can start on the same server at any time, and a call without a name is then refused.
 
 **Seeing.** `take_screenshot` (read-only, saves under `.godot/`; with `crop` in viewport coordinates, so a rect from `get_ui_elements` or `hover` crops as it is; `scale: 2` (1 to 4) grows the window for that one capture, so a crop has that many times the pixels, in a windowed `canvas_items` project that is not recording; for any other project, launch at twice the project's size with `--resolution`, which is given exactly), `get_ui_elements` (filter by class, e.g. `BaseButton`), and `preview_scene`, which shows one scene without playing it: it starts the scene quiet, screenshots its first frames and stops, beside any live session.
 
@@ -164,6 +168,16 @@ A real-time recording needs ffmpeg and the capture helper, records the game's ow
 
 Prefer it for any change of more than one edit, then `validate`, then `preview_scene` to see the result.
 
+## The editor
+
+`run_editor {projectPath, scene?, options {quiet, session, prepare}}` opens the project in the Godot editor and returns once its first scan is done and the bridge has connected. `get_ui_elements`, `click`, `hover`, `drag`, `scroll`, `type_text`, `key`, `take_screenshot`, `wait_for`, `inspect_node`, `get_errors`, `get_debug_output`, `run_script` and `call_method` then act on the editor's own windows.
+
+- **Aim by point for now.** An aimed click (`{element}`, or an `item` target) is refused in an editor session by the cover check (`lands on <nothing>`): click a point `{x, y}` read from `get_ui_elements`' rects.
+- **`get_scene_tree` needs `node`** in an editor, which has no current scene. `preview_scene` and `frame_control` are refused.
+- **Check `git status` after a first open.** The server writes nothing into the project, but an editor's first open of a repo that has not committed an editor-normalised `project.godot` and `.uid` files changes them; `run_editor` does not refuse.
+- **`stop_project` refuses unsaved scenes**: save them in the editor, or pass `discard: true`, which kills the editor and loses them.
+- A game the editor starts (F5) is a plain game: `attach_project` it to drive it.
+
 ## Rules that bite
 
 - **Viewport coordinates everywhere** an input tool takes `x, y`. Prefer `{element}` targets (full paths from `get_ui_elements` when names repeat): an element may be a 2D or 3D world node too (an `Area2D`, a die on a table), aimed at its origin or at `offset` from it through its camera, with `aimedAt` in the result saying where; aim at the node instead of projecting it by hand or emitting its signal.
@@ -183,7 +197,7 @@ Prefer it for any change of more than one edit, then `validate`, then `preview_s
 
   A `run_csharp` snippet names the game's `internal` members directly; privates go through `Get`/`Set`/`Call`.
 - **C# projects:** a launch, a restart and every headless tool build a stale assembly first; a failed build refuses the launch with the compiler errors in the result; a headless tool reports it as a `csharp` block (`build: "failed"` and the errors) and refuses a save that needs C#, quoting them. A C# autoload error under a red build is the missing assembly, not your scene: fix the build first.
-- **Nothing lands in the project's tracked files.** The bridge rides in an `override.cfg` beside `project.godot`, hidden from git by `.git/info/exclude` and removed at stop or detach, or by `disarm_project` while the folder is armed; a user's own `override.cfg` is refused, never overwritten. Screenshots, baselines and recordings go under `.godot/godot-mcp/`.
+- **Nothing lands in the project's tracked files.** The bridge rides in an `override.cfg` beside `project.godot`, hidden from git by `.git/info/exclude` and removed at stop or detach, or by `disarm_project` while the folder is armed; a user's own `override.cfg` is refused, never overwritten (an editor session writes none). Screenshots, baselines and recordings go under `.godot/godot-mcp/`.
 
   After a drive, with no other drive and no arm on the folder, `Test-Path <project>/override.cfg` is false; if a crashed run left one, `stop_project {projectPath}` clears it once every server it names has exited (or delete it by hand; its first line is `; godot-mcp: bridge injection, removed when the run stops`; a file without that line is the project's own, never delete it).
 - **Two godot-mcp versions never drive one project folder at once.** An install stops no running server, so a session keeps the version it started with until the user runs `/mcp` in it. A call refused with "two godot-mcp installs cannot share a folder at once; run /mcp in the session on the older version" means another session's server, on the older version, holds the folder: tell the user to run `/mcp` in that session (the refusal names its pid), then retry; do not delete the folder's `override.cfg` by hand. An install that reports a session "still runs" an older version names a session the user should `/mcp`; until then that session talks to the older server while reading this newer skill, so a tool or option this skill names may be missing there.

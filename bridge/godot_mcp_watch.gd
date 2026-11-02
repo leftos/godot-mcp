@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's watch, a child of the bridge: samples properties of nodes and Godot
 ## Expressions once a frame over a window, beside every other tool, and keeps each track's change

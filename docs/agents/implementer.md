@@ -33,7 +33,7 @@ The gate's kill line (exit 124) says why: `STALLED` (no output and no CPU for 12
 
 ## Non-negotiables
 
-- The bridge never enters a project's tracked files: it is injected through a marked `override.cfg` hidden by `.git/info/exclude`, and an `override.cfg` without the marker is the user's and is refused, never overwritten.
+- The bridge never enters a project's tracked files: a game gets it through a marked `override.cfg` hidden by `.git/info/exclude`, and an `override.cfg` without the marker is the user's and is refused, never overwritten; an editor session gets it from the installed editor host passed to `--script`, writing nothing into the project.
 - The server's stdout is the MCP protocol: every log goes to stderr.
 - Every request on the wire carries an id; a reply for a timed-out id is dropped.
 - Input tools take viewport coordinates and map them to the window; a drag's motion events carry `button_mask` and `relative`.

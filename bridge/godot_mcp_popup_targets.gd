@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## Item targets in a PopupMenu, the input player's (godot_mcp_input.gd) child: an item of an
 ## OptionButton's or a MenuButton's popup, or of a PopupMenu named itself, by {text | index}. The

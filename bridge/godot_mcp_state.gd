@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's state reader, a child of the bridge: the state command, get_game_state's
 ## read. It takes the nodes in the mcp_state group in tree order (SceneTree.get_nodes_in_group),

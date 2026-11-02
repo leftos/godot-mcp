@@ -7,12 +7,16 @@ using Microsoft.Extensions.Logging;
 
 namespace GodotMcp.Server.Session;
 
-/// <summary>Whether a session is a Godot run the server launched, a game attach_project reached, or a program run_process started.</summary>
+/// <summary>
+/// Whether a session is a Godot run the server launched, a game attach_project reached, a program run_process started, or a
+/// Godot editor run_editor opened with the bridge inside it.
+/// </summary>
 internal enum SessionKind
 {
     Run,
     Attach,
     Process,
+    Editor,
 }
 
 /// <summary>
@@ -44,6 +48,17 @@ internal sealed record SessionSpec(string Name, string ProjectDir, SessionKind K
 internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry registry) : IDisposable
 {
     public static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// An editor session's handshake timeout, load-adjusted: its host adds the bridge only once the editor's first scan is done,
+    /// which takes seconds on a project opened before and longer after an engine upgrade.
+    /// </summary>
+    public static readonly TimeSpan EditorHandshakeTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// The grace an editor's close request gets, load-adjusted: the editor's own exit path saves its layout and unloads its plugins.
+    /// </summary>
+    internal static readonly TimeSpan EditorExitGrace = TimeSpan.FromSeconds(10);
 
     /// <summary>What a runtime tool says when no session answers.</summary>
     public const string NoneRunning = "No Godot session is running; start one with run_project or attach_project.";
@@ -150,9 +165,16 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         Kind switch
         {
             SessionKind.Process => ProcessRunning,
-            SessionKind.Run => _run is { IsRunning: true },
-            _ => _attached is { IsOpen: true },
+            SessionKind.Run or SessionKind.Editor => _run is { IsRunning: true },
+            SessionKind.Attach => _attached is { IsOpen: true },
+            _ => throw new InvalidOperationException($"Unknown session kind {Kind}."),
         };
+
+    /// <summary>
+    /// Whether a session of <paramref name="kind"/> injects the bridge through the folder's override.cfg: a run and an attach do;
+    /// an editor ignores override.cfg (4.7.2 <c>main/main.cpp</c> L2107) and gets the bridge from its host, and a process has none.
+    /// </summary>
+    internal static bool WritesOverride(SessionKind kind) => kind is SessionKind.Run or SessionKind.Attach;
 
     /// <summary>Whether this is an attach still waiting for its game to dial in.</summary>
     public bool IsWaitingForGame => _pending && Kind == SessionKind.Attach;
@@ -195,8 +217,20 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// real-time clip finished. An attached game is ended the same way (see <see cref="StopAttachedAsync"/>),
     /// and its session is dropped.
     /// </summary>
-    /// <exception cref="SessionException">No run was ever launched, or the attached session has no game.</exception>
-    public async Task<object> StopAsync(CancellationToken cancellationToken)
+    /// <remarks>An editor session with unsaved scenes is refused, as without discard.</remarks>
+    public Task<object> StopAsync(CancellationToken cancellationToken) => StopAsync(discard: false, cancellationToken);
+
+    /// <inheritdoc cref="StopAsync(CancellationToken)" path="/summary"/>
+    /// <param name="discard">
+    /// For an editor session: kill it without its close request, losing its unsaved scenes; without it, a stop of an editor with
+    /// unsaved scenes is refused before anything is stopped. Ignored by every other kind.
+    /// </param>
+    /// <param name="cancellationToken">Cancels the wait for the session's gate.</param>
+    /// <exception cref="SessionException">
+    /// No run was ever launched, the attached session has no game, or the editor has unsaved scenes and <paramref name="discard"/>
+    /// is false.
+    /// </exception>
+    public async Task<object> StopAsync(bool discard, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
         try
@@ -213,12 +247,13 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
             GodotRun run =
                 _run ?? throw new SessionException("No Godot session has been started, so there is nothing to stop. Start one with run_project.");
+            bool discardEditor = await RefuseUnsavedScenesAsync(run, discard);
             bool alreadyExited = !run.IsRunning;
             RunEnd ended;
             try
             {
                 await EndRealtimeCaptureAsync();
-                ended = await EndRunAsync(run);
+                ended = await EndRunAsync(run, discardEditor);
             }
             finally
             {
@@ -442,7 +477,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// </summary>
     public async Task KillAtShutdownAsync()
     {
-        if (Kind != SessionKind.Run || _run is not { } run)
+        if (Kind is not (SessionKind.Run or SessionKind.Editor) || _run is not { } run)
         {
             return;
         }
@@ -635,6 +670,56 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     internal static string CreateToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
 
+    /// <summary>What the hello of this session's run must carry; an editor's must also say it runs in the editor.</summary>
+    private HandshakeExpectation ExpectHello(string token) => new(token, ProjectDir) { Editor = Kind == SessionKind.Editor };
+
+    /// <summary>
+    /// The launch's handshake timeout: the registry's, or for an editor session the longer of it and
+    /// <see cref="EditorHandshakeTimeout"/>.
+    /// </summary>
+    private TimeSpan CurrentHandshakeTimeout =>
+        Kind == SessionKind.Editor
+            ? TimeSpan.FromTicks(Math.Max(EditorHandshakeTimeout.Ticks, registry.HandshakeTimeout.Ticks))
+            : registry.HandshakeTimeout;
+
+    /// <summary>What refuses the stop of an editor that has unsaved scenes, naming them.</summary>
+    internal static string UnsavedScenesRefusal(IEnumerable<string> scenes) =>
+        $"The editor has unsaved scenes: {string.Join(", ", scenes)}. Save them in the editor, or pass discard: true to close without saving.";
+
+    /// <summary>
+    /// For an editor session stopped without <paramref name="discard"/>: asks its running editor's bridge for its unsaved scenes
+    /// and refuses the stop when there are any, since the editor's close request would only show its save dialog and the grace
+    /// would end in a kill. An editor that does not answer is left to the stop, which pings it and kills it when it is silent.
+    /// Nothing for any other kind.
+    /// </summary>
+    /// <returns>Whether the stop discards an editor's unsaved scenes: an editor session stopped with discard.</returns>
+    /// <exception cref="SessionException">The editor has unsaved scenes and <paramref name="discard"/> is false.</exception>
+    private async Task<bool> RefuseUnsavedScenesAsync(GodotRun run, bool discard)
+    {
+        if (Kind != SessionKind.Editor || discard)
+        {
+            return Kind == SessionKind.Editor;
+        }
+
+        string[] scenes = run.IsRunning && run.Connection is { IsOpen: true } connection ? await AskUnsavedScenesAsync(connection) : [];
+        return scenes.Length > 0 ? throw new SessionException(UnsavedScenesRefusal(scenes)) : false;
+    }
+
+    /// <summary>The editor's unsaved scenes, as its bridge's editor_unsaved lists them; none when it does not answer, which is logged.</summary>
+    private async Task<string[]> AskUnsavedScenesAsync(BridgeConnection connection)
+    {
+        try
+        {
+            JsonNode? reply = await connection.SendRawAsync("editor_unsaved", null, ShutdownReplyTimeout, CancellationToken.None);
+            return reply?["scenes"] is JsonArray listed ? [.. listed.Select(scene => scene?.GetValue<string>() ?? string.Empty)] : [];
+        }
+        catch (Exception e) when (e is TimeoutException or IOException or InvalidOperationException)
+        {
+            Log.ShutdownNotAcknowledged(_logger, e);
+            return [];
+        }
+    }
+
     /// <summary>Adds a captured frame from this session's bridge to its capture in the registry's store.</summary>
     private void ReceiveCaptured(JsonObject frame) => registry.Captures.Receive(Name, frame);
 
@@ -699,15 +784,19 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
                 // A restart cancelled by now must not stop a healthy game that the handshake wait would then kill.
                 cancellationToken.ThrowIfCancellationRequested();
                 await EndRealtimeCaptureAsync();
-                previousEnd = await EndRunAsync(previous);
+                previousEnd = await EndRunAsync(previous, discard: false);
                 Snapshots.Clear();
                 registry.Captures.End(Name, CaptureStore.EndedByRestart);
                 StopOutputCapture(previous);
                 previousRecording = await FinishRecordingAsync(previous) ?? await TakeRealtimeResultAsync();
             }
 
-            registry.WriteOverride(this, bridgeScript);
-            GitExclude.Ensure(ProjectDir, OverrideFile.FileName, _logger);
+            if (WritesOverride(Kind))
+            {
+                registry.WriteOverride(this, bridgeScript);
+                GitExclude.Ensure(ProjectDir, OverrideFile.FileName, _logger);
+            }
+
             Func<int, string>? marker = previous is not null && ProcessId is int replaced ? started => RestartMarker(replaced, started) : null;
             (GodotRun run, string token) = StartGodot(request, godotPath, previous, marker);
             return new PreparedRun
@@ -829,12 +918,12 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
         BridgeConnection connection;
         try
         {
-            connection = await WaitForHandshakeAsync(prepared.Run, new HandshakeExpectation(prepared.Token, ProjectDir), cancellationToken);
+            connection = await WaitForHandshakeAsync(prepared.Run, ExpectHello(prepared.Token), cancellationToken);
         }
         catch (SessionException) when (IsBootCrashToRetry(prepared.Run))
         {
             prepared = await RelaunchAfterBootCrashAsync(request, prepared, cancellationToken);
-            connection = await WaitForHandshakeAsync(prepared.Run, new HandshakeExpectation(prepared.Token, ProjectDir), cancellationToken);
+            connection = await WaitForHandshakeAsync(prepared.Run, ExpectHello(prepared.Token), cancellationToken);
         }
 
         GodotRun run = prepared.Run;
@@ -927,9 +1016,17 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
             run.OutputLog?.Write(line);
         }
 
+        Action<string> stdout = WithOutputLog(run, run.Stdout.Add);
+        Action<string> stderr = WithOutputLog(run, run.Stderr.Add);
+        if (Kind == SessionKind.Editor)
+        {
+            stdout = new EditorOutputNoise(stdout).Add;
+            stderr = new EditorOutputNoise(stderr).Add;
+        }
+
         try
         {
-            run.Launcher.BeginRead(WithOutputLog(run, run.Stdout.Add), WithOutputLog(run, run.Stderr.Add), run.OutputEnded);
+            run.Launcher.BeginRead(stdout, stderr, run.OutputEnded);
         }
         catch
         {
@@ -996,7 +1093,7 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     private async Task<BridgeConnection> WaitForHandshakeAsync(GodotRun run, HandshakeExpectation expected, CancellationToken cancellationToken)
     {
-        using LoadDeadline deadline = registry.LaunchClock.Start(registry.HandshakeTimeout, cancellationToken);
+        using LoadDeadline deadline = registry.LaunchClock.Start(CurrentHandshakeTimeout, cancellationToken);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         Task<BridgeConnection> accept = registry.Listener.AcceptBridgeAsync(expected, timeout.Token);
         Task exited = run.Process.WaitForExitAsync(timeout.Token);
@@ -1432,13 +1529,16 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
     /// Whether the game had to be killed and why, the processes it left running when it quit, and the warnings when a debugger
     /// was attached to it as it was ended and when what the stop killed was still running after its kill wait, in that order.
     /// </returns>
-    private async Task<RunEnd> EndRunAsync(GodotRun run)
+    private async Task<RunEnd> EndRunAsync(GodotRun run, bool discard)
     {
         bool wasRunning = run.IsRunning;
         string? warning = WarnIfDebugged(wasRunning);
-        RunEnd ended = wasRunning
-            ? await StopRunningAsync(run)
-            : new RunEnd(Killed: false, Warning: null, KillReason: null, LeftRunning: [], QuitMs: null);
+        RunEnd ended = (wasRunning, discard) switch
+        {
+            (false, _) => new RunEnd(Killed: false, Warning: null, KillReason: null, LeftRunning: [], QuitMs: null),
+            (true, true) => new RunEnd(Killed: true, await KillAsync(run), GameKillReason.Discarded, LeftRunning: [], QuitMs: null),
+            (true, false) => await StopRunningAsync(run),
+        };
         if (run.Connection is not null)
         {
             await AwaitBridgeCloseAsync(run.Connection, quit: wasRunning && !ended.Killed, registry.Clock, _logger, ProjectDir);

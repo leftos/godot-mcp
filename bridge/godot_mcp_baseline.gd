@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's screenshot comparison, a child of the bridge: captures the next drawn
 ## frame and counts the pixels that differ from a baseline PNG the server saved earlier.

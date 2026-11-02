@@ -205,6 +205,10 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   Itest `ScratchBackgroundTests` (its own `scratchbackground` group, in the untimed lane) runs a background run from its immediate return through its playing scene to the completion line and the synchronous result's shape, a stop mid-run (completion line, no game left running), a second run refused while one is live, and the server's exit interrupting a run mid-way.
 
+  Itest `EditorTests` (its own `editor` group, in the untimed lane) runs `run_editor` on the `OpenedProbeProject` fixture, a copy of InputProbe the editor has opened once so later opens leave `git status` clean: the quiet open listing the FileSystem dock, a click and a screenshot reaching the editor window, a stop closing the editor with the tree unchanged, a stop refused for unsaved scenes unless `discard`, the editor's environment holding no `GODOT_MCP_*` variable, and `restart_project` refused.
+
+  Unit `EditorSessionTests` and `EditorOutputNoiseTests` and the bridge test `tests/bridge/test_editor_mode.gd` cover the session kind, the output filter and the bridge's editor mode.
+
   Itests `ScratchFolderTests` (the `scratchfolder` group) and `ScratchFolderParallelTests` (the `scratchparallel` group) play the whole `tests/fixtures/InputProbe/scratch/` folder to its verdicts, one scene at a time and three at a time. They are split from `scratch` and from each other because each makes some 20 to 26 Godot launches in sequence, and launches slow under other work on the machine, so one group of both ran out its 300 s ceiling.
 
   Itest `ScratchExpectRunTests` (also in the `scratchfolder` group, on the same folder, which holds 21 scenes) plays `ScratchExitLine`, whose `_exit_tree` prints `[scratch] store folder removed: exit-line`, under `scratch.expect` and `scratch.expectFor`: the expected line keeps it green, and one it never prints turns it red with the pattern in `exit.missing`.

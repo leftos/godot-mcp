@@ -14,6 +14,12 @@ namespace GodotMcp.Server.Wire;
 /// </summary>
 internal sealed record HandshakeExpectation(string Token, string ProjectPath)
 {
+    /// <summary>
+    /// Whether the run is an editor session, whose bridge's hello must say <c>kind: "editor"</c>; a game's hello is not asked
+    /// for the field.
+    /// </summary>
+    public bool Editor { get; init; }
+
     /// <summary>Why a hello does not belong to this run, or null when it does.</summary>
     public string? FindMismatch(JsonObject hello)
     {
@@ -32,6 +38,11 @@ internal sealed record HandshakeExpectation(string Token, string ProjectPath)
         if (projectPath is null || !ProjectPaths.AreSame(projectPath, ProjectPath))
         {
             return $"the bridge reports project '{projectPath}', not '{ProjectPath}'";
+        }
+
+        if (Editor && ReadString(hello, "kind") != "editor")
+        {
+            return "the bridge does not report kind 'editor', so it is not running in this editor session";
         }
 
         return null;

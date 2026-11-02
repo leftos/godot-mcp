@@ -1,7 +1,7 @@
 # gdlint: disable=max-public-methods
-# The public methods are the gesture API the sibling target modules (popup_targets) call: a
-# cross-module call loses its underscore. gdlint reports the class at line 1, so the line above
-# must be the first.
+# The public methods are the gesture API sibling modules call (cross-module calls lose the
+# underscore). gdlint reports the class at line 1, so the line above must be the first.
+@tool
 extends Node
 ## The godot-mcp bridge's input player, a child of the bridge: plays the input tools' gestures
 ## (click, drag, type_text, key, mouse_button, hover, scroll, the gamepad gestures) and, through

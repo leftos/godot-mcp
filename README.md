@@ -8,7 +8,7 @@ What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 **Run and watch the game**
 
-- Launch the game (or one scene), restart it, stop it, or attach to a game you started from the editor, or (once the folder is armed) to one already running; run several sessions side by side.
+- Launch the game (or one scene), restart it, stop it, open the Godot editor and drive its windows the same way, or attach to a game you started from the editor, or (once the folder is armed) to one already running; run several sessions side by side.
 - Start a server or mock backend the game needs beside it, declared by name in `godot-mcp.json`; the call can wait for the line it prints before returning, read its output, restart it with the same command and ready line, and stop it with everything it started in one call.
 - Launch quietly by default: off-screen, unfocused, silent and deaf to your own mouse, keyboard and pads, so the agent can play while you work.
 - Preview a single scene as a picture without playing it, 2D or 3D, framing a 3D scene that has no camera.

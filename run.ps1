@@ -239,6 +239,7 @@ $itestGroups = [ordered]@{
     scratchparallel = @('ScratchFolderParallelTests')
     scratchuntil = @('ScratchUntilRunTests')
     scratchbackground = @('ScratchBackgroundTests')
+    editor    = @('EditorTests')
 }
 # The lanes the groups run in: each lane's groups one at a time in this order, the lanes at once. The timing lane keeps
 # the groups that assert wall-clock times apart from each other; the build and untimed lanes hold the rest, the C#
@@ -247,7 +248,7 @@ $itestGroups = [ordered]@{
 $itestLanes = [ordered]@{
     timing  = @('lifecycle', 'stopping', 'watchdog', 'input', 'time', 'recording', 'capture', 'reads', 'scratch', 'scratchpace', 'scratchfolder', 'scratchparallel', 'scratchuntil')
     build   = @('prep', 'scene', 'csharp')
-    untimed = @('sessions', 'attach', 'headless', 'nodes', 'scratchsteps', 'scratchbackground')
+    untimed = @('sessions', 'attach', 'headless', 'nodes', 'scratchsteps', 'scratchbackground', 'editor')
 }
 # The groups whose tests run dotnet builds of the CsProbe project on top of their Godot runs: each takes a heavy gate
 # slot, in whichever lane it runs, and every other group a light one.

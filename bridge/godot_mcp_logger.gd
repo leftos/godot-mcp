@@ -1,3 +1,4 @@
+@tool
 extends Logger
 ## The godot-mcp bridge's error feed: every engine and script error and warning logged after
 ## the bridge registers it (OS.add_logger in the bridge's _init).
@@ -29,6 +30,9 @@ const MAX_FRAMES := 10
 ## recent script frame and the engine's site is kept as "engine".
 const SCRIPT_PREFIXES: PackedStringArray = ["res://", "gdscript://"]
 
+## In an editor session, the editor mode script (godot_mcp_editor_mode.gd), whose is_noise entries
+## are dropped before they are queued; null in a game.
+var noise: GDScript = null
 var _mutex := Mutex.new()
 var _pending: Array = []
 var _dropped: int = 0
@@ -56,6 +60,8 @@ func _log_error(
 	error_type: int,
 	script_backtraces: Array[ScriptBacktrace]
 ) -> void:
+	if _is_editor_noise(file, line):
+		return
 	var message: String = rationale if not rationale.is_empty() else code
 	var muting: Array = _muting_scripts(file, script_backtraces)
 	if not muting.is_empty():
@@ -79,6 +85,11 @@ func _log_error(
 	else:
 		_dropped += 1
 	_mutex.unlock()
+
+
+## Whether an editor session's logger drops the entry as the editor's own noise.
+func _is_editor_noise(file: String, line: int) -> bool:
+	return noise != null and noise.is_noise(file, line)
 
 
 ## Opens a mute window for the script at script_path (on) or closes one of its windows (off), on

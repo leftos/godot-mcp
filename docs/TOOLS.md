@@ -9,6 +9,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 | Start the game and drive it | `run_project`, then the runtime tools | `attach_project`, which is for a game started some other way |
 | Start a server or backend the game needs beside it | `run_process`, for a process the project declares in `godot-mcp.json` | a background shell job, or launching it by hand |
 | Drive a game you (or the editor) started | `attach_project` | `run_project` |
+| Open the Godot editor and drive it (dock clicks, dialogs, the editor's own output) | `run_editor`, then the runtime tools | `run_project`, which plays the game and never shows the editor |
 | Look at a game a launcher or a player already has running | `arm_project` before it starts, then `attach_project` at any time | a delayed launcher timed against `attach_project` |
 | See one scene without playing | `preview_scene` | `run_project` with `scene` plus `take_screenshot` plus `stop_project` |
 | Play a project's scratch scenes step by step and get a verdict each | `run_scratches` | a `Run-Scratches.ps1` script parsing a `--scratch-auto` log |
@@ -55,7 +56,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 - **Arguments are checked by name.** An argument or options key a tool does not take is refused (`run_project has no argument 'optoins'; it takes: …`, `options has no 'prepar'; it takes: …`), as is a value of the wrong kind (`options.prepare takes a string, not true.`, followed by that option's description) and a missing required one (`run_project needs the argument 'projectPath'.`).
 
   Free-form values (`add_node`'s `options.properties`, `set_node_properties`' `value`) take any keys. `batch_drive` and `batch_scene_operations` steps are checked the same way, behind their step prefix.
-- **Session.** Every runtime tool, and `restart_project`, `stop_project`, `detach_project` and `get_debug_output`, takes a last `session` argument; `run_process` takes it as `options.session`. Pass the session `run_project`, `attach_project` or `run_process` returned on every call from the start: another agent's game can start on the same server at any time, and there is no default session.
+- **Session.** Every runtime tool, and `restart_project`, `stop_project`, `detach_project` and `get_debug_output`, takes a last `session` argument; `run_process` takes it as `options.session`. Pass the session `run_project`, `run_editor`, `attach_project` or `run_process` returned on every call from the start: another agent's game can start on the same server at any time, and there is no default session.
 
   It may be left out while only one session exists; with several live ones and no name the call is refused and lists the live ones, with a count of the stopped. A name no session has is refused the same way.
 
@@ -63,7 +64,9 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   A process session (`run_process`) is a third kind beside a run and an attach: it has no bridge, joins no folder bookkeeping and writes no `override.cfg`, so the folder's quiet and shut-out rules do not bind it. Only `wait_for` with an output condition, `get_debug_output`, `restart_project`, `stop_project` and `list_sessions` reach it; every other runtime tool refuses it.
 
-  Two sessions on one folder need distinct names: pass `options.session` to `run_project` or `attach_project`. The headless tools and `preview_scene` take `projectPath` instead and no session.
+  An editor session (`run_editor`) is a fourth kind: the Godot editor with the bridge inside it. It writes no `override.cfg` either, so the folder's quiet and shut-out rules do not bind it, and the runtime tools act on the editor's own windows (see `run_editor`).
+
+  Two sessions on one folder need distinct names: pass `options.session` to `run_project`, `run_editor` or `attach_project`. The headless tools and `preview_scene` take `projectPath` instead and no session.
 - **Errors ride along.** A runtime tool's result carries `errors` (file, line, stack) for every error the game raised while the call ran, and the call still succeeds, except `run_script` and `call_method` as their sections say. The key is present only when the game raised an error during the call: its absence means none. Read `errors` in every result before the next step.
 - **Viewport coordinates.** Every `x`, `y` an input tool takes is in root-viewport coordinates, as `get_ui_elements` reports rects; the bridge maps them to the window whether it is stretched or letterboxed.
 
@@ -135,6 +138,21 @@ For an agent driving a Godot project through this server: which tool fits a job,
   `repickHover: false` (default true) stops the bridge re-picking the hover at the injected pointer every frame: see the hover section. It is a run option only, so `attach_project` and `arm_project` take none and a preset in `godot-mcp.json` cannot carry it.
 - **Shutdown:** once the server's exit has begun, `run_project`, `restart_project`, `preview_scene` and `run_scratches` are refused with "The godot-mcp server is shutting down; no game can start now.", before any build or import runs.
 
+### `run_editor`
+
+- **Does:** opens the project in the Godot editor with the bridge inside it and returns once the editor has finished its first scan and the bridge has connected, with `run_project`'s result shape. `list_sessions` reports `kind: "editor"`.
+- **Use:** `projectPath`; `scene` to open beside the scenes the editor restores (passed as `--scene`); `options {quiet, session, prepare}`. The runtime tools then act on the editor's own windows: `get_ui_elements`, `click`, `hover`, `drag`, `scroll`, `type_text`, `key`, `take_screenshot`, `wait_for`, `inspect_node`, `get_errors`, `get_debug_output`, `run_script` and `call_method`.
+
+  Quiet (the default) runs the editor on the hidden desktop with the Dummy audio driver, as for a game; `quiet: false` shows it. The C# prep build runs as for `run_project`. The handshake waits up to 60 s of load-adjusted time, since the bridge joins only after the editor's first scan.
+- **Edges:** the server writes nothing into the project: no `override.cfg`, no git exclude. The editor does, as any editor open does: a first open of a repo that has not committed an editor-normalised `project.godot` and `.uid` files changes them. `run_editor` does not refuse; check `git status` after a first open.
+
+  The editor's own environment carries no `GODOT_MCP_*` variables, so a game it starts (F5) never dials with the editor's token; reach that game with `attach_project`.
+
+  An aimed click (`{element}` or an `item` target) is refused by the cover check (`lands on <nothing>`) in an editor session; click a point `{x, y}` meanwhile. `get_scene_tree` without `node` refuses (the editor has no current scene): pass `node`. `preview_scene` and `frame_control` are refused (`preview_scene does not run in an editor session.`, `frame_control does not pause or step an editor session.`).
+
+  The editor's `progress_dialog.cpp:183 Parameter "current_window" is null` error and its exit leak report are left out of `get_debug_output`, the run log and `get_errors`.
+- **Stop:** `stop_project` closes the editor through its own close request (10 s of load-adjusted time before a kill), and refuses while it has unsaved scenes (see `stop_project`). `restart_project` refuses an editor: stop it and run `run_editor` again.
+
 ### `attach_project`
 
 - **Does:** on an armed folder with a dormant game, joins that game at once; otherwise injects the bridge plus a one-use attach file and blocks until a game started on the project after that connects: `{session, projectPath, quiet, version, window, joinedPid?}` (`window` `{width, height}` the game window's size in pixels; `joinedPid` the dormant game joined).
@@ -188,6 +206,8 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   Stopping a session also stops its folder's warm host when that host is idle, and `headlessHostStopped` says whether one was stopped.
 
+  An editor session (`run_editor`) is closed through the editor's own close request, killed if it has not exited after 10 s of load-adjusted time. `discard` (default false) is for an editor only: with unsaved scenes the stop is refused, `The editor has unsaved scenes: <paths>. Save them in the editor, or pass discard: true to close without saving.`, and with `discard: true` the editor is killed at once (`killReason: "discarded"`) and its unsaved scenes are lost. Other kinds ignore it.
+
   A process session (`run_process`) is stopped by name only: `stop_project {session}` closes its job and ends the program and everything it started at once, returning `{session, projectPath, kind: "process", exitCode, killed, alreadyExited}` (`exitCode` the program's only when it had already exited, null when the stop had to end it; `killed` true only then), and the session stays listed as stopped.
 
   `stop_project {projectPath}` never stops a process session, and naming one beside `projectPath` is refused (`session '<name>' is a process; stop it by name with stop_project, without projectPath.`).
@@ -211,7 +231,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
   `warning` joins its parts with one space, in the order debugger, kill wait, window size; a debugger's sentence never replaces the kill wait's, in a run or an attach.
 
   A game that quit gives `quitMs`, the wall milliseconds from the quit request until its process was gone: one near the grace is a quit about to become a kill.
-- **Use:** at the end of every `run_project` session, and to quit a game `attach_project` joined. An attached game is stopped the same way through its own process (from the bridge's hello): `exitCode` is null, `gameExitCode` is the game's, `leftRunning` never appears, and the session is gone afterwards, not listed as stopped. A bridge that sent no process id is only asked to quit, and `warning` says it may still be running.
+- **Use:** at the end of every `run_project` or `run_editor` session, and to quit a game `attach_project` joined. An attached game is stopped the same way through its own process (from the bridge's hello): `exitCode` is null, `gameExitCode` is the game's, `leftRunning` never appears, and the session is gone afterwards, not listed as stopped. A bridge that sent no process id is only asked to quit, and `warning` says it may still be running.
 - **Edges:** `alreadyExited` is true when the run had ended before the stop: the game quit, crashed or was killed from outside (a debugger's stop); the exit code, not the flag, tells a kill from a quit, and a debugger picks that code. A game that does not answer a ping in 2 s is killed at once. A game a debugger is attached to is stopped all the same, and `warning` says its debug session ended with it.
   For a recording run, `recording` holds `{mode: "movie", path}` (no marks: the full movie) or `{mode: "movie", clips}` (one H.264 `.mp4` a mark pair; the full movie deleted), plus `error` when a cut failed. A clip whose encode failed (an ffmpeg without libx264, or the encode timing out) is a stream-copied `.avi` of the same frames instead, idle kept, and `error` says which; the other clips are still `.mp4`.
   A clip whose start mark named a `path` is at that path in `clips`, or stays under `recordings/` with a `recording.warning` when its delivery failed (`record_mark`, clip destination).
@@ -228,7 +248,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
   Its result is `{session, projectPath, process, processId, previousProcessId, previousExitCode?, command, log, ready?, prep?}`, `previousExitCode` left out when the kill-on-close job ended the old process, `ready` when the launch waited on none and `prep` (as `run_process`'s) when the process declares a prep.
   A session that never started is refused (`No process has been started in this session, so there is nothing to restart.`); a start that fails is refused as `run_process`'s is and leaves the session stoppable, and one after the server's shutdown has begun is refused as a run restart is.
 - **Use:** after editing code or scenes, to pick up the change without losing the session; `options {prepare}`.
-- **Edges:** the prep runs while the old game still runs, so a failed C# build is an error and leaves the old game running. To change the scene or arguments, `stop_project` then `run_project`. An attached session cannot be restarted.
+- **Edges:** the prep runs while the old game still runs, so a failed C# build is an error and leaves the old game running. To change the scene or arguments, `stop_project` then `run_project`. An attached session cannot be restarted, nor can an editor session (`restart_project does not restart an editor session; stop it with stop_project and start it again with run_editor.`).
   The old game is stopped as `stop_project` stops it, with its `warning` when a debugger was attached to it or the killed game or wrapper was still running after the kill wait, joined in `stop_project`'s order (debugger, kill wait, window size); `previousAlreadyExited` and `previousGameExitCode` (left out when unknown) say how it had ended, as `stop_project`'s `alreadyExited` and `gameExitCode` do, and `previousKillReason`, `previousLeftRunning` and `previousQuitMs` (each left out when empty) say how it was stopped, as its `killReason`, `leftRunning` and `quitMs` do.
   A recording run records the new game to a new file and returns the old one's outcome as `previousRecording`.
   A real-time recording of the old game is ended before it is stopped and its clip returned as `previousRecording` in `stop_project`'s real-time shape (a failed finish is its `error`, as there, and does not fail the restart); the new game does not record until `record_mark` `start`.
@@ -266,7 +286,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 ### `list_sessions`
 
-- **Does:** lists the live sessions by name (`includeStopped: true` adds the stopped ones): project folder, kind (`run`, `attach` or `process`), whether it is live, and a recording's state.
+- **Does:** lists the live sessions by name (`includeStopped: true` adds the stopped ones): project folder, kind (`run`, `attach`, `process` or `editor`), whether it is live, and a recording's state.
 
   `processId` is the process `run_project` started, the `Godot_console` wrapper on Windows that `stop_project` ends; for a process session the program `run_process` started; null for an attach. `gameProcessId` is the game's own process, the one a debugger attaches to; null until the bridge has connected, and always null for a process.
 
@@ -380,7 +400,7 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
 - **Does:** starts the project quiet on one scene in its own short-lived session, pauses it before the scene's first frame, waits two drawn frames, screenshots it and stops: `{scene, path, width, height, window, viewport, warning?, previewPath?, cameraAdded, prep, errors?}` and the image. `window` is the window's client area and `viewport` the root viewport's visible size, each `{width, height}`, in every response mode.
 - **Use:** after a headless scene edit, to see the result. `projectPath`, `scene` (any file inside the project that a loader of the project reads as a scene, a custom loader's extension included: it is passed as `--scene`; a file Godot cannot load as a scene fails at launch with Godot's own `Failed loading scene` line), `options {resolution, prepare}` (`resolution` as `WIDTHxHEIGHT`, given exactly as `run_project`'s `--resolution` is), `responseMode`, `previewMaxWidth`.
-- **Edges:** the quiet and pad settings come from the folder's non-scratch sessions, else its arm, else quiet with live pads, never from a `run_scratches` session. The scene's `_ready` and the project's autoloads still run; when one changes scenes, the result's `scene` says what was shown.
+- **Edges:** the bridge of an editor session (`run_editor`) refuses it: `preview_scene does not run in an editor session.` The quiet and pad settings come from the folder's non-scratch sessions, else its arm, else quiet with live pads, never from a `run_scratches` session. The scene's `_ready` and the project's autoloads still run; when one changes scenes, the result's `scene` says what was shown.
 
   A 3D scene with no current camera gets a temporary one framing its visible geometry (`cameraAdded: true`).
 
@@ -841,7 +861,7 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
   The result adds `met` with `value` (`args` for a signal), or `last` when not met (a signal has none), and `failedChecks` and `mutedErrors` when expression checks failed or raised muted engine errors, as `wait_for` reports them.
 
   An `until` never met runs `count` frames, stays paused and answers `met: false` with `last`: a result, not an error. It works from a running game too: "run until X, then freeze" is `frame_control step {count: 1000, options: {until: X}}`; a stop further than 1000 frames (about 17 s) away takes a `wait_for` on an earlier sign first.
-- **Edges:** nodes whose `process_mode` ignores pause keep running. A step counts drawn frames, so it is refused while the window is minimized or in low-processor mode, and a step whose frames stop being drawn fails at its deadline (10 s + 100 ms a frame, load-adjusted), leaving the game paused.
+- **Edges:** an editor session (`run_editor`) is refused: `frame_control does not pause or step an editor session.` Nodes whose `process_mode` ignores pause keep running. A step counts drawn frames, so it is refused while the window is minimized or in low-processor mode, and a step whose frames stop being drawn fails at its deadline (10 s + 100 ms a frame, load-adjusted), leaving the game paused.
 
   A step fails if the game pauses itself midway, unless its `until` is met on that frame or tick. While a step or a `capture_frames` runs, other steps, `pause` and `resume` are refused. On a headless game a step with `options.screenshot` fails with `take_screenshot`'s headless refusal, in place of the no-draw refusal a step without a screenshot still gets.
 

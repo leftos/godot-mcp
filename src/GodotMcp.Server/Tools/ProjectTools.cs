@@ -47,7 +47,7 @@ internal sealed class ProjectTools(SessionRegistry sessions)
 
     /// <summary>The session parameter of every tool that addresses an existing session.</summary>
     internal const string SessionDescription =
-        "The session's name, as run_project or attach_project returned it. Pass it on every call: it may be omitted only "
+        "The session's name, as run_project, run_editor or attach_project returned it. Pass it on every call: it may be omitted only "
         + "while one session is live, or only one exists, and another agent's game can start at any time.";
 
     /// <summary>The session parameter of run_project's options and attach_project, which name a new session.</summary>
@@ -106,6 +106,44 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             ProfileLaunch launch = ProfileFor(projectPath).Merge(scene, userArgs ?? [], engineArgs ?? [], chosen);
             return sessions.LaunchAsync(launch.Request, launch.Session, cancellationToken);
         });
+        return JsonSerializer.Serialize(result, Json);
+    }
+
+    [McpServerTool(Name = "run_editor", ReadOnly = false, Destructive = false, OpenWorld = false)]
+    [Description(
+        "Opens a Godot project in the Godot editor with the godot-mcp bridge inside it, and returns once the editor has finished "
+            + "its first scan and the bridge has connected. The runtime tools (get_ui_elements, click, hover, drag, scroll, "
+            + "type_text, key, take_screenshot, wait_for, get_scene_tree with node, inspect_node, get_errors, get_debug_output, "
+            + "run_script, call_method) then act on the editor's own windows; preview_scene and frame_control are refused. "
+            + "The server writes nothing into the project (no override.cfg); the editor itself may, as any editor open does (a "
+            + "project.godot it normalises, .uid files it adds). list_sessions names the session's "
+            + "kind editor. stop_project closes it through the editor's own close request, and refuses while the editor has "
+            + "unsaved scenes unless discard: true; restart_project does not restart it."
+            + SessionsNote
+    )]
+    public async Task<string> RunEditorAsync(
+        [Description("The folder that holds the project's project.godot.")] string projectPath,
+        [Description("A scene to open in the editor beside the scenes it restores, e.g. res://main.tscn; passed as --scene.")] string? scene = null,
+        [Description(
+            "{quiet, session, prepare}; when left out, quiet is true, the session is named after the project folder, and prepare "
+                + "is auto (a stale C# assembly is built and missing or outdated imports are run first; the result's prep says what "
+                + "was done)."
+        )]
+            EditorOptions? options = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        EditorOptions chosen = options ?? new EditorOptions();
+        LaunchRequest request = new(
+            projectPath,
+            scene,
+            EngineArgs: [],
+            UserArgs: [],
+            chosen.Quiet,
+            ShutOutRealGamepads: false,
+            chosen.ShouldPrepare()
+        );
+        LaunchResult result = await RunAsync(() => sessions.LaunchEditorAsync(request, chosen.Session, cancellationToken));
         return JsonSerializer.Serialize(result, Json);
     }
 
@@ -254,7 +292,10 @@ internal sealed class ProjectTools(SessionRegistry sessions)
             + "reasons. A warm host holds its folder, so stop it this way before renaming or deleting the folder, as when "
             + "removing a worktree. Calling it again on the folder (with projectPath, or naming the stopped session) waits once "
             + "more for a game a stop killed that is still running, killing it again; one still running after that wait too is "
-            + "listed by pid in gameStillRunning, and the warning says the folder stays in use until it is gone."
+            + "listed by pid in gameStillRunning, and the warning says the folder stays in use until it is gone. An editor "
+            + "session (run_editor) is closed through the editor's own close request and killed if it has not exited after "
+            + "10 s; while the editor has unsaved scenes the stop is refused, naming them, unless discard is true, which kills "
+            + "the editor at once with killReason \"discarded\"."
     )]
     public async Task<string> StopProjectAsync(
         [Description(SessionDescription)] string? session = null,
@@ -263,12 +304,17 @@ internal sealed class ProjectTools(SessionRegistry sessions)
                 + "out to stop a session by name."
         )]
             string? projectPath = null,
+        [Description(
+            "For an editor session: close it without saving its unsaved scenes, killing the editor. Default false, which refuses "
+                + "the stop while the editor has unsaved scenes. Other sessions ignore it."
+        )]
+            bool discard = false,
         CancellationToken cancellationToken = default
     )
     {
         object result = projectPath is null
-            ? await RunAsync(() => sessions.StopAnyAsync(session, cancellationToken))
-            : await RunAsync(() => sessions.StopFolderAsync(projectPath, session, cancellationToken));
+            ? await RunAsync(() => sessions.StopAnyAsync(session, discard, cancellationToken))
+            : await RunAsync(() => sessions.StopFolderAsync(projectPath, session, discard, cancellationToken));
         return JsonSerializer.Serialize(result, Json);
     }
 

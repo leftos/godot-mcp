@@ -36,10 +36,16 @@ internal sealed partial class GodotSession
 
     /// <summary>
     /// The grace a stop gives the current run to quit before it is killed: <see cref="SessionRegistry.ExitGrace"/>, or the
-    /// longer of it and <see cref="RecordingExitGrace"/> while a recording is being written.
+    /// longer of it and <see cref="EditorExitGrace"/> for an editor session, or of it and <see cref="RecordingExitGrace"/> while
+    /// a recording is being written.
     /// </summary>
     private TimeSpan CurrentExitGrace =>
-        _recording is { Outcome: null } ? TimeSpan.FromTicks(Math.Max(RecordingExitGrace.Ticks, registry.ExitGrace.Ticks)) : registry.ExitGrace;
+        Kind == SessionKind.Editor ? AtLeast(EditorExitGrace)
+        : _recording is { Outcome: null } ? AtLeast(RecordingExitGrace)
+        : registry.ExitGrace;
+
+    /// <summary>The longer of <paramref name="grace"/> and the registry's exit grace.</summary>
+    private TimeSpan AtLeast(TimeSpan grace) => TimeSpan.FromTicks(Math.Max(grace.Ticks, registry.ExitGrace.Ticks));
 
     /// <summary>A new movie's path, its folder created, for a start of a recording run; null for a run that does not record.</summary>
     private string? PrepareMoviePath(LaunchRequest request)

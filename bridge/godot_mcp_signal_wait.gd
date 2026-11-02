@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's signal wait, a child of its clock (godot_mcp_time.gd): waits for a
 ## node's next emission of a signal, for wait_for's signal kind and a capture's signal start, and

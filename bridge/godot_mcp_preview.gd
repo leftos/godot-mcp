@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## preview_scene's side of the bridge. The server starts the game on one scene with
 ## GODOT_MCP_PREVIEW set, and the bridge pauses the tree in its _ready, before the scene enters

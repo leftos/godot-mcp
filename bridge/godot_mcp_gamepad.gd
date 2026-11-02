@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's gamepad, a child of the bridge: plays injected joypad button and axis
 ## events, tracks what the injected pads hold, and, when the run asks for shutOutRealGamepads,

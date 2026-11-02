@@ -1,3 +1,4 @@
+@tool
 extends RefCounted
 ## The godot-mcp bridge's watch monitors, a static helper of the watch (godot_mcp_watch.gd):
 ## resolves a watch's monitor names, reads each monitor once a sampled frame, measures frame_ms and

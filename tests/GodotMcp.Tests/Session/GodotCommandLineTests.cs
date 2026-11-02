@@ -44,6 +44,38 @@ public sealed class GodotCommandLineTests : IDisposable
     }
 
     [Fact]
+    public void AQuietEditorLaunchOpensTheEditorWindowedWithItsHostThenTheSceneAndTheDummyDriver()
+    {
+        const string host = @"C:\Program Files\godot-mcp\bridge\godot_mcp_editor_host.gd";
+        LaunchRequest request = new(Project, "res://main.tscn", [], [], Quiet: true, false, Prepare: true) { EditorHost = host };
+
+        List<string> arguments = GodotCommandLine.BuildArguments(request, moviePath: null);
+
+        Assert.Equal(
+            ["--path", Project, "--editor", "--windowed", "--script", host, "--scene", "res://main.tscn", "--audio-driver", "Dummy"],
+            arguments
+        );
+    }
+
+    [Fact]
+    public void AVisibleEditorLaunchWithoutASceneOpensTheEditorAndNothingElse()
+    {
+        const string host = @"C:\godot-mcp\bridge\godot_mcp_editor_host.gd";
+        LaunchRequest request = new(Project, null, [], [], Quiet: false, false, Prepare: true) { EditorHost = host };
+
+        List<string> arguments = GodotCommandLine.BuildArguments(request, moviePath: null);
+
+        Assert.Equal(["--path", Project, "--editor", "--windowed", "--script", host], arguments);
+    }
+
+    [Theory]
+    [InlineData(SessionKind.Run, true)]
+    [InlineData(SessionKind.Attach, true)]
+    [InlineData(SessionKind.Process, false)]
+    [InlineData(SessionKind.Editor, false)]
+    internal void OnlyARunAndAnAttachWriteTheOverride(SessionKind kind, bool writes) => Assert.Equal(writes, GodotSession.WritesOverride(kind));
+
+    [Fact]
     public void ANotQuietRunLeavesTheAudioDriverAlone()
     {
         LaunchRequest request = new(Project, null, [], [], false, false, Prepare: true);

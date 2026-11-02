@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge: an autoload injected into a game run through override.cfg.
 ##
@@ -36,6 +37,7 @@ const DORMANT_SCRIPT := "godot_mcp_dormant.gd"
 const WINDOW_SCRIPT := "godot_mcp_window.gd"
 const AUDIO_SCRIPT := "godot_mcp_audio.gd"
 const WATCH_SCRIPT := "godot_mcp_watch.gd"
+const EDITOR_MODE_SCRIPT := "godot_mcp_editor_mode.gd"
 ## The commands a cancel request can end early, answering the request at once for a run_script it
 ## stops and a call_method it stops awaiting (_cancel); the server cancels one when its
 ## load-adjusted allowance passes before the request's backstopMs.
@@ -125,6 +127,10 @@ var _item_targets: GDScript
 var _class_info: GDScript
 ## Every command's handler, func(id, params), by command name (_command_handlers).
 var _handlers: Dictionary = {}
+## The editor mode (godot_mcp_editor_mode.gd beside this script), static functions called on the
+## script itself; _process is running, so a frame an editor runs inside it is skipped.
+var _editor_mode: GDScript
+var _in_process: bool = false
 ## The cancellable requests still running: id -> the params Dictionary their handler holds, from
 ## the frame that read them until their reply.
 var _running_requests: Dictionary = {}
@@ -176,6 +182,7 @@ func _init() -> void:
 	_script_dir = script.resource_path.get_base_dir()
 	_dormant_script = load(_script_dir.path_join(DORMANT_SCRIPT)) as GDScript
 	_window = load(_script_dir.path_join(WINDOW_SCRIPT)) as GDScript
+	_editor_mode = load(_script_dir.path_join(EDITOR_MODE_SCRIPT)) as GDScript
 	_audio = (load(_script_dir.path_join(AUDIO_SCRIPT)) as GDScript).new()
 	add_child(_audio)
 	_state_dir = ProjectSettings.globalize_path(_dormant_script.STATE_DIR)
@@ -185,6 +192,17 @@ func _init() -> void:
 	_endpoint_source = chosen["source"]
 	if not _endpoint.is_empty():
 		_add_logger()
+
+
+## Runs the bridge in an editor session: values holds every GODOT_MCP_* variable the editor host
+## read and removed from the environment, read here in its place. Called before _ready.
+func use_editor(values: Dictionary) -> void:
+	_mode = _dormant_script.MODE_EDITOR
+	_endpoint = _dormant_script.endpoint_from(values)
+	_endpoint_source = _dormant_script.SOURCE_ENV
+	_window.variables = values
+	_add_logger()
+	_logger.noise = _editor_mode
 
 
 ## Registers the error logger, once; the engine removes it at shutdown.
@@ -378,7 +396,18 @@ func _go_dormant_again() -> void:
 	_go_dormant()
 
 
+## An editor's progress dialog runs a whole frame inside the call that shows it (4.7.2
+## editor/gui/progress_dialog.cpp L148-152), which a command handled here can make: the frame
+## inside it does nothing.
 func _process(_delta: float) -> void:
+	if _in_process:
+		return
+	_in_process = true
+	_poll_connection()
+	_in_process = false
+
+
+func _poll_connection() -> void:
 	if _stream == null or _connection_lost:
 		return
 	_stream.poll()
@@ -393,17 +422,18 @@ func _process(_delta: float) -> void:
 		_hello_sent = true
 		_stream.set_no_delay(true)
 		var window_size: Vector2i = DisplayServer.window_get_size()
-		_send(
-			{
-				"type": "hello",
-				"token": _token,
-				"projectPath": ProjectSettings.globalize_path("res://"),
-				"pid": OS.get_process_id(),
-				"window": {"width": window_size.x, "height": window_size.y},
-				"hwnd": _window.native_handle(),
-				"ticksUsec": Time.get_ticks_usec(),
-			}
-		)
+		var hello: Dictionary = {
+			"type": "hello",
+			"token": _token,
+			"projectPath": ProjectSettings.globalize_path("res://"),
+			"pid": OS.get_process_id(),
+			"window": {"width": window_size.x, "height": window_size.y},
+			"hwnd": _window.native_handle(),
+			"ticksUsec": Time.get_ticks_usec(),
+		}
+		if _mode == _dormant_script.MODE_EDITOR:
+			hello["kind"] = "editor"
+		_send(hello)
 	_flush_errors()
 	_read_frames()
 
@@ -449,10 +479,14 @@ func _on_root_exiting() -> void:
 
 
 ## Ends the game as its own quit does, running its exit work, once every frame save still
-## encoding on a worker has ended; the unit tests replace it.
+## encoding on a worker has ended; an editor gets its close request instead. The unit tests
+## replace it.
 func _quit(tree: SceneTree) -> void:
 	_frame.wait_saves()
-	tree.quit()
+	if _mode == _dormant_script.MODE_EDITOR:
+		_editor_mode.request_close()
+	else:
+		tree.quit()
 
 
 ## Sends the errors logged since the last flush as one {type: "errors", entries, dropped}
@@ -534,6 +568,10 @@ func _handle_frame(text: String) -> void:
 		params = request["params"]
 	if not _handlers.has(command):
 		_reply_error(id, "unknown command '%s'" % command)
+		return
+	var refusal: String = _editor_mode.refusal(command, _mode == _dormant_script.MODE_EDITOR)
+	if not refusal.is_empty():
+		_reply_error(id, refusal)
 		return
 	_track(id, command, params)
 	(_handlers[command] as Callable).call(id, params)
@@ -653,6 +691,7 @@ func _command_handlers() -> Dictionary:
 		"dotnet": _handle_dotnet,
 		"state": _handle_state,
 		"shutdown": _handle_shutdown,
+		"editor_unsaved": _handle_editor_unsaved,
 		"cancel": _handle_cancel,
 		"welcome": _handle_welcome,
 	}
@@ -688,12 +727,13 @@ func _handle_movie_frame(id: int, _params: Dictionary) -> void:
 ## classFilter keeps Controls of that engine class or a subclass of it.
 func _handle_ui_elements(id: int, params: Dictionary) -> void:
 	var controls: Array[Control] = []
-	_gather_controls(get_tree().root, bool(params.get("visibleOnly", true)), Callable(), controls)
+	var visible_only: bool = bool(params.get("visibleOnly", true))
+	_ui_snapshot.gather_controls(get_tree().root, visible_only, Callable(), controls)
 	var class_filter: String = str(params.get("classFilter", ""))
 	var elements: Array = []
 	for control in controls:
 		if class_filter.is_empty() or control.is_class(class_filter):
-			elements.append(_describe_control(control))
+			elements.append(_ui_snapshot.describe_control(self, control))
 	_reply_ok(id, {"elements": elements})
 
 
@@ -805,41 +845,9 @@ func _handle_preview(id: int, params: Dictionary) -> void:
 		_reply_ok(id, result)
 
 
-## Appends every Control under node, depth first: the Controls get_ui_elements lists, and the UI
-## snapshot wait_for {uiChanged} compares. An invisible Control hides its subtree when
-## visible_only is set, and so does any node skip (when valid) returns true for.
-func _gather_controls(node: Node, visible_only: bool, skip: Callable, into: Array[Control]) -> void:
-	if skip.is_valid() and skip.call(node):
-		return
-	var control := node as Control
-	if control != null:
-		if visible_only and not control.is_visible_in_tree():
-			return
-		into.append(control)
-	for child in node.get_children():
-		_gather_controls(child, visible_only, skip, into)
-
-
-func _describe_control(control: Control) -> Dictionary:
-	var rect: Rect2 = _gestures._targets.viewport_rect(control)
-	var element: Dictionary = {
-		"path": str(control.get_path()),
-		"name": str(control.name),
-		"class": control.get_class(),
-		"rect": _json.to_json(rect),
-		"visible": control.is_visible_in_tree(),
-	}
-	var shown: Variant = _shown_text.shown_text(control)
-	if shown != null:
-		element["text"] = shown
-	var listed: Variant = _item_targets.listed_items(control)
-	if listed != null:
-		element.merge(listed)
-	if control is BaseButton:
-		element["disabled"] = (control as BaseButton).disabled
-	if not control.tooltip_text.is_empty():
-		element["tooltip"] = control.tooltip_text
-	return element
+## Replies the paths of the editor's unsaved scenes, {scenes}: stop_project refuses to lose them.
+func _handle_editor_unsaved(id: int, _params: Dictionary) -> void:
+	_reply_ok(id, {"scenes": _editor_mode.unsaved_scenes()})
 
 
 ## Compiles source, runs its execute(scene_tree) and replies {value}. An execute that returns at

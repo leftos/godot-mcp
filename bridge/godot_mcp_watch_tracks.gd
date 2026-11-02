@@ -1,3 +1,4 @@
+@tool
 extends RefCounted
 ## The godot-mcp bridge's watch tracks, a static helper of the watch (godot_mcp_watch.gd): builds
 ## its property and expression tracks from their specs, refusing a missing node or property, an

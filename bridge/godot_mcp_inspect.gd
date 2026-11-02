@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's inspector, a child of the bridge: lists the scene tree, reads a node's
 ## properties, sets one, calls a method and captures a subtree's properties, for get_scene_tree,

@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's conditions, a child of the bridge: parses a condition Expression and
 ## builds the checks wait_for polls each frame (a node existing, a property's value, an

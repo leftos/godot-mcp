@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's input target resolver, a child of the input player (godot_mcp_input.gd):
 ## turns a target ({element}, a Control or a 2D or 3D world node by path or unique bare name,

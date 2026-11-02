@@ -1,3 +1,4 @@
+@tool
 extends RefCounted
 ## The godot-mcp bridge's main window: run_project's size, a quiet session's parking and the
 ## restores that give a parked window back. Static functions called on the script itself.
@@ -13,6 +14,14 @@ const NO_FOCUS_SETTING := "display/window/size/no_focus"
 
 ## Whether park_window moved the window and restore_window has not given it back since.
 static var parked: bool = false
+## The GODOT_MCP_* values an editor session's host read and removed from the environment, read
+## in its place; empty in a game, which reads the environment.
+static var variables: Dictionary = {}
+
+
+## A GODOT_MCP_* variable's value: the editor host's when it read one, else the environment's.
+static func variable(name: String) -> String:
+	return variables.get(name, OS.get_environment(name))
 
 
 ## Gives the window run_project's --resolution (GODOT_MCP_WINDOW_SIZE, "WIDTHxHEIGHT") exactly.
@@ -21,7 +30,7 @@ static var parked: bool = false
 ## after start is not held (window_set_size's MoveWindow, L2492-2520). The root Window's size is
 ## set rather than the display server's, so the root's viewport follows in the same call.
 static func apply_window_size(root: Window) -> void:
-	var wanted: String = OS.get_environment("GODOT_MCP_WINDOW_SIZE")
+	var wanted: String = variable("GODOT_MCP_WINDOW_SIZE")
 	if wanted.get_slice_count("x") != 2:
 		return
 	var size := Vector2i(wanted.get_slice("x", 0).to_int(), wanted.get_slice("x", 1).to_int())
@@ -39,7 +48,7 @@ static func apply_window_size(root: Window) -> void:
 ## turns embed_subwindows off) opens where the game asked, at its offset from the root window.
 static func park_window() -> void:
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_MOUSE_PASSTHROUGH, true)
-	var on_hidden_desktop: bool = OS.get_environment("GODOT_MCP_HIDDEN_DESKTOP") == "1"
+	var on_hidden_desktop: bool = variable("GODOT_MCP_HIDDEN_DESKTOP") == "1"
 	DisplayServer.window_set_position(Vector2i.ZERO if on_hidden_desktop else PARK_POSITION)
 	parked = true
 

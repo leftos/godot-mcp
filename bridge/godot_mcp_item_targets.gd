@@ -1,3 +1,4 @@
+@tool
 extends RefCounted
 ## Item targets for the target resolver (godot_mcp_targets.gd): an item drawn inside an ItemList,
 ## a TabBar, a TabContainer's tab bar or a Tree, named by {text | index | path, column?} and

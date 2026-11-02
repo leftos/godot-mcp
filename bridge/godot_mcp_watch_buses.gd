@@ -1,3 +1,4 @@
+@tool
 extends RefCounted
 ## The godot-mcp bridge's watch bus levels, a static helper of the watch's audio
 ## (godot_mcp_watch_audio.gd): reads each watched bus once an unpaused frame, its peak (the largest

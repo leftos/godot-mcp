@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's step, a child of its clock (godot_mcp_time.gd): advances the scene tree
 ## by whole drawn frames or by physics ticks and leaves it paused, under the clock's running mark;

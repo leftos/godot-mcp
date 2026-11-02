@@ -155,6 +155,12 @@ internal static class Installation
     /// <exception cref="SessionException">Neither exists.</exception>
     public static string FindBridgeScript(string serverDirectory) => FindShippedScript(serverDirectory, BridgeRelativePath, "The bridge script");
 
+    public static readonly string EditorHostRelativePath = Path.Combine("bridge", "godot_mcp_editor_host.gd");
+
+    /// <summary>The editor host an editor session runs with --script, found beside the bridge as <see cref="FindBridgeScript()"/> finds it.</summary>
+    /// <exception cref="SessionException">Neither copy exists.</exception>
+    public static string FindEditorHostScript() => FindShippedScript(AppContext.BaseDirectory, EditorHostRelativePath, "The editor host script");
+
     public static string FindHeadlessScript() => FindHeadlessScript(AppContext.BaseDirectory);
 
     /// <summary>

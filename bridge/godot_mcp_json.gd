@@ -1,3 +1,4 @@
+@tool
 extends RefCounted
 ## The godot-mcp bridge's JSON conversion, static functions only: to_json writes a Godot value as
 ## JSON, from_json reads JSON back as the type a property or parameter entry declares. The bridge

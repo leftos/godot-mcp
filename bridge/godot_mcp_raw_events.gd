@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's raw event player, a child of the bridge: plays simulate_input's event
 ## list one frame apart (the input player's "events" gesture), sending each event through the

@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's frame capture, a child of the bridge: the root viewport's image with
 ## every native window pasted on it, and the PNGs a screenshot, a baseline and a preview save.

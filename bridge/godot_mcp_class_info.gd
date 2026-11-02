@@ -1,3 +1,4 @@
+@tool
 extends RefCounted
 ## describe_class's reader, static functions only, shared by the bridge (in a running game) and
 ## the headless operations: an engine class's (ClassDB) or a project script class's properties

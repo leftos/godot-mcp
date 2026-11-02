@@ -218,6 +218,30 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     }
 
     /// <summary>
+    /// Opens the Godot editor on the request's project under <paramref name="session"/>, named as <see cref="LaunchAsync"/> names a
+    /// run, with the editor host adding the bridge inside it. The session writes no override.cfg and neither binds nor is bound
+    /// by the folder's quiet and pad settings.
+    /// </summary>
+    /// <exception cref="SessionException">The editor host is missing, the name is invalid or live, or the launch failed.</exception>
+    public async Task<LaunchResult> LaunchEditorAsync(LaunchRequest request, string? session, CancellationToken cancellationToken)
+    {
+        string projectDir = NormaliseProjectDir(request.ProjectPath);
+        string host = Installation.FindEditorHostScript();
+        SessionSpec spec = new(NameFor(session, projectDir), projectDir, SessionKind.Editor, ShutOutRealGamepads: false, request.Quiet);
+        GodotSession created = await ReserveAsync(
+            spec,
+            defaultName: session is null,
+            completeUnderLock: static ready => ready,
+            heldByScratchRun: false
+        );
+        return await created.LaunchAsync(request with { ProjectPath = projectDir, EditorHost = host }, cancellationToken);
+    }
+
+    /// <summary>What refuses restart_project on an editor session.</summary>
+    internal const string EditorRestartRefusal =
+        "restart_project does not restart an editor session; stop it with stop_project and start it again with run_editor.";
+
+    /// <summary>
     /// Attaches under the request's session, or when it is null under the project folder's name, numbered as a launch's
     /// is (<see cref="DefaultName"/>). A quiet attach writes the quiet override and tells the bridge to park its window, and
     /// shares the folder rules of a quiet run. The game is a dormant one on the folder when one is chosen
@@ -363,18 +387,23 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// bookkeeping, so no host is stopped for it.
     /// </summary>
     /// <returns>The session's <see cref="StopResult"/>; a process session's <see cref="ProcessStopResult"/>.</returns>
-    /// <exception cref="SessionException">No session answers to the name, or it never reached a game.</exception>
-    public async Task<object> StopAnyAsync(string? session, CancellationToken cancellationToken)
+    /// <param name="session">The session's name; null for the only one.</param>
+    /// <param name="discard">Whether an editor session's unsaved scenes are lost rather than refusing the stop.</param>
+    /// <param name="cancellationToken">Cancels the wait for the session's gate.</param>
+    /// <exception cref="SessionException">
+    /// No session answers to the name, it never reached a game, or it is an editor with unsaved scenes and no discard.
+    /// </exception>
+    public async Task<object> StopAnyAsync(string? session, bool discard, CancellationToken cancellationToken)
     {
         GodotSession target =
             TryResolve(session)
             ?? throw new SessionException("No Godot session has been started, so there is nothing to stop. Start one with run_project.");
         if (target.Kind == SessionKind.Process)
         {
-            return await target.StopAsync(cancellationToken);
+            return await target.StopAsync(discard: false, cancellationToken);
         }
 
-        StopResult stopped = await StopSessionAsync(target, cancellationToken);
+        StopResult stopped = await StopSessionAsync(target, discard, cancellationToken);
         bool hostStopped = Volatile.Read(ref _headlessHosts) is { } hosts && await hosts.StopIfIdleAsync(target.ProjectDir, "stop_project");
         return stopped with { HeadlessHostStopped = hostStopped };
     }
@@ -384,9 +413,15 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// session's stop is reported in a <see cref="StopResult"/>, with no override to remove and no game exit code.
     /// </summary>
     /// <exception cref="SessionException">No session answers to the name, or it never reached a game.</exception>
-    public async Task<StopResult> StopAsync(string? session, CancellationToken cancellationToken)
+    public Task<StopResult> StopAsync(string? session, CancellationToken cancellationToken) => StopAsync(session, discard: false, cancellationToken);
+
+    /// <inheritdoc cref="StopAsync(string?, CancellationToken)"/>
+    /// <param name="session">The session's name; null for the only one.</param>
+    /// <param name="discard">Whether an editor session's unsaved scenes are lost rather than refusing the stop.</param>
+    /// <param name="cancellationToken">Cancels the wait for the session's gate.</param>
+    public async Task<StopResult> StopAsync(string? session, bool discard, CancellationToken cancellationToken)
     {
-        object stopped = await StopAnyAsync(session, cancellationToken);
+        object stopped = await StopAnyAsync(session, discard, cancellationToken);
         return stopped as StopResult ?? ProcessAsStop((ProcessStopResult)stopped);
     }
 
@@ -410,13 +445,21 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// The folder holds no project, the named session runs another folder, several live sessions run there, the session never
     /// reached a game, or no session runs there and neither a host was stopped nor a leftover file removed.
     /// </exception>
-    public async Task<object> StopFolderAsync(string projectPath, string? session, CancellationToken cancellationToken)
+    public Task<object> StopFolderAsync(string projectPath, string? session, CancellationToken cancellationToken) =>
+        StopFolderAsync(projectPath, session, discard: false, cancellationToken);
+
+    /// <inheritdoc cref="StopFolderAsync(string, string?, CancellationToken)"/>
+    /// <param name="projectPath">The project folder to free.</param>
+    /// <param name="session">The session to stop there; null for the only live one.</param>
+    /// <param name="discard">Whether an editor session's unsaved scenes are lost rather than refusing the stop.</param>
+    /// <param name="cancellationToken">Cancels the waits.</param>
+    public async Task<object> StopFolderAsync(string projectPath, string? session, bool discard, CancellationToken cancellationToken)
     {
         string projectDir = NormaliseProjectDir(projectPath);
         GodotSession? target = FindSessionIn(projectDir, session);
         if (target is not null)
         {
-            StopResult stopped = await StopSessionAsync(target, cancellationToken);
+            StopResult stopped = await StopSessionAsync(target, discard, cancellationToken);
             return stopped with { HeadlessHostStopped = await StopHeadlessHostAsync(projectDir, cancellationToken) };
         }
 
@@ -427,10 +470,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// Stops a run or attached session; one already stopped when the call began also has its game waited for once more, as a
     /// stop killed it and it may still be running (<see cref="WaitForStoppedGamesAsync"/>).
     /// </summary>
-    private async Task<StopResult> StopSessionAsync(GodotSession target, CancellationToken cancellationToken)
+    private async Task<StopResult> StopSessionAsync(GodotSession target, bool discard, CancellationToken cancellationToken)
     {
         bool alreadyStopped = !target.IsLive;
-        var stopped = (StopResult)await target.StopAsync(cancellationToken);
+        var stopped = (StopResult)await target.StopAsync(discard, cancellationToken);
         if (!alreadyStopped || await WaitForStoppedGamesAsync([target], target.ProjectDir) is not { } waited)
         {
             return stopped;
@@ -474,7 +517,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
     }
 
-    /// <summary>The stopped run sessions on the folder, whose games a stop may have killed.</summary>
+    /// <summary>The stopped run and editor sessions on the folder, whose games or editors a stop may have killed.</summary>
     private GodotSession[] StoppedRunsIn(string projectDir)
     {
         lock (_lock)
@@ -482,7 +525,11 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             return
             [
                 .. Ordered()
-                    .Where(session => session.Kind == SessionKind.Run && !session.IsLive && ProjectPaths.AreSame(session.ProjectDir, projectDir)),
+                    .Where(session =>
+                        session.Kind is SessionKind.Run or SessionKind.Editor
+                        && !session.IsLive
+                        && ProjectPaths.AreSame(session.ProjectDir, projectDir)
+                    ),
             ];
         }
     }
@@ -772,7 +819,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// </summary>
     private static async Task WaitForStartsAsync(GodotSession[] sessions, Task cap)
     {
-        while (!cap.IsCompleted && sessions.Any(session => session.Kind == SessionKind.Run && session.IsStarting))
+        while (!cap.IsCompleted && sessions.Any(session => session.Kind is SessionKind.Run or SessionKind.Editor && session.IsStarting))
         {
             await Task.Delay(StartSettlePoll);
         }
@@ -1085,8 +1132,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// Takes this server off the owners of the session's override.cfg unless the folder is held: another of its live sessions
     /// uses it, or it is armed. The file is deleted once no live server owns it. Returns whether it deleted the file.
     /// </summary>
+    /// <remarks>An editor session wrote no override.cfg, so it releases nothing and leaves the folder's file to the sessions that use it.</remarks>
     internal bool ReleaseFolder(GodotSession session) =>
-        OverrideFolders.Hold(
+        session.Kind != SessionKind.Editor
+        && OverrideFolders.Hold(
             $"releasing {session.ProjectDir}",
             () =>
             {
@@ -1385,9 +1434,9 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             );
         }
 
-        if (spec.Kind == SessionKind.Process)
+        if (spec.Kind is SessionKind.Process or SessionKind.Editor)
         {
-            // A process session shares no override.cfg with the folder's games, so their settings do not bind it.
+            // A process or editor session shares no override.cfg with the folder's games, so their settings do not bind it.
             return;
         }
 
@@ -1412,8 +1461,14 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     /// Refuses a session still starting, a process session that never started, an attached session, one that never launched,
     /// and one the folder's live sessions rule out.
     /// </summary>
-    private void CheckCanRestart(GodotSession target)
+    /// <exception cref="SessionException">The session cannot be restarted; an editor session never can.</exception>
+    internal void CheckCanRestart(GodotSession target)
     {
+        if (target.Kind == SessionKind.Editor)
+        {
+            throw new SessionException(EditorRestartRefusal);
+        }
+
         if (target.IsStarting)
         {
             throw new SessionException($"session '{target.Name}' is still starting or restarting; wait for its call to return, or stop_project it.");
@@ -1799,7 +1854,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
 
     private static bool IsLiveOn(GodotSession session, string projectDir, GodotSession? except) =>
         !ReferenceEquals(session, except)
-        && session.Kind != SessionKind.Process
+        && session.Kind is not (SessionKind.Process or SessionKind.Editor)
         && session.IsLive
         && ProjectPaths.AreSame(session.ProjectDir, projectDir);
 
@@ -1844,12 +1899,15 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             GameStartTime = session.GameStartTime,
         };
 
-    private static string KindName(SessionKind kind) =>
+    /// <summary>The kind as list_sessions names it.</summary>
+    internal static string KindName(SessionKind kind) =>
         kind switch
         {
             SessionKind.Run => "run",
             SessionKind.Attach => "attach",
-            _ => "process",
+            SessionKind.Process => "process",
+            SessionKind.Editor => "editor",
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown session kind."),
         };
 
     private static void CheckName(string? session)

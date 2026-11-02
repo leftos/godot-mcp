@@ -235,6 +235,7 @@ public sealed class BatchValidationTests : IDisposable
 
     [Theory]
     [InlineData("run_project")]
+    [InlineData("run_editor")]
     [InlineData("stop_project")]
     [InlineData("restart_project")]
     [InlineData("attach_project")]

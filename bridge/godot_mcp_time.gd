@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's clock, a child of the bridge: pauses, resumes and steps the scene tree
 ## (the step itself runs in its Step child, godot_mcp_step.gd, under this clock's running mark),

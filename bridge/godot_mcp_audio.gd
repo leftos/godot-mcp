@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's mute, a child of the bridge named Audio: silences the game by muting its
 ## Master bus for as long as the bridge asks, a run's or an attached game's whole session or a

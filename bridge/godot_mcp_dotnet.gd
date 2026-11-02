@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## The godot-mcp bridge's C# helper module, a child of the bridge: the dotnet command. It loads the
 ## helper extension (godot_mcp_dotnet.gdextension, at the path the server sends) once per process,
