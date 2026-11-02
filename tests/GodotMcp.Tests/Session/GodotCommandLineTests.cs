@@ -14,13 +14,23 @@ public sealed class GodotCommandLineTests : IDisposable
     public void Dispose() => _temp.Dispose();
 
     [Fact]
-    public void PutsPathSceneAndEngineArgsBeforeTheSeparatorAndUserArgsAfter()
+    public void PutsPathTheSceneFlagAndEngineArgsBeforeTheSeparatorAndUserArgsAfter()
     {
         LaunchRequest request = new(Project, "res://levels/test.tscn", ["--resolution", "640x360"], ["--hello", "a b"], false, false, Prepare: true);
 
         List<string> arguments = GodotCommandLine.BuildArguments(request, moviePath: null);
 
-        Assert.Equal(["--path", Project, "res://levels/test.tscn", "--resolution", "640x360", "--", "--hello", "a b"], arguments);
+        Assert.Equal(["--path", Project, "--scene", "res://levels/test.tscn", "--resolution", "640x360", "--", "--hello", "a b"], arguments);
+    }
+
+    [Fact]
+    public void ASceneOfAnyExtensionIsPassedWithTheSceneFlag()
+    {
+        LaunchRequest request = new(Project, "res://ui/menu.xscn", [], [], false, false, Prepare: false);
+
+        List<string> arguments = GodotCommandLine.BuildArguments(request, moviePath: null);
+
+        Assert.Equal(["--path", Project, "--scene", "res://ui/menu.xscn"], arguments);
     }
 
     [Fact]
@@ -58,6 +68,7 @@ public sealed class GodotCommandLineTests : IDisposable
             [
                 "--path",
                 Project,
+                "--scene",
                 "res://main.tscn",
                 "--audio-driver",
                 "Dummy",

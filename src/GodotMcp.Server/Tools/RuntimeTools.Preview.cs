@@ -21,14 +21,7 @@ internal sealed class PreviewTools(SessionRegistry sessions)
     private const string BridgeCommand = "preview";
     private static readonly TimeSpan CaptureTimeout = TimeSpan.FromSeconds(10);
 
-    // The positional scene Godot runs; any other ending makes it run the main scene without a word (4.7.2 main.cpp L4090-4106).
-    private static readonly string[] SceneEndings = [".tscn", ".scn", ".escn", ".res", ".tres"];
-    private static readonly HeadlessTools.PathRule SceneRule = new(
-        "scene",
-        SceneEndings,
-        "is not a scene file: Godot runs a scene named on its command line only when the name ends .tscn, .scn, .escn, .res or "
-            + ".tres (lowercase), and runs the main scene otherwise."
-    );
+    private static readonly HeadlessTools.PathRule SceneRule = new("scene", [], string.Empty);
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     [McpServerTool(Name = ToolName, ReadOnly = true, Destructive = false, OpenWorld = false)]
@@ -43,8 +36,9 @@ internal sealed class PreviewTools(SessionRegistry sessions)
     public async Task<IEnumerable<ContentBlock>> PreviewSceneAsync(
         [Description("The folder that holds the project's project.godot.")] string projectPath,
         [Description(
-            "The scene to show: a res:// path or a path relative to the project folder, inside it, ending .tscn, .scn, .escn, .res "
-                + "or .tres, e.g. res://levels/test.tscn."
+            "The scene to show: a res:// path or a path relative to the project folder, inside it, e.g. res://levels/test.tscn. "
+                + "Any file a loader of the project reads as a scene is taken, a custom loader's extension included; a file Godot "
+                + "cannot load as a scene fails at launch with Godot's \"Failed loading scene\" line."
         )]
             string scene,
         [Description(
@@ -93,17 +87,12 @@ internal sealed class PreviewTools(SessionRegistry sessions)
     }
 
     /// <summary>
-    /// The scene as a res:// path, resolved as the headless scene tools resolve theirs, then checked to end as Godot needs:
-    /// its ending test is case-sensitive, where the shared resolution's is not.
+    /// The scene as a res:// path, resolved as the headless scene tools resolve theirs: any existing file inside the project,
+    /// in the case on disk. Godot loads it with --scene, so a custom loader's extension runs; a file no loader makes a scene
+    /// of fails at launch.
     /// </summary>
-    /// <exception cref="McpException">The scene is empty, outside the project, of another kind, not in the case on disk, or missing.</exception>
-    internal static string CheckScene(string projectDir, string scene)
-    {
-        string resScene = HeadlessTools.ToResPath(projectDir, scene, SceneRule);
-        return SceneEndings.Any(ending => resScene.EndsWith(ending, StringComparison.Ordinal))
-            ? resScene
-            : throw new McpException($"scene '{scene}' {SceneRule.Refusal}");
-    }
+    /// <exception cref="McpException">The scene is empty, outside the project, not in the case on disk, or missing.</exception>
+    internal static string CheckScene(string projectDir, string scene) => HeadlessTools.ToResPath(projectDir, scene, SceneRule);
 
     /// <summary>The resolution when it is WIDTHxHEIGHT in pixels, as godot-mcp.json's is checked; null when left out.</summary>
     /// <exception cref="McpException">The resolution has another form.</exception>

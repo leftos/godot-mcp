@@ -166,6 +166,7 @@ internal static partial class GodotCommandLine
         List<string> arguments = ["--path", request.ProjectPath];
         if (!string.IsNullOrWhiteSpace(request.Scene))
         {
+            arguments.Add("--scene");
             arguments.Add(request.Scene);
         }
 

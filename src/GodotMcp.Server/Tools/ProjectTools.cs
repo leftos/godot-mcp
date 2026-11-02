@@ -77,7 +77,11 @@ internal sealed class ProjectTools(SessionRegistry sessions)
     )]
     public async Task<string> RunProjectAsync(
         [Description("The folder that holds the project's project.godot.")] string projectPath,
-        [Description("A scene to run instead of the main scene, e.g. res://levels/test.tscn.")] string? scene = null,
+        [Description(
+            "A scene to run instead of the main scene, e.g. res://levels/test.tscn; passed as --scene, so any extension a loader of "
+                + "the project reads as a scene runs."
+        )]
+            string? scene = null,
         [Description("Arguments for the game, passed after --; the game reads them with OS.get_cmdline_user_args().")] string[]? userArgs = null,
         [Description(
             "Arguments for the engine, placed before --, e.g. [\"--resolution\", \"1280x720\"]. The last --resolution (after "

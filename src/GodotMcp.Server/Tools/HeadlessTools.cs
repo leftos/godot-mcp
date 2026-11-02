@@ -236,7 +236,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
 
     /// <summary>
     /// A res:// or project-relative path as the res:// path of an existing file inside the project, of one of the rule's
-    /// extensions (in any case) and spelled in the case on disk.
+    /// extensions (in any case) and spelled in the case on disk. An empty extension list takes a file of any extension.
     /// </summary>
     /// <exception cref="McpException">The path breaks the rule, or the file does not exist.</exception>
     internal static string ToResPath(string projectDir, string path, PathRule rule)
@@ -265,7 +265,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
             throw new McpException($"{rule.Argument} '{path}' is outside the project folder {projectDir}; pass a res:// path or a path inside it.");
         }
 
-        if (!rule.Extensions.Contains(Path.GetExtension(full), StringComparer.OrdinalIgnoreCase))
+        if (rule.Extensions.Length > 0 && !rule.Extensions.Contains(Path.GetExtension(full), StringComparer.OrdinalIgnoreCase))
         {
             throw new McpException($"{rule.Argument} '{path}' {rule.Refusal}");
         }

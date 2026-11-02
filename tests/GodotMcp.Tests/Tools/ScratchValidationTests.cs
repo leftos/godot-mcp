@@ -142,8 +142,11 @@ public sealed class ScratchValidationTests : IDisposable
 
     [Theory]
     [InlineData("res://Scratch/Missing.tscn")]
-    [InlineData("res://Scratch/notes.txt")]
     public void AResPathThatIsNoSceneIsRefused(string scene) => Refused(() => Plan([scene]));
+
+    [Fact]
+    public void AResPathOfAnyExtensionIsTakenAsAScratchScene() =>
+        Assert.Equal("res://Scratch/notes.txt", Assert.Single(Plan(["res://Scratch/notes.txt"]).Scenes).ResPath);
 
     [Fact]
     public void AMissingFolderIsRefused()

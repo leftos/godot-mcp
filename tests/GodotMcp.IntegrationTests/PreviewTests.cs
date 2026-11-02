@@ -166,13 +166,13 @@ public sealed class PreviewTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeoutMs)]
-    public async Task AScriptIsRefusedBeforeAnythingLaunches()
+    public async Task AScriptFailsAtLaunchWithGodotsOwnLineAndLeavesNothing()
     {
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
             PreviewAsync("res://main.gd", "preview", TestContext.Current.CancellationToken)
         );
 
-        Assert.Contains("is not a scene file", refused.Message);
+        Assert.Contains("Failed loading scene: res://main.gd", refused.Message);
         Assert.Empty(_harness.Sessions.List(includeStopped: true));
         Assert.False(File.Exists(_probe.OverrideFile));
         Assert.False(Directory.Exists(Path.Combine(_probe.Directory, ".godot", "godot-mcp", "screenshots")));

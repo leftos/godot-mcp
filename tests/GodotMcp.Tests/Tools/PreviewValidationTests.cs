@@ -21,7 +21,7 @@ public sealed class PreviewValidationTests : IDisposable
         _project = _temp.Combine("game");
         Directory.CreateDirectory(_project);
         File.WriteAllText(Path.Combine(_project, "project.godot"), "config_version=5\n");
-        foreach (string file in new[] { Path.Combine("levels", "a.tscn"), "b.scn", "c.escn", "d.res", "e.tres", "main.gd", "f.TSCN" })
+        foreach (string file in new[] { Path.Combine("levels", "a.tscn"), "b.scn", "c.escn", "d.res", "e.tres", "main.gd", "f.TSCN", "g.xscn" })
         {
             string path = Path.Combine(_project, file);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -49,16 +49,20 @@ public sealed class PreviewValidationTests : IDisposable
         Assert.Equal(expected, PreviewTools.CheckScene(_project, scene));
 
     [Theory]
-    [InlineData("main.gd")]
-    [InlineData("res://main.gd")]
-    [InlineData("f.TSCN")]
-    [InlineData("project.godot")]
-    public void AFileGodotWouldNotRunAsASceneIsRefused(string scene)
-    {
-        McpException refused = Assert.Throws<McpException>(() => PreviewTools.CheckScene(_project, scene));
+    [InlineData("main.gd", "res://main.gd")]
+    [InlineData("res://main.gd", "res://main.gd")]
+    [InlineData("f.TSCN", "res://f.TSCN")]
+    [InlineData("project.godot", "res://project.godot")]
+    [InlineData("g.xscn", "res://g.xscn")]
+    public void AFileOfAnyExtensionInsideTheProjectBecomesItsResPath(string scene, string expected) =>
+        Assert.Equal(expected, PreviewTools.CheckScene(_project, scene));
 
-        Assert.Contains("is not a scene file", refused.Message);
-        Assert.Contains(".tscn, .scn, .escn, .res or .tres", refused.Message);
+    [Fact]
+    public void ACaseVariantOfAFileOnDiskIsRefused()
+    {
+        McpException refused = Assert.Throws<McpException>(() => PreviewTools.CheckScene(_project, "F.tscn"));
+
+        Assert.Contains("F.tscn", refused.Message);
     }
 
     [Theory]
