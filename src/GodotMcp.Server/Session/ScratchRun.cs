@@ -944,12 +944,15 @@ internal sealed class ScratchRun
     /// <summary>A whole-number field of a wait_for reply; 0 when the reply lacks it.</summary>
     private static int Figure(JsonNode? reply, string field) => reply?[field] is JsonValue value && value.TryGetValue(out int figure) ? figure : 0;
 
-    /// <summary>The note line of GetStatus's text, its second line; empty when it has none.</summary>
+    /// <summary>
+    /// The status of GetStatus's text: its second line, or the text whole when it has one line; empty when the value is not a
+    /// string.
+    /// </summary>
     internal static string StatusLine(JsonNode? status)
     {
         string text = status is JsonValue value && value.TryGetValue(out string? held) ? held : string.Empty;
         string[] lines = text.Split('\n');
-        return lines.Length > 1 ? lines[1].TrimEnd('\r') : string.Empty;
+        return (lines.Length > 1 ? lines[1] : lines[0]).TrimEnd('\r');
     }
 
     /// <summary>

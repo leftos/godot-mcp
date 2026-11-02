@@ -8,6 +8,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 - Property tools accept a Transform2D, Transform3D, Basis, Quaternion, AABB or Plane as its `.tscn` text, `"Transform3D(1, 0, 0, …)"`, and reads return that text.
 
+### Fixed
+
+- `run_scratches` reports a step's status when the scene's `GetStatus` returns one line, instead of an empty status.
+
 ## 0.25.1 - 2026-11-01
 
 ### Fixed
