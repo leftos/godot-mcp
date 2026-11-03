@@ -432,6 +432,56 @@ public sealed class InputTests(SharedProbeSession shared) : IAsyncLifetime, ICla
         AssertHit(dragged, "releasedOn", "DropTarget", "ColorRect");
         Assert.True(dragged["guiDragStarted"]!.GetValue<bool>(), dragged.ToJsonString());
         Assert.True(dragged["dropAccepted"]!.GetValue<bool>(), dragged.ToJsonString());
+        Assert.False(dragged.AsObject().ContainsKey("released"), dragged.ToJsonString());
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ADragWithReleaseFalseLeavesTheButtonHeld()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonNode held = JsonNode.Parse(await _tools.DragAsync(DragSource, DropTarget, 300, "left", false, cancellationToken: cancellation))!;
+        try
+        {
+            Assert.Equal(1, held["heldButtonMask"]!.GetValue<int>());
+            Assert.False(held["released"]!.GetValue<bool>(), held.ToJsonString());
+            Assert.True(held["guiDragStarted"]!.GetValue<bool>(), held.ToJsonString());
+            Assert.False(held.AsObject().ContainsKey("releasedOn"), held.ToJsonString());
+            Assert.False(held.AsObject().ContainsKey("dropAccepted"), held.ToJsonString());
+
+            // The button never went up, so the probe's GUI still holds the drag.
+            bool dragging = (await RunAsync("return scene_tree.root.gui_is_dragging()")).GetValue<bool>();
+            Assert.True(dragging, "the drag ended before the button was released");
+        }
+        finally
+        {
+            await _tools.MouseButtonAsync(DropTarget, "left", "release", cancellationToken: cancellation);
+        }
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task AHeldDragIsDroppedByMouseButtonRelease()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await _tools.DragAsync(DragSource, DropTarget, 300, "left", false, cancellationToken: cancellation);
+        try
+        {
+            // A click's press would drop the held payload where it lands, so it is refused while the button is held.
+            McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+                _tools.ClickAsync(DropTarget, "left", false, cancellationToken: cancellation)
+            );
+            const string Expected =
+                "the left button is held (a drag with release: false, or a mouse_button press); release it with mouse_button "
+                + "action release first.";
+            // The bridge's refusal arrives wrapped ("click failed: The bridge refused 'input': ...").
+            Assert.Contains(Expected, refused.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            // The drag stopped over DropTarget, so the release lands on it and drops what is dragged.
+            await _tools.MouseButtonAsync(DropTarget, "left", "release", cancellationToken: cancellation);
+        }
+
+        Assert.Equal(("dropped:DragSource", 1), await ReadDropAsync(_tools));
     }
 
     [Fact(Timeout = TestTimeoutMs)]

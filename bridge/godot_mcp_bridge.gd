@@ -386,6 +386,11 @@ func _dormant_if_armed() -> void:
 func _go_dormant_again() -> void:
 	_capture.stop()
 	_watch.drop()
+	# A left release during a GUI drag performs the drop (viewport.cpp's release path): cancel the
+	# drag first, so a lost connection never drops what the game was dragging.
+	var root: Window = get_tree().root
+	if root.gui_is_dragging():
+		root.gui_cancel_drag()
 	_raw_events.release_all()
 	# After release_all, whose button releases take the pointer again.
 	_owns_pointer = false

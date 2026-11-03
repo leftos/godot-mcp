@@ -101,7 +101,9 @@ internal sealed partial class RuntimeTools
     [McpServerTool(Name = "drag", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
         "Drags in the running game: presses at from, moves one step a frame in a straight line to to over durationMs (at "
-            + "least 3 frames), each motion carrying the held button and its step, and releases at to. Godot starts a drag "
+            + "least 3 frames), each motion carrying the held button and its step, and releases at to unless release is "
+            + "false, which leaves the button held there; then the result has released: false and no releasedOn or "
+            + "dropAccepted. Godot starts a drag "
             + "once the path passes gui/common/drag_threshold (10 px by default); a shorter one is a click. While a gesture "
             + "plays, or injected input holds a button, the real mouse's buttons and motions are kept from the game's GUI. "
             + "Returns {pointer, heldButtonMask, pressedOn, releasedOn, guiDragStarted, dropAccepted}: the Controls ({path, "
@@ -114,13 +116,15 @@ internal sealed partial class RuntimeTools
     )]
     public Task<string> DragAsync(
         [Description("Where the drag starts.")] InputTarget from,
-        [Description("Where the drag ends and the button is released.")] InputTarget to,
+        [Description("Where the drag ends: the button is released there, unless release is false.")] InputTarget to,
         [Description(
             "How long the moving part takes, in milliseconds; in a recording (run_project options.record), clip time: 60 movie "
                 + "frames a second, however slowly the game runs."
         )]
             int durationMs = 300,
         [Description("left, right or middle.")] string button = "left",
+        [Description("false stops at to with the button still held (heldButtonMask shows it); release it with mouse_button action release.")]
+            bool release = true,
         [Description(ProjectTools.SessionDescription)] string? session = null,
         CancellationToken cancellationToken = default
     )
@@ -130,16 +134,22 @@ internal sealed partial class RuntimeTools
             throw new McpException($"durationMs must be 0 or more; got {durationMs}.");
         }
 
-        JsonObject parameters = new()
+        JsonObject parameters = BuildDragParameters(from, to, durationMs, button, release);
+        return SendInputAsync(session, "drag", parameters, TimeSpan.FromMilliseconds(durationMs), cancellationToken);
+    }
+
+    /// <summary>The bridge's drag params: {gesture, from, to, durationMs, button, release}.</summary>
+    /// <exception cref="McpException">A button that is not left, right or middle.</exception>
+    internal static JsonObject BuildDragParameters(InputTarget from, InputTarget to, int durationMs, string button, bool release) =>
+        new()
         {
             ["gesture"] = "drag",
             ["from"] = InputTarget.ToBridge(from, "from"),
             ["to"] = InputTarget.ToBridge(to, "to"),
             ["durationMs"] = durationMs,
             ["button"] = CheckButton(button),
+            ["release"] = release,
         };
-        return SendInputAsync(session, "drag", parameters, TimeSpan.FromMilliseconds(durationMs), cancellationToken);
-    }
 
     [McpServerTool(Name = "type_text", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(

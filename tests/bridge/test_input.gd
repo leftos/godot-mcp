@@ -4,6 +4,12 @@ extends "res://gd_test.gd"
 ## never added to the tree either.
 # gdlint: disable=private-method-call
 
+## The refusal a click or a drag answers with while the button it would press is held.
+const HELD_REFUSAL := (
+	"the left button is held (a drag with release: false, or a mouse_button press); "
+	+ "release it with mouse_button action release first."
+)
+
 var _input_script: GDScript = load_bridge_script("godot_mcp_input.gd")
 var _bridge_script: GDScript = load_bridge_script("godot_mcp_bridge.gd")
 var _time_script: GDScript = load_bridge_script("godot_mcp_time.gd")
@@ -157,6 +163,71 @@ func test_handing_the_pointer_back_drops_an_armed_re_pick() -> void:
 	_free_rig(rig)
 
 
+## The result a drag that ends without releasing records: released false, guiDragStarted as the
+## motions found it, and no releasedOn or dropAccepted, nothing having been released.
+func test_a_drag_that_ends_without_a_release_records_released_false() -> void:
+	var rig: Array = _drag_end_rig()
+	var gestures: Node = rig[0]
+	gestures._end_drag(Vector2(40, 30), MOUSE_BUTTON_LEFT, false, true)
+	assert_eq(
+		gestures._hits,
+		{"guiDragStarted": true, "released": false},
+		"released false, and no releasedOn or dropAccepted"
+	)
+	_free_drag_end_rig(rig)
+
+
+## A drag that ends without releasing sends no release, and leaves its button in the held mask.
+func test_a_drag_that_ends_without_a_release_leaves_the_button_held() -> void:
+	var rig: Array = _drag_end_rig()
+	var gestures: Node = rig[0]
+	var bridge: Node = rig[1]
+	gestures._end_drag(Vector2(40, 30), MOUSE_BUTTON_LEFT, false, true)
+	assert_eq(bridge._held_mask, MOUSE_BUTTON_MASK_LEFT, "the button is still held")
+	assert_eq(bridge._capture.sent_events, [], "no release was sent")
+	_free_drag_end_rig(rig)
+
+
+## A click while the button it would press is held is refused before anything is sent: its press
+## would drop the payload a drag with release false left held.
+func test_a_click_while_its_button_is_held_is_refused() -> void:
+	var rig: Array = _drag_end_rig()
+	var gestures: Node = rig[0]
+	var bridge: Node = rig[1]
+	var refusal: String = gestures.click({"target": {"path": "Main/DragSource"}})
+	assert_eq(refusal, HELD_REFUSAL, "the click is refused with the held button's name")
+	assert_eq(bridge._capture.sent_events, [], "nothing was sent")
+	_free_drag_end_rig(rig)
+
+
+## A drag while the button it would press is held is refused before anything is sent.
+func test_a_drag_while_its_button_is_held_is_refused() -> void:
+	var rig: Array = _drag_end_rig()
+	var gestures: Node = rig[0]
+	var bridge: Node = rig[1]
+	var refusal: String = gestures._play_drag(
+		{"from": {"path": "Main/DragSource"}, "to": {"path": "Main/DropTarget"}}
+	)
+	assert_eq(refusal, HELD_REFUSAL, "the drag is refused with the held button's name")
+	assert_eq(bridge._capture.sent_events, [], "nothing was sent")
+	_free_drag_end_rig(rig)
+
+
+## A mouse_button release after a drag that did not release lets the button go, the release
+## carrying no mask.
+func test_a_mouse_button_release_after_a_drag_that_did_not_release_clears_the_mask() -> void:
+	var rig: Array = _drag_end_rig()
+	var gestures: Node = rig[0]
+	var bridge: Node = rig[1]
+	gestures._end_drag(Vector2(40, 30), MOUSE_BUTTON_LEFT, false, true)
+	gestures.send_button(Vector2(40, 30), MOUSE_BUTTON_LEFT, false, false)
+	assert_eq(bridge._held_mask, 0, "the button is let go")
+	assert_eq(bridge._capture.sent_events.size(), 1, "one release was sent")
+	var release: InputEventMouseButton = bridge._capture.sent_events[0]
+	assert_eq(release.button_mask, 0, "the release carries no mask")
+	_free_drag_end_rig(rig)
+
+
 ## An input player re-picking every frame as repick_hover says, with a bridge that owns the
 ## pointer: [gestures, bridge].
 func _repick_rig(repick_hover: bool) -> Array:
@@ -178,3 +249,36 @@ func _real_motion() -> InputEventMouseMotion:
 	var motion := InputEventMouseMotion.new()
 	motion.position = Vector2(50, 30)
 	return motion
+
+
+## An input player with a bridge, a real fired listener and a capture recording every event it
+## dispatches, its held mask carrying LEFT as a drag that ends without releasing leaves it:
+## [gestures, bridge].
+func _drag_end_rig() -> Array:
+	var bridge: Node = _bridge_script.new()
+	var gestures: Node = _input_script.new()
+	gestures.bridge = bridge
+	gestures._fired = load_bridge_script("godot_mcp_fired.gd").new()
+	gestures._fired.bridge = bridge
+	bridge._capture = _recording_capture()
+	bridge._held_mask = MOUSE_BUTTON_MASK_LEFT
+	return [gestures, bridge]
+
+
+func _free_drag_end_rig(rig: Array) -> void:
+	var gestures: Node = rig[0]
+	var bridge: Node = rig[1]
+	gestures._fired.free()
+	bridge._capture.free()
+	_free_rig(rig)
+
+
+## A capture recording every event dispatch sends in sent_events.
+func _recording_capture() -> Node:
+	var script := GDScript.new()
+	script.source_code = (
+		"extends Node\n\nvar sent_events: Array = []\n\n\n"
+		+ "func sent(event: InputEvent) -> void:\n\tsent_events.append(event)\n"
+	)
+	script.reload()
+	return script.new()

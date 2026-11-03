@@ -345,16 +345,20 @@ func _play_pointer_gesture(gesture: String, params: Dictionary) -> String:
 	return error
 
 
-## Refuses a target that cannot be clicked before anything is sent, then dismisses tooltips and
-## aims (resolving the target again, since the dismiss can take a frame) before the click.
+## Refuses a button already held or a target that cannot be clicked before anything is sent, then
+## dismisses tooltips and aims (resolving the target again, since the dismiss can take a frame)
+## before the click.
 func click(params: Dictionary) -> String:
+	var button: int = parse_button(params.get("button", "left"))
+	var held: String = _held_refusal(button)
+	if not held.is_empty():
+		return held
 	var refusal: String = _targets.press_refusal_of(params.get("target"))
 	if not refusal.is_empty():
 		return refusal
-	var button: int = parse_button(params.get("button", "left"))
 	if button == 0:
 		return _unknown_button(params.get("button"))
-	await _dismiss_tooltips()
+	await _hover.dismiss_tooltips()
 	var point: Variant = await aim(params.get("target"), true, false, true)
 	if point is String:
 		return point
@@ -386,11 +390,11 @@ func _send_and_record(
 		_send_drop(window_point, double_click)
 		return
 	var point: Vector2 = to_viewport(window_point)
-	_fired.before_button(pressed, _hovered_control(point) if pressed else null)
+	_fired.before_button(pressed, _hover.hovered_control(point) if pressed else null)
 	send_button(window_point, button, pressed, double_click)
-	var hovered: Control = _hovered_control(point)
+	var hovered: Control = _hover.hovered_control(point)
 	_fired.after_button(hovered, pressed)
-	_hits["pressedOn" if pressed else "releasedOn"] = _describe(hovered)
+	_hits["pressedOn" if pressed else "releasedOn"] = _hover.describe(hovered)
 
 
 ## Sends a left release that drops a GUI drag, reading and describing the Control under the point
@@ -398,78 +402,39 @@ func _send_and_record(
 ## (Window.update_mouse_cursor_state, 4.7.2 window.cpp L935-949), the pointer is already at the
 ## release point, and the drop may free that Control, which the fired listener then skips.
 func _send_drop(window_point: Vector2, double_click: bool) -> void:
-	var before_drop: Control = _hovered_control(to_viewport(window_point))
-	_hits["releasedOn"] = _describe(before_drop)
+	var before_drop: Control = _hover.hovered_control(to_viewport(window_point))
+	_hits["releasedOn"] = _hover.describe(before_drop)
 	_fired.before_button(false, null)
 	send_button(window_point, MOUSE_BUTTON_LEFT, false, double_click)
 	_fired.after_button(before_drop if is_instance_valid(before_drop) else null, false)
 
 
-## Frees every tooltip the root shows before a press whose pressedOn is read, and waits a frame
-## for the free when there was one. A tooltip is mouse-passthrough, so the press reaches the
-## Control beneath (input forwarding skips it, scene/main/viewport.cpp L3184 in 4.7.2), but the
-## root still routes hover into it (_update_mouse_over, L3281-3320), leaving the root's hovered
-## Control null. It is freed with queue_free, as the engine's own _gui_cancel_tooltip does
-## (L1561-1563): the popup's NOTIFICATION_PREDELETE clears the viewport's pointer to it
-## (L771-774), and its removal clears the root's subwindow_over (L502-504), so the next motion
-## (the gesture's move) hovers the Control beneath. The engine cancels a tooltip on the press
-## itself (L2011), not on the release; the bridge dismisses it first anyway, since that cancel's
-## queue_free lands only after pressedOn has been read.
-func _dismiss_tooltips() -> void:
-	var dismissed: bool = false
-	for window: Window in get_tree().root.get_embedded_subwindows():
-		if window.visible and bridge._ui_snapshot.is_tooltip(window):
-			window.queue_free()
-			dismissed = true
-	if dismissed:
-		await get_tree().process_frame
-
-
-## The Control under a viewport point as {path, class}, or null over none, read right after a
-## mouse event there.
-func _control_under(point: Vector2) -> Variant:
-	return _describe(_hovered_control(point))
-
-
-## A Control as {path, class}, or null for none.
-func _describe(control: Control) -> Variant:
-	if control == null:
-		return null
-	return {"path": str(control.get_path()), "class": control.get_class()}
-
-
-## The Control under a viewport point, or null over none, read right after a mouse event there:
-## the topmost visible embedded window holding the point (a popup) answers for it, else the
-## root, each with the Control its GUI picked for its last mouse event.
-func _hovered_control(point: Vector2) -> Control:
-	var viewport: Viewport = get_tree().root
-	var windows: Array[Window] = get_tree().root.get_embedded_subwindows()
-	for index in range(windows.size() - 1, -1, -1):
-		var window: Window = windows[index]
-		if (
-			window.visible
-			and Rect2(Vector2(window.position), Vector2(window.size)).has_point(point)
-		):
-			viewport = window
-			break
-	return viewport.gui_get_hovered_control()
-
-
-## Refuses either end before anything is sent; after the tooltip dismiss, resolves the end and
-## aims at the start, the only end hit-tested: what is dragged may cover the drop point. An
-## element at either end makes aimedAt {from, to}, the point end null.
-func _play_drag(params: Dictionary) -> String:
+## Why a drag cannot play, or "" when it can: a button already held, a target at either end, or an
+## unknown button; nothing is sent.
+func _drag_refusal(params: Dictionary, button: int) -> String:
+	var held: String = _held_refusal(button)
+	if not held.is_empty():
+		return held
 	var refusal: String = _targets.drag_refusal_of(params.get("from"))
 	if not refusal.is_empty():
 		return "from: %s" % refusal
 	refusal = _targets.drag_refusal_of(params.get("to"))
 	if not refusal.is_empty():
 		return "to: %s" % refusal
+	return "" if button != 0 else _unknown_button(params.get("button"))
+
+
+## Refuses a button already held or either end before anything is sent; after the tooltip
+## dismiss, resolves the end and aims at the start, the only end hit-tested: what is dragged may
+## cover the drop point. An element at either end makes aimedAt {from, to}, the point end null.
+func _play_drag(params: Dictionary) -> String:
 	var button: int = parse_button(params.get("button", "left"))
-	if button == 0:
-		return _unknown_button(params.get("button"))
+	var refusal: String = _drag_refusal(params, button)
+	if not refusal.is_empty():
+		return refusal
 	var duration_ms: int = maxi(0, int(params.get("durationMs", 300)))
-	await _dismiss_tooltips()
+	var release: bool = bool(params.get("release", true))
+	await _hover.dismiss_tooltips()
 	var end: Variant = _targets.resolve_target(params.get("to"))
 	if end is String:
 		return "to: %s" % end
@@ -477,7 +442,7 @@ func _play_drag(params: Dictionary) -> String:
 	if start is String:
 		return "from: %s" % start
 	_note_drag_aims(end)
-	await _drag(to_window(start), to_window(_targets.point_of(end)), duration_ms, button)
+	await _drag(to_window(start), to_window(_targets.point_of(end)), duration_ms, button, release)
 	return ""
 
 
@@ -498,10 +463,10 @@ func _note_drag_aims(end: Variant) -> void:
 ## straight line to end for duration_ms (in a recording, its clip frames; and at least
 ## MIN_DRAG_STEPS frames), each carrying the held button in its button_mask and its step as
 ## relative: Godot's viewport starts a drag only from motions with LEFT in the mask whose
-## relatives add up past gui/common/drag_threshold. Records whether the GUI was dragging after
-## any motion, and whether the release dropped it. After each motion the fired listener listens
+## relatives add up past gui/common/drag_threshold. After each motion the fired listener listens
 ## on the Control under the pointer, so the drop target joins before the release drops on it.
-func _drag(start: Vector2, end: Vector2, duration_ms: int, button: int) -> void:
+## With release false the button is left held at end, where _end_drag records it.
+func _drag(start: Vector2, end: Vector2, duration_ms: int, button: int, release: bool) -> void:
 	var root: Window = get_tree().root
 	var gui_drag_started: bool = false
 	_send_and_record(start, button, true, false)
@@ -518,10 +483,22 @@ func _drag(start: Vector2, end: Vector2, duration_ms: int, button: int) -> void:
 		_move_to(start.lerp(end, progress))
 		listen_at(to_viewport(bridge._pointer))
 		gui_drag_started = gui_drag_started or root.gui_is_dragging()
-	await get_tree().process_frame
-	_send_and_record(end, button, false, false)
+	if release:
+		await get_tree().process_frame
+	_end_drag(end, button, release, gui_drag_started)
+
+
+## The end of a drag: without release nothing is sent, and the button stays held at end until a
+## mouse_button release lets it go. Records whether the GUI was dragging after any motion, and
+## whether the release dropped it; a drag that kept the button records released false instead.
+func _end_drag(end: Vector2, button: int, release: bool, gui_drag_started: bool) -> void:
+	if release:
+		_send_and_record(end, button, false, false)
 	_hits["guiDragStarted"] = gui_drag_started
-	_hits["dropAccepted"] = gui_drag_started and root.gui_is_drag_successful()
+	if not release:
+		_hits["released"] = false
+	else:
+		_hits["dropAccepted"] = gui_drag_started and get_tree().root.gui_is_drag_successful()
 
 
 func _play_text(text: String) -> String:
@@ -597,7 +574,7 @@ func _play_mouse_button(params: Dictionary) -> String:
 		return refusal
 	var action: String = str(params.get("action", "press"))
 	if action == "press":
-		await _dismiss_tooltips()
+		await _hover.dismiss_tooltips()
 	var point: Variant = await aim(
 		params.get("target"), action != "release", false, action == "press"
 	)
@@ -638,11 +615,11 @@ func _play_scroll(params: Dictionary) -> String:
 	var refusal: String = _scroll_refusal(params)
 	if not refusal.is_empty():
 		return refusal
-	await _dismiss_tooltips()
+	await _hover.dismiss_tooltips()
 	var point: Variant = await aim(params.get("target"), true, true, false)
 	if point is String:
 		return point
-	_hits["scrolledOn"] = _control_under(point)
+	_hits["scrolledOn"] = _hover.control_under(point)
 	var window_point: Vector2 = to_window(point)
 	var direction: String = str(params.get("direction", "down"))
 	var factor: float = float(params.get("factor", 1.0))
@@ -679,8 +656,8 @@ func _scroll_refusal(params: Dictionary) -> String:
 ## hoveredOn. Returns that Control, or null over none.
 func _settle_hover(point: Vector2) -> Control:
 	await get_tree().process_frame
-	var control: Control = _hovered_control(point)
-	_hits["hoveredOn"] = _describe(control)
+	var control: Control = _hover.hovered_control(point)
+	_hits["hoveredOn"] = _hover.describe(control)
 	return control
 
 
@@ -716,7 +693,7 @@ func _play_hover(params: Dictionary) -> String:
 		_hits["warning"] = "no tooltip showed within %d ms" % timeout_ms
 	else:
 		var tooltip: Dictionary = _hover.describe_tooltip(popup)
-		tooltip["owner"] = _describe(tooltip_owner)
+		tooltip["owner"] = _hover.describe(tooltip_owner)
 		_hits["tooltip"] = tooltip
 	return ""
 
@@ -758,7 +735,7 @@ func aim(target: Variant, checks_hit: bool, scroll: bool, opens: bool) -> Varian
 ## Listens, for the playing gesture's fired list, on the chain of the Control under a viewport
 ## point, read right after a motion there (the fired listener's listen).
 func listen_at(point: Vector2) -> void:
-	_fired.listen(_hovered_control(point))
+	_fired.listen(_hover.hovered_control(point))
 
 
 ## Records an aim as aimedAt and, with checks_hit, answers why the GUI would keep the press from
@@ -795,7 +772,7 @@ func _aim_refusal(aimed: Dictionary, point: Vector2, scroll: bool) -> String:
 		refusal = _targets.covering_window_refusal(aimed)
 	if not refusal.is_empty():
 		return refusal
-	var hit: Variant = _targets.inner_hit(aimed, _hovered_control(point))
+	var hit: Variant = _targets.inner_hit(aimed, _hover.hovered_control(point))
 	if hit is String:
 		return hit
 	if aimed["kind"] == "control":
@@ -974,6 +951,22 @@ func parse_button(value: Variant) -> int:
 
 func _unknown_button(value: Variant) -> String:
 	return "unknown mouse button '%s'; use left, right or middle" % str(value)
+
+
+## Refuses a click or a drag while the button it would press is held: the press would drop the
+## payload a drag with release false left held (scene/main/viewport.cpp's press path), or press
+## over the held button again. Empty when the gesture can play.
+func _held_refusal(button: int) -> String:
+	if button == 0 or (bridge._held_mask & (1 << (button - 1))) == 0:
+		return ""
+	var name: Variant = MOUSE_BUTTONS.find_key(button)
+	return (
+		(
+			"the %s button is held (a drag with release: false, or a mouse_button press); "
+			+ "release it with mouse_button action release first."
+		)
+		% (name if name != null else button)
+	)
 
 
 ## The Key a name like Enter, A or F1 stands for; KEY_NONE for an unknown name or a combination

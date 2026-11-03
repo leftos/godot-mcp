@@ -98,6 +98,39 @@ public sealed class ArmTests : IAsyncDisposable
         Assert.Equal(pid, answeredPid);
     }
 
+    // The bridge lets go of the input a drive held when the server detaches; a left release during a GUI drag would
+    // perform the drop where it is (4.7.2 viewport.cpp's release path), so the bridge cancels the drag first.
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task ADetachDuringAHeldDragCancelsTheDropInsteadOfPerformingIt()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await _project.ArmProjectAsync(_probe.Directory, cancellationToken: cancellation);
+        int pid = await StartDormantGameAsync(cancellation);
+        await _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, cancellationToken: cancellation);
+        JsonNode held = JsonNode.Parse(
+            await _runtime.DragAsync(
+                new InputTarget("DragSource"),
+                new InputTarget("DropTarget"),
+                300,
+                "left",
+                false,
+                cancellationToken: cancellation
+            )
+        )!;
+        Assert.True(held["guiDragStarted"]!.GetValue<bool>(), held.ToJsonString());
+
+        await _project.DetachProjectAsync(cancellationToken: cancellation);
+        bool dormantAgain = await Poll.UntilAsync(() => File.Exists(DormantFilePath(pid)), FileWait, cancellation);
+        await _project.AttachProjectAsync(_probe.Directory, AttachWaitSeconds, cancellationToken: cancellation);
+        JsonNode drop = await RunAsync(
+            "var target = scene_tree.root.get_node(\"Main/DropTarget\")\n\t" + "return [target.get_node(\"DropLabel\").text, target.drop_count]"
+        );
+
+        Assert.True(dormantAgain, "the detach left the game dormant");
+        Assert.Equal("drop here", drop[0]!.GetValue<string>());
+        Assert.Equal(0, drop[1]!.GetValue<int>());
+    }
+
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task StopProjectQuitsAJoinedDormantGame()
     {

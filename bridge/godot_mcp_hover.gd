@@ -1,9 +1,10 @@
 @tool
 extends Node
-## The tooltip reader, the input player's (godot_mcp_input.gd) child: for a hover, finds the
-## Control whose tooltip Godot shows at the pointer, waits for its tooltip popup to show and
-## describes it. The hover gesture itself (the aim, hoveredOn, the warnings) stays in the input
-## player.
+## The tooltip and point reader, the input player's (godot_mcp_input.gd) child: for a hover, finds
+## the Control whose tooltip Godot shows at the pointer, waits for its tooltip popup to show and
+## describes it; for every pointer gesture, reads and describes the Control under a point, and
+## frees the tooltips a press must reach past. The hover gesture itself (the aim, hoveredOn, the
+## warnings) stays in the input player.
 
 const TooltipSpans := preload("godot_mcp_tooltip_spans.gd")
 
@@ -132,3 +133,53 @@ func _find_label(node: Node) -> Label:
 		if found != null:
 			return found
 	return null
+
+
+## Frees every tooltip the root shows before a press whose pressedOn is read, and waits a frame
+## for the free when there was one. A tooltip is mouse-passthrough, so the press reaches the
+## Control beneath (input forwarding skips it, scene/main/viewport.cpp L3184 in 4.7.2), but the
+## root still routes hover into it (_update_mouse_over, L3281-3320), leaving the root's hovered
+## Control null. It is freed with queue_free, as the engine's own _gui_cancel_tooltip does
+## (L1561-1563): the popup's NOTIFICATION_PREDELETE clears the viewport's pointer to it
+## (L771-774), and its removal clears the root's subwindow_over (L502-504), so the next motion
+## (the gesture's move) hovers the Control beneath. The engine cancels a tooltip on the press
+## itself (L2011), not on the release; the bridge dismisses it first anyway, since that cancel's
+## queue_free lands only after pressedOn has been read.
+func dismiss_tooltips() -> void:
+	var dismissed: bool = false
+	for window: Window in get_tree().root.get_embedded_subwindows():
+		if window.visible and gestures.bridge._ui_snapshot.is_tooltip(window):
+			window.queue_free()
+			dismissed = true
+	if dismissed:
+		await get_tree().process_frame
+
+
+## The Control under a viewport point as {path, class}, or null over none, read right after a
+## mouse event there.
+func control_under(point: Vector2) -> Variant:
+	return describe(hovered_control(point))
+
+
+## A Control as {path, class}, or null for none.
+func describe(control: Control) -> Variant:
+	if control == null:
+		return null
+	return {"path": str(control.get_path()), "class": control.get_class()}
+
+
+## The Control under a viewport point, or null over none, read right after a mouse event there:
+## the topmost visible embedded window holding the point (a popup) answers for it, else the
+## root, each with the Control its GUI picked for its last mouse event.
+func hovered_control(point: Vector2) -> Control:
+	var viewport: Viewport = get_tree().root
+	var windows: Array[Window] = get_tree().root.get_embedded_subwindows()
+	for index in range(windows.size() - 1, -1, -1):
+		var window: Window = windows[index]
+		if (
+			window.visible
+			and Rect2(Vector2(window.position), Vector2(window.size)).has_point(point)
+		):
+			viewport = window
+			break
+	return viewport.gui_get_hovered_control()

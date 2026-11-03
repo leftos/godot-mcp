@@ -412,6 +412,17 @@ public sealed class InputValidationTests : IDisposable
     }
 
     [Fact]
+    public void ADragReleasesUnlessReleaseIsFalse()
+    {
+        JsonObject released = RuntimeTools.BuildDragParameters(Point, Point, 300, "left", true);
+        JsonObject held = RuntimeTools.BuildDragParameters(Point, Point, 300, "left", false);
+
+        Assert.Equal("drag", released["gesture"]!.GetValue<string>());
+        Assert.True(released["release"]!.GetValue<bool>(), "a drag releases at the target by default");
+        Assert.False(held["release"]!.GetValue<bool>(), "release false leaves the button held there");
+    }
+
+    [Fact]
     public async Task TypeTextRefusesEmptyText() =>
         await Assert.ThrowsAsync<McpException>(() => _tools.TypeTextAsync(string.Empty, cancellationToken: TestContext.Current.CancellationToken));
 

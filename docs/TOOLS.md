@@ -814,11 +814,11 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 
 ### `drag`
 
-- **Does:** presses at `from`, moves in a straight line to `to` over `durationMs` (default 300, at least 3 frames; in a recording, clip time: 60 movie frames a second, however slowly the game runs), each motion carrying the held button, releases at `to`.
+- **Does:** presses at `from`, moves in a straight line to `to` over `durationMs` (default 300, at least 3 frames; in a recording, clip time: 60 movie frames a second, however slowly the game runs), each motion carrying the held button, releases at `to`. With `release: false` (default true) it stops at `to` with the button still held (`heldButtonMask` shows it), and the result adds `released: false` and leaves out `releasedOn` and `dropAccepted`.
 
   `pressedOn` and `releasedOn` name the Control under the press and under the release point (not the one Godot sends the release to, which is always the pressed one), `guiDragStarted` whether Godot's GUI began a drag, `dropAccepted` whether a Control took the drop, `fired` the signals it set off on the pressed Control's chain and the drop target's.
-- **Use:** drag and drop, sliders, panning; `button` as `click`.
-- **Edges:** Godot starts a GUI drag only once the path passes `gui/common/drag_threshold` (10 px by default); a shorter drag is a click.
+- **Use:** drag and drop, sliders, panning; `button` as `click`. `release: false` to screenshot or read what only a drag in progress draws (an aiming arrow), then end it with `mouse_button` `release` of that button.
+- **Edges:** Godot starts a GUI drag only once the path passes `gui/common/drag_threshold` (10 px by default); a shorter drag is a click. A drag left held ends with a `mouse_button` release of its button, or when `stop_project` or `restart_project` releases every held button, or the bridge loses its connection. A `click` or `drag` while its button is held is refused (`the left button is held (a drag with release: false, or a mouse_button press); release it with mouse_button action release first.`), since Godot would drop the held payload on the press; and the bridge losing its connection cancels a held GUI drag rather than dropping it.
 
 ### `type_text`
 
@@ -836,7 +836,7 @@ A `warning` is added after any other when the pressed Control was a disabled `Ba
 ### `mouse_button`
 
 - **Does:** moves to `target`, then presses or releases `button` (`action` `press` default, or `release`), or with `action` `move` only moves, pressing nothing and closing no tooltip (`button` ignored); held buttons stay in later motions' `button_mask`. A press answers `pressedOn`, a release `releasedOn`, a move `hoveredOn`; every action answers `fired`, a separate release on the chain of the press it follows (kept until the next press, a freed node skipped).
-- **Use:** a drag by hand: `mouse_button` press, `simulate_input` `mouse_motion` events, `mouse_button` release; for paths `drag` cannot draw. `move` to hover without waiting for a tooltip; `hover` waits for it.
+- **Use:** a drag by hand: `mouse_button` press, `simulate_input` `mouse_motion` events, `mouse_button` release; for paths `drag` cannot draw (`drag` with `release: false` plays the motions for a straight path, leaving the button held for a `release` here). A held button stays until a `release` of it, `stop_project`, `restart_project` or the bridge losing its connection. `move` to hover without waiting for a tooltip; `hover` waits for it.
 
 ### `hover`
 
