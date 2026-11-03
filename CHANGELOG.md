@@ -7,6 +7,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 ### Added
 
 - `godot-mcp --run-scratches` takes repeatable `--user-arg` and `--engine-arg`, the terminal form of `run_scratches`' `options.userArgs` and `options.engineArgs`.
+- `call_game_tool`'s `PlayStep` on a C# scratch root takes a step's name as well as its index, as `call_method` does.
 
 ## 0.30.0 - 2026-11-03
 

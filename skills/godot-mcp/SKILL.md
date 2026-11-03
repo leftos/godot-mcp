@@ -239,7 +239,7 @@ Prefer it for any change of more than one edit, then `validate`, then `preview_s
 
   Frames at set moments (0.5 s and 1.2 s into a step, or every 0.1 s for 2 s): `capture_frames {at}` or `{options: {every, for}}` grabs them in one call on game time, following `time_scale`.
 
-  When the moments count from a method that starts the effect (a scratch's `PlayStep`), give it as `options.call {node, method, args}` (`PlayStep` takes the step's name there and in `call_method`, as `run_scratches` reports it), or a C# game's own tool by name as `{tool, args: {...}}`: the bridge calls it in the frame the clock starts, so no round trip between a `call_method` and the capture shifts the points.
+  When the moments count from a method that starts the effect (a scratch's `PlayStep`), give it as `options.call {node, method, args}` (`PlayStep` takes the step's name there, in `call_method` and in `call_game_tool`, as `run_scratches` reports it), or a C# game's own tool by name as `{tool, args: {...}}`: the bridge calls it in the frame the clock starts, so no round trip between a `call_method` and the capture shifts the points.
 
   When the moments count from a condition (a tray showing, then slow motion), give it as `options.start {node, property, equals | exists | expression | signal, edge?, timeoutMs?, then?, call?}`, laid out as `wait_for`'s: the points count from the frame it is met, `start.then {call?, timeScale?}` (no `pause` or `record`) runs in that frame before `options.call`, and a start that times out answers `stopped: true` with `start: {met: false, last}`.
 

@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Godot;
 using GodotMcp.Dotnet.Core;
@@ -30,6 +31,12 @@ internal static class GameTools
 
     /// <summary>The return type written for a method whose signature could not be read at all.</summary>
     private const string UnknownReturns = "unknown";
+
+    /// <summary>A scratch root's getter for its step count, as the scratch protocol names it.</summary>
+    private const string StepCountGetter = "GetStepCount";
+
+    /// <summary>A scratch root's getter for one step's name, as the scratch protocol names it.</summary>
+    private const string StepNameGetter = "GetStepName";
 
     /// <summary>The marked methods of the game's load context, walked on the first request of the game process.</summary>
     private static List<Marked>? _marked;
@@ -95,13 +102,21 @@ internal static class GameTools
         return placed.Reason is { } reason ? Helper.Failure(reason) : Run(placed, request);
     }
 
-    /// <summary>Binds the request's named <c>args</c> to the tool's parameters and runs it on its owner.</summary>
+    /// <summary>
+    /// Binds the request's named <c>args</c> to the tool's parameters and runs it on its owner, a call that names a scratch
+    /// step taking that step's index in place of its name.
+    /// </summary>
     private static JsonObject Run(Placed placed, JsonObject request)
     {
+        JsonObject args = request["args"]?.AsObject() ?? [];
+        if (NameTheStep(placed, args) is { } refusing)
+        {
+            return Helper.Failure(refusing);
+        }
         OverloadChoice choice;
         try
         {
-            choice = NamedArguments.Bind(placed.Tool.Method, request["args"]?.AsObject() ?? [], Resolver);
+            choice = NamedArguments.Bind(placed.Tool.Method, args, Resolver);
         }
         catch (OverloadException e)
         {
@@ -109,6 +124,89 @@ internal static class GameTools
         }
         int maxDepth = request["maxDepth"]?.GetValue<int>() ?? Calls.DefaultDepth;
         return Calls.Invoke(choice, placed.Instance, new Calls.Shape(placed.Tool.Mark.Name, maxDepth, Keep: false, IsStale(request)));
+    }
+
+    /// <summary>
+    /// <paramref name="args"/> with a scratch step's name replaced by the index of the step it names; null when the call
+    /// names no step, which binds exactly as it does without one, or why the name is refused before game code runs. A String
+    /// is always a name, never read as an index, and the owner's steps are read live on every call.
+    /// </summary>
+    private static string? NameTheStep(Placed placed, JsonObject args)
+    {
+        if (StepArgument(placed, args) is not { } parameter || placed.Instance is not { } owner)
+        {
+            return null;
+        }
+        string stepName = args[parameter]!.GetValue<string>();
+        StepMatch match = ReadSteps(owner, stepName);
+        if (match.Refusal is { } refused)
+        {
+            return refused;
+        }
+        args[parameter] = match.Index!.Value;
+        return null;
+    }
+
+    /// <summary>
+    /// The parameter a scratch step's name binds to: the tool's own method is <c>PlayStep</c> taking one integer, the owner
+    /// has the scratch protocol's two getters, and <paramref name="args"/> holds that parameter's one value as a JSON
+    /// string. Null for a call that names no step.
+    /// </summary>
+    private static string? StepArgument(Placed placed, JsonObject args)
+    {
+        if (!PlaysAStep(placed) || !HasStepGetters(placed.Instance))
+        {
+            return null;
+        }
+        string? name = placed.Tool.Method.GetParameters()[0].Name;
+        return
+            name is not null && args.Count == 1 && args.TryGetPropertyValue(name, out JsonNode? node) && node?.GetValueKind() == JsonValueKind.String
+            ? name
+            : null;
+    }
+
+    /// <summary>Whether the tool is the game's own <c>PlayStep</c>, taking one integer.</summary>
+    private static bool PlaysAStep(Placed placed)
+    {
+        MethodInfo method = placed.Tool.Method;
+        ParameterInfo[] parameters = method.GetParameters();
+        return method.Name == "PlayStep" && parameters.Length == 1 && IsInteger(parameters[0].ParameterType);
+    }
+
+    /// <summary>Whether <paramref name="owner"/> has the scratch protocol's two getters.</summary>
+    private static bool HasStepGetters(Node? owner) => owner is { } node && node.HasMethod(StepCountGetter) && node.HasMethod(StepNameGetter);
+
+    private static bool IsInteger(Type type) => type == typeof(int) || type == typeof(long);
+
+    /// <summary>
+    /// The step <paramref name="stepName"/> names on <paramref name="owner"/>, its names read now through the two getters; or
+    /// why a count or a name came back as another type, or why reading them raised.
+    /// </summary>
+    private static StepMatch ReadSteps(Node owner, string stepName)
+    {
+        try
+        {
+            Variant count = owner.Call(StepCountGetter);
+            if (count.VariantType != Variant.Type.Int)
+            {
+                return new StepMatch(null, $"PlayStep \"{stepName}\": GetStepCount returned {GD.VarToStr(count)}, not a step count");
+            }
+            List<string> names = [];
+            for (int index = 0; index < count.AsInt32(); index++)
+            {
+                Variant nameAt = owner.Call(StepNameGetter, index);
+                if (nameAt.VariantType != Variant.Type.String)
+                {
+                    return new StepMatch(null, $"PlayStep \"{stepName}\": GetStepName({index}) returned {GD.VarToStr(nameAt)}, not a name");
+                }
+                names.Add(nameAt.AsString());
+            }
+            return StepNames.Index(stepName, names);
+        }
+        catch (Exception e)
+        {
+            return new StepMatch(null, $"PlayStep \"{stepName}\": reading its step names raised: {e.Message}");
+        }
     }
 
     /// <summary>

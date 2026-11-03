@@ -1,8 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
+using GodotMcp.Server.CSharp;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
+using GodotMcp.TestSupport;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol;
@@ -658,6 +660,73 @@ public sealed class GameToolTests(SharedCsToolsSession shared) : IClassFixture<S
         JsonObject then = waited["then"]!["call"]!.AsObject();
         Assert.Equal("Huge", then["tool"]!.GetValue<string>());
         Assert.Equal("9007199254740993", then["value"]!.ToJsonString());
+    }
+
+    /// <summary>A scratch root whose marked PlayStep plays one of three steps by its index, recorded for the call after it.</summary>
+    private const string StepRootSource = """
+        using Godot;
+
+        namespace CsProbe;
+
+        public partial class StepRoot : Node
+        {
+            private static readonly string[] StepNames = ["open", "move", "close"];
+            private int _played = -1;
+
+            public int GetStepCount() => StepNames.Length;
+
+            public string GetStepName(int index) => StepNames[index];
+
+            [GodotMcpTool("Plays a step.")]
+            public void PlayStep(int index) => _played = index;
+
+            [GodotMcpTool("The step played last.", ReadOnly = true)]
+            public int Played() => _played;
+        }
+
+        """;
+
+    private const string StepRootScene = """
+        [gd_scene format=3]
+
+        [ext_resource type="Script" path="res://StepRoot.cs" id="1_script"]
+
+        [node name="StepRoot" type="Node"]
+        script = ExtResource("1_script")
+
+        """;
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task CallGameToolPlaysAScratchStepByItsName()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        using var project = CsProbeProject.BuiltWith(
+            new Dictionary<string, string> { ["StepRoot.cs"] = StepRootSource, ["step_root.tscn"] = StepRootScene }
+        );
+        using TempDirectory cache = new();
+        await using SessionHarness harness = new();
+        await harness.Sessions.LaunchAsync(
+            new LaunchRequest(project.Directory, "res://step_root.tscn", [], [], Quiet: true, false, Prepare: true),
+            null,
+            cancellation
+        );
+        RuntimeTools tools = new(harness.Sessions, new CSharpBridge(new HelperCache(cache.Combine("dotnet")), Installation.FindDotnetExtension));
+
+        JsonObject named = await CallAsync(tools, "PlayStep", """{"index": "move"}""", null, cancellation);
+        int namedPlayed = (await CallAsync(tools, "Played", null, null, cancellation))["value"]!.GetValue<int>();
+        JsonObject numbered = await CallAsync(tools, "PlayStep", """{"index": 2}""", null, cancellation);
+        int numberedPlayed = (await CallAsync(tools, "Played", null, null, cancellation))["value"]!.GetValue<int>();
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            CallAsync(tools, "PlayStep", """{"index": "nope"}""", null, cancellation)
+        );
+
+        Assert.Equal("PlayStep", named["tool"]!.GetValue<string>());
+        Assert.Null(named["value"]);
+        Assert.Equal(1, namedPlayed);
+        Assert.Equal("PlayStep", numbered["tool"]!.GetValue<string>());
+        Assert.Equal(2, numberedPlayed);
+        Assert.StartsWith("call_game_tool failed: ", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("""PlayStep "nope" matches no step; its steps are 0: open, 1: move, 2: close""", refused.Message, StringComparison.Ordinal);
     }
 
     private async Task<JsonObject> WaitCallAsync(MethodCall call, CancellationToken cancellation)
