@@ -27,3 +27,11 @@ linear: godot-mcp
 Each runs through `run.ps1`, which wraps it in `gate run` through `tools/gate.ps1` and writes `.tmp/<command>.log`: `pwsh run.ps1 build` (warnings are errors), `pwsh run.ps1 test` (unit), `pwsh run.ps1 gdtest` (headless GDScript tests), `pwsh run.ps1 pytest` (for a change under `tools/`), `pwsh run.ps1 format-check`, and `pwsh run.ps1 itest -Since origin/main` for a landing (the full `pwsh run.ps1 itest` at a release).
 
 `prek run --all-files` runs the lint hooks (CSharpier, line length, the build, gdformat, gdlint, gdcomplexity, ruff) and no test.
+
+## Release step
+
+A Ship (`/monitor-inbox`, `/ship`, a `nextup` checkpoint) cuts a release without asking whenever `CHANGELOG.md` has an `## Unreleased` section with bullets; landings that took no bullet (docs only) wait for the next one.
+
+1. Run the release gates: `pwsh run.ps1 build`, `test`, `gdtest`, `format-check` and the full `pwsh run.ps1 itest`. A red gate holds the release and becomes the next item, booked Urgent.
+2. Run DEVELOPMENT.md's "CI and releases" procedure as written: choose the version by CLAUDE.md's rule, land the version commit, push the tag, `linear release complete`, `pwsh run.ps1 install` from the main checkout, then the announcement to every repo that registers `godot`.
+3. The install's stale-session, `install: stopped …`, `unmarked, skipped` and sweep-error lines go into the reply, as CLAUDE.md says.
