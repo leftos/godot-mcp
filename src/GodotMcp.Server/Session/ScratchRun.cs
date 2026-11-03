@@ -27,7 +27,7 @@ internal sealed record ScratchCeiling(double Seconds, string Source)
 }
 
 /// <summary>
-/// A scratch scene to play: its name (the file's, without .tscn), its res:// path, its pace in seconds, the user arguments it
+/// A scratch scene to play: its name (the file's, without its extension), its res:// path, its pace in seconds, the user arguments it
 /// starts with, the engine arguments its game launches with, the ceiling the call or the profile gives it, if any, the reason the
 /// profile knows it to fail, if any, the profile's reason for its pace, if any, the paces of single steps, keyed by a step's index
 /// or its name, the setup steps the profile declares for it, keyed the same way, the patterns its output must match a line of,

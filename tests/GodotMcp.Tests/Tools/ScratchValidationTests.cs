@@ -30,7 +30,7 @@ public sealed class ScratchValidationTests : IDisposable
     public void Dispose() => _temp.Dispose();
 
     [Fact]
-    public void LeftOutScenesAreEveryTscnDirectlyInTheFolderInNameOrder()
+    public void LeftOutScenesAreEverySceneFileDirectlyInTheFolderInNameOrder()
     {
         WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
 
@@ -40,6 +40,60 @@ public sealed class ScratchValidationTests : IDisposable
         Assert.Equal(["res://Scratch/Alpha.tscn", "res://Scratch/Beta.tscn"], plan.Scenes.Select(scene => scene.ResPath));
         Assert.True(plan.Prepare);
         Assert.Equal(ScratchDetails.Default, plan.Details);
+    }
+
+    [Fact]
+    public void AnXscnInTheFolderIsListedBesideTscnScenes()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+        WriteScene("Scratch/Delta.scn", "Delta");
+        WriteScene("Scratch/Gamma.xscn", "Gamma");
+        File.WriteAllText(Path.Combine(_project, "Scratch", "Gamma.xscn.uid"), "uid://abc\n");
+
+        ScratchPlan plan = Plan(null);
+
+        Assert.Equal(["Alpha", "Beta", "Delta", "Gamma"], plan.Scenes.Select(scene => scene.Name));
+        Assert.Equal(
+            ["res://Scratch/Alpha.tscn", "res://Scratch/Beta.tscn", "res://Scratch/Delta.scn", "res://Scratch/Gamma.xscn"],
+            plan.Scenes.Select(scene => scene.ResPath)
+        );
+    }
+
+    [Fact]
+    public void ABareNameResolvesToTheFilesRealExtension()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+        WriteScene("Scratch/Gamma.xscn", "Gamma");
+
+        ScratchScenePlan scene = Assert.Single(Plan(["Gamma"]).Scenes);
+
+        Assert.Equal("Gamma", scene.Name);
+        Assert.Equal("res://Scratch/Gamma.xscn", scene.ResPath);
+    }
+
+    [Fact]
+    public void ATscnAndAnXscnOfOneNameAreRefused()
+    {
+        WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+        WriteScene("Scratch/Alpha.xscn", "AlphaRoot");
+        const string refusal =
+            "scratch.folder res://Scratch holds Alpha.tscn and Alpha.xscn, which share the scene name Alpha; keep one, or pass res:// paths.";
+
+        Assert.Equal(refusal, Refused(() => Plan(null)));
+        Assert.Equal(refusal, Refused(() => Plan(["Alpha"])));
+        Assert.Equal("res://Scratch/Alpha.xscn", Assert.Single(Plan(["res://Scratch/Alpha.xscn"]).Scenes).ResPath);
+    }
+
+    [Fact]
+    public void AFolderWithOnlyOtherFilesIsRefused()
+    {
+        Directory.CreateDirectory(Path.Combine(_project, "Empty"));
+        File.WriteAllText(Path.Combine(_project, "Empty", "notes.txt"), "not a scene");
+        WriteProfile("""{ "scratch": { "folder": "Empty" } }""");
+
+        string message = Refused(() => Plan(null));
+
+        Assert.StartsWith("scratch.folder res://Empty holds no scene (.tscn, .scn or .xscn): looked in ", message, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -122,11 +176,12 @@ public sealed class ScratchValidationTests : IDisposable
     public void ASceneNameNotInTheFolderIsRefusedListingItsScenes()
     {
         WriteProfile("""{ "scratch": { "folder": "Scratch" } }""");
+        WriteScene("Scratch/Gamma.xscn", "Gamma");
 
         string message = Refused(() => Plan(["Beta", "Hidden"]));
 
         Assert.Equal(
-            "scene 'Hidden' is not in the scratch folder res://Scratch; its scenes are Alpha, Beta. Pass one of those, or a res:// path.",
+            "scene 'Hidden' is not in the scratch folder res://Scratch; its scenes are Alpha, Beta, Gamma. Pass one of those, or a " + "res:// path.",
             message
         );
     }

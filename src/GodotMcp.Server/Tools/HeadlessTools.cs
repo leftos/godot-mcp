@@ -33,7 +33,7 @@ internal sealed partial class HeadlessTools(SessionRegistry sessions)
 
     private static readonly string[] ValidateExtensions = [".gd", ".cs", ".tscn", ".scn", ".xscn", ".tres", ".res", ".xres"];
     private static readonly string[] SweepExtensions = [".gd", ".tscn", ".xscn", ".tres", ".xres"];
-    private static readonly string[] SceneExtensions = [".tscn", ".scn", ".xscn"];
+    internal static readonly string[] SceneExtensions = [".tscn", ".scn", ".xscn"];
     private static readonly string[] BuildStatesChecked = ["built", "up-to-date", "failed"];
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 

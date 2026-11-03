@@ -43,7 +43,6 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         + "a background run's status file stays whole, so a later read with \"all\" still sees every step, and a running run's "
         + "scenes are returned as they are.";
 
-    private const string SceneEnding = ".tscn";
     private const string ScratchAuto = "--scratch-auto";
     private const string UserArgsSeparator = "--";
     private const string AlternateUserArgsSeparator = "++";
@@ -126,8 +125,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     public async Task<string> RunScratchesAsync(
         [Description("The folder that holds the project's project.godot.")] string projectPath,
         [Description(
-            "The scenes to play, in order: names of .tscn files in scratch.folder (the file name without .tscn) or res:// paths; "
-                + "every .tscn directly in scratch.folder, by name, when left out."
+            "The scenes to play, in order: names of scene files (.tscn, .scn or .xscn) in scratch.folder (the file name without its "
+                + "extension) or res:// paths; every such scene directly in scratch.folder, by name, when left out."
         )]
             string[]? scenes = null,
         [Description(
@@ -733,7 +732,8 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     private static IReadOnlyDictionary<string, ScratchPace> StepPaces(ScratchPace? entry, ScratchOptions options) =>
         options.Pace is null && entry is not null ? entry.Steps : ReadOnlyDictionary<string, ScratchPace>.Empty;
 
-    /// <summary>The scenes as res:// paths: those given, each checked, or every .tscn directly in scratch.folder by ordinal name.</summary>
+    /// <summary>The scenes as res:// paths: those given, each checked, or every scene file (.tscn, .scn, .xscn) directly in
+    /// scratch.folder by ordinal name.</summary>
     /// <exception cref="McpException">No scenes and no folder, an empty list, a name not in the folder, or a path that is not a scene.</exception>
     private static List<string> ResolveScenes(ProjectProfile profile, ScratchProfile scratch, IReadOnlyList<string>? scenes)
     {
@@ -745,7 +745,7 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         if (scenes is null)
         {
             string folder = ScratchFolder(profile);
-            return [.. FolderScenes(profile.ProjectDir, folder).Select(name => ResPath(folder, name))];
+            return [.. FolderScenes(profile.ProjectDir, folder).Select(file => ResPath(folder, file))];
         }
 
         return [.. scenes.Select(scene => ResolveScene(profile, scene))];
@@ -764,12 +764,13 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
                 $"scene '{scene}' is a name, which run_scratches looks up in scratch.folder, and {profile.FilePath} sets none; pass its "
                     + "res:// path, or add scratch.folder."
             );
-        List<string> names = FolderScenes(profile.ProjectDir, folder);
-        return names.Contains(scene, StringComparer.Ordinal)
-            ? ResPath(folder, scene)
+        List<string> files = FolderScenes(profile.ProjectDir, folder);
+        string? match = files.FirstOrDefault(file => string.Equals(Path.GetFileNameWithoutExtension(file), scene, StringComparison.Ordinal));
+        return match is not null
+            ? ResPath(folder, match)
             : throw new McpException(
-                $"scene '{scene}' is not in the scratch folder {FolderResPath(folder)}; its scenes are {string.Join(", ", names)}. Pass one "
-                    + "of those, or a res:// path."
+                $"scene '{scene}' is not in the scratch folder {FolderResPath(folder)}; its scenes are "
+                    + $"{string.Join(", ", files.Select(Path.GetFileNameWithoutExtension))}. Pass one of those, or a res:// path."
             );
     }
 
@@ -785,8 +786,10 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             ?? throw new McpException($"{profile.FilePath} (scratch): \"folder\" is not set; pass scenes, or add scratch.folder.");
     }
 
-    /// <summary>The names of the .tscn files directly in the folder, in ordinal order.</summary>
-    /// <exception cref="McpException">The folder is outside the project, missing, differs in case from the disk, or holds no scene.</exception>
+    /// <summary>The scene files (.tscn, .scn, .xscn) directly in the folder, in ordinal order of their names.</summary>
+    /// <exception cref="McpException">
+    /// The folder is outside the project, missing, differs in case from the disk, holds no scene, or holds two files of one scene name.
+    /// </exception>
     private static List<string> FolderScenes(string projectDir, string folder)
     {
         string directory = Path.GetFullPath(Path.Combine(projectDir, StripRes(folder)));
@@ -808,18 +811,32 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             );
         }
 
-        List<string> names =
+        List<string> files =
         [
             .. Directory
-                .EnumerateFiles(directory, "*" + SceneEnding)
-                .Where(file => file.EndsWith(SceneEnding, StringComparison.Ordinal))
-                .Select(Path.GetFileNameWithoutExtension)
+                .EnumerateFiles(directory)
+                .Select(file => Path.GetFileName(file))
                 .OfType<string>()
-                .Order(StringComparer.Ordinal),
+                .Where(name => HeadlessTools.SceneExtensions.Contains(Path.GetExtension(name)!, StringComparer.Ordinal))
+                .OrderBy(name => Path.GetFileNameWithoutExtension(name), StringComparer.Ordinal)
+                .ThenBy(name => Path.GetExtension(name), StringComparer.Ordinal),
         ];
-        return names.Count > 0
-            ? names
-            : throw new McpException($"scratch.folder {FolderResPath(folder)} holds no .tscn scene: looked in {directory}.");
+        IGrouping<string?, string>? shared = files
+            .GroupBy(file => Path.GetFileNameWithoutExtension(file), StringComparer.Ordinal)
+            .FirstOrDefault(group => group.Skip(1).Any());
+        if (shared is not null)
+        {
+            List<string> group = [.. shared];
+            string listed = group.Count == 2 ? $"{group[0]} and {group[1]}" : $"{string.Join(", ", group.Take(group.Count - 1))} and {group[^1]}";
+            throw new McpException(
+                $"scratch.folder {FolderResPath(folder)} holds {listed}, which share the scene name "
+                    + $"{Path.GetFileNameWithoutExtension(group[0])}; keep one, or pass res:// paths."
+            );
+        }
+
+        return files.Count > 0
+            ? files
+            : throw new McpException($"scratch.folder {FolderResPath(folder)} holds no scene (.tscn, .scn or .xscn): looked in {directory}.");
     }
 
     /// <exception cref="McpException">The pace is not above 0 and at most the longest wait.</exception>
@@ -1013,10 +1030,10 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         }
     }
 
-    private static string ResPath(string folder, string name)
+    private static string ResPath(string folder, string fileName)
     {
         string relative = StripRes(folder).Replace('\\', '/').Trim('/');
-        return relative.Length == 0 ? $"res://{name}{SceneEnding}" : $"res://{relative}/{name}{SceneEnding}";
+        return relative.Length == 0 ? $"res://{fileName}" : $"res://{relative}/{fileName}";
     }
 
     private static string FolderResPath(string folder) => "res://" + StripRes(folder).Replace('\\', '/').Trim('/');

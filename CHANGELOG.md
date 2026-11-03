@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- `run_scratches` finds a scratch folder's `.xscn` and `.scn` scenes beside its `.tscn` ones, and refuses two scene files sharing one name.
+
 ## 0.29.0 - 2026-11-02
 
 ### Added
