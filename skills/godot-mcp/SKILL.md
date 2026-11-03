@@ -19,6 +19,8 @@ A drive is always the same five moves: **start → look → act → wait → che
 
    `scene` picks another scene; `userArgs` go after `--` (the game reads them with `OS.get_cmdline_user_args()`), `engineArgs` before it (`["--resolution", "1280x720"]`). A `godot-mcp.json` beside `project.godot` holds per-project defaults and named `presets` (`options.preset`), and `prepWrapper`, the project's gate the prep builds and imports through; `prep.buildLog` / `importLog` name the logs and `buildGate` / `importGate` the gate's closing verdict line.
 
+   To try a `project.godot` setting for one run without editing `project.godot`, pass `options.projectSettings` (`{"rendering/renderer/rendering_method": "gl_compatibility", "display/window/size/viewport_width": 640}`; `{"raw": "Vector2i(1280, 720)"}` for a value written as Godot text), or put it in `godot-mcp.json` (top level or a preset, layered per setting like `env`). Sessions on one folder must give the same settings, like `quiet`; `attach_project` and `arm_project` take none, so they are refused beside a run that has them.
+
    To drive the Godot editor itself (its docks, dialogs and output), `run_editor {projectPath}` starts it the same way, quiet, and the runtime tools then act on the editor's windows; see "The editor" below.
 
    A server or backend the game needs beside it starts with `run_process {projectPath, process}` when the file's `processes` section declares it; note that session too. The call waits for the process's `ready` line when the file declares one (or `options.ready {output, timeoutMs}` gives one), and `wait_for {output}` reads any later line.

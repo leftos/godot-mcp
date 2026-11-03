@@ -38,7 +38,7 @@ public sealed class OverrideOwnersTests : IDisposable
     {
         string project = Project("alpha");
 
-        OverrideFile.Write(project, _temp.Combine("bridge.gd"), false, false, unfocused: false);
+        OverrideFile.Write(project, _temp.Combine("bridge.gd"), false, false, unfocused: false, projectSettings: "");
 
         string[] lines = File.ReadAllLines(OverrideFile.PathIn(project));
         Assert.Equal(OverrideFile.Marker, lines[0]);
@@ -53,7 +53,7 @@ public sealed class OverrideOwnersTests : IDisposable
         OverrideOwner foreign = StartForeignOwner();
         WriteMarked(project, $"{OverrideFile.OwnersPrefix}{foreign},{Dead}\n{BodyFor(shutOutRealGamepads: false, quiet: false)}");
 
-        OverrideFile.Write(project, _temp.Combine("bridge.gd"), false, false, unfocused: false);
+        OverrideFile.Write(project, _temp.Combine("bridge.gd"), false, false, unfocused: false, projectSettings: "");
 
         Assert.Equal([foreign, OverrideOwner.Current], OverrideFile.LiveOwners(project));
         Assert.Equal($"{OverrideFile.OwnersPrefix}{foreign},{OverrideOwner.Current}", File.ReadAllLines(OverrideFile.PathIn(project))[1]);
@@ -67,7 +67,7 @@ public sealed class OverrideOwnersTests : IDisposable
         string body = BodyFor(shutOutRealGamepads: true, quiet: true);
         WriteMarked(project, $"{OverrideFile.OwnersPrefix}{foreign}\n{body}");
 
-        OverrideFile.Write(project, _temp.Combine("bridge.gd"), shutOutRealGamepads: true, quiet: true, unfocused: false);
+        OverrideFile.Write(project, _temp.Combine("bridge.gd"), shutOutRealGamepads: true, quiet: true, unfocused: false, projectSettings: "");
 
         Assert.Equal([foreign, OverrideOwner.Current], OverrideFile.LiveOwners(project));
         Assert.Equal(
@@ -84,7 +84,7 @@ public sealed class OverrideOwnersTests : IDisposable
         OverrideOwner foreign = StartForeignOwner();
         WriteMarked(project, $"{OverrideFile.OwnersPrefix}{foreign}\n[autoload]\n\nGodotMcpBridge=\"*{OurBridge()}\"\n");
 
-        OverrideFile.Write(project, _temp.Combine("bridge.gd"), shutOutRealGamepads: false, quiet: false, unfocused: false);
+        OverrideFile.Write(project, _temp.Combine("bridge.gd"), shutOutRealGamepads: false, quiet: false, unfocused: false, projectSettings: "");
 
         Assert.Equal([foreign, OverrideOwner.Current], OverrideFile.LiveOwners(project));
         string body = BodyFor(shutOutRealGamepads: false, quiet: false);
@@ -103,12 +103,13 @@ public sealed class OverrideOwnersTests : IDisposable
         string before = File.ReadAllText(OverrideFile.PathIn(project));
 
         SessionException refused = Assert.Throws<SessionException>(() =>
-            OverrideFile.Write(project, _temp.Combine("bridge.gd"), shutOutRealGamepads: false, quiet: true, unfocused: false)
+            OverrideFile.Write(project, _temp.Combine("bridge.gd"), shutOutRealGamepads: false, quiet: true, unfocused: false, projectSettings: "")
         );
 
         Assert.Equal(
-            $"{project}'s override.cfg is in use by another godot-mcp server (pid {foreign.ProcessId}) with quiet=false and "
-                + "shutOutRealGamepads=true; start this session with the same values, or end that server's sessions on the folder first.",
+            $"{project}'s override.cfg is in use by another godot-mcp server (pid {foreign.ProcessId}) with quiet=false, "
+                + "shutOutRealGamepads=true and projectSettings=none; start this session with the same values, or end that server's "
+                + "sessions on the folder first.",
             refused.Message
         );
         Assert.Equal(before, File.ReadAllText(OverrideFile.PathIn(project)));
@@ -123,7 +124,7 @@ public sealed class OverrideOwnersTests : IDisposable
         string before = File.ReadAllText(OverrideFile.PathIn(project));
 
         SessionException refused = Assert.Throws<SessionException>(() =>
-            OverrideFile.Write(project, _temp.Combine("bridge.gd"), false, false, unfocused: false)
+            OverrideFile.Write(project, _temp.Combine("bridge.gd"), false, false, unfocused: false, projectSettings: "")
         );
 
         Assert.Equal(

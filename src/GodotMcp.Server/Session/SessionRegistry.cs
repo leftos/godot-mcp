@@ -207,6 +207,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         SessionSpec spec = new(NameFor(session, projectDir), projectDir, SessionKind.Run, request.ShutOutRealGamepads, request.Quiet)
         {
             Mute = request.Mute,
+            ProjectSettings = request.ProjectSettings,
         };
         GodotSession created = await ReserveAsync(
             spec,
@@ -1121,7 +1122,10 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             } while (_sessions.ContainsKey(name));
 
             ArmSettings settings = FolderSettingsForPreview(projectDir);
-            SessionSpec spec = new(name, projectDir, SessionKind.Run, settings.ShutOutRealGamepads, settings.Quiet);
+            SessionSpec spec = new(name, projectDir, SessionKind.Run, settings.ShutOutRealGamepads, settings.Quiet)
+            {
+                ProjectSettings = ProjectSettingsForPreview(projectDir),
+            };
             GodotSession created = new(spec, this);
             _sessions[name] = created;
             return created;
@@ -1143,6 +1147,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             session.ProjectDir,
             bridgeScript,
             new ArmSettings(session.Quiet, session.ShutOutRealGamepads, session.Mute),
+            session.ProjectSettings,
             () => IsWriteHeldByOther(session)
         );
 
@@ -1519,6 +1524,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         {
             Scratch = target.Scratch,
             Mute = target.Mute,
+            ProjectSettings = target.ProjectSettings,
         };
         CheckFolder(spec, except: target);
     }
@@ -1540,13 +1546,48 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         ];
         CheckSameSetting(spec, onFolder, "shutOutRealGamepads", session => session.ShutOutRealGamepads, spec.ShutOutRealGamepads);
         CheckSameSetting(spec, onFolder, "quiet", session => session.Quiet, spec.Quiet);
+        CheckSameProjectSettings(spec, onFolder);
         if (_armed.TryGetValue(spec.ProjectDir, out ArmSettings? arm))
         {
             CheckArmSetting(spec.ProjectDir, "shutOutRealGamepads", arm.ShutOutRealGamepads, spec.ShutOutRealGamepads);
             CheckArmSetting(spec.ProjectDir, "quiet", arm.Quiet, spec.Quiet);
+            CheckArmProjectSettings(spec);
         }
 
         return onFolder;
+    }
+
+    /// <summary>
+    /// Refuses a session whose project settings differ from the live ones' on its folder: they share one override.cfg, and an
+    /// attach takes none to agree with them.
+    /// </summary>
+    private static void CheckSameProjectSettings(SessionSpec spec, GodotSession[] onFolder)
+    {
+        if (onFolder.FirstOrDefault(other => other.ProjectSettings != spec.ProjectSettings) is not { } differing)
+        {
+            return;
+        }
+
+        string summary = ProjectSettingsText.Summary(differing.ProjectSettings);
+        throw spec.Kind == SessionKind.Attach
+            ? new SessionException(
+                $"Sessions on {spec.ProjectDir} run with projectSettings={summary}; attach_project takes no projectSettings, so stop them first."
+            )
+            : new SessionException(
+                $"Sessions on {spec.ProjectDir} run with projectSettings={summary}; start this one with the same value, or stop them first."
+            );
+    }
+
+    /// <summary>Refuses a session that sets project settings on an armed folder: the arm's override.cfg carries none.</summary>
+    private static void CheckArmProjectSettings(SessionSpec spec)
+    {
+        if (spec.ProjectSettings.Length > 0)
+        {
+            throw new SessionException(
+                $"{spec.ProjectDir} is armed, and arm_project takes no projectSettings; disarm_project first to run with "
+                    + $"projectSettings={ProjectSettingsText.Summary(spec.ProjectSettings)}."
+            );
+        }
     }
 
     /// <summary>Refuses a session whose setting differs from the folder's arm: the arm's override.cfg is the one it would share.</summary>
@@ -1583,6 +1624,7 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
             GodotSession[] onFolder = [.. _sessions.Values.Where(other => BindsFolderSettings(other, projectDir))];
             CheckSessionsForArm(projectDir, onFolder, "shutOutRealGamepads", session => session.ShutOutRealGamepads, wanted.ShutOutRealGamepads);
             CheckSessionsForArm(projectDir, onFolder, "quiet", session => session.Quiet, wanted.Quiet);
+            CheckSessionsArmProjectSettings(projectDir, onFolder);
 
             // Recorded with the check, under one lock, so a session reserved while the files are written meets the arm's settings.
             _armed[projectDir] = wanted;
@@ -1620,6 +1662,18 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         }
     }
 
+    /// <summary>Refuses an arm beside a live session that runs with project settings: the arm's override.cfg carries none.</summary>
+    private static void CheckSessionsArmProjectSettings(string projectDir, GodotSession[] onFolder)
+    {
+        if (onFolder.FirstOrDefault(other => other.ProjectSettings.Length > 0) is { } differing)
+        {
+            throw new SessionException(
+                $"Sessions on {projectDir} run with projectSettings={ProjectSettingsText.Summary(differing.ProjectSettings)}; "
+                    + "arm_project takes no projectSettings, so stop them first."
+            );
+        }
+    }
+
     private static string Flag(bool value) => value ? "true" : "false";
 
     /// <summary>
@@ -1630,7 +1684,13 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
     {
         try
         {
-            WriteOverrideUnlessHeld(projectDir, bridgeScript, settings, () => HasLiveNonScratchSessionOn(projectDir, except: null));
+            WriteOverrideUnlessHeld(
+                projectDir,
+                bridgeScript,
+                settings,
+                projectSettings: "",
+                () => HasLiveNonScratchSessionOn(projectDir, except: null)
+            );
             GitExclude.Ensure(projectDir, OverrideFile.FileName, logger);
             OverrideFolders.Hold($"arming {projectDir}", () => ArmFile.Write(projectDir, settings));
         }
@@ -1729,15 +1789,20 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
         return _armed.GetValueOrDefault(projectDir) ?? new ArmSettings(Quiet: true, ShutOutRealGamepads: false, Mute: false);
     }
 
+    /// <summary>The project settings a preview takes: those of the first live session on the folder that binds its settings, else none.</summary>
+    private string ProjectSettingsForPreview(string projectDir) =>
+        _sessions.Values.FirstOrDefault(other => BindsFolderSettings(other, projectDir))?.ProjectSettings ?? "";
+
     /// <summary>
     /// Writes the marked override.cfg with this server among its owners, unless <paramref name="held"/> says this server
     /// already holds the folder and the file is there, or the file already lists this server with these settings; the folder
-    /// is recorded in <see cref="OverrideFolders"/> first.
+    /// is recorded in <see cref="OverrideFolders"/> first. <paramref name="projectSettings"/> follows the bridge's lines, and is
+    /// empty for a write that is not a run's, as an arm's is.
     /// </summary>
     /// <exception cref="SessionException">
     /// The project has its own override.cfg, or another live server's marked one injects another bridge or holds other settings.
     /// </exception>
-    private void WriteOverrideUnlessHeld(string projectDir, string bridgeScript, ArmSettings settings, Func<bool> held) =>
+    private void WriteOverrideUnlessHeld(string projectDir, string bridgeScript, ArmSettings settings, string projectSettings, Func<bool> held) =>
         OverrideFolders.RecordWhile(
             projectDir,
             () =>
@@ -1750,14 +1815,21 @@ internal sealed partial class SessionRegistry(BridgeListener listener, ILogger<G
                         && OverrideFile.IsMarked(text)
                         && (
                             held()
-                            || OverrideFile.SetsForThisServer(text, bridgeScript, settings.ShutOutRealGamepads, settings.Quiet, LaunchesUnfocused)
+                            || OverrideFile.SetsForThisServer(
+                                text,
+                                bridgeScript,
+                                settings.ShutOutRealGamepads,
+                                settings.Quiet,
+                                LaunchesUnfocused,
+                                projectSettings
+                            )
                         )
                     )
                     {
                         return;
                     }
 
-                    OverrideFile.Write(projectDir, bridgeScript, settings.ShutOutRealGamepads, settings.Quiet, LaunchesUnfocused);
+                    OverrideFile.Write(projectDir, bridgeScript, settings.ShutOutRealGamepads, settings.Quiet, LaunchesUnfocused, projectSettings);
                 }
             }
         );

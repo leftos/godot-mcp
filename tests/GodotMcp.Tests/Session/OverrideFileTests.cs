@@ -21,7 +21,7 @@ public sealed class OverrideFileTests : IDisposable
     {
         string bridge = _project.Combine("tools", "bridge.gd");
 
-        OverrideFile.Write(_project.Path, bridge, false, false, unfocused: false);
+        OverrideFile.Write(_project.Path, bridge, false, false, unfocused: false, projectSettings: "");
 
         string[] lines = File.ReadAllLines(OverrideFile.PathIn(_project.Path));
         Assert.Equal(OverrideFile.Marker, lines[0]);
@@ -38,7 +38,7 @@ public sealed class OverrideFileTests : IDisposable
     [Fact]
     public void WriteCreatesTheWindowUnfocusedAndOffScreenWhenQuiet()
     {
-        OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), false, quiet: true, unfocused: false);
+        OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), false, quiet: true, unfocused: false, projectSettings: "");
 
         string[] lines = File.ReadAllLines(OverrideFile.PathIn(_project.Path));
         int section = Array.IndexOf(lines, "[display]");
@@ -52,7 +52,7 @@ public sealed class OverrideFileTests : IDisposable
     [Fact]
     public void WriteCreatesTheWindowUnfocusedAndMinimizedInPlaceWhenUnfocusedAndNotQuiet()
     {
-        OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), false, quiet: false, unfocused: true);
+        OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), false, quiet: false, unfocused: true, projectSettings: "");
 
         string[] lines = File.ReadAllLines(OverrideFile.PathIn(_project.Path));
         int section = Array.IndexOf(lines, "[display]");
@@ -63,7 +63,7 @@ public sealed class OverrideFileTests : IDisposable
     [Fact]
     public void WriteLeavesTheWindowAloneWhenNotQuiet()
     {
-        OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), false, quiet: false, unfocused: false);
+        OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), false, quiet: false, unfocused: false, projectSettings: "");
 
         string[] lines = File.ReadAllLines(OverrideFile.PathIn(_project.Path));
         Assert.DoesNotContain("[display]", lines);
@@ -72,7 +72,7 @@ public sealed class OverrideFileTests : IDisposable
 
     private void AssertJoypadSetting(bool shutOutRealGamepads, string expected)
     {
-        OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), shutOutRealGamepads, false, unfocused: false);
+        OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), shutOutRealGamepads, false, unfocused: false, projectSettings: "");
 
         string[] lines = File.ReadAllLines(OverrideFile.PathIn(_project.Path));
         int section = Array.IndexOf(lines, "[input_devices]");
@@ -91,7 +91,7 @@ public sealed class OverrideFileTests : IDisposable
         byte[] before = File.ReadAllBytes(path);
 
         SessionException refused = Assert.Throws<SessionException>(() =>
-            OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), false, false, unfocused: false)
+            OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), false, false, unfocused: false, projectSettings: "")
         );
 
         Assert.Contains(path, refused.Message, StringComparison.Ordinal);
@@ -105,7 +105,7 @@ public sealed class OverrideFileTests : IDisposable
         File.WriteAllText(path, $"{OverrideFile.Marker}\n[autoload]\n\nGodotMcpBridge=\"*D:/gone/old_bridge.gd\"\n");
         string bridge = _project.Combine("new_bridge.gd");
 
-        OverrideFile.Write(_project.Path, bridge, false, false, unfocused: false);
+        OverrideFile.Write(_project.Path, bridge, false, false, unfocused: false, projectSettings: "");
 
         string content = File.ReadAllText(path);
         Assert.DoesNotContain("old_bridge.gd", content, StringComparison.Ordinal);
@@ -115,7 +115,7 @@ public sealed class OverrideFileTests : IDisposable
     [Fact]
     public void ReleaseDeletesAMarkedFile()
     {
-        OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), false, false, unfocused: false);
+        OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), false, false, unfocused: false, projectSettings: "");
 
         Assert.True(OverrideFile.Release(_project.Path));
         Assert.False(File.Exists(OverrideFile.PathIn(_project.Path)));
@@ -277,35 +277,35 @@ public sealed class OverrideFileTests : IDisposable
     public void AFileThisServerWroteSetsTheSameValuesAndNoOtherOnes()
     {
         string bridge = _project.Combine("bridge.gd");
-        OverrideFile.Write(_project.Path, bridge, shutOutRealGamepads: false, quiet: true, unfocused: false);
+        OverrideFile.Write(_project.Path, bridge, shutOutRealGamepads: false, quiet: true, unfocused: false, projectSettings: "");
 
-        Assert.True(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: false, quiet: true, unfocused: false));
-        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: true, quiet: true, unfocused: false));
-        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: false, quiet: false, unfocused: false));
-        Assert.False(OverrideFile.SetsForThisServer(Text(), _project.Combine("other.gd"), false, quiet: true, unfocused: false));
+        Assert.True(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: false, quiet: true, unfocused: false, projectSettings: ""));
+        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: true, quiet: true, unfocused: false, projectSettings: ""));
+        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: false, quiet: false, unfocused: false, projectSettings: ""));
+        Assert.False(OverrideFile.SetsForThisServer(Text(), _project.Combine("other.gd"), false, quiet: true, unfocused: false, projectSettings: ""));
     }
 
     [Fact]
     public void AnUnfocusedFileSetsNoValuesOfAFocusedWrite()
     {
         string bridge = _project.Combine("bridge.gd");
-        OverrideFile.Write(_project.Path, bridge, shutOutRealGamepads: false, quiet: false, unfocused: true);
+        OverrideFile.Write(_project.Path, bridge, shutOutRealGamepads: false, quiet: false, unfocused: true, projectSettings: "");
 
-        Assert.True(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: false, quiet: false, unfocused: true));
-        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: false, quiet: false, unfocused: false));
+        Assert.True(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: false, quiet: false, unfocused: true, projectSettings: ""));
+        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: false, quiet: false, unfocused: false, projectSettings: ""));
     }
 
     [Fact]
     public void AFileThatDoesNotListThisServerIsNotItsWhateverItSets()
     {
         string bridge = _project.Combine("bridge.gd");
-        OverrideFile.Write(_project.Path, bridge, shutOutRealGamepads: false, quiet: false, unfocused: false);
+        OverrideFile.Write(_project.Path, bridge, shutOutRealGamepads: false, quiet: false, unfocused: false, projectSettings: "");
         string path = OverrideFile.PathIn(_project.Path);
         string[] lines = File.ReadAllLines(path);
         lines[1] = $"{OverrideFile.OwnersPrefix}{Dead}";
         File.WriteAllText(path, string.Join('\n', lines) + "\n");
 
-        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: false, quiet: false, unfocused: false));
+        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, shutOutRealGamepads: false, quiet: false, unfocused: false, projectSettings: ""));
     }
 
     [Fact]
@@ -317,7 +317,84 @@ public sealed class OverrideFileTests : IDisposable
 
         Assert.Null(missing);
         Assert.False(OverrideFile.IsMarked(Text()));
-        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, false, false, unfocused: false));
+        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, false, false, unfocused: false, projectSettings: ""));
+    }
+
+    [Fact]
+    public void WriteAppendsProjectSettingsAfterTheBridgesLines()
+    {
+        string bridge = _project.Combine("bridge.gd");
+        const string settings = "; godot-mcp project settings\n\n[gmcp]\n\nvalue=\"Seen\"\n";
+
+        OverrideFile.Write(_project.Path, bridge, false, false, unfocused: false, settings);
+
+        string text = File.ReadAllText(OverrideFile.PathIn(_project.Path));
+        string autoload = $"{OverrideFile.AutoloadName}=\"*{bridge.Replace('\\', '/')}\"";
+        Assert.Contains(autoload, text, StringComparison.Ordinal);
+        Assert.Contains(ProjectSettingsText.BlockMarker, text, StringComparison.Ordinal);
+        Assert.True(text.IndexOf(autoload, StringComparison.Ordinal) < text.IndexOf(ProjectSettingsText.BlockMarker, StringComparison.Ordinal));
+        Assert.EndsWith(settings, text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AProjectSettingNamedLikeABridgeFlagIsNotReadAsOne()
+    {
+        string bridge = _project.Combine("bridge.gd");
+        const string settings = "; godot-mcp project settings\n\n[foo]\n\nwindow/size/initial_position=1\n";
+
+        OverrideFile.Write(_project.Path, bridge, false, quiet: false, unfocused: false, settings);
+
+        Assert.True(OverrideFile.SetsForThisServer(Text(), bridge, false, quiet: false, unfocused: false, settings));
+        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, false, quiet: true, unfocused: false, settings));
+    }
+
+    [Fact]
+    public void ASharedFileWithOtherProjectSettingsIsRefusedNamingThem()
+    {
+        Process foreign = RegistryHarness.StartStandInGame();
+        try
+        {
+            string bridge = _project.Combine("bridge.gd");
+            const string theirs = "; godot-mcp project settings\n\n[gmcp]\n\nvalue=\"Theirs\"\n";
+            const string ours = "; godot-mcp project settings\n\n[gmcp]\n\nvalue=\"Ours\"\n";
+            OverrideOwner owner = new(foreign.Id, foreign.StartTime.ToUniversalTime().Ticks);
+            File.WriteAllText(
+                OverrideFile.PathIn(_project.Path),
+                $"{OverrideFile.Marker}\n{OverrideFile.OwnersPrefix}{owner}\n[autoload]\n\nGodotMcpBridge=\"*{bridge.Replace('\\', '/')}\"\n\n"
+                    + $"[input_devices]\n\n{OverrideFile.IgnoreJoypadOnUnfocusedSetting}=false\n\n{theirs}"
+            );
+
+            SessionException refused = Assert.Throws<SessionException>(() =>
+                OverrideFile.Write(_project.Path, bridge, false, quiet: false, unfocused: false, ours)
+            );
+
+            Assert.Equal(
+                $"{_project.Path}'s override.cfg is in use by another godot-mcp server (pid {foreign.Id}) with quiet=false, "
+                    + "shutOutRealGamepads=false and projectSettings=gmcp/value=\"Theirs\"; start this session with the same values, or "
+                    + "end that server's sessions on the folder first.",
+                refused.Message
+            );
+        }
+        finally
+        {
+            RegistryHarness.EndStandInGame(foreign);
+        }
+    }
+
+    [Fact]
+    public void ReleaseDeletesTheFileWithItsSettings()
+    {
+        OverrideFile.Write(
+            _project.Path,
+            _project.Combine("bridge.gd"),
+            false,
+            false,
+            unfocused: false,
+            "; godot-mcp project settings\n\n[gmcp]\n\nvalue=\"Seen\"\n"
+        );
+
+        Assert.True(OverrideFile.Release(_project.Path));
+        Assert.False(File.Exists(OverrideFile.PathIn(_project.Path)));
     }
 
     /// <summary>The project's override.cfg, which the test has written.</summary>

@@ -20,13 +20,20 @@ internal enum SessionKind
 }
 
 /// <summary>
-/// What a session is created for: its name, its project folder, its kind, its pad setting, whether it runs quiet and whether
-/// the bridge mutes the game.
+/// What a session is created for: its name, its project folder, its kind, its pad setting, whether it runs quiet, whether the
+/// bridge mutes the game, and the project settings its folder's override.cfg carries.
 /// </summary>
 internal sealed record SessionSpec(string Name, string ProjectDir, SessionKind Kind, bool ShutOutRealGamepads, bool Quiet)
 {
     /// <summary>Whether the session asked the bridge to mute the game's Master bus; a quiet game is silent either way.</summary>
     public bool Mute { get; init; }
+
+    /// <summary>
+    /// The run's project settings block, which the folder's override.cfg carries after the bridge's lines; empty when it sets
+    /// none (<see cref="ProjectSettingsText.Block"/>). Sessions sharing the folder agree on it, as they do on the pad and quiet
+    /// settings; an attach, an arm, a preview taken without one and a scratch run carry none.
+    /// </summary>
+    public string ProjectSettings { get; init; } = "";
 
     /// <summary>The dormant game an attach joins, by its process id; null for an attach that waits for a launch, and for a run.</summary>
     public int? JoinPid { get; init; }
@@ -102,6 +109,9 @@ internal sealed partial class GodotSession(SessionSpec spec, SessionRegistry reg
 
     /// <summary>Whether the session asked the bridge to mute the game's Master bus, apart from quiet.</summary>
     public bool Mute { get; } = spec.Mute;
+
+    /// <summary>The run's project settings block, which the folder's override.cfg carries after the bridge's lines; empty for none.</summary>
+    public string ProjectSettings { get; } = spec.ProjectSettings;
 
     /// <inheritdoc cref="SessionSpec.Scratch"/>
     public bool Scratch { get; } = spec.Scratch;

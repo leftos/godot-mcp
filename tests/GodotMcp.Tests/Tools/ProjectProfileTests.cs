@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
@@ -8,10 +9,11 @@ namespace GodotMcp.Tests.Tools;
 
 public sealed class ProjectProfileTests : IDisposable
 {
-    private const string TopLevelKeys = "scene, userArgs, engineArgs, resolution, quiet, audible, env, presets, prepWrapper, scratch, processes";
+    private const string TopLevelKeys =
+        "scene, userArgs, engineArgs, resolution, quiet, audible, env, projectSettings, presets, prepWrapper, scratch, processes";
     private const string PrepWrapperShape =
         "(top level): \"prepWrapper\" must be a non-empty array of non-empty strings, the program and then its arguments";
-    private const string PresetKeys = "scene, userArgs, engineArgs, resolution, quiet, audible, env, session";
+    private const string PresetKeys = "scene, userArgs, engineArgs, resolution, quiet, audible, env, projectSettings, session";
 
     private const string Layered = """
         {
@@ -1420,6 +1422,70 @@ public sealed class ProjectProfileTests : IDisposable
         Assert.Equal($"{FilePath} (top level): \"env\" names \"Name\" and \"NAME\", which are one variable; keep one.", inFile);
         Assert.Equal("options.env names \"Name\" and \"NAME\", which are one variable; keep one.", inCall);
     }
+
+    [Fact]
+    public void ProjectSettingsLayerPerKeyAcrossTopLevelPresetAndCall()
+    {
+        Write(
+            """
+            {
+              "projectSettings": { "a/one": "top", "a/two": 1 },
+              "presets": { "client": { "projectSettings": { "a/two": 2 } } }
+            }
+            """
+        );
+
+        ProfileLaunch top = Merge(new RunOptions());
+        ProfileLaunch byPreset = Merge(new RunOptions(Preset: "client"));
+        ProfileLaunch byCall = Merge(
+            new RunOptions(Preset: "client", ProjectSettings: new() { ["a/one"] = JsonSerializer.SerializeToElement("call") })
+        );
+
+        Assert.Equal(
+            BlockOf(("a/one", JsonSerializer.SerializeToElement("top")), ("a/two", JsonSerializer.SerializeToElement(1))),
+            top.Request.ProjectSettings
+        );
+        Assert.Equal(
+            BlockOf(("a/one", JsonSerializer.SerializeToElement("top")), ("a/two", JsonSerializer.SerializeToElement(2))),
+            byPreset.Request.ProjectSettings
+        );
+        Assert.Equal(
+            BlockOf(("a/one", JsonSerializer.SerializeToElement("call")), ("a/two", JsonSerializer.SerializeToElement(2))),
+            byCall.Request.ProjectSettings
+        );
+    }
+
+    [Fact]
+    public void ProjectSettingsInGodotMcpJsonThatAreNotAnObjectAreRefused()
+    {
+        Write("""{ "projectSettings": ["a/b"] }""");
+
+        Assert.Equal(
+            $"{FilePath} (top level): \"projectSettings\" must be an object of \"section/key\" names to values.",
+            Refused(() => Merge(new RunOptions()))
+        );
+    }
+
+    [Fact]
+    public void ABridgeOwnedProjectSettingInGodotMcpJsonIsRefused()
+    {
+        Write("""{ "projectSettings": { "autoload/bridge": true } }""");
+
+        Assert.Equal(
+            $"{FilePath} (top level): \"projectSettings\" cannot set \"autoload/bridge\": godot-mcp's override.cfg sets it for the "
+                + "bridge (autoload/*, input_devices/joypads/ignore_joypad_on_unfocused_application, display/window/size/no_focus, "
+                + "display/window/size/initial_position_type, display/window/size/initial_position, display/window/size/mode).",
+            Refused(() => Merge(new RunOptions()))
+        );
+    }
+
+    /// <summary>The block these settings render to, as a run's request carries it.</summary>
+    private static string BlockOf(params (string Name, JsonElement Value)[] settings) =>
+        ProjectSettingsText.Block(
+            settings.Select(setting => new KeyValuePair<string, JsonElement>(setting.Name, setting.Value)),
+            "options.projectSettings",
+            problem => new McpException(problem)
+        );
 
     private static string Refused(Func<object> action) => Assert.Throws<McpException>(action).Message;
 

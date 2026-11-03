@@ -71,6 +71,12 @@ internal sealed record LaunchRequest(
     /// merged, and the bridge's own variables are set after these, so they win (<see cref="GodotCommandLine.CreateStartInfo"/>).
     /// </summary>
     public IReadOnlyDictionary<string, string> Env { get; init; } = new Dictionary<string, string>();
+
+    /// <summary>
+    /// The run's project settings as the block the folder's override.cfg carries after the bridge's own lines; empty when it sets
+    /// none (<see cref="ProjectSettingsText.Block"/>).
+    /// </summary>
+    public string ProjectSettings { get; init; } = "";
 }
 
 /// <summary>Where the bridge dials and the token it proves itself with.</summary>

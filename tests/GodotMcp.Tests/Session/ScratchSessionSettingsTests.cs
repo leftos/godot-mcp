@@ -158,8 +158,9 @@ public sealed class ScratchSessionSettingsTests : IAsyncDisposable
         SessionException refused = Assert.Throws<SessionException>(() => _harness.Sessions.WriteOverride(scratch, Installation.FindBridgeScript()));
 
         Assert.Equal(
-            $"{alpha}'s override.cfg is in use by another godot-mcp server (pid {foreign.ProcessId}) with quiet=false and "
-                + "shutOutRealGamepads=true; start this session with the same values, or end that server's sessions on the folder first.",
+            $"{alpha}'s override.cfg is in use by another godot-mcp server (pid {foreign.ProcessId}) with quiet=false, "
+                + "shutOutRealGamepads=true and projectSettings=none; start this session with the same values, or end that server's "
+                + "sessions on the folder first.",
             refused.Message
         );
     }

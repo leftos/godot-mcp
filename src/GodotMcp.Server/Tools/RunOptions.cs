@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json;
 using ModelContextProtocol;
 
 namespace GodotMcp.Server.Tools;
@@ -6,7 +7,8 @@ namespace GodotMcp.Server.Tools;
 /// <summary>
 /// How run_project sets up the game's window and pads, the session's name, whether the project is prepared first, and which
 /// preset of the project's godot-mcp.json it launches, whether it is recorded, whether its clips drop idle frames, whether the
-/// bridge re-picks the hover every frame, whether a quiet run keeps its sound, and the environment variables the game's process gets.
+/// bridge re-picks the hover every frame, whether a quiet run keeps its sound, the environment variables the game's process
+/// gets, and the project settings written into the run's override.cfg.
 /// <see cref="Quiet"/>, <see cref="Mute"/> and <see cref="Audible"/> are null when not given.
 /// </summary>
 internal sealed record RunOptions(
@@ -58,7 +60,14 @@ internal sealed record RunOptions(
         "Environment variables for the game, laid over the server's own (a godot-mcp.json env and a preset's env are laid under these, "
             + "per variable). Cannot set GODOT_MCP_* names. A variable cannot be removed. restart_project keeps them."
     )]
-        Dictionary<string, string>? Env = null
+        Dictionary<string, string>? Env = null,
+    [property: Description(
+        "Project settings for this run, as {\"section/key\": value}: a string, a number or a boolean, or {\"raw\": \"<Godot value "
+            + "text>\"} such as {\"raw\": \"Vector2i(1280, 720)\"}. They are written into the bridge's override.cfg after project.godot "
+            + "and removed with it; sessions on one folder must give the same ones. godot-mcp.json's projectSettings are laid under "
+            + "these, per key."
+    )]
+        Dictionary<string, JsonElement>? ProjectSettings = null
 )
 {
     /// <summary>The prepare option, for run_project's options and restart_project's.</summary>

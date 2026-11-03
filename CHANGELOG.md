@@ -6,6 +6,7 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ### Added
 
+- `run_project` takes `options.projectSettings`, and godot-mcp.json a `projectSettings` key, to set `project.godot` settings for one run.
 - `godot-mcp --run-scratches <project>` runs a project's scratch scenes from a terminal with the same verdict, exiting 0, 1, 2 or 130.
 - `editor {action: play}` on a C# project with a `prepWrapper` builds through it first, and `play` and `build` replies carry `buildGate`.
 - `drag` takes `release: false` to stop with the button held; `click` and `drag` refuse while their button is held.

@@ -45,7 +45,7 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
 
       Each file is judged and deleted through one handle, only when every owner it names has exited, an owner entry that does not parse counts as live, and the owners list is opened strictly: when it will not open nothing is touched. A file another process holds is reported in `warning`, never failing the stop; `attach.json`, the join, dormant and scratch status files and the `.git/info/exclude` line stay.
 
-      A new session whose `shutOutRealGamepads` differs from the live ones' is refused, since the file holds one value. An attach is refused while another attach on the same folder is still waiting for its game.
+      A new session whose `shutOutRealGamepads` differs from the live ones' is refused, since the file holds one value; `projectSettings` (decision 46) is agreed the same way, as `quiet` is. An attach is refused while another attach on the same folder is still waiting for its game.
 
       **Scratch sessions are exempt from the agreement** (GMCP-232; an orchestrator decision, not an owner ruling). A `run_scratches` session is headless, so its quiet and pad settings never reach a player (a windowed one, `options.windowed`, is hidden off-screen and quiet, and keeps the exemption): it always runs quiet with real pads live and unmuted, copies nothing from a live session or the arm, and is never refused against the folder's arm or its other sessions.
 
@@ -660,6 +660,13 @@ The user's two Godot projects (opening-hand and delve-the-dungeon, both C#, Godo
     - **The exit reaches the delivery by a mark.** Delivery runs on the recording's own task, so the exit sets a mark under the recording's lock and the delivery reads it right before it moves the clip.
     - **The refusal is raised at the rename**, the only point another volume is known, and N1 removes any folder made for it. A delivery already copying when the exit begins is GMCP-360.
     - **Seams** (D7, D8): the rename function and the Movie Maker frame request are passed in, so tests force another volume and check that a refused `record_mark` start never asks the game for its frame; a real two-volume test is gated on an environment variable.
+
+46. **A per-run project setting goes into the marked `override.cfg`, after the bridge's lines** (GMCP-415; an orchestrator decision, not an owner ruling). `run_project`'s `options.projectSettings` (and `godot-mcp.json`'s key, layered per setting like `env`) tries a `project.godot` setting for one run. Godot has no command-line project-setting flag, loads `override.cfg` after `project.godot` where a set overwrites (4.7.2 `core/config/project_settings.cpp` L773-781, L985-989), and stops reading the file at a parse error (L978), so the settings follow the bridge's lines and a bad raw value loses only the settings after it.
+    - **Agreed like `quiet`.** Sessions on one folder must give the same settings, across servers too; `arm_project` and `attach_project` take none, so they are refused beside a run that has them and such a run is refused on an armed folder. A scratch session is exempt (decision 10).
+    - **Names the bridge's own lines set are refused** (`autoload/*` and the window and joypad settings, with their feature-tagged variants), as are names Godot would rename or the file cannot hold.
+    - **Rejected: a second per-run cfg through `application/config/project_settings_override`.** It is a second file to track, and it needs a line in `override.cfg` anyway.
+    - **Rejected: an exclusive folder** (one session per folder when settings are given). It breaks a server-plus-clients flow.
+    - **Caveat:** `application/config/disable_project_settings_override` in `project.godot` makes Godot read no `override.cfg`, so neither the bridge nor these settings apply.
 
 ## Wire
 

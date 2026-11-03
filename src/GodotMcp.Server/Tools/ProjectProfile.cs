@@ -11,8 +11,9 @@ namespace GodotMcp.Server.Tools;
 internal sealed record ProfileLaunch(LaunchRequest Request, string? Session);
 
 /// <summary>
-/// The values the top level of godot-mcp.json or one of its presets sets: null, or empty for the argument lists and the
-/// environment, where it sets none. <see cref="Session"/> and <see cref="Description"/> are only ever set by a preset.
+/// The values the top level of godot-mcp.json or one of its presets sets: null, or empty for the argument lists, the
+/// environment and the project settings, where it sets none. <see cref="Session"/> and <see cref="Description"/> are only ever
+/// set by a preset.
 /// </summary>
 internal sealed record ProfileValues(
     string? Scene,
@@ -23,11 +24,23 @@ internal sealed record ProfileValues(
     bool? Audible,
     string? Session,
     string? Description,
-    IReadOnlyDictionary<string, string> Env
+    IReadOnlyDictionary<string, string> Env,
+    IReadOnlyDictionary<string, JsonElement> ProjectSettings
 )
 {
     /// <summary>Values that set nothing.</summary>
-    public static readonly ProfileValues None = new(null, [], [], null, null, null, null, null, new Dictionary<string, string>());
+    public static readonly ProfileValues None = new(
+        null,
+        [],
+        [],
+        null,
+        null,
+        null,
+        null,
+        null,
+        new Dictionary<string, string>(),
+        new Dictionary<string, JsonElement>()
+    );
 }
 
 /// <summary>
@@ -55,6 +68,7 @@ internal sealed partial class ProjectProfile
         "quiet",
         "audible",
         "env",
+        "projectSettings",
         "presets",
         PrepWrapperKey,
         ScratchKey,
@@ -69,6 +83,7 @@ internal sealed partial class ProjectProfile
         "quiet",
         "audible",
         "env",
+        "projectSettings",
         "session",
         "description",
     ];
@@ -177,14 +192,15 @@ internal sealed partial class ProjectProfile
 
     /// <summary>
     /// Layers the top level, then <paramref name="options"/>' preset, then the explicit arguments: scene, resolution, quiet and
-    /// audible are replaced by each later layer, the argument lists append in that order, and the resolution becomes
-    /// <c>--resolution WxH</c> ahead of every engine argument, so an explicit one wins.
+    /// audible are replaced by each later layer, the argument lists append in that order, the environment and the project
+    /// settings layer per name, and the resolution becomes <c>--resolution WxH</c> ahead of every engine argument, so an explicit
+    /// one wins.
     /// </summary>
     /// <returns>The request to launch, and the session name: options' session, else the preset's, else null for the default.</returns>
     /// <exception cref="McpException">
     /// The preset is not in the file, or there is no file; or options' prepare is invalid; or options' mute is false on a quiet
     /// run; or options' audible is true on a run that is not quiet, with mute true or with record; or options' env names a variable
-    /// that cannot be set.
+    /// that cannot be set; or options' projectSettings names a setting the bridge sets or holds a value override.cfg cannot.
     /// </exception>
     public ProfileLaunch Merge(string? scene, IReadOnlyList<string> userArgs, IReadOnlyList<string> engineArgs, RunOptions options)
     {
@@ -212,6 +228,7 @@ internal sealed partial class ProjectProfile
             Audible = audible,
             RepickHover = options.RepickHover ?? true,
             Env = EnvironmentFor(preset, options.Env),
+            ProjectSettings = ProjectSettingsFor(preset, options.ProjectSettings),
         };
         return new ProfileLaunch(request, options.Session ?? preset.Session);
     }
@@ -242,6 +259,33 @@ internal sealed partial class ProjectProfile
         foreach ((string name, string value) in from)
         {
             into.Remove(name);
+            into[name] = value;
+        }
+    }
+
+    /// <summary>
+    /// Lays the top level's <c>projectSettings</c>, then the preset's, then the call's over one another, per setting, and renders
+    /// them as the block the run writes (<see cref="ProjectSettingsText.Block"/>), which refuses a name or a value override.cfg
+    /// cannot take.
+    /// </summary>
+    private string ProjectSettingsFor(ProfileValues preset, Dictionary<string, JsonElement>? given)
+    {
+        Dictionary<string, JsonElement> settings = new(StringComparer.Ordinal);
+        LaySettings(settings, _defaults.ProjectSettings);
+        LaySettings(settings, preset.ProjectSettings);
+        if (given is not null)
+        {
+            LaySettings(settings, given);
+        }
+
+        return ProjectSettingsText.Block(settings, "options.projectSettings", problem => new McpException(problem));
+    }
+
+    /// <summary>Sets <paramref name="from"/>'s settings on <paramref name="into"/>, each replacing the one of the same name.</summary>
+    private static void LaySettings(Dictionary<string, JsonElement> into, IEnumerable<KeyValuePair<string, JsonElement>> from)
+    {
+        foreach ((string name, JsonElement value) in from)
+        {
             into[name] = value;
         }
     }
@@ -351,6 +395,8 @@ internal sealed partial class ProjectProfile
     {
         IReadOnlyDictionary<string, string> env = ReadEnvironment(keys, place, place.Where);
         CheckEnvironment(env, "\"env\"", problem => Refused(place, problem));
+        IReadOnlyDictionary<string, JsonElement> settings = ReadProjectSettings(keys, place);
+        CheckProjectSettings(settings, place);
         return new(
             ReadString(keys, "scene", place),
             ReadStrings(keys, "userArgs", place),
@@ -360,7 +406,8 @@ internal sealed partial class ProjectProfile
             ReadBool(keys, "audible", place),
             session,
             description,
-            env
+            env,
+            settings
         );
     }
 
@@ -690,6 +737,44 @@ internal sealed partial class ProjectProfile
 
         return environment;
     }
+
+    /// <summary>
+    /// The section's <c>projectSettings</c>: setting names to values, each element its own so it outlives the parsed file; empty
+    /// when the key is absent.
+    /// </summary>
+    private static Dictionary<string, JsonElement> ReadProjectSettings(Dictionary<string, JsonElement> keys, Place place)
+    {
+        Dictionary<string, JsonElement> settings = new(StringComparer.Ordinal);
+        if (!keys.TryGetValue("projectSettings", out JsonElement value))
+        {
+            return settings;
+        }
+
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            throw Refused(place, "\"projectSettings\" must be an object of \"section/key\" names to values");
+        }
+
+        foreach (JsonProperty entry in value.EnumerateObject())
+        {
+            if (!settings.TryAdd(entry.Name, entry.Value.Clone()))
+            {
+                throw Refused(place, $"\"projectSettings\" names \"{entry.Name}\" twice; keep one");
+            }
+        }
+
+        return settings;
+    }
+
+    /// <summary>
+    /// Refuses a setting the file cannot give a run: a name that is not a <c>section/key</c> one or names a setting the bridge's
+    /// override.cfg sets, or a value that file cannot hold.
+    /// </summary>
+    private static void CheckProjectSettings(IReadOnlyDictionary<string, JsonElement> settings, Place place) =>
+        ProjectSettingsText.Block(settings, "\"projectSettings\"", problem => Refused(place, Trimmed(problem)));
+
+    /// <summary>The problem without its closing period, which <see cref="Refused"/> adds once.</summary>
+    private static string Trimmed(string problem) => problem.EndsWith('.') ? problem[..^1] : problem;
 
     /// <summary>
     /// A process's <c>ready</c>: the line it must print before run_process returns, as a compiled pattern, and the timeout it
