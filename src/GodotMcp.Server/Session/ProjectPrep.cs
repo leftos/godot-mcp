@@ -80,7 +80,7 @@ internal static class ProjectPrep
             ProjectFiles files = PrepScan.Scan(context.ProjectDir, context.Logger);
             PrepStep build = await BuildAsync(context, files, wrapper, reportRedBuild: true, cancellationToken);
             Log.PrepFinished(context.Logger, context.ProjectDir, build.State, "not run");
-            return new BuildOutcome(build.State, build.Errors);
+            return new BuildOutcome(build.State, build.Errors, build.Gate);
         }
         catch (SessionException e)
         {
@@ -246,10 +246,10 @@ internal static class ProjectPrep
     private static string ReadLog(string log) => File.Exists(log) ? File.ReadAllText(log) : string.Empty;
 
     /// <summary>
-    /// The prep wrapper's verdict from a step's capture log (<see cref="PrepWrapper.CaptureLog"/>): its last <c>gate: </c>
-    /// line, which follows the lines it prints as it starts and so is the one the step ended with. Null when the step ran
-    /// through no wrapper, the wrapper left no capture log, or the log holds no verdict. The log is read while another process
-    /// may still hold it, and one that cannot be read is logged and left out.
+    /// The prep wrapper's verdict from a step's capture log (<see cref="PrepWrapper.CaptureLog"/>): the gate's closing verdict
+    /// line, or the kill line of a run the gate's watchdog killed (<see cref="PrepWrapper.GateVerdict"/>). Null when the step
+    /// ran through no wrapper, the wrapper left no capture log, or the log holds no verdict. The log is read while another
+    /// process may still hold it, and one that cannot be read is logged and left out.
     /// </summary>
     private static string? GateVerdictOf(PrepWrapper? wrapper, string stepLog, ILogger logger)
     {
@@ -726,6 +726,7 @@ internal sealed record PrepOutcome(PrepResult Result, CompilerErrorList? BuildEr
 
 /// <summary>
 /// What a build alone did (<see cref="ProjectPrep.RunBuildAsync"/>): <see cref="Build"/> is up-to-date, built, failed, no-csproj
-/// or skipped, and <see cref="Errors"/> holds a failed build's compiler errors.
+/// or skipped, <see cref="Errors"/> holds a failed build's compiler errors, and <see cref="Gate"/> the prep wrapper's verdict line
+/// when it ran through one and left it.
 /// </summary>
-internal sealed record BuildOutcome(string Build, CompilerErrorList? Errors);
+internal sealed record BuildOutcome(string Build, CompilerErrorList? Errors, string? Gate);

@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
 using GodotMcp.Tests.Session;
@@ -56,6 +57,47 @@ public sealed class EditorValidationTests : IAsyncDisposable
         McpException refused = Assert.Throws<McpException>(() => RuntimeTools.BuildableProject(projectDir));
 
         Assert.Equal($"build needs a C# project; {projectDir} has no .csproj.", refused.Message);
+    }
+
+    [Fact]
+    public void PlayBuildsFirstOnlyForACSharpProjectWithAPrepWrapper()
+    {
+        string projectDir = _harness.Project("csharp");
+        string project = Path.Combine(projectDir, "CsProbe.csproj");
+        string profile = Path.Combine(projectDir, ProjectProfile.FileName);
+        File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
+        File.WriteAllText(profile, """{ "prepWrapper": ["pwsh"] }""");
+
+        bool gated = RuntimeTools.PlayBuildsFirst(projectDir);
+
+        File.WriteAllText(profile, """{ "scene": "res://main.tscn" }""");
+        bool unwrapped = RuntimeTools.PlayBuildsFirst(projectDir);
+
+        File.Delete(project);
+        File.WriteAllText(profile, """{ "prepWrapper": ["pwsh"] }""");
+        bool noCSharp = RuntimeTools.PlayBuildsFirst(projectDir);
+
+        Assert.True(gated);
+        Assert.False(unwrapped);
+        Assert.False(noCSharp);
+    }
+
+    [Fact]
+    public void PlaysReplyCarriesTheReloadsErrorsAndThePlays()
+    {
+        ErrorEntry reload = new(7, "error", "raised while the reload was waited for", "res://a.gd", 3, "f", [], "engine");
+        ErrorEntry play = new(8, "error", "raised by the play", "res://b.gd", 4, "g", [], "engine");
+        RuntimeTools.EditorBuild build = new(new BuildOutcome("up-to-date", null, null), "C:/p/.godot/godot-mcp/build.log", false, [reload]);
+        JsonObject reply = new() { ["action"] = "play", ["scene"] = "current" };
+
+        JsonObject shaped = RuntimeTools.PlayReply(reply, build, new RuntimeTools.BridgeResult(reply, [play]));
+
+        Assert.Equal(
+            ["raised while the reload was waited for", "raised by the play"],
+            shaped["errors"]!.AsArray().Select(error => error!["message"]!.GetValue<string>())
+        );
+        Assert.Equal("up-to-date", shaped["build"]!.GetValue<string>());
+        Assert.Equal("C:/p/.godot/godot-mcp/build.log", shaped["log"]!.GetValue<string>());
     }
 
     [Fact]

@@ -47,9 +47,12 @@ internal sealed partial class RuntimeTools
             + "(stops the playing scene; wasPlaying says whether one played); select_file (path, a res:// file or folder that "
             + "exists, selected in the FileSystem dock); build (builds the project's C# assembly as run_project's prep does, "
             + "skipped when it is up to date, then waits for the editor to reload it; refused for a project with no .csproj, "
-            + "and a red build fails with its compiler errors). Returns the editor's state with action and the action's own "
-            + "fields (scene, saved, wasPlaying, selected; for build: build built or up-to-date, reloadWaited when built, log "
-            + "the build log's path, and a warning when a scene plays, since the running game keeps its old assembly)."
+            + "and a red build fails with its compiler errors). With a prepWrapper and a C# project, play first builds as build "
+            + "does (through the wrapper, a red build is refused with its errors and nothing plays) and its reply carries build, "
+            + "reloadWaited, log and buildGate; F5 in the editor is not routed through the wrapper. Returns the editor's state "
+            + "with action and the action's own fields (scene, saved, wasPlaying, selected; for build: build built or up-to-date, "
+            + "reloadWaited when built, log the build log's path, buildGate (the wrapper's verdict line), and a warning when a "
+            + "scene plays, since the running game keeps its old assembly)."
             + EditorStateNote
             + " An action that shows a progress dialog holds every other command to this session until its effect shows; one "
             + "whose effect does not show within 30 s fails saying so, and a dialog the editor opened may be waiting: look "
@@ -73,6 +76,15 @@ internal sealed partial class RuntimeTools
         if (action == "build")
         {
             return await EditorBuildAsync(game, cancellationToken);
+        }
+
+        if (action == "play")
+        {
+            RefuseMissingScene(game, scene);
+            if (PlayBuildsFirst(game.ProjectDir))
+            {
+                return await EditorPlayBuiltAsync(game, parameters, cancellationToken);
+            }
         }
 
         TimeSpan timeout = action is "stop" or "select_file" ? EditorReadTimeout : EditorActionTimeout;
@@ -134,6 +146,96 @@ internal sealed partial class RuntimeTools
     /// <exception cref="McpException">The project has no C# project, the build failed or was stopped, or the bridge refused.</exception>
     private async Task<string> EditorBuildAsync(GodotSession editor, CancellationToken cancellationToken)
     {
+        (BridgeResult result, EditorBuild build) = await BuildForEditorAsync(editor, EditorReadTimeout, cancellationToken);
+        JsonObject reply = ReplyObject(EditorToolName, result.Reply);
+        reply["action"] = "build";
+        AddBuildFields(reply, build);
+        if (reply["playingScene"]?.GetValue<string>() is { Length: > 0 })
+        {
+            reply["warning"] = PlayingBuildWarning;
+        }
+
+        return ErrorReport.AddTo(reply, result.Errors).ToJsonString();
+    }
+
+    /// <summary>
+    /// editor play on a gated C# project: the server's gated build first, as editor build runs it, then the bridge's play, so the
+    /// editor's own pre-play build finds nothing to compile and the project is never built outside its prepWrapper. A red build is
+    /// refused before anything plays. The reply is the editor's state with the build's fields and both calls' errors.
+    /// </summary>
+    /// <exception cref="McpException">The project has no C# project, the build failed or was stopped, or the bridge refused.</exception>
+    private async Task<string> EditorPlayBuiltAsync(GodotSession editor, JsonObject parameters, CancellationToken cancellationToken)
+    {
+        (_, EditorBuild build) = await BuildForEditorAsync(editor, EditorActionTimeout, cancellationToken);
+        BridgeResult played = await CallWithErrorsAsync(
+            editor,
+            new BridgeCall(EditorToolName, "editor", parameters, EditorActionTimeout),
+            cancellationToken
+        );
+        return PlayReply(ReplyObject(EditorToolName, played.Reply), build, played).ToJsonString();
+    }
+
+    /// <summary>
+    /// play's reply from the bridge's: the build's fields, and the errors the editor raised while the reload was waited for
+    /// together with those the play raised, as build reports its own.
+    /// </summary>
+    internal static JsonObject PlayReply(JsonObject reply, EditorBuild build, BridgeResult played)
+    {
+        AddBuildFields(reply, build);
+        return ErrorReport.AddTo(reply, [.. build.Errors, .. played.Errors]);
+    }
+
+    /// <summary>
+    /// A play's scene checked before any build: a res:// path that names no file is refused at once, with the refusal open gives
+    /// it, so an invalid play costs no gated build. current, main and a left-out scene are left to the bridge, which alone knows
+    /// the edited scene, and so is a path outside res://, which play refuses in its own words.
+    /// </summary>
+    /// <exception cref="McpException">The scene is a res:// path that names no file.</exception>
+    private static void RefuseMissingScene(GodotSession editor, string? scene)
+    {
+        if (scene is null || !scene.StartsWith("res://", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (!File.Exists(Path.Combine(editor.ProjectDir, scene["res://".Length..])))
+        {
+            throw new McpException($"{scene} does not exist.");
+        }
+    }
+
+    /// <summary>Whether editor play builds the project first as editor build does: a found C# project, and a prepWrapper.</summary>
+    /// <exception cref="McpException">The folder's godot-mcp.json is refused.</exception>
+    internal static bool PlayBuildsFirst(string projectDir)
+    {
+        if (PrepScan.FindCsproj(projectDir).Kind != CsprojKind.Found)
+        {
+            return false;
+        }
+
+        try
+        {
+            return PrepWrapper.Read(projectDir) is not null;
+        }
+        catch (SessionException e)
+        {
+            throw new McpException(e.Message, e);
+        }
+    }
+
+    /// <summary>
+    /// The gated build and its reload wait, for editor build or play: the assembly's write time before the build, the build under
+    /// the folder's prep lock, then, when it wrote the assembly, the bridge's await_reload, else the editor's state, waited on for
+    /// <paramref name="stateTimeout"/> (play gives the wait its own play timeout). A red build is refused with its errors and its
+    /// log, and nothing further runs.
+    /// </summary>
+    /// <exception cref="McpException">The project has no C# project, the build failed or was stopped, or the bridge refused.</exception>
+    private async Task<(BridgeResult Result, EditorBuild Build)> BuildForEditorAsync(
+        GodotSession editor,
+        TimeSpan stateTimeout,
+        CancellationToken cancellationToken
+    )
+    {
         string projectDir = editor.ProjectDir;
         CsprojLookup lookup = BuildableProject(projectDir);
         string assembly = PrepScan.AssemblyPath(projectDir, lookup.AssemblyName!);
@@ -148,23 +250,25 @@ internal sealed partial class RuntimeTools
         bool reload = built.Build == "built" && WrittenAt(assembly) != before;
         BridgeCall call = reload
             ? new BridgeCall(EditorToolName, "editor", new JsonObject { ["action"] = "await_reload", ["assembly"] = assembly }, EditorActionTimeout)
-            : new BridgeCall(EditorToolName, "editor_state", [], EditorReadTimeout);
+            : new BridgeCall(EditorToolName, "editor_state", [], stateTimeout);
         BridgeResult result = await CallWithErrorsAsync(editor, call, cancellationToken);
-        JsonObject reply = ReplyObject(EditorToolName, result.Reply);
-        reply["action"] = "build";
-        reply["build"] = built.Build;
-        if (built.Build == "built")
+        return (result, new EditorBuild(built, log, reload, result.Errors));
+    }
+
+    /// <summary>The build's fields a build or a play reply carries: what it did, its log, and the prep wrapper's verdict.</summary>
+    private static void AddBuildFields(JsonObject reply, EditorBuild build)
+    {
+        reply["build"] = build.Outcome.Build;
+        if (build.Outcome.Build == "built")
         {
-            reply["reloadWaited"] = reload;
+            reply["reloadWaited"] = build.ReloadWaited;
         }
 
-        reply["log"] = log;
-        if (reply["playingScene"]?.GetValue<string>() is { Length: > 0 })
+        reply["log"] = build.Log;
+        if (build.Outcome.Gate is not null)
         {
-            reply["warning"] = PlayingBuildWarning;
+            reply["buildGate"] = build.Outcome.Gate;
         }
-
-        return ErrorReport.AddTo(reply, result.Errors).ToJsonString();
     }
 
     /// <summary>The C# project editor build builds in <paramref name="projectDir"/>.</summary>
@@ -211,6 +315,12 @@ internal sealed partial class RuntimeTools
 
     /// <summary>When the file was last written, or null when it does not exist.</summary>
     private static DateTime? WrittenAt(string path) => File.Exists(path) ? File.GetLastWriteTimeUtc(path) : null;
+
+    /// <summary>
+    /// A build for the editor: what it did, the build log's path, whether the editor's reload was waited for, and the errors the
+    /// editor raised while it was.
+    /// </summary>
+    internal sealed record EditorBuild(BuildOutcome Outcome, string Log, bool ReloadWaited, IReadOnlyList<ErrorEntry> Errors);
 
     /// <summary>The editor session a tool addresses.</summary>
     /// <exception cref="McpException">The session is not an editor session.</exception>
