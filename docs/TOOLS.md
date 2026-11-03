@@ -432,16 +432,20 @@ For an agent driving a Godot project through this server: which tool fits a job,
 ### `crop_screenshot`
 
 - **Does:** cuts a rectangle out of a PNG already captured and enlarges it, to read small text or a detail without another capture. Needs no game, no session and no Godot launch. Returns a text block `{path, width, height, rect}` (`rect` the source rectangle after clipping) then an image/png block of the crop.
-- **Use:** `projectPath`; `image`, a PNG (absolute or project-relative) anywhere under `<project>/.godot/godot-mcp/screenshots/`; `rect {x, y, width, height}` in the PNG's own pixels, not viewport coordinates (a capture can be a pixel short of the window); `scale`, an integer 1 to 8 (1 by default), enlarged nearest-neighbour so pixels stay sharp.
+- **Use:** `projectPath`; `image`, a PNG (absolute or project-relative) anywhere under `<project>/.godot/godot-mcp/` (screenshots, `run_scratches` step shots) or in the `.tmp` folder of the project's git checkout or of the main checkout; `rect {x, y, width, height}` in the PNG's own pixels, not viewport coordinates (a capture can be a pixel short of the window); `scale`, an integer 1 to 8 (1 by default), enlarged nearest-neighbour so pixels stay sharp.
 - **Edges:** the crop is written as `<stem>-crop-<n>.png` beside the file the image finally reaches, `n` the first free number from 1; it never replaces a file, and a writer that takes that `n` meanwhile moves this one to the next, up to 100 tries.
 
   A `rect` partly outside the image is clipped to it. One wholly outside is refused: "rect <x>,<y> <width>x<height> lies wholly outside <path>, which is <w>x<h>". An output edge over 4096 px is refused: "the crop would be <W>x<H>; crop_screenshot writes at most 4096 px on an edge, so use a smaller rect or scale".
 
-  Links are followed and checked: the image's final file must lie under the project's screenshots folder and have one name, else "<full> is not under the project's screenshots folder <folder>; crop_screenshot reads only the captures there". A folder reads "<full> is a folder, not a PNG", a missing file "<full> does not exist", and a file over 1074790400 bytes is refused.
+  Links are followed and checked: the image's final file must lie under one of those folders and have one name. A path outside them is refused: "<full> is not under a folder crop_screenshot reads (<folders>); it reads only the captures in the project's .godot/godot-mcp/ and the .tmp folder of the project's checkout or main checkout". A link leading out is refused: "<image> resolves to <final>, not under a folder crop_screenshot reads (<folders>); it reads only the captures in the project's .godot/godot-mcp/ and the .tmp folder of the project's checkout or main checkout". A hard link is refused: "<image> has <n> names (hard links); crop_screenshot reads only files with one name in those folders". `<folders>` are the absolute folders joined with `; `. A checkout's own tree outside its `.tmp`, and the `.tmp` of a checkout the project does not lie under, are not readable.
+
+  A file git tracks is refused: "<image> is tracked by git; crop_screenshot reads only untracked captures". When git cannot answer, the file is refused too, "<image> could not be checked against git; crop_screenshot reads only untracked captures", unless it lies under `.godot/godot-mcp/` of a project in no checkout. Each crop runs git, to find the project's checkout and to ask about the file.
+
+  A folder reads "<full> is a folder, not a PNG", a missing file "<full> does not exist", and a file over 1074790400 bytes is refused.
 
   It reads only 8-bit RGB or RGBA PNGs that are not interlaced, as Godot saves them; any other (16-bit, palette colour type 3, interlaced, wider or taller than Godot's 16384 px edge, damaged) is refused with "crop_screenshot reads only 8-bit RGB or RGBA PNGs that are not interlaced, as Godot saves them; <path> is <what it is>".
 
-  Other refusals: "scale must be 1 to 8; got <scale>" and "rect width and height must be at least 1; got <w>x<h>". It is in the `read` class and `readOnly`: it writes only its crop, in the screenshots folder.
+  Other refusals: "scale must be 1 to 8; got <scale>" and "rect width and height must be at least 1; got <w>x<h>". It is in the `read` class and `readOnly`: it writes only its crop, beside the source, in one of those folders.
 
 ### `get_ui_elements`
 

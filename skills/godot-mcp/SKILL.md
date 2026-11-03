@@ -72,7 +72,7 @@ To keep a still anywhere else in the project, `save_screenshot` takes `take_scre
 
 It refuses a `.git` folder and a `.godot` folder outside a `.tmp`, refuses an existing file without `options.overwrite`, and is not batchable.
 
-To read small print in a capture already taken, `crop_screenshot {image, rect, scale}` cuts `rect` out of a PNG under `.godot/godot-mcp/screenshots/` and enlarges it by an integer `scale` (1 to 8, nearest-neighbour), with no game running. The `rect` is in the PNG's own pixels, not viewport coordinates; it returns the crop as an image and writes it as `<name>-crop-<n>.png` beside the capture.
+To read small print in a capture already taken, `crop_screenshot {image, rect, scale}` cuts `rect` out of a PNG under `.godot/godot-mcp/` (a `run_scratches` step shot included) or in the `.tmp` folder of the project's checkout or main checkout, never one git tracks, and enlarges it by an integer `scale` (1 to 8, nearest-neighbour), with no game running. The `rect` is in the PNG's own pixels, not viewport coordinates; it returns the crop as an image and writes it as `<name>-crop-<n>.png` beside the capture.
 
 **Scratch scenes.**
 

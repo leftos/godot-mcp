@@ -11,6 +11,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 - `compare_screenshot` takes `options.colors` and returns `colorCounts`: how many changed pixels match each colour, in the capture or the baseline.
 - `watch` gains the `frame_work_ms` monitor: a frame's own work time, without the frame cap's wait, vsync or the draw.
 
+### Changed
+
+- `crop_screenshot` reads a PNG in the project's `.godot/godot-mcp/` or the checkout's `.tmp`, not only the screenshots folder; tracked files stay refused.
+
 ### Fixed
 
 - `prep.buildGate`, `importGate` and `gate` report a routed gate run's verdict or kill line, not the `gate: restored …` line printed after it.

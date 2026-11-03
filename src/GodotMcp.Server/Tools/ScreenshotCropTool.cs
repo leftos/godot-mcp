@@ -17,8 +17,9 @@ internal sealed record CropRect(
 );
 
 /// <summary>
-/// crop_screenshot: cuts a rectangle out of a PNG already saved under a project's screenshots folder, scaled up
-/// nearest-neighbour, with no session and no Godot; the crop is written beside its source.
+/// crop_screenshot: cuts a rectangle out of a PNG already saved in a project's .godot/godot-mcp/ folder or in the .tmp
+/// folder of its git checkout or main checkout, scaled up nearest-neighbour, with no session and no Godot; the crop is
+/// written beside its source.
 /// </summary>
 [McpServerToolType]
 internal sealed class ScreenshotCropTool
@@ -34,8 +35,9 @@ internal sealed class ScreenshotCropTool
 
     [McpServerTool(Name = ToolName, ReadOnly = true, Destructive = false, OpenWorld = false)]
     [Description(
-        "Crops a PNG already captured under the project's .godot/godot-mcp/screenshots/ (a take_screenshot capture, or a frame "
-            + "capture_frames or wait_for saved there), with no session and no re-capture, and scales the crop up nearest-neighbour "
+        "Crops a PNG already captured under the project's .godot/godot-mcp/ (a take_screenshot capture, a frame "
+            + "capture_frames or wait_for saved there, or a run_scratches step shot) or in the .tmp folder of the project's git "
+            + "checkout or main checkout, with no session and no re-capture, and scales the crop up nearest-neighbour "
             + "to read small detail. rect is in the PNG's own pixels from its top-left, not viewport coordinates. A rect partly "
             + "outside the image is clipped to it; one wholly outside is refused, and so is a crop over 4096 px on an edge after "
             + "scaling. Writes <stem>-crop-<n>.png beside the source, n the first free number from 1, and returns the cropped image "
@@ -44,8 +46,8 @@ internal sealed class ScreenshotCropTool
     public static IEnumerable<ContentBlock> CropScreenshot(
         [Description("The folder that holds the project's project.godot.")] string projectPath,
         [Description(
-            "The PNG to crop: absolute or relative to the project folder, anywhere under the project's "
-                + ".godot/godot-mcp/screenshots/; an 8-bit RGB or RGBA PNG as Godot saves it."
+            "The PNG to crop: absolute or relative to the project folder, anywhere under the project's .godot/godot-mcp/ "
+                + "or in the .tmp folder of its git checkout or main checkout; an 8-bit RGB or RGBA PNG as Godot saves it."
         )]
             string image,
         [Description("{x, y, width, height}: the rectangle to keep, in the PNG's own pixels.")] CropRect rect,
@@ -53,9 +55,9 @@ internal sealed class ScreenshotCropTool
     )
     {
         CheckArguments(rect, scale);
-        string projectDir = ProjectDir(projectPath);
-        string source = Source(projectDir, image);
-        (byte[] bytes, string final) = ReadChecked(projectDir, source);
+        OutputPlaces places = Places(projectPath);
+        string source = Source(places, image);
+        (byte[] bytes, string final) = ReadChecked(places, source);
         var original = PngImage.Decode(bytes, source);
         CropRect used = Clip(rect, original, source);
         CheckEdge(used, scale);
@@ -93,31 +95,40 @@ internal sealed class ScreenshotCropTool
         }
     }
 
-    private static string ProjectDir(string projectPath)
+    /// <summary>The project's folder and the places its outputs may lie in.</summary>
+    /// <exception cref="McpException">The folder holds no project.godot, or a folder has no final path Windows can give.</exception>
+    private static OutputPlaces Places(string projectPath)
     {
+        string projectDir;
         try
         {
-            return SessionRegistry.NormaliseProjectDir(projectPath);
+            projectDir = SessionRegistry.NormaliseProjectDir(projectPath);
         }
         catch (SessionException e)
         {
             throw new McpException(e.Message, e);
         }
+
+        return OutputPlaces.Find(projectDir, Log.Ambient);
     }
 
-    /// <summary>The image's full path, which must lie under the project's screenshots folder and exist.</summary>
-    private static string Source(string projectDir, string image)
+    /// <summary>The image's full path, which must lie in one of the folders crop_screenshot reads and exist.</summary>
+    private static string Source(OutputPlaces places, string image)
     {
         if (string.IsNullOrWhiteSpace(image))
         {
-            throw new McpException("image is empty; pass a PNG under the project's .godot/godot-mcp/screenshots/");
+            throw new McpException(
+                "image is empty; pass a PNG under the project's .godot/godot-mcp/ or in the .tmp folder of its checkout or main checkout"
+            );
         }
 
-        string full = Path.GetFullPath(Path.Combine(projectDir, image));
-        string folder = ScreenshotTarget.CaptureFolder(projectDir);
-        if (HeadlessTools.IsOutside(Path.GetRelativePath(folder, full)))
+        string full = Path.GetFullPath(Path.Combine(places.Project, image));
+        if (!ScreenshotTarget.IsUnderCropFolders(places, full))
         {
-            throw new McpException($"{full} is not under the project's screenshots folder {folder}; {ToolName} reads only the captures there");
+            throw new McpException(
+                $"{full} is not under a folder {ToolName} reads ({Folders(places)}); it reads only the captures in the project's "
+                    + ".godot/godot-mcp/ and the .tmp folder of the project's checkout or main checkout"
+            );
         }
 
         if (Directory.Exists(full))
@@ -128,16 +139,20 @@ internal sealed class ScreenshotCropTool
         return File.Exists(full) ? full : throw new McpException($"{full} does not exist");
     }
 
+    /// <summary>The folders crop_screenshot reads, as a refusal names them.</summary>
+    private static string Folders(OutputPlaces places) => string.Join("; ", ScreenshotTarget.CropSourceFolders(places));
+
     /// <summary>
-    /// The source's bytes and the path its file finally lies at, read through a handle that, on Windows, must reach a
-    /// one-name file under the project's screenshots folder; elsewhere the path is the source as given.
+    /// The source's bytes and the path its file finally lies at, read through the one handle that, on Windows, must reach
+    /// a one-name file in one of the folders crop_screenshot reads; elsewhere the path is the source as given.
     /// </summary>
-    private static (byte[] Bytes, string Final) ReadChecked(string projectDir, string source)
+    private static (byte[] Bytes, string Final) ReadChecked(OutputPlaces places, string source)
     {
         try
         {
             using FileStream stream = new(source, FileMode.Open, FileAccess.Read, FileShare.Read);
-            string final = OperatingSystem.IsWindows() ? CheckIsCapture(stream, projectDir, source) : source;
+            string final = OperatingSystem.IsWindows() ? CheckIsCropSource(stream, places, source) : source;
+            CheckNotTracked(places, final, source);
             CheckLength(stream.Length, source);
             using MemoryStream bytes = new();
             stream.CopyTo(bytes);
@@ -160,27 +175,44 @@ internal sealed class ScreenshotCropTool
     }
 
     /// <summary>
-    /// The source's final path, refusing a source that is no capture by <see cref="ScreenshotTarget.IdentifyCapture"/>: a
-    /// link leading out of the screenshots folder, or a file with more than one name.
+    /// The source's final path, refusing a source that is no crop source by <see cref="ScreenshotTarget.IdentifyCropSource"/>:
+    /// a link leading out of the folders crop_screenshot reads, or a file with more than one name.
     /// </summary>
     [SupportedOSPlatform("windows")]
-    private static string CheckIsCapture(FileStream stream, string projectDir, string source)
+    private static string CheckIsCropSource(FileStream stream, OutputPlaces places, string source)
     {
-        string finalProject = Path.TrimEndingDirectorySeparator(FinalPath.Of(projectDir));
-        CaptureIdentity identity = ScreenshotTarget.IdentifyCapture(stream.SafeFileHandle, finalProject);
+        CaptureIdentity identity = ScreenshotTarget.IdentifyCropSource(stream.SafeFileHandle, places);
         if (!identity.UnderFolder)
         {
             throw new McpException(
-                $"{source} resolves to {identity.Final}, not under the project's screenshots folder "
-                    + $"{ScreenshotTarget.CaptureFolder(projectDir)}; {ToolName} reads only the captures there"
+                $"{source} resolves to {identity.Final}, not under a folder {ToolName} reads ({Folders(places)}); it reads only "
+                    + "the captures in the project's .godot/godot-mcp/ and the .tmp folder of the project's checkout or main checkout"
             );
         }
 
         return identity.Names == 1
             ? identity.Final
-            : throw new McpException(
-                $"{source} has {identity.Names} names (hard links); {ToolName} reads only the captures in the screenshots folder"
-            );
+            : throw new McpException($"{source} has {identity.Names} names (hard links); {ToolName} reads only files with one name in those folders");
+    }
+
+    /// <summary>
+    /// Refuses a source git tracks, and a source git could not be asked about unless it lies under the .godot/godot-mcp
+    /// folder of a project that is in no checkout.
+    /// </summary>
+    private static void CheckNotTracked(OutputPlaces places, string final, string source)
+    {
+        bool? tracked = ScreenshotTarget.IsTracked(places, final, Log.Ambient);
+        if (tracked is null)
+        {
+            if (places.Checkout is not null || !ScreenshotTarget.IsUnderProjectCaptureFolders(places, final))
+            {
+                throw new McpException($"{source} could not be checked against git; {ToolName} reads only untracked captures");
+            }
+        }
+        else if (tracked.Value)
+        {
+            throw new McpException($"{source} is tracked by git; {ToolName} reads only untracked captures");
+        }
     }
 
     /// <summary>The part of <paramref name="rect"/> inside the image; refused when none is.</summary>
