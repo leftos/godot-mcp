@@ -8,10 +8,10 @@ namespace GodotMcp.Tests.Tools;
 
 public sealed class ProjectProfileTests : IDisposable
 {
-    private const string TopLevelKeys = "scene, userArgs, engineArgs, resolution, quiet, presets, prepWrapper, scratch, processes";
+    private const string TopLevelKeys = "scene, userArgs, engineArgs, resolution, quiet, env, presets, prepWrapper, scratch, processes";
     private const string PrepWrapperShape =
         "(top level): \"prepWrapper\" must be a non-empty array of non-empty strings, the program and then its arguments";
-    private const string PresetKeys = "scene, userArgs, engineArgs, resolution, quiet, session";
+    private const string PresetKeys = "scene, userArgs, engineArgs, resolution, quiet, env, session";
 
     private const string Layered = """
         {
@@ -1207,6 +1207,178 @@ public sealed class ProjectProfileTests : IDisposable
             message
         );
         Assert.EndsWith(" Fix or remove it.", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EnvLayersTopLevelPresetAndOptionPerVariable()
+    {
+        Write(
+            """
+            {
+              "env": {"TOP_ONLY": "top", "UNDER_PRESET": "top", "UNDER_CALL": "top"},
+              "presets": { "client": { "env": {"UNDER_PRESET": "preset", "UNDER_CALL": "preset", "PRESET_ONLY": "preset"} } }
+            }
+            """
+        );
+
+        IReadOnlyDictionary<string, string> top = Merge(new RunOptions()).Request.Env;
+        IReadOnlyDictionary<string, string> preset = Merge(new RunOptions(Preset: "client")).Request.Env;
+        IReadOnlyDictionary<string, string> call = Merge(
+            new RunOptions(Preset: "client", Env: new() { ["UNDER_CALL"] = "call", ["CALL_ONLY"] = "call" })
+        ).Request.Env;
+
+        Assert.Equal(3, top.Count);
+        Assert.Equal("top", top["UNDER_PRESET"]);
+        Assert.Equal(4, preset.Count);
+        Assert.Equal("preset", preset["UNDER_PRESET"]);
+        Assert.Equal("top", preset["TOP_ONLY"]);
+        Assert.Equal("preset", preset["PRESET_ONLY"]);
+        Assert.Equal(5, call.Count);
+        Assert.Equal("call", call["UNDER_CALL"]);
+        Assert.Equal("call", call["CALL_ONLY"]);
+        Assert.Equal("preset", call["UNDER_PRESET"]);
+        Assert.Equal("top", call["TOP_ONLY"]);
+    }
+
+    [Fact]
+    public void EnvKeyIsAllowedAtTopLevelAndInAPreset()
+    {
+        Write("""{ "env": {"A": "top"}, "presets": { "client": { "env": {"B": "preset"} } } }""");
+
+        ProfileLaunch top = Merge(new RunOptions());
+        ProfileLaunch preset = Merge(new RunOptions(Preset: "client"));
+
+        Assert.Equal("top", top.Request.Env["A"]);
+        Assert.Equal("top", preset.Request.Env["A"]);
+        Assert.Equal("preset", preset.Request.Env["B"]);
+    }
+
+    [Fact]
+    public void RefusesAnEnvNameTheBridgeOwns()
+    {
+        Write("""{ "env": {"GODOT_MCP_PORT": "secret"} }""");
+        string top = Refused(() => ProjectProfile.Load(_temp.Path));
+        Write("""{ "presets": { "client": { "env": {"GODOT_MCP_TOKEN": "secret"} } } }""");
+        string preset = Refused(() => ProjectProfile.Load(_temp.Path));
+        Write("""{ }""");
+        string call = Refused(() => Merge(new RunOptions(Env: new() { ["GODOT_MCP_QUIET"] = "secret" })));
+
+        Assert.Equal(
+            $"{FilePath} (top level): \"env\" cannot set \"GODOT_MCP_PORT\": GODOT_MCP_* variables belong to the bridge, which the server "
+                + "sets from the run's own options.",
+            top
+        );
+        Assert.Equal(
+            $"{FilePath} (preset \"client\"): \"env\" cannot set \"GODOT_MCP_TOKEN\": GODOT_MCP_* variables belong to the bridge, which the "
+                + "server sets from the run's own options.",
+            preset
+        );
+        Assert.Equal(
+            "options.env cannot set \"GODOT_MCP_QUIET\": GODOT_MCP_* variables belong to the bridge, which the server sets from the run's "
+                + "own options.",
+            call
+        );
+        Assert.DoesNotContain("secret", top, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret", call, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RefusesANonStringEnvValue()
+    {
+        Write("""{ "env": {"Delve__DataDir": 1} }""");
+        string top = Refused(() => ProjectProfile.Load(_temp.Path));
+        Write("""{ "presets": { "client": { "env": {"Delve__DataDir": true} } } }""");
+        string preset = Refused(() => ProjectProfile.Load(_temp.Path));
+
+        Assert.Equal($"{FilePath} (top level): \"env\" of top level must hold strings; \"Delve__DataDir\" is a number.", top);
+        Assert.Equal($"{FilePath} (preset \"client\"): \"env\" of preset \"client\" must hold strings; \"Delve__DataDir\" is true or false.", preset);
+    }
+
+    [Fact]
+    public void RefusesAnEnvNameThatIsEmptyOrHoldsAnEquals()
+    {
+        Write("""{ "env": {"A=B": "x"} }""");
+        string inFile = Refused(() => ProjectProfile.Load(_temp.Path));
+        Write("""{ "presets": { "client": { "env": {"": "x"} } } }""");
+        string emptyInPreset = Refused(() => ProjectProfile.Load(_temp.Path));
+        Write("""{ }""");
+        string emptyInCall = Refused(() => Merge(new RunOptions(Env: new() { [""] = "x" })));
+        string equalsInCall = Refused(() => Merge(new RunOptions(Env: new() { ["A=B"] = "x" })));
+
+        Assert.Equal($"{FilePath} (top level): \"env\" has the name \"A=B\", which is empty or holds '='; name a variable.", inFile);
+        Assert.Equal($"{FilePath} (preset \"client\"): \"env\" has the name \"\", which is empty or holds '='; name a variable.", emptyInPreset);
+        Assert.Equal("options.env has the name \"\", which is empty or holds '='; name a variable.", emptyInCall);
+        Assert.Equal("options.env has the name \"A=B\", which is empty or holds '='; name a variable.", equalsInCall);
+    }
+
+    [Fact]
+    public void ALowercaseBridgeVariableIsRefused()
+    {
+        Write("""{ "env": {"godot_mcp_off": "1"} }""");
+        string inFile = Refused(() => ProjectProfile.Load(_temp.Path));
+        Write("""{ }""");
+        string inCall = Refused(() => Merge(new RunOptions(Env: new() { ["godot_mcp_dotnet_error"] = "1" })));
+
+        Assert.Equal(
+            $"{FilePath} (top level): \"env\" cannot set \"godot_mcp_off\": GODOT_MCP_* variables belong to the bridge, which the server "
+                + "sets from the run's own options.",
+            inFile
+        );
+        Assert.Equal(
+            "options.env cannot set \"godot_mcp_dotnet_error\": GODOT_MCP_* variables belong to the bridge, which the server sets from "
+                + "the run's own options.",
+            inCall
+        );
+    }
+
+    [Fact]
+    public void AValueHoldingANulIsRefused()
+    {
+        Write("""{ "env": {"A": "x\u0000y"} }""");
+        string inFile = Refused(() => ProjectProfile.Load(_temp.Path));
+        Write("""{ }""");
+        string inCall = Refused(() => Merge(new RunOptions(Env: new() { ["A"] = "x\0y" })));
+
+        Assert.Equal($"{FilePath} (top level): \"env\" gives \"A\" a value holding a NUL character; remove it.", inFile);
+        Assert.Equal("options.env gives \"A\" a value holding a NUL character; remove it.", inCall);
+    }
+
+    [Fact]
+    public void ANullValueInTheCallIsRefused()
+    {
+        string refusal = Refused(() => Merge(new RunOptions(Env: new() { ["A"] = null! })));
+
+        Assert.Equal("options.env gives \"A\" no value; give it a string.", refusal);
+    }
+
+    [Fact]
+    public void ACaseDifferingNameInTheCallWinsOverThePreset()
+    {
+        Write("""{ "env": {"Shared": "top", "TopOnly": "top"}, "presets": { "client": { "env": {"SHARED": "preset"} } } }""");
+
+        IReadOnlyDictionary<string, string> merged = Merge(
+            new RunOptions(Preset: "client", Env: new() { ["shared"] = "call", ["CallOnly"] = "call" })
+        ).Request.Env;
+
+        Assert.Equal(3, merged.Count);
+        Assert.Equal("call", merged["SHARED"]);
+        Assert.Equal("call", merged["shared"]);
+        Assert.Equal("top", merged["TOPONLY"]);
+        Assert.Equal("call", merged["CALLONLY"]);
+        Assert.Contains("shared", merged.Keys);
+        Assert.DoesNotContain("Shared", merged.Keys);
+    }
+
+    [Fact]
+    public void TwoNamesDifferingOnlyInCaseAreRefused()
+    {
+        Write("""{ "env": {"Name": "a", "NAME": "b"} }""");
+        string inFile = Refused(() => ProjectProfile.Load(_temp.Path));
+        Write("""{ }""");
+        string inCall = Refused(() => Merge(new RunOptions(Env: new() { ["Name"] = "a", ["NAME"] = "b" })));
+
+        Assert.Equal($"{FilePath} (top level): \"env\" names \"Name\" and \"NAME\", which are one variable; keep one.", inFile);
+        Assert.Equal("options.env names \"Name\" and \"NAME\", which are one variable; keep one.", inCall);
     }
 
     private static string Refused(Func<object> action) => Assert.Throws<McpException>(action).Message;

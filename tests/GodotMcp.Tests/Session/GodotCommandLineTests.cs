@@ -494,6 +494,37 @@ public sealed class GodotCommandLineTests : IDisposable
         Assert.Null(GodotCommandLine.DescribeWindowMismatch(null, new WindowSize(3840, 1421)));
     }
 
+    [Fact]
+    public void EnvIsLaidOverTheServersEnvironmentAndTheBridgeVariablesWin()
+    {
+        BridgeEndpoint bridge = new(4321, "t0k3n");
+        LaunchRequest request = ProjectProfile.Empty(Project).Merge(null, [], [], new RunOptions(Env: new() { ["GMCP_TEST_VAR"] = "kept" })).Request;
+        // Merge refuses a bridge variable, so only a request built by hand can hold one, and the bridge's own value still wins.
+        LaunchRequest bridgeNamed = request with
+        {
+            Env = new Dictionary<string, string> { [GodotCommandLine.PortVariable] = "1" },
+        };
+
+        ProcessStartInfo startInfo = GodotCommandLine.CreateStartInfo("godot.exe", request, bridge, moviePath: null);
+        ProcessStartInfo laidOver = GodotCommandLine.CreateStartInfo("godot.exe", bridgeNamed, bridge, moviePath: null);
+
+        Assert.Equal("kept", startInfo.Environment["GMCP_TEST_VAR"]);
+        Assert.Equal("4321", startInfo.Environment[GodotCommandLine.PortVariable]);
+        Assert.Equal("4321", laidOver.Environment[GodotCommandLine.PortVariable]);
+    }
+
+    [Fact]
+    public void ARestartedLaunchKeepsItsEnv()
+    {
+        BridgeEndpoint bridge = new(4321, "t0k3n");
+        LaunchRequest request = ProjectProfile.Empty(Project).Merge(null, [], [], new RunOptions(Env: new() { ["GMCP_TEST_VAR"] = "kept" })).Request;
+
+        // A restart relaunches the session's last request with only its prepare replaced.
+        ProcessStartInfo restarted = GodotCommandLine.CreateStartInfo("godot.exe", request with { Prepare = false }, bridge, moviePath: null);
+
+        Assert.Equal("kept", restarted.Environment["GMCP_TEST_VAR"]);
+    }
+
     /// <summary>A project folder whose project.godot holds <paramref name="windowSettings"/> under its <c>[display]</c> section.</summary>
     private string ProjectWithWindowSettings(string windowSettings)
     {

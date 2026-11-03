@@ -11,8 +11,8 @@ namespace GodotMcp.Server.Tools;
 internal sealed record ProfileLaunch(LaunchRequest Request, string? Session);
 
 /// <summary>
-/// The values the top level of godot-mcp.json or one of its presets sets: null, or empty for the argument lists, where it
-/// sets none. <see cref="Session"/> and <see cref="Description"/> are only ever set by a preset.
+/// The values the top level of godot-mcp.json or one of its presets sets: null, or empty for the argument lists and the
+/// environment, where it sets none. <see cref="Session"/> and <see cref="Description"/> are only ever set by a preset.
 /// </summary>
 internal sealed record ProfileValues(
     string? Scene,
@@ -21,11 +21,12 @@ internal sealed record ProfileValues(
     string? Resolution,
     bool? Quiet,
     string? Session,
-    string? Description
+    string? Description,
+    IReadOnlyDictionary<string, string> Env
 )
 {
     /// <summary>Values that set nothing.</summary>
-    public static readonly ProfileValues None = new(null, [], [], null, null, null, null);
+    public static readonly ProfileValues None = new(null, [], [], null, null, null, null, new Dictionary<string, string>());
 }
 
 /// <summary>
@@ -51,12 +52,13 @@ internal sealed partial class ProjectProfile
         "engineArgs",
         "resolution",
         "quiet",
+        "env",
         "presets",
         PrepWrapperKey,
         ScratchKey,
         ProcessesKey,
     ];
-    private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "session", "description"];
+    private static readonly string[] PresetKeys = ["scene", "userArgs", "engineArgs", "resolution", "quiet", "env", "session", "description"];
     private static readonly string[] ScratchKeys =
     [
         "folder",
@@ -168,12 +170,17 @@ internal sealed partial class ProjectProfile
     /// <returns>The request to launch, and the session name: options' session, else the preset's, else null for the default.</returns>
     /// <exception cref="McpException">
     /// The preset is not in the file, or there is no file; or options' prepare is invalid; or options' mute is false on a quiet
-    /// run.
+    /// run; or options' env names a variable that cannot be set.
     /// </exception>
     public ProfileLaunch Merge(string? scene, IReadOnlyList<string> userArgs, IReadOnlyList<string> engineArgs, RunOptions options)
     {
         ProfileValues preset = PresetFor(options.Preset);
         bool quiet = QuietFor(preset, options.Quiet);
+        if (options.Env is not null)
+        {
+            CheckEnvironment(options.Env, "options.env", problem => new McpException(problem + "."));
+        }
+
         LaunchRequest request = new(
             ProjectDir,
             scene ?? preset.Scene ?? _defaults.Scene,
@@ -188,8 +195,39 @@ internal sealed partial class ProjectProfile
             DropIdle = options.DropIdle ?? false,
             Mute = options.MuteFor(quiet),
             RepickHover = options.RepickHover ?? true,
+            Env = EnvironmentFor(preset, options.Env),
         };
         return new ProfileLaunch(request, options.Session ?? preset.Session);
+    }
+
+    /// <summary>
+    /// Lays the top level's <c>env</c>, then the preset's, then the call's over one another, per variable; names that differ only in
+    /// case are one variable here, as a process's environment holds them on Windows.
+    /// </summary>
+    private Dictionary<string, string> EnvironmentFor(ProfileValues preset, Dictionary<string, string>? given)
+    {
+        Dictionary<string, string> environment = new(StringComparer.OrdinalIgnoreCase);
+        LayEnvironment(environment, _defaults.Env);
+        LayEnvironment(environment, preset.Env);
+        if (given is not null)
+        {
+            LayEnvironment(environment, given);
+        }
+
+        return environment;
+    }
+
+    /// <summary>
+    /// Sets <paramref name="from"/>'s variables on <paramref name="into"/>, replacing one it already holds, and taking a name's
+    /// spelling from the layer that set it last.
+    /// </summary>
+    private static void LayEnvironment(Dictionary<string, string> into, IEnumerable<KeyValuePair<string, string>> from)
+    {
+        foreach ((string name, string value) in from)
+        {
+            into.Remove(name);
+            into[name] = value;
+        }
     }
 
     private List<string> EngineArgsFor(ProfileValues preset, IReadOnlyList<string> engineArgs)
@@ -279,16 +317,78 @@ internal sealed partial class ProjectProfile
         return presets;
     }
 
-    private static ProfileValues ReadValues(Dictionary<string, JsonElement> keys, Place place, string? session, string? description) =>
-        new(
+    private static ProfileValues ReadValues(Dictionary<string, JsonElement> keys, Place place, string? session, string? description)
+    {
+        IReadOnlyDictionary<string, string> env = ReadEnvironment(keys, place, place.Where);
+        CheckEnvironment(env, "\"env\"", problem => Refused(place, problem));
+        return new(
             ReadString(keys, "scene", place),
             ReadStrings(keys, "userArgs", place),
             ReadStrings(keys, "engineArgs", place),
             ReadResolution(keys, place),
             ReadBool(keys, "quiet", place),
             session,
-            description
+            description,
+            env
         );
+    }
+
+    /// <summary>
+    /// Refuses a variable a run's <c>env</c> cannot set: a name that is empty or holds '=', or that names a bridge variable, a name
+    /// another one here holds in another case, and a value that is missing or holds a NUL.
+    /// </summary>
+    /// <param name="variables">The variables to check, the call's or the file's.</param>
+    /// <param name="source">Where they came from, which the refusal names.</param>
+    /// <param name="refuse">How that place's refusal is raised, so each place's reads as it does.</param>
+    private static void CheckEnvironment(IEnumerable<KeyValuePair<string, string>> variables, string source, Func<string, McpException> refuse)
+    {
+        Dictionary<string, string> seen = new(StringComparer.OrdinalIgnoreCase);
+        foreach ((string name, string value) in variables)
+        {
+            CheckEnvironmentName(name, source, refuse);
+            CheckEnvironmentSpelling(seen, name, source, refuse);
+            CheckEnvironmentValue(value, name, source, refuse);
+        }
+    }
+
+    /// <summary>Refuses a name that is empty or holds '=', and one that names a bridge variable however it is cased.</summary>
+    private static void CheckEnvironmentName(string name, string source, Func<string, McpException> refuse)
+    {
+        if (name.Length == 0 || name.Contains('=', StringComparison.Ordinal) || name.Contains('\0'))
+        {
+            throw refuse($"{source} has the name \"{name}\", which is empty or holds '='; name a variable");
+        }
+
+        if (name.StartsWith(GodotCommandLine.BridgeVariablePrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            throw refuse(
+                $"{source} cannot set \"{name}\": GODOT_MCP_* variables belong to the bridge, which the server sets from the run's " + "own options"
+            );
+        }
+    }
+
+    /// <summary>Refuses a name one the same <c>env</c> already holds in another case, naming both spellings.</summary>
+    private static void CheckEnvironmentSpelling(Dictionary<string, string> seen, string name, string source, Func<string, McpException> refuse)
+    {
+        if (!seen.TryAdd(name, name))
+        {
+            throw refuse($"{source} names \"{seen[name]}\" and \"{name}\", which are one variable; keep one");
+        }
+    }
+
+    /// <summary>Refuses a value that is missing, or that holds a NUL, which would cut the environment block at it.</summary>
+    private static void CheckEnvironmentValue(string? value, string name, string source, Func<string, McpException> refuse)
+    {
+        if (value is null)
+        {
+            throw refuse($"{source} gives \"{name}\" no value; give it a string");
+        }
+
+        if (value.Contains('\0', StringComparison.Ordinal))
+        {
+            throw refuse($"{source} gives \"{name}\" a value holding a NUL character; remove it");
+        }
+    }
 
     /// <summary>The object's keys, each checked against <paramref name="allowed"/> and seen once.</summary>
     private static Dictionary<string, JsonElement> Keys(JsonElement element, string[] allowed, Place place)
@@ -453,7 +553,7 @@ internal sealed partial class ProjectProfile
             ProcessProfile read = new(
                 ReadCommand(process, place, "command"),
                 ReadCwd(process, place, projectDir),
-                ReadEnvironment(process, place, entry.Name),
+                ReadEnvironment(process, place, $"\"{entry.Name}\""),
                 ReadReady(process, place),
                 ReadProcessDescription(process, place),
                 ReadPrep(process, place)
@@ -531,10 +631,14 @@ internal sealed partial class ProjectProfile
             && !relative.StartsWith("../", StringComparison.Ordinal);
     }
 
-    /// <summary>A process's <c>env</c>: the variables set for it over the server's own environment; empty when absent.</summary>
-    private static Dictionary<string, string> ReadEnvironment(Dictionary<string, JsonElement> keys, Place place, string process)
+    /// <summary>
+    /// The <c>env</c> a section sets: variables laid over the server's own environment; empty when the key is absent. Names that
+    /// differ only in case are one variable, as a process's environment holds them on Windows.
+    /// <paramref name="label"/> names the section in the refusal a non-string value gets.
+    /// </summary>
+    private static Dictionary<string, string> ReadEnvironment(Dictionary<string, JsonElement> keys, Place place, string label)
     {
-        Dictionary<string, string> environment = new(StringComparer.Ordinal);
+        Dictionary<string, string> environment = new(StringComparer.OrdinalIgnoreCase);
         if (!keys.TryGetValue("env", out JsonElement value))
         {
             return environment;
@@ -545,10 +649,11 @@ internal sealed partial class ProjectProfile
             string read =
                 entry.Value.ValueKind == JsonValueKind.String
                     ? entry.Value.GetString()!
-                    : throw Refused(place, $"\"env\" of \"{process}\" must hold strings; \"{entry.Name}\" is {Describe(entry.Value.ValueKind)}");
+                    : throw Refused(place, $"\"env\" of {label} must hold strings; \"{entry.Name}\" is {Describe(entry.Value.ValueKind)}");
             if (!environment.TryAdd(entry.Name, read))
             {
-                throw Refused(place, $"the variable \"{entry.Name}\" appears twice in \"env\"; keep one");
+                string first = environment.Keys.First(name => string.Equals(name, entry.Name, StringComparison.OrdinalIgnoreCase));
+                throw Refused(place, $"\"env\" names \"{first}\" and \"{entry.Name}\", which are one variable; keep one");
             }
         }
 

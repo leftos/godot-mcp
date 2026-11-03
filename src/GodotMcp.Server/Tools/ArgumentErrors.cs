@@ -253,6 +253,23 @@ internal static class ArgumentErrors
 
     private static string Mismatch(JsonElement schema, JsonElement resolved, JsonElement value, string path)
     {
+        // run_project's env may hold secrets, so its refusals name the kind and never the text given, whatever case it is sent in.
+        if (string.Equals(path, "options.env", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"options.env takes an object of names to strings, not {Phrase(KindOf(value))}.";
+        }
+
+        if (path.StartsWith("options.env.", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"options.env gives \"{path["options.env.".Length..]}\" {Phrase(KindOf(value))}; give it a string.";
+        }
+
+        // The same when options itself comes JSON-encoded, with the env inside it.
+        if (path == "options" && HoldsEnvironment(value))
+        {
+            return $"{path} takes an object, not {Phrase(KindOf(value))}.";
+        }
+
         string kinds = string.Join(" or ", KindsOf(resolved).Where(kind => kind != "null").Select(Phrase));
         string message = $"{path} takes {kinds}, not {Given(value)}.";
         string? description = DescriptionOf(schema) ?? DescriptionOf(resolved);
@@ -270,6 +287,10 @@ internal static class ArgumentErrors
             "array" => "an array",
             _ => kind,
         };
+
+    /// <summary>Whether a value's JSON names <c>env</c> anywhere, so its refusal must not echo what it holds.</summary>
+    private static bool HoldsEnvironment(JsonElement value) =>
+        JsonSerializer.Serialize(value, Shown).Contains("env", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The value's JSON, cut to <see cref="GivenLimit"/> characters and an ellipsis.</summary>
     private static string Given(JsonElement value)

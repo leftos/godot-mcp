@@ -180,6 +180,69 @@ public sealed class ArgumentErrorsTests : IAsyncDisposable
         Assert.Null(message);
     }
 
+    [Fact]
+    public void AMalformedEnvDoesNotEchoItsValue()
+    {
+        JsonObject asString = new()
+        {
+            ["projectPath"] = "x",
+            ["options"] = new JsonObject { ["env"] = "SUPER_SECRET" },
+        };
+        JsonObject entryNotAString = new()
+        {
+            ["projectPath"] = "x",
+            ["options"] = new JsonObject { ["env"] = new JsonObject { ["A"] = 1 } },
+        };
+
+        string? stringMessage = Describe("run_project", asString, new JsonException("bind failed"));
+        string? entryMessage = Describe("run_project", entryNotAString, new JsonException("bind failed"));
+
+        Assert.Equal("options.env takes an object of names to strings, not a string.", stringMessage);
+        Assert.Equal("options.env gives \"A\" a number; give it a string.", entryMessage);
+        Assert.DoesNotContain("SUPER_SECRET", stringMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AMalformedEnvInAnotherCaseDoesNotEchoItsValue()
+    {
+        JsonObject asString = new()
+        {
+            ["projectPath"] = "x",
+            ["options"] = new JsonObject { ["Env"] = "API_KEY=sk-123" },
+        };
+        JsonObject entryNotAString = new()
+        {
+            ["projectPath"] = "x",
+            ["options"] = new JsonObject { ["ENV"] = new JsonObject { ["A"] = 1 } },
+        };
+
+        string? stringMessage = Describe("run_project", asString, new JsonException("bind failed"));
+        string? entryMessage = Describe("run_project", entryNotAString, new JsonException("bind failed"));
+
+        Assert.Equal("options.env takes an object of names to strings, not a string.", stringMessage);
+        Assert.Equal("options.env gives \"A\" a number; give it a string.", entryMessage);
+        Assert.DoesNotContain("sk-123", stringMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnOptionsStringHoldingEnvDoesNotEchoIt()
+    {
+        JsonObject asString = new() { ["projectPath"] = "x", ["options"] = "{\"env\": {\"API_KEY\": \"sk-123\"}}" };
+        JsonObject asArray = new() { ["projectPath"] = "x", ["options"] = new JsonArray(new JsonObject { ["env"] = "sk-123" }) };
+        JsonObject plain = new() { ["projectPath"] = "x", ["options"] = "nothing secret" };
+
+        string? stringMessage = Describe("run_project", asString, new JsonException("bind failed"));
+        string? arrayMessage = Describe("run_project", asArray, new JsonException("bind failed"));
+        string? plainMessage = Describe("run_project", plain, new JsonException("bind failed"));
+
+        Assert.Equal("options takes an object, not a string.", stringMessage);
+        Assert.Equal("options takes an object, not an array.", arrayMessage);
+        Assert.DoesNotContain("sk-123", stringMessage, StringComparison.Ordinal);
+        Assert.DoesNotContain("API_KEY", stringMessage, StringComparison.Ordinal);
+        Assert.DoesNotContain("sk-123", arrayMessage, StringComparison.Ordinal);
+        Assert.StartsWith("options takes an object, not \"nothing secret\". options: ", plainMessage, StringComparison.Ordinal);
+    }
+
     private string? Describe(string tool, JsonObject arguments, Exception exception) =>
         ArgumentErrors.Describe(
             tool,

@@ -58,6 +58,12 @@ internal sealed record LaunchRequest(
     /// null for a game. With it the launch opens the project in the Godot editor, windowed, and the host adds the bridge there.
     /// </summary>
     public string? EditorHost { get; init; }
+
+    /// <summary>
+    /// Variables set for the game's process over the server's own environment. A <c>GODOT_MCP_*</c> name is refused where the run is
+    /// merged, and the bridge's own variables are set after these, so they win (<see cref="GodotCommandLine.CreateStartInfo"/>).
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Env { get; init; } = new Dictionary<string, string>();
 }
 
 /// <summary>Where the bridge dials and the token it proves itself with.</summary>
@@ -66,6 +72,7 @@ internal sealed record BridgeEndpoint(int Port, string Token);
 /// <summary>Builds the Godot process for a run: <c>--path &lt;p&gt; [scene] &lt;engineArgs&gt; [-- &lt;userArgs&gt;]</c>.</summary>
 internal static partial class GodotCommandLine
 {
+    public const string BridgeVariablePrefix = "GODOT_MCP_";
     public const string PortVariable = "GODOT_MCP_PORT";
     public const string TokenVariable = "GODOT_MCP_TOKEN";
     public const string QuietVariable = "GODOT_MCP_QUIET";
@@ -351,6 +358,11 @@ internal static partial class GodotCommandLine
         foreach (string argument in BuildArguments(request, moviePath))
         {
             startInfo.ArgumentList.Add(argument);
+        }
+
+        foreach ((string name, string value) in request.Env)
+        {
+            startInfo.Environment[name] = value;
         }
 
         startInfo.Environment[PortVariable] = bridge.Port.ToString(CultureInfo.InvariantCulture);

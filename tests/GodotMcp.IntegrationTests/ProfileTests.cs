@@ -10,6 +10,8 @@ public sealed class ProfileTests : IAsyncDisposable
     private const int ScriptTimeoutMs = 10_000;
     private const string PresetSession = "profiled";
     private const string Profile = """{ "presets": { "small": { "session": "profiled", "resolution": "320x240" } } }""";
+    private const string EnvProfile = """{ "presets": { "withEnv": { "env": { "GMCP_TEST_VAR": "from-preset" } } } }""";
+    private const string ReadTestVariable = "return OS.get_environment(\"GMCP_TEST_VAR\")";
 
     // Godot keeps the engine options it reads out of OS.get_cmdline_args(), so the window size is where --resolution shows.
     private const string ReadWindowSize =
@@ -77,5 +79,32 @@ public sealed class ProfileTests : IAsyncDisposable
         Assert.Equal(7680, result["window"]!["width"]!.GetValue<int>());
         Assert.Equal(4320, result["window"]!["height"]!.GetValue<int>());
         Assert.Null(result["warning"]);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task APresetEnvReachesTheGame()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        await File.WriteAllTextAsync(Path.Combine(_probe.Directory, ProjectProfile.FileName), EnvProfile, cancellation);
+
+        // The quiet run and the watched one take the hidden desktop and the caller's desktop paths; both give the game the variable.
+        string quiet = await ReadEnvAsync(quiet: true, session: "envQuiet", cancellation);
+        await _project.StopProjectAsync("envQuiet", cancellationToken: cancellation);
+        string watched = await ReadEnvAsync(quiet: false, session: "envWatched", cancellation);
+
+        Assert.Equal(("from-preset", "from-preset"), (quiet, watched));
+    }
+
+    /// <summary>Launches the probe with the preset's <c>env</c> and reads the variable back from inside the game.</summary>
+    private async Task<string> ReadEnvAsync(bool quiet, string session, CancellationToken cancellation)
+    {
+        await _project.RunProjectAsync(
+            _probe.Directory,
+            options: new RunOptions(Quiet: quiet, Session: session, Preset: "withEnv"),
+            cancellationToken: cancellation
+        );
+        string script = $"extends RefCounted\n\n\nfunc execute(scene_tree: SceneTree) -> Variant:\n\t{ReadTestVariable}\n";
+        string json = await _runtime.RunScriptAsync(script, ScriptTimeoutMs, session, cancellation);
+        return JsonNode.Parse(json)!["value"]!.GetValue<string>();
     }
 }

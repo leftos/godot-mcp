@@ -6,7 +6,7 @@ namespace GodotMcp.Server.Tools;
 /// <summary>
 /// How run_project sets up the game's window and pads, the session's name, whether the project is prepared first, and which
 /// preset of the project's godot-mcp.json it launches, whether it is recorded, whether its clips drop idle frames and whether
-/// the bridge re-picks the hover every frame.
+/// the bridge re-picks the hover every frame, and the environment variables the game's process gets.
 /// <see cref="Quiet"/> and <see cref="Mute"/> are null when not given.
 /// </summary>
 internal sealed record RunOptions(
@@ -46,7 +46,12 @@ internal sealed record RunOptions(
         "Default true; false stops the bridge re-picking the hover at the injected pointer every frame, so only the game's own "
             + "re-picks (which pick at the OS cursor), a scene change and the end of a GUI drag (a drop or a cancel) move the hover."
     )]
-        bool? RepickHover = null
+        bool? RepickHover = null,
+    [property: Description(
+        "Environment variables for the game, laid over the server's own (a godot-mcp.json env and a preset's env are laid under these, "
+            + "per variable). Cannot set GODOT_MCP_* names. A variable cannot be removed. restart_project keeps them."
+    )]
+        Dictionary<string, string>? Env = null
 )
 {
     /// <summary>The prepare option, for run_project's options and restart_project's.</summary>
