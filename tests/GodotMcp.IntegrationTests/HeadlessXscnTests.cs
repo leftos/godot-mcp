@@ -349,11 +349,13 @@ public sealed class HeadlessXscnTests : IAsyncDisposable
         File.WriteAllText(scene, Comment + "\n" + GoneInstanceScene);
         // Given its own .uid: the prep's import writes one for a file that has none, so its absence would test the import.
         File.WriteAllText(scene + ".uid", SceneUid + "\n");
+
+        await PrepareImportAsync(project, "broken.xscn", cancellation);
         byte[] before = File.ReadAllBytes(scene);
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() => SetSibPositionAsync(project, "broken.xscn", cancellation));
 
-        Assert.Contains(LoadedWithErrors("res://broken.xscn"), refused.Message, StringComparison.Ordinal);
+        AssertLoadedWithErrors(project, "res://broken.xscn", refused.Message);
         Assert.Equal(before, File.ReadAllBytes(scene));
         Assert.Equal(SceneUid, File.ReadAllText(scene + ".uid").Trim());
     }
@@ -365,11 +367,13 @@ public sealed class HeadlessXscnTests : IAsyncDisposable
         string project = Built();
         File.WriteAllText(Path.Combine(project, "broken.xscn"), Comment + "\n" + GoneInstanceScene);
 
+        await PrepareImportAsync(project, "broken.xscn", cancellation);
+
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
             _tools.SaveSceneAsync(project, "broken.xscn", "copy.xscn", cancellationToken: cancellation)
         );
 
-        Assert.Contains(LoadedWithErrors("res://broken.xscn"), refused.Message, StringComparison.Ordinal);
+        AssertLoadedWithErrors(project, "res://broken.xscn", refused.Message);
         Assert.False(File.Exists(Path.Combine(project, "copy.xscn")));
         Assert.False(File.Exists(Path.Combine(project, "copy.xscn.uid")));
     }
@@ -382,14 +386,16 @@ public sealed class HeadlessXscnTests : IAsyncDisposable
         string scene = Path.Combine(project, "broken.xscn");
         File.WriteAllText(scene, Comment + "\n" + GoneInstanceScene);
         File.WriteAllText(scene + ".uid", SceneUid + "\n");
-        byte[] before = File.ReadAllBytes(scene);
         SceneBatchStep add = new("add_node", new JsonObject { ["nodeType"] = "Node2D", ["nodeName"] = "D" });
+
+        await PrepareImportAsync(project, "broken.xscn", cancellation);
+        byte[] before = File.ReadAllBytes(scene);
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
             _tools.BatchSceneOperationsAsync(project, "broken.xscn", [add], cancellation)
         );
 
-        Assert.Contains(LoadedWithErrors("res://broken.xscn"), refused.Message, StringComparison.Ordinal);
+        AssertLoadedWithErrors(project, "res://broken.xscn", refused.Message);
         Assert.Equal(before, File.ReadAllBytes(scene));
         Assert.Equal(SceneUid, File.ReadAllText(scene + ".uid").Trim());
     }
@@ -405,7 +411,7 @@ public sealed class HeadlessXscnTests : IAsyncDisposable
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() => SetSibPositionAsync(project, "broken.tscn", cancellation));
 
-        Assert.Contains(LoadedWithErrors("res://broken.tscn"), refused.Message, StringComparison.Ordinal);
+        AssertLoadedWithErrors(project, "res://broken.tscn", refused.Message);
         Assert.Equal(before, File.ReadAllBytes(scene));
     }
 
@@ -417,6 +423,54 @@ public sealed class HeadlessXscnTests : IAsyncDisposable
     private static string LoadedWithErrors(string scene) =>
         $"{scene} loaded with errors, so it was not saved: saving it now would drop whatever failed to load, such as an instance "
         + "whose file was not found. Fix what engineErrors names first.";
+
+    /// <summary>
+    /// Asserts the refusal names <paramref name="scene"/> as loaded with errors, failing with the whole message rather than its start.
+    /// </summary>
+    private static void AssertLoadedWithErrors(string project, string scene, string message) =>
+        Assert.True(message.Contains(LoadedWithErrors(scene), StringComparison.Ordinal), Diagnostic(project, message));
+
+    /// <summary>
+    /// The failure text: the whole message, plus the import log's tail when the prep's import refused, since the temp project
+    /// takes its log with it when it is disposed.
+    /// </summary>
+    private static string Diagnostic(string project, string message)
+    {
+        if (!message.StartsWith("The Godot import of", StringComparison.Ordinal))
+        {
+            return message;
+        }
+
+        string log = Path.Combine(project, ".godot", "godot-mcp", "import.log");
+        if (!File.Exists(log))
+        {
+            return message + "\n(no import.log)";
+        }
+
+        string[] lines = File.ReadAllLines(log);
+        return $"{message}\n--- import.log (last 40 lines) ---\n{string.Join('\n', lines.TakeLast(40))}";
+    }
+
+    /// <summary>
+    /// Runs validate with the prep, so a due import happens here and the write that follows finds none due: it can then only
+    /// refuse on the load check this class is about.
+    /// </summary>
+    private async Task PrepareImportAsync(string project, string scene, CancellationToken cancellation)
+    {
+        string? refusal = null;
+        string? result = null;
+        try
+        {
+            result = await _tools.ValidateAsync(project, [scene], cancellationToken: cancellation);
+        }
+        catch (McpException refused)
+        {
+            refusal = refused.Message;
+        }
+
+        string? import = result is null ? null : JsonNode.Parse(result)?["prep"]?["import"]?.GetValue<string>();
+        Assert.True(refusal is null && (import is "done" or "not-needed"), Diagnostic(project, refusal ?? result ?? scene));
+    }
 
     private Task<string> SetSibPositionAsync(string project, string scene, CancellationToken cancellation) =>
         _tools.SetNodePropertiesAsync(project, scene, [new PropertyUpdate("Sib", "position", Json("{\"x\": 1, \"y\": 2}"))], cancellation);
