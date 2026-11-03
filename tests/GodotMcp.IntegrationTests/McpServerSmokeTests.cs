@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using GodotMcp.IntegrationTests.Fixtures;
@@ -295,38 +296,53 @@ public sealed class McpServerSmokeTests : IDisposable
     public async Task TheFrontIsToldBusyBeforeARunAnswersAndFreeAfterTheStop()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
-        List<string> events = [];
-        await using McpClient client = await ConnectAsync(frontBusy: true);
-        await using IAsyncDisposable handler = client.RegisterNotificationHandler(
-            BusyMethod,
-            (notification, _) =>
-            {
-                bool busy = notification.Params is JsonObject parameters && parameters["busy"]?.GetValue<bool>() == true;
-                lock (events)
-                {
-                    events.Add(busy ? "busy:true" : "busy:false");
-                }
-
-                return ValueTask.CompletedTask;
-            }
-        );
-
-        CallToolResult run = await CallAsync(client, "run_project", new() { ["projectPath"] = _probe.Directory, ["userArgs"] = SmokeArgs });
-        lock (events)
+        using Process server = StartServer(frontBusy: true);
+        WireRecorder wire = new(server.StandardOutput.BaseStream);
+        TaskCompletionSource freed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
         {
-            events.Add("response");
+            await using McpClient client = await McpClient.CreateAsync(
+                new StreamClientTransport(server.StandardInput.BaseStream, wire),
+                cancellationToken: cancellation
+            );
+            await using IAsyncDisposable handler = client.RegisterNotificationHandler(
+                BusyMethod,
+                (notification, _) =>
+                {
+                    if (notification.Params is JsonObject parameters && parameters["busy"]?.GetValue<bool>() == false)
+                    {
+                        freed.TrySetResult();
+                    }
+
+                    return ValueTask.CompletedTask;
+                }
+            );
+
+            CallToolResult run = await CallAsync(client, "run_project", new() { ["projectPath"] = _probe.Directory, ["userArgs"] = SmokeArgs });
+
+            // The SDK client runs a notification's handlers and a response's completion as separate thread-pool items
+            // (McpSessionHandler.cs:224-264, ModelContextProtocol 2.2.0), so a handler's effect is unordered against the
+            // call's return; the order the front relies on is the wire's, read from the bytes the client has consumed.
+            string? beforeRunAnswered = wire.BeforeLastResponse();
+            CallToolResult stop = await CallAsync(client, "stop_project", []);
+
+            Assert.True(run.IsError is not true, Text(run));
+            Assert.Equal("busy:true", beforeRunAnswered);
+            Assert.True(stop.IsError is not true, Text(stop));
+
+            // busy:false precedes the stop's response unless the wrapper's kill wait ran out, which leaves it to
+            // FrontBusy's re-check loop; so the case waits on the notification itself, the Timeout its hang guard.
+            await freed.Task.WaitAsync(cancellation);
         }
+        finally
+        {
+            if (!server.HasExited)
+            {
+                server.Kill(entireProcessTree: true);
+            }
 
-        Assert.True(run.IsError is not true, Text(run));
-        Assert.Equal(["busy:true", "response"], events);
-
-        CallToolResult stop = await CallAsync(client, "stop_project", []);
-
-        Assert.True(stop.IsError is not true, Text(stop));
-        Assert.True(
-            await Poll.UntilAsync(() => Snapshot(events).Contains("busy:false"), TimeSpan.FromSeconds(10), cancellation),
-            $"the front was never told the session had ended: {string.Join(", ", Snapshot(events))}"
-        );
+            await ProcessExit.WaitUntilGoneAsync(server, GameQuitWait);
+        }
     }
 
     [Fact(Timeout = 180_000)]
@@ -406,7 +422,7 @@ public sealed class McpServerSmokeTests : IDisposable
 
     private static string ServerPath => Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "godot-mcp.exe" : "godot-mcp");
 
-    private static Task<McpClient> ConnectAsync(bool frontBusy = false)
+    private static Task<McpClient> ConnectAsync()
     {
         StdioClientTransport transport = new(
             new StdioClientTransportOptions
@@ -414,14 +430,17 @@ public sealed class McpServerSmokeTests : IDisposable
                 Name = "godot",
                 Command = ServerPath,
                 ShutdownTimeout = TimeSpan.FromSeconds(10),
-                EnvironmentVariables = new Dictionary<string, string?> { ["MCP_FRONT"] = frontBusy ? "1" : "" },
+
+                // An empty value, not an unset one: the front is off here even when the developer's own shell has it on.
+                EnvironmentVariables = new Dictionary<string, string?> { ["MCP_FRONT"] = "" },
             }
         );
         return McpClient.CreateAsync(transport, cancellationToken: TestContext.Current.CancellationToken);
     }
 
     /// <summary>Starts the built server over redirected stdio, as a host does, with its stderr read and dropped so it never blocks.</summary>
-    private static Process StartServer()
+    /// <param name="frontBusy">Whether a front is told about the server, which turns its busy notifications on.</param>
+    private static Process StartServer(bool frontBusy = false)
     {
         ProcessStartInfo start = new(ServerPath)
         {
@@ -430,6 +449,9 @@ public sealed class McpServerSmokeTests : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+
+        // An empty value, not an unset one: the front is off unless the case asks for it.
+        start.Environment["MCP_FRONT"] = frontBusy ? "1" : "";
         Process server = Process.Start(start) ?? throw new InvalidOperationException($"the server {ServerPath} did not start");
         server.ErrorDataReceived += (_, _) => { };
         server.BeginErrorReadLine();
@@ -490,6 +512,102 @@ public sealed class McpServerSmokeTests : IDisposable
         lock (events)
         {
             return [.. events];
+        }
+    }
+
+    /// <summary>The server's stdout as the client reads it, every byte kept, so a case reads the wire's own order.</summary>
+    private sealed class WireRecorder(Stream inner) : Stream
+    {
+        private readonly List<byte> _read = [];
+
+        /// <summary>
+        /// The message just before the last response read so far: busy:true or busy:false for the front's notification,
+        /// "response" for another response.
+        /// </summary>
+        /// <returns>The label, or null before any response has been read.</returns>
+        public string? BeforeLastResponse()
+        {
+            string text;
+            lock (_read)
+            {
+                text = Encoding.UTF8.GetString([.. _read]);
+            }
+
+            List<string> labels = [];
+            foreach (string line in WholeLines(text))
+            {
+                if (Label(line) is { } label)
+                {
+                    labels.Add(label);
+                }
+            }
+
+            int last = labels.LastIndexOf("response");
+            return last > 0 ? labels[last - 1] : null;
+        }
+
+        // The lines read so far that are complete: the last one may still be growing, so it is dropped.
+        private static string[] WholeLines(string text) => text[..(text.LastIndexOf('\n') + 1)].Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        // What a line says: busy:true or busy:false for the front's notification, "response" for a response, null for a request.
+        private static string? Label(string line)
+        {
+            JsonObject message = JsonNode.Parse(line)!.AsObject();
+            if (message["method"]?.GetValue<string>() == BusyMethod)
+            {
+                return message["params"]?["busy"]?.GetValue<bool>() == true ? "busy:true" : "busy:false";
+            }
+
+            return message["id"] is not null && message["method"] is null ? "response" : null;
+        }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            int read = await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            return Keep(buffer.Span[..read]);
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override int Read(byte[] buffer, int offset, int count) => Keep(buffer.AsSpan(offset, inner.Read(buffer, offset, count)));
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() { }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        private int Keep(ReadOnlySpan<byte> bytes)
+        {
+            lock (_read)
+            {
+                _read.AddRange(bytes);
+            }
+
+            return bytes.Length;
         }
     }
 }

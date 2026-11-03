@@ -390,6 +390,10 @@ The command runs at below-normal priority, so a gated command needs no `nice` or
 
   A server limit that encloses a launch (preview_scene's 60 s) starts on the registry's `LaunchClock`, never its `Clock`: the itest harness sets `Clock` to wall time on purpose and only `LaunchClock` to load-adjusted time, so a wall-time limit around a launch cuts it off under load in the itests while production, where both are the same clock, passes.
 
+- **The MCP C# SDK client does not order a notification's handler against the response after it.** `McpSessionHandler` (ModelContextProtocol 2.2.0) handles each incoming message as its own fire-and-forget thread-pool item, so a notification handler's side effect is not ordered against the return of the call whose response followed it on the wire. The server's wire order is guaranteed (one writer, the response written only after the call's filters return).
+
+  A test that needs "notification before response" reads the wire: a recorder stream under `StreamClientTransport` over the server's stdout (`WireRecorder` in `McpServerSmokeTests`). A test that only needs "the notification came" waits on a `TaskCompletionSource` its handler completes, with the test's `Timeout` as the hang guard, never a poll window.
+
 - **A failure at one instant is reproduced by suspending Godot, not with the suspend rig.** The rig (`~/.claude/tools/suspend-rig`) slows a whole process evenly and cannot aim at a moment. To reproduce a failure at one instant (a request, a quit), suspend Godot (`NtSuspendProcess`) when its log shows a marker (`[godot-mcp] request <id> <op>` in the headless host log; `scratch pace end` in a scratch run log) and resume it after a hold.
 
   Under the rig, freeze `Godot` as well as `Godot_console`: `GODOT_PATH` names the console wrapper, and the game runs in its child `Godot.exe`. The rig takes `-StopAfterSeconds` up to 600. To see a scratch run's per-scene reasons under the rig, drive the server with `tools/drive.py`, giving the server path as an absolute path. To put a whole scratch run under the rig, wrap `godot-mcp.exe --run-scratches <project>` in it: the server and the games are its children.
