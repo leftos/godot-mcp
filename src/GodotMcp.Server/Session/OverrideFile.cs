@@ -25,6 +25,11 @@ namespace GodotMcp.Server.Session;
 /// The line after the marker lists the file's owners (<see cref="OwnersPrefix"/>): the server processes with live sessions
 /// using it, so a server releasing the folder deletes the file only when no other live server still uses it, and a file
 /// whose owners have all exited (or that lists none) is stale.
+/// A bridge setting the project itself feature-tags (<c>X.&lt;feature&gt;</c>) is written with the bridge's value under each of
+/// the project's own tags for it in the same section, directly after the plain line: Godot registers those keys as feature
+/// overrides of <c>X</c> and prefers them (<c>project_settings.cpp</c> L324-339, L415-431), while a line of the same tagged key
+/// in override.cfg, read after project.godot, replaces the project's own (L342-343). A tag the project does not define, and a
+/// setting the bridge does not write, is never touched.
 /// The run's project settings, when any, follow the bridge's lines under <see cref="ProjectSettingsText.BlockMarker"/>, last
 /// because Godot stops reading the file at a parse error (<c>project_settings.cpp</c> L978).
 /// </summary>
@@ -37,6 +42,12 @@ internal static class OverrideFile
     public const string OwnersPrefix = "; godot-mcp owners: ";
 
     public const string AutoloadName = "GodotMcpBridge";
+
+    /// <summary>The section <see cref="IgnoreJoypadOnUnfocusedSetting"/> belongs to, as project.godot names it.</summary>
+    private const string InputDevicesSection = "input_devices";
+
+    /// <summary>The section the window settings belong to, as project.godot names it.</summary>
+    private const string DisplaySection = "display";
 
     /// <summary>The project setting under its <c>[input_devices]</c> section, as <c>override.cfg</c> writes it.</summary>
     public const string IgnoreJoypadOnUnfocusedSetting = "joypads/ignore_joypad_on_unfocused_application";
@@ -88,7 +99,15 @@ internal static class OverrideFile
         }
 
         string script = Path.GetFullPath(bridgeScriptPath).Replace('\\', '/');
-        string body = BodyFor(script, shutOutRealGamepads, quiet, unfocused, projectSettings);
+        string body = BodyFor(
+            script,
+            shutOutRealGamepads,
+            quiet,
+            unfocused,
+            projectSettings,
+            ProjectWindowSize.ReadSection(projectDir, DisplaySection),
+            ProjectWindowSize.ReadSection(projectDir, InputDevicesSection)
+        );
         OverrideValues values = new(script, quiet, shutOutRealGamepads, Unfocused: quiet || unfocused, projectSettings);
         List<OverrideOwner> owners = exists ? SharersOf(projectDir, Read(path), values) : [];
         owners.Add(OverrideOwner.Current);
@@ -204,23 +223,62 @@ internal static class OverrideFile
         return firstLine is not null && firstLine.TrimEnd() == Marker;
     }
 
-    private static string BodyFor(string script, bool shutOutRealGamepads, bool quiet, bool unfocused, string projectSettings)
+    /// <summary>
+    /// The bridge's lines for these settings, each followed by the project's own feature-tagged variants of it, and then the
+    /// run's project settings block.
+    /// </summary>
+    /// <param name="script">The bridge script the autoload names.</param>
+    /// <param name="shutOutRealGamepads">Whether the pad flag is set.</param>
+    /// <param name="quiet">Whether the window is parked off-screen and unfocused.</param>
+    /// <param name="unfocused">Whether a window that is not quiet is minimized in place and unfocused.</param>
+    /// <param name="projectSettings">The run's project settings block; empty for none.</param>
+    /// <param name="display">The project's own <c>[display]</c> settings, which name the variants to write for the window settings.</param>
+    /// <param name="inputDevices">The project's own <c>[input_devices]</c> settings, which name the pad flag's variants.</param>
+    private static string BodyFor(
+        string script,
+        bool shutOutRealGamepads,
+        bool quiet,
+        bool unfocused,
+        string projectSettings,
+        IReadOnlyDictionary<string, string> display,
+        IReadOnlyDictionary<string, string> inputDevices
+    )
     {
-        string body =
-            $"[autoload]\n\n{AutoloadName}=\"*{script}\"\n\n[input_devices]\n\n" + $"{IgnoreJoypadOnUnfocusedSetting}={Flag(shutOutRealGamepads)}\n";
+        StringBuilder body = new($"[autoload]\n\n{AutoloadName}=\"*{script}\"\n\n[input_devices]\n\n");
+        AppendSetting(body, IgnoreJoypadOnUnfocusedSetting, Flag(shutOutRealGamepads), inputDevices);
         if (quiet)
         {
-            body +=
-                $"\n[display]\n\n{NoFocusSetting}=true\n{InitialPositionTypeSetting}={AbsolutePositionType}\n"
-                + $"{InitialPositionSetting}={OffScreenPosition}\n";
+            body.Append("\n[display]\n\n");
+            AppendSetting(body, NoFocusSetting, "true", display);
+            AppendSetting(body, InitialPositionTypeSetting, Number(AbsolutePositionType), display);
+            AppendSetting(body, InitialPositionSetting, OffScreenPosition, display);
         }
         else if (unfocused)
         {
-            body += $"\n[display]\n\n{NoFocusSetting}=true\n{WindowModeSetting}={MinimizedWindowMode}\n";
+            body.Append("\n[display]\n\n");
+            AppendSetting(body, NoFocusSetting, "true", display);
+            AppendSetting(body, WindowModeSetting, Number(MinimizedWindowMode), display);
         }
 
-        return body + (projectSettings.Length == 0 ? "" : "\n" + projectSettings);
+        return body.Append(projectSettings.Length == 0 ? "" : "\n" + projectSettings).ToString();
     }
+
+    /// <summary>
+    /// One setting's line, then a line per <c>key.&lt;feature&gt;</c> variant of that key the project's own project.godot sets in
+    /// the same section, each with <paramref name="value"/>: Godot prefers such a variant over the plain key, and override.cfg's
+    /// line of the same variant, read after project.godot, replaces the project's.
+    /// </summary>
+    private static void AppendSetting(StringBuilder body, string key, string value, IReadOnlyDictionary<string, string> projectSection)
+    {
+        body.Append(key).Append('=').Append(value).Append('\n');
+        string prefix = key + ".";
+        foreach (string variant in projectSection.Keys.Where(name => name.StartsWith(prefix, StringComparison.Ordinal)).Order(StringComparer.Ordinal))
+        {
+            body.Append(variant).Append('=').Append(value).Append('\n');
+        }
+    }
+
+    private static string Number(int value) => value.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>
     /// The live other owners of the marked file, which the write keeps as owners. Their file is compared by what it sets, not

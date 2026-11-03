@@ -70,6 +70,116 @@ public sealed class OverrideFileTests : IDisposable
         Assert.DoesNotContain(lines, line => line.StartsWith("window/", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void WriteCarriesTheProjectsFeatureVariantsOfAQuietWindow()
+    {
+        string project = ProjectGodot(TaggedProjectGodot());
+
+        OverrideFile.Write(project, _project.Combine("bridge.gd"), false, quiet: true, unfocused: false, projectSettings: "");
+
+        string[] lines = File.ReadAllLines(OverrideFile.PathIn(project));
+        int section = Array.IndexOf(lines, "[display]");
+        Assert.True(section > 0, string.Join('\n', lines));
+        Assert.Equal(
+            [
+                "",
+                "window/size/no_focus=true",
+                "window/size/no_focus.linux=true",
+                "window/size/no_focus.windows=true",
+                "window/size/initial_position_type=0",
+                "window/size/initial_position_type.windows=0",
+                "window/size/initial_position=Vector2i(-9999, -9999)",
+            ],
+            lines[(section + 1)..]
+        );
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void WriteCarriesTheProjectsFeatureVariantsOfThePadFlag(bool shutOutRealGamepads)
+    {
+        string project = ProjectGodot(TaggedProjectGodot());
+        string flag = shutOutRealGamepads ? "true" : "false";
+
+        OverrideFile.Write(project, _project.Combine("bridge.gd"), shutOutRealGamepads, quiet: false, unfocused: false, projectSettings: "");
+
+        string[] lines = File.ReadAllLines(OverrideFile.PathIn(project));
+        int section = Array.IndexOf(lines, "[input_devices]");
+        Assert.True(section > 0, string.Join('\n', lines));
+        Assert.Equal(
+            ["", $"{OverrideFile.IgnoreJoypadOnUnfocusedSetting}={flag}", $"{OverrideFile.IgnoreJoypadOnUnfocusedSetting}.windows={flag}"],
+            lines[(section + 1)..]
+        );
+    }
+
+    [Fact]
+    public void WriteNeverCarriesASettingItDoesNotWrite()
+    {
+        string project = ProjectGodot(TaggedProjectGodot());
+
+        OverrideFile.Write(project, _project.Combine("bridge.gd"), false, quiet: true, unfocused: false, projectSettings: "");
+
+        Assert.DoesNotContain("some/other/setting", File.ReadAllText(OverrideFile.PathIn(project)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WriteCarriesNoDisplayVariantsWhenItWritesNoDisplaySetting()
+    {
+        string project = ProjectGodot(TaggedProjectGodot());
+
+        OverrideFile.Write(project, _project.Combine("bridge.gd"), false, quiet: false, unfocused: false, projectSettings: "");
+
+        string[] lines = File.ReadAllLines(OverrideFile.PathIn(project));
+        Assert.DoesNotContain("[display]", lines);
+        Assert.DoesNotContain(lines, line => line.StartsWith("window/", StringComparison.Ordinal));
+        Assert.Contains($"{OverrideFile.IgnoreJoypadOnUnfocusedSetting}.windows=false", lines);
+    }
+
+    [Fact]
+    public void WriteLeavesAProjectWithoutItsOwnFeatureVariantsAsToday()
+    {
+        string project = ProjectGodot(
+            "[application]\n\nconfig/name=\"Theirs\"\n\n[display]\n\nwindow/size/viewport_width=800\nsome/other/setting.windows=1\n"
+        );
+
+        OverrideFile.Write(project, _project.Combine("bridge.gd"), false, quiet: true, unfocused: false, projectSettings: "");
+
+        string[] lines = File.ReadAllLines(OverrideFile.PathIn(project));
+        int section = Array.IndexOf(lines, "[display]");
+        Assert.True(section > 0, string.Join('\n', lines));
+        Assert.Equal(
+            ["", "window/size/no_focus=true", "window/size/initial_position_type=0", "window/size/initial_position=Vector2i(-9999, -9999)"],
+            lines[(section + 1)..]
+        );
+    }
+
+    [Fact]
+    public void AFileWithFeatureVariantsReadsTheSameValues()
+    {
+        string project = ProjectGodot(TaggedProjectGodot());
+        string bridge = _project.Combine("bridge.gd");
+
+        OverrideFile.Write(project, bridge, false, quiet: true, unfocused: false, projectSettings: "");
+
+        Assert.True(OverrideFile.SetsForThisServer(Text(), bridge, false, quiet: true, unfocused: false, projectSettings: ""));
+        Assert.False(OverrideFile.SetsForThisServer(Text(), bridge, false, quiet: false, unfocused: false, projectSettings: ""));
+    }
+
+    [Fact]
+    public void AFeatureVariantLineAloneIsNotABridgeValue()
+    {
+        string bridge = _project.Combine("bridge.gd").Replace('\\', '/');
+        File.WriteAllText(
+            OverrideFile.PathIn(_project.Path),
+            $"{OverrideFile.Marker}\n{OverrideFile.OwnersPrefix}{OverrideOwner.Current}\n[autoload]\n\n{OverrideFile.AutoloadName}=\"*{bridge}\"\n\n"
+                + $"[input_devices]\n\n{OverrideFile.IgnoreJoypadOnUnfocusedSetting}=false\n\n"
+                + $"[display]\n\n{OverrideFile.NoFocusSetting}.windows=true\n"
+        );
+
+        Assert.True(OverrideFile.SetsForThisServer(Text(), bridge, false, quiet: false, unfocused: false, projectSettings: ""));
+    }
+
     private void AssertJoypadSetting(bool shutOutRealGamepads, string expected)
     {
         OverrideFile.Write(_project.Path, _project.Combine("bridge.gd"), shutOutRealGamepads, false, unfocused: false, projectSettings: "");
@@ -399,6 +509,22 @@ public sealed class OverrideFileTests : IDisposable
 
     /// <summary>The project's override.cfg, which the test has written.</summary>
     private string Text() => OverrideFile.ReadText(_project.Path)!;
+
+    /// <summary>The project.godot the feature-variant tests read: the bridge's settings feature-tagged, and one of another setting's.</summary>
+    private static string TaggedProjectGodot() =>
+        "[display]\n\n"
+        + $"{OverrideFile.NoFocusSetting}.windows=false\n"
+        + $"{OverrideFile.NoFocusSetting}.linux=false\n"
+        + $"{OverrideFile.InitialPositionTypeSetting}.windows=0\n"
+        + "some/other/setting.windows=1\n"
+        + $"\n[input_devices]\n\n{OverrideFile.IgnoreJoypadOnUnfocusedSetting}.windows=false\n";
+
+    /// <summary>Gives the test's project folder a project.godot holding <paramref name="content"/> and returns the folder.</summary>
+    private string ProjectGodot(string content)
+    {
+        File.WriteAllText(Path.Combine(_project.Path, "project.godot"), content);
+        return _project.Path;
+    }
 
     /// <summary>Writes a marked file whose owners line is <paramref name="ownersLine"/> (empty for none) and a bridge autoload.</summary>
     private void WriteMarked(string ownersLine) =>

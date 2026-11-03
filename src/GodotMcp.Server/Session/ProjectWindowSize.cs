@@ -51,7 +51,7 @@ internal static class ProjectWindowSize
     /// the server cannot read, yields no settings: a launch of such a folder is refused before it reaches here, so the caller
     /// reading a default is the right answer rather than a failure to report.
     /// </summary>
-    private static Dictionary<string, string> ReadSection(string projectDir, string section)
+    internal static Dictionary<string, string> ReadSection(string projectDir, string section)
     {
         Dictionary<string, string> values = new(StringComparer.Ordinal);
         string file = Path.Combine(projectDir, ProjectFile);

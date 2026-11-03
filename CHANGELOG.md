@@ -2,6 +2,12 @@
 
 What changed in each version of the godot-mcp server, newest first. The version is `VersionPrefix` in `Directory.Build.props`, and the build stamps the commit after a `+` (`0.3.1+<sha>`). Builds before 0.1.0 carry no version.
 
+## Unreleased
+
+### Fixed
+
+- A quiet run stays unfocused and off-screen, and the pad shut-out holds, even when the project sets per-platform variants of those settings.
+
 ## 0.31.0 - 2026-11-03
 
 ### Added
