@@ -330,8 +330,26 @@ public sealed class HeadlessSceneValidationTests : IDisposable
     {
         McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckStampPaths(_project, ["main.gd"]));
 
-        Assert.Equal("paths 'main.gd' is not a scene or resource: stamp_uids takes .tscn and .tres files and folders.", refused.Message);
+        Assert.Equal(
+            "paths 'main.gd' is not a scene or resource: stamp_uids takes .tscn, .tres, .xscn and .xres files and folders.",
+            refused.Message
+        );
         Assert.Equal(["res://levels/a.tscn"], HeadlessTools.CheckStampPaths(_project, ["levels/a.tscn"]));
+    }
+
+    [Fact]
+    public void StampUidsTakesAXscnAndAXres()
+    {
+        Assert.Equal(["res://levels/d.xscn"], HeadlessTools.CheckStampPaths(_project, ["levels/d.xscn"]));
+        Assert.Equal(["res://levels/e.XSCN"], HeadlessTools.CheckStampPaths(_project, ["levels/e.XSCN"]));
+        Assert.Equal(["res://levels/f.xres"], HeadlessTools.CheckStampPaths(_project, ["levels/f.xres"]));
+
+        McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckStampPaths(_project, ["levels/c.scn"]));
+
+        Assert.Equal(
+            "paths 'levels/c.scn' is not a scene or resource: stamp_uids takes .tscn, .tres, .xscn and .xres files and folders.",
+            refused.Message
+        );
     }
 
     [Fact]
@@ -355,6 +373,19 @@ public sealed class HeadlessSceneValidationTests : IDisposable
     }
 
     [Fact]
+    public void StampUidsExpandsAFolderToItsXscnAndXresFiles()
+    {
+        string project = ProjectFolder("xaml");
+        Directory.CreateDirectory(Path.Combine(project, "scenes"));
+        File.WriteAllText(Path.Combine(project, "scenes", "a.xscn"), string.Empty);
+        File.WriteAllText(Path.Combine(project, "scenes", "a.xscn.uid"), "uid://bqsidecar\n");
+        File.WriteAllText(Path.Combine(project, "scenes", "b.xres"), string.Empty);
+        File.WriteAllText(Path.Combine(project, "scenes", "c.scn"), string.Empty);
+
+        Assert.Equal(["res://scenes/a.xscn", "res://scenes/b.xres"], HeadlessTools.CheckStampPaths(project, ["scenes"]));
+    }
+
+    [Fact]
     public void StampUidsRefusesMoreThan500Files()
     {
         string project = ProjectFolder("sweep");
@@ -366,8 +397,8 @@ public sealed class HeadlessSceneValidationTests : IDisposable
         McpException refused = Assert.Throws<McpException>(() => HeadlessTools.CheckStampPaths(project, null));
 
         Assert.Equal(
-            $"stamp_uids found {HeadlessTools.MaxSweep + 1} .tscn and .tres files; it stamps at most {HeadlessTools.MaxSweep} at once: "
-                + "pass paths.",
+            $"stamp_uids found {HeadlessTools.MaxSweep + 1} .tscn, .tres, .xscn and .xres files; it stamps at most "
+                + $"{HeadlessTools.MaxSweep} at once: pass paths.",
             refused.Message
         );
     }
@@ -383,9 +414,11 @@ public sealed class HeadlessSceneValidationTests : IDisposable
     [Fact]
     public void StampUidsAcceptsTheProjectFolderAndATrailingSlash()
     {
-        Assert.Equal(["res://levels/a.tscn"], HeadlessTools.CheckStampPaths(_project, ["res://"]));
-        Assert.Equal(["res://levels/a.tscn"], HeadlessTools.CheckStampPaths(_project, ["."]));
-        Assert.Equal(["res://levels/a.tscn"], HeadlessTools.CheckStampPaths(_project, ["res://levels/"]));
+        string[] levels = ["res://levels/a.tscn", "res://levels/d.xscn", "res://levels/e.XSCN", "res://levels/f.xres"];
+
+        Assert.Equal(levels, HeadlessTools.CheckStampPaths(_project, ["res://"]));
+        Assert.Equal(levels, HeadlessTools.CheckStampPaths(_project, ["."]));
+        Assert.Equal(levels, HeadlessTools.CheckStampPaths(_project, ["res://levels/"]));
     }
 
     [Fact]

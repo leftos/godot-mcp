@@ -251,6 +251,32 @@ func test_stamp_uids_drops_the_headers_other_attributes() -> void:
 	_res_remove(path)
 
 
+func test_stamp_uids_leaves_an_xscn_that_has_a_sidecar() -> void:
+	var path: String = _res_written("side.xscn", '[node name="Root" type="Node2D"]\n')
+	var sidecar: String = path + ".uid"
+	var kept := "uid://bqsidecar\n"
+	_write(sidecar, kept)
+	var result: Dictionary = _files.stamp_uids({"files": [path]})["result"]
+	assert_eq(result["alreadyHad"], 1, "the sidecar counts")
+	assert_eq(result["stamped"].size(), 0, "left alone")
+	assert_true(not result.has("uidFilesWritten"), "no sidecar written")
+	assert_eq(FileAccess.get_file_as_string(sidecar), kept, "the sidecar keeps its text")
+	_res_remove(sidecar)
+	_res_remove(path)
+
+
+func test_stamp_uids_names_the_loader_when_no_saver_takes_an_xscn() -> void:
+	var path: String = _res_written("nosave.xscn", '[node name="Root" type="Node2D"]\n')
+	var result: Dictionary = _files.stamp_uids({"files": [path]})["result"]
+	var failed: Array = result["failed"]
+	assert_eq(failed.size(), 1, "the file it could not stamp")
+	assert_eq(failed[0]["path"], path, "its path")
+	var error: String = failed[0]["error"]
+	assert_true(error.contains("no loader reads .xscn files in this project"), error)
+	assert_true(not FileAccess.file_exists(path + ".uid"), "no sidecar written")
+	_res_remove(path)
+
+
 func _resource(ext_tags: Array) -> String:
 	var text: String = '[gd_resource type="Resource" format=3]\n\n'
 	for index in ext_tags.size():

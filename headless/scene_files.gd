@@ -29,7 +29,8 @@ const NO_LOADER := (
 	+ "loader classes. A project without the addon cannot read this format."
 )
 ## The extensions of the files the editor's scan gives a <path>.uid: those whose loader keeps no uid
-## of its own (4.7.2 core/io/resource_loader.cpp L1428-1440, should_create_uid_file).
+## of its own (4.7.2 core/io/resource_loader.cpp L1428-1440, should_create_uid_file); a .xscn's or
+## .xres's sidecar is written by its format's saver (ResourceSaver.set_uid), not here.
 const UID_FILE_EXTENSIONS: Array[String] = ["gd", "cs", "gdshader", "gdshaderinc"]
 
 
@@ -269,32 +270,53 @@ static func uid_or_new(path: String, written: PackedStringArray) -> int:
 	return id
 
 
-## Gives each file in params.files that has no uid in its header the uid the editor would give it,
-## changing the header line alone: ResourceSaver.set_uid writes a fresh header and copies the rest
-## of the file byte for byte (4.7.2 scene/resources/resource_format_text.cpp L2161-2231). A stamped
-## file's uid is registered here and, when the project has a cache, in .godot/uid_cache.bin
-## (register_uid). {checked, stamped: [{path, uid}], alreadyHad, failed?}: stamped lists the files
-## changed, alreadyHad counts those that had a uid already, and a file that fails is listed in
-## failed while the others are still stamped.
+## Whether the file at path has a uid already: in its header for a .tscn or .tres (header_uid_of),
+## or in the <path>.uid beside a .xscn or .xres, whose format has no header to hold one (4.7.2
+## core/io/resource_loader.cpp L118-129).
+static func _has_uid(path: String) -> bool:
+	if is_text(path):
+		return not header_uid_of(path).is_empty()
+	return FileAccess.file_exists(path + ".uid")
+
+
+## Gives each file in params.files that has no uid yet the uid the editor would give it: a .tscn or
+## .tres has its header line alone changed, ResourceSaver.set_uid writing a fresh header and
+## copying the rest of the file byte for byte (4.7.2 scene/resources/resource_format_text.cpp
+## L2161-2231), and a .xscn or .xres gets the <path>.uid file beside it, which its format's saver
+## writes as the editor's scan would (core/io/resource_loader.cpp L1428-1440). A .xscn or .xres
+## whose sidecar exists already counts in alreadyHad and is left alone, since its saver would
+## overwrite the sidecar. A stamped file's uid is registered here and, when the project has a
+## cache, in .godot/uid_cache.bin (register_uid). {checked, stamped: [{path, uid}], alreadyHad,
+## uidFilesWritten?, failed?}: stamped lists the files changed, alreadyHad counts those that had a
+## uid already, uidFilesWritten the .uid files this call wrote (a .tscn's or .tres's stamp writes
+## none), and a file that fails is listed in failed with load_failure's reason while the others are
+## still stamped.
 static func stamp_uids(params: Dictionary) -> Dictionary:
 	var files: Array = params.get("files", [])
 	var stamped: Array = []
 	var failed: Array = []
+	var written: PackedStringArray = []
 	var already_had: int = 0
 	for path: String in files:
-		if not header_uid_of(path).is_empty():
+		if _has_uid(path):
 			already_had += 1
 			continue
 		var id: int = _uid_to_stamp(path)
+		var sidecar: String = path + ".uid"
+		var had_sidecar: bool = FileAccess.file_exists(sidecar)
 		var error: int = ResourceSaver.set_uid(path, id)
 		if error != OK:
-			failed.append({"path": path, "error": error_string(error)})
+			failed.append({"path": path, "error": load_failure(path, error_string(error))})
 			continue
 		register_uid(id, path)
+		if not had_sidecar and FileAccess.file_exists(sidecar):
+			written.append(sidecar)
 		stamped.append({"path": path, "uid": ResourceUID.id_to_text(id)})
 	var result: Dictionary = {
 		"checked": files.size(), "stamped": stamped, "alreadyHad": already_had
 	}
+	if not written.is_empty():
+		result["uidFilesWritten"] = written
 	if not failed.is_empty():
 		result["failed"] = failed
 	return {"ok": true, "result": result}

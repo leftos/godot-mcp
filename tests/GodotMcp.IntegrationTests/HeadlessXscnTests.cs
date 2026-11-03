@@ -421,6 +421,36 @@ public sealed class HeadlessXscnTests : IAsyncDisposable
     private Task<string> SetSibPositionAsync(string project, string scene, CancellationToken cancellation) =>
         _tools.SetNodePropertiesAsync(project, scene, [new PropertyUpdate("Sib", "position", Json("{\"x\": 1, \"y\": 2}"))], cancellation);
 
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task StampUidsWritesTheUidFileAHandWrittenXscnLacks()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string project = Built();
+        // Imported first, as a project the editor has opened: stamp_uids' own run prepares nothing, so only this scan registers
+        // the addon's saver for .xscn. The scenes are written after it, so the scan gives neither of them a sidecar.
+        await RunGodotAsync(project, ["--import"], cancellation);
+        File.WriteAllText(Path.Combine(project, "hand.xscn"), SceneText);
+        WriteScene(project, "kept.xscn", SceneUid);
+
+        JsonNode stamped = JsonNode.Parse(await _tools.StampUidsAsync(project, ["hand.xscn", "kept.xscn"], cancellation))!;
+
+        JsonObject entry = Assert.Single(stamped["stamped"]!.AsArray().OfType<JsonObject>());
+        Assert.Equal("res://hand.xscn", entry["path"]!.GetValue<string>());
+        string uid = entry["uid"]!.GetValue<string>();
+        Assert.StartsWith("uid://", uid, StringComparison.Ordinal);
+        Assert.Equal(uid, File.ReadAllText(Path.Combine(project, "hand.xscn.uid")).Trim());
+        Assert.Equal(["res://hand.xscn.uid"], stamped["uidFilesWritten"]!.AsArray().Select(path => path!.GetValue<string>()));
+        Assert.Equal(1, (int)stamped["alreadyHad"]!.GetValue<double>());
+        Assert.Equal(SceneUid, File.ReadAllText(Path.Combine(project, "kept.xscn.uid")).Trim());
+        Assert.Equal(SceneText, File.ReadAllText(Path.Combine(project, "hand.xscn")));
+
+        JsonNode again = JsonNode.Parse(await _tools.StampUidsAsync(project, ["hand.xscn"], cancellation))!;
+
+        Assert.Equal(1, (int)again["alreadyHad"]!.GetValue<double>());
+        Assert.Empty(again["stamped"]!.AsArray());
+        Assert.Null(again["uidFilesWritten"]);
+    }
+
     /// <summary>A built CsProbe copy with the fake format's sources, never imported.</summary>
     private string Built() => Track(CsProbeProject.BuiltWith(FakeXamlFormat.Sources)).Directory;
 

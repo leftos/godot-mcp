@@ -8,16 +8,16 @@ namespace GodotMcp.Server.Tools;
 
 /// <summary>
 /// The headless uid stamp (headless/scene_ops.gd, SceneFiles.stamp_uids): stamp_uids, which gives a hand-written .tscn or
-/// .tres with no uid in its header the uid the editor would give it, changing the header line alone.
+/// .tres with no uid in its header, or a .xscn or .xres with no <path>.uid file beside it, the uid the editor would give it.
 /// </summary>
 internal sealed partial class HeadlessTools
 {
-    /// <summary>The extensions stamp_uids takes: the text formats whose header holds their uid.</summary>
-    internal static readonly string[] StampExtensions = [".tscn", ".tres"];
+    /// <summary>The extensions stamp_uids takes: the formats a uid can be given, in the file's header or beside it.</summary>
+    internal static readonly string[] StampExtensions = [".tscn", ".tres", ".xscn", ".xres"];
 
-    private const string StampRefusal = "is not a scene or resource: stamp_uids takes .tscn and .tres files and folders.";
+    private const string StampRefusal = "is not a scene or resource: stamp_uids takes .tscn, .tres, .xscn and .xres files and folders.";
 
-    /// <summary>How a path that names a file is checked: it must be a .tscn or a .tres.</summary>
+    /// <summary>How a path that names a file is checked: it must be a .tscn, a .tres, a .xscn or a .xres.</summary>
     private static readonly PathRule StampRule = new("paths", StampExtensions, StampRefusal);
 
     /// <summary>
@@ -28,18 +28,21 @@ internal sealed partial class HeadlessTools
 
     [McpServerTool(Name = "stamp_uids", ReadOnly = false, Destructive = false, OpenWorld = false)]
     [Description(
-        "Gives every .tscn and .tres that has no uid in its header the uid the editor would give it, in a headless Godot, without "
-            + "running the game: only the first line of the file changes (a hand-written header's other attributes, such as "
-            + "load_steps, are dropped), the rest of the text is kept byte for byte, and the uid is also added to "
-            + ".godot/uid_cache.bin when the project has one. paths lists .tscn and .tres files and folders (res:// or relative "
-            + "to the project folder); left out, the whole project is walked, skipping the folders Godot's scan skips (a name "
-            + "starting with \".\", a .gdignore, a nested project.godot). Returns {checked, stamped: [{path, uid}], alreadyHad, "
-            + "failed?: [{path, error}], errors?}: stamped lists the files it changed; commit them."
+        "Gives every .tscn, .tres, .xscn and .xres that has no uid yet the uid the editor would give it, in a headless Godot, "
+            + "without running the game. A .tscn or .tres gets it in its header: only the first line of the file changes (a "
+            + "hand-written header's other attributes, such as load_steps, are dropped) and the rest of the text is kept byte for "
+            + "byte. A .xscn or .xres keeps its uid in the <file>.uid beside it, which stamp_uids writes when it is missing and "
+            + "leaves alone when it exists. The uid is also added to .godot/uid_cache.bin when the project has one. paths lists "
+            + ".tscn, .tres, .xscn and .xres files and folders (res:// or relative to the project folder); left out, the whole "
+            + "project is walked, skipping the folders Godot's scan skips (a name starting with \".\", a .gdignore, a nested "
+            + "project.godot). Returns {checked, stamped: [{path, uid}], alreadyHad, uidFilesWritten?, failed?: [{path, error}], "
+            + "errors?}: stamped lists the files it changed and uidFilesWritten the .uid files it wrote; commit them."
     )]
     public async Task<string> StampUidsAsync(
         [Description(ProjectPathDescription)] string projectPath,
         [Description(
-            "The .tscn and .tres files and folders to stamp: res:// paths or paths relative to the project folder; left out, the " + "whole project."
+            "The .tscn, .tres, .xscn and .xres files and folders to stamp: res:// paths or paths relative to the project folder; "
+                + "left out, the whole project."
         )]
             string[]? paths = null,
         CancellationToken cancellationToken = default
@@ -61,12 +64,12 @@ internal sealed partial class HeadlessTools
         new() { ["files"] = new JsonArray([.. CheckStampPaths(projectDir, paths).Select(path => (JsonNode)path)]) };
 
     /// <summary>
-    /// The .tscn and .tres files stamp_uids stamps, as res:// paths: the whole project when paths is null, else every file the
-    /// paths name, a folder's walked recursively. A folder Godot's scan skips is left out of a walk, and a path repeated is taken
-    /// once.
+    /// The .tscn, .tres, .xscn and .xres files stamp_uids stamps, as res:// paths: the whole project when paths is null, else
+    /// every file the paths name, a folder's walked recursively. A folder Godot's scan skips is left out of a walk, and a path
+    /// repeated is taken once.
     /// </summary>
     /// <exception cref="McpException">
-    /// paths is an empty list, a path is empty, outside the project or missing, a file is not a .tscn or .tres, or more than
+    /// paths is an empty list, a path is empty, outside the project or missing, a file is not one of them, or more than
     /// <see cref="MaxSweep"/> files are found.
     /// </exception>
     internal static IReadOnlyList<string> CheckStampPaths(string projectDir, IReadOnlyList<string>? paths)
@@ -84,12 +87,14 @@ internal sealed partial class HeadlessTools
         ];
         return files.Count <= MaxSweep
             ? files
-            : throw new McpException($"stamp_uids found {files.Count} .tscn and .tres files; it stamps at most {MaxSweep} at once: pass paths.");
+            : throw new McpException(
+                $"stamp_uids found {files.Count} .tscn, .tres, .xscn and .xres files; it stamps at most {MaxSweep} at once: pass paths."
+            );
     }
 
-    /// <summary>The files a path on stamp_uids' list names: the .tscn and .tres files of the folder it names, else the file itself.</summary>
+    /// <summary>The files a path on stamp_uids' list names: the scene and resource files of the folder it names, else the file itself.</summary>
     /// <exception cref="McpException">
-    /// The path is empty, outside the project, missing, not a .tscn or .tres, or a folder Godot's scan skips.
+    /// The path is empty, outside the project, missing, not one of stamp_uids' formats, or a folder Godot's scan skips.
     /// </exception>
     private static IEnumerable<string> StampFilesAt(string projectDir, string path)
     {
@@ -109,8 +114,8 @@ internal sealed partial class HeadlessTools
     }
 
     /// <summary>
-    /// Every .tscn and .tres under folder, however deep, as res:// paths in ordinal order, skipping a folder Godot's scan skips
-    /// (<see cref="IsUnscanned"/>).
+    /// Every .tscn, .tres, .xscn and .xres under folder, however deep, as res:// paths in ordinal order, skipping a folder Godot's
+    /// scan skips (<see cref="IsUnscanned"/>).
     /// </summary>
     private static IEnumerable<string> StampFilesUnder(string projectDir, string folder)
     {
