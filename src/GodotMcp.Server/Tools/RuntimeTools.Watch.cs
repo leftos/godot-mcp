@@ -48,7 +48,7 @@ internal sealed partial class RuntimeTools
             + "the game paused are not sampled nor counted toward the window, and are listed in paused; frame_control steps count. "
             + "The timeline: {startFrame, frames, gameMs, wallMs, clockErrorMs?, paused?: [[from, to]], stopped?, call?, tracks: [{name?, "
             + "node?, property?, first, last, changes, points: [[frame, gameMs, value, at]], dropped?, cut?, min?, max?, minAt?, maxAt?}], "
-            + "events?: [[frame, gameMs, node, signal, args, at]], eventCounts?: {\"<node>:<signal>\": n}, eventsDropped?, eventsCut?, "
+            + "events?: [[frame, gameMs, node, signal, args, at, stack?]], eventCounts?: {\"<node>:<signal>\": n}, eventsDropped?, eventsCut?, "
             + "skipped?, skippedTotal?}. "
             + "startFrame is Engine.get_process_frames() at the watch's first frame (Engine.get_physics_frames() with unit "
             + "physics) and every frame counts from 0 there; gameMs "
@@ -62,8 +62,11 @@ internal sealed partial class RuntimeTools
             + "deadline passed: the window's allowance, 10 s + 100 ms a frame or gameMs + 10 s, at most 600 s, plus the time a "
             + "started watch spends paused, up to 600 s). events lists every signal track's emissions in order, at most 300 shared "
             + "fairly across signal tracks (each keeps its earliest), and eventCounts counts every emission; a freed emitter's "
-            + "signals stop. Every point, event and voice ends with at, its time on the drive clock in ms (null when the session's "
-            + "clock cannot convert it); the timeline carries clockErrorMs once when any was converted. "
+            + "signals stop. Every point, event and voice carries at, its time on the drive clock in ms (null when the session's "
+            + "clock cannot convert it); the timeline carries clockErrorMs once when any was converted. A signal track with "
+            + "stack: true ends each of its events with stack, the emission's call stack (\"<file>:<line> in <function>\", at most "
+            + "10 frames of each language, GDScript's then C#'s, each the most recent first, the bridge's own frames left out, "
+            + "empty when no script frame exists), after that at. "
             + "tracks.monitors adds monitors?: [{name, samples, p50, p95, p99, max, maxAt, mean, spikes?: [[frame, "
             + "value]], over?, custom?, nonNumeric?}], each read once a sampled frame and summarised in the game: frame_ms (the wall "
             + "time between frames, over: {budget, count, frames} against options.budgetMs, a hitch reading as one long frame), "
@@ -109,7 +112,7 @@ internal sealed partial class RuntimeTools
         [Description("start, stop or run.")] string action,
         [Description(
             "start and run: {properties: [{node, property, name?, minDelta?}], expressions: [{name, expression, node?, minDelta?}], "
-                + "signals: [{node | group, signal}], monitors: [\"frame_ms\" | \"frame_work_ms\" | a built-in monitor such as "
+                + "signals: [{node | group, signal, stack?}], monitors: [\"frame_ms\" | \"frame_work_ms\" | a built-in monitor such as "
                 + "\"object/nodes\" | a custom "
                 + "monitor id], audio: {players?: {under?}, buses?: [name] | [\"*\"], thresholdDb?}}, at least one track; at most 32 "
                 + "property and expression tracks, each with a unique key (name, else node and property), at most 16 signal "
@@ -284,6 +287,11 @@ internal sealed partial class RuntimeTools
             "Pass a signal's name as Godot lists it, such as pressed (a C# [Signal] without its EventHandler suffix)."
         );
         parameters["signal"] = signal;
+        if (track.Stack == true)
+        {
+            parameters["stack"] = true;
+        }
+
         string emitter = track.Node ?? track.Group!;
         string kind = track.Node is null ? "group" : "node";
         return pairs.Add($"{kind}\n{emitter}\n{signal}")

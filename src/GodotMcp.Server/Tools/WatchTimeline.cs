@@ -29,7 +29,8 @@ internal static class WatchTimeline
     internal const int MaxHeardRanges = 50;
 
     /// <summary>Where the bridge's event names the signal track it belongs to, after [frame, gameMs, node, signal, args] and
-    /// before at, so an event the timeline keeps is [frame, gameMs, node, signal, args, at].</summary>
+    /// before at, so an event the timeline keeps is [frame, gameMs, node, signal, args, at], or [frame, gameMs, node, signal,
+    /// args, at, stack] on a stack track.</summary>
     private const int EventTrackIndex = 5;
 
     /// <summary>Where a voice, [frame, gameMs, event, path, {...}, at], names its player.</summary>

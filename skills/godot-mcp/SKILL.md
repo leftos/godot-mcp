@@ -120,7 +120,9 @@ The injected pad never shows in `Input.get_connected_joypads()`. Without `device
 
 While paused, `wait_for` accepts a signal wait, an output wait or a check-once wait (`timeoutMs: 0`): that set is how you assert on an exact frame. A condition already true is met at frame 0: `wait_for` with `options.edge: true` (an exists, property or expression wait with a timeout) waits for it to turn true after being false.
 
-`watch` records how properties and expressions moved frame by frame, and the signals fired meanwhile (`tracks.signals`): `start` it, drive with any tools (input, waits, steps), `stop` it for each track's change points and range; `run` does it in one call over a `window` of `frames` or `gameMs`. Every point, event and voice ends with `at`, its drive-clock ms, comparable with `wait_for`'s `metAt` and `batch_drive`'s `startMs`. One watch per game run: always `stop` the one you started.
+`watch` records how properties and expressions moved frame by frame, and the signals fired meanwhile (`tracks.signals`): `start` it, drive with any tools (input, waits, steps), `stop` it for each track's change points and range; `run` does it in one call over a `window` of `frames` or `gameMs`. Every point and voice ends with `at`, and every event carries it (last, but for a `stack`), its drive-clock ms, comparable with `wait_for`'s `metAt` and `batch_drive`'s `startMs`.
+To find the code that emitted a signal, add `stack: true` to its track: each event then ends with its call stack. A property track has none, so to find who writes a property, watch the property's own signal with `stack: true`.
+One watch per game run: always `stop` the one you started.
 
 **Inspecting and changing the live game.**
 

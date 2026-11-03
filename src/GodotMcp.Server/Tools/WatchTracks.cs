@@ -21,7 +21,7 @@ internal sealed record WatchTracks(
     [property: Description(
         "Signal tracks, each {node, signal} or {group, signal}: every emission is recorded with its frame, game time, emitter and "
             + "arguments; a group is resolved once at start, and a member without the signal is listed in skipped. At most 16, "
-            + "connecting at most 200 nodes."
+            + "connecting at most 200 nodes. stack: true on a track adds each emission's call stack to its event."
     )]
         WatchSignalTrack[]? Signals = null,
     [property: Description(
@@ -76,7 +76,14 @@ internal sealed record WatchAudioPlayers(
 internal sealed record WatchSignalTrack(
     [property: Description("The emitting node, named as a property track's node; give node or group, not both.")] string? Node = null,
     [property: Description("A group: every node in it at start that has the signal is connected.")] string? Group = null,
-    [property: Description("The signal's name, as Godot lists it (a C# [Signal] without its EventHandler suffix).")] string Signal = ""
+    [property: Description("The signal's name, as Godot lists it (a C# [Signal] without its EventHandler suffix).")] string Signal = "",
+    [property: Description(
+        "true: each kept emission also records the call stack that emitted it, as stack: [\"<file>:<line> in <function>\"] (at most "
+            + "10 frames of each language, GDScript's then C#'s, each the most recent first, the bridge's own frames left out), the "
+            + "last item of its event; left out, false. A property or other value cannot be traced to a writer; watch its signal "
+            + "with stack instead."
+    )]
+        bool? Stack = null
 );
 
 /// <summary>A property of a node a watch samples each frame.</summary>

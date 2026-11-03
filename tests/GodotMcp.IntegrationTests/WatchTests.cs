@@ -29,6 +29,11 @@ public sealed class WatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
         + "func _process(delta: float) -> void:\\n\\tif armed:\\n\\t\\tarmed = false\\n\\t\\tmoved_delta = delta\\n\\t\\t"
         + "position.x = 50.0\\n\\t\\tmoved.emit()\\n";
 
+    // A Button whose pressed this script's _on_pressed handles by emitting hit, so a stack shows a game frame.
+    private const string ClickEmitterScript =
+        "extends Button\\n\\nsignal hit\\n\\n\\nfunc _ready() -> void:\\n\\tpressed.connect(_on_pressed)\\n\\n\\n"
+        + "func _on_pressed() -> void:\\n\\thit.emit()\\n";
+
     // Once armed, adds a child named Kid three frames later, and with arm_and_raise also has the scene's Main raise its
     // probe error then, from the game's own _process. shout, for an expression to call, push_errors the first time.
     private const string GrowerScript =
@@ -384,6 +389,34 @@ public sealed class WatchTests : IAsyncLifetime, IClassFixture<SharedProbeSessio
         // The emission runs in frame N's _process: after the first point's frame-start tick, before point 1's at N + 1.
         Assert.InRange(movedAt, stamps[0], stamps[1]);
         Assert.True(timeline["clockErrorMs"]!.GetValue<double>() >= 0, json);
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task ASignalStackFromAClickNamesTheGamesHandlerFirstAndNoBridgeFile()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        string button = (
+            await RunAsync(
+                "var button := Button.new()\n\tbutton.name = \"WatchClickButton\"\n\t"
+                    + "button.focus_mode = Control.FOCUS_NONE\n\tbutton.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS\n\t"
+                    + "button.position = Vector2(540, 300)\n\tbutton.size = Vector2(80, 40)\n\t"
+                    + "var script := GDScript.new()\n\t"
+                    + $"script.source_code = \"{ClickEmitterScript}\"\n\tscript.reload()\n\tbutton.set_script(script)\n\t"
+                    + "scene_tree.root.add_child(button)\n\treturn str(button.get_path())"
+            )
+        ).GetValue<string>();
+        WatchTracks tracks = new(Signals: [new WatchSignalTrack(Node: button, Signal: "hit", Stack: true)]);
+
+        await WatchAsync("start", cancellation, tracks);
+        await _tools.ClickAsync(new InputTarget("WatchClickButton"), "left", false, cancellationToken: cancellation);
+        await _tools.WaitForAsync(new WaitCondition(Frames: 3), cancellationToken: cancellation);
+        JsonObject timeline = await WatchAsync("stop", cancellation);
+
+        JsonArray hit = timeline["events"]![0]!.AsArray();
+        Assert.Equal(7, hit.Count);
+        JsonArray stack = hit[hit.Count - 1]!.AsArray();
+        Assert.EndsWith(" in _on_pressed", stack[0]!.GetValue<string>(), StringComparison.Ordinal);
+        Assert.DoesNotContain(stack, frame => frame!.GetValue<string>().Contains("godot_mcp_", StringComparison.Ordinal));
     }
 
     [Fact(Timeout = TestTimeoutMs)]

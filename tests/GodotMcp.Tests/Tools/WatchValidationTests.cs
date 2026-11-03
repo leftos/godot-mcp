@@ -101,6 +101,18 @@ public sealed class WatchValidationTests
         Assert.False(parameters.ContainsKey("expressions"));
     }
 
+    [Fact]
+    public void ASignalTrackWithStackRecordsItAndOneWithItFalseOrDefaultSendsNoKey()
+    {
+        JsonObject stacked = BuildSignals(new WatchSignalTrack(Node: "Button", Signal: "pressed", Stack: true));
+        JsonObject unstacked = BuildSignals(new WatchSignalTrack(Node: "Button", Signal: "pressed", Stack: false));
+        JsonObject leftOut = BuildSignals(new WatchSignalTrack(Node: "Button", Signal: "pressed"));
+
+        Assert.Equal("""[{"node":"Button","signal":"pressed","stack":true}]""", stacked["signals"]!.ToJsonString());
+        Assert.Equal("""[{"node":"Button","signal":"pressed"}]""", unstacked["signals"]!.ToJsonString());
+        Assert.Equal("""[{"node":"Button","signal":"pressed"}]""", leftOut["signals"]!.ToJsonString());
+    }
+
     [Theory]
     [InlineData(0, null, "frames must be between 1 and 7200; got 0.")]
     [InlineData(7201, null, "frames must be between 1 and 7200; got 7201.")]

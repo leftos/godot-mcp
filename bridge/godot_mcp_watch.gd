@@ -34,6 +34,10 @@ const FIRST_POINTS := 200
 const LAST_POINTS := 50
 ## The events a signal track keeps; past them it only counts its emissions.
 const TRACK_EVENTS := 300
+## The frames a stack track keeps of each emission's call stack, each language's.
+const STACK_FRAMES := 10
+## The languages a stack lists, in this order: each language's frames, its newest first.
+const STACK_LANGUAGES: PackedStringArray = ["GDScript", "C#"]
 ## The most nodes a watch's signal tracks connect together.
 const MAX_CONNECTIONS := 200
 ## The most skipped group members a reply lists.
@@ -96,6 +100,9 @@ var group_members: Callable
 ## The real time now in microseconds: what frame_ms and the sampler's cost are measured with
 ## (Time.get_ticks_usec; a test sets its own).
 var usec_clock: Callable
+## The script backtraces a captured emission's stack comes from (Engine.capture_script_backtraces;
+## a test sets its own).
+var backtraces: Callable = Callable(Engine, "capture_script_backtraces")
 ## The signal a sampled frame draws on, RenderingServer.frame_pre_draw, which reads frame_work_ms
 ## (a test, whose frames draw nothing, sets its own).
 var draw_signal: Signal = RenderingServer.frame_pre_draw
@@ -313,14 +320,21 @@ func _new_watch(params: Dictionary, tracks: Array, source: Signal) -> Dictionary
 	return watch
 
 
-## A signal track {node, signal} or {group, signal}: its emitter as given (the node's path, or the
-## group), its signal, the nodes to connect (the node, or the group's members at start that have the
-## signal), the members skipped, and its kept and total emissions. Refused when the node is missing
-## or lacks the signal, when the group has no nodes, or when none of them has it.
+## A signal track {node, signal, stack?} or {group, signal, stack?}: its emitter as given (the
+## node's path, or the group), its signal, the nodes to connect (the node, or the group's members
+## at start that have the signal), the members skipped, whether each kept emission also records its
+## call stack, and its kept and total emissions. Refused when the node is missing or lacks the
+## signal, when the group has no nodes, or when none of them has it.
 func _signal_track(spec: Dictionary) -> Variant:
 	var signal_name: String = str(spec.get("signal", ""))
 	var track: Dictionary = {
-		"signal": signal_name, "nodes": [], "skipped": [], "kept": 0, "total": 0, "connected": 0
+		"signal": signal_name,
+		"stack": spec.get("stack") == true,
+		"nodes": [],
+		"skipped": [],
+		"kept": 0,
+		"total": 0,
+		"connected": 0,
 	}
 	if spec.get("group") is String:
 		track["emitter"] = {"group": spec["group"]}
@@ -370,11 +384,13 @@ static func _connections_refusal(signals: Array) -> String:
 ## Connects one variadic lambda to each node of each signal track, plainly, so an emission is
 ## recorded as it fires; counts each node's emissions from 0 and lets go of the track's nodes. A
 ## node and signal an earlier track connected is not connected again, so each emission is counted
-## and kept once, under the first track that names it.
+## and kept once, under the first track that names it, and carries a stack when any track naming it
+## asks for one.
 func _connect_signals(watch: Dictionary) -> void:
 	var tracks: Array = watch["signals"]
 	var counts: Dictionary = watch["event_counts"]
 	var connected: Dictionary = {}
+	var stacks: Dictionary = _stack_connections(tracks)
 	for index in tracks.size():
 		var track: Dictionary = tracks[index]
 		var signal_name: String = track["signal"]
@@ -384,12 +400,26 @@ func _connect_signals(watch: Dictionary) -> void:
 				continue
 			connected[key] = true
 			var path: String = _path_of(node)
+			var with_stack: bool = stacks.has(key)
 			counts["%s:%s" % [path, signal_name]] = 0
-			var on_signal := func(...args: Array) -> void: _record(watch, index, path, args)
+			var on_signal := func(...args: Array) -> void:
+				_record(watch, index, path, args, with_stack)
 			node.connect(signal_name, on_signal)
 			(watch["connections"] as Array).append([node, signal_name, on_signal])
 			track["connected"] = int(track["connected"]) + 1
 		track.erase("nodes")
+
+
+## The connections a stack track asks for, by key: a node and signal an earlier track connected
+## carries a stack when any track naming it asks for one.
+static func _stack_connections(tracks: Array) -> Dictionary:
+	var stacks: Dictionary = {}
+	for track: Dictionary in tracks:
+		if not track["stack"]:
+			continue
+		for node: Node in track["nodes"]:
+			stacks[_connection_key(node, track["signal"])] = true
+	return stacks
 
 
 ## One node's signal, whichever tracks name it.
@@ -398,11 +428,11 @@ static func _connection_key(node: Node, signal_name: String) -> String:
 
 
 ## Records an emission of signal track index's signal by the node at path: counted always, and kept
-## as [frame, gameMs, node, signal, args, track, ticks] while the track holds fewer than
+## as [frame, gameMs, node, signal, args, track, ticks[, stack]] while the track holds fewer than
 ## TRACK_EVENTS, its arguments converted to JSON now and ticks the usec_clock read at the emission,
-## mid-frame. A watch that ended records nothing (an emission calls the slots it copied before a
-## disconnect).
-func _record(watch: Dictionary, index: int, path: String, args: Array) -> void:
+## mid-frame, and a connection a stack track names ending with the emission's call stack. A watch
+## that ended records nothing (an emission calls the slots it copied before a disconnect).
+func _record(watch: Dictionary, index: int, path: String, args: Array, with_stack: bool) -> void:
 	if watch["state"] != "running":
 		return
 	var track: Dictionary = watch["signals"][index]
@@ -418,7 +448,37 @@ func _record(watch: Dictionary, index: int, path: String, args: Array) -> void:
 	var event: Array = [
 		stamp[0], stamp[1], path, signal_name, bridge._json.to_json(args), index, usec_clock.call()
 	]
+	if with_stack:
+		event.append(_emission_stack())
 	(watch["events"] as Array).append(event)
+
+
+## The emission's call stack from the backtraces: each language's frames in STACK_LANGUAGES's order,
+## its newest first, up to STACK_FRAMES of each, as "<file>:<line> in <function>".
+func _emission_stack() -> Array:
+	var bridge_dir: String = (get_script() as Script).resource_path.get_base_dir()
+	var captured: Array = backtraces.call()
+	var frames: Array = []
+	for language: String in STACK_LANGUAGES:
+		for backtrace in captured:
+			if backtrace.get_language_name() == language:
+				frames.append_array(_language_stack(backtrace, bridge_dir))
+	return frames
+
+
+## One language's frames as "<file>:<line> in <function>", its newest first, the bridge's own folder
+## left out, up to STACK_FRAMES.
+static func _language_stack(backtrace, bridge_dir: String) -> Array:
+	var frames: Array = []
+	for index in backtrace.get_frame_count():
+		if frames.size() == STACK_FRAMES:
+			break
+		var file: String = backtrace.get_frame_file(index)
+		if file.get_base_dir() == bridge_dir:
+			continue
+		var line: int = backtrace.get_frame_line(index)
+		frames.append("%s:%d in %s" % [file, line, backtrace.get_frame_function(index)])
+	return frames
 
 
 ## [frame, gameMs] for an emission now: the engine's frame count less startFrame, 0 before the
@@ -782,7 +842,8 @@ func _release(watch: Dictionary) -> void:
 
 
 ## start's reply: {startFrame, tracks: [{name?, node?, property?}], signals?: [{node | group,
-## signal, connected}], skipped?, skippedTotal?, monitors?: [{name, custom?}], audio?, call?}.
+## signal, connected[, stack]}], skipped?, skippedTotal?, monitors?: [{name, custom?}], audio?,
+## call?}.
 func _started(watch: Dictionary) -> Dictionary:
 	var reply: Dictionary = {"startFrame": watch["start_frame"], "tracks": []}
 	for track: Dictionary in watch["tracks"]:
@@ -798,11 +859,13 @@ func _started(watch: Dictionary) -> Dictionary:
 	return reply
 
 
-## A signal track as start lists it: {node | group, signal, connected}.
+## A signal track as start lists it: {node | group, signal, connected[, stack]}.
 static func _describe_signal(track: Dictionary) -> Dictionary:
 	var described: Dictionary = (track["emitter"] as Dictionary).duplicate()
 	described["signal"] = track["signal"]
 	described["connected"] = track["connected"]
+	if track["stack"]:
+		described["stack"] = true
 	return described
 
 
@@ -819,8 +882,9 @@ static func _add_skipped(result: Dictionary, signals: Array) -> void:
 		result["skippedTotal"] = skipped.size()
 
 
-## Adds the signal tracks' kept events, in emission order, every emitter's count (eventCounts), each
-## track's kept and total emissions (eventTracks, which the server shares the events by) and the
+## Adds the signal tracks' kept events, one [frame, gameMs, node, signal, args, track,
+## ticks[, stack]] each, in emission order, every emitter's count (eventCounts), each track's
+## kept and total emissions (eventTracks, which the server shares the events by) and the
 ## skipped members to a timeline.
 static func _add_events(result: Dictionary, watch: Dictionary) -> void:
 	var signals: Array = watch["signals"]

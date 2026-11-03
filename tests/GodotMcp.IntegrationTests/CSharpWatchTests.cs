@@ -91,6 +91,32 @@ public sealed class CSharpWatchTests(SharedCsProbeSession shared) : IClassFixtur
     }
 
     [Fact(Timeout = TestTimeoutMs)]
+    public async Task ACSharpSignalStackNamesTheMethodThatEmittedIt()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonNode added = JsonNode.Parse(await _tools.RunScriptAsync(AddSignalsScript, ScriptTimeoutMs, cancellationToken: cancellation))!;
+        Assert.True(added["value"]?.GetValue<bool>() == true, added.ToJsonString());
+        WatchTracks tracks = new(Signals: [new WatchSignalTrack(Node: Signals, Signal: "Hit", Stack: true)]);
+
+        JsonObject timeline = JsonNode
+            .Parse(
+                await _tools.WatchAsync(
+                    "run",
+                    tracks,
+                    new WatchWindow(Frames: 5),
+                    new WatchOptions(Call: new MethodCall(Signals, "EmitAll")),
+                    cancellationToken: cancellation
+                )
+            )!
+            .AsObject();
+
+        JsonArray hit = timeline["events"]![0]!.AsArray();
+        Assert.Equal(7, hit.Count);
+        JsonArray stack = hit[hit.Count - 1]!.AsArray();
+        Assert.Contains(stack, frame => frame!.GetValue<string>().Contains("EmitAll", StringComparison.Ordinal));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task AnErrorACSharpMethodAnExpressionTrackCallsPushesLandsAndAnEngineErrorBesideItDoesNot()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;

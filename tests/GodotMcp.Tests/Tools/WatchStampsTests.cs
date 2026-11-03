@@ -95,6 +95,41 @@ public sealed class WatchStampsTests
     }
 
     [Fact]
+    public void AStackedEventsTickConvertsAtItsOldIndexAndItsStackStaysLast()
+    {
+        JsonObject reply = Reply(
+            [0, 0, 1.5, 1_000L],
+            [3, 48, "/root/A", "hit", new JsonArray(), 0, 2_000_049L, new JsonArray("res://A.gd:3 in hit")],
+            [4, 64, "start", "/root/S", new JsonObject(), 3_000_051L]
+        );
+
+        WatchStamps.Stamp(reply, Clock());
+
+        JsonArray item = reply["events"]![0]!.AsArray();
+        Assert.Equal(8, item.Count);
+        Assert.Equal(Math.Round(MidMs + 2_000.049, 1), item[6]!.GetValue<double>());
+        Assert.Equal("""["res://A.gd:3 in hit"]""", item[7]!.ToJsonString());
+    }
+
+    [Fact]
+    public void AStackedEventWhoseTickCannotConvertKeepsItsStack()
+    {
+        JsonObject reply = Reply(
+            [0, 0, 1.5, 1_000L],
+            [3, 48, "/root/A", "hit", new JsonArray(), 0, 2_000_049L, new JsonArray("res://A.gd:3 in hit")],
+            [4, 64, "start", "/root/S", new JsonObject(), 3_000_051L]
+        );
+
+        WatchStamps.Stamp(reply, new SessionClock());
+
+        JsonArray item = reply["events"]![0]!.AsArray();
+        Assert.Equal(8, item.Count);
+        Assert.Null(item[6]);
+        Assert.Equal("""["res://A.gd:3 in hit"]""", item[7]!.ToJsonString());
+        Assert.False(reply.ContainsKey("clockErrorMs"), reply.ToJsonString());
+    }
+
+    [Fact]
     public void NoRawTickSurvivesAnywhereInTheReply()
     {
         const long Ticks = 987_654_321;
