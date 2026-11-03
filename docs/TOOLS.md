@@ -172,6 +172,10 @@ For an agent driving a Godot project through this server: which tool fits a job,
 
   The editor runs single-window (`--single-window`), so its dialogs and popups are embedded in its window and aimed clicks (`{element}`, `{text}`, an `item` on a dock's Tree) work as in a game, and a dialog's own buttons are `{text}` targets (the disk-changed dialog's "Reload from disk"); a game it starts with F5 or F6 runs in its own window, not the editor's Game tab. `get_scene_tree` without `node` refuses (the editor has no current scene): pass `node`. `preview_scene` and `frame_control` are refused (`preview_scene does not run in an editor session.`, `frame_control does not pause or step an editor session.`).
 
+  A quiet editor never gets focus, and Godot looks for files changed on disk only when it does (`EditorNode::_notification`, `NOTIFICATION_APPLICATION_FOCUS_IN`), so the disk-changed dialog never comes up by itself. After changing a file the editor has open, send the notification yourself: `run_script` whose `execute` calls `scene_tree.root.propagate_notification(Node.NOTIFICATION_APPLICATION_FOCUS_IN)`, then `wait_for {text: "Reload from disk"}`.
+
+  In Godot 4.7.2 each "Reload from disk" logs `Something attempted to free the root Node of a scene` (the editor guard in `Node`'s `NOTIFICATION_PREDELETE`), leaves the old root in the viewport and brings the new one back renamed (`Root2`). It is the engine's, with or without input, so expect one such error in `get_errors` per reload.
+
   The editor's `progress_dialog.cpp:183 Parameter "current_window" is null` error and its exit leak report are left out of `get_debug_output`, the run log and `get_errors`.
 - **Stop:** `stop_project` closes the editor through its own close request (10 s of load-adjusted time before a kill), and refuses while it has unsaved scenes (see `stop_project`). `restart_project` refuses an editor: stop it and run `run_editor` again.
 
