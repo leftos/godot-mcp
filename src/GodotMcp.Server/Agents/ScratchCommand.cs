@@ -144,12 +144,12 @@ internal static class ScratchCommand
         );
         Log.Ambient = logging.CreateLogger("GodotMcp.Server.Load");
         using CancellationTokenSource cancellation = new();
-        ConsoleCancelEventHandler onCancel = (_, cancel) =>
+        void OnCancel(object? _, ConsoleCancelEventArgs cancel)
         {
             cancel.Cancel = true;
             cancellation.Cancel();
-        };
-        Console.CancelKeyPress += onCancel;
+        }
+        Console.CancelKeyPress += OnCancel;
         GameServices? services = null;
         AppDomain.CurrentDomain.ProcessExit += StopGames;
         int status;
@@ -178,7 +178,7 @@ internal static class ScratchCommand
             services?.Sessions.Shutdown();
             services?.Sessions.Dispose();
             services?.Dispose();
-            Console.CancelKeyPress -= onCancel;
+            Console.CancelKeyPress -= OnCancel;
             AppDomain.CurrentDomain.ProcessExit -= StopGames;
         }
 

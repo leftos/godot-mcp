@@ -103,8 +103,7 @@ public sealed class BaselineValidationTests : IDisposable
         Assert.StartsWith("maxChangedRatio takes values from 0 to 1; got ", refused.Message, StringComparison.Ordinal);
     }
 
-    public static TheoryData<string[]> WrongColorCounts =>
-        new() { Array.Empty<string>(), Enumerable.Range(1, 17).Select(index => $"#{index:X6}").ToArray() };
+    public static TheoryData<string[]> WrongColorCounts => [Array.Empty<string>(), Enumerable.Range(1, 17).Select(index => $"#{index:X6}").ToArray()];
 
     [Theory]
     [MemberData(nameof(WrongColorCounts))]

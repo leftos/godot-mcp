@@ -29,8 +29,8 @@ internal static partial class ServerProcess
         // its games and exits 130) and this process only carries that exit code out to the shell; the default handler would end
         // the launcher first, and the kill-on-close job would then end the server before it could clean up. The handler is
         // removed once the server has gone, so a Ctrl+C after it ends the launcher as any other process ends.
-        ConsoleCancelEventHandler keepWaiting = (_, cancel) => cancel.Cancel = true;
-        Console.CancelKeyPress += keepWaiting;
+        static void KeepWaiting(object? _, ConsoleCancelEventArgs cancel) => cancel.Cancel = true;
+        Console.CancelKeyPress += KeepWaiting;
         try
         {
             nint job = CreateKillOnCloseJob(server);
@@ -56,7 +56,7 @@ internal static partial class ServerProcess
         }
         finally
         {
-            Console.CancelKeyPress -= keepWaiting;
+            Console.CancelKeyPress -= KeepWaiting;
         }
     }
 
