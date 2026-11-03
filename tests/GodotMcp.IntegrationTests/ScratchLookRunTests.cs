@@ -158,7 +158,7 @@ public sealed class ScratchLookRunTests : ScratchRunBase
         while (true)
         {
             JsonObject status = JsonNode
-                .Parse(await _scratch.ScratchStatusAsync(_probe.Directory, runId, stop: null, only: null, cancellation))!
+                .Parse(await _scratch.ScratchStatusAsync(_probe.Directory, runId, stop: null, only: null, waitSeconds: null, cancellation))!
                 .AsObject();
             if (holds(status))
             {

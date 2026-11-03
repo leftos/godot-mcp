@@ -247,6 +247,7 @@ public sealed partial class ScratchBackgroundTests : IDisposable
                 @"..\..\20261019T222144-3f2a",
                 stop: null,
                 only: null,
+                waitSeconds: null,
                 TestContext.Current.CancellationToken
             )
         );
@@ -394,10 +395,10 @@ public sealed partial class ScratchBackgroundTests : IDisposable
         );
 
         McpException refused = await Assert.ThrowsAsync<McpException>(() =>
-            tools.ScratchStatusAsync(project, RunId, stop: true, only: null, TestContext.Current.CancellationToken)
+            tools.ScratchStatusAsync(project, RunId, stop: true, only: null, waitSeconds: null, TestContext.Current.CancellationToken)
         );
         JsonObject read = JsonNode
-            .Parse(await tools.ScratchStatusAsync(project, RunId, stop: null, only: null, TestContext.Current.CancellationToken))!
+            .Parse(await tools.ScratchStatusAsync(project, RunId, stop: null, only: null, waitSeconds: null, TestContext.Current.CancellationToken))!
             .AsObject();
 
         Assert.Equal(
@@ -516,8 +517,103 @@ public sealed partial class ScratchBackgroundTests : IDisposable
         Assert.Equal($"only must be \"all\" or \"red\", not \"{only}\"", refused.Message);
     }
 
+    [Fact]
+    public async Task AWaitOnALiveRunReturnsOnceTheRunEndsWithNoNote()
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("wait-ended");
+        ScratchTools tools = new(harness.Sessions, TestCSharp.Unused());
+        ScratchBackgroundRun run = harness.Sessions.ScratchRuns.Register(Plan(project, "A"), ServerPid, Io());
+        run.CreateFiles();
+
+        Task<string> waiting = tools.ScratchStatusAsync(
+            project,
+            run.RunId,
+            waitSeconds: 60,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        run.Finish(Passed());
+        harness.Sessions.ScratchRuns.Remove(run);
+
+        JsonObject status = JsonNode.Parse(await waiting)!.AsObject();
+
+        Assert.Equal(("done", false), (status["state"]!.GetValue<string>(), status["live"]!.GetValue<bool>()));
+        Assert.Null(status["waited"]);
+    }
+
+    [Fact]
+    public async Task AWaitThatPassesItsLimitReturnsTheRunningStatusWithTheNote()
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("wait-limit");
+        ScratchTools tools = new(harness.Sessions, TestCSharp.Unused());
+        ScratchBackgroundRun run = harness.Sessions.ScratchRuns.Register(Plan(project, "A"), ServerPid, Io());
+        run.CreateFiles();
+
+        JsonObject status = JsonNode
+            .Parse(await tools.ScratchStatusAsync(project, run.RunId, waitSeconds: 1, cancellationToken: TestContext.Current.CancellationToken))!
+            .AsObject();
+
+        Assert.Equal(("running", true), (status["state"]!.GetValue<string>(), status["live"]!.GetValue<bool>()));
+        Assert.StartsWith("the run was still running after waitSeconds 1", status["waited"]!.GetValue<string>(), StringComparison.Ordinal);
+    }
+
+    [Fact(Timeout = NoWaitGuardMs)]
+    public async Task AStatusFileLeftRunningByAnotherServerIsReadWithItsNoteAndNoWait()
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("wait-left-running");
+        ScratchTools tools = new(harness.Sessions, TestCSharp.Unused());
+        const string RunId = "20261019T222144-3f2a";
+        string path = ScratchBackgroundRun.StatusPath(project, RunId);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, $"{{\"runId\":\"{RunId}\",\"state\":\"running\",\"serverPid\":1}}", TestContext.Current.CancellationToken);
+
+        JsonObject read = JsonNode
+            .Parse(await tools.ScratchStatusAsync(project, RunId, waitSeconds: 600, cancellationToken: TestContext.Current.CancellationToken))!
+            .AsObject();
+
+        Assert.False(read["live"]!.GetValue<bool>());
+        Assert.Equal(
+            "this server is not running the run (live: false), so there is nothing to wait for; a status file left at running by "
+                + "a server that exited means the run must be started again",
+            read["waited"]!.GetValue<string>()
+        );
+    }
+
+    [Fact]
+    public async Task ACallCancelledDuringItsWaitThrows()
+    {
+        await using RegistryHarness harness = new();
+        string project = harness.Project("wait-cancelled");
+        ScratchTools tools = new(harness.Sessions, TestCSharp.Unused());
+        ScratchBackgroundRun run = harness.Sessions.ScratchRuns.Register(Plan(project, "A"), ServerPid, Io());
+        run.CreateFiles();
+        using CancellationTokenSource cancel = new();
+
+        Task<string> waiting = tools.ScratchStatusAsync(project, run.RunId, waitSeconds: 60, cancellationToken: cancel.Token);
+        await cancel.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+    }
+
+    [Fact]
+    public void AWaitNoteIsKeptOnlyForAStatusThatIsStillLive()
+    {
+        const string Note = "the run was still running after waitSeconds 1";
+
+        Assert.Equal(Note, ScratchTools.WaitNoteFor(Note, live: true));
+        Assert.Null(ScratchTools.WaitNoteFor(Note, live: false));
+        Assert.Null(ScratchTools.WaitNoteFor(null, live: true));
+    }
+
+    /// <summary>The hang guard of a test whose call must return at once: wall time a passing run never reaches.</summary>
+    private const int NoWaitGuardMs = 60_000;
+
     private static async Task<JsonObject> StatusAsync(ScratchTools tools, string project, string runId, string? only) =>
-        JsonNode.Parse(await tools.ScratchStatusAsync(project, runId, stop: null, only, TestContext.Current.CancellationToken))!.AsObject();
+        JsonNode
+            .Parse(await tools.ScratchStatusAsync(project, runId, stop: null, only, waitSeconds: null, TestContext.Current.CancellationToken))!
+            .AsObject();
 
     private static IEnumerable<int> StepIndices(JsonObject status) =>
         status["result"]!["scenes"]![0]!["details"]!.AsArray().Select(step => step!["index"]!.GetValue<int>());

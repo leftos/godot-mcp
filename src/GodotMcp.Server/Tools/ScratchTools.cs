@@ -43,6 +43,17 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         + "a background run's status file stays whole, so a later read with \"all\" still sees every step, and a running run's "
         + "scenes are returned as they are.";
 
+    /// <summary>What waitSeconds does, for scratch_status' parameter.</summary>
+    internal const string WaitDescription =
+        "How long to hold the call for the run to finish, in whole seconds of load-adjusted time from 1 to 600: the status is "
+        + "returned either way, with waited saying the run was still running when the limit passed. Left out, the call returns at "
+        + "once; refused with stop: true.";
+
+    /// <summary>Why a wait on a run read from its status file answers at once: no run of this server is playing it.</summary>
+    private const string NotRunningElsewhere =
+        "this server is not running the run (live: false), so there is nothing to wait for; a status file left at running by a "
+        + "server that exited means the run must be started again";
+
     private const string ScratchAuto = "--scratch-auto";
     private const string UserArgsSeparator = "--";
     private const string AlternateUserArgsSeparator = "++";
@@ -192,8 +203,9 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     [Description(
         "Reads a background scratch run (run_scratches with options.background), or ends it with stop: true. Returns its status "
             + "{runId, state, serverPid, startedAt, updatedAt, scenes: [{scene, state, step?, stepName?, total?, elapsedSeconds?, "
-            + "remainingSecondsAtMost?, verdict?, log?, timeScale?}], timeScale?, result?, error?, live}: state is running, done, stopped, "
-            + "interrupted (the server exited) or failed (with error); scenes in play order, each queued, playing (its step index, "
+            + "remainingSecondsAtMost?, verdict?, log?, timeScale?}], timeScale?, result?, error?, waited?, live}: state is running, done, "
+            + "stopped, interrupted (the server exited) or failed (with error); scenes in play order, each queued, playing "
+            + "(its step index, "
             + "name and the scene's step count, remainingSecondsAtMost the wall seconds the paces still to come take at the scene's "
             + "time scale, launch left out) or done (its verdict), or the run's own final word for a scene it ended mid-step; "
             + "timeScale is options.timeScale when it is not 1, and a scene's own timeScale (1) shows its game runs at another "
@@ -208,13 +220,17 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
             + "stop: true ends a live run of this server as a cancelled call ends (its games stopped), writes stopped and the "
             + "completion line, and returns the final status once the run has ended; a run this server finished is returned "
             + "unchanged, and a stop of a run read from its status file (another server's, or one this server no longer keeps) is "
-            + "refused."
+            + "refused. waitSeconds holds the call until the run finishes or that many seconds of load-adjusted time pass (1 to "
+            + "600), returning the status either way, with waited saying the run was still running when the limit passed; a run "
+            + "read from its status file that says running (live false) is never waited on, and reading the log with a Monitor "
+            + "still works."
     )]
     public async Task<string> ScratchStatusAsync(
         [Description("The folder that holds the project's project.godot.")] string projectPath,
         [Description("The run's id, as run_scratches returned it: <UTC yyyyMMddTHHmmss>-<4 hex>, e.g. 20261019T222144-3f2a.")] string runId,
         [Description("true ends the run and returns its final status; default false only reads it.")] bool? stop = null,
         [Description(OnlyDescription)] string? only = null,
+        [Description(WaitDescription)] int? waitSeconds = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -227,10 +243,16 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
         }
 
         bool redOnly = RedOnly(only);
+        CheckWaitSeconds(waitSeconds, stop ?? false);
         try
         {
             string projectDir = ProjectDir(projectPath);
-            JsonObject status = await StatusAsync(projectDir, runId, stop ?? false, cancellationToken);
+            (JsonObject status, string? note) = await StatusAsync(projectDir, runId, stop ?? false, waitSeconds, cancellationToken);
+            if (note is not null)
+            {
+                status["waited"] = note;
+            }
+
             JsonObject shown = ScratchView.Status(status, redOnly);
             return ScratchView.CappedStatus(shown, status, runId, SpillPlace(projectDir)).ToJsonString(ToolJson.Options);
         }
@@ -268,20 +290,95 @@ internal sealed class ScratchTools(SessionRegistry sessions, CSharpBridge csharp
     }
 
     /// <summary>
-    /// The run's status with live: this server's live run (stopped first when asked), else its finished run, else the status
-    /// file as it is.
+    /// The run's status with live: this server's live run (waited for first when <paramref name="waitSeconds"/> asks, stopped
+    /// first when <paramref name="stop"/>), else its finished run, else the status file as it is. The note is what a wait that
+    /// did not see the run end leaves, or why a run read from its file is not waited on.
     /// </summary>
-    private async Task<JsonObject> StatusAsync(string projectDir, string runId, bool stop, CancellationToken cancellationToken)
+    private async Task<(JsonObject Status, string? Note)> StatusAsync(
+        string projectDir,
+        string runId,
+        bool stop,
+        int? waitSeconds,
+        CancellationToken cancellationToken
+    )
     {
+        string? note = await WaitNoteAsync(projectDir, runId, waitSeconds, cancellationToken);
+
         if (sessions.ScratchRuns.Find(projectDir, runId) is { } run)
         {
             (ScratchRunStatus status, bool live) = stop ? await run.StopAsync(cancellationToken) : run.Read();
-            return WithLive(JsonSerializer.SerializeToNode(status, ToolJson.Options)!.AsObject(), live);
+            return (WithLive(JsonSerializer.SerializeToNode(status, ToolJson.Options)!.AsObject(), live), WaitNoteFor(note, live));
         }
 
-        return sessions.ScratchRuns.FindFinished(projectDir, runId) is { } finished
-            ? WithLive(JsonSerializer.SerializeToNode(finished, ToolJson.Options)!.AsObject(), live: false)
-            : WithLive(StatusFile(projectDir, runId, stop), live: false);
+        if (sessions.ScratchRuns.FindFinished(projectDir, runId) is { } finished)
+        {
+            return (WithLive(JsonSerializer.SerializeToNode(finished, ToolJson.Options)!.AsObject(), live: false), null);
+        }
+
+        JsonObject file = WithLive(StatusFile(projectDir, runId, stop), live: false);
+        return (file, NotWaited(file, waitSeconds));
+    }
+
+    /// <summary>
+    /// The note a wait leaves: null when no wait was asked for, the run is not this server's live one, or it ended within the
+    /// limit; otherwise what the limit's passing left.
+    /// </summary>
+    private async Task<string?> WaitNoteAsync(string projectDir, string runId, int? waitSeconds, CancellationToken cancellationToken) =>
+        waitSeconds is { } seconds && sessions.ScratchRuns.Find(projectDir, runId) is { IsLive: true } waiting
+            ? await WaitForEndAsync(waiting, seconds, cancellationToken)
+            : null;
+
+    /// <summary>Why a wait on a run read from its status file answered at once, or null when the file's run is in a final state.</summary>
+    private static string? NotWaited(JsonObject file, int? waitSeconds) => waitSeconds is not null && IsRunning(file) ? NotRunningElsewhere : null;
+
+    /// <summary>
+    /// The wait note a read keeps: only while the status it returns is still live. A run that ended between the limit's passing
+    /// and the read is done, and the call carries nothing to keep waiting for.
+    /// </summary>
+    internal static string? WaitNoteFor(string? note, bool live) => live ? note : null;
+
+    /// <summary>
+    /// Waits for the run's final write, at most <paramref name="seconds"/> of load-adjusted time; the note a call leaves when
+    /// the limit passed with the run still live, and null once the run has ended. A cancellation of the call's own token
+    /// propagates, as it does from a stop.
+    /// </summary>
+    private static async Task<string?> WaitForEndAsync(ScratchBackgroundRun run, int seconds, CancellationToken cancellationToken)
+    {
+        using LoadDeadline deadline = LoadClock.Shared.Start(TimeSpan.FromSeconds(seconds), cancellationToken);
+        try
+        {
+            await run.FinalWritten.WaitAsync(deadline.Token);
+            return null;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && deadline.Expired)
+        {
+            return $"the run was still running after waitSeconds {seconds.ToString(CultureInfo.InvariantCulture)} "
+                + $"({deadline.CeilingClause()}); call scratch_status again to keep waiting";
+        }
+    }
+
+    /// <summary>Whether a status read from its file names the running state, which no run of this server is playing.</summary>
+    private static bool IsRunning(JsonObject status) =>
+        status["state"] is JsonValue state && state.TryGetValue(out string? word) && word == "running";
+
+    /// <summary>Refuses a waitSeconds outside 1 to 600, and one asked for alongside stop: true.</summary>
+    /// <exception cref="McpException">waitSeconds is outside its range, or a stop ends the run before there is anything to wait for.</exception>
+    internal static void CheckWaitSeconds(int? waitSeconds, bool stop)
+    {
+        if (waitSeconds is not { } seconds)
+        {
+            return;
+        }
+
+        if (seconds is < 1 or > 600)
+        {
+            throw new McpException("waitSeconds must be a whole number of seconds from 1 to 600; call scratch_status again to keep waiting.");
+        }
+
+        if (stop)
+        {
+            throw new McpException("waitSeconds and stop: true cannot be combined: stop ends the run at once, so there is nothing to wait for.");
+        }
     }
 
     /// <summary>The run's status file as it is; a stop is refused, since the run is not live in this server.</summary>

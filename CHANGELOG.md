@@ -4,6 +4,10 @@ What changed in each version of the godot-mcp server, newest first. The version 
 
 ## Unreleased
 
+### Added
+
+- `scratch_status` takes `waitSeconds`, holding the call until a background scratch run finishes or that many seconds pass.
+
 ### Changed
 
 - Headless scene edits are refused on a project while an editor session from `run_editor` is open on it; reads still work.

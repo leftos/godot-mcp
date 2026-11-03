@@ -104,9 +104,11 @@ A repeated `--user-arg <arg>` or `--engine-arg <arg>` adds one element to `userA
 
 A run of many minutes goes in the background: `run_scratches` with `options.background: true` returns `{runId, statusFile, logFile, scenes}` at once and plays on in the server (one background run per project; `run_scratches` on it is refused until it ends).
 
-Wait on its log with a `Monitor` running `timeout <limit> tail -n +1 -F <logFile>` and matching `^godot-mcp scratch run \S+ finished:` (the completion line: `done, passed …`, `stopped`, `interrupted` or `failed: …`) rather than holding a call open.
+Wait with `scratch_status {projectPath, runId, waitSeconds}` (1 to 600): it holds up to that many seconds and returns the status; while the status carries `waited`, the run is still going, so call it again. A status without `waited` is the run's end (or `waited` saying `live: false`: the server that played it is gone and the run must be started again). `waitSeconds` cannot be combined with `stop`.
 
-The limit is the scenes' paces (each divided by the time scale, the last step's pace, or its scene's `exitHold`, once more, in wall time above scale 1) plus a minute or two: a server killed outright (a crash, a killed session) never writes the line, and `scratch_status` then answers `live: false` with `state: running`.
+Or wait on its log with a `Monitor` running `timeout <limit> tail -n +1 -F <logFile>` and matching `^godot-mcp scratch run \S+ finished:` (the completion line: `done, passed …`, `stopped`, `interrupted` or `failed: …`).
+
+The Monitor's limit is the scenes' paces (each divided by the time scale, the last step's pace, or its scene's `exitHold`, once more, in wall time above scale 1) plus a minute or two: a server killed outright (a crash, a killed session) never writes the line, and `scratch_status` then answers `live: false` with `state: running`.
 
 Never drop the `timeout`: on Windows a bare `tail -F` outlives the Monitor's shell when the Monitor ends, and runs on for good.
 

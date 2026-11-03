@@ -1,6 +1,7 @@
 using System.Text.Json;
 using GodotMcp.Server.Session;
 using GodotMcp.Server.Tools;
+using GodotMcp.Tests.Session;
 using GodotMcp.TestSupport;
 using ModelContextProtocol;
 
@@ -963,6 +964,41 @@ public sealed class ScratchValidationTests : IDisposable
 
         Assert.Null(error);
         Assert.Equal([0], steps!);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(601)]
+    [InlineData(-1)]
+    public async Task AWaitSecondsOutsideOneToSixHundredIsRefused(int seconds)
+    {
+        await using RegistryHarness harness = new();
+        ScratchTools tools = new(harness.Sessions, TestCSharp.Unused());
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            tools.ScratchStatusAsync(_project, "20261019T222144-3f2a", waitSeconds: seconds, cancellationToken: TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("waitSeconds must be a whole number of seconds from 1 to 600; call scratch_status again to keep waiting.", refused.Message);
+    }
+
+    [Fact]
+    public async Task AWaitSecondsWithAStopIsRefused()
+    {
+        await using RegistryHarness harness = new();
+        ScratchTools tools = new(harness.Sessions, TestCSharp.Unused());
+
+        McpException refused = await Assert.ThrowsAsync<McpException>(() =>
+            tools.ScratchStatusAsync(
+                _project,
+                "20261019T222144-3f2a",
+                stop: true,
+                waitSeconds: 5,
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Equal("waitSeconds and stop: true cannot be combined: stop ends the run at once, so there is nothing to wait for.", refused.Message);
     }
 
     private static ScratchOptions CaptureOf(string steps) =>

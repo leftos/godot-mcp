@@ -234,6 +234,12 @@ internal sealed partial class ScratchBackgroundRun : IScratchRunObserver
         }
     }
 
+    /// <summary>
+    /// Completes once the run's end has written its status file and its completion line and marked its final snapshot: the
+    /// signal a wait on the run watches.
+    /// </summary>
+    internal Task FinalWritten => _finalWritten.Task;
+
     /// <summary>The run's task once started; null before.</summary>
     public Task? Task
     {

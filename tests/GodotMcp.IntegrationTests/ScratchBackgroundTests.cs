@@ -83,6 +83,22 @@ public sealed partial class ScratchBackgroundTests : IAsyncDisposable
     }
 
     [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
+    public async Task AStatusCallWithAWaitReturnsWhenTheRunEndsWithNoNote()
+    {
+        CancellationToken cancellation = TestContext.Current.CancellationToken;
+        JsonObject started = await StartAsync(pace: 5, cancellation);
+        string runId = started["runId"]!.GetValue<string>();
+
+        JsonObject waited = JsonNode
+            .Parse(await _scratch.ScratchStatusAsync(_probe.Directory, runId, waitSeconds: 120, cancellationToken: cancellation))!
+            .AsObject();
+
+        Assert.Equal(("done", false), (waited["state"]!.GetValue<string>(), waited["live"]!.GetValue<bool>()));
+        Assert.Null(waited["waited"]);
+        Assert.Matches(Completion(), LogLines(started)[^1]);
+    }
+
+    [Fact(Timeout = TestTimeouts.OwnLaunchMs)]
     public async Task AStopMidRunEndsItStoppedWithItsCompletionLineAndNoGameLeftRunning()
     {
         CancellationToken cancellation = TestContext.Current.CancellationToken;
@@ -217,7 +233,7 @@ public sealed partial class ScratchBackgroundTests : IAsyncDisposable
             .AsObject();
 
     private async Task<JsonObject> StatusAsync(string runId, bool? stop, CancellationToken cancellation) =>
-        JsonNode.Parse(await _scratch.ScratchStatusAsync(_probe.Directory, runId, stop, only: null, cancellation))!.AsObject();
+        JsonNode.Parse(await _scratch.ScratchStatusAsync(_probe.Directory, runId, stop, only: null, waitSeconds: null, cancellation))!.AsObject();
 
     /// <summary>
     /// Reads the status file until <paramref name="holds"/>, failing as soon as the run is no longer running without it, or once
